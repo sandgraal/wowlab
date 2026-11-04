@@ -474,6 +474,7 @@ def test_the_csp_names_the_hashes_of_the_current_looks_templates(
         "default-src": ["'none'"],
         "script-src": [_sha(own_script), _sha(lookspage._SCRIPT)],
         "style-src": [_sha(own_style), _sha(lookspage._STYLE)],
+        "font-src": ["data:"],  # M16-51 (ADR-0035): the page's own fonts
         "connect-src": ["'self'"],
         "img-src": ["'self'"],
         "frame-ancestors": ["'none'"],

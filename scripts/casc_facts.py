@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Write a derived fixture of an install's CASC index (M15-03) or of its
-archive records and BLTE (M15-04, `--blte`) (ADR-0033).
+"""Write a derived fixture of an install's CASC index (M15-03), of its
+archive records and BLTE (M15-04, `--blte`), or of its encoding and root
+files and reads by file data id (M15-05, `--files`) (ADR-0033).
 
     uv run python scripts/casc_facts.py --flavor FOLDER --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --blte --flavor FOLDER --out PATH [--root INSTALL]
+    uv run python scripts/casc_facts.py --files --flavor FOLDER --out PATH [--root INSTALL]
+        [--model-table CSV]
 
 Opens one flavor's build in the install's `Data/` through `wowlab_core.casc`
 (read-only: every file is read into memory and closed; `shmem` and
@@ -38,20 +41,38 @@ key-name length, IV length and cipher byte; how many record headers' nine
 index bytes are the start of the MD5 of the record's BLTE header). Never a
 byte of a file: sizes, hashes, modes and names only.
 
+With `--files` the record is of `casc.open_source` (the encoding file and
+the root, filtered for the build's locale and the flavor folder's
+platform): the locale and platform and where each came from, and the
+speech locale the `Tags` cell names (never the rest of the cell), the
+encoding header and how many content keys have one, two, … encoding keys, the root's report with the counts the filter
+gives (unique ids, with and without `LowViolence`, ids in more than one
+block and the flags of those blocks), a census of every root row taken
+against the local index (how many ids have no local copy: §17.1's middle
+state), a handful of file data ids with their state, content and encoding
+hashes and, when local, their index row, sizes and whether the decoded
+bytes' MD5 is the content hash; a sample of 300 `ModelFileData` ids (the
+table from `--model-table`, else through `gamedata`) split into the
+states; the open's timings, the time of 300 reads and of the sample's
+local files, and the process's peak resident memory after the open and
+after the reads. Field names say `hash`, not `key`.
+
 The install is `--root`, else `WOWLAB_WOW_ROOT`, else the platform default
 (`wowlab_core.install.discover`). Never print or commit its path: the JSON
 holds none.
 
 Refusals (exit 1): `--out` inside a game install (a folder with
 `.build.info` in it or above it, links resolved), `--out` already there (a
-committed fixture is never replaced), or any `casc` or `install` error, in
+committed fixture is never replaced), or any `casc`, `install` or `gamedata` error, in
 one line on stderr. The output is written only after everything is read.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import itertools
 import json
 import sys
 import time
@@ -60,7 +81,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from wowlab_core import casc
+from wowlab_core import casc, gamedata
+from wowlab_core.gamedata import GameDataError
 from wowlab_core.install import InstallError, discover
 
 INSTALL_MARKER = ".build.info"
@@ -397,14 +419,340 @@ def blte_facts(storage: casc.CascStorage, flavor_folder: str, captured: str) -> 
     }
 
 
+# ─── --files: encoding, root and reads by file data id (M15-05) ─────────────
+
+
+def _peak_rss_mb() -> float | None:
+    """The process's peak resident memory so far, in MB (`ru_maxrss` is in
+    bytes on macOS, in KiB elsewhere; not on Windows, where it is None)."""
+    try:
+        import resource  # POSIX only
+    except ImportError:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return round(peak / 1e6 if sys.platform == "darwin" else peak * 1024 / 1e6, 1)
+
+
+def _file_row(
+    source: casc.CascSource, fdid: int, why: str, *, in_table: bool = True
+) -> dict[str, Any]:
+    """One file: its stat and, when local, its read checked by its content
+    key. The field names say `hash`, not `key`: they are MD5s of public game
+    files, and gitleaks reads `"…key": "<hex>"` as a credential."""
+    stat = source.stat(fdid, in_table=in_table)
+    row: dict[str, Any] = {
+        "why": why,
+        "fdid": fdid,
+        "state": stat.state,
+        "words": stat.words,
+        "content_hash": stat.content_key,
+        "content_hashes": list(stat.content_keys),
+        "encoding_hashes": list(stat.encoding_keys),
+        "encryption_names": list(stat.key_names),
+        "root_content_flags": [f"{h.content_flags:#x}" for h in source.root.find(fdid)],
+        "note": stat.note,
+    }
+    if stat.state == "local" and stat.encoding_key is not None:
+        entry = source.storage.index.find(bytes.fromhex(stat.encoding_key))
+        data = source.read(fdid)
+        row.update(
+            {
+                "local_encoding_hash": stat.encoding_key,
+                "index": None if entry is None else entry.model_dump(),
+                "size": stat.size,
+                "decoded_size": len(data),
+                "decoded_md5_is_content_hash": hashlib.md5(data, usedforsecurity=False).hexdigest()
+                == stat.content_key,
+            }
+        )
+    return row
+
+
+def _model_ids(path: Path | None, version: str) -> tuple[list[int], str, str | None]:
+    """The `FileDataID` column of `ModelFileData` at `version`: from `path`
+    (a CSV), else through `gamedata` (its cache under the data directory,
+    or one fetch from wago.tools, as any `wowlab` table read does); where
+    it came from; and the build the table is of (gamedata's own record of
+    the fetch, else the build asked for; None for a CSV)."""
+    table_build: str | None = None
+    if path is not None:
+        with path.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        where = "a CSV given with --model-table"
+    else:
+        data = gamedata.GameData()
+        rows = list(data.rows("ModelFileData", version))
+        sidecar = data.sidecar("ModelFileData", version)
+        table_build = sidecar.build if sidecar is not None else version
+        where = "gamedata (wago.tools, cached under the data directory)"
+    ids = sorted({int(r["FileDataID"]) for r in rows if r.get("FileDataID", "").isdecimal()})
+    return ids, where, table_build
+
+
+def _sample(values: Sequence[int], n: int) -> list[int]:
+    """`n` values evenly spaced over `values` (all of them when fewer)."""
+    if len(values) <= n:
+        return list(values)
+    step = len(values) / n
+    return [values[int(i * step)] for i in range(n)]
+
+
+def _timed_reads(source: casc.CascSource, ids: Sequence[int]) -> tuple[int, dict[str, int], float]:
+    """Read every id in turn: the bytes decoded, the refusals by kind (an
+    encrypted or not local file is refused, not read), and the seconds."""
+    total = 0
+    refused: Counter[str] = Counter()
+    started = time.perf_counter()
+    for fdid in ids:
+        try:
+            total += len(source.read(fdid))
+        except casc.EncryptedContent:
+            refused["encrypted"] += 1
+        except casc.FileUnavailable as exc:
+            refused[exc.state] += 1
+        except casc.CascError as exc:
+            refused[type(exc).__name__] += 1
+    return total, dict(sorted(refused.items())), time.perf_counter() - started
+
+
+def _local_census(source: casc.CascSource) -> tuple[dict[str, Any], int | None]:
+    """Every root row taken, checked against the local index by its
+    content key's encoding keys (the index only; no record is read, so an
+    encrypted copy counts as local here): how many unique ids have a local
+    copy and how many none (§17.1's middle state), with the root flags of
+    the rows of those with none; for ids with more than one row, which rows
+    are local (in file order, each with its block's `0x1` bit) and whether
+    the rows' content differs; for ids with two or more local rows of
+    different content, none with bit 0x1, the locale flags of those rows
+    (in file order); and the first id with no local copy."""
+    index = source.storage.index
+    lookup = source.encoding.lookup
+    local: dict[int, list[tuple[bool, bytes, int, int]]] = {}
+    for fdid, ckey, flags, locales in source.root.rows():
+        row = lookup(ckey)
+        here = row is not None and any(index.find(e) is not None for e in row.ekeys)
+        local.setdefault(fdid, []).append((here, ckey, flags, locales))
+    some = sum(1 for v in local.values() if any(x[0] for x in v))
+    none = sorted(f for f, v in local.items() if not any(x[0] for x in v))
+    none_flags: Counter[str] = Counter(" + ".join(f"{x[2]:#x}" for x in local[f]) for f in none)
+    patterns: Counter[str] = Counter()
+    locale_pairs: Counter[str] = Counter()
+    for v in local.values():
+        present = [x for x in v if x[0]]
+        if (
+            len(present) > 1
+            and len({x[1] for x in present}) > 1
+            and not any(x[2] & casc.ROOT_FLAG_1 for x in present)
+        ):
+            locale_pairs[" + ".join(f"{x[3]:#x}" for x in present)] += 1
+        if len(v) > 1:
+            rows = " + ".join(
+                f"{'local' if x[0] else 'absent'}{' (0x1)' if x[2] & 0x1 else ''}" for x in v
+            )
+            same = "same content" if len({x[1] for x in v}) == 1 else "different content"
+            patterns[f"{rows}, {same}"] += 1
+    return (
+        {
+            "what": "every root row taken; local means an encoding key of its content is in "
+            "the local index (no record read)",
+            "unique_ids": len(local),
+            "with_a_local_copy": some,
+            "with_no_local_copy": len(none),
+            "flags_of_ids_with_no_local_copy": dict(none_flags.most_common()),
+            "ids_in_more_than_one_block": dict(patterns.most_common()),
+            "locale_flags_of_two_local_rows_without_0x1": dict(locale_pairs.most_common()),
+        },
+        none[0] if none else None,
+    )
+
+
+def files_facts(
+    install_root: str | None,
+    flavor_folder: str,
+    captured: str,
+    model_table: Path | None,
+) -> dict[str, Any]:
+    """The derived record of one build's encoding and root and of reads by
+    file data id."""
+    inst = discover(install_root)
+    source = casc.open_source(inst, flavor_folder)
+    peak_open = _peak_rss_mb()
+    report = source.report
+    root = source.root
+    # The timed reads come first, so the peak after them is the reader's,
+    # not this script's analysis below.
+    step = max(1, len(root) // 300)
+    reads = list(dict.fromkeys(itertools.islice(root.ids(), 0, None, step)))[:300]
+    read_bytes, read_refused, reads_seconds = _timed_reads(source, reads)
+    peak_reads = _peak_rss_mb()
+    taken = list(root.ids())
+    unique = sorted(set(taken))
+    counted = Counter(taken)
+    dups = [f for f, n in counted.items() if n > 1]
+    pairs: Counter[str] = Counter()
+    differing = 0
+    first_differing: int | None = None
+    for fdid in dups:
+        hits = root.find(fdid)
+        pairs[" + ".join(f"{h.content_flags:#x}" for h in hits)] += 1
+        if len({h.ckey for h in hits}) > 1:
+            differing += 1
+            first_differing = fdid if first_differing is None else first_differing
+    with_low_violence = set(unique)
+    skipped_any = set()
+    flag = report.root.locale_flag
+    mask = casc.PLATFORM_SKIP[report.platform]
+    for fdid, content, locales in root.skipped_rows():
+        skipped_any.add(fdid)
+        if locales & flag and not content & mask:
+            with_low_violence.add(fdid)
+    only_skipped = sorted(skipped_any - set(unique))
+    absent = next(i for i in range(1, unique[-1]) if i not in counted and i not in skipped_any)
+    encrypted_ids = [
+        f
+        for f in unique[:: max(1, len(unique) // 20000)]
+        if any(h.content_flags & casc.ROOT_ENCRYPTED for h in root.find(f))
+    ]
+    census, first_not_local = _local_census(source)
+    rows: list[dict[str, Any]] = [
+        _file_row(source, unique[0], "the lowest file data id taken"),
+        _file_row(source, unique[-1], "the highest file data id taken"),
+    ]
+    for fdid in _sample(unique, 8)[1:]:
+        rows.append(_file_row(source, fdid, "evenly spaced over the ids taken"))
+    if first_differing is not None:
+        rows.append(
+            _file_row(
+                source, first_differing, "the first id with two root rows of different content"
+            )
+        )
+    if encrypted_ids:
+        rows.append(
+            _file_row(source, encrypted_ids[0], "the first sampled id in an Encrypted block")
+        )
+    if only_skipped:
+        rows.append(
+            _file_row(source, only_skipped[0], "the first id the root lists only in skipped blocks")
+        )
+    if first_not_local is not None:
+        rows.append(
+            _file_row(source, first_not_local, "the first id taken with no copy in the local index")
+        )
+    rows.append(
+        _file_row(
+            source,
+            absent,
+            "the first id the root does not list, asked with in_table=False (the script's "
+            "choice: no game table was looked up)",
+            in_table=False,
+        )
+    )
+
+    model_ids, model_source, model_build = _model_ids(model_table, report.index.version)
+    sampled = _sample(model_ids, 300)
+    states: Counter[str] = Counter()
+    examples: dict[str, int] = {}
+    stats = []
+    for fdid in sampled:
+        stat = source.stat(fdid)
+        states[stat.state] += 1
+        examples.setdefault(stat.state, fdid)
+        stats.append(stat)
+    for state, fdid in sorted(examples.items()):
+        rows.append(_file_row(source, fdid, f"the first sampled ModelFileData id in state {state}"))
+
+    local_models = [s.fdid for s in stats if s.state == "local"]
+    model_bytes, model_refused, model_seconds = _timed_reads(source, local_models)
+    return {
+        "schema": SCHEMA,
+        "kind": "casc-files-derived",
+        "made_by": "scripts/casc_facts.py --files",
+        "captured": captured,
+        "flavor": flavor_folder,
+        "product": report.index.product,
+        "version": report.index.version,
+        "build": report.index.build,
+        "locale": report.locale,
+        "locale_from": report.locale_from,
+        "speech_locale": report.speech_locale,
+        "locale_flag": report.root.locale_flag,
+        "platform": report.platform,
+        "platform_from": report.platform_from,
+        "platform_mask": f"{mask:#x}",
+        "encoding": {
+            **report.encoding.model_dump(),
+            "read_by": report.encoding_ekey,
+            "encoding_hashes_per_content": {
+                str(k): v for k, v in source.encoding.key_counts().items()
+            },
+        },
+        "root": {
+            **report.root.model_dump(),
+            "read_by_hash": report.root_ekey,
+            "unique_ids_taken": len(unique),
+            "unique_ids_with_low_violence": len(with_low_violence),
+            "ids_in_more_than_one_block": len(dups),
+            "ids_whose_rows_differ_in_content": differing,
+            "flags_of_ids_in_more_than_one_block": dict(pairs.most_common()),
+            "ids_only_in_skipped_blocks": len(only_skipped),
+        },
+        "local_census": census,
+        "rows": rows,
+        "model_file_data": {
+            "source": model_source,
+            "version": model_build,
+            "ids_in_table": len(model_ids),
+            "sampled": len(sampled),
+            "states": dict(sorted(states.items())),
+        },
+        "timings": {
+            "index_seconds": report.index.index_seconds,
+            "encoding_seconds": report.encoding_seconds,
+            "root_seconds": report.root_seconds,
+            "open_seconds": report.open_seconds,
+            "reads": {
+                "files": len(reads),
+                "what": "every (rows taken // 300)-th row taken, in file order, each id once",
+                "bytes": read_bytes,
+                "refused": read_refused,
+                "seconds": round(reads_seconds, 3),
+            },
+            "model_reads": {
+                "files": len(local_models),
+                "what": "every local file of the ModelFileData sample",
+                "bytes": model_bytes,
+                "refused": model_refused,
+                "seconds": round(model_seconds, 3),
+            },
+        },
+        "memory": {
+            "peak_rss_mb_after_open": peak_open,
+            "peak_rss_mb_after_reads": peak_reads,
+            "reopens": source.reopens,
+        },
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--flavor", required=True, help="the flavor folder, as on disk")
     parser.add_argument("--out", required=True, type=Path, help="the JSON file to write")
     parser.add_argument("--root", default=None, help="the install (default: discovery)")
     parser.add_argument("--captured", required=True, help="the capture date, YYYY-MM-DD")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--blte", action="store_true", help="write the archive and BLTE record (M15-04)"
+    )
+    mode.add_argument(
+        "--files",
+        action="store_true",
+        help="write the encoding, root and file-read record (M15-05)",
+    )
+    parser.add_argument(
+        "--model-table",
+        type=Path,
+        default=None,
+        help="with --files: a ModelFileData CSV for the build (default: through gamedata)",
     )
     args = parser.parse_args(argv)
     out: Path = args.out
@@ -412,15 +760,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         refuse_install(out)
         if out.exists():
             raise FactsError("--out is already there; a fixture is never replaced")
-        storage = casc.open_storage(discover(args.root), args.flavor)
-        make = blte_facts if args.blte else facts
-        record = make(storage, args.flavor, args.captured)
+        if args.files:
+            record = files_facts(args.root, args.flavor, args.captured, args.model_table)
+        else:
+            storage = casc.open_storage(discover(args.root), args.flavor)
+            make = blte_facts if args.blte else facts
+            record = make(storage, args.flavor, args.captured)
         text = json.dumps(record, indent=2) + "\n"
         with out.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-    except (FactsError, casc.CascError, InstallError, OSError) as exc:
+    except (FactsError, casc.CascError, InstallError, GameDataError, OSError) as exc:
         print(f"casc_facts: {exc}", file=sys.stderr)
         return 1
+    if args.files:
+        timings = record["timings"]
+        print(
+            f"wrote {out}: {record['product']} {record['version']}, {len(record['rows'])} rows; "
+            f"open {timings['open_seconds']} s, {timings['reads']['files']} reads in "
+            f"{timings['reads']['seconds']} s, peak RSS {record['memory']['peak_rss_mb_after_reads']} MB; "
+            f"ModelFileData sample {record['model_file_data']['states']}"
+        )
+        return 0
     report = storage.report
     if args.blte:
         census = record["census"]

@@ -10,14 +10,15 @@
 </head>
 <body>
 <header class="banner">
-<svg class="crest" viewBox="0 0 40 48" width="40" height="48" aria-hidden="true" focusable="false">
-<path d="M20 2 L37 9 V24 C37 35 29 42 20 46 C11 42 3 35 3 24 V9 Z" fill="#2a2116" stroke="#d4a838" stroke-width="2.5"/>
-<path d="M20 9 L30 13.5 V24 C30 31 25.5 36 20 39 C14.5 36 10 31 10 24 V13.5 Z" fill="none" stroke="#8c6a1c" stroke-width="1.5"/>
-<path d="M20 13 L22.6 21.4 L31 24 L22.6 26.6 L20 35 L17.4 26.6 L9 24 L17.4 21.4 Z" fill="#f0cf6a"/>
+<svg class="sigil" viewBox="0 0 64 64" width="56" height="56" aria-hidden="true" focusable="false">
+<g class="ring" transform="rotate(-90 32 32)"><circle cx="32" cy="32" r="26" stroke-dasharray="46.45 8" stroke-dashoffset="-4"/></g>
+<g class="tick"><line x1="44.93" y1="37.36" x2="49.55" y2="39.27"/><line x1="37.36" y1="44.93" x2="39.27" y2="49.55"/><line x1="26.64" y1="44.93" x2="24.73" y2="49.55"/><line x1="19.07" y1="37.36" x2="14.45" y2="39.27"/><line x1="19.07" y1="26.64" x2="14.45" y2="24.73"/><line x1="26.64" y1="19.07" x2="24.73" y2="14.45"/><line x1="37.36" y1="19.07" x2="39.27" y2="14.45"/><line x1="44.93" y1="26.64" x2="49.55" y2="24.73"/></g>
+<path class="core" d="M32 21 L39 32 L32 43 L25 32 Z"/>
+<path class="fissure" d="M32 43 L32 58"/>
 </svg>
 <div class="banner-text">
 <h1>wowlab</h1>
-<p>What every file in your game folder is, who writes it, and whether wowlab may change it. The explorer only reads, and nothing on this page changes your game files; the Commands tab can save to wowlab's own data (snapshots, profiles, saved looks).</p>
+<p>What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.</p>
 </div>
 <nav class="tabs" role="tablist" aria-label="Views">
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="true" aria-controls="explorer-view">Explorer</button>
@@ -39,37 +40,38 @@
 <div class="panes">
 <div class="panel tree-panel">
 <p id="tree-root" class="tree-root"></p>
-<ul id="tree" class="tree" role="tree" aria-label="Files in the install"></ul>
+<ul id="tree" class="tree" aria-label="Files in the install"></ul>
 </div>
-<aside id="explain" class="parchment" aria-live="polite">
-<h2 id="explain-title">Pick a file or folder</h2>
+<aside id="explain" class="parchment">
+<h2 id="explain-title" tabindex="-1">Pick a file or folder</h2>
 <p id="explain-path" class="path"></p>
 <div id="explain-verdict" class="verdict"></div>
 <dl id="explain-facts"></dl>
 <p id="explain-snapshot" class="snapshot"></p>
 <div id="explain-hints" class="hints"></div>
 <div id="explain-preview" class="preview-box"></div>
-<p id="explain-status"></p>
+<p id="explain-status" role="status"></p>
 </aside>
 </div>
 </section>
 <section id="gaps-view" role="tabpanel" aria-labelledby="tab-gaps" hidden>
+<h2 class="unseen">Gaps</h2>
 <p class="intro">Paths in the install that no file-map row describes, grouped under the row of the folder they are in and ranked by how many files they hold, then paths only a catch-all row describes, folders labelled whole and not looked inside, and links, which are never followed. Read only.</p>
 <p id="gaps-status" role="status"></p>
 <div id="gaps-body"></div>
 </section>
 <section id="commands-view" role="tabpanel" aria-labelledby="tab-commands" hidden>
-<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Commands that save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages) are offered, and none of them touches the game folder. A command that asks before changing anything (<code>--yes</code>) runs first as a plan, which changes nothing, and runs for real only when you press Confirm under that plan. <code>snap gc</code> and <code>doctor</code> change only wowlab's own store; the commands that change your game files go through the same write gate as on the command line, which takes a snapshot first, and <code>wowlab undo</code> reverses them. Two of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code>, when its target file changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from.</p>
+<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Two of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code>, when its target file changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages), run directly.</p>
 <div class="commands-body">
 <nav id="commands" class="panel" aria-label="Commands"></nav>
-<section id="detail" class="panel" aria-live="polite">
+<section id="detail" class="panel">
 <h2 id="title">Pick a command</h2>
 <p id="help"></p>
 <div id="fields"></div>
 <button id="run" type="button" disabled>Run</button>
-<p id="status"></p>
+<p id="status" role="status"></p>
 <div id="confirm-box" class="confirm-box" hidden>
-<p id="confirm-note"></p>
+<p id="confirm-note" role="status"></p>
 <button id="confirm" type="button" hidden>Confirm</button>
 </div>
 <div id="result-tree" class="jt" hidden></div>
@@ -79,6 +81,7 @@
 </div>
 </section>
 <section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
+<h2 class="unseen">Character</h2>
 <p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code> and <code>wowlab char macros</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
 <div class="toolbar panel">
 <label>Character <select id="char-picker" disabled></select></label>
@@ -100,7 +103,7 @@
 <label>Find <input id="char-keys-filter" type="search" placeholder="key, command or what it does" autocomplete="off" spellcheck="false"></label>
 <label class="check"><input id="char-keys-disagree" type="checkbox"> Disagreements only</label>
 </div>
-<div id="char-keys"></div>
+<div id="char-keys" role="region" aria-label="Key bindings" tabindex="0"></div>
 <p class="char-read-only">Read only in this version: this panel changes no binding. Changing keys from here is planned for a later wave.</p>
 </section>
 <section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title">
@@ -114,6 +117,7 @@
 </div>
 </section>
 <section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
+<h2 class="unseen">Looks</h2>
 <p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes <code>pages/looks.html</code> in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
 <div class="toolbar panel">
 <button id="looks-write" type="button">Write the page</button>
@@ -123,6 +127,7 @@
 <iframe id="looks-frame" class="looks-frame" sandbox="allow-scripts" title="The looks page" hidden></iframe>
 </section>
 </main>
+<p id="copy-status" class="unseen" role="status"></p>
 <script><!--wowlab:script--></script>
 </body>
 </html>
