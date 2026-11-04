@@ -26,7 +26,7 @@ that also stop bash -e from exiting on a failed check: `set +e` on an
 earlier line, a `{ ...; } || true` group, a `( ... ) || true` subshell, and
 a function that holds the check called as `fn || true`. No workflow uses
 them today; review covers them (the probe
-lab/core/tests/review/test_m13_65_check_swallowed_by_enclosing_shell.py
+lab/core/tests/review/test_m13_65_shell_level_swallow_is_a_documented_limit.py
 records the limit).
 
 The mutation tests apply each failure to the real workflows in memory, and
