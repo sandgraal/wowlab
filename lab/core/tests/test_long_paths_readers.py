@@ -408,10 +408,23 @@ def test_constructed_char_output_names_no_extended_length_path(
         report = cli.CharListReport.model_validate_json(
             _ok(_invoke("char", "list", "--root", str(_x(tree.root)), "--json")).stdout
         )
-        assert sorted(c.file for c in report.characters) == sorted(
+        saved = [c for c in report.characters if c.no_lab_record is None]
+        assert sorted(c.file for c in saved) == sorted(
             f"{ACCT}/1/{who}/SavedVariables/WowLab.lua" for who in (CHAR_A, CHAR_B)
         )
-        assert all(c.error is None and c.summary for c in report.characters), report
+        assert all(c.error is None and c.summary for c in saved), report
+        # The folders without a WowLab.lua (M16-35) are named by their plain
+        # relative path too, and their counts carry no path at all.
+        bare = [c for c in report.characters if c.no_lab_record is not None]
+        assert bare, "the capture has character folders without a WowLab.lua"
+        for c in bare:
+            assert c.file == f"{ACCT}/{c.realm_folder}/{c.label}", c
+            facts = c.no_lab_record
+            assert facts is not None
+            assert not any(
+                "\\\\?\\" in text
+                for text in (c.file, facts.cvars_absent or "", facts.macros_absent or "")
+            ), c
 
 
 @pytest.mark.parametrize("json_out", [False, True], ids=["text", "json"])

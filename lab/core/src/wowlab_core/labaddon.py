@@ -1575,9 +1575,12 @@ Place = Literal["file", "saved_variables_folder", "character_folder", "no_lab_fi
 # `WowLab.lua` is described by (M16-35), as the file map names them.
 CONFIG_FILE_NAME = "config-cache.wtf"
 MACROS_FILE_NAME = "macros-cache.txt"
-# The most `survey` reads of one of those two files to count what it holds.
-# A real one is a few KB; a file over it is named, not read.
-MAX_COUNTED_FILE_BYTES = 4 * 1024 * 1024
+# The most `survey` reads of one of those two files to count what it holds
+# (a real one is a few KB; a file over it is named, not read), and of all of
+# them together in one run. Neither is charged to `MAX_SURVEY_BYTES`.
+MAX_COUNTED_FILE_BYTES = 256 * 1024
+MAX_COUNTED_TOTAL_BYTES = 8 * 1024 * 1024
+_COUNTED_FILE_WORDS = "256 KiB"
 
 
 class FolderFacts(BaseModel):
@@ -1590,12 +1593,21 @@ class FolderFacts(BaseModel):
     `config-cache.wtf`, `macros` the macro records in its `macros-cache.txt`,
     and `saved_variables` the addon files in its `SavedVariables/` (no
     `.lua.bak`). The two files are matched by name with case folded and
-    parsed as `cvar list` and `macros list` parse them; a file absent, over
-    `MAX_COUNTED_FILE_BYTES` or that could not be read gives the reason
+    counted in one pass by the grammar `cvar list` and `macros list` parse
+    with (`wtfconfig.count_cvar_names`, `count_macro_records`); a file
+    absent, over `MAX_COUNTED_FILE_BYTES`, past `MAX_COUNTED_TOTAL_BYTES`
+    for the run ("not counted") or that could not be read gives the reason
     instead. `twins` are the character folders of the other shape in the
     same account whose first name matches (`layout.Character.twins`), each
     as `<realm or digits folder>/<character folder>`: a name match, not
-    proof of the same character."""
+    proof of the same character.
+
+    `first_name_folder` is True for a folder of the realm-name shape
+    (`<Realm>/<First>/`) that has a twin of the digits shape: the layout's
+    shapes decide it, never the flavor. On the Forever beta such a folder
+    holds only `AddOns.txt` **[verify]** (`docs/LAB_FILE_MAP.md`) and the
+    lab-addon writes nothing there, so `char list` counts it apart from the
+    character folders."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1605,6 +1617,7 @@ class FolderFacts(BaseModel):
     macros_absent: str | None = None
     saved_variables: int
     twins: list[FsText] = Field(default_factory=list)
+    first_name_folder: bool = False
 
     @model_validator(mode="after")
     def _value_or_reason(self) -> Self:
@@ -1805,6 +1818,8 @@ class _Reader:
         self.full = False
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
+        # The counts of folders without a WowLab.lua (M16-35), on their own bounds.
+        self.counter = _Counter(flavor_path)
 
     def _on_its_own(self, account: str, who: str) -> str:
         """The advice ending a refused row: a `char show` command for this
@@ -1946,29 +1961,47 @@ def _place(path: str, entry_id: str | None, *, is_link: bool) -> tuple[_Place, l
     return None
 
 
-def _count_in(
-    flavor_path: Path, found: list[layout.WtfFile], name: str
-) -> tuple[int | None, str | None]:
-    """How many CVar names (`config-cache.wtf`) or macro records
-    (`macros-cache.txt`) the first of `found` holds, or why that is not
-    known. Opened as `read_char` opens a file: a regular file only, within
-    `MAX_COUNTED_FILE_BYTES`, read only (L1)."""
-    if not found:
-        return None, f"no {name}"
-    first = min(found, key=lambda f: f.path)
-    if first.size > MAX_COUNTED_FILE_BYTES:
-        return None, (
-            f"{name} not read: the file holds {_size_words(first.size)}, more than "
-            f"{_size_words(MAX_COUNTED_FILE_BYTES)}"
-        )
-    path = flavor_path / first.path
-    try:
-        data = snapshot.read_regular_file(path, limit=MAX_COUNTED_FILE_BYTES)
-    except OSError as exc:
-        return None, f"{name} not read: {_os_error(exc, path)}"
-    if name == CONFIG_FILE_NAME:
-        return len(wtfconfig.parse_config(data).effective()), None
-    return len(wtfconfig.parse_macros(data).macros), None
+class _Counter:
+    """Counts what a folder without a `WowLab.lua` holds (M16-35), within
+    `MAX_COUNTED_FILE_BYTES` per file and `MAX_COUNTED_TOTAL_BYTES` for all
+    of one `survey` together. The counts take one pass over the bytes
+    (`wtfconfig.count_cvar_names`, `count_macro_records`) and build no
+    document, so the cost stays in proportion to the bytes read."""
+
+    def __init__(self, flavor_path: Path) -> None:
+        self.flavor_path = flavor_path
+        self.total = MAX_COUNTED_TOTAL_BYTES
+        self.left = self.total
+        self.full = False
+
+    def count(self, found: list[layout.WtfFile], name: str) -> tuple[int | None, str | None]:
+        """How many CVar names (`config-cache.wtf`) or macro records
+        (`macros-cache.txt`) the first of `found` holds, or why that is not
+        known. Opened as `read_char` opens a file: a regular file only,
+        within the bounds, read only (L1)."""
+        if not found:
+            return None, f"no {name}"
+        first = min(found, key=lambda f: f.path)
+        if first.size > MAX_COUNTED_FILE_BYTES:
+            return None, (
+                f"{name} not read: the file holds {_size_words(first.size)}, more than "
+                f"{_COUNTED_FILE_WORDS}"
+            )
+        if self.full or first.size > self.left:
+            self.full = True  # every file after this one gets the same answer
+            return None, (
+                f"{name} not counted: wowlab counts at most {_size_words(self.total)} of these "
+                "files in one listing, and the folders before this one used it up"
+            )
+        path = self.flavor_path / first.path
+        try:
+            data = snapshot.read_regular_file(path, limit=min(MAX_COUNTED_FILE_BYTES, self.left))
+        except OSError as exc:
+            return None, f"{name} not read: {_os_error(exc, path)}"
+        self.left -= len(data)
+        if name == CONFIG_FILE_NAME:
+            return wtfconfig.count_cvar_names(data), None
+        return wtfconfig.count_macro_records(data), None
 
 
 class _Folder:
@@ -2025,15 +2058,16 @@ class _Folder:
             no_lab_record=no_lab_record,
         )
 
-    def bare(self, flavor_path: Path) -> CharacterFile:
+    def bare(self, counter: _Counter) -> CharacterFile:
         """The row of a folder that holds no `WowLab.lua` (M16-35)."""
-        cvars, cvars_absent = _count_in(flavor_path, self.wtf[CONFIG_FILE_NAME], CONFIG_FILE_NAME)
-        macros, macros_absent = _count_in(flavor_path, self.wtf[MACROS_FILE_NAME], MACROS_FILE_NAME)
+        cvars, cvars_absent = counter.count(self.wtf[CONFIG_FILE_NAME], CONFIG_FILE_NAME)
+        macros, macros_absent = counter.count(self.wtf[MACROS_FILE_NAME], MACROS_FILE_NAME)
         path = (
             self.character.path
             if self.character is not None
             else f"{_WTF}/{_ACCOUNT}/{self.account}/{self.realm.folder}/{self.label}"
         )
+        twins = self.character.twins if self.character is not None else ()
         return self.entry(
             path,
             None,
@@ -2044,10 +2078,8 @@ class _Folder:
                 macros=macros,
                 macros_absent=macros_absent,
                 saved_variables=self.addon_files,
-                twins=[
-                    "/".join(t.split("/")[-2:])
-                    for t in (self.character.twins if self.character is not None else ())
-                ],
+                twins=["/".join(t.split("/")[-2:]) for t in twins],
+                first_name_folder=self.realm.kind != "numeric" and bool(twins),
             ),
         )
 
@@ -2064,7 +2096,7 @@ class _Folder:
             found = self.files.get(first)
             return self.entry(first, found.mtime_ns if found else None, error=str(exc))
         if chosen is None:
-            return self.bare(reader.flavor_path) if every_folder else None
+            return self.bare(reader.counter) if every_folder else None
         if chosen in self.odd:
             return self.entry(chosen, None, error=self.odd[chosen])
         found = self.files[chosen]
@@ -2162,7 +2194,9 @@ def survey(
     SavedVariables/ holds no `WowLab.lua` gets a row too, in the same order:
     `place` `no_lab_file` and `no_lab_record`, which counts the CVars in its
     `config-cache.wtf`, the macros in its `macros-cache.txt` (each read on
-    its own bound, `MAX_COUNTED_FILE_BYTES`, never charged to `budget`) and
+    its own bound, `MAX_COUNTED_FILE_BYTES`, and all of them within
+    `MAX_COUNTED_TOTAL_BYTES`, never charged to `budget`; one pass over the
+    bytes, no document built) and
     the addon files in its SavedVariables/. Without it (the default) such a
     folder gives no row and those files are never opened.
 
