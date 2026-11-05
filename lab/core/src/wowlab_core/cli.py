@@ -7967,7 +7967,7 @@ _CHAR_LIST_NOTES = [
     "The addon records no time; the time shown is the file's modification time: the "
     "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
     "or sv merge, or a copy).",
-    "One row per character folder: a renamed or transferred character (and a deleted one "
+    "One row per folder: a renamed or transferred character (and a deleted one "
     "[verify]) keeps its old folder and last save here.",
 ]
 
@@ -7982,7 +7982,59 @@ def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+_INSTALL_ADVICE = (
+    "install the lab-addon with `wowlab addon install lab`, log in on the character, then log "
+    "out or /reload"
+)
+# The one note `char list` adds when a row shows a folder's counts.
+_BARE_NOTE = (
+    "Counts are what each file held at the client's last exit; with settings sync on, the "
+    "server may replace these files at login."
+)
+# How a `<Realm>/<First>/` folder with a digits-shape twin reads (the shapes
+# decide it, never the flavor; the contents claim is the file map's).
+_FIRST_NAME_FOLDER = (
+    "a <Realm>/<First> folder: on Forever it holds only AddOns.txt [verify], and the "
+    "lab-addon writes nothing here"
+)
+
+
+def _first_name_folder(e: labaddon.CharacterFile) -> bool:
+    return e.no_lab_record is not None and e.no_lab_record.first_name_folder
+
+
+def _shows_counts(facts: labaddon.FolderFacts) -> bool:
+    """Whether a folder's row shows its counts: always for a character
+    folder, and for a `<Realm>/<First>/` folder when it holds anything
+    counted."""
+    nothing = (f"no {labaddon.CONFIG_FILE_NAME}", f"no {labaddon.MACROS_FILE_NAME}", 0)
+    held = (facts.cvars_absent, facts.macros_absent, facts.saved_variables)
+    return not facts.first_name_folder or held != nothing
+
+
+def _bare_words(facts: labaddon.FolderFacts) -> str:
+    """What a folder without a `WowLab.lua` holds, for its `char list` row:
+    wowlab's own words in player words (`_player_copy`), the twin folders'
+    names (read from the install) put in as they are."""
+    cvars = facts.cvars_absent if facts.cvars is None else _plural(facts.cvars, "CVar")
+    macros = facts.macros_absent if facts.macros is None else _plural(facts.macros, "macro")
+    counts = _player_copy(
+        f"{cvars}, {macros}, {_plural(facts.saved_variables, 'SavedVariables file')}"
+    )
+    if not facts.first_name_folder:
+        words = counts
+    else:
+        words = _player_copy(_FIRST_NAME_FOLDER)
+        if _shows_counts(facts):
+            words += f"; it holds {counts}"
+    if facts.twins:
+        words += "; same first name as " + ", ".join(facts.twins)
+    return words
+
+
 def _row_words(e: labaddon.CharacterFile) -> str:
+    if e.no_lab_record is not None:
+        return _bare_words(e.no_lab_record)
     if e.summary is not None:
         return e.summary
     if e.place in _BLOCKED_PLACE:
@@ -8028,9 +8080,11 @@ def char_list(
         ),
     ] = False,
 ) -> None:
-    """Every character folder with a WowLab.lua, in every account unless
-    --account names one: when the file was last written, and its schema, the
-    client that saved it and the spec, or why it could not be read. A file or
+    """Every character folder, in every account unless --account names one.
+    For a folder with a WowLab.lua: when the file was last written, and its
+    schema, the client that saved it and the spec, or why it could not be
+    read. For one without: "no lab record", and how many CVars, macros and
+    SavedVariables files its other files hold. A file or
     place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed.
 
@@ -8062,51 +8116,67 @@ def char_list(
             account=acct_folder,
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
+            every_folder=True,
         )
         entries, unseen = found.characters, found.not_looked_at
+    # Rows of character folders, apart from the `<Realm>/<First>/` folders.
+    folders = [e for e in entries if not _first_name_folder(e)]
+    bare_rows = [e for e in folders if e.no_lab_record is not None]
+    counted = any(e.no_lab_record is not None and _shows_counts(e.no_lab_record) for e in entries)
+    notes = _CHAR_LIST_NOTES + ([_BARE_NOTE] if counted else [])
     report = CharListReport(
         flavor_folder=chosen.folder,
         account=acct_folder,
         characters=entries,
         not_looked_at=unseen,
-        notes=_CHAR_LIST_NOTES,
+        notes=notes,
     )
     if json_out:
         _emit(report)
     elif not entries:
         where = f"account {acct_folder}" if acct_folder is not None else "any account"
         if unseen:
-            _say(
-                f"No character folder in {where} with a {labaddon.LAB_FILE_NAME} was found, "
-                f"but {_unseen_words(len(unseen))}."
-            )
+            text = f"No character folder was found in {where}, but {_unseen_words(len(unseen))}."
         else:
-            _say(
-                f"No character folder in {where} has a {labaddon.LAB_FILE_NAME} (install the "
-                "lab-addon with `wowlab addon install lab`, log in on the character, then log "
-                "out or /reload)."
-            )
+            text = f"No character folder was found in {where} ({_INSTALL_ADVICE})."
+        _say(_player_copy(text, keep=[acct_folder]))
     else:
         names = {e.character: _safe(e.character) for e in entries}
         width = max(len(name) for name in names.values())
         for folder in dict.fromkeys(e.account for e in entries):
             mine = [e for e in entries if e.account == folder]
+            twins = sum(1 for e in mine if _first_name_folder(e))
             blocked = sum(1 for e in mine if e.place in _BLOCKED_PLACE)
+            bare = sum(1 for e in mine if e.no_lab_record is not None) - twins
+            total = len(mine) - twins
             heading = (
-                f"Account {folder}: {_plural(len(mine) - blocked, 'character folder')} with a "
-                f"{labaddon.LAB_FILE_NAME}"
+                f": {_plural(total, 'character folder')}: "
+                f"{total - blocked - bare} with a {labaddon.LAB_FILE_NAME}"
             )
+            if bare:
+                heading += f", {bare} without"
             if blocked:
                 heading += f", {blocked} that wowlab could not look inside"
-            _say(heading)
+            if twins:
+                heading += f"; and {_plural(twins, '<Realm>/<First> folder')}"
+            # The account folder's name is the install's; the rest is wowlab's.
+            _say(f"Account {folder}" + _player_copy(heading))
             for e in mine:
-                when = (
-                    "time unknown" if e.mtime_ns is None else f"written {_local_time(e.mtime_ns)}"
-                )
+                if e.no_lab_record is not None:
+                    when = "no lab record"
+                elif e.mtime_ns is None:
+                    when = "time unknown"
+                else:
+                    when = f"written {_local_time(e.mtime_ns)}"
                 _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+        # No install advice while a place went unseen: it may hold the files.
+        if bare_rows and len(bare_rows) == len(folders) and not unseen:
+            _say_note(
+                f"No character folder here has a {labaddon.LAB_FILE_NAME} ({_INSTALL_ADVICE})."
+            )
         if unseen:
             _say(f"{_unseen_words(len(unseen))}.")
-        for note in _CHAR_LIST_NOTES:
+        for note in notes:
             _say_note(note)
     for e in entries:
         if e.error is None:
