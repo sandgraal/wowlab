@@ -121,7 +121,9 @@ markers = [
   "serial: measures RSS or a CPU-time budget; runs alone after the parallel pass (conftest.py, M13-18)",
 ]
 # Hang guard (M13-81): a test still running after 300 s fails with every
-# thread's stack, locally and in CI. The slowest known test takes about 40 s;
+# thread's stack, locally and in CI. The slowest measured test took 255 s
+# (a lab-addon review probe, on 4 cores at load average about 20; M13-81),
+# 45 s inside the guard;
 # a test that needs longer gets an override by node id in conftest.py
 # (TIMEOUT_OVERRIDES). The thread method works on Windows, and it leaves
 # SIGALRM to the tests that use it (test_install_folder_race.py); on a

@@ -101,10 +101,12 @@ SERIAL_TESTS: frozenset[str] = frozenset(
 
 # Tests that may legitimately run longer than the hang guard's 300 s
 # (`timeout` in pyproject.toml, M13-81), by node id without the parameter
-# suffix, with the seconds they get. None is known: the slowest measured test
-# took 86 s on a heavily loaded 4-core machine (M13-81's measurement). An entry goes here, never into the test file, for the same
-# reason as the serial list. `tests/repo/test_make_test_fast.py` checks that
-# every entry names a test that exists.
+# suffix, with the seconds they get. None is listed: the slowest measured
+# test took 255 s (a lab-addon review probe, on 4 cores at load average about
+# 20; M13-81), 45 s inside the guard. An entry goes here, never into the test
+# file, for the same reason as the serial list.
+# `tests/repo/test_make_test_fast.py` checks that every entry names a test
+# that exists.
 TIMEOUT_OVERRIDES: dict[str, int] = {}
 
 SERIAL = pytest.mark.serial

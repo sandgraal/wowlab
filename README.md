@@ -344,7 +344,7 @@ Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`docs/INSTA
 | `make lint` | ruff check, ruff format check, `mypy --strict`. The commit gate. |
 | `make test` | The full pytest suite. Anything marked `live` is excluded and never runs in CI. |
 | `make test-fast` | A quicker local run while you work: the suite without the review probes (`lab/core/tests/review/`) and the `serial` pass, on at most 4 workers. Never the proof of done; `make test` and CI run everything. |
-| `make test-clean` | Removes pytest's temp dirs and `.pytest_cache`, prunes the uv cache, and prints the sizes before and after. |
+| `make test-clean` | Removes pytest's temp dirs and `.pytest_cache`, prunes the uv cache, and prints the sizes before and after. Do not run it while tests run. |
 | `make test-parser` | Parser fixtures and round-trip suites. Required green for any parser change. |
 | `make hooks-test` | The agent hook scripts under Python 3.12 and 3.9. |
 | `make ci` | Everything CI runs. Every stage runs even if one fails, then a summary of each stage's result. |

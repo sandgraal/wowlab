@@ -50,7 +50,10 @@ def _recipe(target: str) -> list[str]:
 
 
 def _pytest_args(command: str) -> list[str]:
+    """The arguments after the `pytest` that runs (after `--` when uv has one)."""
     words = shlex.split(command)
+    if "--" in words:
+        words = words[words.index("--") + 1 :]
     assert "pytest" in words, command
     return words[words.index("pytest") + 1 :]
 
@@ -94,6 +97,24 @@ def test_make_ci_runs_every_stage() -> None:
     assert "test-fast" not in " ".join(_recipe("ci"))
 
 
+# Every pytest command in ci.yml, by job, exactly. A marker expression is one
+# of the two passes (together `not live`) or none (the hook tests, which have
+# no markers), and the paths are each job's documented roots: the whole
+# testpaths for `quality`, `lab/core/tests` for the desktop job (docs/LAB_PLAN.md
+# section 15.3 E3), `tests/harness` for the hook tests on 3.9 and 3.12.
+CI_PYTEST = {
+    "quality": [
+        ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL],
+        ["-q", "-m", SERIAL],
+    ],
+    "lab-desktop": [
+        ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL, "lab/core/tests"],
+        ["-q", "-m", SERIAL, "lab/core/tests"],
+    ],
+    "harness": [["-q", "tests/harness"]],
+}
+
+
 def test_ci_yml_runs_every_test_in_its_two_passes() -> None:
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
     commands: dict[str, list[list[str]]] = {}
@@ -103,15 +124,13 @@ def test_ci_yml_runs_every_test_in_its_two_passes() -> None:
             for line in run.splitlines():
                 if re.search(r"\bpytest\b", line) and "uv run" in line:
                     commands.setdefault(job_id, []).append(_pytest_args(line))
-    assert commands, "ci.yml runs pytest"
     for job_id, runs in commands.items():
         for args in runs:
             assert not _hides(args), f"{job_id}: {args} leaves tests out"
-    # The quality job: the whole testpaths, in a parallel and a serial pass
-    # whose markers together are `not live`.
-    quality = commands["quality"]
-    assert ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL] in quality
-    assert ["-q", "-m", SERIAL] in quality
+            if "-m" in args:
+                marker = args[args.index("-m") + 1]
+                assert marker in (PARALLEL, SERIAL), f"{job_id}: -m {marker!r} narrows a pass"
+    assert commands == CI_PYTEST
 
 
 def test_pyproject_hides_nothing_and_sets_the_hang_guard_and_retention() -> None:

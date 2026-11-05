@@ -70,7 +70,7 @@ test-fast: ## Quick local run: no review probes, no serial pass, at most 4 worke
 # uv process holding the cache, and `uv run` holds it while its child runs.
 PYTHON3 ?= python3
 
-test-clean: ## Remove pytest's temp dirs and .pytest_cache, prune the uv cache; print sizes before and after
+test-clean: ## Remove pytest's temp dirs and .pytest_cache, prune the uv cache, print sizes (not while tests run)
 	UV="$(UV)" $(PYTHON3) scripts/clean_test_artifacts.py
 
 test-parser: ## Parser fixtures and round-trip suites — gate for luadata.py and every format parser

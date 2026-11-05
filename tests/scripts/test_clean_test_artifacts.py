@@ -10,9 +10,12 @@ captures: there is no external format here.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -77,10 +80,7 @@ def layout(tmp_path: Path) -> dict[str, Path]:
     repo = _git_repo(tmp_path / "repo")
     mine = temproot / "pytest-of-alice"
     _fill(mine / "pytest-7" / "test_x0", 3000)
-    # A directory a test left read-only, and a symlink out of the tree.
-    locked = mine / "pytest-7" / "test_locked0"
-    _fill(locked, 10)
-    locked.chmod(0o500)
+    # A symlink out of the tree.
     outside = tmp_path / "outside"
     _fill(outside, 50)
     (mine / "pytest-current").symlink_to(outside, target_is_directory=True)
@@ -118,7 +118,7 @@ def test_removes_the_users_pytest_dir_and_pytest_cache_and_prints_sizes(
 
     out = capsys.readouterr().out.splitlines()
     by_label = {line.split("  ")[0].strip(): line for line in out}
-    # 3010 bytes of files plus the symlink itself (its lstat size).
+    # 3000 bytes of files plus the symlink itself (its lstat size).
     assert re.search(r" 3\.\d KB ->       0 B ", by_label["pytest temp dirs"])
     assert "200 B ->       0 B" in by_label[".pytest_cache"]
     assert "1.0 KB ->     400 B" in by_label["uv cache"]
@@ -134,14 +134,6 @@ def test_constructed_a_wrong_target_name_deletes_nothing(
     assert (layout["mine"] / "pytest-7" / "test_x0" / "data.bin").is_file()
     assert (layout["temproot"] / "pytest-of-bob" / "data.bin").is_file()
     assert "0 B ->       0 B" in capsys.readouterr().out
-
-    # Constructed: asked directly to remove a directory whose name is not the
-    # expected one, it refuses and the directory stays.
-    notes: list[str] = []
-    wrong = layout["temproot"] / "pytest-of-bob"
-    assert clean.remove(wrong, "pytest-of-alice", layout["repo"], subprocess.run, notes) is False
-    assert (wrong / "data.bin").is_file()
-    assert notes and "not 'pytest-of-alice'" in notes[0]
 
 
 def test_constructed_a_symlink_with_the_right_name_is_refused(tmp_path: Path) -> None:
@@ -174,7 +166,7 @@ def test_constructed_nothing_under_claude_worktrees_is_removed(tmp_path: Path) -
     inside = repo / ".claude" / "worktrees" / "agent-x" / ".pytest_cache"
     _fill(inside)
     notes: list[str] = []
-    assert clean.remove(inside, ".pytest_cache", repo, subprocess.run, notes) is False
+    assert clean.remove(inside, repo, subprocess.run, notes) is False
     assert (inside / "data.bin").is_file()
     assert ".claude/worktrees" in notes[0]
 
@@ -216,3 +208,136 @@ def test_this_sessions_own_temp_dir_is_where_the_script_looks(
     if not owners:
         pytest.skip("this session runs with --basetemp")
     assert clean.pytest_temp_root() == owners[0]
+
+
+ROOT_USER = getattr(os, "geteuid", lambda: -1)() == 0
+
+
+def _argv(temproot: Path, repo: Path) -> list[str]:
+    return ["--repo", str(repo), "--temproot", str(temproot), "--user", "alice", "--no-uv"]
+
+
+def test_constructed_a_read_only_dir_is_reported_never_chmodded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Constructed: a test left a read-only directory with a file in it. As
+    # root it is removable; otherwise removal fails, is reported, and the
+    # directory's mode is not changed (no chmod-and-retry, security review M1).
+    temproot = tmp_path / "tmp"
+    locked = temproot / "pytest-of-alice" / "pytest-3" / "test_locked0"
+    _fill(locked, 10)
+    locked.chmod(0o500)
+    repo = _git_repo(tmp_path / "repo")
+    code = clean.main(_argv(temproot, repo))
+    if ROOT_USER:
+        assert code == 0
+        assert not (temproot / "pytest-of-alice").exists()
+        return
+    try:
+        assert code == 1
+        assert stat.S_IMODE(locked.stat().st_mode) == 0o500
+        assert (locked / "data.bin").is_file()
+        assert "could not remove" in capsys.readouterr().err
+    finally:
+        locked.chmod(0o700)
+
+
+def test_constructed_a_symlinks_target_is_never_changed(tmp_path: Path) -> None:
+    # Constructed: inside a session dir, a symlink to a read-only directory
+    # outside the tree. The link goes; the target, its file and its mode stay
+    # (security review M1: nothing follows a link).
+    temproot = tmp_path / "tmp"
+    session = temproot / "pytest-of-alice" / "pytest-4"
+    _fill(session / "test_a0")
+    outside = tmp_path / "outside"
+    _fill(outside)
+    outside.chmod(0o500)
+    (session / "test_a0" / "link").symlink_to(outside, target_is_directory=True)
+    (session / "test_a0" / "file-link").symlink_to(outside / "data.bin")
+    repo = _git_repo(tmp_path / "repo")
+    try:
+        assert clean.main(_argv(temproot, repo)) == 0
+        assert not (temproot / "pytest-of-alice").exists()
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o500
+        assert (outside / "data.bin").read_bytes() == b"x" * 1000
+    finally:
+        outside.chmod(0o700)
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o775, 0o757], ids=["world", "group", "others"])
+def test_constructed_a_group_or_world_writable_pytest_dir_is_refused(
+    tmp_path: Path, mode: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Constructed: pytest-of-alice writable by others (security review M2).
+    temproot = tmp_path / "tmp"
+    mine = temproot / "pytest-of-alice"
+    _fill(mine / "pytest-1")
+    mine.chmod(mode)
+    repo = _git_repo(tmp_path / "repo")
+    assert clean.main(_argv(temproot, repo)) == 1
+    assert (mine / "pytest-1" / "data.bin").is_file()
+    assert "writable by group or others" in capsys.readouterr().err
+
+
+def test_constructed_a_pytest_dir_owned_by_another_user_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Constructed: the directory's owner is not the current uid (security
+    # review M2). The current uid is faked rather than the owner changed, so
+    # this runs without root.
+    temproot = tmp_path / "tmp"
+    mine = temproot / "pytest-of-alice"
+    _fill(mine / "pytest-1")
+    repo = _git_repo(tmp_path / "repo")
+    owner = mine.lstat().st_uid
+    monkeypatch.setattr(os, "getuid", lambda: owner + 1)
+    assert clean.main(_argv(temproot, repo)) == 1
+    assert (mine / "pytest-1" / "data.bin").is_file()
+    assert f"owned by uid {owner}" in capsys.readouterr().err
+
+
+def test_constructed_a_running_session_is_left_by_pytests_lock_rule(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Constructed: pytest-7 holds a fresh .lock (a session still running),
+    # pytest-6 a .lock older than LOCK_TIMEOUT (a crashed session), pytest-5
+    # none, and pytest-current points at pytest-7 (review CODE 3).
+    temproot = tmp_path / "tmp"
+    mine = temproot / "pytest-of-alice"
+    for n in (5, 6, 7):
+        _fill(mine / f"pytest-{n}" / "test_a0")
+    (mine / "pytest-7" / ".lock").write_text("", encoding="utf-8")
+    stale = mine / "pytest-6" / ".lock"
+    stale.write_text("", encoding="utf-8")
+    old = time.time() - clean.LOCK_TIMEOUT - 60
+    os.utime(stale, (old, old))
+    (mine / "pytest-current").symlink_to(mine / "pytest-7", target_is_directory=True)
+    (mine / "garbage-1234").mkdir()
+    repo = _git_repo(tmp_path / "repo")
+    assert clean.main(_argv(temproot, repo)) == 0
+    assert sorted(p.name for p in mine.iterdir()) == ["pytest-7", "pytest-current"]
+    assert (mine / "pytest-7" / "test_a0" / "data.bin").is_file()
+    assert "a test session is still running" in capsys.readouterr().err
+
+
+def test_constructed_the_current_link_to_a_finished_session_goes(tmp_path: Path) -> None:
+    temproot = tmp_path / "tmp"
+    mine = temproot / "pytest-of-alice"
+    _fill(mine / "pytest-8")
+    (mine / "pytest-9").mkdir()
+    (mine / "pytest-9" / ".lock").write_text("", encoding="utf-8")
+    (mine / "pytest-current").symlink_to(mine / "pytest-8", target_is_directory=True)
+    repo = _git_repo(tmp_path / "repo")
+    assert clean.main(_argv(temproot, repo)) == 0
+    assert [p.name for p in mine.iterdir()] == ["pytest-9"]
+
+
+def test_in_flight_follows_the_numbered_name_and_the_lock_age(tmp_path: Path) -> None:
+    for name in ("pytest-12", "pytest-x", "other"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / ".lock").write_text("", encoding="utf-8")
+    now = time.time()
+    assert clean.in_flight(tmp_path / "pytest-12", now)
+    assert not clean.in_flight(tmp_path / "pytest-12", now + clean.LOCK_TIMEOUT + 1)
+    assert not clean.in_flight(tmp_path / "pytest-x", now)
+    assert not clean.in_flight(tmp_path / "other", now)

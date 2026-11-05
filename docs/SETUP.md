@@ -56,7 +56,8 @@ While you work, `make test-fast` runs the suite without the review probes
 for iteration, and `make test` or `make ci` (and the PR's CI) is the proof
 that a change is done. `make test-clean` removes pytest's temp dirs
 (`$TMPDIR/pytest-of-<user>`) and `.pytest_cache` and prunes the uv cache,
-printing the sizes before and after. Every test has a 300-second hang guard
+printing the sizes before and after; do not run it while tests run (it
+skips only a session dir whose `.lock` is fresh, pytest's own rule). Every test has a 300-second hang guard
 (`pytest-timeout`). `make ci` runs every stage even when one fails, prints
 each stage's result at the end, exits non-zero if any failed, and says so
 when selene is missing (`make selene` fetches it).
