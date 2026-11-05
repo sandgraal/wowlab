@@ -30,7 +30,7 @@ import yaml
 # The modules those test files already loaded: loading them again would replace
 # them in sys.modules and break identity checks elsewhere.
 from test_check_wiki import cw, gen
-from test_release import INSTALL_V010, rc
+from test_release import INSTALL_V010, WHEEL_V010_SHA256, rc
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
@@ -73,7 +73,8 @@ def _install_lines(text: str) -> list[str]:
 
 
 def test_one_install_line_and_it_is_the_v010_line() -> None:
-    assert rc.install_line("sandgraal/wowlab", rc.parse_version("0.1.0")) == INSTALL_V010
+    release = rc.parse_version("0.1.0")
+    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010
     assert _install_lines(_readme()) == [INSTALL_V010], "exactly one install line, the v0.1.0 one"
     assert INSTALL_V010 + "\n" in _first_screen(), "on the first screen, on a line of its own"
 

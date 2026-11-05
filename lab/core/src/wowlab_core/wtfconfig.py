@@ -86,6 +86,8 @@ __all__ = [
     "MacrosDocument",
     "SetLine",
     "Unknown",
+    "count_cvar_names",
+    "count_macro_records",
     "fold_name",
     "parse_bindings",
     "parse_config",
@@ -631,6 +633,37 @@ def parse_macros(data: bytes) -> MacrosDocument:
         else:
             lines.append(Unknown(text=text, ending=ending))
     return MacrosDocument(lines=tuple(lines))
+
+
+# --------------------------------------------------------------------------
+# Counts without a document (M16-35): one pass over the bytes, by the same
+# line split and grammar as the parsers above, building no line models.
+
+
+def count_cvar_names(data: bytes) -> int:
+    """``len(parse_config(data).effective())``: the distinct CVar names
+    (``fold_name``) set on a ``SET`` line, without building the document."""
+    names: set[str] = set()
+    for text, _ending in split_lines(data):
+        match = _SET.fullmatch(text)
+        if match is not None:
+            names.add(fold_name(_text(match.group(1))))
+    return len(names)
+
+
+def count_macro_records(data: bytes) -> int:
+    """``len(parse_macros(data).macros)``: the ``VER`` records, complete or
+    not, read by `parse_macros`'s own state machine, without building the
+    document."""
+    records = 0
+    in_record = False
+    for text, _ending in split_lines(data):
+        if in_record:
+            in_record = text != _END
+        elif _VER.fullmatch(text) is not None:
+            records += 1
+            in_record = True
+    return records
 
 
 # --------------------------------------------------------------------------

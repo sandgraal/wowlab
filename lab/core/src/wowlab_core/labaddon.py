@@ -115,7 +115,7 @@ from pydantic import (
     model_validator,
 )
 
-from wowlab_core import filemap, layout, longpath, luadata, snapshot
+from wowlab_core import filemap, layout, longpath, luadata, snapshot, wtfconfig
 from wowlab_core.layout import FsText
 
 __all__ = [
@@ -167,6 +167,7 @@ __all__ = [
     "Customization",
     "CustomizationImport",
     "CustomizationV2",
+    "FolderFacts",
     "Identity",
     "LabAddonError",
     "LegacyConfig",
@@ -1565,8 +1566,65 @@ NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 A_FOLDER = "a folder, not a file"
 
-# What `CharacterFile.file` names.
-Place = Literal["file", "saved_variables_folder", "character_folder"]
+# What `CharacterFile.file` names: the file read, or the folder wowlab could
+# not look inside (the character folder or its SavedVariables/), or, with
+# `no_lab_file`, a character folder that holds no `WowLab.lua` (M16-35).
+Place = Literal["file", "saved_variables_folder", "character_folder", "no_lab_file"]
+
+# The character's own CVar file and macro file, which a folder without a
+# `WowLab.lua` is described by (M16-35), as the file map names them.
+CONFIG_FILE_NAME = "config-cache.wtf"
+MACROS_FILE_NAME = "macros-cache.txt"
+# The most `survey` reads of one of those two files to count what it holds
+# (a real one is a few KB; a file over it is named, not read), and of all of
+# them together in one run. Neither is charged to `MAX_SURVEY_BYTES`.
+MAX_COUNTED_FILE_BYTES = 256 * 1024
+MAX_COUNTED_TOTAL_BYTES = 8 * 1024 * 1024
+_COUNTED_FILE_WORDS = "256 KiB"
+
+
+class FolderFacts(BaseModel):
+    """What a character folder without a `WowLab.lua` shows from its other
+    files (M16-35, `survey(every_folder=True)`): "no lab record" and three
+    counts. Each of the two file counts is exactly one of the value and
+    `<count>_absent`, a reason.
+
+    `cvars` is the number of CVar names (case folded) set in the folder's
+    `config-cache.wtf`, `macros` the macro records in its `macros-cache.txt`,
+    and `saved_variables` the addon files in its `SavedVariables/` (no
+    `.lua.bak`). The two files are matched by name with case folded and
+    counted in one pass by the grammar `cvar list` and `macros list` parse
+    with (`wtfconfig.count_cvar_names`, `count_macro_records`); a file
+    absent, over `MAX_COUNTED_FILE_BYTES`, past `MAX_COUNTED_TOTAL_BYTES`
+    for the run ("not counted") or that could not be read gives the reason
+    instead. `twins` are the character folders of the other shape in the
+    same account whose first name matches (`layout.Character.twins`), each
+    as `<realm or digits folder>/<character folder>`: a name match, not
+    proof of the same character.
+
+    `first_name_folder` is True for a folder of the realm-name shape
+    (`<Realm>/<First>/`) that has a twin of the digits shape: the layout's
+    shapes decide it, never the flavor. On the Forever beta such a folder
+    holds only `AddOns.txt` **[verify]** (`docs/LAB_FILE_MAP.md`) and the
+    lab-addon writes nothing there, so `char list` counts it apart from the
+    character folders."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cvars: int | None = None
+    cvars_absent: str | None = None
+    macros: int | None = None
+    macros_absent: str | None = None
+    saved_variables: int
+    twins: list[FsText] = Field(default_factory=list)
+    first_name_folder: bool = False
+
+    @model_validator(mode="after")
+    def _value_or_reason(self) -> Self:
+        for name in ("cvars", "macros"):
+            if (getattr(self, name) is None) == (getattr(self, f"{name}_absent") is None):
+                raise ValueError(f"exactly one of {name} and {name}_absent is set")
+        return self
 
 
 class CharacterFile(BaseModel):
@@ -1590,7 +1648,13 @@ class CharacterFile(BaseModel):
     client's last save, unless something wrote the file since (a wowlab snap
     restore, undo or sv merge, or a copy); the addon records no time of its
     own. It is None when no regular file was looked at. An `error` never
-    holds an absolute path. `same_as` is set when the file is a hard link to
+    holds an absolute path.
+
+    With `survey(every_folder=True)` a character folder that holds no
+    `WowLab.lua` gets a row too (M16-35): `place` `no_lab_file`, `file` the
+    folder, `mtime_ns` None, no `summary`, `record` or `error`, and
+    `no_lab_record` saying what its other files hold. That row is not an
+    error. Every other row has `no_lab_record` None. `same_as` is set when the file is a hard link to
     one already read on another character's row (`<realm or digits
     folder>/<character folder>`, and the account when it differs): it is
     not read twice, and `error` says so, since the row cannot vouch that the
@@ -1609,9 +1673,26 @@ class CharacterFile(BaseModel):
     record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
     error: str | None = None
     same_as: FsText | None = None
+    no_lab_record: FolderFacts | None = None
 
     @model_validator(mode="after")
     def _read_or_error(self) -> Self:
+        if (self.place == "no_lab_file") != (self.no_lab_record is not None):
+            raise ValueError(
+                "a CharacterFile has the place no_lab_file exactly when it holds no_lab_record"
+            )
+        if self.no_lab_record is not None:
+            if (
+                self.summary is not None
+                or self.error is not None
+                or self.record is not None
+                or self.mtime_ns is not None
+            ):
+                raise ValueError(
+                    "a CharacterFile for a folder without a WowLab.lua holds no summary, "
+                    "record, error or time"
+                )
+            return self
         if (self.summary is None) == (self.error is None):
             raise ValueError(
                 "a CharacterFile holds either a summary (the file was read) or an error, "
@@ -1737,6 +1818,8 @@ class _Reader:
         self.full = False
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
+        # The counts of folders without a WowLab.lua (M16-35), on their own bounds.
+        self.counter = _Counter(flavor_path)
 
     def _on_its_own(self, account: str, who: str) -> str:
         """The advice ending a refused row: a `char show` command for this
@@ -1878,13 +1961,68 @@ def _place(path: str, entry_id: str | None, *, is_link: bool) -> tuple[_Place, l
     return None
 
 
+class _Counter:
+    """Counts what a folder without a `WowLab.lua` holds (M16-35), within
+    `MAX_COUNTED_FILE_BYTES` per file and `MAX_COUNTED_TOTAL_BYTES` for all
+    of one `survey` together. The counts take one pass over the bytes
+    (`wtfconfig.count_cvar_names`, `count_macro_records`) and build no
+    document, so the cost stays in proportion to the bytes read."""
+
+    def __init__(self, flavor_path: Path) -> None:
+        self.flavor_path = flavor_path
+        self.total = MAX_COUNTED_TOTAL_BYTES
+        self.left = self.total
+        self.full = False
+
+    def count(self, found: list[layout.WtfFile], name: str) -> tuple[int | None, str | None]:
+        """How many CVar names (`config-cache.wtf`) or macro records
+        (`macros-cache.txt`) the first of `found` holds, or why that is not
+        known. Opened as `read_char` opens a file: a regular file only,
+        within the bounds, read only (L1)."""
+        if not found:
+            return None, f"no {name}"
+        first = min(found, key=lambda f: f.path)
+        if first.size > MAX_COUNTED_FILE_BYTES:
+            return None, (
+                f"{name} not read: the file holds {_size_words(first.size)}, more than "
+                f"{_COUNTED_FILE_WORDS}"
+            )
+        if self.full or first.size > self.left:
+            self.full = True  # every file after this one gets the same answer
+            return None, (
+                f"{name} not counted: wowlab counts at most {_size_words(self.total)} of these "
+                "files in one listing, and the folders before this one used it up"
+            )
+        path = self.flavor_path / first.path
+        try:
+            data = snapshot.read_regular_file(path, limit=min(MAX_COUNTED_FILE_BYTES, self.left))
+        except OSError as exc:
+            return None, f"{name} not read: {_os_error(exc, path)}"
+        self.left -= len(data)
+        if name == CONFIG_FILE_NAME:
+            return wtfconfig.count_cvar_names(data), None
+        return wtfconfig.count_macro_records(data), None
+
+
 class _Folder:
     """What `survey` gathered for one character folder."""
 
-    def __init__(self, account: str, realm: layout.Realm, label: str) -> None:
+    def __init__(
+        self,
+        account: str,
+        realm: layout.Realm,
+        label: str,
+        character: layout.Character | None = None,
+    ) -> None:
         self.account = account
         self.realm = realm
         self.label = label
+        # The layout's entry; None for a linked character folder.
+        self.character = character
+        # The folder's own config-cache.wtf and macros-cache.txt (case folded),
+        # and how many addon files its SavedVariables/ holds (M16-35).
+        self.wtf: dict[str, list[layout.WtfFile]] = {CONFIG_FILE_NAME: [], MACROS_FILE_NAME: []}
+        self.addon_files = 0
         # (path, place, reason): the character folder or its SavedVariables/
         self.blocked: list[tuple[str, Place, str]] = []
         self.files: dict[str, layout.SavedVariablesFile] = {}  # regular files, by path
@@ -1903,6 +2041,7 @@ class _Folder:
         summary: str | None = None,
         error: str | None = None,
         same_as: str | None = None,
+        no_lab_record: FolderFacts | None = None,
     ) -> CharacterFile:
         return CharacterFile(
             label=self.label,
@@ -1916,10 +2055,37 @@ class _Folder:
             record=record,
             error=error,
             same_as=same_as,
+            no_lab_record=no_lab_record,
         )
 
-    def read(self, reader: _Reader) -> CharacterFile | None:
-        """The folder's entry, or None when it holds no `WowLab.lua`."""
+    def bare(self, counter: _Counter) -> CharacterFile:
+        """The row of a folder that holds no `WowLab.lua` (M16-35)."""
+        cvars, cvars_absent = counter.count(self.wtf[CONFIG_FILE_NAME], CONFIG_FILE_NAME)
+        macros, macros_absent = counter.count(self.wtf[MACROS_FILE_NAME], MACROS_FILE_NAME)
+        path = (
+            self.character.path
+            if self.character is not None
+            else f"{_WTF}/{_ACCOUNT}/{self.account}/{self.realm.folder}/{self.label}"
+        )
+        twins = self.character.twins if self.character is not None else ()
+        return self.entry(
+            path,
+            None,
+            place="no_lab_file",
+            no_lab_record=FolderFacts(
+                cvars=cvars,
+                cvars_absent=cvars_absent,
+                macros=macros,
+                macros_absent=macros_absent,
+                saved_variables=self.addon_files,
+                twins=["/".join(t.split("/")[-2:]) for t in twins],
+                first_name_folder=self.realm.kind != "numeric" and bool(twins),
+            ),
+        )
+
+    def read(self, reader: _Reader, *, every_folder: bool = False) -> CharacterFile | None:
+        """The folder's entry, or None when it holds no `WowLab.lua` (its
+        bare row instead with `every_folder`)."""
         if self.blocked:
             path, place, reason = min(self.blocked)
             return self.entry(path, None, place=place, error=reason)
@@ -1930,7 +2096,7 @@ class _Folder:
             found = self.files.get(first)
             return self.entry(first, found.mtime_ns if found else None, error=str(exc))
         if chosen is None:
-            return None
+            return self.bare(reader.counter) if every_folder else None
         if chosen in self.odd:
             return self.entry(chosen, None, error=self.odd[chosen])
         found = self.files[chosen]
@@ -1971,6 +2137,7 @@ def survey(
     keep_records: bool = True,
     budget: int = MAX_SURVEY_BYTES,
     root: str | None = None,
+    every_folder: bool = False,
 ) -> AllCharacters:
     """Every character `WowLab.lua` in the flavor (§14.4, M12-09), from one
     walk of `WTF/` (`Layout.wtf_walk`).
@@ -2021,7 +2188,19 @@ def survey(
 
     The order is by account, then realm folder, then character folder, each
     compared with case folded and then as spelled: stable across runs and
-    independent of modification times. Read only (L1): each file is
+    independent of modification times.
+
+    With `every_folder` (M16-35, `char list`) a character folder whose
+    SavedVariables/ holds no `WowLab.lua` gets a row too, in the same order:
+    `place` `no_lab_file` and `no_lab_record`, which counts the CVars in its
+    `config-cache.wtf`, the macros in its `macros-cache.txt` (each read on
+    its own bound, `MAX_COUNTED_FILE_BYTES`, and all of them within
+    `MAX_COUNTED_TOTAL_BYTES`, never charged to `budget`; one pass over the
+    bytes, no document built) and
+    the addon files in its SavedVariables/. Without it (the default) such a
+    folder gives no row and those files are never opened.
+
+    Read only (L1): each file is
     `lstat`ed, opened as `read_char` opens it (checked to be that same file)
     and parsed by `parse_char`; nothing is written anywhere."""
     walk = lay.wtf_walk()
@@ -2032,7 +2211,7 @@ def survey(
             realms[(acct.folder, realm.folder)] = realm
             for character in realm.characters:
                 key = (acct.folder, realm.folder, character.folder)
-                folders[key] = _Folder(acct.folder, realm, character.folder)
+                folders[key] = _Folder(acct.folder, realm, character.folder, character)
     not_looked_at: list[NotLookedAt] = []
 
     def unseen(path: str, reason: str, parts: list[str]) -> None:
@@ -2085,11 +2264,22 @@ def survey(
         if found is not None and found[0] == "file":
             note(path, NOT_REGULAR if path in walk.not_regular else A_FOLDER)
     for f in walk.saved_variables:
-        if f.scope != "character" or f.backup or not is_lab_file_name(_name(f.path)):
+        if f.scope != "character" or f.backup:
             continue
         folder = folders.get((f.account, f.realm_folder or "", f.character_folder or ""))
-        if folder is not None:
+        if folder is None:
+            continue
+        if is_lab_file_name(_name(f.path)):
             folder.files[f.path] = f
+        else:
+            folder.addon_files += 1
+    if every_folder:
+        for w in walk.wtf_files:
+            if w.scope != "character" or w.account is None:
+                continue
+            folder = folders.get((w.account, w.realm_folder or "", w.character_folder or ""))
+            if folder is not None and w.name.casefold() in folder.wtf:
+                folder.wtf[w.name.casefold()].append(w)
     if walk.truncated:
         limits = lay.limits
         not_looked_at.append(
@@ -2106,7 +2296,7 @@ def survey(
     for folder in sorted(folders.values(), key=_Folder.key):
         if account is not None and folder.account != account:
             continue
-        entry = folder.read(reader)
+        entry = folder.read(reader, every_folder=every_folder)
         if entry is not None:
             entries.append(entry)
     return AllCharacters(
