@@ -307,16 +307,14 @@ def test_real_grader_full_activation_passes(path: str) -> None:
             assert i in removed, f"{path}:{i + 1} is not a whole marker block"
 
 
-def test_real_graders_include_the_pending_ones() -> None:
-    # The M16 [TEST] graders on main at the time of writing; each must count
-    # as a grader on a guard.py change.
-    for path in (
-        "lab/core/tests/test_guard_restore_into_target.py",
-        "lab/core/tests/test_cli_restore_into_target.py",
-        "lab/core/tests/parser/test_parser_reads_regular_file_m16_26.py",
-    ):
-        data = (REPO / path).read_bytes()
-        assert gate.grader_reason(path, [data], {"guard"}) is not None, path
+@pytest.mark.parametrize("path", REAL_PENDING)
+def test_real_pending_graders_count_on_any_load_bearing_change(path: str) -> None:
+    # Whatever [TEST] graders are pending on main (the list shrinks as each
+    # [IMPL] ticket activates its own), each counts as a grader on a change
+    # to any load-bearing file, whatever it imports.
+    data = (REPO / path).read_bytes()
+    for module in ("guard", "luadata", "proposal"):
+        assert gate.grader_reason(path, [data], {module}) is not None, (path, module)
 
 
 @pytest.mark.parametrize(
