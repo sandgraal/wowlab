@@ -37,7 +37,17 @@ Then run `wowlab --version` and `wowlab doctor --offline`.
 
 ## Check the download
 
-The wheel, the sdist and `SHA256SUMS` are attached below. Download them into one folder and run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter).
+The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SUMS`, but `uv tool install` does not check it, and checking a file you downloaded says nothing about the copy `uv tool install <address>` downloads again. To install exactly the file you checked:
+
+1. Download the wheel, the sdist and `SHA256SUMS` attached below into one empty folder, and open a terminal there.
+2. Check them. Run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter). Then check where the wheel was built: the wheel and the sdist each carry a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/) run
+
+   ```
+   gh attestation verify wowlab_core-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab --signer-workflow sandgraal/wowlab/.github/workflows/release.yml --source-ref refs/tags/{{TAG}}
+   ```
+
+   It has to print `Verification succeeded!`; it fails if the file was changed or was built anywhere but wowlab's release workflow from the tag {{TAG}}.
+3. Install the file you checked: `uv tool install --python 3.12 ./wowlab_core-{{VERSION}}-py3-none-any.whl`.
 
 ## Changes to `--json` output
 

@@ -2,7 +2,9 @@
 
 Two halves. The workflow tests read `.github/workflows/release.yml` as data
 and pin what `security-reviewer` signs off on: the trigger, the token's
-reach (read-only everywhere, `contents: write` on the release job only),
+reach (read-only everywhere; `contents: write`, and since M16-43
+`id-token: write` and `attestations: write` for the provenance attestation,
+on the release job only),
 action commits pinned, no secret but the job token, and the version check
 standing between a tag and a release. The script tests grade
 `scripts/release_check.py`, which does the checking. The last section
@@ -19,6 +21,7 @@ they are.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -40,11 +43,17 @@ WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 TEMPLATE = ROOT / ".github" / "release-notes.md"
 PINNED = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
 
-# The line the README gives (M13-10 copies it byte for byte) for v0.1.0.
+# The SHA-256 of the v0.1.0 wheel as published: the wheel's line in the
+# release's own SHA256SUMS, checked against the downloaded wheel on
+# 2026-11-04 (M16-43).
+WHEEL_V010_SHA256 = "a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639"
+
+# The line the README gives (M13-10 copies it byte for byte) for v0.1.0,
+# with the wheel's hash in the address (M16-43).
 INSTALL_V010 = (
     "uv tool install --python 3.12 "
     "https://github.com/sandgraal/wowlab/releases/download/v0.1.0/"
-    "wowlab_core-0.1.0-py3-none-any.whl"
+    f"wowlab_core-0.1.0-py3-none-any.whl#sha256={WHEEL_V010_SHA256}"
 )
 
 
@@ -82,7 +91,7 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
         "test": None,
         "build": None,
         "smoke": None,
-        "release": {"contents": "write"},
+        "release": {"contents": "write", "id-token": "write", "attestations": "write"},
     }
 
 
@@ -133,7 +142,7 @@ def test_the_release_job_runs_no_repository_code() -> None:
     assert release["needs"] == ["version", "test", "build", "smoke"]
     assert "if" not in release  # the implicit success(): any failure publishes nothing
     uses = [s["uses"].split("@")[0] for s in release["steps"] if "uses" in s]
-    assert uses == ["actions/download-artifact"]
+    assert uses == ["actions/download-artifact", "actions/attest-build-provenance"]
     runs = " ".join(s.get("run", "") for s in release["steps"])
     assert not re.search(r"\buv\b|\bpython3?\b|\bscripts/|\bgit\b|\bmake\b", runs)
 
@@ -189,6 +198,7 @@ def test_the_build_hashes_checks_sums_and_uploads_and_never_runs_the_wheel() -> 
         "--build-constraints lab/core/build-constraints.txt --require-hashes "
         '--out-dir "$RUNNER_TEMP/dist"',
         'scripts/release_check.py notes --tag "$TAG" --version "$VERSION"',
+        '--dir "$RUNNER_TEMP/dist" --out "$RUNNER_TEMP/notes.md"',
         'echo "wheel_sha256=$(sha256sum -- "$RUNNER_TEMP/dist/$WHEEL" | cut -d\' \' -f1)"',
         'scripts/release_check.py dist --dir "$RUNNER_TEMP/dist" --version "$VERSION"',
         'sha256sum -- "$WHEEL" "$SDIST" > SHA256SUMS',
@@ -196,7 +206,7 @@ def test_the_build_hashes_checks_sums_and_uploads_and_never_runs_the_wheel() -> 
     at = [next(i for i, r in enumerate(runs) if needle in r) for needle in order]
     assert at == sorted(at)
     # The hashes are job outputs, written by one step with an id.
-    hashes = steps[at[2]]
+    hashes = steps[at[3]]
     assert hashes["id"] == "hashes"
     for key in HASHED:
         assert f'echo "{key}=$(sha256sum -- ' in hashes["run"]
@@ -243,6 +253,25 @@ def test_the_smoke_job_checks_the_download_then_installs_and_runs_it() -> None:
     assert smoke["steps"].index(bundle) == len(smoke["steps"]) - 1
     assert "*/site-packages/wowlab_core/_addon/WowLab) ;;" in bundle["run"]
     assert not re.search(r"\binstall\(|\bremove\(|guard|addon install", bundle["run"])
+
+
+def test_the_release_job_attests_the_checked_files_before_it_publishes() -> None:
+    # M16-43: provenance for exactly the wheel and the sdist, made after the
+    # download is checked against the build's hashes and before anything is
+    # published, so a failed attestation publishes nothing.
+    steps = _jobs()["release"]["steps"]
+    names = [s.get("name") for s in steps]
+    attest = next(s for s in steps if s.get("uses", "").startswith("actions/attest-build"))
+    at = steps.index(attest)
+    assert names.index("The files are the ones the build hashed") < at
+    assert at < names.index("Create the release")
+    assert attest["with"] == {
+        "subject-path": (
+            "release/${{ needs.version.outputs.wheel }}\n"
+            "release/${{ needs.version.outputs.sdist }}\n"
+        )
+    }
+    assert "env" not in attest
 
 
 def test_the_release_job_checks_the_download_against_the_build_outputs() -> None:
@@ -314,6 +343,14 @@ def test_the_notes_template_has_a_section_for_json_model_changes() -> None:
     assert "ADR-0031" in text
     assert "{{INSTALL}}" in text
     assert "sha256sum -c SHA256SUMS" in text
+    # M16-43: the attestation check names the release workflow and the tag,
+    # and the checked file, not the address, is what gets installed.
+    assert (
+        "gh attestation verify wowlab_core-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab "
+        "--signer-workflow sandgraal/wowlab/.github/workflows/release.yml "
+        "--source-ref refs/tags/{{TAG}}"
+    ) in text
+    assert "`uv tool install --python 3.12 ./wowlab_core-{{VERSION}}-py3-none-any.whl`" in text
 
 
 # ─── scripts/release_check.py ─────────────────────────────────────────────────
@@ -664,12 +701,34 @@ def test_the_sdist_takes_the_repository_license_and_leaves_the_tests_out() -> No
 
 def test_the_install_line_the_readme_gives() -> None:
     release = rc.parse_version("0.1.0")
-    assert rc.install_line("sandgraal/wowlab", release) == INSTALL_V010
+    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010
     with pytest.raises(rc.ReleaseError, match="OWNER/NAME"):
-        rc.install_line("sandgraal/wowlab; rm -rf ~", release)
+        rc.install_line("sandgraal/wowlab; rm -rf ~", release, WHEEL_V010_SHA256)
 
 
-def test_the_real_template_renders_with_the_install_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "digest",
+    ["", "A3C3" + WHEEL_V010_SHA256[4:], WHEEL_V010_SHA256[:-1], WHEEL_V010_SHA256 + " x"],
+    ids=["constructed-empty", "constructed-upper", "constructed-short", "constructed-trailing"],
+)
+def test_constructed_the_install_line_takes_only_a_lowercase_sha256(digest: str) -> None:
+    with pytest.raises(rc.ReleaseError, match="SHA-256"):
+        rc.install_line("sandgraal/wowlab", rc.parse_version("0.1.0"), digest)
+
+
+def _constructed_dist(tmp_path: Path, version: str) -> tuple[Path, str]:
+    """A dist folder holding a constructed stand-in for the wheel; its hash."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    wheel = dist / rc.parse_version(version).wheel
+    wheel.write_bytes(b"constructed: not a wheel, only bytes to hash\n")
+    return dist, hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+
+def test_the_real_template_renders_with_the_install_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dist, digest = _constructed_dist(tmp_path, "0.1.0")
     out = tmp_path / "notes.md"
     code = rc.main(
         [
@@ -682,13 +741,19 @@ def test_the_real_template_renders_with_the_install_line(tmp_path: Path) -> None
             "sandgraal/wowlab",
             "--template",
             str(TEMPLATE),
+            "--dir",
+            str(dist),
             "--out",
             str(out),
         ]
     )
     assert code == 0
+    # The hash in the line is the one of the file in --dir, read by the script.
+    line = rc.install_line("sandgraal/wowlab", rc.parse_version("0.1.0"), digest)
+    assert line == INSTALL_V010.replace(WHEEL_V010_SHA256, digest)
     text = out.read_text(encoding="utf-8")
-    assert f"\n{INSTALL_V010}\n" in text
+    assert f"\n{line}\n" in text
+    assert capsys.readouterr().out == f"{line}\n"
     assert "{{" not in text
     assert "\n## Changes to `--json` output\n" in text
 
@@ -696,10 +761,20 @@ def test_the_real_template_renders_with_the_install_line(tmp_path: Path) -> None
 def test_constructed_an_unknown_placeholder_or_a_wrong_tag_fails(tmp_path: Path) -> None:
     release = rc.parse_version("0.1.0")
     with pytest.raises(rc.ReleaseError, match=r"\{\{DATE\}\}"):
-        rc.render_notes("{{VERSION}} {{DATE}}", "sandgraal/wowlab", release)
+        rc.render_notes("{{VERSION}} {{DATE}}", "sandgraal/wowlab", release, WHEEL_V010_SHA256)
+    dist, _ = _constructed_dist(tmp_path, "0.1.0")
     out = tmp_path / "notes.md"
     args = ["notes", "--tag", "v0.1.1", "--version", "0.1.0", "--repository", "sandgraal/wowlab"]
-    assert rc.main([*args, "--template", str(TEMPLATE), "--out", str(out)]) == 1
+    rest = ["--template", str(TEMPLATE), "--dir", str(dist), "--out", str(out)]
+    assert rc.main([*args, *rest]) == 1
+    assert not out.exists()
+
+
+def test_constructed_notes_fail_when_the_wheel_is_not_in_dir(tmp_path: Path) -> None:
+    out = tmp_path / "notes.md"
+    args = ["notes", "--tag", "v0.1.0", "--version", "0.1.0", "--repository", "sandgraal/wowlab"]
+    rest = ["--template", str(TEMPLATE), "--dir", str(tmp_path), "--out", str(out)]
+    assert rc.main([*args, *rest]) == 1
     assert not out.exists()
 
 

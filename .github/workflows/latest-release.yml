@@ -1,0 +1,130 @@
+name: Latest release
+
+# Once a week, the latest published release is installed fresh the way a
+# player installs it, on Python 3.12 and 3.13, and run on a fixture install
+# (M16-43). It catches what the release-time smoke test cannot: a release
+# that stops installing or starting later, when a dependency within its
+# bounds (lab/core/pyproject.toml) publishes a new version or a new Python
+# comes out. Not a required check; a red run is a bug to file as a ticket.
+#
+# It downloads the latest release's wheel and SHA256SUMS with `gh`, checks the
+# wheel against its line, installs that checked file with `uv tool install`
+# into a tool directory of its own with uv's cache off, and runs
+# `wowlab --version`, `wowlab doctor --offline` and `wowlab tree` against the
+# captured tree in lab/core/tests/fixtures/macos/ copied into the runner's
+# temp folder. The checkout is only for that fixture: no repository code
+# runs. The fixture copy is hashed before and after, so a run that wrote into
+# it fails (L1). No secret, no cache, a read-only token, every action pinned.
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-release
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.12"
+
+jobs:
+  install:
+    name: Install the latest release (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    env:
+      PYTHON: ${{ matrix.python }}
+      # Fresh: no uv cache, and (the first step) a tool directory and a user
+      # data directory of this run's own.
+      UV_NO_CACHE: "1"
+    steps:
+      - name: This run's own tool, user data and install folders
+        run: |
+          {
+            echo "UV_TOOL_DIR=$RUNNER_TEMP/uv-tools"
+            echo "UV_TOOL_BIN_DIR=$RUNNER_TEMP/uv-bin"
+            echo "XDG_DATA_HOME=$RUNNER_TEMP/user-data"
+            echo "WOW_ROOT=$RUNNER_TEMP/World of Warcraft"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Actions cache, restored or saved (M13-42; see the note in ci.yml).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # The job token, read-only, is what `gh` needs to read a public
+      # release; nothing else holds it.
+      - name: Download the latest release's wheel and SHA256SUMS
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          mkdir "$RUNNER_TEMP/release"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release" \
+            --pattern '*.whl' --pattern SHA256SUMS
+          cd "$RUNNER_TEMP/release"
+          wheel="$(find . -maxdepth 1 -name '*.whl' -printf '%f\n')"
+          test "$(printf '%s\n' "$wheel" | wc -l)" -eq 1
+          version="${wheel#wowlab_core-}"
+          version="${version%-py3-none-any.whl}"
+          test "$tag" = "v$version"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "wheel=$wheel"
+          } >> "$GITHUB_OUTPUT"
+          echo "$tag: $wheel"
+      - name: The wheel is the one SHA256SUMS names
+        env:
+          WHEEL: ${{ steps.release.outputs.wheel }}
+        run: |
+          cd "$RUNNER_TEMP/release"
+          awk -v w="$WHEEL" '$2 == w' SHA256SUMS > "$RUNNER_TEMP/expected"
+          test "$(wc -l < "$RUNNER_TEMP/expected")" -eq 1
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 1
+          sha256sum -c "$RUNNER_TEMP/expected"
+      - name: uv tool install
+        env:
+          WHEEL: ${{ steps.release.outputs.wheel }}
+        run: uv tool install --python "$PYTHON" "$RUNNER_TEMP/release/$WHEEL"
+      - name: wowlab --version
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: test "$("$UV_TOOL_BIN_DIR/wowlab" --version)" = "wowlab $VERSION"
+      # The captured tree with its flavor folder named as its provenance row
+      # says (lab/core/tests/fixtures/README.md), as lab/core/tests/test_cli.py
+      # builds it: discovery reports only `_*_` folders.
+      - name: A fixture install from the captured tree
+        run: |
+          mkdir -p "$WOW_ROOT"
+          cp lab/core/tests/fixtures/macos/.build.info "$WOW_ROOT/"
+          cp -R lab/core/tests/fixtures/macos/forever "$WOW_ROOT/_classic_beta_"
+          cd "$WOW_ROOT"
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/before"
+      - name: wowlab doctor --offline
+        run: |
+          "$UV_TOOL_BIN_DIR/wowlab" doctor --offline --root "$WOW_ROOT" < /dev/null
+          "$UV_TOOL_BIN_DIR/wowlab" doctor --offline --json --root "$WOW_ROOT" < /dev/null > "$RUNNER_TEMP/doctor.json"
+          python3 -I -c 'import json, sys; r = json.load(open(sys.argv[1])); assert r["install_root"] == sys.argv[2] and not r["problems"], r' "$RUNNER_TEMP/doctor.json" "$WOW_ROOT"
+      - name: wowlab tree
+        run: |
+          "$UV_TOOL_BIN_DIR/wowlab" tree --root "$WOW_ROOT" < /dev/null
+          "$UV_TOOL_BIN_DIR/wowlab" tree --json --root "$WOW_ROOT" < /dev/null > "$RUNNER_TEMP/tree.json"
+          python3 -I -c 'import json, sys; r = json.load(open(sys.argv[1])); assert r["flavor_folder"] == "_classic_beta_" and r["items"] and not r["errors"], r' "$RUNNER_TEMP/tree.json"
+      - name: Nothing was written into the fixture install
+        run: |
+          cd "$WOW_ROOT"
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/after"
+          cmp "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"

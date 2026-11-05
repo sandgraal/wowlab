@@ -3,7 +3,7 @@
     python scripts/release_check.py version --tag v0.1.0 [--pyproject PATH] [--output PATH]
     python scripts/release_check.py dist --dir DIST --version 0.1.0
     python scripts/release_check.py notes --tag v0.1.0 --version 0.1.0 \\
-        --repository OWNER/NAME --template PATH --out PATH
+        --repository OWNER/NAME --template PATH --dir DIST --out PATH
 
 `version` fails unless the tag is exactly `v` plus the version of
 `wowlab-core` in `lab/core/pyproject.toml` (docs/LAB_PLAN.md §15.3, E5). The
@@ -28,7 +28,10 @@ members are read.
 
 `notes` fills the release-notes template: `{{TAG}}`, `{{VERSION}}` and
 `{{INSTALL}}`, the one `uv tool install` line the README gives
-(`install_line`). It fails if a placeholder is left.
+(`install_line`). It fails if a placeholder is left. The line ends in
+`#sha256=` and the SHA-256 of the wheel in `--dir`, hashed here from the
+built file (M16-43): the hash comes from the bytes the release publishes,
+never from a value typed by hand.
 
 Standard library only. Reads the files it is given; `notes` writes `--out`
 and `version` appends to `--output`, nothing else. Exit 0 when the check
@@ -39,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import email.parser
+import hashlib
 import re
 import stat
 import sys
@@ -72,6 +76,7 @@ INTERFACE_LINE = b"## Interface: @WOWLAB_INTERFACE@"
 LUA_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\.lua")
 
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+")
+SHA256 = re.compile(r"[0-9a-f]{64}")
 PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 
 
@@ -267,20 +272,35 @@ def check_dist(dist: Path, version: str) -> Release:
     return release
 
 
-def install_line(repository: str, release: Release) -> str:
-    """The one `uv tool install` line that installs `release`'s wheel from its GitHub Release."""
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of the file at `path`, as lowercase hex."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def install_line(repository: str, release: Release, wheel_sha256: str) -> str:
+    """The one `uv tool install` line that installs `release`'s wheel from its GitHub Release.
+
+    The address ends in `#sha256=<wheel_sha256>` (M16-43), the hash of the
+    wheel that release publishes.
+    """
     if REPOSITORY.fullmatch(repository) is None:
         raise ReleaseError(f"{repository!r} is not an OWNER/NAME repository")
+    if SHA256.fullmatch(wheel_sha256) is None:
+        raise ReleaseError(f"{wheel_sha256!r} is not a lowercase hex SHA-256")
     url = f"https://github.com/{repository}/releases/download/{release.tag}/{release.wheel}"
-    return f"uv tool install --python {INSTALL_PYTHON} {url}"
+    return f"uv tool install --python {INSTALL_PYTHON} {url}#sha256={wheel_sha256}"
 
 
-def render_notes(template: str, repository: str, release: Release) -> str:
+def render_notes(template: str, repository: str, release: Release, wheel_sha256: str) -> str:
     """`template` with its placeholders filled; ReleaseError if any is left."""
     text = (
         template.replace("{{TAG}}", release.tag)
         .replace("{{VERSION}}", release.version)
-        .replace("{{INSTALL}}", install_line(repository, release))
+        .replace("{{INSTALL}}", install_line(repository, release, wheel_sha256))
     )
     left = sorted(set(PLACEHOLDER.findall(text)))
     if left:
@@ -303,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     n.add_argument("--version", required=True)
     n.add_argument("--repository", required=True)
     n.add_argument("--template", type=Path, required=True)
+    n.add_argument("--dir", type=Path, required=True, help="the built files; the wheel is hashed")
     n.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -326,9 +347,11 @@ def main(argv: list[str] | None = None) -> int:
             release = parse_version(args.version)
             if args.tag != release.tag:
                 raise ReleaseError(f"tag {args.tag!r} is not {release.tag!r}")
-            text = render_notes(args.template.read_text(encoding="utf-8"), args.repository, release)
+            wheel_sha256 = file_sha256(args.dir / release.wheel)
+            template = args.template.read_text(encoding="utf-8")
+            text = render_notes(template, args.repository, release, wheel_sha256)
             args.out.write_text(text, encoding="utf-8")
-            print(install_line(args.repository, release))
+            print(install_line(args.repository, release, wheel_sha256))
     except (
         ReleaseError,
         OSError,
