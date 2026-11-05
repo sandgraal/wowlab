@@ -33,7 +33,7 @@ from test_cli import (
 )
 
 from wowlab_core import cli, guard
-from wowlab_core.snapshot import Manifest
+from wowlab_core.snapshot import Manifest, SnapshotStore
 
 LAUNCH = "_classic_"  # constructed: the name the launch rename gives the folder
 ACCOUNT = "90000001#6"  # the captured account folder
@@ -259,3 +259,20 @@ def test_snap_restore_into_names_a_folder_that_is_no_account_constructed(
     assert "WTF/Account/LEGACYACCT/ is not taken as an account folder" in said, said
     report = _json(cli.RestoreReport, "snap", "restore", a.id, "--into-flavor", LAUNCH, "--dry-run")
     assert report.into is not None and report.into.unmapped == ["LEGACYACCT"]
+
+
+def test_snap_restore_into_takes_a_short_reference_and_a_pre_write_snapshot_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """With M16-09: `latest-user` names the snapshot, and the target's own
+    pre-write snapshot carries the pre-write kind and the target's folder."""
+    _snapshot()
+    launch = root / LAUNCH
+    flavor.rename(launch)
+    saved = _later_session(launch)
+
+    ok("snap", "restore", "latest-user", "--into-flavor", LAUNCH, "--yes")
+    assert (launch / CONFIG).read_bytes() == saved
+    pre = SnapshotStore().show(guard.history()[-1].snapshot_id)
+    assert pre.kind == "pre-write"
+    assert pre.flavor_folder == LAUNCH

@@ -958,7 +958,7 @@ Found 2026-10-18 by the shepherd on #266, the first merge through the GitHub MCP
 
 ---
 
-## [ ] M13-61 — The capture tool follows a symlinked `WTF/` or `WTF/Account/` past its identity harvest
+## [x] M13-61 — The capture tool follows a symlinked `WTF/` or `WTF/Account/` past its identity harvest
 **Size:** S · **Depends on:** M13-55
 
 Found 2026-10-18 in the security review of #269 (M13-55), on `main` before it. `scripts/lab_capture.py`'s discovery (`folders()`/`named()`, around lines 2838–2860 on `main` after #269) skips symlinked folders, but the planner reaches the same files through `child()`/`descend()` (around 1770–1786), which follow symlinks, and `Planner.add` (around 2294) refuses a symlink only at the final file. With `_retail_/WTF` a symlink to a directory outside the install holding `SET accountName "SECRETACCT"`, account `123456789#1` and an SV file containing `SECRETACCT`, the capture exits 0 with the account folder and the value unscrubbed (reproduced against main's tool too). Players symlink `WTF` to sync settings, so the harvest M13-55 added is skipped silently on exactly those installs; only the GUID check has a fallback refusal. Fix: make discovery and planning agree, failing closed: discovery stops with a `CaptureError` when `WTF/` or `WTF/Account/` is a symlink (or the planner applies the same symlink exclusion at every level). Labelled constructed test with the symlinked `WTF` tree: exit 2, nothing written, the value not printed.
@@ -976,7 +976,7 @@ Left **[verify]** by M13-55 (#269, 2026-10-18; the security and code reviews bot
 
 ---
 
-## [ ] M13-63 — `check_wiki` decodes percent-encoding before the personal-data matchers
+## [x] M13-63 — `check_wiki` decodes percent-encoding before the personal-data matchers
 **Size:** XS · **Depends on:** M13-53
 
 Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_privacy` reads raw lines, `wiki_diagnose.Redactor.line` too, and `_resolve` decodes a link target once and only for the withhold decision: `[x](123456789%231)` is withheld in the message but exits 1 (the page goes out in the `wiki-daily-unchecked` artifact), `[x](123456789%25231)` prints the digits, and `123456789%231` as plain text exits 0. The runner holds nothing private, so an encoded identifier can only come from an already-public input or from the model, which is why this is low; the backstop should still see it. Fix in `personal_kinds`: also match a percent-decoded form of the text, decoding repeatedly (capped) until it stops changing, so the privacy check, the withhold decision and the redactor agree. Labelled constructed tests for single and double encoding, exit 3.
@@ -1012,8 +1012,10 @@ Three small items found 2026-10-18 in the security and code reviews of #278 (M13
 
 ---
 
-## [ ] M13-67 — `claude-review.yml`: the model reads the PR's `AGENTS.md`
+## [x] M13-67 — `claude-review.yml`: the model reads the PR's `AGENTS.md`
 **Size:** XS · **Depends on:** M13-59
+
+**Closed 2026-11-04 as moot:** `claude-review.yml` was deleted with the other workflows that ran Claude (owner decision, #361), so there is no prompt left to point at a base copy.
 
 Found 2026-10-18 in the security review of #272 (M13-59), pre-existing. The review prompt says "Read AGENTS.md first", but `AGENTS.md` is not one of the paths the action restores from `main` before the model starts, so the model reads the PR's copy, and a hostile PR could weaken the invariants it is graded against. Offset today because the prompt restates L1 to L8 inline and the change would show in the diff. Fix in the workflow: the restore list is the constant `SENSITIVE_PATHS` in the pinned action's `restore-config.ts`, not an input, so have the diff step copy `main`'s `AGENTS.md` beside the diff file and point the prompt at that copy, saying the on-disk one is the PR's.
 
@@ -1392,7 +1394,7 @@ The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: 
 **Acceptance:** the fixture character's gear against recorded wago CSV slices, row by row (appearance per item, geosets, attachments, file ids and states); a labelled constructed character with a helmet (hair hidden), a cloak, a robe (the trouser priority), a shirt under chest (the sleeve priority), an item whose bonus ids select a second appearance, and an item with no appearance row (listed, not fatal); `make ci` green. Reviewed by `domain-reviewer` (the item tables on Forever's data; the geoset rules) and `code-reviewer`. User-facing: none until M15-11.
 
 
-## [ ] M15-14 — `CascSource`: one index re-read per call, whatever the retry raises
+## [x] M15-14 — `CascSource`: one index re-read per call, whatever the retry raises
 **Size:** XS · **Depends on:** M15-05 · **Sources:** the automated review of #320 (2026-10-22)
 
 Found in review after M15-05 merged. In `casc.py`, `_read_checked` and `_probe_once` (around lines 2598–2608 at 9112f0f) lose the per-call `reopened` flag when the retry after a re-read raises `EncryptedContent` or `CascUnsupportedError`. A later candidate can then call `_reopen()` a second time, giving `reopens == 2` within one `read` or `stat`, while §17.1 allows one re-open per call. Fix: keep the flag for the whole call, on the instance or passed through. Add a labelled constructed test that makes the first candidate fail its MD5, has the retry raise each of the two errors, and asserts `reopens == 1` after the call.
@@ -1638,7 +1640,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-15 — Player-output lint, and its hits fixed
+## [x] M16-15 — Player-output lint, and its hits fixed
 **Size:** S · **Depends on:** nothing · **Sources:** designer:F6, newcomer:F3, writer:F4, F15, a11y:F13, addon-author:F14 (EV-14; owner Q6)
 
 §18.1 item 4; `.claude/rules/player-copy.md`.
@@ -1787,7 +1789,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 
 ---
 
-## [ ] M16-26 — [IMPL] `luadata.read` and `wtfconfig` readers through the M11-11 helper
+## [x] M16-26 — [IMPL] `luadata.read` and `wtfconfig` readers through the M11-11 helper
 **Size:** S · **Depends on:** M16-26T · **Sources:** qa:F6, security:F3 (EV-24)
 
 **Acceptance:** the graders are activated by marker deletion only, and `make test-parser` and `make ci` are green. Reviewed by `code-reviewer` and `security-reviewer`.
@@ -1804,7 +1806,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 
 ---
 
-## [ ] M16-28 — Gaps tab: one `plural`
+## [x] M16-28 — Gaps tab: one `plural`
 **Size:** XS · **Depends on:** nothing · **Sources:** designer:F1 (EV-26)
 
 **Acceptance:**

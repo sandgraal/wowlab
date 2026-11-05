@@ -1770,6 +1770,7 @@ class _Transaction:
                 place.install_root,
                 [f"{place.folder}/{root}" for root in _ROOTS],
                 label=f"guard pre-write: {self._label}",
+                kind="pre-write",
                 flavor_folder=place.folder,
                 flavor_version=place.version,
                 client_running=False,

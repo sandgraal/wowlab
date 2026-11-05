@@ -3284,6 +3284,69 @@ A static local page over every character's `WowLab.lua`.
   text output is the same with or without the flag. The UI's Character tab
   (§16.3) asks for `--brief`, since its picker needs no record and a large
   roster's records could approach the UI's output cap.
+  *Amended 2026-11-04 (M16-35):* `char list` lists every character folder,
+  not only those with a `WowLab.lua`; the sentences above that a folder
+  without the file "is not listed" no longer hold for `char list`. It calls
+  `survey(..., every_folder=True)`; the default (`every_folder=False`) is
+  unchanged, so `read_all`, `char show` and every other caller still get
+  rows for the file only. A folder whose `SavedVariables/` holds no
+  `WowLab.lua` (Forever's `<Realm>/<First>/` twin among them) gets a row in
+  the same order, `place` `no_lab_file`, `file` the character folder,
+  `mtime_ns`, `summary`, `record` and `error` all null, and `no_lab_record`
+  (`labaddon.FolderFacts`): `cvars` (the number of distinct CVar names, case
+  folded, set in its `config-cache.wtf`), `macros` (the number of VER
+  records in its `macros-cache.txt`), each with a `<count>_absent` reason in
+  its place (`no config-cache.wtf`, or `<file> not read: <reason>`),
+  `saved_variables` (its addon files, no `.lua.bak`), `twins`
+  (`layout.Character.twins` as `<realm or digits folder>/<character
+  folder>`: a first-name match, not proof) and `first_name_folder`. That
+  last is true for a folder of the realm-name shape that has a twin of the
+  digits shape: the shapes the layout found decide it, never the flavor
+  (L6). On the Forever beta such a `<Realm>/<First>/` folder holds only
+  `AddOns.txt` **[verify]** (`docs/LAB_FILE_MAP.md`) and the lab-addon
+  writes nothing there. Every other row has `no_lab_record` null; `--json`
+  is otherwise unchanged (additive, as M13-72's decision), `--brief` still
+  nulls every `record`, and `notes` gains the counts note below when any
+  row shows counts. The two files are read only
+  for these rows, each on its own bound (`labaddon.MAX_COUNTED_FILE_BYTES`,
+  256 KiB, refused unread above it), all of them in one run within
+  `labaddon.MAX_COUNTED_TOTAL_BYTES` (8 MiB; once a file would pass what is
+  left, it and every one after it read `<file> not counted: wowlab counts at
+  most 8 MiB of these files in one listing, and the folders before this one
+  used it up`), never charged to `MAX_SURVEY_BYTES`. The counts take one
+  pass over the bytes by `wtfconfig`'s own line split and grammar
+  (`wtfconfig.count_cvar_names`, `count_macro_records`, graded equal to the
+  full parse on every indexed capture) and build no document, so the cost
+  is in proportion to the bytes (security review, 2026-11-04). A
+  count that could not be made is shown on the row and is not an error: the
+  command's exit code still depends only on the `WowLab.lua` files and the
+  places it could not look inside. Text: the heading is `Account <A>: N
+  character folder(s): W with a WowLab.lua[, X without][, K that wowlab
+  could not look inside][; and T <Realm>/<First> folder(s)]`, where W + X +
+  K = N and the `<Realm>/<First>/` folders are counted apart from N. The
+  row's time column reads `no lab record`, then `21 CVars, 1 macro, 0
+  SavedVariables files` (and `; same first name as <twins>`); a
+  `<Realm>/<First>/` folder's row instead reads `a <Realm>/<First> folder:
+  on Forever it holds only AddOns.txt [verify], and the lab-addon writes
+  nothing here` (its counts follow only when it holds anything counted),
+  the marker shown to a player as the CLI shows every `[verify]`. When
+  every character folder listed (the `<Realm>/<First>/` folders aside) is
+  without the file and no place went unseen, one line after the rows gives
+  the install advice. When any row shows counts (every character folder
+  without the file, and a `<Realm>/<First>/` folder that holds anything
+  counted), the notes end with "Counts are what each file held at the client's last
+  exit; with settings sync on, the server may replace these files at
+  login." The standing note says "One row per folder" (it said "One row
+  per character folder" before), since a `<Realm>/<First>/` folder is listed
+  too. With nothing listed the text is `No character folder was found in
+  <any account | account A>`, then `, but <the unseen places>.`, or the
+  install advice when there are none. A realm-name folder whose digits-shape
+  twin could not be seen (its digits folder unlistable) is an ordinary
+  character folder without the file in this count. The Character tab lists
+  such a row after the saved ones (it has no time), as `<label>: no lab
+  record`, or `<label>: <Realm>/<First> folder` when `first_name_folder` is
+  set, disabled; it is never picked, so no read is run for it and it gets
+  no record panels.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the

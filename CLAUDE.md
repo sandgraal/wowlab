@@ -40,10 +40,11 @@ Claude Code in this repository.
 
 Opus-class work runs on Opus 5.5, pinned by full id: the conductor session
 (`.claude/settings.json`), `implementer`, `test-writer`, `code-reviewer`,
-`domain-reviewer`, `security-reviewer`, and the three GitHub workflows that
-run Claude (`claude.yml`, `claude-review.yml`, `wiki-daily.yml`). Other
-Opus versions and Fable cost more tokens for no gain here and are not used.
-`pr-shepherd` stays on `sonnet`.
+`domain-reviewer` and `security-reviewer`. Other Opus versions and Fable
+cost more tokens for no gain here and are not used. `pr-shepherd` stays on
+`sonnet`. No GitHub workflow runs Claude: `claude.yml`, `claude-review.yml`
+and `wiki-daily.yml` were deleted on the owner's order (2026-11-04, #361),
+and `tests/repo/test_no_claude_in_workflows.py` keeps it that way.
 
 Context window: Anthropic's pricing has no per-token premium for the 1M
 window, but every turn resends the whole context. Caching makes that cheaper
@@ -55,7 +56,7 @@ by how long a session must hold state:
   frontier, parallel dispatches, agent reports, review routing, merges.
   Compaction mid-wave loses routing state, and that costs more than the
   larger context.
-- **`claude-opus-5-5` (standard): the repo's agents and the three workflows.** Each
+- **`claude-opus-5-5` (standard): the repo's agents.** Each
   is scoped to one ticket, review or PR. The top-level `docs/*.md` files
   together run to about 120K words (about 160K tokens; measured 2026-10-21),
   more than one agent needs. An agent reads the sections its ticket names

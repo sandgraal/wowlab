@@ -538,6 +538,7 @@ def save(
             flavor_version=flavor.version,
             client_running=client_running,
             purpose="profile",
+            kind="profile",
         )
     return Profile(name=name, presets=tuple(dict.fromkeys(preset_names)), manifest=manifest)
 

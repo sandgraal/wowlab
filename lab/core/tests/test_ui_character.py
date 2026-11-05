@@ -62,6 +62,9 @@ _TEMPLATES = Path(ui.__file__).resolve().parent / "templates"
 ACCOUNT = "90000001#6"
 NEWER = "1/Labchard-Labrealmg"  # written later here, though it sorts second by name
 OLDER = "1/Labcharb-Labrealmf"
+# The capture's character folders without a WowLab.lua: listed, not picked (M16-35).
+BARE = "1/Labcharb-Labrealmd"
+TWIN = "Labrealmb Partb Partc Partd/Labchard"
 NEWER_NS = 1_760_000_000_000_000_000
 OLDER_NS = 1_750_000_000_000_000_000
 # The four read commands the tab runs (M14-09 added the last two).
@@ -312,23 +315,56 @@ def test_the_picker_lists_the_characters_latest_written_first(
 ) -> None:
     scenario = _scenario(server, [{"char_tab": True}], [NEWER])
     listed = json.loads(scenario["runs"][0]["stdout"])
-    assert {f"{c['realm_folder']}/{c['label']}" for c in listed["characters"]} == {NEWER, OLDER}
+    saved = [c for c in listed["characters"] if c["no_lab_record"] is None]
+    assert {f"{c['realm_folder']}/{c['label']}" for c in saved} == {NEWER, OLDER}
+    # The capture's two character folders without a WowLab.lua (M16-35).
+    every = {f"{c['realm_folder']}/{c['label']}" for c in listed["characters"]}
+    assert every == {NEWER, OLDER, BARE, TWIN}
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
     assert view["hidden"] is False and view["tabSelected"] == "true"
     assert view["pickerDisabled"] is False
     labels = [NEWER.split("/")[1], OLDER.split("/")[1]]
+    # Listed after every saved one (they have no file time), never picked:
+    # disabled, and no read is asked for them, so they get no record panels.
     assert [o["text"] for o in view["options"]] == [
         f"{labels[0]}, written {_local(NEWER_NS)}",
         f"{labels[1]}, written {_local(OLDER_NS)}",
+        f"{BARE.split('/')[1]}: no lab record",
+        f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
     ]
-    assert not any(o["disabled"] for o in view["options"])
+    assert [o["disabled"] for o in view["options"]] == [False, False, True, True]
+    assert all(o["title"] in ("", None) for o in view["options"][2:])
     # The first (latest) is read at once, with the folders the list gave.
     assert [r["body"] for r in view["newRequests"]] == [
         {"command": ["char", "list"], "params": LIST_PARAMS},
         *_pick_requests(NEWER),
     ]
     assert view["status"] == "" and not view["statusError"]
+
+
+def test_folders_with_no_lab_record_only_are_listed_and_never_read_constructed(
+    server: Any, timed: Path, tmp_path: Path
+) -> None:
+    """M16-35: with no WowLab.lua anywhere, `char list` still lists the four
+    folders; the picker shows them, disabled, picks none, asks for no read,
+    and says what the tab needs."""
+    for character in (NEWER, OLDER):
+        _lab_file(timed, character).unlink()
+    scenario = _scenario(server, [{"char_tab": True}], [])
+    out = _drive(tmp_path / "node", scenario)
+    view = out["steps"][0]
+    assert [o["text"].endswith(": no lab record") for o in view["options"]] == [True] * 3 + [False]
+    assert view["options"][3]["text"] == f"{TWIN.split('/')[1]}: <Realm>/<First> folder"
+    assert all(o["disabled"] for o in view["options"])
+    assert [r["body"] for r in view["newRequests"]] == [
+        {"command": ["char", "list"], "params": LIST_PARAMS}
+    ]
+    assert view["status"] == (
+        "wowlab char list found no character folder with a lab-addon save. Run it in a "
+        "terminal for what to do."
+    )
+    assert view["rows"] == [] and view["header"] == ""
 
 
 def test_the_gear_rows_match_char_gear_for_the_picked_one(
@@ -492,7 +528,12 @@ def test_a_list_with_an_unreadable_file_lists_the_rest_constructed(
     scenario["held"].append({"command": ["char", "list"], "params": LIST_PARAMS, "reply": reply})
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
-    bad, good = view["options"]
+    bad, good, *bare = view["options"]
+    assert [o["text"] for o in bare] == [
+        f"{BARE.split('/')[1]}: no lab record",
+        f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
+    ]
+    assert all(o["disabled"] for o in bare)
     assert bad["text"].startswith(NEWER.split("/")[1]) and bad["disabled"] is True
     assert bad["text"].endswith(": not read") and bad["title"]
     assert good["disabled"] is False and good["text"].startswith(OLDER.split("/")[1])
