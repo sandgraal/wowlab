@@ -106,7 +106,7 @@ def test_constructed_old_manifest_labelled_like_guards_without_a_record_reads_as
     _strip_kind(store, taken)
     assert kind_of(store.show(taken), cli._pre_write_ids(store)) == "user"
     assert json.loads(ok("snap", "show", taken, "--json").stdout)["kind"] == "user"
-    assert "  kind:     user, taken with snap create\n" in ok("snap", "show", taken).stdout
+    assert "  kind:     user, one you took\n" in ok("snap", "show", taken).stdout
 
 
 def test_constructed_old_profile_manifest_reads_as_profile(root: Path, user_data: Path) -> None:
@@ -220,6 +220,8 @@ def test_constructed_wipe_recover_explain_compares_with_the_user_snapshot(
     assert not [h for h in report.hints if h.argv[:2] == ["snap", "restore"]]
     words = facts.words or ""
     assert taken in words and pre in words
+    # The snapshot named is the player's latest, not the latest of all.
+    assert words.startswith(f"In your latest snapshot ({taken}"), words
     assert "taken automatically just before a change" in words
     assert "as they were just before that change" in words
     text = ok("explain", CONFIG).stdout
@@ -347,6 +349,24 @@ def test_constructed_unique_suffix_and_prefix(root: Path, flavor: Path, user_dat
     assert resolve_reference(store, pre) == pre
     assert resolve_reference(store, second) == second
     assert json.loads(ok("snap", "show", first.rsplit("-", 1)[1], "--json").stdout)["id"] == first
+
+
+def test_constructed_prefix_of_one_id_and_suffix_of_another_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    """Prefix and suffix matches are pooled: a reference that starts one id
+    and ends another is refused, never resolved to the prefix match."""
+    store = SnapshotStore(tmp_path / "store")
+    store.manifests_dir.mkdir(parents=True)
+    older = "20250101T000000.000000Z-aaaaaaaa"
+    newer = "20260101T000000.000000Z-bbbb2025"
+    for snapshot_id in (older, newer):
+        (store.manifests_dir / f"{snapshot_id}.json").write_bytes(b"{}")
+    with pytest.raises(snapshot.SnapshotNotFoundError, match="ambiguous"):
+        resolve_reference(store, "2025")
+    assert resolve_reference(store, older) == older  # an exact id is never ambiguous
+    assert resolve_reference(store, "20250") == older
+    assert resolve_reference(store, "bbbb2025") == newer
 
 
 @pytest.mark.parametrize(

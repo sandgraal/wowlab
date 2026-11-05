@@ -2694,7 +2694,10 @@ _UNCONFIRMED = (
 def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     """The "In the latest snapshot" line. `captured`: the subtrees `snap
     create` captures, in words."""
-    head = "In the latest readable snapshot" if facts.damaged else "In the latest snapshot"
+    # A newer automatic copy was passed over: the snapshot named is the
+    # player's latest, not the latest of all (M16-09).
+    whose = "your latest" if facts.newer_pre_write is not None else "the latest"
+    head = f"In {whose} readable snapshot" if facts.damaged else f"In {whose} snapshot"
     if facts.error is not None:
         return f"{head}: unknown; the snapshot store could not be read ({facts.error})"
     damaged = ""
@@ -5684,13 +5687,15 @@ class SnapListReport(_Out):
 
 _REF_HELP = (
     "A snapshot id, a unique start or end of one, latest, latest-user (the newest "
-    "one you took), or ~N (N before the newest)."
+    "one you took), or ~N (N before the newest). Snapshots from before wowlab "
+    "recorded who took each one count as yours unless the change history names "
+    "them as automatic copies; if that history cannot be read, they all count as yours."
 )
 
 # What each kind of snapshot is, in words (M16-09): `snap show` prints it, and
 # `explain` uses the pre-write one when it points at such a copy.
 _KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
-    "user": "taken with snap create",
+    "user": "one you took",
     "first-run": "taken by doctor on its first run",
     "profile": "a saved profile",
     "pre-write": (

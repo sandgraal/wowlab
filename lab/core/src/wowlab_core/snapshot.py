@@ -2287,7 +2287,9 @@ def resolve_reference(
     """The full id in `store` that a player's reference names (M16-09):
     `latest` (the newest snapshot of any kind), `latest-user` (the newest
     `user` snapshot), `~N` (the snapshot N before the newest, so `~0` is
-    `latest`), an exact id, or a unique prefix or suffix of one.
+    `latest`), an exact id, or the start or end of exactly one id (prefix
+    and suffix matches are pooled, so one that starts an id and ends
+    another is ambiguous).
     `pre_write_ids` are the snapshots the journal names, for manifests
     written before kinds existed (`kind_of`). Reads only. A damaged manifest
     is an error for `latest`, `latest-user` and `~N`, which must see every
@@ -2312,14 +2314,13 @@ def resolve_reference(
                 f"{reference!r} names no snapshot: the store holds {len(ordered)}"
             )
         return ordered[-1 - back].id
-    try:
-        return store.resolve_id(reference)
-    except SnapshotNotFoundError:
-        if not _ID_PREFIX_RE.match(reference):
-            raise
-    # Neither an id nor a unique prefix: a unique suffix (the fingerprint
-    # end of an id), or one that is a prefix of one id and a suffix of
-    # another, which is ambiguous.
+    if _ID_RE.match(reference) and store._manifest_path(reference).is_file():
+        return reference
+    if not _ID_PREFIX_RE.match(reference):
+        raise SnapshotNotFoundError(f"not a snapshot id or prefix: {reference!r}")
+    # Not an exact id: the start or the end of one. Prefix and suffix matches
+    # are pooled, so a reference that starts one id and ends another is
+    # ambiguous, never resolved to whichever is tried first.
     names = [p.name.removesuffix(_MANIFEST_SUFFIX) for p in store._manifest_files()]
     matches = sorted({n for n in names if n.startswith(reference) or n.endswith(reference)})
     if len(matches) == 1:
