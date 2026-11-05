@@ -90,6 +90,15 @@ def ok(*args: str) -> Any:
     return result
 
 
+def wide(*args: str, notes: bool = True) -> Any:
+    """`ok` on a terminal wide enough that no line wraps, with --notes
+    unless `notes` is False (M16-16)."""
+    extra = ["--notes"] if notes else []
+    result = runner.invoke(cli.app, [*args, *extra], terminal_width=10_000)
+    assert result.exit_code == 0, (result.stdout, result.stderr, result.exception)
+    return result
+
+
 def report(*args: str) -> cli.CharBindsReport:
     out = ok("char", "binds", *args, "--json").stdout
     return cli.CharBindsReport.model_validate_json(out)
@@ -136,7 +145,9 @@ def test_char_binds_json_131_keys_3_agree_128_not_in_a_file_0_disagree_11_unreac
         "upper case (a key bound straight to a spell, macro, item or click may be one), and "
         "0 keys not printable ASCII."
     )
-    assert rep.left_out_note in ok("char", "binds", "--character", CHARACTER).stdout.splitlines()
+    # The one caveat of this result (M16-16).
+    plain = wide("char", "binds", "--character", CHARACTER, notes=False).stdout.splitlines()
+    assert rep.left_out_note == plain[-2]
     assert (rep.cannot_place, rep.cannot_compare) == (None, None)
     assert cli.CharBindsReport.model_validate_json(rep.model_dump_json()) == rep
 
@@ -144,19 +155,21 @@ def test_char_binds_json_131_keys_3_agree_128_not_in_a_file_0_disagree_11_unreac
 def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     record: Path,
 ) -> None:
-    text = ok("char", "binds", "--character", CHARACTER).stdout
+    text = wide("char", "binds", "--character", CHARACTER).stdout
     lines = unmarked(text).splitlines()  # M16-15: the run's markers, as `--json` has them
     assert lines[0] == f"Character: 1/{CHARACTER} in account {ACCOUNT}"
     assert lines[1].startswith(f"Record: {RECORD} (schema 3), written ")
     assert lines[2].startswith(f"Account bindings: {ACCOUNT_FILE} (3 bind lines), written ")
-    assert lines[3].startswith("Character bindings: no bindings-cache.wtf (a character has")
+    # What each file is went behind --notes (M16-16).
+    assert lines[3] == "Character bindings: no bindings-cache.wtf"
+    assert any(n.startswith("  - Character bindings: a character has") for n in lines)
     assert (
         "Keys: 131 (3 in a file and the record, 0 only in a file, 0 only in the record with a "
         "file line putting the key on another command, 128 only in the record with no file "
         "line for the key, 0 cleared)"
     ) in lines
     assert (
-        "  Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
+        "  - Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
         "form, stance or stealth active; another page they may show is not followed."
     ) in lines
     assert (
@@ -174,7 +187,7 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     ) in lines
     assert (
         unmarked(
-            "  Only in the record, no file line for the key: the file may hold only the changes "
+            "  - Only in the record, no file line for the key: the file may hold only the changes "
             "from the client's defaults, or may not have been rewritten since the key was set "
             "[verify]."
         )
@@ -214,7 +227,7 @@ def test_a_schema_1_record_gives_the_file_rows_cannot_place(root: Path) -> None:
     ]
     assert (rep.unreached_slots, rep.commands_left_out, rep.keys_left_out) == ([], None, None)
     assert rep.left_out_note is None
-    text = ok("char", "binds", "--character", SCHEMA_1_CHARACTER).stdout
+    text = wide("char", "binds", "--character", SCHEMA_1_CHARACTER).stdout
     assert (
         "Cannot place keys on action slots or compare the files with the record: schema 1 has "
         "no action-bar or bindings record (" in text

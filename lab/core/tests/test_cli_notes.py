@@ -251,7 +251,7 @@ def test_doctor_folds_six_unset_sync_lines_into_one(make: Callable[[str], Path])
     out = run(["doctor", "--offline"]).stdout
     synced = [line for line in out.splitlines() if line.startswith("  Server sync")]
     assert len(synced) == 1
-    assert synced[0].startswith("  Server sync: not set in 2 config files (the client's default")
+    assert synced[0].startswith("  Server sync: not set in WTF/Config.wtf or WTF/Account/")
     assert "synchronizeBindings" not in out
 
 

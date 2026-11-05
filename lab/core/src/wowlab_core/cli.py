@@ -1649,9 +1649,9 @@ _SYNC_NOTE = (
 _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
 
 
-def _print_doctor(report: DoctorReport) -> list[str]:
-    """The doctor report as text; returns the standing notes that apply to
-    it, which the caller says after the first run (`_say_notes`)."""
+def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
+    """The doctor report as text, its standing notes behind --notes
+    (`_say_notes`) before the problems."""
     notes: list[str] = []
     if report.install_root is not None:
         _say(f"Install: {report.install_root} (found by {report.found_by})")
@@ -1676,10 +1676,10 @@ def _print_doctor(report: DoctorReport) -> list[str]:
         _say(f"  Game data: {_print_game_data(f.game_data)}")
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
-            files = len({sync.file for sync in f.sync_cvars})
+            files = " or ".join(dict.fromkeys(sync.file for sync in f.sync_cvars))
             _say_prose(
-                f"  Server sync: not set in {_plural(files, 'config file')} (the client's "
-                "default, and wowlab cannot tell whether that default is on)",
+                f"  Server sync: not set in {files} (the client's default, and wowlab cannot "
+                "tell whether that default is on)",
                 hang="    ",
             )
         elif f.sync_cvars:
@@ -1725,13 +1725,15 @@ def _print_doctor(report: DoctorReport) -> list[str]:
     else:
         _say("  no transactions in the journal")
     notes.append(_STORE_VERIFY_NOTE)
+    # The footer ends the report's own lines: the problems (why it exits 1)
+    # and the first run's undo line stay the last words, as before.
+    _say_notes(notes, show_notes)
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
         _say("Problems:")
         for problem in report.problems:
             _say(f"  {problem}")
-    return notes
 
 
 def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
@@ -1905,7 +1907,7 @@ def doctor(
         if json_out:
             _emit(report)
         else:
-            _say_notes(_print_doctor(report), notes)
+            _print_doctor(report, notes)
         if report.problems:
             raise typer.Exit(EXIT_ERROR)
         return
@@ -1928,7 +1930,8 @@ def doctor(
             say("")
 
     report = _doctor(root, offline, on_found)
-    standing = [] if json_out else _print_doctor(report)
+    if not json_out:
+        _print_doctor(report, notes)
     if first:
         result = _first_run(found[0], store, flavor, yes, json_out, say)
         problems = list(report.problems)
@@ -1938,8 +1941,6 @@ def doctor(
     # The report is complete here, first run included, before it is printed.
     if json_out:
         _emit(report)
-    else:
-        _say_notes(standing, notes)
     if report.first_run is not None and report.first_run.refused:
         raise typer.Exit(EXIT_REFUSED)
     if report.problems:

@@ -97,6 +97,14 @@ def ok(*args: str) -> Any:
     return result
 
 
+def wide(*args: str) -> Any:
+    """`ok` with --notes, on a terminal wide enough that no line wraps:
+    the notes' words, unwrapped (M16-16)."""
+    result = runner.invoke(cli.app, [*args, "--notes"], terminal_width=10_000)
+    assert result.exit_code == 0, (result.stdout, result.stderr, result.exception)
+    return result
+
+
 def report(*args: str) -> cli.BindsCoachReport:
     out = ok("binds", "coach", *args, "--json").stdout
     return cli.BindsCoachReport.model_validate_json(out)
@@ -237,7 +245,7 @@ def test_binds_coach_reads_the_log_filtered_to_the_cast_events(
 def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be_on(
     record: Path,
 ) -> None:
-    text = ok("binds", "coach", "--character", CHARACTER).stdout
+    text = wide("binds", "coach", "--character", CHARACTER).stdout
     assert (
         f"Combat log: Logs/{LOG_NAME} (the newest) (79 lines; COMBAT_LOG_VERSION 22; your "
         "casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged "
@@ -246,9 +254,12 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
     assert "  Your casts: 6 of 7 SPELL_CAST_SUCCESS record(s)" in text
     assert (
         "Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard, the "
-        "left hand on W A S D and a mouse with two side buttons." in text
+        "left hand on W A S D and a mouse with two side buttons\n" in text
     )
+    # Where the player's own table goes is a note, as ~/..., never the
+    # shipped table's absolute path (M16-16).
     assert bindscoach.COSTS_FILE in text and "(create the folder if it is missing)" in text
+    assert bindscoach.shipped_costs_path() not in text
     assert (
         "  High-cost: 4 or more. Frequent: at least 5% of your casts and at least 5 casts.\n"
         in text
@@ -564,10 +575,10 @@ def test_a_players_table_overrides_key_by_key_constructed(
     assert rep.costs.table.keys["Q"] == 1  # left out: the shipped value
     assert rep.costs.table.frequent_min_casts == 5
     assert [(f.spell_name, f.cheapest) for f in rep.frequent_on_high_cost] == [("Health Funnel", 6)]
-    text = ok("binds", "coach", "--character", CHARACTER).stdout
+    text = wide("binds", "coach", "--character", CHARACTER).stdout
     assert (
-        f"Key costs: your table {user_dirs / bindscoach.COSTS_FILE}, over the shipped default"
-        in text
+        f"Key costs: your {bindscoach.COSTS_FILE} in wowlab's user config folder, over the "
+        "shipped default\n" in text
     )
     assert _state(user_dirs) == before
 
