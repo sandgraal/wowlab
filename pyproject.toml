@@ -88,7 +88,8 @@ python_version = "3.12"
 # the wiki gate (M12-14; nothing should reach the wiki past it),
 # and the release checks (M13-03; nothing is published past them), and the derived-fixture
 # tool for the install's archives (M15-03; it reads the install and writes a fixture), and
-# the font check (M16-51; it vouches for the third-party font files in the package).
+# the font check (M16-51; it vouches for the third-party font files in the package),
+# and the grader diff gate (M16-40; it holds graders of the load-bearing files to marker removal).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
@@ -98,6 +99,7 @@ files = [
   "scripts/release_check.py",
   "scripts/casc_facts.py",
   "scripts/check_fonts.py",
+  "scripts/check_grader_diff.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true
