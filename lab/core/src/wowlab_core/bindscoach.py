@@ -468,7 +468,8 @@ def unseen_words(commands: int, keys: int) -> str:
     counts = (
         f"Left out of the bindings record, counted with no list: "
         f"{_plural(commands, 'binding command')} it did not read, whether or not a key is "
-        f"bound to them (not named in plain upper case), and {_plural(keys, 'key')} whose "
+        f"bound to {'it' if commands == 1 else 'them'} (not named in plain upper case), and "
+        f"{_plural(keys, 'key')} whose "
         "name is not printable ASCII."
     )
     if commands or keys:

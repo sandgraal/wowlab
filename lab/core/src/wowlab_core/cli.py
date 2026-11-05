@@ -5225,7 +5225,7 @@ def _read_counts(path: Path) -> combatlog.CastCounts:
 def _shared_warning(first: str, namesakes: Sequence[str]) -> str:
     return (
         f"{', '.join(namesakes)} also {'has' if len(namesakes) == 1 else 'have'} the first name "
-        f"{first}, and a combat log names a character by first name and realm only: these casts "
+        f"{first}, and the coach matches a log to a character by first name only: these casts "
         "may be another of your characters'."
     )
 
@@ -5301,13 +5301,15 @@ def _coach_pick_log(
         return out(newest, "newest", newest_counts, None)
     if matched(newest_counts) in ("matches", "first name shared"):
         return out(newest, "caster name", newest_counts, None)
-    read, used, skipped, stopped = 1, 0, [], False
+    read, used = 1, 0
+    skipped: list[str] = []  # could not be read
+    too_big: list[str] = []  # larger than what is left of the budget
     for path in list(reversed(logs))[1:_COACH_LOG_SCAN]:
         try:
             size = path.stat().st_size
             if used + size > _COACH_LOG_BUDGET:
-                stopped = True
-                break
+                too_big.append(path.name)
+                continue
             counts = _read_counts(path)
         except OSError:
             skipped.append(path.name)
@@ -5315,35 +5317,42 @@ def _coach_pick_log(
         used += size
         read += 1
         if matched(counts) in ("matches", "first name shared"):
-            return out(path, "caster name", counts, None, _scan_note(skipped, stopped))
+            return out(path, "caster name", counts, None, _scan_note(skipped, too_big))
     warning = None
     if matched(newest_counts) == "does not match":  # with no casts, its reports say so
         whose = ", ".join(newest_counts.source_names)
         if len(logs) == 1:
             where = f"the only combat log has no casts by {first}, the character judged"
+        elif read == 1:
+            where = (
+                f"the newest combat log, the only one read, has no casts by {first}, the "
+                "character judged"
+            )
         else:
             where = (
-                f"none of the {_plural(read, 'combat log')} looked through has casts by {first}, "
-                "the character judged, so the newest is read"
+                f"none of the {read} combat logs read has casts by {first}, the character "
+                "judged, so the newest is read"
             )
         warning = (
             f"{where}; its casts are by {whose}: the findings below may be about another character."
         )
-    return out(newest, "newest", newest_counts, warning, _scan_note(skipped, stopped))
+    return out(newest, "newest", newest_counts, warning, _scan_note(skipped, too_big))
 
 
-def _scan_note(skipped: Sequence[str], stopped: bool) -> str | None:
-    """One line on the older logs not looked through, or None."""
+def _scan_note(skipped: Sequence[str], too_big: Sequence[str]) -> str | None:
+    """One line on the older logs not read, or None."""
     parts = []
     if skipped:
         parts.append(
             f"{_plural(len(skipped), 'older combat log')} could not be read and "
             f"{'was' if len(skipped) == 1 else 'were'} skipped ({', '.join(skipped)})"
         )
-    if stopped:
+    if too_big:
         parts.append(
-            "older combat logs were looked through only up to "
-            f"{_COACH_LOG_BUDGET // (1024 * 1024)} MiB, so the oldest were not"
+            f"{_plural(len(too_big), 'older combat log')} ({', '.join(too_big)}) "
+            f"{'was' if len(too_big) == 1 else 'were'} not read, since older logs are looked "
+            f"through only up to {_COACH_LOG_BUDGET // (1024 * 1024)} MiB in all; --log FILE "
+            "reads one"
         )
     if not parts:
         return None

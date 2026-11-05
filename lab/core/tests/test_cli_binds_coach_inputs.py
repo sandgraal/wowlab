@@ -96,7 +96,7 @@ def namesake(flavor: Path) -> Path:
 
 UNSEEN_REAL = (
     "Left out of the bindings record, counted with no list: 1 binding command it did not read, "
-    "whether or not a key is bound to them (not named in plain upper case), and 0 keys whose "
+    "whether or not a key is bound to it (not named in plain upper case), and 0 keys whose "
     "name is not printable ASCII. Any of these may reach a spell, so a spell reported with no "
     "key may have one, and a key reported as costly may not be the only one. A key bound "
     "straight to a spell or to an addon's button may be in neither count [verify]."
@@ -273,7 +273,7 @@ def test_no_matching_log_falls_back_to_the_newest_constructed(flavor: Path, reco
         None,
     )
     assert rep.log.warning == (
-        "none of the 2 combat logs looked through has casts by Labcharb, the character judged, "
+        "none of the 2 combat logs read has casts by Labcharb, the character judged, "
         "so the newest is read; its casts are by Someone-Else-: the findings below may be about "
         "another character."
     )
@@ -298,9 +298,7 @@ def test_only_the_newest_logs_are_looked_through_constructed(flavor: Path, names
         "does not match",
     )
     assert rep.log.warning is not None
-    assert rep.log.warning.startswith(
-        f"none of the {cli._COACH_LOG_SCAN} combat logs looked through"
-    )
+    assert rep.log.warning.startswith(f"none of the {cli._COACH_LOG_SCAN} combat logs read")
 
 
 def test_an_unreadable_older_log_is_skipped_and_said_constructed(
@@ -341,9 +339,14 @@ def test_the_older_logs_scan_stops_at_its_byte_budget_constructed(
     rep = report("--character", f"1/{NAMESAKE}")
     assert (rep.log.file, rep.log.caster_match) == ("Logs/WoWCombatLog-a.txt", "does not match")
     assert rep.log.scan_note is not None
-    assert rep.log.scan_note.startswith("Older combat logs were looked through only up to ")
+    assert rep.log.scan_note == (
+        f"1 older combat log ({LOG_NAME}) was not read, since older logs are looked through only "
+        "up to 0 MiB in all; --log FILE reads one."
+    )
     assert rep.log.warning is not None
-    assert rep.log.warning.startswith("none of the 1 combat log looked through")
+    assert rep.log.warning.startswith(
+        "the newest combat log, the only one read, has no casts by Labchard, the character judged;"
+    )
     monkeypatch.setattr(cli, "_COACH_LOG_BUDGET", real_size)
     rep = report("--character", f"1/{NAMESAKE}")
     assert (rep.log.file, rep.log.chosen_by, rep.log.scan_note) == (
@@ -404,6 +407,34 @@ def test_casts_without_a_quoted_name_are_not_no_casts_constructed() -> None:
     assert cli._caster_match(none, "Labchard-Labrealmg") == "no casts"
 
 
+def test_an_oversized_older_log_is_skipped_and_smaller_ones_still_read_constructed(
+    flavor: Path, namesake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Budget patched to the real log's size: the second-newest log is
+    larger (constructed padding), so it is not read and the scan goes on to
+    the older real log, which has the character's casts."""
+    real_size = (flavor / "Logs" / LOG_NAME).stat().st_size
+    padding = [cast(755, "Health Funnel")] * (real_size // 100 + 10)
+    big = caster_log(flavor, "Someone-Else-", *padding, name="WoWCombatLog-b.txt", offset=3)
+    assert big.stat().st_size > real_size
+    caster_log(
+        flavor, "Someone-Else-", cast(755, "Health Funnel"), name="WoWCombatLog-c.txt", offset=6
+    )
+    monkeypatch.setattr(cli, "_COACH_LOG_BUDGET", real_size)
+    rep = report("--character", f"1/{NAMESAKE}")
+    assert (rep.log.file, rep.log.chosen_by, rep.log.caster_match) == (
+        f"Logs/{LOG_NAME}",
+        "caster name",
+        "matches",
+    )
+    assert rep.log.scan_note is not None
+    assert rep.log.scan_note.startswith(
+        "1 older combat log (WoWCombatLog-b.txt) was not read, since older logs are looked "
+        "through only up to "
+    )
+    assert rep.log.scan_note.endswith("; --log FILE reads one.")
+
+
 def test_a_first_name_two_folders_share_is_said_cross_capture(flavor: Path, record: Path) -> None:
     """The captured tree has two real folders with the first name Labcharb
     (`1/Labcharb-Labrealmd`, the record's, and `1/Labcharb-Labrealmf`). A
@@ -418,8 +449,8 @@ def test_a_first_name_two_folders_share_is_said_cross_capture(flavor: Path, reco
         "first name shared",
     )
     assert rep.log.warning == (
-        f"1/{OTHER} also has the first name Labcharb, and a combat log names a character by "
-        "first name and realm only: these casts may be another of your characters'."
+        f"1/{OTHER} also has the first name Labcharb, and the coach matches a log to a "
+        "character by first name only: these casts may be another of your characters'."
     )
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert f"  Warning: {rep.log.warning}\n" in text
