@@ -2866,10 +2866,12 @@ def _hints(
             and facts.confirmed is True
             and not facts.damaged_newer
         ):
-            does = (
-                f"put back the copy in snapshot {latest}; it shows the plan and asks "
-                "first, and `wowlab undo` reverses it"
+            what = (
+                f"put back the copy in snapshot {latest}, which was {_KIND_WORDS['pre-write']}"
+                if facts.kind == "pre-write"
+                else f"put back the copy in snapshot {latest}"
             )
+            does = f"{what}; it shows the plan and asks first, and `wowlab undo` reverses it"
             if verdict.server_may_replace:
                 does += (
                     "; the server may replace it at the next login (sync settings: wowlab doctor)"
@@ -2919,7 +2921,10 @@ _UNCONFIRMED = (
 def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     """The "In the latest snapshot" line. `captured`: the subtrees `snap
     create` captures, in words."""
-    head = "In the latest readable snapshot" if facts.damaged else "In the latest snapshot"
+    # A newer automatic copy was passed over: the snapshot named is the
+    # player's latest, not the latest of all (M16-09).
+    whose = "your latest" if facts.newer_pre_write is not None else "the latest"
+    head = f"In {whose} readable snapshot" if facts.damaged else f"In {whose} snapshot"
     if facts.error is not None:
         return f"{head}: unknown; the snapshot store could not be read ({facts.error})"
     damaged = ""
@@ -2971,9 +2976,29 @@ def _snapshot_line(facts: pathfacts.SnapshotFacts, captured: str) -> str:
     if facts.confirmed is False:
         return (
             f"{head} ({_snap_name(latest)}): it holds {facts.path}, which could not be "
-            f"confirmed to be this file ({_UNCONFIRMED}); {on_disk}{damaged}"
+            f"confirmed to be this file ({_UNCONFIRMED}); {on_disk}{_pre_write_words(facts)}"
+            f"{damaged}"
         )
-    return f"{head} ({_snap_name(latest)}): {on_disk}{damaged}"
+    return f"{head} ({_snap_name(latest)}): {on_disk}{_pre_write_words(facts)}{damaged}"
+
+
+def _pre_write_words(facts: pathfacts.SnapshotFacts) -> str:
+    """What the line says of a pre-write copy (M16-09): of the snapshot it
+    names, when that is one, or of a newer one it passed over."""
+    if facts.kind == "pre-write":
+        return (
+            "; this snapshot was "
+            + _KIND_WORDS["pre-write"]
+            + ", and no other snapshot covers this file"
+        )
+    newer = facts.newer_pre_write
+    if newer is not None:
+        return (
+            f"; a newer snapshot ({_snap_name(newer)}) was taken automatically just "
+            "before a change, and restoring that one puts the files back as they were "
+            "just before that change"
+        )
+    return ""
 
 
 def _path_kind(
@@ -3383,6 +3408,7 @@ def _detail(
             judged.flavor_folder,
             "/".join(parts),
             lay.snapshot_subtrees(),
+            _pre_write_ids(snapshot.SnapshotStore()),
         )
     views: list[ExplainView] = []
     note: str | None = None
@@ -5934,6 +5960,42 @@ class SnapListReport(_Out):
     damaged: list[snapshot.InvalidManifest]
 
 
+_REF_HELP = (
+    "A snapshot id, a unique start or end of one, latest, latest-user (the newest "
+    "one you took), or ~N (N before the newest). Snapshots from before wowlab "
+    "recorded who took each one count as yours unless the change history names "
+    "them as automatic copies; if that history cannot be read, they all count as yours."
+)
+
+# What each kind of snapshot is, in words (M16-09): `snap show` prints it, and
+# `explain` uses the pre-write one when it points at such a copy.
+_KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
+    "user": "one you took",
+    "first-run": "taken by doctor on its first run",
+    "profile": "a saved profile",
+    "pre-write": (
+        "taken automatically just before a change; restoring it puts the files back "
+        "as they were just before that change"
+    ),
+}
+
+
+def _pre_write_ids(store: snapshot.SnapshotStore) -> frozenset[str]:
+    """The snapshots the store's journal names: the pre-write copies, for
+    manifests written before kinds existed (`snapshot.kind_of`). A journal
+    that cannot be read names none, so such a manifest reads as `user`."""
+    try:
+        return frozenset(r.snapshot_id for r in guard.history(store=store.path))
+    except guard.GuardError:
+        return frozenset()
+
+
+def _resolve_ref(store: snapshot.SnapshotStore, reference: str) -> str:
+    """The full id `reference` names (`snapshot.resolve_reference`)."""
+    ids = _pre_write_ids(store) if reference == "latest-user" else frozenset[str]()
+    return snapshot.resolve_reference(store, reference, ids)
+
+
 def _summary(m: snapshot.Manifest) -> SnapshotSummary:
     return SnapshotSummary(
         id=m.id,
@@ -6068,19 +6130,27 @@ def snap_list(json_out: JsonOpt = False) -> None:
 @snap_app.command("show", short_help="One snapshot and every path in it.")
 @_handled
 def snap_show(
-    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
     json_out: JsonOpt = False,
 ) -> None:
     """One snapshot and every path in it.
 
     \f
-    JSON: the manifest (snapshot.Manifest)."""
-    manifest = snapshot.SnapshotStore().show(snapshot_id)
+    JSON: the manifest (snapshot.Manifest), with its kind."""
+    store = snapshot.SnapshotStore()
+    manifest = store.show(_resolve_ref(store, snapshot_id))
+    if manifest.kind is None:
+        # Written before kinds existed: say what it is, as the journal tells.
+        manifest = manifest.model_copy(
+            update={"kind": snapshot.kind_of(manifest, _pre_write_ids(store))}
+        )
     if json_out:
         _emit_manifest(manifest)
         return
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
+    if manifest.kind is not None:
+        _say(f"  kind:     {manifest.kind}, {_KIND_WORDS[manifest.kind]}")
     if manifest.label:
         _say(f"  label:    {manifest.label}")
     _say(f"  install:  {manifest.install_root}")
@@ -6174,8 +6244,8 @@ def _lua_diff(
 @snap_app.command("diff", short_help="What changed between two snapshots.")
 @_handled
 def snap_diff(
-    a: Annotated[str, typer.Argument(metavar="A", help="Older snapshot id or prefix.")],
-    b: Annotated[str, typer.Argument(metavar="B", help="Newer snapshot id or prefix.")],
+    a: Annotated[str, typer.Argument(metavar="A", help="The older snapshot. " + _REF_HELP)],
+    b: Annotated[str, typer.Argument(metavar="B", help="The newer snapshot. " + _REF_HELP)],
     json_out: JsonOpt = False,
 ) -> None:
     """Files added, removed and changed from A to B; for SavedVariables that
@@ -6184,7 +6254,7 @@ def snap_diff(
     \f
     JSON: DiffReport."""
     store = snapshot.SnapshotStore()
-    diff = store.diff(a, b)
+    diff = store.diff(_resolve_ref(store, a), _resolve_ref(store, b))
     a_version = store.show(diff.a).flavor_version
     b_version = store.show(diff.b).flavor_version
     changed = []
@@ -6741,7 +6811,7 @@ def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -
 )
 @_handled
 def snap_restore(
-    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help="Id or unique prefix.")],
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
     paths: Annotated[
         list[str] | None,
         typer.Option(
@@ -6777,7 +6847,7 @@ def snap_restore(
     \f
     JSON: RestoreReport."""
     store = snapshot.SnapshotStore()
-    manifest = store.show(snapshot_id)
+    manifest = store.show(_resolve_ref(store, snapshot_id))
     inst, _ = _discover(root)
     if manifest.flavor_folder is None:
         raise CliError(f"snapshot {manifest.id} names no flavor folder; it cannot be restored")
@@ -7904,7 +7974,7 @@ _CHAR_LIST_NOTES = [
     "The addon records no time; the time shown is the file's modification time: the "
     "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
     "or sv merge, or a copy).",
-    "One row per character folder: a renamed or transferred character (and a deleted one "
+    "One row per folder: a renamed or transferred character (and a deleted one "
     "[verify]) keeps its old folder and last save here.",
 ]
 
@@ -7919,7 +7989,59 @@ def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+_INSTALL_ADVICE = (
+    "install the lab-addon with `wowlab addon install lab`, log in on the character, then log "
+    "out or /reload"
+)
+# The one note `char list` adds when a row shows a folder's counts.
+_BARE_NOTE = (
+    "Counts are what each file held at the client's last exit; with settings sync on, the "
+    "server may replace these files at login."
+)
+# How a `<Realm>/<First>/` folder with a digits-shape twin reads (the shapes
+# decide it, never the flavor; the contents claim is the file map's).
+_FIRST_NAME_FOLDER = (
+    "a <Realm>/<First> folder: on Forever it holds only AddOns.txt [verify], and the "
+    "lab-addon writes nothing here"
+)
+
+
+def _first_name_folder(e: labaddon.CharacterFile) -> bool:
+    return e.no_lab_record is not None and e.no_lab_record.first_name_folder
+
+
+def _shows_counts(facts: labaddon.FolderFacts) -> bool:
+    """Whether a folder's row shows its counts: always for a character
+    folder, and for a `<Realm>/<First>/` folder when it holds anything
+    counted."""
+    nothing = (f"no {labaddon.CONFIG_FILE_NAME}", f"no {labaddon.MACROS_FILE_NAME}", 0)
+    held = (facts.cvars_absent, facts.macros_absent, facts.saved_variables)
+    return not facts.first_name_folder or held != nothing
+
+
+def _bare_words(facts: labaddon.FolderFacts) -> str:
+    """What a folder without a `WowLab.lua` holds, for its `char list` row:
+    wowlab's own words in player words (`_player_copy`), the twin folders'
+    names (read from the install) put in as they are."""
+    cvars = facts.cvars_absent if facts.cvars is None else _plural(facts.cvars, "CVar")
+    macros = facts.macros_absent if facts.macros is None else _plural(facts.macros, "macro")
+    counts = _player_copy(
+        f"{cvars}, {macros}, {_plural(facts.saved_variables, 'SavedVariables file')}"
+    )
+    if not facts.first_name_folder:
+        words = counts
+    else:
+        words = _player_copy(_FIRST_NAME_FOLDER)
+        if _shows_counts(facts):
+            words += f"; it holds {counts}"
+    if facts.twins:
+        words += "; same first name as " + ", ".join(facts.twins)
+    return words
+
+
 def _row_words(e: labaddon.CharacterFile) -> str:
+    if e.no_lab_record is not None:
+        return _bare_words(e.no_lab_record)
     if e.summary is not None:
         return e.summary
     if e.place in _BLOCKED_PLACE:
@@ -7965,9 +8087,11 @@ def char_list(
         ),
     ] = False,
 ) -> None:
-    """Every character folder with a WowLab.lua, in every account unless
-    --account names one: when the file was last written, and its schema, the
-    client that saved it and the spec, or why it could not be read. A file or
+    """Every character folder, in every account unless --account names one.
+    For a folder with a WowLab.lua: when the file was last written, and its
+    schema, the client that saved it and the spec, or why it could not be
+    read. For one without: "no lab record", and how many CVars, macros and
+    SavedVariables files its other files hold. A file or
     place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed.
 
@@ -7999,51 +8123,67 @@ def char_list(
             account=acct_folder,
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
+            every_folder=True,
         )
         entries, unseen = found.characters, found.not_looked_at
+    # Rows of character folders, apart from the `<Realm>/<First>/` folders.
+    folders = [e for e in entries if not _first_name_folder(e)]
+    bare_rows = [e for e in folders if e.no_lab_record is not None]
+    counted = any(e.no_lab_record is not None and _shows_counts(e.no_lab_record) for e in entries)
+    notes = _CHAR_LIST_NOTES + ([_BARE_NOTE] if counted else [])
     report = CharListReport(
         flavor_folder=chosen.folder,
         account=acct_folder,
         characters=entries,
         not_looked_at=unseen,
-        notes=_CHAR_LIST_NOTES,
+        notes=notes,
     )
     if json_out:
         _emit(report)
     elif not entries:
         where = f"account {acct_folder}" if acct_folder is not None else "any account"
         if unseen:
-            _say(
-                f"No character folder in {where} with a {labaddon.LAB_FILE_NAME} was found, "
-                f"but {_unseen_words(len(unseen))}."
-            )
+            text = f"No character folder was found in {where}, but {_unseen_words(len(unseen))}."
         else:
-            _say(
-                f"No character folder in {where} has a {labaddon.LAB_FILE_NAME} (install the "
-                "lab-addon with `wowlab addon install lab`, log in on the character, then log "
-                "out or /reload)."
-            )
+            text = f"No character folder was found in {where} ({_INSTALL_ADVICE})."
+        _say(_player_copy(text, keep=[acct_folder]))
     else:
         names = {e.character: _safe(e.character) for e in entries}
         width = max(len(name) for name in names.values())
         for folder in dict.fromkeys(e.account for e in entries):
             mine = [e for e in entries if e.account == folder]
+            twins = sum(1 for e in mine if _first_name_folder(e))
             blocked = sum(1 for e in mine if e.place in _BLOCKED_PLACE)
+            bare = sum(1 for e in mine if e.no_lab_record is not None) - twins
+            total = len(mine) - twins
             heading = (
-                f"Account {folder}: {_plural(len(mine) - blocked, 'character folder')} with a "
-                f"{labaddon.LAB_FILE_NAME}"
+                f": {_plural(total, 'character folder')}: "
+                f"{total - blocked - bare} with a {labaddon.LAB_FILE_NAME}"
             )
+            if bare:
+                heading += f", {bare} without"
             if blocked:
                 heading += f", {blocked} that wowlab could not look inside"
-            _say(heading)
+            if twins:
+                heading += f"; and {_plural(twins, '<Realm>/<First> folder')}"
+            # The account folder's name is the install's; the rest is wowlab's.
+            _say(f"Account {folder}" + _player_copy(heading))
             for e in mine:
-                when = (
-                    "time unknown" if e.mtime_ns is None else f"written {_local_time(e.mtime_ns)}"
-                )
+                if e.no_lab_record is not None:
+                    when = "no lab record"
+                elif e.mtime_ns is None:
+                    when = "time unknown"
+                else:
+                    when = f"written {_local_time(e.mtime_ns)}"
                 _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+        # No install advice while a place went unseen: it may hold the files.
+        if bare_rows and len(bare_rows) == len(folders) and not unseen:
+            _say_note(
+                f"No character folder here has a {labaddon.LAB_FILE_NAME} ({_INSTALL_ADVICE})."
+            )
         if unseen:
             _say(f"{_unseen_words(len(unseen))}.")
-        for note in _CHAR_LIST_NOTES:
+        for note in notes:
             _say_note(note)
     for e in entries:
         if e.error is None:

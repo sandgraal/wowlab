@@ -35,7 +35,7 @@ import stat
 import sys
 import uuid
 import zlib
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, BinaryIO, Literal, NamedTuple
@@ -66,13 +66,16 @@ __all__ = [
     "SnapshotDiff",
     "SnapshotError",
     "SnapshotExistsError",
+    "SnapshotKind",
     "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
     "StoreLocationError",
     "VerifyReport",
     "default_store_path",
+    "kind_of",
     "manifest_bytes",
+    "resolve_reference",
     "tree_fingerprint",
 ]
 
@@ -474,6 +477,13 @@ class Entry(_Frozen):
         return value
 
 
+SnapshotKind = Literal["user", "first-run", "profile", "pre-write"]
+"""Who took a snapshot and why (M16-09, `docs/LAB_PLAN.md` §18.1 item 3):
+`user` (`snap create`, or a library caller that does not say), `first-run`
+(doctor's first run), `profile` (`profiles.save`) or `pre-write` (the copy
+the write gate takes before every change)."""
+
+
 # The `Manifest.__dict__` key of its path index (`Manifest.entry`).
 _ENTRY_INDEX = "_wowlab_entry_index"
 
@@ -500,6 +510,12 @@ class Manifest(_Frozen):
     file, so a manifest without a purpose is byte-for-byte what it was
     before the field existed. Like the label, it is not in the fingerprint."""
     entries: tuple[Entry, ...]
+    kind: SnapshotKind | None = None
+    """Who took the snapshot (M16-09). Every manifest `create` writes carries
+    it; one written before M16-09 has none (`None`, left out of the file so
+    a label rewrite keeps it byte for byte as it was). Read it through
+    `kind_of`, which says what such a manifest is. Like the label, it is not
+    in the fingerprint."""
 
     @model_validator(mode="before")
     @classmethod
@@ -620,6 +636,21 @@ def default_store_path() -> Path:
     return platformdirs.user_data_path("wowlab") / "store"
 
 
+def kind_of(manifest: Manifest, pre_write_ids: Collection[str] = ()) -> SnapshotKind:
+    """What `manifest` is (M16-09): the kind it records, else, for one
+    written before kinds existed, `pre-write` when its id is the snapshot a
+    journal record names (`pre_write_ids`), `profile` when it carries
+    `purpose="profile"`, and `user` otherwise. A label that merely reads like
+    the write gate's own says nothing: only the journal does."""
+    if manifest.kind is not None:
+        return manifest.kind
+    if manifest.id in pre_write_ids:
+        return "pre-write"
+    if manifest.purpose == "profile":
+        return "profile"
+    return "user"
+
+
 def manifest_bytes(manifest: Manifest) -> bytes:
     """The one canonical encoding: sorted keys, fixed separators, ASCII, LF.
 
@@ -629,6 +660,8 @@ def manifest_bytes(manifest: Manifest) -> bytes:
     data = manifest.model_dump()
     if data.get("purpose") is None:
         data.pop("purpose", None)  # absent, as in every manifest written before M11-08
+    if data.get("kind") is None:
+        data.pop("kind", None)  # absent, as in every manifest written before M16-09
     text = json.dumps(
         _map_strings(data, _escape_text),
         sort_keys=True,
@@ -825,6 +858,7 @@ class SnapshotStore:
         flavor_version: str | None = None,
         client_running: bool | None = None,
         purpose: Literal["profile"] | None = None,
+        kind: SnapshotKind | None = None,
         now: datetime | None = None,
     ) -> Manifest:
         """Capture `subtrees` of `root` and return the new manifest.
@@ -869,6 +903,9 @@ class SnapshotStore:
         `purpose` is recorded in the manifest (`"profile"` from
         `profiles.save`, M11-08); a manifest with none omits the field.
 
+        `kind` is always recorded (M16-09). Left `None`, it is `"profile"`
+        with `purpose="profile"` and `"user"` otherwise.
+
         Long paths on Windows (M13-15): every path past the plain limit is
         reached by its extended-length spelling (`longpath`), whatever
         `LongPathsEnabled` says. A root given relative is made absolute
@@ -912,6 +949,9 @@ class SnapshotStore:
                 "excluded": tuple(excluded),
                 "client_running": client_running,
                 "purpose": purpose,
+                "kind": kind
+                if kind is not None
+                else ("profile" if purpose == "profile" else "user"),
             }
             # Hold the caller's values to the model before anything is stored, so
             # a bad argument fails with a typed error and an untouched store.
@@ -2239,3 +2279,54 @@ class SnapshotStore:
             and not _is_link_stat(now)
             and _file_identity(now) == _file_identity(expect)
         )
+
+
+def resolve_reference(
+    store: SnapshotStore, reference: str, pre_write_ids: Collection[str] = ()
+) -> str:
+    """The full id in `store` that a player's reference names (M16-09):
+    `latest` (the newest snapshot of any kind), `latest-user` (the newest
+    `user` snapshot), `~N` (the snapshot N before the newest, so `~0` is
+    `latest`), an exact id, or the start or end of exactly one id (prefix
+    and suffix matches are pooled, so one that starts an id and ends
+    another is ambiguous).
+    `pre_write_ids` are the snapshots the journal names, for manifests
+    written before kinds existed (`kind_of`). Reads only. A damaged manifest
+    is an error for `latest`, `latest-user` and `~N`, which must see every
+    snapshot to say which is newest."""
+    if reference in ("latest", "latest-user") or reference.startswith("~"):
+        ordered = sorted(store.list(), key=lambda m: (m.created_at, m.id))
+        if reference == "latest-user":
+            ordered = [m for m in ordered if kind_of(m, pre_write_ids) == "user"]
+            if not ordered:
+                raise SnapshotNotFoundError("no snapshot you took yourself is in the store")
+            return ordered[-1].id
+        back = 0
+        if reference.startswith("~"):
+            digits = reference[1:]
+            if not (digits.isascii() and digits.isdigit()) or len(digits) > 9:
+                raise SnapshotNotFoundError(
+                    f"not a snapshot reference: {reference!r} (~N takes a number, as ~1)"
+                )
+            back = int(digits)
+        if back >= len(ordered):
+            raise SnapshotNotFoundError(
+                f"{reference!r} names no snapshot: the store holds {len(ordered)}"
+            )
+        return ordered[-1 - back].id
+    if _ID_RE.match(reference) and store._manifest_path(reference).is_file():
+        return reference
+    if not _ID_PREFIX_RE.match(reference):
+        raise SnapshotNotFoundError(f"not a snapshot id or prefix: {reference!r}")
+    # Not an exact id: the start or the end of one. Prefix and suffix matches
+    # are pooled, so a reference that starts one id and ends another is
+    # ambiguous, never resolved to whichever is tried first.
+    names = [p.name.removesuffix(_MANIFEST_SUFFIX) for p in store._manifest_files()]
+    matches = sorted({n for n in names if n.startswith(reference) or n.endswith(reference)})
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise SnapshotNotFoundError(f"no snapshot matches {reference!r}")
+    raise SnapshotNotFoundError(
+        f"{reference!r} is ambiguous: {', '.join(matches[:5])}" + (" …" if len(matches) > 5 else "")
+    )

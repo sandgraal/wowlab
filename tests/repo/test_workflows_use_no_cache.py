@@ -53,6 +53,7 @@ PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 SETUP_UV = "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2"  # v10.3.3
 ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
+ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
 
 # What each action does with the Actions cache at the pinned commit, as read
 # from its action.yml on 2026-10-18 (M13-42):
@@ -70,6 +71,9 @@ TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 # nests before changing the commit here.
 # upload-artifact and download-artifact were re-read at their current pins
 # on 2026-10-19 (#309): the same as above.
+# attest-build-provenance (v4.2.2, M16-43, read 2026-11-04): a composite
+# action with one step, actions/attest@508db95 (v4.2.1), a node24 action
+# whose action.yml has no cache input and no nested action: nothing.
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
     ACTIONLINT: "cache",
@@ -80,7 +84,8 @@ CACHE_OFF: Mapping[str, str] = {
 # does an entry the workflow no longer uses.
 ALLOWED: Mapping[str, frozenset[str]] = {
     "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, ACTIONLINT, TRIVY}),
-    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
+    "latest-release.yml": frozenset({CHECKOUT, SETUP_UV}),
+    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST}),
     "windows.yml": frozenset({CHECKOUT, SETUP_UV}),
 }
 
@@ -227,7 +232,7 @@ def test_a_cache_step_is_caught(uses: str) -> None:
 
 @pytest.mark.parametrize("value", ["<omitted>", True, "true", "auto", "${{ true }}"])
 def test_setup_uv_without_enable_cache_false_is_caught(value: object) -> None:
-    for name in ("windows.yml", "ci.yml", "release.yml"):
+    for name in ("windows.yml", "ci.yml", "release.yml", "latest-release.yml"):
         workflow = _mutated(name)
         step = _first_step(workflow, SETUP_UV)
         if value == "<omitted>":

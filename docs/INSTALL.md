@@ -56,6 +56,55 @@ compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
 the owner create a `v*` tag (`docs/handoffs/M13-03.md`).
 
+The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
+that hash. The v0.1.0 line's hash was taken from that release's
+`SHA256SUMS`. From the next release on, the release workflow hashes the
+wheel it has just built (the same file that goes into `SHA256SUMS` and onto
+the release page) and writes the install line, hash included, into the
+release notes, and the README's line is copied from there. `uv tool install`
+does not check the hash itself (uv 0.12 and 0.13 install the wheel even when
+it is wrong), and checking a file you downloaded says nothing about the copy
+`uv tool install <address>` downloads again. So the line tells you which
+file it means; it does not prove you got that file.
+
+**The checked install, in three steps.** To install exactly the file you
+checked:
+
+1. Download the wheel, the sdist and `SHA256SUMS` from the release page into
+   one empty folder, and open a terminal there.
+2. Check them. Run `sha256sum -c SHA256SUMS` (macOS:
+   `shasum -a 256 -c SHA256SUMS`; Windows: `Get-FileHash` as above); each
+   file has to print `OK`. Then, for a release after v0.1.0, check where the
+   wheel was built (next paragraph):
+
+   ```bash
+   gh attestation verify wowlab_core-<version>-py3-none-any.whl \
+     --repo sandgraal/wowlab \
+     --signer-workflow sandgraal/wowlab/.github/workflows/release.yml \
+     --source-ref refs/tags/v<version>
+   ```
+
+3. Install the file you checked, not the address:
+
+   ```bash
+   uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl
+   ```
+
+Replace `<version>` with the release's version, for example `0.2.0`.
+
+**Check where a release was built.** From the first release after v0.1.0,
+the wheel and the sdist each carry a signed build-provenance attestation:
+a record, signed through Sigstore and kept on GitHub, that names the
+repository, the workflow, the tag and the commit that built the file. The
+command in step 2 needs the [GitHub CLI](https://cli.github.com/),
+installed and signed in. `--signer-workflow` requires the signature to come
+from wowlab's release workflow and `--source-ref` requires the build to be
+of that release's tag; with them the command prints
+`Verification succeeded!`, or fails if the file was changed or was built
+anywhere else. (With `--repo` alone it would accept a file signed by any
+workflow in the repository.) v0.1.0 was published before attestations were
+added, so it has none: for it, `SHA256SUMS` is the check.
+
 **From source**, if you want the development version:
 
 ```bash
