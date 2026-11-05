@@ -1012,8 +1012,9 @@ def test_sv_merge_real_pair_every_printed_path_reads_back(flavor: Path) -> None:
     items = [(c["path"], c) for c in report["conflicts"]]
     items += [(a["path"], a) for a in report["absent"]]
     # M16-12 (owner decision of 2026-10-21, Q8): each differing list is one
-    # conflict, so the pair gives 12 items where M11-25T counted over 200.
-    assert len(items) >= 10
+    # conflict, so the pair gives the library's 12 conflicts less the probe,
+    # which `sv merge` keeps from the target: 11, where M11-25T counted over 200.
+    assert len(items) == 11
     seen: set[str] = set()
     for path, item in items:
         _path, steps, rest = _scan(path)

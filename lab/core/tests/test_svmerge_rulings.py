@@ -125,10 +125,12 @@ def test_take_ours_keeps_the_target_list_constructed() -> None:
     assert list(result.removed) == []
 
 
-def test_taking_a_shorter_list_lists_the_entry_it_removes_constructed() -> None:
+def test_taking_a_shorter_list_lists_it_once_at_its_path_constructed() -> None:
     result = svmerge.merge(_doc(THEIRS), _doc(OURS), take="theirs")
     assert _data(result)["BarCharDB"]["tracked"] == ["Copper Ore", "Tin Ore"]
-    assert [(r.path, r.value) for r in result.removed] == [(f"{TRACKED}[3]", '"Tin Ore"')]
+    assert [(r.path, r.value, r.entries) for r in result.removed] == [
+        (TRACKED, '{"Silver Ore", "Copper Ore", "Tin Ore"}', (3, 2))
+    ], "the list replaced, once, never one removal per index"
     out = luadata.serialize(result.document)
     assert out.count(b'"Tin Ore"') == 1 and b'"Silver Ore"' not in out
 
@@ -176,9 +178,28 @@ def test_a_list_of_tables_taken_lists_what_it_removes_inside_constructed() -> No
     ours = _crlf("DB = {", '["l"] = {', "{", '["x"] = 1,', '["y"] = 1,', "},", "},", "}")
     theirs = _crlf("DB = {", '["l"] = {', "{", '["x"] = 2,', "},", "},", "}")
     result = svmerge.merge(_doc(ours), _doc(theirs), take="theirs")
-    assert _paths(result.conflicts) == ['DB["l"]']
-    assert [(r.path, r.value) for r in result.removed] == [('DB["l"][1]["y"]', "1")]
+    assert [(c.path, c.ours, c.theirs) for c in result.conflicts] == [
+        ('DB["l"]', "list (1 entry, 1 differ)", "list (1 entry, 1 differ)")
+    ]
+    assert [(r.path, r.entries) for r in result.removed] == [('DB["l"]', (1, 1))]
     assert _data(result) == {"DB": {"l": [{"x": 2}]}}
+
+
+def test_a_list_taken_with_a_gap_holds_exactly_theirs_keys_constructed() -> None:
+    ours = _crlf("DB = {", '["l"] = {', '"a",', '"b",', '"c",', "},", '["n"] = 1,', "}")
+    theirs = _crlf("DB = {", '["l"] = {', '[1] = "a",', '[3] = "c",', "},", '["n"] = 1,', "}")
+    result = svmerge.merge(_doc(ours), _doc(theirs), take="theirs")
+    assert _data(result) == {"DB": {"l": {1: "a", 3: "c"}, "n": 1}}
+    assert [(r.path, r.entries) for r in result.removed] == [('DB["l"]', (3, 2))]
+
+
+def test_a_list_in_the_middle_of_a_table_stays_there_constructed() -> None:
+    ours = _crlf("DB = {", '["a"] = 1,', '"x",', '"y",', '["z"] = 2,', "}")
+    theirs = _crlf("DB = {", '["a"] = 1,', '"q",', '["z"] = 2,', "}")
+    result = svmerge.merge(_doc(ours), _doc(theirs), take="theirs")
+    out = luadata.serialize(result.document)
+    assert luadata.parse(out).to_python() == {"DB": {1: "q", "a": 1, "z": 2}}
+    assert out.index(b'"q"') < out.index(b'["z"]'), "where ours' list was"
 
 
 def test_a_table_replaced_by_a_scalar_lists_its_keys_as_removed_constructed() -> None:
@@ -207,6 +228,23 @@ def test_key_without_take_is_a_conflict_inside_the_subtree_constructed() -> None
         'BarCharDB["profile"]["size"]',
     ]
     assert result.unresolved
+
+
+def test_key_copies_an_empty_destination_whole_constructed() -> None:
+    # Conductor's ruling, 2026-11-05: an empty DST is treated as a missing one.
+    ours = _crlf("DB = {", '["a"] = {', '["x"] = 1,', "},", '["b"] = {', "},", "}")
+    result = svmerge.merge(_doc(ours), _doc(ours), keys=['DB.a=DB["b"]'])
+    assert _paths(result.taken) == ['DB["b"]'] and list(result.absent) == []
+    assert _data(result) == {"DB": {"a": {"x": 1}, "b": {"x": 1}}}
+
+
+def test_replace_of_a_table_holding_a_list_lists_the_list_once_constructed() -> None:
+    ours = _crlf("DB = {", '["p"] = {', '["l"] = {', '"a",', '"b",', "},", "},", "}")
+    theirs = _crlf("DB = {", '["p"] = {', '["l"] = {', '"a",', "},", "},", "}")
+    result = svmerge.merge(_doc(ours), _doc(theirs), keys=["DB.p"], replace=True)
+    assert [(r.path, r.value, r.entries) for r in result.removed] == [
+        ('DB["p"]["l"]', '{"a", "b"}', (2, 1))
+    ]
 
 
 def test_key_copies_a_destination_the_target_lacks_whole_constructed() -> None:
@@ -267,6 +305,8 @@ def _merge(*extra: str, input: str | None = None) -> Any:
 
 
 def test_cli_take_theirs_keeps_the_list_whole_constructed(bar: Path) -> None:
+    plan = _merge("--take", "theirs", input="n\n")
+    assert TRACKED in plan.output and "settings removed from the target" not in plan.output
     result = _merge("--take", "theirs", "--yes", "--json")
     assert result.exit_code == 0, result.output
     cli.SvMergeReport.model_validate_json(result.stdout)
@@ -306,7 +346,7 @@ def test_cli_replace_plan_lists_the_removed_key_before_the_prompt_constructed(
     declined = _merge("--key", "BarCharDB.profile", "--replace", input="n\n")
     assert declined.exit_code != 0
     out = declined.output
-    assert "1 key(s) removed from the target:" in out
+    assert "1 entries or settings removed from the target:" in out
     assert out.index(OUTLINE) < out.index("Write the merge?")
     assert "(was true)" in out
     assert (bar / BAR_A).read_bytes() == OURS, "declined: nothing written"
@@ -358,3 +398,18 @@ def test_cli_loader_notes_print_before_the_prompt_constructed(bar: Path) -> None
     written = _merge("--take", "theirs", input="y\n")
     assert written.exit_code == 0, written.output
     assert written.output.count("the SavedVariables loader was not checked") == 1, "not again"
+
+
+def test_cli_plan_names_a_list_replaced_once_constructed(bar: Path) -> None:
+    # The reverse direction: the source's two ores replace the target's three.
+    (bar / BAR_A).write_bytes(THEIRS)
+    (bar / BAR_B).write_bytes(OURS)
+    plan = _merge("--take", "theirs", input="n\n")
+    out = plan.output
+    line = (
+        f'    {TRACKED}  list replaced, 3 entries -> 2 (was {{"Silver Ore", "Copper Ore", '
+        '"Tin Ore"})'
+    )
+    assert line in out.split("\n"), out
+    assert f"{TRACKED}[3]" not in out, "never one removal per index"
+    assert out.index(line) < out.index("Write the merge?")

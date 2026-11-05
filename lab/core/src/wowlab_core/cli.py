@@ -4384,9 +4384,14 @@ def _print_merge(show: Callable[[str], None], report: SvMergeReport) -> None:
         how = " (copied whole: --replace)" if report.replace else ""
         show(f"  limited to --key {', '.join(report.keys)}{how}")
     if report.removed:
-        show(f"  {len(report.removed)} key(s) removed from the target:")
+        show(f"  {len(report.removed)} entries or settings removed from the target:")
         for r in report.removed:
-            show(f"    {r.path}  (was {r.value})")
+            if r.entries is not None:
+                was, now = r.entries
+                entries = f"{was} entr{'y' if was == 1 else 'ies'} -> {now}"
+                show(f"    {r.path}  list replaced, {entries} (was {r.value})")
+            else:
+                show(f"    {r.path}  (was {r.value})")
     if report.conflicts:
         how = {None: "unresolved", "ours": "kept ours", "theirs": "took theirs"}[report.take]
         show(f"  {len(report.conflicts)} conflict(s), {how}:")
@@ -4428,7 +4433,8 @@ def sv_merge(
         typer.Option(
             "--from",
             help="The source: a character folder (per-character files only) or a snapshot "
-            "id. Left out, --key SRC=DST copies within the file.",
+            "id. Left out, --key SRC=DST merges SRC into DST within the file (a missing or "
+            "empty DST is copied whole).",
         ),
     ] = None,
     base: Annotated[
@@ -4444,8 +4450,10 @@ def sv_merge(
             "--key",
             help='Merge only this subtree, e.g. Var.profile or Var["some key"], spelled as sv '
             'dump prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd). '
-            "SRC=DST merges SRC into DST. Inside it the usual rules apply: keys the target has "
-            "are kept; a subtree the target lacks is copied. Repeatable.",
+            "SRC=DST merges SRC into DST. Inside it the usual rules apply: differing keys are "
+            "conflicts, and keys on one side only are listed and left as they are. If the "
+            "target has no DST at all (or an empty one), the source's subtree is copied whole. "
+            "--replace copies it whole and removes what the target alone had. Repeatable.",
         ),
     ] = None,
     replace: Annotated[
@@ -4492,14 +4500,15 @@ def sv_merge(
     Two-way (--from a character or a snapshot): every key whose values differ is a
     conflict. Three-way (--from SNAPSHOT --base SNAPSHOT): a change on one side is
     taken, the same change on both once, different changes are conflicts. A list
-    (the entries 1, 2, 3, ...) is one value, so --take theirs takes the whole list.
-    Conflicts are listed and nothing is written unless --take resolves them; exit 1.
-    A key on one side only is listed as absent and never deleted. The plan lists
-    every key the merge removes: list entries past the end of the list it takes, and
-    with --replace the keys the copied subtree lacks. An account-wide file is shared
-    by every character, so merging it from another character is refused (exit 2);
-    use --from SNAPSHOT, or --key SRC=DST to merge between the per-character keys an
-    addon keeps inside it. Before writing, the --into character's WowLab.lua
+    (the entries 1, 2, 3, ...) is one value, so --take theirs takes the whole list;
+    to merge one entry, name it with --key Var.list[n]. Conflicts are listed and
+    nothing is written unless --take resolves them; exit 1. A key outside a list
+    that is on one side only is listed as absent and never deleted. The plan lists
+    everything the merge removes: list entries the list it takes drops or changes,
+    keys under a table that the source's value replaces, and the keys --replace
+    drops. An account-wide file is shared by every character, so merging it from
+    another character is refused (exit 2); use --from SNAPSHOT, or --key SRC=DST to
+    merge between the per-character keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
     is checked for a SavedVariables loader failure (exit 3).
 
     \f

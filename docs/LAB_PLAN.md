@@ -2867,34 +2867,47 @@ same change.
 - **An array part is one value.** The keys 1..n of a table, where n is the
   largest border on any side (ours, theirs, base: the keys 1..n all
   present, whether written positionally or as `[k] =`), are compared as
-  one list, by the rules a scalar has. Two-way, a list that differs is one
-  conflict at the table's path; three-way, a list changed on one side only
-  is that side's, and changed differently on both is one conflict.
-  `--take theirs` takes the whole list: ours' keys 1..n become theirs',
-  entries past the end of theirs are removed, and nothing is merged index
-  by index. This supersedes "positional entries are keyed by their index"
-  for conflicts; paths still spell positional entries `[n]`. The other keys
-  of a table are merged key by key as before. On the M11-03 pair the
-  conflicts are now the lists that differ and the leaves outside them, and
-  the class tree's `nodes` (52 against 54 entries) is one conflict, so
+  one list, by the rules a scalar has. Keys inside list entries are part
+  of the list; to merge one entry, name it with `--key …[n]`. Two-way, a
+  list that differs is one conflict at the table's path; three-way, a list
+  changed on one side only is that side's, and changed differently on both
+  is one conflict. Two lists that differ never print the same text: when
+  their counts match, the conflict says how many entries differ
+  (`list (9 entries, 3 differ)`). `--take theirs` takes the whole list:
+  the table then holds exactly theirs' keys 1..n, nothing is merged index
+  by index, and a source entry after a gap inside 1..n is written as
+  `[k] =`, never renumbered. Keys past every side's border (a sparse
+  source's entries after a gap that no side's list reaches) are merged as
+  keys. This supersedes "positional entries are keyed by their index" for
+  conflicts; paths still spell positional entries `[n]`. The other keys of
+  a table are merged key by key as before. On the M11-03 pair the
+  conflicts are now the lists that differ and the leaves outside them (12
+  in all); the class tree's 52 against 54 nodes sit inside the one-entry
+  list at `…["class"]["config"]["trees"]`, which is one conflict, so
   `nodes[53]` and `[54]` are no longer listed as absent.
 - **`--key X` merges inside `X`.** Two-way, `--key X` (and `--key
   SRC=DST`) runs the normal two-way merge inside the subtree: differing
   leaves and lists are conflicts, a key on one side only is absent and
-  kept. A destination the target does not hold at all is copied whole,
-  since that removes and overrides nothing (conductor's reading, so a
-  per-character key copied into an account file still works). Three-way
-  is unchanged.
+  kept. A destination the target does not hold at all, or holds as an
+  empty table `{}`, is copied whole, since that removes and overrides
+  nothing (conductor's ruling, 2026-11-05; so a per-character key copied
+  into an account file still works). Three-way is unchanged.
 - **`--key X --replace`** is the old wholesale copy: theirs' subtree is
   placed whole. `--replace` needs a `--key` and takes no `--base` (exit 2
   for either). The library takes it as `merge(…, replace=True)`.
 - **Every removal is listed.** `MergeResult.removed` and the report's
-  `removed` (with `path` and the target's `value`) list every key the
-  merge removes from the target: entries past the end of a list taken from
-  theirs, keys under a table that theirs' value replaces, and keys a
-  `--replace` copy lacks. Each is listed at the highest key that goes; the
-  keys under it go with it. The plan prints them before the prompt. The
-  report also gains `replace`. Both fields are additive to `--json`.
+  `removed` (with `path`, the target's `value`, and `entries`) list what
+  the merge removes from the target: a list taken from theirs that drops
+  or changes any of ours' entries, listed once at the list's path with
+  `entries` holding ours' and theirs' counts (the plan prints
+  `BarCharDB["tracked"]  list replaced, 3 entries -> 2 (was {…})`;
+  appending to a list removes nothing); keys under a table that theirs'
+  value replaces; and keys a `--replace` copy lacks. A key is listed at
+  the highest key that goes; the keys under it go with it. A key outside a
+  list that is on one side only is never deleted. The plan prints them
+  before the prompt, under "N entries or settings removed from the
+  target". The report also gains `replace`. Both fields are additive to
+  `--json`.
 - **The notes print before the prompt.** The loader check's notes, and the
   others the run collected, print with the plan before `Write the merge?
   [y/N]`, and are not printed again after it.

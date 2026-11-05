@@ -20,10 +20,12 @@ Rules, by key path:
   (keys 1..n all present), are compared as one list. A list that differs
   is one conflict (or one taken change, three-way) at the table's path,
   never merged index by index; taking theirs makes ours' keys 1..n
-  theirs', so an entry past the end of theirs is removed.
-- Every key the merge removes from ours is listed in `removed`: an entry
-  past the end of a taken list, a key under a table that theirs' value
-  replaces, and a key a `replace` copy does not hold.
+  exactly theirs' (an entry after a gap in theirs is written as `[k] =`,
+  never renumbered). Keys past every side's border are merged as keys.
+- Everything the merge removes from ours is listed in `removed`: a taken
+  list that drops or changes any of ours' entries (once, at the list's
+  path), a key under a table that theirs' value replaces, and a key a
+  `replace` copy does not hold.
 - Two-way (no `base`): a key whose values differ is a conflict. A key on one
   side only is `absent`, with the side it is missing from, and is neither
   added to ours nor deleted from it.
@@ -40,7 +42,8 @@ Rules, by key path:
   merged into `DST` in ours by the rules above, inside the named subtree
   only, and nothing outside it is taken or listed (M16-12; a merge within
   one file is `merge(doc, doc, keys=["SRC=DST"])`). Two-way, a `DST` ours
-  does not hold at all is theirs' subtree, whole. `replace=True` (two-way
+  does not hold at all, or holds as an empty table, is theirs' subtree,
+  whole. `replace=True` (two-way
   only) copies each subtree whole instead, as `--key X --replace`.
   A `DST` whose parent tables ours does not have is reported `absent`; one
   whose parent is not a table is refused (`MergeError`).
@@ -159,14 +162,16 @@ class Absent(_Frozen):
 
 
 class Removed(_Frozen):
-    """A key the merge removes from the target (M16-12): an entry past the
-    end of a list taken from theirs, a key under a table that theirs'
-    value replaces, or a key a `replace` copy does not hold. Listed at the
-    highest key that goes, with ours' value as `wowlab sv dump` shows it;
-    the keys under it go with it."""
+    """What the merge removes from the target (M16-12): a list taken from
+    theirs that drops or changes any of ours' entries (once, at the list's
+    table path, with `entries` set to ours' and theirs' entry counts), a
+    key under a table that theirs' value replaces, or a key a `replace`
+    copy does not hold. A key is listed at the highest key that goes, with
+    ours' value as `wowlab sv dump` shows it; the keys under it go with it."""
 
     path: str
     value: str
+    entries: tuple[int, int] | None = None  # a list replaced: (ours', theirs')
 
 
 class MergeResult(BaseModel):
@@ -601,6 +606,10 @@ def _same_list(a: Sequence[LuaValue | None], b: Sequence[LuaValue | None]) -> bo
     )
 
 
+def _count(values: Sequence[LuaValue | None]) -> int:
+    return sum(v is not None for v in values)
+
+
 def _border(keys: _Keys) -> int:
     """The largest n with the keys 1..n all present: the table's array
     part, as Lua's length operator sees a table without holes."""
@@ -800,12 +809,22 @@ class _Merger:
     def lost(self, ours: LuaValue, new: LuaValue, path: str) -> None:
         """List what replacing `ours` with `new` at `path` removes: each key
         of ours' table that `new` does not hold (the highest such key; the
-        keys under it go with it), and so on down the keys both hold."""
+        keys under it go with it), and so on down the keys both hold. Ours'
+        array part is one value here too: listed once, at `path`, when the
+        new value drops or changes any of its entries."""
         if not isinstance(ours, LuaTable):
             return
         o = _Keys(ours)
         n = _Keys(new) if isinstance(new, LuaTable) else None
+        span = max(_border(o), 0 if n is None else _border(n))
+        ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
+        self.list_lost(
+            path, [o.value(k) for k in ids], [None if n is None else n.value(k) for k in ids]
+        )
+        listed = set(ids)
         for index in o.order():
+            if o.ids[index] in listed:
+                continue
             value = ours.entries[index].value
             here = path + o.spelled(index)
             kept = None if n is None else n.value(o.ids[index])
@@ -813,6 +832,29 @@ class _Merger:
                 self.drop(here, value)
             else:
                 self.lost(value, kept, here)
+
+    def list_lost(
+        self, path: str, mine: Sequence[LuaValue | None], yours: Sequence[LuaValue | None]
+    ) -> None:
+        """Ours' list `mine` replaced by `yours`: one removal at the list's
+        `path` when an entry of ours is not in theirs' list (each of theirs'
+        entries matches one of ours at most). A list theirs only added to,
+        at either end or between entries, removes nothing."""
+        left = [y for y in yours if y is not None]
+        gone = False
+        for m in mine:
+            if m is None:
+                continue
+            match = next((i for i, y in enumerate(left) if _same(m, y)), None)
+            if match is None:
+                gone = True
+                break
+            del left[match]
+        if gone:
+            self._removed.setdefault(
+                path,
+                Removed(path=path, value=_show_list(mine), entries=(_count(mine), _count(yours))),
+            )
 
     def replaced(self, ours: LuaValue, theirs: LuaValue, path: str) -> LuaValue:
         """Theirs' value placed over ours' at `path`: listed as taken, and
@@ -877,16 +919,66 @@ class _Merger:
                 return True
             if _same_list(theirs, based):
                 return False
+        ours_shown, theirs_shown = _show_list(ours), _show_list(theirs)
+        if ours_shown == theirs_shown:
+            # Two lists that differ never read the same (lists of tables, or
+            # long ones): say how many entries differ.
+            differ = sum(not _same_list([x], [y]) for x, y in zip(ours, theirs, strict=True))
+            n = _count(ours)
+            ours_shown = theirs_shown = (
+                f"list ({n} entr{'y' if n == 1 else 'ies'}, {differ} differ)"
+            )
         self.conflict(
             Conflict(
                 path=path,
-                ours=_show_list(ours),
-                theirs=_show_list(theirs),
+                ours=ours_shown,
+                theirs=theirs_shown,
                 base=_show_list(based) if self.three and based is not None else None,
                 resolved=self.take,
             )
         )
         return self.take == "theirs"
+
+    def take_list(
+        self,
+        ours: LuaTable,
+        theirs: LuaTable,
+        o: _Keys,
+        t: _Keys,
+        entries: list[Entry],
+        span: int,
+        path: str,
+    ) -> tuple[list[Entry], list[Entry]]:
+        """Theirs' array part in place of ours': ours' entries with every
+        entry of the keys 1..`span` taken out (duplicates too, so none of
+        them loads), and theirs' entries for those keys written where ours'
+        list began, so the table holds exactly theirs' keys 1..`span`: an
+        entry is positional while the keys run on from 1, and `[k] =` after
+        a gap, never renumbered. Returns (entries, entries to append after
+        them: theirs' list when ours' list ended the table or was empty).
+        The list is reported once, at its path: taken, and removed when it
+        drops or changes any of ours' entries."""
+        ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
+        mine = [o.value(k) for k in ids]
+        yours = [t.value(k) for k in ids]
+        self._taken[path] = Taken(path=path, value=_show_list(yours))
+        self.list_lost(path, mine, yours)
+        listed = set(ids)
+        at = [i for i, kid in enumerate(o.ids) if kid in listed]
+        first = at[0] if at else len(entries)
+        before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
+        after = [e for i, e in enumerate(entries) if i > first and o.ids[i] not in listed]
+        written: list[Entry] = []
+        npos = 0  # every positional entry of ours is a key 1..span, so none is left
+        for kid, value in zip(ids, yours, strict=True):
+            if value is None:
+                continue
+            entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
+            npos += entry.style is KeyStyle.POSITIONAL
+            written.append(entry)
+        if after:
+            return [*before, *written, *after], []
+        return before, written
 
     def table(self, ours: LuaTable, theirs: LuaTable, base: LuaTable | None, path: str) -> LuaTable:
         o, t, b = _Keys(ours), _Keys(theirs), _keys(base)
@@ -905,36 +997,13 @@ class _Merger:
             if merged is not entry.value and merged is not None:
                 entries[index] = entry._replace(value=merged)
                 changed = True
-        dropped: set[_KeyId] = set()
-        list_added: list[tuple[_KeyId, Entry]] = []
-        if span and self.array(o, t, None if base is None else b, span, path):
-            shown = _show_list([t.value(("n", float(k))) for k in range(1, span + 1)])
-            self._taken[path] = Taken(path=path, value=shown)
-            for k in range(1, span + 1):
-                kid = ("n", float(k))
-                at = o.loaded.get(kid)
-                yours = t.value(kid)
-                if at is not None and yours is not None:
-                    mine = entries[at].value
-                    if not _same(mine, yours):
-                        self.lost(mine, yours, path + o.spelled(at))
-                        entries[at] = entries[at]._replace(value=_adopt(yours, mine))
-                        changed = True
-                elif at is not None:
-                    self.drop(path + o.spelled(at), entries[at].value)
-                    dropped.add(kid)
-                elif yours is not None:
-                    list_added.append((kid, theirs.entries[t.loaded[kid]]))
-        if dropped:
-            # Every entry of a removed key goes, so no duplicate of it loads.
-            entries = [e for e, kid in zip(entries, o.ids, strict=True) if kid not in dropped]
-            changed = True
-        added: list[Entry] = []
+        tail: list[Entry] = []
         npos = sum(e.style is KeyStyle.POSITIONAL for e in entries)
-        for kid, like in list_added:
-            entry = _new_entry(kid, like, npos, like.value)
-            npos += entry.style is KeyStyle.POSITIONAL
-            added.append(entry)
+        if span and self.array(o, t, None if base is None else b, span, path):
+            entries, tail = self.take_list(ours, theirs, o, t, entries, span, path)
+            npos = sum(e.style is KeyStyle.POSITIONAL for e in [*entries, *tail])
+            changed = True
+        added: list[Entry] = list(tail)
         for index in t.order():
             kid = t.ids[index]
             if kid in o.loaded or kid in listed:
@@ -1128,8 +1197,9 @@ class _Copy(_Change):
 
 class _Within(_Change):
     """Two-way `--key` (M16-12): the two-way rules inside the subtree. A
-    destination ours does not hold at all is theirs' subtree, whole: it
-    removes nothing and overrides nothing."""
+    destination ours does not hold at all, or holds as an empty table, is
+    theirs' subtree, whole: it removes nothing and overrides nothing
+    (conductor's ruling, 2026-11-05)."""
 
     def __init__(self, merger: _Merger, source: _Found) -> None:
         self.merger = merger
@@ -1140,9 +1210,11 @@ class _Within(_Change):
         if theirs is None:
             self.merger.missing(self.source.spelled, "theirs")
             return ours
-        if ours is None:
+        if ours is None or (isinstance(ours, LuaTable) and not ours.entries):
+            if ours is not None and _same(ours, theirs):
+                return ours
             self.merger.took(path, theirs)
-            return _adopt(theirs, None)
+            return _adopt(theirs, ours)
         return self.merger.slot(ours, theirs, None, path)
 
 

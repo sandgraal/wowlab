@@ -326,6 +326,25 @@ _FILTER = (b'["filter"] = 1,', b'["filter"] = 2,')
 _EQUIPPED = (b'["equipped"] = 3.3125,', b'["equipped"] = 3.375,')
 
 
+def _taken_lists_order(ours: bytes, theirs: bytes) -> list[str]:
+    """Ours' key order with the run of keys under each differing list (the
+    outermost ones; a list is one value, M16-12) replaced by theirs' run."""
+    conflicts = _two_way_oracle(ours, theirs)[0]
+    o_order, t_order = _key_order(ours), _key_order(theirs)
+    lists = sorted(p for p in conflicts if any(q.startswith(p + "[") for q in o_order))
+    outer = [p for p in lists if not any(p != q and p.startswith(q + "[") for q in lists)]
+    order = o_order
+    for path in outer:
+
+        def under(q: str, path: str = path) -> bool:
+            return q.startswith(path + "[")
+
+        at = next(i for i, q in enumerate(order) if under(q))
+        rest = [q for q in order[at:] if not under(q)]
+        order = order[:at] + [q for q in t_order if under(q)] + rest
+    return order
+
+
 def _take_theirs_expected(out: bytes, *, probe_from: bytes = REAL_B) -> None:
     """The M11-03 pair merged two-way with every conflict taken from theirs
     (the second character) into ours (the first). `probe_from=REAL_A`: the
@@ -338,9 +357,10 @@ def _take_theirs_expected(out: bytes, *, probe_from: bytes = REAL_B) -> None:
         "probe"
     ]
     assert luadata.parse(out).to_python() == expected
-    # Ours' keys keep ours' order; the entries a taken list adds follow its
-    # last entry (M16-12 amendment: the M11-09T grader compared equal orders).
-    assert _is_subsequence(_key_order(REAL_A), _key_order(out)), "ours' key order"
+    # Ours' key order, exactly, with each list taken whole in theirs' order
+    # where ours' list was (M16-12 amendment: the M11-09T grader compared
+    # ours' order alone, since nothing was added).
+    assert _key_order(out) == _taken_lists_order(REAL_A, REAL_B), "ours' key order"
     assert b'["equipped"] = 2.375,\r\n' in out, "theirs' number text"
     assert out.startswith(b"\r\nWowLabCharDB = {\r\n") and out.endswith(b"}\r\n")
     assert b"\t" not in out and out.count(b"\n") == out.count(b"\r\n"), "ours' layout"
