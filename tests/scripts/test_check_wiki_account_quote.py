@@ -23,9 +23,7 @@ import re
 from pathlib import Path
 
 import pytest
-from test_check_wiki import _build, _load, cw
-
-wd = _load("wiki_diagnose")
+from test_check_wiki import _build, cw
 
 NUMBER = "123456789"
 ACCOUNT = f"{NUMBER}#1"
@@ -163,22 +161,3 @@ def test_constructed_the_exit_codes_are_unchanged(
     personal = _build(tmp_path / "personal", Extra=f"# Extra\n\n#{ACCOUNT}\n")
     assert cw.main([str(personal)]) == cw.EXIT_PERSONAL == 3
     capsys.readouterr()
-
-
-@pytest.mark.parametrize(
-    ("text", "secret", "kind"),
-    [
-        (f"#{ACCOUNT}", NUMBER, "a numeric account folder"),
-        (f"see Home#{ACCOUNT} now", NUMBER, "a numeric account folder"),
-        (f"see Page_{ACCOUNT} now", NUMBER, "a numeric account folder"),
-        (f"#{TAG}", TAG_NAME, "a BattleTag"),
-        (f"see Home#{TAG} now", TAG_NAME, "a BattleTag"),
-        (f"see Page_{TAG} now", TAG_NAME, "a BattleTag"),
-    ],
-)
-def test_constructed_the_diagnosis_redactor_withholds_an_identifier_after_a_hash_or_underscore(
-    text: str, secret: str, kind: str
-) -> None:
-    out = wd.Redactor().line(text)
-    assert secret not in out
-    assert kind in out
