@@ -149,6 +149,12 @@ SUBTREE_SCOPE_NOTE = (
     "An explicit subtree: files added anywhere under it since the save are deleted, "
     "including every file in a character folder created under it since."
 )
+INTO_SCOPE_NOTE = (
+    "Applied to another flavor folder: under the profile's folders, files that are in the "
+    "target folder but not in the profile are deleted. Per-character settings go only to the "
+    "character folder of the same realm and character name; a character the target has under "
+    "another realm or name gets nothing from them."
+)
 BEHIND_LINK_REASON = (
     "it sits behind a link (a folder on its path is a symlink or junction); wowlab never "
     "reads or writes through one"
@@ -606,7 +612,8 @@ class ApplyPlan(_Frozen):
     plan: tuple[guard.PlanItem, ...]
     """What the gate will change, in order: writes, then deletes."""
     added: tuple[str, ...]
-    """The deletes in `plan`: files added under the profile's subtrees since the save."""
+    """The deletes in `plan`: files under the profile's subtrees that it does not hold
+    (added since the save; with a target named, files of the target folder)."""
     skipped: tuple[SkippedPath, ...]
     left: tuple[LeftPath, ...]
     cache_files: tuple[CacheFile, ...]
@@ -932,6 +939,26 @@ def mapped_view(
     )
 
 
+def unmapped_folders(manifest: Manifest, accounts: Mapping[str, str]) -> tuple[str, ...]:
+    """The folders under the snapshot's `WTF/Account/` that a restore into
+    another target does not map (they are no account folder: an old account
+    name with no character folder in it, say) and so puts back under their own
+    name. The client's own `SavedVariables/` is left out."""
+    source = manifest.flavor_folder
+    if source is None:
+        return ()
+    found: set[str] = set()
+    for entry in manifest.entries:
+        if not entry.path.startswith(source + "/"):
+            continue
+        parts = entry.path.removeprefix(source + "/").split("/")
+        if len(parts) >= 4 and parts[0] == "WTF" and parts[1].casefold() == "account":
+            name = parts[2]
+            if name not in accounts and name.casefold() != "savedvariables":
+                found.add(name)
+    return tuple(sorted(found))
+
+
 class _Restorer(Protocol):
     def restore(
         self,
@@ -1032,10 +1059,15 @@ def plan_apply(
         else:
             to_delete.append(frel)
     if len(to_delete) > MAX_DELETES:
+        what = (
+            "files added since it was saved"
+            if into is None
+            else f"files that are in {flavor.folder} but not in the profile"
+        )
         raise ProfileError(
-            f"applying profile {profile.name} would delete {len(to_delete)} files added since "
-            f"it was saved, more than {MAX_DELETES}; nothing was changed. For a whole area use "
-            "`wowlab snap restore`, or save a narrower profile"
+            f"applying profile {profile.name} would delete {len(to_delete)} {what}, more than "
+            f"{MAX_DELETES}; nothing was changed. For a whole area use `wowlab snap restore`, "
+            "or save a narrower profile"
         )
     with guard.transaction(
         flavor, label=f"profile apply {profile.name}", store=store.path, dry_run=True
@@ -1079,7 +1111,10 @@ def plan_apply(
             )
         else:
             kept.append(item)
-    notes = [SUBTREE_SCOPE_NOTE if not profile.presets else PRESET_SCOPE_NOTE]
+    if into is not None:
+        notes = [INTO_SCOPE_NOTE]
+    else:
+        notes = [SUBTREE_SCOPE_NOTE if not profile.presets else PRESET_SCOPE_NOTE]
     if any(_base_name(i.path) == _MACROS_FILE for i in kept):
         notes.append(MACROS_NOTE)
     return ApplyPlan(

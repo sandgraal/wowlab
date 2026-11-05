@@ -220,3 +220,42 @@ def test_profile_apply_into_maps_a_renamed_account_folder_constructed(
     ok("profile", "apply", "keys", "--into-flavor", LAUNCH, "--yes")
     assert mapped.read_bytes() == saved
     assert not (account / ACCOUNT).exists(), "the old account name is never created"
+
+
+def test_profile_apply_into_labels_target_only_files_constructed(root: Path, flavor: Path) -> None:
+    """Applied to another folder, a file under the profile's folders that the
+    profile does not hold is the target's own, not one "added since"."""
+    sv = f"WTF/Account/{ACCOUNT}/SavedVariables"
+    ok("profile", "save", "addons", "--subtree", sv)
+    launch = root / LAUNCH
+    flavor.rename(launch)
+    extra = launch / sv / "ConstructedTargetOnly.lua"
+    extra.write_bytes(b"ConstructedTargetOnly = {}\n")
+
+    said = _plain(ok("profile", "apply", "addons", "--into-flavor", LAUNCH, "--dry-run").stdout)
+    line = next(ln for ln in said.splitlines() if "ConstructedTargetOnly.lua" in ln)
+    assert "(in the target folder, not in the profile)" in line, said
+    assert "added since" not in said, said
+    assert "Applied to another flavor folder" in said, said
+
+    ok("profile", "apply", "addons", "--into-flavor", LAUNCH, "--yes")
+    assert not extra.exists()
+
+
+def test_snap_restore_into_names_a_folder_that_is_no_account_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """A folder under WTF/Account/ that is no account folder is not mapped;
+    the plan says it goes back under its own name."""
+    legacy = flavor / "WTF" / "Account" / "LEGACYACCT"
+    legacy.mkdir()
+    (legacy / "bindings-cache.wtf").write_bytes(b"bind Q constructed-legacy\n")
+    a = _snapshot()
+    launch = root / LAUNCH
+    flavor.rename(launch)
+    _later_session(launch)
+
+    said = _plain(ok("snap", "restore", a.id, "--into-flavor", LAUNCH, "--dry-run").stdout)
+    assert "WTF/Account/LEGACYACCT/ is not taken as an account folder" in said, said
+    report = _json(cli.RestoreReport, "snap", "restore", a.id, "--into-flavor", LAUNCH, "--dry-run")
+    assert report.into is not None and report.into.unmapped == ["LEGACYACCT"]

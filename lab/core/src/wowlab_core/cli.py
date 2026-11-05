@@ -6403,6 +6403,9 @@ class IntoReport(_Out):
     from_flavor_folder: str  # the flavor folder the snapshot was taken of
     from_install_root: str  # the install root it was taken in
     accounts: list[AccountMapped]
+    # Folders under the snapshot's WTF/Account/ that are no account folder and
+    # so are not mapped: they go back under their own name. Left out when none.
+    unmapped: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 class RestoreReport(_Out):
@@ -6760,7 +6763,8 @@ IntoFlavorOpt = Annotated[
         "--into-flavor",
         metavar="FOLDER",
         help="Restore into this flavor folder of the install instead of the one the snapshot "
-        "was taken of: after the client renames a folder (beta to launch), name the new one.",
+        "was taken of. When a beta launches, the game's folder gets a new name (you do not "
+        "rename it): name the new folder here.",
     ),
 ]
 MapAccountOpt = Annotated[
@@ -6819,6 +6823,7 @@ def _into_report(manifest: snapshot.Manifest, accounts: Sequence[tuple[str, str]
         from_flavor_folder=manifest.flavor_folder or "",
         from_install_root=manifest.install_root,
         accounts=[AccountMapped(snapshot=a, target=b) for a, b in accounts],
+        unmapped=list(profiles.unmapped_folders(manifest, dict(accounts))),
     )
 
 
@@ -6830,6 +6835,11 @@ def _into_lines(into: IntoReport, chosen: install.Flavor) -> list[str]:
     ]
     lines += [
         f"  Account folder {a.snapshot} goes into account folder {a.target}." for a in into.accounts
+    ]
+    lines += [
+        f"  WTF/Account/{name}/ is not taken as an account folder (no character folder in "
+        "it), so it is not mapped: its files go back under the same name."
+        for name in into.unmapped
     ]
     return lines
 
@@ -6863,8 +6873,9 @@ def snap_restore(
             "--into-root",
             metavar="PATH",
             help="Restore into the install at PATH (the folder that holds .build.info) "
-            "instead of the one the snapshot was taken in: another machine's or a "
-            "reinstalled copy. Into the folder of the same name unless --into-flavor names one.",
+            "instead of the one the snapshot was taken in, such as a reinstall in another "
+            "folder or a second install on this machine. Into the flavor folder of the same "
+            "name unless --into-flavor names one.",
         ),
     ] = None,
     map_account: MapAccountOpt = None,
@@ -6884,9 +6895,9 @@ def snap_restore(
     Screenshots/, not even with --paths): a whole restore leaves them in the
     snapshot, counts them, and restores the rest.
 
-    After the client renames a flavor folder (beta to launch), restore into
-    the new one with --into-flavor; into another install with --into-root.
-    --paths are then spelled as `snap show` lists them.
+    When a beta launches, the game's folder gets a new name: restore into
+    the new folder with --into-flavor, or into another install folder with
+    --into-root. --paths are then spelled as `snap show` lists them.
 
     \f
     JSON: RestoreReport."""
@@ -7449,10 +7460,17 @@ def profile_delete(name: NameArg, json_out: JsonOpt = False) -> None:
 
 
 def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> None:
+    # Into another flavor folder, a file the profile does not hold was not
+    # "added since": it is the target folder's own.
+    extra = (
+        "added since the profile was saved"
+        if plan.source_flavor_path is None
+        else "in the target folder, not in the profile"
+    )
     for item in plan.plan:
         line = _plan_line(item)
         if item.after is None:
-            line += "  (added since the profile was saved)"
+            line += f"  ({extra})"
         show(line)
     if plan.skipped:
         show(
@@ -7461,7 +7479,7 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
             "addon executables):"
         )
         for sk in plan.skipped:
-            undone = "  (added since the profile was saved; not deleted)"
+            undone = f"  ({extra}; not deleted)"
             show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
     if plan.left:
         show(f"  Left alone ({len(plan.left)} path(s)):")
@@ -7492,7 +7510,8 @@ def profile_apply(
             "--into-flavor",
             metavar="FOLDER",
             help="Apply to this flavor folder of the install instead of the one the profile "
-            "was saved from: after the client renames a folder (beta to launch), name the new one.",
+            "was saved from. When a beta launches, the game's folder gets a new name (you do "
+            "not rename it): name the new folder here.",
         ),
     ] = None,
     map_account: MapAccountOpt = None,
@@ -7519,8 +7538,8 @@ def profile_apply(
     these files (the server keeps them; not yet verified on this client), so no
     profile saves or restores them.
 
-    After the client renames a flavor folder (beta to launch), apply the
-    profile to the new one with --into-flavor.
+    When a beta launches, the game's folder gets a new name: apply the
+    profile to the new folder with --into-flavor.
 
     \f
     JSON: ProfileApplyReport."""

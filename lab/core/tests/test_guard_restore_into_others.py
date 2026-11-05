@@ -203,7 +203,6 @@ def refused_automatic(
 
 
 @DRY_RUN
-@pytest.mark.xfail(strict=True, reason="M16-03 round 1: others vs target accounts")
 def test_constructed_stray_folder_matching_an_unmapped_target_account_is_refused(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dry_run: bool
 ) -> None:
@@ -211,7 +210,6 @@ def test_constructed_stray_folder_matching_an_unmapped_target_account_is_refused
 
 
 @DRY_RUN
-@pytest.mark.xfail(strict=True, reason="M16-03 round 1: others vs target accounts")
 def test_constructed_automatic_mapping_onto_the_stray_folders_name_is_refused(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dry_run: bool
 ) -> None:

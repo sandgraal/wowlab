@@ -2450,6 +2450,23 @@ def _account_mapping(
                 "snapshot holds as a folder that is no account"
             )
         mapping = given
+    # A folder the snapshot holds that is no account goes back under its own
+    # name. Where the target has an account folder of that name (compared
+    # case-folded, whatever the file system does with case), that would
+    # write into an account the mapping never named, or merge two source
+    # folders into the one the automatic mapping chose: refused.
+    target_folded = {_fold(name): name for name in target}
+    for other in sorted(others):
+        if not _not_saved_variables(other):
+            continue  # the client's own folder, never an account
+        hit = target_folded.get(_fold(other))
+        if hit is not None:
+            raise GuardError(
+                f"snapshot {manifest.id} holds {other!r} under WTF/Account/, a folder that is "
+                f"no account, and {place.flavor_dir} has the account folder {hit!r}; "
+                "restoring it under its own name would write into that account, so nothing "
+                "is restored"
+            )
     linked = {_fold(name) for name, is_link in target.items() if is_link}
     for source, dest in mapping.items():
         if _fold(dest) in linked:
