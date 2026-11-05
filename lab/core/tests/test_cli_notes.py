@@ -248,10 +248,12 @@ def test_no_absolute_path_of_wowlabs_own_files(
 
 def test_doctor_folds_six_unset_sync_lines_into_one(make: Callable[[str], Path]) -> None:
     make("macos")
-    out = run(["doctor", "--offline"]).stdout
+    out = run(["doctor", "--offline"], width=200).stdout
     synced = [line for line in out.splitlines() if line.startswith("  Server sync")]
-    assert len(synced) == 1
-    assert synced[0].startswith("  Server sync: not set in WTF/Config.wtf or WTF/Account/")
+    assert synced == [
+        "  Server sync: not set in WTF/Config.wtf or WTF/Account/90000001#6/config-cache.wtf "
+        "(the client's default, and wowlab cannot tell whether that default is on)"
+    ]
     assert "synchronizeBindings" not in out
 
 
