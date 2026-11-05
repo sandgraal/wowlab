@@ -2868,12 +2868,15 @@ same change.
   largest border on any side (ours, theirs, base: the keys 1..n all
   present, whether written positionally or as `[k] =`), are compared as
   one list, by the rules a scalar has. Keys inside list entries are part
-  of the list; to merge one entry, name it with `--key …[n]`. Two-way, a
+  of the list; to merge the entries at one position on both sides, name
+  it with `--key …[n]` (a position, not a record: positions can differ
+  between characters, so check with `sv dump` first). Two-way, a
   list that differs is one conflict at the table's path; three-way, a list
   changed on one side only is that side's, and changed differently on both
   is one conflict. Two lists that differ never print the same text: when
   their counts match, the conflict says how many entries differ
-  (`list (9 entries, 3 differ)`). `--take theirs` takes the whole list:
+  (`list (9 entries, 3 differ)`). A list counts only its real entries and
+  names a gap (`list (2 entries, a gap at [2])`). `--take theirs` takes the whole list:
   the table then holds exactly theirs' keys 1..n, nothing is merged index
   by index, and a source entry after a gap inside 1..n is written as
   `[k] =`, never renumbered. Keys past every side's border (a sparse
@@ -2889,9 +2892,10 @@ same change.
   SRC=DST`) runs the normal two-way merge inside the subtree: differing
   leaves and lists are conflicts, a key on one side only is absent and
   kept. A destination the target does not hold at all, or holds as an
-  empty table `{}`, is copied whole, since that removes and overrides
-  nothing (conductor's ruling, 2026-11-05; so a per-character key copied
-  into an account file still works). Three-way is unchanged.
+  empty table `{}`, when the source's value is a table, is copied whole,
+  since that removes and overrides nothing (conductor's ruling,
+  2026-11-05; so a per-character key copied into an account file still
+  works). A source that is not a table over `{}` is a conflict. Three-way is unchanged.
 - **`--key X --replace`** is the old wholesale copy: theirs' subtree is
   placed whole. `--replace` needs a `--key` and takes no `--base` (exit 2
   for either). The library takes it as `merge(…, replace=True)`.

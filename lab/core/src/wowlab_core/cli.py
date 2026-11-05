@@ -4433,8 +4433,8 @@ def sv_merge(
         typer.Option(
             "--from",
             help="The source: a character folder (per-character files only) or a snapshot "
-            "id. Left out, --key SRC=DST merges SRC into DST within the file (a missing or "
-            "empty DST is copied whole).",
+            "id. Left out, --key SRC=DST merges SRC into DST within the file (a missing DST, or an "
+            "empty one when the source's is a table, is copied whole).",
         ),
     ] = None,
     base: Annotated[
@@ -4452,7 +4452,8 @@ def sv_merge(
             'dump prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd). '
             "SRC=DST merges SRC into DST. Inside it the usual rules apply: differing keys are "
             "conflicts, and keys on one side only are listed and left as they are. If the "
-            "target has no DST at all (or an empty one), the source's subtree is copied whole. "
+            "target has no DST at all (or an empty one, when the source's is a table), the "
+            "source's subtree is copied whole. "
             "--replace copies it whole and removes what the target alone had. Repeatable.",
         ),
     ] = None,
@@ -4501,15 +4502,17 @@ def sv_merge(
     conflict. Three-way (--from SNAPSHOT --base SNAPSHOT): a change on one side is
     taken, the same change on both once, different changes are conflicts. A list
     (the entries 1, 2, 3, ...) is one value, so --take theirs takes the whole list;
-    to merge one entry, name it with --key Var.list[n]. Conflicts are listed and
-    nothing is written unless --take resolves them; exit 1. A key outside a list
-    that is on one side only is listed as absent and never deleted. The plan lists
-    everything the merge removes: list entries the list it takes drops or changes,
-    keys under a table that the source's value replaces, and the keys --replace
-    drops. An account-wide file is shared by every character, so merging it from
-    another character is refused (exit 2); use --from SNAPSHOT, or --key SRC=DST to
-    merge between the per-character keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
-    is checked for a SavedVariables loader failure (exit 3).
+    to merge the entries at one position on both sides, name it with --key
+    Var.list[n] (positions can differ between characters; check with sv dump
+    first). Conflicts are listed and nothing is written unless --take resolves
+    them; exit 1. A key outside a list that is on one side only is listed as absent
+    and never deleted. The plan lists everything the merge removes: list entries the
+    list it takes drops or changes, keys under a table that the source's value
+    replaces, and the keys --replace drops. An account-wide file is shared by every
+    character, so merging it from another character is refused (exit 2); use --from
+    SNAPSHOT, or --key SRC=DST to merge between the per-character keys an addon
+    keeps inside it. Before writing, the --into character's WowLab.lua is checked
+    for a SavedVariables loader failure (exit 3).
 
     \f
     JSON: SvMergeReport."""

@@ -413,3 +413,52 @@ def test_cli_plan_names_a_list_replaced_once_constructed(bar: Path) -> None:
     assert line in out.split("\n"), out
     assert f"{TRACKED}[3]" not in out, "never one removal per index"
     assert out.index(line) < out.index("Write the merge?")
+
+
+# ─── review round 2 ─────────────────────────────────────────────────────────
+
+
+def test_key_a_scalar_source_over_an_empty_destination_is_a_conflict_constructed() -> None:
+    # The empty-DST copy (conductor's ruling, 2026-11-05) holds only when the
+    # source's value is a table: `false` over `{}` is a conflict, never silent.
+    ours = _crlf("DB = {", '["p"] = {', "},", "}")
+    theirs = _crlf("DB = {", '["p"] = false,', "}")
+    result = svmerge.merge(_doc(ours), _doc(theirs), keys=["DB.p"])
+    assert [(c.path, c.ours, c.theirs) for c in result.conflicts] == [
+        ('DB["p"]', "table (0 entries)", "false")
+    ]
+    assert result.unresolved and list(result.taken) == []
+    assert luadata.serialize(result.document) == ours
+
+
+def test_a_list_with_a_gap_counts_only_its_entries_constructed() -> None:
+    ours = _crlf("DB = {", '["l"] = {', '"a",', '"b",', '"c",', '"d",', "},", "}")
+    theirs = _crlf("DB = {", '["l"] = {', '[1] = "a",', '[3] = "c",', "},", "}")
+    result = svmerge.merge(_doc(ours), _doc(theirs), take="theirs")
+    (conflict,) = result.conflicts
+    assert conflict.theirs == '{[1] = "a", [3] = "c"}'
+    assert [(r.path, r.entries) for r in result.removed] == [('DB["l"]', (4, 2))]
+    tables = _crlf("DB = {", '["l"] = {', "[1] = {", "},", "[3] = {", "},", "},", "}")
+    shown = svmerge.merge(_doc(ours), _doc(tables)).conflicts[0].theirs
+    assert shown == "list (2 entries, a gap at [2])"
+
+
+@pytest.mark.parametrize(
+    "theirs",
+    [
+        ("Silver Ore",),
+        ("Silver Ore", "Copper Ore", "Tin Ore", "Iron Ore"),
+    ],
+    ids=["shorter", "longer"],
+)
+def test_a_taken_list_gets_its_own_index_comments_constructed(theirs: tuple[str, ...]) -> None:
+    # The retail layout (tabs, LF, `-- [n]` after each positional entry):
+    # a dropped entry's comment goes with it, and each written entry gets
+    # the comment naming its own index.
+    def doc(items: tuple[str, ...]) -> bytes:
+        lines = [f'\t\t"{v}", -- [{n}]' for n, v in enumerate(items, start=1)]
+        return ('\nDB = {\n\t["l"] = {\n' + "\n".join(lines) + '\n\t},\n\t["n"] = 1,\n}\n').encode()
+
+    ours = doc(("Copper Ore", "Tin Ore", "Iron Ore"))
+    result = svmerge.merge(_doc(ours), _doc(doc(theirs)), take="theirs")
+    assert luadata.serialize(result.document) == doc(theirs)

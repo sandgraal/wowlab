@@ -42,8 +42,8 @@ Rules, by key path:
   merged into `DST` in ours by the rules above, inside the named subtree
   only, and nothing outside it is taken or listed (M16-12; a merge within
   one file is `merge(doc, doc, keys=["SRC=DST"])`). Two-way, a `DST` ours
-  does not hold at all, or holds as an empty table, is theirs' subtree,
-  whole. `replace=True` (two-way
+  does not hold at all, or holds as an empty table when theirs' value is a
+  table, is theirs' subtree, whole. `replace=True` (two-way
   only) copies each subtree whole instead, as `--key X --replace`.
   A `DST` whose parent tables ours does not have is reported `absent`; one
   whose parent is not a table is refused (`MergeError`).
@@ -587,16 +587,27 @@ _LIST_SHOWN = 72
 
 
 def _show_list(values: Sequence[LuaValue | None]) -> str:
-    """An array part as one value: its entries 1..n (`None`: a hole)."""
+    """An array part as one value: its entries 1..n (`None`: a gap). Only
+    real entries are counted; a gap is named (`{[1] = "a", [3] = "c"}`, or
+    `list (2 entries, a gap at [2])`)."""
     items = list(values)
     while items and items[-1] is None:
         items.pop()
-    if all(v is not None and not isinstance(v, LuaTable) for v in items):
-        text = "{" + ", ".join(_show(v) for v in items) + "}"
+    gaps = [k for k, v in enumerate(items, start=1) if v is None]
+    if all(v is None or not isinstance(v, LuaTable) for v in items):
+        if gaps:
+            shown = [f"[{k}] = {_show(v)}" for k, v in enumerate(items, start=1) if v is not None]
+        else:
+            shown = [_show(v) for v in items]
+        text = "{" + ", ".join(shown) + "}"
         if len(text) <= _LIST_SHOWN:
             return text
-    n = len(items)
-    return f"list ({n} entr{'y' if n == 1 else 'ies'})"
+    n = _count(items)
+    text = f"list ({n} entr{'y' if n == 1 else 'ies'}"
+    if gaps:
+        named = ", ".join(f"[{k}]" for k in gaps[:3]) + (", ..." if len(gaps) > 3 else "")
+        text += f", a gap at {named}" if len(gaps) == 1 else f", gaps at {named}"
+    return text + ")"
 
 
 def _same_list(a: Sequence[LuaValue | None], b: Sequence[LuaValue | None]) -> bool:
@@ -948,16 +959,23 @@ class _Merger:
         entries: list[Entry],
         span: int,
         path: str,
-    ) -> tuple[list[Entry], list[Entry]]:
+    ) -> tuple[list[Entry], list[Entry], bool]:
         """Theirs' array part in place of ours': ours' entries with every
         entry of the keys 1..`span` taken out (duplicates too, so none of
         them loads), and theirs' entries for those keys written where ours'
         list began, so the table holds exactly theirs' keys 1..`span`: an
         entry is positional while the keys run on from 1, and `[k] =` after
         a gap, never renumbered. Returns (entries, entries to append after
-        them: theirs' list when ours' list ended the table or was empty).
-        The list is reported once, at its path: taken, and removed when it
-        drops or changes any of ours' entries."""
+        them: theirs' list when ours' list ended the table or was empty,
+        whether the table's closing bytes are to be generated).
+
+        Index comments: a removed entry's trailing comment (`-- [n]`) is in
+        the slot after it, the next entry's `lead` or the table's
+        `close_lead`, and goes with it: that slot is generated instead, so
+        each written positional entry gets its own `-- [n]` where the
+        layout has them, and a kept entry's own comment is written from its
+        `Entry.comment`. The list is reported once, at its path: taken, and
+        removed when it drops or changes any of ours' entries."""
         ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
         mine = [o.value(k) for k in ids]
         yours = [t.value(k) for k in ids]
@@ -967,7 +985,11 @@ class _Merger:
         at = [i for i, kid in enumerate(o.ids) if kid in listed]
         first = at[0] if at else len(entries)
         before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
-        after = [e for i, e in enumerate(entries) if i > first and o.ids[i] not in listed]
+        after = [
+            e._replace(lead=None) if o.ids[i - 1] in listed else e
+            for i, e in enumerate(entries)
+            if i > first and o.ids[i] not in listed
+        ]
         written: list[Entry] = []
         npos = 0  # every positional entry of ours is a key 1..span, so none is left
         for kid, value in zip(ids, yours, strict=True):
@@ -977,8 +999,10 @@ class _Merger:
             npos += entry.style is KeyStyle.POSITIONAL
             written.append(entry)
         if after:
-            return [*before, *written, *after], []
-        return before, written
+            return [*before, *written, *after], [], False
+        # Ours' list ended the table (its last entry's comment is in the
+        # closing bytes), or ours had none and theirs' is appended.
+        return before, written, bool(at)
 
     def table(self, ours: LuaTable, theirs: LuaTable, base: LuaTable | None, path: str) -> LuaTable:
         o, t, b = _Keys(ours), _Keys(theirs), _keys(base)
@@ -998,9 +1022,10 @@ class _Merger:
                 entries[index] = entry._replace(value=merged)
                 changed = True
         tail: list[Entry] = []
+        regenerate = False
         npos = sum(e.style is KeyStyle.POSITIONAL for e in entries)
         if span and self.array(o, t, None if base is None else b, span, path):
-            entries, tail = self.take_list(ours, theirs, o, t, entries, span, path)
+            entries, tail, regenerate = self.take_list(ours, theirs, o, t, entries, span, path)
             npos = sum(e.style is KeyStyle.POSITIONAL for e in [*entries, *tail])
             changed = True
         added: list[Entry] = list(tail)
@@ -1014,6 +1039,8 @@ class _Merger:
                 entry = _new_entry(kid, like, npos, merged)
                 npos += entry.style is KeyStyle.POSITIONAL
                 added.append(entry)
+        if regenerate:
+            return LuaTable(ours.lead, (*entries, *added), None)
         if added:
             return _appended(ours, entries, added)
         if not changed:
@@ -1197,9 +1224,9 @@ class _Copy(_Change):
 
 class _Within(_Change):
     """Two-way `--key` (M16-12): the two-way rules inside the subtree. A
-    destination ours does not hold at all, or holds as an empty table, is
-    theirs' subtree, whole: it removes nothing and overrides nothing
-    (conductor's ruling, 2026-11-05)."""
+    destination ours does not hold at all, or holds as an empty table when
+    theirs' value is a table, is theirs' subtree, whole: it removes nothing
+    and overrides nothing (conductor's ruling, 2026-11-05)."""
 
     def __init__(self, merger: _Merger, source: _Found) -> None:
         self.merger = merger
@@ -1210,7 +1237,10 @@ class _Within(_Change):
         if theirs is None:
             self.merger.missing(self.source.spelled, "theirs")
             return ours
-        if ours is None or (isinstance(ours, LuaTable) and not ours.entries):
+        empty = isinstance(ours, LuaTable) and not ours.entries
+        if ours is None or (empty and isinstance(theirs, LuaTable)):
+            # A source that is not a table over an empty `{}` is a conflict
+            # (`slot`), never a silent replacement.
             if ours is not None and _same(ours, theirs):
                 return ours
             self.merger.took(path, theirs)
