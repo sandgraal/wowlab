@@ -158,7 +158,9 @@ def test_macros_check_reports_on_the_fixture_install(root: Path) -> None:
     assert f"Spellbook and action bars: no lab-addon record ({macrocheck.GET_RECORD})\n" in text
     assert "Findings: 0\n" in text
     assert f"  spell-not-in-spellbook: {macrocheck.NO_RECORD}\n" in text
-    assert "counted in characters and UTF-8 bytes" in text and "[verify]" in text
+    # The run's one marker, in words (M16-15).
+    assert "counted in characters and UTF-8 bytes" in text and "(not yet confirmed)" in text
+    assert "[verify]" not in text
     assert _state(root) == before  # reads never write (L1)
 
 
