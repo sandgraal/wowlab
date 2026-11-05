@@ -18,6 +18,7 @@ from typing import Any
 
 import platformdirs
 import pytest
+from _player_copy import unmarked
 from typer.testing import CliRunner
 
 from wowlab_core import cli, install, labaddon
@@ -106,7 +107,7 @@ def test_constructed_schema_4_char_show(flavor: Path) -> None:
     before = ok("char", "show").stdout
     assert before.count("Identity:") == 1
     line = next(x for x in before.splitlines() if x.startswith("Identity:"))
-    assert line == (
+    assert unmarked(line) == unmarked(
         "Identity: class WARLOCK (class id 9), race id 5, body type 1 (Enum.UnitSex, from "
         "UnitSex 3; the game's own screens may number body types differently [verify]); all "
         "its change events registered"
@@ -120,9 +121,11 @@ def test_constructed_schema_4_char_show(flavor: Path) -> None:
 
 
 def test_constructed_schema_4_char_show_text_is_schema_3_plus_one_line(flavor: Path) -> None:
-    as_3 = ok("char", "show").stdout.splitlines()
+    # Unmarked (M16-15): which note of a run says "(not yet confirmed)" moves
+    # when a line with a marker is added before it.
+    as_3 = unmarked(ok("char", "show").stdout).splitlines()
     _make_schema_4(flavor)
-    as_4 = ok("char", "show").stdout.splitlines()
+    as_4 = unmarked(ok("char", "show").stdout).splitlines()
     # The edit changes the file's time, so the "Written:" line is set aside;
     # every other line is the same except the one `Identity:` line.
     written = [i for i, x in enumerate(as_3) if x.startswith("Written:")]
@@ -130,9 +133,11 @@ def test_constructed_schema_4_char_show_text_is_schema_3_plus_one_line(flavor: P
     as_4[written[0]] = as_3[written[0]]
     extra = [x for x in as_4 if x not in as_3]
     assert extra == [
-        "Identity: class WARLOCK (class id 9), race id 5, body type 1 (Enum.UnitSex, from "
-        "UnitSex 3; the game's own screens may number body types differently [verify]); all "
-        "its change events registered"
+        unmarked(
+            "Identity: class WARLOCK (class id 9), race id 5, body type 1 (Enum.UnitSex, from "
+            "UnitSex 3; the game's own screens may number body types differently [verify]); all "
+            "its change events registered"
+        )
     ]
     as_4.remove(extra[0])
     assert as_4 == as_3

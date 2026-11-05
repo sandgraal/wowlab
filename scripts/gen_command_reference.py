@@ -1,7 +1,8 @@
 """Render the wiki's command reference from the `wowlab` CLI itself (M12-13).
 
-The page is the wiki's `CLI-Reference`, which the daily wiki job regenerates
-(M12-14); its first line says it is generated and is not edited by hand. The
+The page is the wiki's `CLI-Reference`, regenerated with this script before a
+wiki push (the daily wiki job did it until 2026-11-04); its first line says it
+is generated and is not edited by hand. The
 hand-written `Command-Reference` page stays the overview.
 
 Walks the Click tree of `wowlab_core.cli:app` (`typer.main.get_command`) and
@@ -54,8 +55,9 @@ OVERVIEW_TITLE = "Command Reference"
 # The option that makes a command ask before changing files.
 YES_OPT = "--yes"
 
-# "JSON: <sentence>." in a command's help names the model its --json output
-# validates against (the convention stated in wowlab_core.cli's docstring).
+# "JSON: <sentence>." in a command's help, after the form feed that ends what
+# `--help` prints, names the model its --json output validates against (the
+# convention stated in wowlab_core.cli's docstring).
 _JSON_SENTENCE = re.compile(r"\bJSON: (.+?)\.(?=\s|$)", re.DOTALL)
 _MODEL_NAME = re.compile(r"\b(?:[a-z_][a-z0-9_]*\.)?[A-Z][A-Za-z0-9_]*")
 
@@ -112,7 +114,7 @@ def json_models(cmd: Any) -> list[str]:
     first word) is prose and is skipped.
     """
     names: list[str] = []
-    for sentence in _JSON_SENTENCE.findall(_help_text(cmd)):
+    for sentence in _JSON_SENTENCE.findall(_declared_help(cmd)):
         for name in _MODEL_NAME.findall(sentence):
             if name not in names and _resolve_model(name) is not None:
                 names.append(name)
@@ -296,10 +298,16 @@ def _cell(text: str) -> str:
     return _table_safe(_prose(" ".join(text.split())))
 
 
+def _declared_help(cmd: Any) -> str:
+    """The whole help the code declares, including what follows a form feed."""
+    return str(getattr(cmd, "help", None) or "")
+
+
 def _help_text(cmd: Any) -> str:
-    """The help the code declares, cut where Click cuts it (form feed)."""
-    text = getattr(cmd, "help", None) or ""
-    return str(text).split("\f", 1)[0].strip()
+    """The help the code declares, cut where Click cuts it (form feed): the
+    model a command's --json output validates against is named after the cut
+    ("JSON: ..."), so `--help` does not print it and this page does."""
+    return _declared_help(cmd).split("\f", 1)[0].strip()
 
 
 def _paragraphs(text: str) -> list[str]:
