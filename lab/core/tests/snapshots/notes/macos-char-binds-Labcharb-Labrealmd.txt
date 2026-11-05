@@ -1,0 +1,13 @@
+exit 0
+Character: 1/Labcharb-Labrealmd in account 90000001#6
+Record: none (no WowLab.lua in 1/Labcharb-Labrealmd. Character folders in account 90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg. If none is listed: install the lab-addon (wowlab addon install lab), log in on the character, then log out or /reload.)
+Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
+Character bindings: no bindings-cache.wtf
+Keys: 3
+  Q                MULTIACTIONBAR1BUTTON1       61  cannot place: no action-bar record  (account file)
+  BUTTON3          MULTIACTIONBAR1BUTTON2       62  cannot place: no action-bar record  (account file)
+  E                MULTIACTIONBAR1BUTTON3       63  cannot place: no action-bar record  (account file)
+Without a bindings record only the files' lines are listed; a file may leave out
+  keys at the client's defaults (not yet confirmed), so keys not listed may
+  still be bound.
+4 notes: --notes shows them

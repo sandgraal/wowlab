@@ -1,0 +1,32 @@
+exit 0
+Character: 1/Labchard-Labrealmg in account 90000001#6 (written last; choose another with --character)
+Record: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua (schema 1), written <local time> (the file's modification time)
+Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
+Character bindings: no bindings-cache.wtf
+Cannot place keys on action slots or compare the files with the record: schema 1
+  has no action-bar or bindings record (install or update the lab-addon with the
+  client closed (wowlab addon install lab), log in on this character, then log
+  out or /reload; schema 3 is needed)
+Keys: 3
+  Q                MULTIACTIONBAR1BUTTON1       61  cannot place: no action-bar record  (account file)
+  BUTTON3          MULTIACTIONBAR1BUTTON2       62  cannot place: no action-bar record  (account file)
+  E                MULTIACTIONBAR1BUTTON3       63  cannot place: no action-bar record  (account file)
+Without a bindings record only the files' lines are listed; a file may leave out
+  keys at the client's defaults (not yet confirmed), so keys not listed may
+  still be bound.
+Notes:
+  - Account bindings: a character with character-specific key bindings on uses
+    its own file instead. The server can replace this file at login when binding
+    sync is on; see wowlab doctor.
+  - Character bindings: a character has its own bindings-cache.wtf only when
+    character-specific key bindings are on; without one it uses the account
+    bindings.
+  - A key reaches an action slot through the default UI's action buttons: button
+    n of the bar showing page p is slot (p - 1) x 12 + n. The main bar is read
+    at page 1 only, the page shown with no form, stance or stealth active; the
+    pages shown by paging, a form, stance or stealth, or a possess, override or
+    vehicle bar, the pet and stance bars and an addon's buttons are not
+    followed.
+  - WowLab.lua is written at logout, /reload or a clean exit (a crash writes
+    nothing): this is the character as of that save, not the session in
+    progress.

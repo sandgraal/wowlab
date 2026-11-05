@@ -1,0 +1,9 @@
+exit 0
+Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt
+Spellbook and action bars: no lab-addon record (use --character)
+Findings: 0
+Cannot judge: 2
+  spell-not-in-spellbook: no spellbook record (no character chosen; use
+    --character)
+  not-on-action-bar: no spellbook record (no character chosen; use --character)
+3 notes: --notes shows them

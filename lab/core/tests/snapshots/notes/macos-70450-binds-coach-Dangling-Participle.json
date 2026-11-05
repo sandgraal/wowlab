@@ -1,0 +1,296 @@
+{
+  "flavor_folder": "_classic_beta_",
+  "account": "90000001#6",
+  "character": "1/Dangling-Participle",
+  "chosen_by": "--character",
+  "record_file": "WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua",
+  "record_schema": 4,
+  "record_error": null,
+  "log": {
+    "file": "Logs/WoWCombatLog-040126_021630.txt",
+    "chosen_by": "newest",
+    "counts": {
+      "lines": 79,
+      "unparsed": 0,
+      "versions": [
+        "22"
+      ],
+      "cast_events": 7,
+      "other_version": 0,
+      "not_read": 0,
+      "others": 1,
+      "mine": 6,
+      "sources": 1,
+      "first_timestamp": "4/1/2026 02:16:37.862-4",
+      "last_timestamp": "4/1/2026 02:17:00.351-4",
+      "spells": [
+        {
+          "spell_id": 172,
+          "spell_name": "Corruption",
+          "casts": 2
+        },
+        {
+          "spell_id": 980,
+          "spell_name": "Bane of Agony",
+          "casts": 2
+        },
+        {
+          "spell_id": 348,
+          "spell_name": "Immolate",
+          "casts": 1
+        },
+        {
+          "spell_id": 695,
+          "spell_name": "Shadow Bolt",
+          "casts": 1
+        }
+      ]
+    }
+  },
+  "costs": {
+    "source": "default",
+    "shipped": "<package>/binds_coach_costs.toml",
+    "user_file": "<tmp>/userconfig/wowlab/binds_coach_costs.toml",
+    "table": {
+      "high_cost": 4,
+      "frequent_share": 0.05,
+      "frequent_min_casts": 5,
+      "unlisted": 5,
+      "modifiers": {
+        "SHIFT": 1,
+        "CTRL": 2,
+        "ALT": 2,
+        "META": 2
+      },
+      "keys": {
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "Q": 1,
+        "E": 1,
+        "R": 1,
+        "F": 1,
+        "W": 1,
+        "A": 1,
+        "S": 1,
+        "D": 1,
+        "BUTTON4": 1,
+        "BUTTON5": 1,
+        "5": 2,
+        "T": 2,
+        "G": 2,
+        "Z": 2,
+        "X": 2,
+        "C": 2,
+        "V": 2,
+        "TAB": 2,
+        "SPACE": 2,
+        "BUTTON3": 2,
+        "MOUSEWHEELUP": 2,
+        "MOUSEWHEELDOWN": 2,
+        "6": 3,
+        "Y": 3,
+        "H": 3,
+        "B": 3,
+        "`": 3,
+        "CAPSLOCK": 3,
+        "F1": 3,
+        "F2": 3,
+        "F3": 3,
+        "F4": 3,
+        "7": 4,
+        "U": 4,
+        "J": 4,
+        "N": 4,
+        "M": 4,
+        "F5": 4,
+        "F6": 4
+      }
+    }
+  },
+  "matched_by": "spell id or spellbook name",
+  "spells": [
+    {
+      "spell_name": "Bane of Agony",
+      "spell_id": 980,
+      "casts": 2,
+      "share": 0.3333333333333333,
+      "matched_by": "none",
+      "match_note": null,
+      "keys": [],
+      "slots": []
+    },
+    {
+      "spell_name": "Corruption",
+      "spell_id": 172,
+      "casts": 2,
+      "share": 0.3333333333333333,
+      "matched_by": "none",
+      "match_note": null,
+      "keys": [],
+      "slots": []
+    },
+    {
+      "spell_name": "Immolate",
+      "spell_id": 348,
+      "casts": 1,
+      "share": 0.16666666666666666,
+      "matched_by": "none",
+      "match_note": null,
+      "keys": [],
+      "slots": []
+    },
+    {
+      "spell_name": "Shadow Bolt",
+      "spell_id": 695,
+      "casts": 1,
+      "share": 0.16666666666666666,
+      "matched_by": "none",
+      "match_note": null,
+      "keys": [],
+      "slots": []
+    }
+  ],
+  "frequent_on_high_cost": [],
+  "cast_without_bind": [
+    {
+      "spell_name": "Corruption",
+      "spell_id": 172,
+      "casts": 2,
+      "slots": [],
+      "detail": "on no action slot: cast from a macro, the spellbook or an addon's button, with a key bound straight to it, or triggered by another spell or an item"
+    },
+    {
+      "spell_name": "Bane of Agony",
+      "spell_id": 980,
+      "casts": 2,
+      "slots": [],
+      "detail": "on no action slot: cast from a macro, the spellbook or an addon's button, with a key bound straight to it, or triggered by another spell or an item"
+    },
+    {
+      "spell_name": "Immolate",
+      "spell_id": 348,
+      "casts": 1,
+      "slots": [],
+      "detail": "on no action slot: cast from a macro, the spellbook or an addon's button, with a key bound straight to it, or triggered by another spell or an item"
+    },
+    {
+      "spell_name": "Shadow Bolt",
+      "spell_id": 695,
+      "casts": 1,
+      "slots": [],
+      "detail": "on no action slot: cast from a macro, the spellbook or an addon's button, with a key bound straight to it, or triggered by another spell or an item"
+    }
+  ],
+  "on_unfollowed_page": [],
+  "bound_never_cast": [
+    {
+      "slot": 1,
+      "command": "ACTIONBUTTON1",
+      "keys": [
+        {
+          "key": "1",
+          "cost": 1
+        }
+      ],
+      "spell_id": 143,
+      "spell_name": "Fireball"
+    },
+    {
+      "slot": 2,
+      "command": "ACTIONBUTTON2",
+      "keys": [
+        {
+          "key": "2",
+          "cost": 1
+        }
+      ],
+      "spell_id": 5143,
+      "spell_name": "Arcane Missiles"
+    },
+    {
+      "slot": 3,
+      "command": "ACTIONBUTTON3",
+      "keys": [
+        {
+          "key": "3",
+          "cost": 1
+        }
+      ],
+      "spell_id": 205,
+      "spell_name": "Frostbolt"
+    },
+    {
+      "slot": 4,
+      "command": "ACTIONBUTTON4",
+      "keys": [
+        {
+          "key": "4",
+          "cost": 1
+        }
+      ],
+      "spell_id": 2136,
+      "spell_name": "Fire Blast"
+    },
+    {
+      "slot": 5,
+      "command": "ACTIONBUTTON5",
+      "keys": [
+        {
+          "key": "5",
+          "cost": 2
+        }
+      ],
+      "spell_id": 20572,
+      "spell_name": "Blood Fury"
+    },
+    {
+      "slot": 61,
+      "command": "MULTIACTIONBAR1BUTTON1",
+      "keys": [
+        {
+          "key": "Q",
+          "cost": 1
+        }
+      ],
+      "spell_id": 1459,
+      "spell_name": "Arcane Intellect"
+    },
+    {
+      "slot": 62,
+      "command": "MULTIACTIONBAR1BUTTON2",
+      "keys": [
+        {
+          "key": "BUTTON3",
+          "cost": 2
+        }
+      ],
+      "spell_id": 118,
+      "spell_name": "Polymorph"
+    },
+    {
+      "slot": 63,
+      "command": "MULTIACTIONBAR1BUTTON3",
+      "keys": [
+        {
+          "key": "E",
+          "cost": 1
+        }
+      ],
+      "spell_id": 168,
+      "spell_name": "Frost Armor"
+    }
+  ],
+  "cannot_judge": [],
+  "caveats": [
+    "the bindings record left out 1 command(s) that are not plain names (a key bound straight to a spell, macro or click; an action-bar addon such as Bartender, Dominos or ElvUI binds through these) and 0 key(s) that are not printable, so a spell listed as cast with no bind may have one of those"
+  ],
+  "notes": [
+    "Casts are counted only from a combat log, which the client writes only while combat logging is on: type /combatlog in game before you play (whether it stays on after logout has not been checked).",
+    "The client adds to this file in batches, and only while combat logging is on: the latest events may not be on disk yet, and if logging is off, this file ends where logging was turned off or the client closed.",
+    "The newest log under Logs/ is read (or the one --log names), whichever character wrote it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet), never picked by a name or a GUID, so a log written by another character than the record's makes these reports wrong: check the log's time and choose it with --log.",
+    "The action bars and key bindings are the lab-addon's record as of its last save (logout or /reload), not the session in progress; the log may be older or newer than it. A key reaches a spell through the default UI's action buttons only: the main bar at page 1, and the bottom, right and extra bars. Its other pages (forms, stances, stealth, paging), the pet and stance bars, an addon's buttons, items and macros are not followed.",
+    "An auto-repeating spell (a wand's Shoot, Auto Shot) may be logged once per shot rather than once per key press; that has not been checked against a real log, so its count may be high."
+  ]
+}

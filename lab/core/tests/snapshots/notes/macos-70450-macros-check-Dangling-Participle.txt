@@ -1,0 +1,11 @@
+exit 0
+Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt
+Character macros: no macros-cache.txt
+Spellbook and action bars: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua (schema 4)
+Findings: 0
+Cannot judge: 1
+  not-on-action-bar: the record has 1 macro slot(s) on 1/Dangling-Participle's
+    action bars (slots 1 to 180), and how a slot's macro index maps to the ids
+    in macros-cache.txt is (not yet confirmed); so which macros are on one
+    cannot be told
+3 notes: --notes shows them

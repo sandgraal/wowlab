@@ -1,0 +1,24 @@
+exit 0
+Combat log: Logs/WoWCombatLog-040126_021630.txt (the newest) (79 lines; COMBAT_LOG_VERSION 22; your casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged against no lab-addon record
+  Your casts: 6 of 7 SPELL_CAST_SUCCESS record(s) (picked by the source flags: yours, and a player); 1 by other units
+Action bars and bindings: no lab-addon record (no WowLab.lua in 1/Labcharb-Labrealmd. Character folders in account 90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg. If none is listed: install the lab-addon (wowlab addon install lab), log in on the character, then log out or /reload.)
+Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard,
+  the left hand on W A S D and a mouse with two side buttons
+  High-cost: 4 or more. Frequent: at least 5% of your casts and at least 5 casts.
+Your casts by spell (matched to slots by spell id):
+       2  Bane of Agony (980): no key
+       2  Corruption (172): no key
+       1  Immolate (348): no key
+       1  Shadow Bolt (695): no key
+Frequent spells on high-cost keys: cannot judge (no lab-addon record)
+Spells cast with no bind: cannot judge (no lab-addon record)
+Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time):
+  cannot judge (no lab-addon record)
+Cannot judge because: no lab-addon record: no WowLab.lua in
+  1/Labcharb-Labrealmd. Character folders in account 90000001#6 that have one:
+  1/Labcharb-Labrealmf, 1/Labchard-Labrealmg. If none is listed: install the
+  lab-addon (wowlab addon install lab), log in on the character, then log out or
+  /reload.
+No spellbook record: casts match slots by spell id only, so a spell cast at
+  another rank's id than the one on the bar reads as cast with no bind.
+6 notes: --notes shows them

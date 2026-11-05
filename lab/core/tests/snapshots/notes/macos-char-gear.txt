@@ -1,0 +1,30 @@
+exit 0
+Character: 1/Labchard-Labrealmg in account 90000001#6 (the WowLab.lua with the newest modification time; a wowlab restore also sets it; tied with 1/Labcharb-Labrealmf on that time, taken by path order; choose another with --character)
+File: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
+Written: <local time> (the file's modification time)
+Spec: id 1490 (index 1, from C_SpecializationInfo)
+Gear (slots 1 to 19 as the client numbers them, 9 filled):
+  slot  1 Head       empty
+  slot  2 Neck       empty
+  slot  3 Shoulder   empty
+  slot  4 Shirt      empty
+  slot  5 Chest      Simple Blouse of the Owl: Uncommon, item level 15, item 9749; bonus ids 12720
+  slot  6 Waist      Flax Belt: Common, item level 5, item 11848
+  slot  7 Legs       Simple Britches of the Physician: Uncommon, item level 14, item 9747; bonus ids 12748
+  slot  8 Feet       Flax Boots: Common, item level 5, item 3274
+  slot  9 Wrist      Frayed Bracers: Poor, item level 5, item 3365
+  slot 10 Hands      Frayed Gloves: Poor, item level 3, item 1377
+  slot 11 Finger 1   empty
+  slot 12 Finger 2   empty
+  slot 13 Trinket 1  empty
+  slot 14 Trinket 2  empty
+  slot 15 Back       Disciple's Cloak: Common, item level 10, item 6514
+  slot 16 Main Hand  Curved Dagger of the Owl: Uncommon, item level 14, item 2632; bonus ids 12720
+  slot 17 Off Hand   empty
+  slot 18 Ranged     Shadow Wand: Uncommon, item level 14, item 5071
+  slot 19 Tabard     empty
+Averages (GetAverageItemLevel, as the client returns them): equipped 3.3125, overall 3.3125, pvp 3.3125
+Item levels from C_Item.GetCurrentItemLevel.
+Slot names and quality words: the shipped default table, community documentation
+  for Retail, not yet confirmed on Forever
+6 notes: --notes shows them

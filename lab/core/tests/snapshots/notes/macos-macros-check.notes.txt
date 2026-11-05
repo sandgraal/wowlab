@@ -1,0 +1,22 @@
+exit 0
+Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt
+Spellbook and action bars: no lab-addon record (use --character)
+Findings: 0
+Cannot judge: 2
+  spell-not-in-spellbook: no spellbook record (no character chosen; use
+    --character)
+  not-on-action-bar: no spellbook record (no character chosen; use --character)
+Notes:
+  - Length: counted in characters and UTF-8 bytes of the body lines joined by
+    LF, with no final line break; over 255 characters is a finding, over 255
+    bytes only is cannot judge; the client's limit is 255, and whether it counts
+    characters or bytes is (not yet confirmed).
+  - macros-cache.txt is what the client last wrote; the server can replace it at
+    login when macro sync is on. In a real capture a macro made in a finished
+    session was missing from it (whether the client rewrites it at logout is not
+    yet confirmed), so a macro may be missing here, or still listed after you
+    deleted it.
+  - The spellbook and action bars are the lab-addon's record as of its last save
+    (logout or /reload), not the session in progress. It reads the player's
+    spellbook only, so an item, a pet, mount or toy spell after /cast reads as
+    not in the spellbook.
