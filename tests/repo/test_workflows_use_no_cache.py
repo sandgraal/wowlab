@@ -50,7 +50,7 @@ CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
-SETUP_UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
+SETUP_UV = "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2"  # v10.3.3
 ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 
@@ -58,6 +58,8 @@ TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 # from its action.yml on 2026-10-18 (M13-42):
 # - checkout, upload-artifact, download-artifact, paths-filter: nothing.
 # - setup-uv: `enable-cache` defaults to `auto` (on, on hosted runners).
+#   Re-read 2026-11-05 at v10.3.3 (dependabot #373): action.yml is byte-
+#   identical to v10.3.0's, so only the pin moved.
 # - actionlint: `cache` defaults to true and restores the actionlint binary
 #   with a nested actions/cache step.
 # - trivy-action: `cache` defaults to true; it restores the trivy database
