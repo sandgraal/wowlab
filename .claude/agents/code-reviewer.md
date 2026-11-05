@@ -74,8 +74,8 @@ own internal consistency.
 - Every user-visible change in the diff (a command, option, help text,
   output shape in text or `--json`, generated page, addon command) is listed
   in the report's `user-facing changes:` and the PR's "User-facing surface"
-  box. An unlisted one is a finding: the daily wiki job and, from Wave 5
-  (M14), the UI depend on that list.
+  box. An unlisted one is a finding: the owner's wiki updates and, from
+  Wave 5 (M14), the UI depend on that list.
 
 ## Probes
 

@@ -6,7 +6,8 @@ on:
   push:
     branches: [main]
 
-# Every job below except `lab (macos)` is a required status check on main,
+# Every job below except `lab (macos)` and `grader-diff` (M16-40; not yet
+# in the ruleset, see the job) is a required status check on main,
 # by exact name (see .github/rulesets/main.json). `lab (macos)` came with
 # M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3 E3) and counts toward
 # macOS being supported without being required. `lab (windows)` lives in
@@ -15,9 +16,10 @@ on:
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 #
 # No job restores or saves an Actions cache (M13-42). The cache is shared
-# by every workflow running in main's scope, including the two that run a
-# model with a token whose cache mode is write (claude.yml, wiki-daily.yml),
-# so an entry these jobs restored could have been written by that model.
+# by every workflow running in main's scope, so an entry these jobs restored
+# could have been written by any of them. (Until 2026-11-04 two of them ran
+# a model with a token whose cache mode is write; no workflow runs Claude
+# since the owner decision of that date.)
 # setup-uv runs with `enable-cache: false` (omitted means `auto`, which
 # caches), actionlint and trivy with `cache: false` (both default to true),
 # and tests/repo/test_workflows_use_no_cache.py holds every workflow to it.
@@ -79,7 +81,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
@@ -130,7 +132,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
@@ -169,7 +171,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
@@ -202,7 +204,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -299,3 +301,37 @@ jobs:
       - name: Doc-only PR — skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — trivy skipped"
+
+  # M16-40 (ADR-0013): on a change to a load-bearing file (luadata.py,
+  # guard.py, proposal.py), a grader already on main may change only by
+  # deleting complete xfail(strict=True) marker blocks, and test support
+  # files, conftest.py and pytest configuration may not change. The rule and
+  # what counts as a grader are in scripts/check_grader_diff.py. HEAD^1..HEAD
+  # is the pull request's merge commit against its base (on a push to main,
+  # the squash-merged commit), so a depth of 2 is all the history it reads.
+  # The script runs from the base revision when the base has it: an edit to
+  # the script alone cannot loosen the check, and an edit to this job shows
+  # here in ci.yml. It is stdlib-only and runs on the runner's python3 with
+  # -I, so nothing is installed or fetched.
+  # Not yet a required check: adding it means changing
+  # .github/rulesets/main.json and re-applying it after this job is on main.
+  grader-diff:
+    name: Graders activated by marker deletion only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Check grader diffs
+        run: |
+          script="$RUNNER_TEMP/check_grader_diff.py"
+          if git cat-file -e HEAD^1:scripts/check_grader_diff.py 2>/dev/null; then
+            git show HEAD^1:scripts/check_grader_diff.py > "$script"
+          else
+            cp scripts/check_grader_diff.py "$script"
+          fi
+          python3 -I "$script" --repo . --base HEAD^1 --head HEAD

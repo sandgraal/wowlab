@@ -260,7 +260,6 @@ def _pre_write_of(guard: Any, flavor: Flavor, store: SnapshotStore, scenario: st
 
 
 @pytest.mark.parametrize("scenario", SCENARIO_PARAMS)
-@pytest.mark.xfail(strict=True, reason="M16-09 not implemented")
 def test_constructed_every_pre_write_manifest_records_kind_pre_write(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, scenario: str
 ) -> None:
@@ -275,7 +274,6 @@ def test_constructed_every_pre_write_manifest_records_kind_pre_write(
     assert set(raw) == MANIFEST_KEYS | {"kind"}, sorted(set(raw) ^ (MANIFEST_KEYS | {"kind"}))
 
 
-@pytest.mark.xfail(strict=True, reason="M16-09 not implemented")
 def test_constructed_every_manifest_of_a_session_of_writes_is_pre_write(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:

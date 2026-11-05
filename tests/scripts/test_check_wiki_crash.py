@@ -1,7 +1,8 @@
 """A crash in `scripts/check_wiki.py` never reads as "no personal data" (M13-40).
 
-The wiki-daily job lets pages out when `check_wiki` exits 0 or 1, and Python
-exits 1 on any uncaught exception. So `main` turns a crash into 2, or 3 when
+A wiki push goes ahead when `check_wiki` exits 0 or 1 (the deleted
+wiki-daily job let pages out on those codes), and Python exits 1 on any
+uncaught exception. So `main` turns a crash into 2, or 3 when
 the personal-data check, which runs first, found something.
 
 Every input is `constructed`: the small passing wiki of `test_check_wiki.py`

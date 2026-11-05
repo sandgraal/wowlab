@@ -51,7 +51,8 @@ def test_the_reason_is_the_reports_and_the_cli_says_it_once(server: Any, picked:
     args = ["char", "binds", "--character", params["character"], "--account", params["account"]]
     text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]])
     assert text.exit_code == 0, text.stdout
-    assert text.stdout.count(keymap.WHY_NOT_IN_A_FILE) == 1
+    # Text output says the marker in words (M16-15): count the sentence without it.
+    assert text.stdout.count(keymap.WHY_NOT_IN_A_FILE.removesuffix(" [verify]")) == 1
 
 
 def test_the_keys_panel_shows_why_a_row_is_not_in_a_file(

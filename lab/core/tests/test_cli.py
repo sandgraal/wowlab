@@ -696,8 +696,13 @@ def test_sv_dump_over_the_parse_budget_is_refused_cleanly(
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal, never a traceback"
     assert "refused: this file is beyond what the SavedVariables parser will hold" in result.stderr
-    assert "MAX_COST" in result.stderr
+    # The constant's name is kept for --json only (M16-15, player copy).
+    assert "over the parse budget" in result.stderr
+    assert "MAX_COST" not in result.stderr
     assert result.stdout == ""
+    as_json = run("sv", "dump", SYNDICATOR, "--json")
+    assert as_json.exit_code == 1
+    assert "MAX_COST" in as_json.stderr
 
 
 def test_sv_dump_refuses_code_constructed(tmp_path: Path, root: Path) -> None:
@@ -705,7 +710,11 @@ def test_sv_dump_refuses_code_constructed(tmp_path: Path, root: Path) -> None:
     hostile.write_bytes(b"X = os.execute('true')\n")  # constructed: never run (L3)
     result = run("sv", "dump", str(hostile))
     assert result.exit_code == 1
-    assert "not SavedVariables data the parser accepts: line 1" in result.stderr
+    assert "not SavedVariables data wowlab can read: " in result.stderr
+    assert "at line 1, column 5" in result.stderr
+    # --json keeps the parser's own message, rule id included (M16-15).
+    as_json = run("sv", "dump", str(hostile), "--json")
+    assert "not SavedVariables data the parser accepts: line 1" in as_json.stderr
 
 
 # ─── cvar, binds, macros, addons ─────────────────────────────────────────────

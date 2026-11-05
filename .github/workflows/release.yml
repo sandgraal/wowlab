@@ -1,7 +1,9 @@
 name: Release
 
 # Pushing a tag `v*` builds wowlab-core and publishes a GitHub Release with
-# three files: the wheel, the sdist and SHA256SUMS (ADR-0031, M13-03). The
+# three files: the wheel, the sdist and SHA256SUMS (ADR-0031, M13-03), and a
+# signed build-provenance attestation for the wheel and the sdist that
+# `gh attestation verify` checks (M16-43, docs/INSTALL.md). The
 # tag has to be exactly `v` plus the package version (docs/LAB_PLAN.md §15.3,
 # E5); a PEP 440 pre-release or development version becomes a GitHub
 # pre-release. Nothing is published unless every job before `release`
@@ -14,7 +16,8 @@ on:
     tags: ["v*"]
 
 # The token is read-only everywhere except the `release` job, which runs no
-# code from the repository: it downloads the checked files and calls `gh`.
+# code from the repository: it downloads the checked files, attests them and
+# calls `gh`.
 permissions:
   contents: read
 
@@ -41,7 +44,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -66,7 +69,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -99,7 +102,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -111,12 +114,16 @@ jobs:
           uv build --package wowlab-core --no-sources --no-create-gitignore
           --build-constraints lab/core/build-constraints.txt --require-hashes
           --out-dir "$RUNNER_TEMP/dist"
+      # The notes' install line ends in `#sha256=` and the hash of the wheel
+      # just built, which release_check.py reads from the file itself
+      # (M16-43). The README's line is copied from these notes after the
+      # release is out.
       - name: Release notes
         run: >-
           uv run --isolated --no-project --python "$PYTHON_VERSION" --
           python scripts/release_check.py notes --tag "$TAG" --version "$VERSION"
           --repository "$GITHUB_REPOSITORY" --template .github/release-notes.md
-          --out "$RUNNER_TEMP/notes.md"
+          --dir "$RUNNER_TEMP/dist" --out "$RUNNER_TEMP/notes.md"
       - name: Record each file's SHA-256
         id: hashes
         run: |
@@ -169,7 +176,7 @@ jobs:
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
           cd release
           sha256sum -c "$RUNNER_TEMP/expected"
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
@@ -211,10 +218,15 @@ jobs:
     # Every publish waits for the owner's approval of this environment
     # (required reviewer, `v*` tags only; scripts/bootstrap-github.sh).
     environment: release
-    # The only job that can write: it creates the release and uploads its
-    # three files. It checks out nothing and runs no repository code.
+    # The only job that can write: it attests the wheel and the sdist, then
+    # creates the release and uploads its three files. It checks out nothing
+    # and runs no repository code. The attestation is made here, after the
+    # owner's approval and after the files are checked against the build's
+    # hashes, so only what is published is ever attested.
     permissions:
       contents: write # gh release create: the release and its three assets
+      id-token: write # attest-build-provenance: the OIDC token Sigstore signs with
+      attestations: write # attest-build-provenance: stores the attestation on the repository
     env:
       TAG: ${{ github.ref_name }}
       WHEEL: ${{ needs.version.outputs.wheel }}
@@ -240,6 +252,19 @@ jobs:
           sha256sum -c "$RUNNER_TEMP/expected"
           sha256sum -c "$RUNNER_TEMP/expected-notes"
           cmp "$RUNNER_TEMP/expected" SHA256SUMS
+      # SLSA build provenance for the two files, signed through Sigstore with
+      # the job's OIDC token and stored on the repository: it names this
+      # workflow, the tag and the commit. A player checks it with
+      # `gh attestation verify <file> --repo sandgraal/wowlab
+      # --signer-workflow sandgraal/wowlab/.github/workflows/release.yml
+      # --source-ref refs/tags/<tag>` (docs/INSTALL.md). Before `gh release create`, so a failed
+      # attestation publishes nothing.
+      - name: Attest the wheel and the sdist
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/${{ needs.version.outputs.wheel }}
+            release/${{ needs.version.outputs.sdist }}
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

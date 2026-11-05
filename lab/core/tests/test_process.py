@@ -704,7 +704,7 @@ def test_real_psutil_os_reported_exe_is_labelled_exe_and_may_clear(
 # The routing tests above record the PUBLIC cmdline. That alone would miss a
 # psutil whose exe() fallback went straight to the platform layer
 # (self._proc.cmdline()), so these record the platform layer itself and where
-# each call came from. This is the safety argument for an unbounded psutil>=7.0.
+# each call came from. This is the safety argument for the whole psutil>=7.0,<8 range.
 
 
 class _LayerRecorder:

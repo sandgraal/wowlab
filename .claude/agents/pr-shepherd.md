@@ -10,8 +10,9 @@ the repository owner decided that a PR with all required checks green, a
 clean `code-reviewer` verdict (plus `domain-reviewer`/`security-reviewer`
 where the conductor dispatched them), every thread the owner opened
 answered, and no conflicts merges without asking. Anything less does not
-merge. Since 2026-10-17 (ADR-0013 amendment) an open thread from the
-automated review or another bot is not a merge blocker: you still read and
+merge. Since 2026-10-17 (ADR-0013 amendment) an open thread from a bot
+(Copilot or another; the automated Claude review was removed 2026-11-04)
+is not a merge blocker: you still read and
 answer it, but the independent reviewer verdict is the gate. Only when the
 conductor tells you, naming the reports, that every independent reviewer
 dispatched for the branch already saw a bot finding and did not count it:
@@ -171,11 +172,10 @@ Handle, in order:
   above (formatting, stale lock, rebase artefact): fix, commit, push.
   Otherwise `NEEDS_IMPLEMENTER:` with the run URL. Infra flake (runner
   died, network) → `gh run rerun <id> --failed` once, then treat as real.
-  `claude-review` is *not* required; it skips without the token (fork,
-  missing secret), and a failure there (subscription usage limit, expired
-  or revoked token) is informational.
-- **Unresolved review threads** (the Claude review workflow, a human, or
-  Copilot): read each. Fix is yours under the rule above → fix, commit,
+  No workflow runs Claude (owner decision 2026-11-04); a `review` check
+  from the deleted Claude workflow can still appear on an old head and is
+  not required.
+- **Unresolved review threads** (a human, or Copilot or another bot): read each. Fix is yours under the rule above → fix, commit,
   push. Any other change, including one the plan or an ADR plainly calls
   for → reply that it is routed to the implementer, leave the thread open,
   report `NEEDS_IMPLEMENTER:` with thread URLs. Wrong or not applicable
@@ -212,8 +212,8 @@ Handle, in order:
 
 Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
 job that is not in `.github/rulesets/main.json`'s required list failed or
-is still pending: the `review` job of the `Claude review` workflow,
-`lab (windows)`, `lab (macos)`), every
+is still pending: `lab (windows)`, `lab (macos)`, or on an old head the
+`review` job of the deleted Claude workflow), every
 **required** check is SUCCESS
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said

@@ -2844,11 +2844,33 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     def config_files(entries: Iterable[Path]) -> list[Path]:
         return [p for p in entries if p.name.casefold() in CONFIG_NAMES and p.is_file()]
 
+    def no_link(entries: Iterable[Path], name: str, where: str) -> None:
+        """Refuse a symlinked `WTF/` or `WTF/Account/` (M13-61).
+
+        The walk above skips a symlinked folder, but the planner's `child()`
+        and `descend()` follow one, so the files under it would be captured
+        with their account folders and `accountName` values never harvested.
+        Every case spelling counts: the planner takes the first in name order.
+        The link's target is never printed: it is a path outside the install.
+        """
+        if any(p.name.casefold() == name.casefold() and p.is_symlink() for p in entries):
+            raise CaptureError(
+                f"{where} is a symbolic link. The identity map is built only from real "
+                "folders inside the install, so the files under the link would be captured "
+                "unscrubbed; nothing is captured. To capture a WTF folder kept elsewhere "
+                "(for example one synced between machines), copy `.build.info` and the flavor "
+                "folders into a new folder with a copy that follows links (such as `cp -RL`), "
+                "and pass that folder as --root"
+            )
+
     for folder in folders(listed(root)):
-        wtf = named(listed(folder), "WTF")
+        in_folder = listed(folder)
+        no_link(in_folder, "WTF", f"{folder.name}/WTF")
+        wtf = named(in_folder, "WTF")
         if wtf is None:
             continue
         in_wtf = listed(wtf)
+        no_link(in_wtf, "Account", f"{folder.name}/WTF/Account")
         configs.extend(config_files(in_wtf))
         account_root = named(in_wtf, "Account")
         for account in folders(listed(account_root)) if account_root else []:

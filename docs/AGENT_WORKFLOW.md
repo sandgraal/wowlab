@@ -16,13 +16,31 @@ project can copy the setup — see the last section.
 | **domain-reviewer** | `.claude/agents/domain-reviewer.md` | nothing | glossary, file map, format reference, then diff |
 | **security-reviewer** | `.claude/agents/security-reviewer.md` | nothing | ADR-0021, ADR-0023, workflows, then diff |
 | **pr-shepherd** | `.claude/agents/pr-shepherd.md` | PR text, thread replies, comment-level fixes, rebases, lock regeneration | PR state, checks, threads |
-| **Automated review** | `.github/workflows/claude-review.yml` | PR comments | `AGENTS.md`, diff |
+
+*Amended 2026-11-04 (owner decision: nothing uses the Claude API):* the
+automated review, `.github/workflows/claude-review.yml`, was deleted with
+every other workflow that ran Claude. No review runs in CI; the independent
+`code-reviewer` verdict (with `domain-reviewer` and `security-reviewer` by
+area) is the review gate, as it already was for merging since 2026-10-17.
 
 Every writer is graded by someone who did not write the thing. For the two
 load-bearing files, the ones that rewrite the owner's data (`luadata.py` and
 `guard.py` under `lab/core/src/wowlab_core/`), that separation is enforced
 at the ticket level: a `[TEST]` ticket lands graders on `main` as
 `pytest.mark.xfail(strict=True)` before the `[IMPL]` ticket starts.
+Since M16-40, CI's `Graders activated by marker deletion only` job checks
+the `[IMPL]` side: on a PR that changes one of those files (or
+`proposal.py`), a test file already on `main` that is named for it, imports
+it, or carries a strict xfail marker may change only by deleting whole
+`xfail(strict=True)` marker blocks. On the same PR, no other file under a
+`tests/` directory may be added, changed or deleted, whatever its type,
+unless it is a new `test_*.py` module (helpers, oracles, packages,
+`conftest.py`, fixtures and snapshot data all count), no `conftest.py` may
+be added anywhere, and pytest configuration may not change: `pytest.toml`,
+`.pytest.toml`, `pytest.ini`, `.pytest.ini`, the `tool.pytest` table of
+`pyproject.toml`, `[tool:pytest]` in `setup.cfg` and `[pytest]` in
+`tox.ini` (`scripts/check_grader_diff.py` states the rule). The Makefile's
+pytest lines are not checked; review covers them.
 `svmerge.py`, `profiles.py` and the `ui` server were in the set from
 2026-09-29 and 2026-10-15 until 2026-10-17, when the owner narrowed it back
 to ADR-0013's two: the rule had doubled every `ui` ticket, needed owner
@@ -140,19 +158,22 @@ removes or changes a command, an option, an output shape (text or
 implementer report's `user-facing changes:` field and in the PR body's
 "User-facing surface" box, with the wiki pages they affect. The wiki
 (`sandgraal/wowlab.wiki`) describes what is on `main`; implementers do not
-edit it. The daily wiki job reads merged PRs and documents them; the
-conductor may also update a page directly after a merge. From Wave 5 (M14)
+edit it. The conductor updates the wiki after a merge. (Until 2026-11-04 the
+daily wiki job also read merged PRs and documented them; it ran Claude and
+was deleted by owner decision that day.) From Wave 5 (M14)
 on, every command must also be reachable in `wowlab ui` (the parity test in
 the required `quality` job enforces it). *Amended 2026-10-14:* this said
 Wave 4; the first public release (ADR-0031) took that number.
 
-**A new command and the wiki (2026-10-14, amended 2026-10-15).** The live
-wiki job requires every leaf command to be named on a hand-written wiki page.
+**A new command and the wiki (2026-10-14, amended 2026-10-15).**
+`scripts/check_wiki.py` requires every leaf command to be named on a
+hand-written wiki page (it was the daily wiki job's gate; since 2026-11-04
+it is a local tool only).
 Since M12-15, the tests grade `check_wiki` against a frozen copy of the wiki
 together with the command set of its era
 (`tests/scripts/fixtures/wiki-<commit>.commands.txt`), so a PR that adds a
 command no longer breaks CI. The conductor still documents a new command on
-the wiki at merge, or the next daily pass does.
+the wiki at merge.
 
 **Windows after merge (2026-10-15, owner decision).** `lab (windows)` is not
 a required check; it runs in `windows.yml` after each merge to `main`,
@@ -255,8 +276,8 @@ explain why.
 
 Open issues with the ticket template; the conductor folds them into the
 backlog if the owner wants them in the current wave. Review any PR;
-reply-then-resolve applies to you too. Mention `@claude` in an issue or PR
-comment to get an answer with the repo's context loaded. Real fixtures come
+reply-then-resolve applies to you too. (Mentioning `@claude` no longer
+answers: the responder was deleted on 2026-11-04, owner decision.) Real fixtures come
 from the owner's install through `scripts/lab_capture.py`
 (`docs/handoffs/M10-03.md`). Accept or reject ADRs by editing their status
 in a PR you merge yourself.
@@ -277,6 +298,6 @@ in a PR you merge yourself.
 4. Write a backlog in the `## [ ] ID — Title` / `**Depends on:**` format;
    the frontier logic and SessionStart hook work unchanged.
 5. Run `scripts/bootstrap-github.sh` (edit `REPO` and the required check
-   names in `.github/rulesets/main.json`), add the `CLAUDE_CODE_OAUTH_TOKEN`
-   secret from `claude setup-token` (`docs/SETUP.md`; CI usage then counts
-   against that subscription's limits), and start with `/conduct next`.
+   names in `.github/rulesets/main.json`) and start with `/conduct next`.
+   No secret is needed: Claude does not run in CI (owner decision,
+   2026-11-04).

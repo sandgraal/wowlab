@@ -27,7 +27,7 @@ dev = [
   "types-psutil>=7.0",  # psutil ships no py.typed; mypy --strict needs the stubs
   # dev only: test_ui_fonts.py builds the sdist and wheel in-process, offline
   # (M16-51, ADR-0012); the same pin as lab/core/build-constraints.txt, which a test checks
-  "hatchling==1.32.4",
+  "hatchling==1.33.0",
 ]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
@@ -88,23 +88,22 @@ python_version = "3.12"
 # Scripts held to the library's standard: the scrub tool (the repository's privacy
 # boundary), the subset tool (M12-01; makes fixtures the same byte-for-byte way),
 # the command-reference generator (M12-13; its page is published to the wiki), and
-# the daily wiki job's gate and state tool (M12-14; nothing reaches the wiki past them),
-# and its diagnosis of the Claude step (M12-14; it prints model text to a public log),
+# the wiki gate (M12-14; nothing should reach the wiki past it),
 # and the release checks (M13-03; nothing is published past them), and the derived-fixture
 # tool for the install's archives (M15-03; it reads the install and writes a fixture), and
-# the font check (M16-51; it vouches for the third-party font files in the package), and
-# the test-artifact cleaner (M13-81; it deletes directories).
+# the font check (M16-51; it vouches for the third-party font files in the package),
+# and the grader diff gate (M16-40; it holds graders of the load-bearing files to marker removal),
+# and the test-artifact cleaner (M13-81; it deletes directories).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
   "scripts/wago_subset.py",
   "scripts/gen_command_reference.py",
   "scripts/check_wiki.py",
-  "scripts/wiki_state.py",
-  "scripts/wiki_diagnose.py",
   "scripts/release_check.py",
   "scripts/casc_facts.py",
   "scripts/check_fonts.py",
+  "scripts/check_grader_diff.py",
   "scripts/clean_test_artifacts.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]

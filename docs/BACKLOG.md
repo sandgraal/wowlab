@@ -958,7 +958,7 @@ Found 2026-10-18 by the shepherd on #266, the first merge through the GitHub MCP
 
 ---
 
-## [ ] M13-61 — The capture tool follows a symlinked `WTF/` or `WTF/Account/` past its identity harvest
+## [x] M13-61 — The capture tool follows a symlinked `WTF/` or `WTF/Account/` past its identity harvest
 **Size:** S · **Depends on:** M13-55
 
 Found 2026-10-18 in the security review of #269 (M13-55), on `main` before it. `scripts/lab_capture.py`'s discovery (`folders()`/`named()`, around lines 2838–2860 on `main` after #269) skips symlinked folders, but the planner reaches the same files through `child()`/`descend()` (around 1770–1786), which follow symlinks, and `Planner.add` (around 2294) refuses a symlink only at the final file. With `_retail_/WTF` a symlink to a directory outside the install holding `SET accountName "SECRETACCT"`, account `123456789#1` and an SV file containing `SECRETACCT`, the capture exits 0 with the account folder and the value unscrubbed (reproduced against main's tool too). Players symlink `WTF` to sync settings, so the harvest M13-55 added is skipped silently on exactly those installs; only the GUID check has a fallback refusal. Fix: make discovery and planning agree, failing closed: discovery stops with a `CaptureError` when `WTF/` or `WTF/Account/` is a symlink (or the planner applies the same symlink exclusion at every level). Labelled constructed test with the symlinked `WTF` tree: exit 2, nothing written, the value not printed.
@@ -976,7 +976,7 @@ Left **[verify]** by M13-55 (#269, 2026-10-18; the security and code reviews bot
 
 ---
 
-## [ ] M13-63 — `check_wiki` decodes percent-encoding before the personal-data matchers
+## [x] M13-63 — `check_wiki` decodes percent-encoding before the personal-data matchers
 **Size:** XS · **Depends on:** M13-53
 
 Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_privacy` reads raw lines, `wiki_diagnose.Redactor.line` too, and `_resolve` decodes a link target once and only for the withhold decision: `[x](123456789%231)` is withheld in the message but exits 1 (the page goes out in the `wiki-daily-unchecked` artifact), `[x](123456789%25231)` prints the digits, and `123456789%231` as plain text exits 0. The runner holds nothing private, so an encoded identifier can only come from an already-public input or from the model, which is why this is low; the backstop should still see it. Fix in `personal_kinds`: also match a percent-decoded form of the text, decoding repeatedly (capped) until it stops changing, so the privacy check, the withhold decision and the redactor agree. Labelled constructed tests for single and double encoding, exit 3.
@@ -1012,8 +1012,10 @@ Three small items found 2026-10-18 in the security and code reviews of #278 (M13
 
 ---
 
-## [ ] M13-67 — `claude-review.yml`: the model reads the PR's `AGENTS.md`
+## [x] M13-67 — `claude-review.yml`: the model reads the PR's `AGENTS.md`
 **Size:** XS · **Depends on:** M13-59
+
+**Closed 2026-11-04 as moot:** `claude-review.yml` was deleted with the other workflows that ran Claude (owner decision, #361), so there is no prompt left to point at a base copy.
 
 Found 2026-10-18 in the security review of #272 (M13-59), pre-existing. The review prompt says "Read AGENTS.md first", but `AGENTS.md` is not one of the paths the action restores from `main` before the model starts, so the model reads the PR's copy, and a hostile PR could weaken the invariants it is graded against. Offset today because the prompt restates L1 to L8 inline and the change would show in the diff. Fix in the workflow: the restore list is the constant `SENSITIVE_PATHS` in the pinned action's `restore-config.ts`, not an input, so have the diff step copy `main`'s `AGENTS.md` beside the diff file and point the prompt at that copy, saying the on-disk one is the PR's.
 
@@ -1065,7 +1067,7 @@ Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh
 
 ---
 
-## [ ] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
+## [x] M13-72 — `char list --json` carries every full record; the Character tab's colour grep exempts `page.css`
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the code review of #290 (M14-08), on `main` before it. (1) `char list --json` is called with `keep_records=json_out` and so prints every character's full record (about 50 KB per low-level character on the capture; 100,632 bytes for two), while the Character tab's picker needs only the label, the folders, the time and the error. A large roster of high-level characters could approach the UI's 16 MiB output cap and leave the tab saying the page cannot hold the output; not verified on real high-level records. Decide between a lighter `char list --json` (a `--brief` flag, or records dropped by default under the UI) and a documented bound; `char list` text output byte-identical to `main`, and `--json` unchanged unless a flag asks. (2) `test_the_templates_hold_no_slot_name_and_no_colour_code` in `test_ui_character.py` skips six-digit colours in `page.css` because of `--field: #ffffff`; exempt that one value instead and check the quality words in the stylesheet too, so a stylesheet colour table keyed by quality word cannot pass the test.
@@ -1083,7 +1085,7 @@ Found 2026-10-19 in the M14-07 reviews (both reviewers, off that branch), on `ma
 **Acceptance:** the test passes on a case-sensitive runner (CI Linux); byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
 ---
-## [ ] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
+## [x] M13-74 — `sv merge --expect` pins the merged bytes, not only the target
 **Size:** S · **Depends on:** M14-03
 
 Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the conductor: the ticket named the target's sha256 as the pin and allowed one new JSON field). `sv merge --from CHARACTER` reads its source from a live file, and the client rewrites the played character's per-character files at logout, not the target's. So between the plan the page showed and the confirmed run the source can change while the target does not; `--expect <target sha256>` passes and the confirmed run writes values the page never showed (§16.1 "applies the plan that was shown"). A `--from` or `--base` snapshot given as an id prefix can likewise resolve to a different snapshot if the store changes in between. Pin what the merge will write: the merge report gains `merged_sha256` (the sha256 of the bytes `tx.write` will receive) beside `target_sha256`; `--expect` takes `<target>:<merged>` (or a second option, decided in the report) and the confirmed run refuses with exit 3 unless both match, the second check made inside the transaction against `tx.plan[0].before` and the bytes passed to `tx.write`; the UI passes both back. The security-reviewer's probe `lab/core/tests/review/test_m14_03_sv_merge_confirms_a_source_the_page_never_showed.py` (xfail on `main` after M14-03) is activated by marker deletion only. Text output byte-identical to `main` without `--expect`; `--json` gains that one field, listed in the release notes.
@@ -1099,7 +1101,7 @@ Found 2026-10-19 in the security review of M14-03 (ruled a follow-up by the cond
 **Acceptance:** the five tests pass on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
 
 ---
-## [ ] M13-76 — `wowlab ui --help` still describes the v0.1 UI
+## [x] M13-76 — `wowlab ui --help` still describes the v0.1 UI
 **Size:** XS · **Depends on:** M14-04, M16-02 (absorbed by M16-02, 2026-10-21; closes with it)
 
 Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_command` docstring in `cli.py` says only `snap gc` and `doctor` run behind a Confirm and that commands that change game files "are not offered in this version"; since M14-03 every `--yes` command runs through the confirm step, and the docstring names neither the Character tab (M14-08) nor the Looks tab (M14-04). Rewrite it to match `main` after M14-04 (the five tabs; plan then Confirm for every `--yes` command; `undo` and `sv merge` refuse on drift, the others apply what is there after the snapshot; `--out` and `--follow` refused), in the CLI's own voice; the generated command reference and the wiki's `wowlab ui` page follow it. Text output of every other command byte-identical to `main`.
@@ -1107,7 +1109,7 @@ Found 2026-10-19 in the code review of M14-04, on `main` before it. The `ui_comm
 **Acceptance:** `wowlab ui --help` says what the UI does on `main`; `tests/scripts/test_readme.py`-style pin if one exists for the reference; `make ci` green; reviewed by `code-reviewer`. User-facing: `wowlab ui --help`, the command reference, the wiki's `wowlab ui` page.
 
 ---
-## [ ] M13-77 — `CharBindsReport` carries the left-out sentence it prints
+## [x] M13-77 — `CharBindsReport` carries the left-out sentence it prints
 **Size:** XS · **Depends on:** M14-09
 
 Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds`'s "Left out of the bindings record …" sentence, caveat included ("a key bound straight to a spell, macro, item or click may be one"), but no report field carries it: `CharBindsReport` has only `commands_left_out` and `keys_left_out`, so the page copies the CLI's prose word for word and a test holds the two equal (§14.5 D3, §15.6 data flow). Add the sentence to the report (one field, `left_out_note`, or the two counts each with their words), make the CLI's text form and the page read it from there, and drop the copied prose from `page.js`. `--json` gains exactly that field, listed in the release notes (M13-47's guard); text output byte-identical to `main`.
@@ -1314,7 +1316,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-05 — `casc`: encoding, root, and `CascSource.read`
+## [x] M15-05 — `casc`: encoding, root, and `CascSource.read`
 **Size:** M · **Depends on:** M15-04
 
 §17.1 steps 4 and 5 and the targets. The encoding file (page index, `bisect`, one-page scan; no full dictionary; one content key may map to several encoding keys, each tried against the index), the root file in versions 1 and 2 (the flag words; locale and platform filtering with the locale from `.build.info`'s `Tags` column and the platform from the install's layout, never a constant: L6; the `0x108`/`0x110` masks and `LowViolence`; a file in an `Encrypted` block tried through its other keys before it is called encrypted), and `CascSource.read(fdid) -> bytes` with the content-key MD5 check and the one re-open on mismatch, on every read. `CascSource.stat(fdid)` reports §17.1's four states: *local*, *not in your client's local files*, *not part of this game version's files*, *encrypted*, plus *unknown id* for an id in no table. **Performance target (§6.4):** open in ≤ 5 s, 300 reads in ≤ 10 s, resident memory measured; a miss is a stop-and-ask (§17.1), not a dependency.
@@ -1391,6 +1393,14 @@ The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: 
 
 **Acceptance:** the fixture character's gear against recorded wago CSV slices, row by row (appearance per item, geosets, attachments, file ids and states); a labelled constructed character with a helmet (hair hidden), a cloak, a robe (the trouser priority), a shirt under chest (the sleeve priority), an item whose bonus ids select a second appearance, and an item with no appearance row (listed, not fatal); `make ci` green. Reviewed by `domain-reviewer` (the item tables on Forever's data; the geoset rules) and `code-reviewer`. User-facing: none until M15-11.
 
+
+## [x] M15-14 — `CascSource`: one index re-read per call, whatever the retry raises
+**Size:** XS · **Depends on:** M15-05 · **Sources:** the automated review of #320 (2026-10-22)
+
+Found in review after M15-05 merged. In `casc.py`, `_read_checked` and `_probe_once` (around lines 2598–2608 at 9112f0f) lose the per-call `reopened` flag when the retry after a re-read raises `EncryptedContent` or `CascUnsupportedError`. A later candidate can then call `_reopen()` a second time, giving `reopens == 2` within one `read` or `stat`, while §17.1 allows one re-open per call. Fix: keep the flag for the whole call, on the instance or passed through. Add a labelled constructed test that makes the first candidate fail its MD5, has the retry raise each of the two errors, and asserts `reopens == 1` after the call.
+
+**Acceptance:** the test fails on `main` and passes on the branch; `make test-parser` and `make ci` green; reviewed by `code-reviewer`. User-facing: none.
+
 ---
 
 ---
@@ -1412,7 +1422,7 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 
 ---
 
-## [ ] M16-02 — One sentence about what can change your files
+## [x] M16-02 — One sentence about what can change your files
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F15, designer:F15, a11y:F14, newcomer:F2, writer:F1, qa:F18, security:F5 (EV: M13-76 widened)
 
 §18.1 item 2. The same sentence goes into the `ui` docstring (`cli.py` around 9899), `page.html:20`, the Commands intro (`page.html:62`), the `page.js:572` hint, INSTALL.md's UI section (with Character and Looks added to "What to look for"), and the wiki's `CLI-Reference.md` through the wiki job's notes. The sentence: "Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot."
@@ -1421,7 +1431,7 @@ These are the `Proposed` amendments of 2026-10-21 to ADR-0013 (the proposal vali
 
 ---
 
-## [ ] M16-03T — [TEST] `guard`: restore into a named flavor folder or install root
+## [x] M16-03T — [TEST] `guard`: restore into a named flavor folder or install root
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F1, qa:F1 (EV-01T)
 
 §18.1 item 1. Strict-xfail graders cover:
@@ -1540,7 +1550,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`'s def
 
 ---
 
-## [ ] M16-09T — [TEST] `guard`: the pre-write snapshot records `kind=pre-write`
+## [x] M16-09T — [TEST] `guard`: the pre-write snapshot records `kind=pre-write`
 **Size:** XS · **Depends on:** nothing · **Sources:** raider:F2
 
 Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: …")`), so recording its kind changes what `guard` does (ADR-0013). Strict-xfail graders: every write's pre-write manifest carries `kind="pre-write"`; a `snap create` manifest carries `kind="user"`; nothing else in the manifest or journal changes.
@@ -1572,7 +1582,7 @@ Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: 
 
 ---
 
-## [ ] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
+## [x] M16-11T — [TEST] `guard`: a whole restore's plan lists what it leaves alone
 **Size:** XS · **Depends on:** nothing · **Sources:** qa:F2
 
 The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes what `guard` returns (ADR-0013). Strict-xfail graders: files added under the snapshot's subtrees since the snapshot appear in the plan as left-alone items; they are never written or deleted; a `--paths` restore lists none. *Seam amended 2026-10-22 (M16-11's "Seam" paragraph):* the left-alone files are a read-only `tx.left_alone` tuple, not items in `tx.plan`. The graders also cover links, a FIFO, excluded paths, and added executables and Edit-no files.
@@ -1630,7 +1640,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-15 — Player-output lint, and its hits fixed
+## [x] M16-15 — Player-output lint, and its hits fixed
 **Size:** S · **Depends on:** nothing · **Sources:** designer:F6, newcomer:F3, writer:F4, F15, a11y:F13, addon-author:F14 (EV-14; owner Q6)
 
 §18.1 item 4; `.claude/rules/player-copy.md`.
@@ -1727,7 +1737,7 @@ Every fenced `wowlab` command in README and INSTALL runs against the fixture san
 
 ---
 
-## [ ] M16-23T — [TEST] `guard`: a listing memo that keeps every re-check
+## [x] M16-23T — [TEST] `guard`: a listing memo that keeps every re-check
 **Size:** S · **Depends on:** nothing · **Sources:** architect:F1, raider:F14 (EV-05T)
 
 §18.1 item 6. Strict-xfail graders cover:
@@ -1767,7 +1777,7 @@ Inputs are constructed and labelled.
 
 ---
 
-## [ ] M16-26T — [TEST] `luadata.read` and the `wtfconfig` readers through `open_regular_file`
+## [x] M16-26T — [TEST] `luadata.read` and the `wtfconfig` readers through `open_regular_file`
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F6, security:F3 (EV-24T)
 
 **Acceptance:** strict-xfail graders show:
@@ -1779,7 +1789,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 
 ---
 
-## [ ] M16-26 — [IMPL] `luadata.read` and `wtfconfig` readers through the M11-11 helper
+## [x] M16-26 — [IMPL] `luadata.read` and `wtfconfig` readers through the M11-11 helper
 **Size:** S · **Depends on:** M16-26T · **Sources:** qa:F6, security:F3 (EV-24)
 
 **Acceptance:** the graders are activated by marker deletion only, and `make test-parser` and `make ci` are green. Reviewed by `code-reviewer` and `security-reviewer`.
@@ -1796,7 +1806,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 
 ---
 
-## [ ] M16-28 — Gaps tab: one `plural`
+## [x] M16-28 — Gaps tab: one `plural`
 **Size:** XS · **Depends on:** nothing · **Sources:** designer:F1 (EV-26)
 
 **Acceptance:**
