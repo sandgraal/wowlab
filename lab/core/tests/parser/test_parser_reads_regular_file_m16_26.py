@@ -65,7 +65,6 @@ from wowlab_core.snapshot import UnsafeReadError
 
 pytestmark = pytest.mark.parser
 
-XFAIL = pytest.mark.xfail(strict=True, reason="M16-26 not implemented")
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 CAPTURE = FIXTURES / "macos" / "forever"
@@ -342,7 +341,6 @@ def test_real_luadata_read_keeps_taking_a_str_path(install: Path) -> None:
     assert luadata.serialize(luadata.read(str(path))) == data
 
 
-@XFAIL
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-one-guarded-open"))
 def test_a_regular_file_is_read_through_one_guarded_open_and_closed(
     reader: Reader, install: Path, monkeypatch: pytest.MonkeyPatch
@@ -359,7 +357,6 @@ def test_a_regular_file_is_read_through_one_guarded_open_and_closed(
     assert_one_guarded_open_closed(spy, path)
 
 
-@XFAIL
 def test_real_luadata_read_by_str_path_is_one_guarded_open_and_closed(
     install: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -370,7 +367,6 @@ def test_real_luadata_read_by_str_path_is_one_guarded_open_and_closed(
     assert_one_guarded_open_closed(spy, path)
 
 
-@XFAIL
 def test_constructed_oversized_luadata_read_is_refused_and_closed(
     install: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -414,7 +410,6 @@ def test_constructed_oversized_luadata_read_reads_at_most_the_bound_plus_one(
 
 
 @needs_fifo
-@XFAIL
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-fifo"))
 def test_a_fifo_is_refused_without_blocking(
     reader: Reader, install: Path, monkeypatch: pytest.MonkeyPatch
@@ -439,7 +434,6 @@ def test_a_fifo_is_refused_without_blocking(
 
 
 @needs_symlink
-@XFAIL
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-link-out"))
 def test_a_final_link_out_of_the_install_is_refused(
     reader: Reader, install: Path, tmp_path: Path
@@ -462,7 +456,6 @@ def test_a_final_link_out_of_the_install_is_refused(
 
 
 @needs_symlink
-@XFAIL
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-link-out-no-o-nofollow"))
 def test_without_o_nofollow_a_final_link_out_of_the_install_is_refused(
     reader: Reader, install: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -485,7 +478,6 @@ def test_without_o_nofollow_a_final_link_out_of_the_install_is_refused(
 
 @needs_fifo
 @needs_symlink
-@XFAIL
 @pytest.mark.parametrize("kind", ["constructed-fifo", "constructed-link-out"])
 def test_sv_dump_refuses_a_fifo_or_a_final_link_with_a_message(
     kind: str, install: Path, tmp_path: Path

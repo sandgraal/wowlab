@@ -230,7 +230,8 @@ def test_probe_as_the_only_difference_writes_nothing_and_says_so_constructed(
     text = run("sv", "merge", LAB, "--from", CHAR_B, "--into", CHAR_A, "--yes")
     assert text.exit_code == 0, _out(text)
     assert "Nothing to change" in _out(text), "the no-change path's wording"
-    assert PROBE_NOTE in _out(text)
+    # Text output drops the spec section (M16-15); --json keeps the note whole.
+    assert PROBE_NOTE.removesuffix(" (§13.4)") in _out(text)
     assert _state(root) == before
     assert guard.history() == ()
 
