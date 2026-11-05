@@ -212,8 +212,8 @@ Handle, in order:
 
 Only when `mergeStateStatus == CLEAN` (or `UNSTABLE` solely because a
 job that is not in `.github/rulesets/main.json`'s required list failed or
-is still pending: the `review` job of the `Claude review` workflow,
-`lab (windows)`, `lab (macos)`), every
+is still pending: `lab (windows)`, `lab (macos)`, `grader-diff`, or on an
+old head the `review` job of the deleted Claude workflow), every
 **required** check is SUCCESS
 on the head sha, every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
