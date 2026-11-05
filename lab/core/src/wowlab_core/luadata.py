@@ -106,7 +106,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple, NoReturn, cast
 
-from wowlab_core import longpath
+from wowlab_core import longpath, snapshot
 
 __all__ = [
     "MAX_COST",
@@ -140,6 +140,8 @@ _MIB = 1024 * 1024
 MAX_DEPTH = 200
 #: Largest document accepted, in bytes (§6.4: 256 MB, read as MiB).
 MAX_FILE_BYTES = 256 * _MIB
+# A read past what `fstat` saw (a file growing as `read` reads it) asks for this much at a time.
+_READ_CHUNK = 16 * _MIB
 #: Longest string literal accepted, counted on its source bytes between the quotes.
 MAX_STRING_BYTES = 64 * _MIB
 #: Longest number literal accepted, in characters: CPython's own default
@@ -1089,20 +1091,42 @@ def _resume_gc() -> None:
 
 def read(path: str | Path) -> LuaDocument:
     """Read and parse one file. Opens it read-only, reads it once and writes
-    nothing anywhere (L1). The size bound is checked before reading. A path
-    past Windows' plain limit is opened by its extended-length spelling
-    (`longpath`, M13-15)."""
-    with longpath.open_read(path) as handle:
-        size = os.fstat(handle.fileno()).st_size
-        if size > MAX_FILE_BYTES:
+    nothing anywhere (L1). The size bound is checked before reading, and at
+    most `MAX_FILE_BYTES + 1` bytes are read.
+
+    The one open is the guarded one (`snapshot.open_regular_file`, M16-26):
+    non-blocking and not following a final link, then an `fstat` that must
+    show a regular file. A FIFO, a device or a final link is refused with
+    `snapshot.UnsafeReadError` (or an `OSError` with `ELOOP` from the open),
+    raised as it is, never as a `LuaDataError`. The descriptor is closed on
+    every path. A path past Windows' plain limit is opened by its
+    extended-length spelling (`longpath`, M13-15)."""
+    fd, st = snapshot.open_regular_file(Path(path))
+    try:
+        bound = MAX_FILE_BYTES
+        if st.st_size > bound:
             raise LuaLimitError(
-                f"file is {size} bytes, over the {MAX_FILE_BYTES}-byte bound",
+                f"file is {st.st_size} bytes, over the {bound}-byte bound",
                 line=1,
                 column=1,
                 token=b"",
             )
-        data = handle.read(MAX_FILE_BYTES + 1)
-    return parse(data)
+        budget = bound + 1
+        chunks: list[bytes] = []
+        total = 0
+        while total < budget:
+            # The first read asks for the whole file as `fstat` saw it, plus
+            # one byte, so the usual file arrives in one piece; a file that
+            # grows after the `fstat` is read on in chunks up to the budget.
+            want = st.st_size + 1 if not chunks else _READ_CHUNK
+            chunk = os.read(fd, min(want, budget - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    finally:
+        os.close(fd)
+    return parse(b"".join(chunks))
 
 
 def _parse_prefix(data: bytes) -> LuaDocument:

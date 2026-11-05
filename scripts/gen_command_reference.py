@@ -1,7 +1,8 @@
 """Render the wiki's command reference from the `wowlab` CLI itself (M12-13).
 
-The page is the wiki's `CLI-Reference`, which the daily wiki job regenerates
-(M12-14); its first line says it is generated and is not edited by hand. The
+The page is the wiki's `CLI-Reference`, regenerated with this script before a
+wiki push (the daily wiki job did it until 2026-11-04); its first line says it
+is generated and is not edited by hand. The
 hand-written `Command-Reference` page stays the overview.
 
 Walks the Click tree of `wowlab_core.cli:app` (`typer.main.get_command`) and
