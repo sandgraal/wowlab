@@ -97,7 +97,6 @@ def _create(*args: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(("args", "label"), LABELS)
-@pytest.mark.xfail(strict=True, reason="M16-09 not implemented")
 def test_snap_create_records_kind_user(
     root: Path, user_data: Path, args: tuple[str, ...], label: str
 ) -> None:
@@ -112,7 +111,6 @@ def test_snap_create_records_kind_user(
     assert set(raw) == MANIFEST_KEYS | {"kind"}, sorted(set(raw) ^ (MANIFEST_KEYS | {"kind"}))
 
 
-@pytest.mark.xfail(strict=True, reason="M16-09 not implemented")
 def test_snap_restore_takes_a_pre_write_snapshot_and_leaves_the_user_one_a_user_one(
     root: Path, flavor: Path, user_data: Path
 ) -> None:

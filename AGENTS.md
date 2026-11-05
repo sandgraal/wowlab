@@ -13,7 +13,8 @@ change it back. Its base is a Python library and a CLI (`wowlab_core`,
 base: the lab-addon, the customization sandbox, profiles and sv-merge in
 Wave 2, and the character list, the generated command reference and the
 daily wiki job in Wave 3 (re-scoped 2026-10-14: db2lake, talents and the
-alt-dashboard deferred). Wave 4 (M13) is the first public release and
+alt-dashboard deferred; the wiki job was deleted 2026-11-04, when the owner
+ordered that no workflow run Claude). Wave 4 (M13) is the first public release and
 its v0.1 includes the read-only first stage of `wowlab ui` (ADR-0029,
 amended 2026-10-15); Wave 5 (M14) finishes it. Other players may install it from a tagged
 GitHub release and run it on their own machine; it is never deployed as a
@@ -103,7 +104,8 @@ each in its own worktree; `code-reviewer` grades every branch spec-first;
 opens the PR, answers every thread, and **merges autonomously** once the
 required checks are green, the reviewer verdicts are clean, and every
 thread the owner opened is answered. Since 2026-10-17 an open thread from
-the automated review or another bot does not hold a merge: the independent
+a bot does not hold a merge (the automated Claude review itself was removed
+2026-11-04; the rule still covers Copilot and other bots): the independent
 `code-reviewer` verdict is the gate, and the thread stays visible. A bot
 finding that every independent reviewer dispatched for the branch saw and
 did not count gets, once the conductor has checked that against their
