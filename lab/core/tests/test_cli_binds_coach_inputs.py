@@ -50,7 +50,7 @@ from test_cli_binds_coach import (
     user_dirs,
 )
 
-from wowlab_core import bindscoach, cli, combatlog, labaddon
+from wowlab_core import bindscoach, cli, combatlog, labaddon, layout
 
 __all__ = ["flavor", "record", "root", "user_dirs"]  # the fixtures, used by name
 
@@ -606,6 +606,39 @@ def test_default_character_without_a_usable_record_still_picks_the_log_by_name_c
     rep = report()
     assert rep.record_file == NAMESAKE_RECORD and rep.record_error is not None
     assert rep.record_schema is None
+    assert rep.log.character_name == "Labchard"
+    assert (rep.log.file, rep.log.chosen_by) == (f"Logs/{LOG_NAME}", "caster name")
+
+
+def test_default_character_with_no_file_to_choose_still_picks_the_log_by_name_constructed(
+    flavor: Path, namesake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The top-ranked folder holds two case variants of WowLab.lua, none
+    spelled exactly, so no file is chosen and no record target exists. The
+    second variant is injected into the listing (constructed), as
+    `test_cli_char_list.py` does, so this runs on a case-insensitive volume
+    too. The folder still names the character the log is chosen for."""
+    (flavor / OTHER_RECORD).unlink()
+    namesake.rename(namesake.with_name("wowlab.lua"))
+    real_list = layout.Layout.saved_variables
+    listed = NAMESAKE_RECORD[: -len("WowLab.lua")] + "wowlab.lua"
+
+    def with_twin(self: layout.Layout, scope: Any = None) -> Any:
+        files = real_list(self, scope)
+        extra = [
+            f.model_copy(update={"path": f.path[: -len("wowlab.lua")] + "WOWLAB.lua"})
+            for f in files
+            if f.path == listed
+        ]
+        return (*files, *extra)
+
+    monkeypatch.setattr(layout.Layout, "saved_variables", with_twin)
+    caster_log(
+        flavor, "Someone-Else-", cast(755, "Health Funnel"), name="WoWCombatLog-a.txt", offset=5
+    )
+    rep = report()
+    assert rep.record_file is None and rep.record_error is not None
+    assert "none was read" in rep.record_error
     assert rep.log.character_name == "Labchard"
     assert (rep.log.file, rep.log.chosen_by) == (f"Logs/{LOG_NAME}", "caster name")
 
