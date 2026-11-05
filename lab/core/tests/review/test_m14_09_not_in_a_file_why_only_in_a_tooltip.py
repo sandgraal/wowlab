@@ -49,7 +49,10 @@ def test_the_reason_is_the_reports_and_the_cli_says_it_once(server: Any, picked:
     assert not any(keymap.WHY_NOT_IN_A_FILE in note for note in report["notes"])
     params = _gear_params(panels.PICKED)
     args = ["char", "binds", "--character", params["character"], "--account", params["account"]]
-    text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]])
+    # Behind --notes since M16-16; a wide terminal keeps the sentence on one line.
+    text = CliRunner().invoke(
+        cli.app, [*args, "--flavor", params["flavor"], "--notes"], terminal_width=10_000
+    )
     assert text.exit_code == 0, text.stdout
     # Text output says the marker in words (M16-15): count the sentence without it.
     assert text.stdout.count(keymap.WHY_NOT_IN_A_FILE.removesuffix(" [verify]")) == 1

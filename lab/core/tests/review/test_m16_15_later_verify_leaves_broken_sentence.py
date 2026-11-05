@@ -38,7 +38,10 @@ def test_first_marker_reads_in_words_positive_control(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pc.sandbox(tmp_path, monkeypatch, "")
-    out = runner.invoke(cli.app, ["macros", "check", "--character", CHAR])
+    # The length note is behind --notes since M16-16; wide, so it does not wrap.
+    out = runner.invoke(
+        cli.app, ["macros", "check", "--character", CHAR, "--notes"], terminal_width=10_000
+    )
     assert out.exit_code == 0, out.stderr
     assert "characters or bytes is (not yet confirmed)" in out.stdout
 

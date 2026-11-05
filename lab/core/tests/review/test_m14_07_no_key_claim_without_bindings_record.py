@@ -68,7 +68,13 @@ def test_positive_control_char_binds_carries_the_caveat(tree: Path) -> None:
 
 
 def test_char_macros_no_key_claim_keeps_the_caveat_constructed(tree: Path) -> None:
-    out = CliRunner().invoke(cli.app, ["char", "macros", "--character", "Labcharb-Labrealmd"])
+    # The caveat is a standing note since M16-16: printed with --notes, unwrapped
+    # on a wide terminal. The default output's one caveat is the candidate rule.
+    out = CliRunner().invoke(
+        cli.app,
+        ["char", "macros", "--character", "Labcharb-Labrealmd", "--notes"],
+        terminal_width=10_000,
+    )
     assert out.exit_code == 0, out.stdout
     assert "may sit at slot 64 (unconfirmed)" in out.stdout
     assert "no key reaches it on the page its bar shows by default" in out.stdout
