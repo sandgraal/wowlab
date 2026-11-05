@@ -119,6 +119,13 @@ class SnapshotFacts(BaseModel):
     # …" line `explain` prints, which `wowlab ui` shows verbatim. `explain`
     # sets it; `snapshot_facts` leaves it None.
     words: str | None = None
+    # M16-09: the kind of the snapshot named by `snapshot_id`, and the newest
+    # pre-write copy covering the path that is newer than it, if any. The
+    # comparison above is against the newest `user`, `first-run` or
+    # `profile` snapshot; a pre-write copy is compared against only when no
+    # other kind covers the path, and `kind` then says so.
+    kind: snapshot.SnapshotKind | None = None
+    newer_pre_write: SnapshotRef | None = None
 
 
 def disk_spelling(base: Path, parts: Sequence[str]) -> tuple[str, ...]:
@@ -371,11 +378,19 @@ def snapshot_facts(
     flavor_folder: str,
     rel: str,
     captured_subtrees: Sequence[str],
+    pre_write_ids: frozenset[str] = frozenset(),
 ) -> SnapshotFacts:
     """What the snapshots of `flavor_folder` in `install_root` say about
     `rel` (relative to the flavor folder, spelled as on disk).
     `captured_subtrees`: what `snap create` captures, relative to the flavor
-    folder."""
+    folder. `pre_write_ids`: the snapshots the journal names, which tell a
+    pre-write copy written before kinds existed (`snapshot.kind_of`).
+
+    The snapshot compared against is the newest `user`, `first-run` or
+    `profile` one (M16-09): the write gate's pre-write copies are the state
+    just before a change, so after a restore the newest of them holds what
+    the restore undid. Only when no other kind covers the path are the
+    pre-write copies used, and `kind` says so."""
     captured = any(
         _fold(rel) == _fold(s) or _fold(rel).startswith(_fold(s) + "/") for s in captured_subtrees
     )
@@ -409,6 +424,13 @@ def snapshot_facts(
         ),
         key=lambda m: (m.created_at, m.id),
     )
+    newer_pre_write: SnapshotRef | None = None
+    kinds = {m.id: snapshot.kind_of(m, pre_write_ids) for m in covering}
+    chosen = [m for m in covering if kinds[m.id] != "pre-write"]
+    if chosen:
+        newer = covering[covering.index(chosen[-1]) + 1 :]  # pre-write copies, all
+        newer_pre_write = _ref(newer[-1]) if newer else None
+        covering = chosen
     damaged = len(listing.invalid)
     latest_id = covering[-1].id if covering else None
     damaged_newer = any(_newer(bad.name, latest_id) for bad in listing.invalid)
@@ -457,6 +479,8 @@ def snapshot_facts(
                 last[1][0].path.removeprefix(flavor_folder + "/") if last is not None else None
             ),
             last_held_confirmed=last[1][1] if last is not None else None,
+            kind=kinds[latest.id],
+            newer_pre_write=newer_pre_write,
         )
     entry, confirmed = found
     live = _compare(install_root / flavor_folder / rel, entry)
@@ -474,6 +498,8 @@ def snapshot_facts(
         damaged=damaged,
         damaged_newer=damaged_newer,
         error=None,
+        kind=kinds[latest.id],
+        newer_pre_write=newer_pre_write,
     )
 
 
