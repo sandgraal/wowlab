@@ -664,6 +664,31 @@ def _adopt(theirs: LuaValue, ours: LuaValue | None) -> LuaValue:
 _BLANK = re.compile(rb"[ \t\f\v]*")
 
 
+_INDEX_COMMENT = re.compile(rb"-- \[\d+\]")
+
+
+def _unprefixed(slot: bytes | None, comment: bytes | None) -> bytes | None:
+    """`slot` without `comment` at its front (after blanks): a removed
+    entry's trailing comment, which the parser keeps at the start of the
+    slot after that entry (as `_appended` finds it in `close_lead`)."""
+    if not isinstance(slot, bytes) or comment is None:
+        return slot
+    m = _BLANK.match(slot)
+    start = m.end() if m is not None else 0
+    if slot.startswith(comment, start):
+        return slot[start + len(comment) :]
+    return slot
+
+
+def _prefixed(slot: bytes | None, comment: bytes | None) -> bytes | None:
+    """`slot` with ` comment` in front: the trailing comment of the entry
+    now before it, when that slot is given (a generated slot writes it from
+    `Entry.comment`)."""
+    if not isinstance(slot, bytes) or comment is None:
+        return slot
+    return b" " + comment + slot
+
+
 def _appended(table: LuaTable, entries: list[Entry], added: Sequence[Entry]) -> LuaTable:
     """`table` with `entries` (its own, some replaced) and `added` after them.
 
@@ -959,23 +984,22 @@ class _Merger:
         entries: list[Entry],
         span: int,
         path: str,
-    ) -> tuple[list[Entry], list[Entry], bool]:
+    ) -> tuple[list[Entry], list[Entry], bytes | None]:
         """Theirs' array part in place of ours': ours' entries with every
         entry of the keys 1..`span` taken out (duplicates too, so none of
         them loads), and theirs' entries for those keys written where ours'
         list began, so the table holds exactly theirs' keys 1..`span`: an
         entry is positional while the keys run on from 1, and `[k] =` after
         a gap, never renumbered. Returns (entries, entries to append after
-        them: theirs' list when ours' list ended the table or was empty,
-        whether the table's closing bytes are to be generated).
+        them: theirs' list when ours had none, the table's `close_lead`).
 
-        Index comments: a removed entry's trailing comment (`-- [n]`) is in
-        the slot after it, the next entry's `lead` or the table's
-        `close_lead`, and goes with it: that slot is generated instead, so
-        each written positional entry gets its own `-- [n]` where the
-        layout has them, and a kept entry's own comment is written from its
-        `Entry.comment`. The list is reported once, at its path: taken, and
-        removed when it drops or changes any of ours' entries."""
+        Index comments: a removed entry's trailing comment is at the front
+        of the slot after it (the next entry's `lead`, or `close_lead`).
+        Only that comment is taken off the slot; the rest (own-line
+        comments, the line break and indentation of what follows) stays.
+        When ours' list carried `-- [n]` comments, each written positional
+        entry gets its own, naming its key. The list is reported once, at
+        its path: taken, and removed when it drops any of ours' entries."""
         ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
         mine = [o.value(k) for k in ids]
         yours = [t.value(k) for k in ids]
@@ -983,26 +1007,64 @@ class _Merger:
         self.list_lost(path, mine, yours)
         listed = set(ids)
         at = [i for i, kid in enumerate(o.ids) if kid in listed]
-        first = at[0] if at else len(entries)
+        close = ours.close_lead
+        if not at:  # ours has no list: theirs' is appended, as any new entry
+            return entries, self.written(theirs, t, ids, yours, False), close
+        indexed = any(_INDEX_COMMENT.fullmatch(entries[i].comment or b"") for i in at)
+        written = self.written(theirs, t, ids, yours, indexed)
+        first = at[0]
         before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
-        after = [
-            e._replace(lead=None) if o.ids[i - 1] in listed else e
-            for i, e in enumerate(entries)
-            if i > first and o.ids[i] not in listed
-        ]
-        written: list[Entry] = []
+        # What ends up in front of the slot after the written list: the last
+        # written entry's comment, or, when theirs' list is empty, the
+        # comment of the kept entry before ours' list (its slot was the
+        # first removed entry's lead).
+        lead_in = written[-1].comment if written else (before[-1].comment if before else None)
+        if written:
+            # The slot before ours' list (the kept entry's comment before it,
+            # own-line comments, the indentation) goes before theirs.
+            written[0] = written[0]._replace(lead=entries[first].lead)
+        out = list(before)
+        out += written
+        joined = False
+        for i, entry in enumerate(entries):
+            if i <= first or o.ids[i] in listed:
+                continue
+            if o.ids[i - 1] in listed:
+                lead = _unprefixed(entry.lead, entries[i - 1].comment)
+                if not joined:
+                    lead = _prefixed(lead, lead_in)
+                    joined = True
+                entry = entry._replace(lead=lead)
+            out.append(entry)
+        if o.ids[-1] in listed:  # a list entry ended the table: its comment is in close
+            close = _unprefixed(close, entries[-1].comment)
+            if not joined:
+                close = _prefixed(close, lead_in)
+        return out, [], close
+
+    def written(
+        self,
+        theirs: LuaTable,
+        t: _Keys,
+        ids: list[_KeyId],
+        yours: list[LuaValue | None],
+        indexed: bool,
+    ) -> list[Entry]:
+        """Theirs' entries for the keys `ids`: positional while the keys run
+        on from 1, `[k] =` after a gap; with `indexed`, each positional one
+        carries `-- [n]`."""
+        out: list[Entry] = []
         npos = 0  # every positional entry of ours is a key 1..span, so none is left
         for kid, value in zip(ids, yours, strict=True):
             if value is None:
                 continue
             entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
-            npos += entry.style is KeyStyle.POSITIONAL
-            written.append(entry)
-        if after:
-            return [*before, *written, *after], [], False
-        # Ours' list ended the table (its last entry's comment is in the
-        # closing bytes), or ours had none and theirs' is appended.
-        return before, written, bool(at)
+            if entry.style is KeyStyle.POSITIONAL:
+                npos += 1
+                if indexed:
+                    entry = entry._replace(comment=b"-- [%d]" % npos)
+            out.append(entry)
+        return out
 
     def table(self, ours: LuaTable, theirs: LuaTable, base: LuaTable | None, path: str) -> LuaTable:
         o, t, b = _Keys(ours), _Keys(theirs), _keys(base)
@@ -1022,10 +1084,10 @@ class _Merger:
                 entries[index] = entry._replace(value=merged)
                 changed = True
         tail: list[Entry] = []
-        regenerate = False
         npos = sum(e.style is KeyStyle.POSITIONAL for e in entries)
         if span and self.array(o, t, None if base is None else b, span, path):
-            entries, tail, regenerate = self.take_list(ours, theirs, o, t, entries, span, path)
+            entries, tail, close = self.take_list(ours, theirs, o, t, entries, span, path)
+            ours = ours._replace(close_lead=close)
             npos = sum(e.style is KeyStyle.POSITIONAL for e in [*entries, *tail])
             changed = True
         added: list[Entry] = list(tail)
@@ -1039,8 +1101,6 @@ class _Merger:
                 entry = _new_entry(kid, like, npos, merged)
                 npos += entry.style is KeyStyle.POSITIONAL
                 added.append(entry)
-        if regenerate:
-            return LuaTable(ours.lead, (*entries, *added), None)
         if added:
             return _appended(ours, entries, added)
         if not changed:

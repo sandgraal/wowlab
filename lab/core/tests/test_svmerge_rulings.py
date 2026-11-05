@@ -462,3 +462,20 @@ def test_a_taken_list_gets_its_own_index_comments_constructed(theirs: tuple[str,
     ours = doc(("Copper Ore", "Tin Ore", "Iron Ore"))
     result = svmerge.merge(_doc(ours), _doc(doc(theirs)), take="theirs")
     assert luadata.serialize(result.document) == doc(theirs)
+
+
+def test_a_taken_list_keeps_the_comments_around_it_constructed() -> None:
+    # Only the removed entries' own `-- [n]` go: the kept entry's comment,
+    # own-line comments above the list and before `}`, and the indentation
+    # stay (review of round 2).
+    ours = b'X = {\n\tk = 1, -- keep\n\t-- list follows\n\t"a", -- [1]\n\t"b", -- [2]\n\t-- before close\n}\n'
+    theirs = b'X = {\n\tk = 1,\n\t"q", "r", "s",\n}\n'
+    result = svmerge.merge(_doc(ours), _doc(theirs), take="theirs")
+    assert luadata.serialize(result.document) == (
+        b'X = {\n\tk = 1, -- keep\n\t-- list follows\n\t"q", -- [1]\n\t"r", -- [2]\n'
+        b'\t"s", -- [3]\n\t-- before close\n}\n'
+    )
+    emptied = svmerge.merge(_doc(ours), _doc(b"X = {\n\tk = 1,\n}\n"), take="theirs")
+    assert luadata.serialize(emptied.document) == (
+        b"X = {\n\tk = 1, -- keep\n\t-- before close\n}\n"
+    )
