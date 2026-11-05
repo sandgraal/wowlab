@@ -1,5 +1,5 @@
 # Review routing. The harness, ADRs, and the constitution are owner-reviewed;
-# everything else is reviewed by the agent pipeline plus the automated review.
+# everything else is reviewed by the agent pipeline.
 *                       @sandgraal
 /.claude/               @sandgraal
 /.github/               @sandgraal

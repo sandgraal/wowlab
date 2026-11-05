@@ -701,8 +701,16 @@ def test_constructed_windows_char_list_past_max_path(deep: Tree, short: Tree) ->
     install past `MAX_PATH` lists every character's file as read, as it
     does at a short root, in text and in JSON."""
     found = _json(["char", "list", "--root", str(deep.root)])
-    assert len(found["characters"]) == 2, found
-    assert all(c["error"] is None and c["summary"] for c in found["characters"]), found
+    saved = [c for c in found["characters"] if c["no_lab_record"] is None]
+    assert len(saved) == 2, found
+    assert all(c["error"] is None and c["summary"] for c in saved), found
+    # The folders without a WowLab.lua (M16-35): their config-cache.wtf and
+    # macros-cache.txt past `MAX_PATH` are counted, not refused.
+    bare = {c["label"]: c["no_lab_record"] for c in found["characters"]}
+    assert bare["Labcharb-Labrealmd"] is not None, found
+    assert bare["Labcharb-Labrealmd"]["cvars"] == 21, found
+    assert bare["Labcharb-Labrealmd"]["macros"] == 1, found
+    assert len(found["characters"]) == 4, found
     assert found["not_looked_at"] == []
     assert found == _json(["char", "list", "--root", str(short.root)])
     text = _ok(_invoke("char", "list", "--root", str(deep.root)))
@@ -748,8 +756,12 @@ def test_constructed_windows_char_list_refused_row_advice_past_max_path(
     result = _invoke("char", "list", "--root", str(_x(deep.root)), "--json")
     _no_extended(result)
     assert result.exit_code == 1, (result.stdout, result.stderr)
-    rows = cli.CharListReport.model_validate_json(result.stdout).characters
+    report = cli.CharListReport.model_validate_json(result.stdout)
+    # The rows with a WowLab.lua; the folders without one (M16-35) are not
+    # charged to that bound and carry no error.
+    rows = [c for c in report.characters if c.no_lab_record is None]
     assert len(rows) == 2
+    assert all(c.error is None for c in report.characters if c.no_lab_record is not None)
     for row in rows:
         assert row.error is not None and "total size bound" in row.error, row
         assert "wowlab char show --root" in row.error and str(deep.root) in row.error, row

@@ -1,14 +1,16 @@
 """M13-63: the personal-data matchers also see percent-decoded text.
 
 Every input is `constructed`: the small passing wiki of `test_check_wiki.py`
-with one invented line added, or an invented string handed to the matcher
-or the diagnosis redactor. The account number `123456789`, the BattleTag
-`Brakka#1234` and the address `someone@example.org` are invented.
+with one invented line added, or an invented string handed to the matcher.
+The account number `123456789`, the BattleTag `Brakka#1234` and the address
+`someone@example.org` are invented.
 
-Before M13-63 `check_privacy` and `wiki_diagnose.Redactor.line` read raw
-text and `_resolve` decoded a link target once, for the withhold decision
-only: `[x](123456789%231)` was withheld but exited 1, `[x](123456789%25231)`
-printed the digits, and `123456789%231` as plain text exited 0.
+Before M13-63 `check_privacy` read raw text and `_resolve` decoded a link
+target once, for the withhold decision only: `[x](123456789%231)` was
+withheld but exited 1, `[x](123456789%25231)` printed the digits, and
+`123456789%231` as plain text exited 0. The diagnosis redactor's half went
+with `scripts/wiki_diagnose.py`, deleted on 2026-11-04 (owner decision: no
+workflow runs Claude).
 """
 
 from __future__ import annotations
@@ -17,9 +19,7 @@ import re
 from pathlib import Path
 
 import pytest
-from test_check_wiki import _build, _load, cw
-
-wd = _load("wiki_diagnose")
+from test_check_wiki import _build, cw
 
 NUMBER = "123456789"
 ONCE = f"{NUMBER}%231"  # `#` encoded once
@@ -112,8 +112,6 @@ def test_constructed_an_account_encoded_past_the_cap_fails_closed(
     assert code == cw.EXIT_PERSONAL
     assert out == [f"Extra.md:3: {cw.TOO_DEEP} {cw.PERSONAL_SUFFIX}"]
     _no_digits(out)
-    redacted = wd.Redactor().line(f"the model wrote {line} into a page")
-    assert NUMBER not in redacted and f"[withheld: {cw.TOO_DEEP}]" in redacted
 
 
 def test_constructed_a_long_deeply_nested_line_returns() -> None:
@@ -139,11 +137,3 @@ def test_constructed_ordinary_percent_text_still_passes(tmp_path: Path, line: st
     root = _build(tmp_path / "wiki", Extra=f"# Extra\n\n{line}\n")
     assert [str(f) for f in cw.check(root).failures] == []
     assert cw.main([str(root)]) == cw.EXIT_OK
-
-
-@pytest.mark.parametrize("token", [ONCE, TWICE])
-def test_constructed_the_diagnosis_redactor_withholds_an_encoded_account(token: str) -> None:
-    out = wd.Redactor().line(f"the model wrote {token} into a page")
-    assert NUMBER not in out
-    assert "[withheld: a numeric account folder]" in out
-    assert out.startswith("the model wrote ")

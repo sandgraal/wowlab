@@ -331,7 +331,7 @@ def test_the_picker_lists_the_characters_latest_written_first(
         f"{labels[0]}, written {_local(NEWER_NS)}",
         f"{labels[1]}, written {_local(OLDER_NS)}",
         f"{BARE.split('/')[1]}: no lab record",
-        f"{TWIN.split('/')[1]}: no lab record",
+        f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
     ]
     assert [o["disabled"] for o in view["options"]] == [False, False, True, True]
     assert all(o["title"] in ("", None) for o in view["options"][2:])
@@ -354,7 +354,8 @@ def test_folders_with_no_lab_record_only_are_listed_and_never_read_constructed(
     scenario = _scenario(server, [{"char_tab": True}], [])
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
-    assert [o["text"].endswith(": no lab record") for o in view["options"]] == [True] * 4
+    assert [o["text"].endswith(": no lab record") for o in view["options"]] == [True] * 3 + [False]
+    assert view["options"][3]["text"] == f"{TWIN.split('/')[1]}: <Realm>/<First> folder"
     assert all(o["disabled"] for o in view["options"])
     assert [r["body"] for r in view["newRequests"]] == [
         {"command": ["char", "list"], "params": LIST_PARAMS}
@@ -530,7 +531,7 @@ def test_a_list_with_an_unreadable_file_lists_the_rest_constructed(
     bad, good, *bare = view["options"]
     assert [o["text"] for o in bare] == [
         f"{BARE.split('/')[1]}: no lab record",
-        f"{TWIN.split('/')[1]}: no lab record",
+        f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
     ]
     assert all(o["disabled"] for o in bare)
     assert bad["text"].startswith(NEWER.split("/")[1]) and bad["disabled"] is True

@@ -7897,7 +7897,7 @@ _CHAR_LIST_NOTES = [
     "The addon records no time; the time shown is the file's modification time: the "
     "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
     "or sv merge, or a copy).",
-    "One row per character folder: a renamed or transferred character (and a deleted one "
+    "One row per folder: a renamed or transferred character (and a deleted one "
     "[verify]) keeps its old folder and last save here.",
 ]
 
@@ -7916,7 +7916,7 @@ _INSTALL_ADVICE = (
     "install the lab-addon with `wowlab addon install lab`, log in on the character, then log "
     "out or /reload"
 )
-# The one note `char list` adds when it shows a folder without a WowLab.lua.
+# The one note `char list` adds when a row shows a folder's counts.
 _BARE_NOTE = (
     "Counts are what each file held at the client's last exit; with settings sync on, the "
     "server may replace these files at login."
@@ -7933,6 +7933,15 @@ def _first_name_folder(e: labaddon.CharacterFile) -> bool:
     return e.no_lab_record is not None and e.no_lab_record.first_name_folder
 
 
+def _shows_counts(facts: labaddon.FolderFacts) -> bool:
+    """Whether a folder's row shows its counts: always for a character
+    folder, and for a `<Realm>/<First>/` folder when it holds anything
+    counted."""
+    nothing = (f"no {labaddon.CONFIG_FILE_NAME}", f"no {labaddon.MACROS_FILE_NAME}", 0)
+    held = (facts.cvars_absent, facts.macros_absent, facts.saved_variables)
+    return not facts.first_name_folder or held != nothing
+
+
 def _bare_words(facts: labaddon.FolderFacts) -> str:
     """What a folder without a `WowLab.lua` holds, for its `char list` row:
     wowlab's own words in player words (`_player_copy`), the twin folders'
@@ -7946,8 +7955,7 @@ def _bare_words(facts: labaddon.FolderFacts) -> str:
         words = counts
     else:
         words = _player_copy(_FIRST_NAME_FOLDER)
-        nothing = (f"no {labaddon.CONFIG_FILE_NAME}", f"no {labaddon.MACROS_FILE_NAME}", 0)
-        if (facts.cvars_absent, facts.macros_absent, facts.saved_variables) != nothing:
+        if _shows_counts(facts):
             words += f"; it holds {counts}"
     if facts.twins:
         words += "; same first name as " + ", ".join(facts.twins)
@@ -8044,7 +8052,8 @@ def char_list(
     # Rows of character folders, apart from the `<Realm>/<First>/` folders.
     folders = [e for e in entries if not _first_name_folder(e)]
     bare_rows = [e for e in folders if e.no_lab_record is not None]
-    notes = _CHAR_LIST_NOTES + ([_BARE_NOTE] if bare_rows else [])
+    counted = any(e.no_lab_record is not None and _shows_counts(e.no_lab_record) for e in entries)
+    notes = _CHAR_LIST_NOTES + ([_BARE_NOTE] if counted else [])
     report = CharListReport(
         flavor_folder=chosen.folder,
         account=acct_folder,

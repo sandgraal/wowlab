@@ -3306,8 +3306,8 @@ A static local page over every character's `WowLab.lua`.
   `AddOns.txt` **[verify]** (`docs/LAB_FILE_MAP.md`) and the lab-addon
   writes nothing there. Every other row has `no_lab_record` null; `--json`
   is otherwise unchanged (additive, as M13-72's decision), `--brief` still
-  nulls every `record`, and `notes` gains the counts note below when a
-  character folder without the file is listed. The two files are read only
+  nulls every `record`, and `notes` gains the counts note below when any
+  row shows counts. The two files are read only
   for these rows, each on its own bound (`labaddon.MAX_COUNTED_FILE_BYTES`,
   256 KiB, refused unread above it), all of them in one run within
   `labaddon.MAX_COUNTED_TOTAL_BYTES` (8 MiB; once a file would pass what is
@@ -3332,17 +3332,21 @@ A static local page over every character's `WowLab.lua`.
   the marker shown to a player as the CLI shows every `[verify]`. When
   every character folder listed (the `<Realm>/<First>/` folders aside) is
   without the file and no place went unseen, one line after the rows gives
-  the install advice. When a character folder without the file is shown,
-  the notes end with "Counts are what each file held at the client's last
+  the install advice. When any row shows counts (every character folder
+  without the file, and a `<Realm>/<First>/` folder that holds anything
+  counted), the notes end with "Counts are what each file held at the client's last
   exit; with settings sync on, the server may replace these files at
-  login." With nothing listed the text is `No character folder was found in
+  login." The standing note says "One row per folder" (it said "One row
+  per character folder" before), since a `<Realm>/<First>/` folder is listed
+  too. With nothing listed the text is `No character folder was found in
   <any account | account A>`, then `, but <the unseen places>.`, or the
   install advice when there are none. A realm-name folder whose digits-shape
   twin could not be seen (its digits folder unlistable) is an ordinary
   character folder without the file in this count. The Character tab lists
   such a row after the saved ones (it has no time), as `<label>: no lab
-  record`, disabled; it is never picked, so no read is run for it and it
-  gets no record panels.
+  record`, or `<label>: <Realm>/<First> folder` when `first_name_folder` is
+  set, disabled; it is never picked, so no read is run for it and it gets
+  no record panels.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
@@ -3448,6 +3452,14 @@ lab-addon.
 | M12-05 to M12-08 talents | not started | **defer** | Incumbents have talent planners. |
 | M12-10 alt-dashboard, M12-11 talent capture | not started | **defer** | M12-10 is a page over M12-09's data for one player's alts; M12-11 only serves the talent tickets. |
 | M12-12 Wave 3 review | — | **keep, smaller** | It now waits on M12-09 and M12-14 only, and records what was deferred. |
+
+*Note, 2026-11-04 (owner decision: nothing uses the Claude API):* the daily
+wiki job M12-14 built (`.github/workflows/wiki-daily.yml`) was deleted, with
+the `@claude` responder and the automated PR review, because each ran
+Claude in CI. `scripts/check_wiki.py` stays as a local gate for a wiki push;
+`scripts/wiki_diagnose.py` (it read only the Claude step's output) and
+`scripts/wiki_state.py` (the job's state and model context) were deleted
+with it. The conductor updates the wiki after a merge.
 
 The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
 They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay

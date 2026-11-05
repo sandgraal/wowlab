@@ -184,7 +184,7 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
         "undo or sv merge, or a copy).",
         # The twin row above already showed the run's first marker, so this
         # one is left out.
-        "One row per character folder: a renamed or transferred character (and a deleted one) "
+        "One row per folder: a renamed or transferred character (and a deleted one) "
         "keeps its old folder and last save here.",
         # Added because a "no lab record" row is shown (M16-35 review).
         "Counts are what each file held at the client's last exit; with settings sync on, the "
@@ -299,6 +299,29 @@ def test_constructed_an_oversized_config_file_is_named_not_read(flavor: Path) ->
         "1 macro, 0 SavedVariables files"
     )
     assert result.stderr == ""
+
+
+def test_constructed_the_counts_note_follows_any_row_that_shows_counts(flavor: Path) -> None:
+    """The counts note is there when a row shows counts, a <Realm>/<First>
+    folder's included, and not otherwise (M16-35 domain re-check)."""
+    note = cli._BARE_NOTE
+    _plant(flavor, f"1/{NO_ADDON}")  # now every character folder has a WowLab.lua
+    # Only the twin is without a WowLab.lua, and it holds nothing counted.
+    plain = ok("char", "list")
+    assert note not in plain.stdout
+    assert (
+        note
+        not in cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout).notes
+    )
+    (flavor / ACCOUNT_DIR / TWIN_REALM / "Labchard" / "config-cache.wtf").write_bytes(
+        b'SET a "1"\n'
+    )
+    counted = ok("char", "list")
+    rows = dict(_bare_rows(counted.stdout))
+    assert "; it holds 1 CVar, no macros-cache.txt, 0 SavedVariables files" in rows[BARE[1][0]]
+    assert counted.stdout.split("\n")[-2] == note
+    report = cli.CharListReport.model_validate_json(ok("char", "list", "--json").stdout)
+    assert report.notes[-1] == note
 
 
 def test_constructed_counts_past_the_total_bound_are_not_counted_and_not_an_error(

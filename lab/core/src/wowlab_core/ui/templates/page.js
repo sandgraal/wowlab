@@ -911,7 +911,7 @@
   }
 
   // "1 file", "1,024 bytes": `word` with its leading space.
-  function plural(n, word) {
+  function pluralWord(n, word) {
     return grouped(n) + word + (n === 1 ? "" : "s");
   }
 
@@ -919,13 +919,13 @@
   function groupCounts(group) {
     const parts = [];
     if (group.kind === "file") {
-      parts.push(plural(group.bytes, " byte"));
+      parts.push(pluralWord(group.bytes, " byte"));
     } else if (group.kind === "link") {
       parts.push("link, not followed");
     } else if (group.kind === "folder") {
-      parts.push(plural(group.files, " file"), plural(group.bytes, " byte"));
-      if (group.folders) parts.push(plural(group.folders, " folder"));
-      if (group.links) parts.push(plural(group.links, " link") + " not followed");
+      parts.push(pluralWord(group.files, " file"), pluralWord(group.bytes, " byte"));
+      if (group.folders) parts.push(pluralWord(group.folders, " folder"));
+      if (group.links) parts.push(pluralWord(group.links, " link") + " not followed");
       if (group.other) parts.push(grouped(group.other) + " other");
     } else {
       parts.push("not a file, folder or link; never opened");
@@ -938,10 +938,10 @@
 
   function placeCounts(place) {
     const parts = [];
-    if (place.files) parts.push(plural(place.files, " file"));
-    parts.push(plural(place.bytes, " byte"));
-    if (place.folders) parts.push(plural(place.folders, " folder"));
-    if (place.links) parts.push(plural(place.links, " link") + " not followed");
+    if (place.files) parts.push(pluralWord(place.files, " file"));
+    parts.push(pluralWord(place.bytes, " byte"));
+    if (place.folders) parts.push(pluralWord(place.folders, " folder"));
+    if (place.links) parts.push(pluralWord(place.links, " link") + " not followed");
     if (place.other) parts.push(grouped(place.other) + " other");
     return parts.join(", ");
   }
@@ -1004,7 +1004,7 @@
     const errors = listOf(report.errors);
     const notes = [];
     if (report.truncated) notes.push("The walk stopped at a bound: there may be thin spots it did not reach.");
-    if (errors.length) notes.push(plural(errors.length, " path") + " could not be read (listed below).");
+    if (errors.length) notes.push(pluralWord(errors.length, " path") + " could not be read (listed below).");
     gapsSay(notes.join(" "), false);
 
     // With no groups, the links the walk did not follow are said, as
@@ -1012,17 +1012,17 @@
     let noneText = "None: every path the walk reached has a row";
     if (links.length) {
       noneText +=
-        "; " + plural(links.length, " link") + " met and not followed (listed below), " +
+        "; " + pluralWord(links.length, " link") + " met and not followed (listed below), " +
         "so what they point at, a linked WTF/ for one, was not checked";
     }
     const none = gapSection(body, "Paths with no file-map row",
       groups.length
-        ? plural(report.files, " file") + ", " + plural(report.bytes, " byte") + ", in " + plural(groups.length, " group") + "."
+        ? pluralWord(report.files, " file") + ", " + pluralWord(report.bytes, " byte") + ", in " + pluralWord(groups.length, " group") + "."
         : noneText + ".");
     for (const group of groups) none.appendChild(gapGroup(group, false));
     if (catchAll.length) {
       const only = gapSection(body, "Described only by a catch-all row",
-        plural(report.catch_all_files, " file") + ", " + plural(report.catch_all_bytes, " byte") + ".");
+        pluralWord(report.catch_all_files, " file") + ", " + pluralWord(report.catch_all_bytes, " byte") + ".");
       for (const group of catchAll) only.appendChild(gapGroup(group, true));
     }
     if (notEntered.length) {
@@ -1053,7 +1053,7 @@
         }
         const li = make("li");
         const box = make("details");
-        box.appendChild(make("summary", tag + plural(items.length, " folder")));
+        box.appendChild(make("summary", tag + pluralWord(items.length, " folder")));
         const inner = make("ul");
         for (const item of items) inner.appendChild(folderLine(item, ""));
         box.appendChild(inner);
@@ -1173,7 +1173,9 @@
     if (counts.get(entry.label) > 1) {
       text += " (" + visible(String(entry.realm_folder)) + ", account " + visible(String(entry.account)) + ")";
     }
-    if (bare(entry)) return text + ": no lab record";
+    // A <Realm>/<First> folder (`first_name_folder`): the lab-addon never
+    // writes there, so the label names the folder's shape instead.
+    if (bare(entry)) return text + (entry.no_lab_record.first_name_folder === true ? ": <Realm>/<First> folder" : ": no lab record");
     if (!readable(entry)) return text + ": not read";
     return text + ", written " + localTime(entry.mtime_ns);
   }
