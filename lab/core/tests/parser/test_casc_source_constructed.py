@@ -960,3 +960,67 @@ def test_a_million_empty_blocks_keep_no_place_constructed() -> None:
     assert len(table._taken) == 1 and table._skipped == []
     assert table.find(2)[0].ckey == _keys([1, 2])[1]
     assert seconds < 10, f"{seconds:.2f} s for a million empty blocks"
+
+
+# ─── M15-14: one index re-read per call, whatever the retry raises ───
+
+
+def _retry_raises(kind: str) -> casc.CascError:
+    if kind == "encrypted":
+        return casc.EncryptedContent("constructed: the retry is encrypted", "00" * 8, 0, "S")
+    return casc.UnsupportedBlockMode("constructed: the retry is LZ4", "4", 0)
+
+
+@pytest.mark.parametrize("kind", ["encrypted", "unsupported"])
+def test_read_re_reads_the_index_once_whatever_the_retry_raises_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Constructed (the failure sequence is injected): the first copy fails
+    its MD5, the index is read again, the retry raises `kind`; the next copy
+    then fails its MD5 too, and must not read the index a second time."""
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    real = casc.read_encoded
+    calls: list[bytes] = []
+
+    def scripted(
+        storage: casc.CascStorage, ekey: bytes, *, limit: int = casc.DECODE_LIMIT
+    ) -> bytearray | None:
+        calls.append(ekey)
+        if len(calls) == 2:
+            raise _retry_raises(kind)
+        data = real(storage, ekey, limit=limit)
+        assert data is not None
+        if len(calls) == 3:
+            data[0] ^= 1  # the next copy mismatches as well
+        return data
+
+    monkeypatch.setattr(casc, "read_encoded", scripted)
+    with pytest.raises(casc.ContentMismatch):
+        source.read(ids["corrupt"])
+    assert source.reopens == 1
+    assert len(calls) == 3
+
+
+def test_stat_re_reads_the_index_once_whatever_the_retry_raises_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed (the failure sequence is injected): the first copy's
+    record disagrees with the index, the index is read again, the retry
+    raises `CascUnsupportedError`; the next copy disagrees too, and must not
+    read the index a second time."""
+    root, ids = _fallback_install(tmp_path)
+    source = _open(root)
+    calls: list[bytes] = []
+
+    def scripted(ekey: bytes, limit: int) -> tuple[casc.IndexEntry, str | None] | None:
+        calls.append(ekey)
+        if len(calls) == 2:
+            raise _retry_raises("unsupported")
+        raise casc.CascMalformedError("constructed: the record disagrees with the index")
+
+    monkeypatch.setattr(source, "_probe", scripted)
+    with pytest.raises(casc.CascUnsupportedError):
+        source.stat(ids["corrupt"])
+    assert source.reopens == 1
+    assert len(calls) == 3
