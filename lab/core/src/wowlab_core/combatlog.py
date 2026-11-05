@@ -112,6 +112,7 @@ __all__ = [
     "CONTROL_PLAYER",
     "MAX_DEPTH",
     "MAX_LINE_BYTES",
+    "SOURCE_NAMES_KEPT",
     "TYPE_MASK",
     "TYPE_PLAYER",
     "Bracket",
@@ -780,6 +781,11 @@ CAST_LAYOUT_VERSION = "22"
 (docs/LAB_FORMATS.md §8). Casts under any other version, or before any
 version line, are not counted: their layout is not known."""
 
+SOURCE_NAMES_KEPT = 16
+"""At most this many distinct source names are kept in ``CastCounts``: one
+player's characters in one log are a handful, and a crafted log must not
+grow the report without bound."""
+
 CAST_COUNT_EVENTS = frozenset({"COMBAT_LOG_VERSION", CAST_EVENT})
 """The events :func:`cast_counts` reads; pass as ``events=`` to
 :func:`read_log` so that no other line is tokenized (M13-41)."""
@@ -801,7 +807,7 @@ TYPE_PLAYER = 0x00000400
 # The format-22 cast layout, after the event name: source GUID, name, flags,
 # raid flags; destination GUID, name, flags, raid flags; spell id, spell name,
 # school; then the advanced block when advanced logging is on.
-_SOURCE_GUID, _SOURCE_FLAGS, _SPELL_ID, _SPELL_NAME = 0, 2, 8, 9
+_SOURCE_GUID, _SOURCE_NAME, _SOURCE_FLAGS, _SPELL_ID, _SPELL_NAME = 0, 1, 2, 8, 9
 _CAST_FIELDS = 11
 _FLAGS = re.compile(r"0x[0-9A-Fa-f]{1,8}")
 _SPELL = re.compile(r"[0-9]{1,10}")
@@ -825,7 +831,9 @@ class CastCounts(_Model):
     with every other unit's. The pick never looks at a GUID or a name; only
     ``sources`` counts the distinct source GUIDs of the casts counted, so
     that a log holding more than one of the player's characters (logging left
-    on across a character change) can be said to.
+    on across a character change) can be said to, and ``source_names`` keeps
+    the distinct quoted source names of those casts (`"<First>-<Realm>-"` in
+    the real log), so that a caller can tell whose log it is (M16-36).
     """
 
     lines: int  # every line of the log
@@ -840,6 +848,10 @@ class CastCounts(_Model):
     others: int  # casts by any unit that is not the player
     mine: int  # the player's own casts, counted
     sources: int  # distinct source GUIDs among the counted casts
+    # Distinct source names of the counted casts, as written, in order of
+    # first appearance, at most SOURCE_NAMES_KEPT; a cast whose name is not
+    # quoted adds none.
+    source_names: tuple[str, ...] = ()
     first_timestamp: str | None  # of the first counted cast, as written
     last_timestamp: str | None  # of the last counted cast, as written
     spells: tuple[SpellCasts, ...]  # most cast first, then by spell id and name
@@ -863,6 +875,7 @@ def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
     versions: list[str] = []
     version: str | None = None
     guids: set[str] = set()
+    names: dict[str, None] = {}
     first: str | None = None
     last: str | None = None
     counts: dict[tuple[int, str], int] = {}
@@ -911,6 +924,9 @@ def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
             continue
         mine += 1
         guids.add(guid)
+        who = fields[_SOURCE_NAME]
+        if isinstance(who, Quoted) and len(names) < SOURCE_NAMES_KEPT:
+            names.setdefault(who.text, None)
         first = entry.timestamp if first is None else first
         last = entry.timestamp
         key = (int(spell_id), name.text)
@@ -926,6 +942,7 @@ def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
         others=others,
         mine=mine,
         sources=len(guids),
+        source_names=tuple(names),
         first_timestamp=first,
         last_timestamp=last,
         spells=tuple(SpellCasts(spell_id=i, spell_name=n, casts=c) for (i, n), c in spells),

@@ -108,6 +108,7 @@ import stat
 import sys
 import time
 import traceback
+import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -5049,12 +5050,22 @@ _COMBATLOG_ON = (
     "logging is on: type /combatlog in game before you play (whether it stays on after "
     "logout has not been checked)."
 )
+_COACH_LOG_SCAN = 10  # the newest logs looked through for the character's casts
+# Bytes of logs older than the newest read while looking for the character's
+# casts; past this the scan stops, and says so.
+_COACH_LOG_BUDGET = 256 * 1024 * 1024
 _COACH_NOTES = [
-    "The newest log under Logs/ is read (or the one --log names), whichever character wrote "
-    "it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a "
-    "player (not a pet), never picked by a name or a GUID, so a log written by another "
-    "character than the record's makes these reports wrong: check the log's time and choose "
-    "it with --log.",
+    "Without --character, the character judged is the one whose lab-addon record has the "
+    "newest schema, and of those the one written last: a newer schema records more.",
+    f"Without --log, the newest of the {_COACH_LOG_SCAN} newest combat logs under Logs/ with "
+    "casts by the character judged is read (older logs are looked through only up to "
+    f"{_COACH_LOG_BUDGET // (1024 * 1024)} MiB); if none has any, the newest is read and a "
+    "warning says whose casts it holds. A log names a character <First>-<Realm>-. A Forever "
+    "character folder is <First>-<Second>, whose second name is not a realm; a retail one is "
+    "<Name> under its realm's folder. So the two are matched by first name only, and two of "
+    "your characters with one first name are not told apart. Your casts are the log's "
+    "SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet); the "
+    "name only chooses the log.",
     "The action bars and key bindings are the lab-addon's record as of its last save (logout "
     "or /reload), not the session in progress; the log may be older or newer than it. A key "
     "reaches a spell through the default UI's action buttons only: the main bar at page 1, "
@@ -5067,9 +5078,25 @@ _COACH_NOTES = [
 _SPAN_TIME = re.compile(r"\d{1,2}:\d{2}:\d{2}")
 
 
+# "first name shared": the log's caster has the judged character's first name,
+# and so does another character folder of the account.
+# "no caster name": your casts carry no quoted name to compare.
+CasterMatch = Literal[
+    "matches", "first name shared", "does not match", "no casts", "no caster name", "no character"
+]
+
+
 class CoachLog(_Out):
     file: str | None  # relative to the flavor folder; None: no combat log under Logs/
-    chosen_by: Literal["newest", "--log"] | None
+    # "caster name": the newest of the newest logs with casts by the character
+    # judged; "newest": no log had any, or there is no character to look for.
+    chosen_by: Literal["caster name", "newest", "--log"] | None
+    character_name: str | None  # the first name looked for, from the character folder
+    casters: list[str]  # the source names of your casts in this log, as written
+    caster_match: CasterMatch | None  # None: no combat log
+    warning: str | None  # said when the log's casts may not be the character's
+    # Older logs skipped (unreadable) or not looked at (the byte budget), in one line.
+    scan_note: str | None
     counts: combatlog.CastCounts | None
 
 
@@ -5079,18 +5106,26 @@ class BindsCoachReport(_Out):
     flavor_folder: str
     account: str
     character: str | None  # "<realm folder>/<character folder>" of the record read
-    chosen_by: Literal["--character", "latest"] | None
+    # "newest schema": the record with the newest schema, then the one written last.
+    chosen_by: Literal["--character", "newest schema"] | None
+    chosen_because: str | None  # why that character, without --character
     record_file: str | None  # the character's WowLab.lua: action bars, bindings, spellbook
     record_schema: int | None
     record_error: str | None  # why no WowLab.lua was read
     log: CoachLog
     costs: bindscoach.Costs
+    commands_unseen: int | None  # binding commands the record counts and leaves out
+    keys_unseen: int | None  # keys the record counts and leaves out
+    unseen: str | None  # said before any finding; None without a usable bindings record
     matched_by: Literal["spell id or spellbook name", "spell id"]
     spells: list[bindscoach.CastSpell]
     frequent_on_high_cost: list[bindscoach.FrequentOnHighCost]
     cast_without_bind: list[bindscoach.CastWithoutBind]
     on_unfollowed_page: list[bindscoach.OnUnfollowedPage]
     bound_never_cast: list[bindscoach.BoundNeverCast]
+    # True when "bound, never cast" is withheld for a log under the minimum
+    # sample (costs.table.never_cast_min_casts); its cannot_judge row says so.
+    never_cast_withheld: bool
     cannot_judge: list[bindscoach.CannotJudge]
     caveats: list[str]
     notes: list[str]
@@ -5142,6 +5177,268 @@ def _coach_log(lay: layout.Layout, name: str | None) -> Path | None:
     return match[0]
 
 
+Folder = tuple[str, str]  # (realm folder, character folder)
+_CoachRanked = tuple[
+    int,  # the record's schema; -1 when it could not be read
+    int,  # the folder's newest WowLab.lua, by modification time
+    Folder,
+    layout.SavedVariablesFile | None,
+    labaddon.CharDB | None,
+    str | None,  # why no record was read
+]
+
+
+def _coach_default_record(
+    lay: layout.Layout, acct: layout.Account
+) -> tuple[
+    layout.SavedVariablesFile | None,
+    Literal["newest schema"] | None,
+    labaddon.CharDB | None,
+    str | None,
+    str | None,
+    Folder | None,
+]:
+    """Without --character, `binds coach` judges the character whose
+    WowLab.lua has the newest schema, then the one written last (ties: the
+    last by folder name), and says why (docs/LAB_PLAN.md §16.2, amended
+    2026-11-04). Every character's record is read to learn its schema; one
+    that cannot be read ranks below every one that can. The last value is the
+    character folder judged, also when its record could not be used. The
+    `char` commands keep their own rule."""
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    folders: dict[Folder, list[layout.SavedVariablesFile]] = {}
+    for f in files:
+        if f.scope == "character" and f.realm_folder and f.character_folder:
+            folders.setdefault((f.realm_folder, f.character_folder), []).append(f)
+    if not folders:
+        target, how, record, error = _coach_record(lay, acct, None)
+        return target, None if how is None else "newest schema", record, error, None, None
+    ranked: list[_CoachRanked] = []
+    for folder, mine in folders.items():
+        newest = max(f.mtime_ns for f in mine)
+        try:
+            target = _chosen_lab_file(mine)
+        except CliError as exc:
+            ranked.append((-1, newest, folder, None, None, str(exc)))
+            continue
+        try:
+            record = labaddon.read_char(lay.flavor_path / target.path)
+        except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
+            ranked.append((-1, newest, folder, target, None, str(exc)))
+            continue
+        ranked.append((record.schema_, newest, folder, target, record, None))
+    ranked.sort(key=lambda r: (r[0], r[1], r[2]), reverse=True)
+    _, _, folder, target, record, error = ranked[0]
+    return target, "newest schema", record, error, _coach_because(ranked), folder
+
+
+def _coach_because(ranked: Sequence[_CoachRanked]) -> str:
+    """Why the first of `ranked` is the character judged, in a player's words."""
+    schema, mtime = ranked[0][0], ranked[0][1]
+    if len(ranked) == 1:
+        return "the only character with a lab-addon record"
+    if schema < 0:
+        why = f"no character's record could be read ({len(ranked)} tried); the one written last"
+    else:
+        same = [r for r in ranked if r[0] == schema]
+        why = (
+            f"its record has the newest schema ({schema}) of the {len(ranked)} characters' records"
+        )
+        if len(same) > 1:
+            why += f", and of the {len(same)} at that schema it was written last"
+        later = [r for r in ranked if r[1] > mtime]
+        if later:
+            last = max(later, key=lambda r: (r[1], r[2]))
+            at = f"schema {last[0]}" if last[0] >= 0 else "a record that could not be read"
+            why += f"; {'/'.join(last[2])} was written later, at {at}"
+    tied = [r for r in ranked[1:] if (r[0], r[1]) == (schema, mtime)]
+    if tied:
+        why += f"; tied on that with {'/'.join(tied[0][2])}, it is the last by folder name"
+    return why
+
+
+def _first_name(name: str) -> str:
+    """The part before the first hyphen, normalised for comparison: a combat
+    log names a character `<First>-<Realm>-`, and a character folder is
+    `<First>` or `<First>-<Second>`. NFC first, since a macOS folder name
+    may be stored decomposed."""
+    return unicodedata.normalize("NFC", name.split("-", 1)[0]).casefold()
+
+
+def _caster_match(counts: combatlog.CastCounts, who: str | None) -> CasterMatch:
+    """Whether the casts counted are by a character with `who`'s first name
+    (`who`: a character folder name)."""
+    if who is None:
+        return "no character"
+    if not counts.mine:
+        return "no casts"
+    if not counts.source_names:
+        return "no caster name"
+    wanted = _first_name(who)
+    if any(_first_name(n) == wanted for n in counts.source_names):
+        return "matches"
+    return "does not match"
+
+
+def _namesakes(acct: layout.Account, folder: Folder) -> list[str]:
+    """The account's other character folders with `folder`'s first name, as
+    "<realm folder>/<folder>". A retail-style twin that holds only
+    AddOns.txt (the Forever `<Realm>/<First>/` beside `<digits>/<First>-<Second>/`)
+    is the same character's, not another one, and is left out."""
+    wanted = _first_name(folder[1])
+    found: list[str] = []
+    for realm in acct.realms:
+        for c in realm.characters:
+            if (c.realm_folder, c.folder) == folder or _first_name(c.folder) != wanted:
+                continue
+            if c.twins and not c.folders and [f.casefold() for f in c.files] == ["addons.txt"]:
+                continue
+            found.append(f"{c.realm_folder}/{c.folder}")
+    return sorted(found)
+
+
+def _read_counts(path: Path) -> combatlog.CastCounts:
+    return combatlog.cast_counts(combatlog.read_log(path, events=combatlog.CAST_COUNT_EVENTS))
+
+
+def _shared_warning(first: str, namesakes: Sequence[str]) -> str:
+    return (
+        f"{', '.join(namesakes)} also {'has' if len(namesakes) == 1 else 'have'} the first name "
+        f"{first}, and the coach matches a log to a character by first name only: these casts "
+        "may be another of your characters'."
+    )
+
+
+def _coach_pick_log(
+    lay: layout.Layout, acct: layout.Account, name: str | None, who: Folder | None
+) -> CoachLog:
+    """The combat log `binds coach` reads, and whether its casts are by the
+    character judged (`who`, its folder). With --log, that log, with a
+    warning when its casts are someone else's. Otherwise the newest of the
+    `_COACH_LOG_SCAN` newest logs with casts by `who`'s first name, read newest
+    first and stopping at the first; older logs are read up to
+    `_COACH_LOG_BUDGET` bytes in all, and one that cannot be read is skipped.
+    When none has (or there is no character), the newest, with the warning.
+    A match on a first name another of the account's characters shares is
+    "first name shared", with its own warning."""
+    folder_name = who[1] if who is not None else None
+    first = folder_name.split("-", 1)[0] if folder_name is not None else None
+    namesakes = _namesakes(acct, who) if who is not None else []
+
+    def matched(counts: combatlog.CastCounts) -> CasterMatch:
+        match = _caster_match(counts, folder_name)
+        return "first name shared" if match == "matches" and namesakes else match
+
+    def out(
+        path: Path,
+        how: Literal["caster name", "newest", "--log"],
+        counts: combatlog.CastCounts,
+        warning: str | None,
+        scan_note: str | None = None,
+    ) -> CoachLog:
+        match = matched(counts)
+        if match == "first name shared" and first is not None:
+            warning = _shared_warning(first, namesakes)
+        return CoachLog(
+            file=_rel(lay, path),
+            chosen_by=how,
+            character_name=first,
+            casters=list(counts.source_names),
+            caster_match=match,
+            warning=warning,
+            scan_note=scan_note,
+            counts=counts,
+        )
+
+    if name is not None:
+        path = _coach_log(lay, name)
+        assert path is not None
+        counts = _read_counts(path)
+        warning = None
+        if matched(counts) == "does not match":
+            warning = (
+                f"this log's casts are by {', '.join(counts.source_names)}, not {first}, the "
+                "character judged: the findings below may be about another character."
+            )
+        return out(path, "--log", counts, warning)
+    logs_dir = _logs_dir(lay)
+    logs = combatlog.find_logs(logs_dir) if logs_dir is not None else []
+    if not logs:
+        return CoachLog(
+            file=None,
+            chosen_by=None,
+            character_name=first,
+            casters=[],
+            caster_match=None,
+            warning=None,
+            scan_note=None,
+            counts=None,
+        )
+    newest = logs[-1]
+    newest_counts = _read_counts(newest)  # the log read anyway: its errors stay errors
+    if who is None:
+        return out(newest, "newest", newest_counts, None)
+    if matched(newest_counts) in ("matches", "first name shared"):
+        return out(newest, "caster name", newest_counts, None)
+    read, used = 1, 0
+    skipped: list[str] = []  # could not be read
+    too_big: list[str] = []  # larger than what is left of the budget
+    for path in list(reversed(logs))[1:_COACH_LOG_SCAN]:
+        try:
+            size = path.stat().st_size
+            if used + size > _COACH_LOG_BUDGET:
+                too_big.append(path.name)
+                continue
+            counts = _read_counts(path)
+        except OSError:
+            skipped.append(path.name)
+            continue
+        used += size
+        read += 1
+        if matched(counts) in ("matches", "first name shared"):
+            return out(path, "caster name", counts, None, _scan_note(skipped, too_big))
+    warning = None
+    if matched(newest_counts) == "does not match":  # with no casts, its reports say so
+        whose = ", ".join(newest_counts.source_names)
+        if len(logs) == 1:
+            where = f"the only combat log has no casts by {first}, the character judged"
+        elif read == 1:
+            where = (
+                f"the newest combat log, the only one read, has no casts by {first}, the "
+                "character judged"
+            )
+        else:
+            where = (
+                f"none of the {read} combat logs read has casts by {first}, the character "
+                "judged, so the newest is read"
+            )
+        warning = (
+            f"{where}; its casts are by {whose}: the findings below may be about another character."
+        )
+    return out(newest, "newest", newest_counts, warning, _scan_note(skipped, too_big))
+
+
+def _scan_note(skipped: Sequence[str], too_big: Sequence[str]) -> str | None:
+    """One line on the older logs not read, or None."""
+    parts = []
+    if skipped:
+        parts.append(
+            f"{_plural(len(skipped), 'older combat log')} could not be read and "
+            f"{'was' if len(skipped) == 1 else 'were'} skipped ({', '.join(skipped)})"
+        )
+    if too_big:
+        parts.append(
+            f"{_plural(len(too_big), 'older combat log')} ({', '.join(too_big)}) "
+            f"{'was' if len(too_big) == 1 else 'were'} not read, since older logs are looked "
+            f"through only up to {_COACH_LOG_BUDGET // (1024 * 1024)} MiB in all; --log FILE "
+            "reads one"
+        )
+    if not parts:
+        return None
+    line = "; ".join(parts)
+    return f"{line[:1].upper()}{line[1:]}."
+
+
 def _key_words(keys: Sequence[bindscoach.KeyCost]) -> str:
     return ", ".join(f"{k.key} (cost {k.cost})" for k in keys)
 
@@ -5172,28 +5469,39 @@ def binds_coach(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Coach your key bindings from a combat log (the newest, or --log): spells you
-    cast often on high-cost keys, spells you cast with no key, and keys bound to spells
-    you did not cast in that log. Keys reach spells through the lab-addon's record of
-    the action bars and bindings of one character: --character, or the one
-    whose WowLab.lua was written last. Combat logging must be on (/combatlog) for a log
-    to exist. What a key costs is an opinion, from a table you can override. Reads only.
+    """Coach your key bindings from a combat log: spells you cast often on
+    high-cost keys, spells you cast with no key, and keys bound to spells you did not
+    cast in that log (only from a stated number of your casts up). Keys reach spells
+    through the lab-addon's record of the action bars and bindings of one character:
+    --character, or the one whose record has the newest schema, then the one written
+    last. The log is --log, or the newest with that character's casts. Combat logging
+    must be on (/combatlog) for a log to exist. What a key costs is an opinion, from a
+    table you can override. Reads only.
 
     \f
     JSON: BindsCoachReport."""
     _, chosen, lay = _open(root, flavor)
     acct = _select_account(lay, account)
-    target, how, record, record_error = _coach_record(lay, acct, character)
-    path = _coach_log(lay, log)
+    how: Literal["--character", "newest schema"] | None
+    because: str | None = None
+    folder: Folder | None = None
+    if character is not None:
+        target, given, record, record_error = _coach_record(lay, acct, character)
+        how = None if given is None else "--character"
+        named = _select_character(acct, character)
+        folder = (named.realm_folder, named.folder)
+    else:
+        target, how, record, record_error, because, folder = _coach_default_record(lay, acct)
+    if target is not None and target.realm_folder and target.character_folder:
+        folder = (target.realm_folder, target.character_folder)
+    if log is not None:
+        _coach_log(lay, log)  # a bad --log is a usage error before the table or a log is read
     try:
         costs = bindscoach.load_costs()
     except bindscoach.CostTableError as exc:
         raise CliError(f"the key-cost table cannot be used: {exc}") from exc
-    counts = (
-        combatlog.cast_counts(combatlog.read_log(path, events=combatlog.CAST_COUNT_EVENTS))
-        if path is not None
-        else None
-    )
+    coach_log = _coach_pick_log(lay, acct, log, folder)
+    counts = coach_log.counts
     if record_error is not None:
         no_record = f"no lab-addon record: {record_error}"
     else:
@@ -5206,21 +5514,22 @@ def binds_coach(
         account=acct.folder,
         character=f"{target.realm_folder}/{target.character_folder}" if target else None,
         chosen_by=how,
+        chosen_because=because,
         record_file=target.path if target else None,
         record_schema=record.schema_ if record is not None else None,
         record_error=record_error,
-        log=CoachLog(
-            file=_rel(lay, path) if path else None,
-            chosen_by=None if path is None else ("newest" if log is None else "--log"),
-            counts=counts,
-        ),
+        log=coach_log,
         costs=costs,
+        commands_unseen=result.commands_unseen,
+        keys_unseen=result.keys_unseen,
+        unseen=result.unseen,
         matched_by=result.matched_by,
         spells=result.spells,
         frequent_on_high_cost=result.frequent_on_high_cost,
         cast_without_bind=result.cast_without_bind,
         on_unfollowed_page=result.on_unfollowed_page,
         bound_never_cast=result.bound_never_cast,
+        never_cast_withheld=result.never_cast_withheld,
         cannot_judge=result.cannot_judge,
         caveats=result.caveats,
         notes=[_COMBATLOG_ON, f"{_BATCHES[:1].upper()}{_BATCHES[1:]}.", *_COACH_NOTES],
@@ -5243,11 +5552,20 @@ def _say_coach(report: BindsCoachReport) -> None:
             if counts.first_timestamp is not None
             else "; none of your casts"
         )
-        newest = " (the newest)" if report.log.chosen_by == "newest" else " (--log)"
+        newest = {
+            "newest": " (the newest)",
+            "--log": " (--log)",
+            "caster name": f" (the newest with casts by {report.log.character_name})",
+            None: "",
+        }[report.log.chosen_by]
         _say(
             f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
             f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
         )
+        if report.log.warning is not None:
+            _say(f"  Warning: {report.log.warning}")
+        if report.log.scan_note is not None:
+            _say(f"  Note: {report.log.scan_note}")
         _say(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
             f"(picked by the source flags: yours, and a player); {counts.others} by other units"
@@ -5268,11 +5586,16 @@ def _say_coach(report: BindsCoachReport) -> None:
     elif report.record_error is not None:
         _say(f"Action bars and bindings: {report.record_file} not read ({report.record_error})")
     else:
-        picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
+        picked = ""
+        if report.chosen_by == "newest schema":
+            because = report.chosen_because or "the newest record schema, then written last"
+            picked = f" ({because}; choose another with --character)"
         _say(
             f"Action bars and bindings: {report.record_file} "
             f"(schema {report.record_schema}){picked}"
         )
+    if report.unseen is not None:
+        _say_note(report.unseen)
     costs = report.costs
     table = costs.table
     if costs.source == "default":
@@ -5321,10 +5644,20 @@ def _say_coach(report: BindsCoachReport) -> None:
     start = _clock(counts.first_timestamp) if counts is not None else None
     end = _clock(counts.last_timestamp) if counts is not None else None
     span = f", {start} to {end} log time" if start and end else ""
-    _say(
-        f"Binds to spells not cast in this log ({_plural(mine, 'cast')}{span}): "
-        f"{len(report.bound_never_cast)}"
-    )
+    least = table.never_cast_min_casts
+    withheld = report.never_cast_withheld
+    if withheld:
+        _say(
+            f"Binds to spells not cast in this log: withheld, this log has {mine} of your casts, "
+            f"under the minimum sample of {least}"
+        )
+    elif mine == 0 or any(c.report == "bound-never-cast" for c in report.cannot_judge):
+        _say(f"Binds to spells not cast in this log: {len(report.bound_never_cast)}")
+    else:
+        _say(
+            f"Binds to spells not cast in this log ({_plural(mine, 'cast')}{span}; judged from "
+            f"{_plural(least, 'cast')} up): {len(report.bound_never_cast)}"
+        )
     for b in report.bound_never_cast:
         name = b.spell_name or "a spell the spellbook record does not name"
         _say(f"  {_key_words(b.keys)}: slot {b.slot}, {name} ({b.spell_id})")
@@ -5332,9 +5665,9 @@ def _say_coach(report: BindsCoachReport) -> None:
     for c in report.cannot_judge:
         _say(f"  {c.report}: {c.reason}")
     for caveat in report.caveats:
-        _say(f"Note: {caveat}")
+        _say_note(f"Note: {caveat}")
     for note in report.notes:
-        _say(note)
+        _say_note(note)
 
 
 class MacroItem(_Out):
