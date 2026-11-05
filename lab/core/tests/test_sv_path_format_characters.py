@@ -80,7 +80,9 @@ def test_format_character_key_prints_escaped_and_reads_back_constructed(
     again = CliRunner().invoke(cli.app, ["sv", "dump", str(file), "--path", path])
     assert (again.exit_code, again.stdout) == (0, f"{path} = {1000 + offset + n}\n"), again.stderr
     ours, theirs = luadata.parse(OURS), luadata.parse(THEIRS)
-    limited = svmerge.merge(ours, theirs, keys=[path])
+    # `replace=True`: the wholesale copy, as `--key X --replace` since M16-12
+    # (owner decision of 2026-10-21, Q8); `--key X` alone merges inside X.
+    limited = svmerge.merge(ours, theirs, keys=[path], replace=True)
     assert [(t.path, t.value) for t in limited.taken] == [(path, str(2000 + offset + n))]
 
 

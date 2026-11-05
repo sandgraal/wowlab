@@ -473,7 +473,7 @@ def test_rule1_wins_over_rule3_when_no_session_ran_since_the_lab_write(
 
 @pytest.mark.parametrize(
     "args",
-    [("--take", "theirs"), ("--key", "WowLabCharDB.gear")],
+    [("--take", "theirs"), ("--key", "WowLabCharDB.gear", "--replace")],  # --replace: M16-12
     ids=["take-theirs", "key-copy"],
 )
 def test_sv_merge_of_wowlab_lua_keeps_the_written_bytes_as_a_store_object(

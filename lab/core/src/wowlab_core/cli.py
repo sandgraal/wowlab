@@ -3900,6 +3900,10 @@ class SvMergeReport(_Out):
     # `--expect`'s second half compares, so a source that changed after the
     # plan is refused (M13-74). None when unresolved conflicts stop the merge.
     merged_sha256: str | None
+    # Every key the merge removes from the target, the highest key that goes
+    # (what is under it goes with it), with the target's value (M16-12).
+    removed: list[svmerge.Removed]
+    replace: bool  # --replace: each --key subtree copied whole
 
 
 _MERGE_PROVEN = (
@@ -4403,7 +4407,17 @@ def _print_merge(show: Callable[[str], None], report: SvMergeReport) -> None:
         f"into {report.into}"
     )
     if report.keys:
-        show(f"  limited to --key {', '.join(report.keys)}")
+        how = " (copied whole: --replace)" if report.replace else ""
+        show(f"  limited to --key {', '.join(report.keys)}{how}")
+    if report.removed:
+        show(f"  {len(report.removed)} entries or settings removed from the target:")
+        for r in report.removed:
+            if r.entries is not None:
+                was, now = r.entries
+                entries = f"{was} entr{'y' if was == 1 else 'ies'} -> {now}"
+                show(f"    {r.path}  list replaced, {entries} (was {r.value})")
+            else:
+                show(f"    {r.path}  (was {r.value})")
     if report.conflicts:
         how = {None: "unresolved", "ours": "kept ours", "theirs": "took theirs"}[report.take]
         show(f"  {len(report.conflicts)} conflict(s), {how}:")
@@ -4445,7 +4459,8 @@ def sv_merge(
         typer.Option(
             "--from",
             help="The source: a character folder (per-character files only) or a snapshot "
-            "id. Left out, --key SRC=DST copies within the file.",
+            "id. Left out, --key SRC=DST merges SRC into DST within the file (a missing DST, or an "
+            "empty one when the source's is a table, is copied whole).",
         ),
     ] = None,
     base: Annotated[
@@ -4459,11 +4474,23 @@ def sv_merge(
         list[str] | None,
         typer.Option(
             "--key",
-            help='A subtree, e.g. Var.profile or Var["some key"], spelled as sv dump prints it; '
-            'a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd). SRC=DST copies SRC '
-            "to DST. Repeatable.",
+            help='Merge only this subtree, e.g. Var.profile or Var["some key"], spelled as sv '
+            'dump prints it; a quoted key takes Lua 5.1 escapes (\\n, \\\\, \\", \\ddd). '
+            "SRC=DST merges SRC into DST. Inside it the usual rules apply: differing keys are "
+            "conflicts, and keys on one side only are listed and left as they are. If the "
+            "target has no DST at all (or an empty one, when the source's is a table), the "
+            "source's subtree is copied whole. "
+            "--replace copies it whole and removes what the target alone had. Repeatable.",
         ),
     ] = None,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace",
+            help="Copy each --key subtree whole instead of merging inside it: keys only the "
+            "target has there are removed, and the plan lists each one. Not with --base.",
+        ),
+    ] = False,
     take: Annotated[
         Literal["ours", "theirs"] | None,
         typer.Option(
@@ -4499,13 +4526,19 @@ def sv_merge(
 
     Two-way (--from a character or a snapshot): every key whose values differ is a
     conflict. Three-way (--from SNAPSHOT --base SNAPSHOT): a change on one side is
-    taken, the same change on both once, different changes are conflicts. Conflicts
-    are listed and nothing is written unless --take resolves them; exit 1. A key on
-    one side only is listed as absent and never deleted. An account-wide file is
-    shared by every character, so merging it from another character is refused
-    (exit 2); use --from SNAPSHOT, or --key SRC=DST to copy between the per-character
-    keys an addon keeps inside it. Before writing, the --into character's WowLab.lua
-    is checked for a SavedVariables loader failure (exit 3).
+    taken, the same change on both once, different changes are conflicts. A list
+    (the entries 1, 2, 3, ...) is one value, so --take theirs takes the whole list;
+    to merge the entries at one position on both sides, name it with --key
+    Var.list[n] (positions can differ between characters; check with sv dump
+    first). Conflicts are listed and nothing is written unless --take resolves
+    them; exit 1. A key outside a list that is on one side only is listed as absent
+    and never deleted. The plan lists everything the merge removes: list entries the
+    list it takes drops or changes, keys under a table that the source's value
+    replaces, and the keys --replace drops. An account-wide file is shared by every
+    character, so merging it from another character is refused (exit 2); use --from
+    SNAPSHOT, or --key SRC=DST to merge between the per-character keys an addon
+    keeps inside it. Before writing, the --into character's WowLab.lua is checked
+    for a SavedVariables loader failure (exit 3).
 
     \f
     JSON: SvMergeReport."""
@@ -4526,6 +4559,13 @@ def sv_merge(
     if from_ is None and base is not None:
         raise CliError(
             "--base names the common ancestor of --from SNAPSHOT; give --from", EXIT_USAGE
+        )
+    if replace and not keys:
+        raise CliError("--replace copies the --key subtrees whole; give --key", EXIT_USAGE)
+    if replace and base is not None:
+        raise CliError(
+            "--replace copies a subtree whole, so it takes no --base: leave out one of them",
+            EXIT_USAGE,
         )
     if from_ is None and not keys:
         raise CliError(
@@ -4606,7 +4646,7 @@ def sv_merge(
     theirs = ours if source_char is None and source_snap is None else luadata.parse(theirs_bytes)
     base_doc = luadata.parse(base_bytes) if base_bytes is not None else None
     try:
-        result = svmerge.merge(ours, theirs, base=base_doc, keys=keys, take=take)
+        result = svmerge.merge(ours, theirs, base=base_doc, keys=keys, take=take, replace=replace)
     except svmerge.MergeError as exc:
         raise CliError(str(exc), EXIT_USAGE) from exc
     lab_file = _character_sv(files, acct, char, svmerge.LAB_ADDON_FILE)
@@ -4646,6 +4686,8 @@ def sv_merge(
             conflicts=list(result.conflicts),
             absent=list(result.absent),
             taken=list(result.taken),
+            removed=list(result.removed),
+            replace=replace,
             written=written,
             transaction=transaction,
             notes=[*notes, _MERGE_PROVEN] if written else notes,
@@ -4653,13 +4695,18 @@ def sv_merge(
             merged_sha256=merged,
         )
 
+    # The notes printed with the plan, before the prompt (M16-12): not again
+    # after it.
+    shown: list[str] = []
+
     def finish(done: SvMergeReport, line: str) -> None:
         if json_out:
             _emit(done)
             return
         _print_merge(_say, done)
         for n in done.notes:  # wowlab's own notes in player words; any other as it is
-            _say_err(_player_copy(n) if n in _MERGE_OWN_NOTES else n)
+            if n not in shown:
+                _say_err(_player_copy(n) if n in _MERGE_OWN_NOTES else n)
         _say(line)
 
     if expect_merged is not None and expect_merged != merged:
@@ -4690,7 +4737,13 @@ def sv_merge(
     if not yes:
         _print_merge(show, report(written=False))
         show(f"  replace  {target.path}  ({_bytes(len(data))})")
-        show(_MERGE_PROVEN)
+        # The loader check's notes and the others belong to the plan, so
+        # they print before the prompt (M16-12).
+        for n in notes:
+            _say_err(_player_copy(n) if n in _MERGE_OWN_NOTES else n)
+        shown.extend(notes)
+        show(_player_copy(_MERGE_PROVEN))
+        shown.append(_MERGE_PROVEN)
     try:
         _confirm("Write the merge?", yes)
     except typer.Exit:
