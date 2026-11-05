@@ -302,7 +302,8 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
         "Binds to spells not cast in this log: withheld, this log has 6 of your casts, under "
         "the minimum sample of 200\n" in text
     )
-    assert "Cannot judge: 0\n" in text  # the withheld report is said once, above
+    # Text gives the same count as JSON: the withheld report is listed too.
+    assert "Cannot judge: 1\n  bound-never-cast: withheld: the log has 6 of your casts" in text
     assert "/combatlog" in text
     assert "The client adds to this file in batches" in text
     assert "matched by first name only" in text and "--log" in text
@@ -321,8 +322,8 @@ def test_binds_coach_without_character_takes_the_latest_record(flavor: Path, rec
     )
     text = ok("binds", "coach").stdout
     assert (
-        "(the newest record schema (3) of 3 characters' records; choose another with "
-        "--character)" in text
+        "(its record has the newest schema (3) of the 3 characters' records; choose another "
+        "with --character)" in text
     )
 
 
@@ -402,7 +403,7 @@ def test_cast_with_no_bind_clicked_and_on_no_slot_constructed(flavor: Path, reco
     ]
     assert (
         rep.unseen is not None
-        and "leaves out 1 binding command, counted but not named" in rep.unseen
+        and "counted with no list: 1 binding command it did not read" in rep.unseen
     )
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "Spells cast with no bind: 2\n" in text

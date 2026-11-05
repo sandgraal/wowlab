@@ -103,8 +103,10 @@ __all__ = [
     "LEFT_OUT_LIMIT",
     "MODIFIERS",
     "NEVER_CAST_LIMIT",
+    "RARE_SPELLS",
     "REPORTS",
     "UNFOLLOWED_SLOTS",
+    "UNSEEN_NOTE",
     "BoundNeverCast",
     "CannotJudge",
     "CastSpell",
@@ -141,6 +143,9 @@ _SIDES = ("L", "R")
 # cannot read, so "cast with no bind" cannot be judged.
 LEFT_OUT_LIMIT = 12
 _BAR_ADDONS = "an action-bar addon may bind through commands like these"
+RARE_SPELLS = (
+    "a spell cast rarely (a long buff, a resurrection, a long cooldown) can be missing from any log"
+)
 # The upper bound of `never_cast_min_casts` in a cost table.
 NEVER_CAST_LIMIT = 100_000
 _UNFOLLOWED_DETAIL = (
@@ -400,7 +405,7 @@ class CoachResult(_Model):
     # the coach cannot see; None without a usable bindings record.
     commands_unseen: int | None
     keys_unseen: int | None
-    unseen: str | None  # said before any finding when either count is above 0
+    unseen: str | None  # said before any finding; None without a usable bindings record
     spells: list[CastSpell]
     frequent_on_high_cost: list[FrequentOnHighCost]
     cast_without_bind: list[CastWithoutBind]
@@ -446,26 +451,32 @@ def _sections(
     return bars, binds
 
 
-def unseen_words(commands: int, keys: int) -> str | None:
-    """The sentence said before any finding when the bindings record left
-    out commands or keys, or None when it left out none. Generic: the record
-    does not say which program, if any, bound them."""
-    if not commands and not keys:
-        return None
-    parts = []
-    if commands:
-        word = "command" if commands == 1 else "commands"
-        parts.append(
-            f"{commands} binding {word}, counted but not named (a key bound straight to a "
-            "spell, macro, item or button click may be one)"
-        )
-    if keys:
-        parts.append(f"{keys} {'key' if keys == 1 else 'keys'} it could not store as text")
-    return (
-        f"The coach cannot see every binding: the lab-addon's record leaves out "
-        f"{' and '.join(parts)}. Any of these may reach a spell, so a spell reported with no "
-        "key may have one, and a key reported as costly may not be the only one."
+UNSEEN_NOTE = (
+    "a key bound straight to a spell or to an addon's button may be in neither count [verify]"
+)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def unseen_words(commands: int, keys: int) -> str:
+    """What the coach cannot see in the bindings record, said before any
+    finding whenever there is a bindings record, also at 0 and 0: the counts
+    in `char binds`'s words, and `UNSEEN_NOTE`. Generic: the record does not
+    say which program, if any, bound them."""
+    counts = (
+        f"Left out of the bindings record, counted with no list: "
+        f"{_plural(commands, 'binding command')} it did not read, whether or not a key is "
+        f"bound to them (not named in plain upper case), and {_plural(keys, 'key')} whose "
+        "name is not printable ASCII."
     )
+    if commands or keys:
+        counts += (
+            " Any of these may reach a spell, so a spell reported with no key may have one, "
+            "and a key reported as costly may not be the only one."
+        )
+    return f"{counts} {UNSEEN_NOTE[:1].upper()}{UNSEEN_NOTE[1:]}."
 
 
 def _cheapest(keys: list[KeyCost]) -> list[KeyCost]:
@@ -654,8 +665,9 @@ def coach(
 
     if left_out >= LEFT_OUT_LIMIT:
         hidden = (
-            f"the bindings record left out {left_out} binding commands that are not action "
-            f"buttons ({_BAR_ADDONS}), so a key the coach cannot see may reach these spells"
+            f"the bindings record left out {left_out} binding commands that are not plain "
+            f"command names ({_BAR_ADDONS}), so a key the coach cannot see may reach these "
+            "spells"
         )
         if unbound:
             cannot.append(CannotJudge(report="cast-without-bind", reason=hidden))
@@ -684,6 +696,8 @@ def coach(
                     spell_name=names.get(spell_id),
                 )
             )
+    if never:
+        caveats.append(RARE_SPELLS)
     spells.sort(key=lambda c: (-c.casts, c.spell_name.casefold(), c.spell_id))
     return CoachResult(
         matched_by="spell id" if no_book is not None else "spell id or spellbook name",
