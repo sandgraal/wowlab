@@ -34,7 +34,7 @@
 uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256=a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639
 ```
 
-The `#sha256=` part is the wheel's hash, the same as its line in the release's `SHA256SUMS`. The release page carries the wheel, the sdist and `SHA256SUMS`; [`docs/INSTALL.md`](docs/INSTALL.md) says how to check them (`uv tool install` does not check that hash itself) and how to run from a source checkout instead.
+The `#sha256=` part is the wheel's hash, the same as its line in the release's `SHA256SUMS`. The release page carries the wheel, the sdist and `SHA256SUMS`; [`docs/INSTALL.md`](docs/INSTALL.md) says how to check them and install the very file you checked (`uv tool install` does not check that hash itself), and how to run from a source checkout instead.
 
 **⚔️ The first three commands:**
 

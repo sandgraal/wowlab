@@ -3336,8 +3336,14 @@ def test_constructed_public_surface_is_exactly_the_gate(
     assert list(inspect.signature(tx.write).parameters) == ["rel_path", "data"]
     assert list(inspect.signature(tx.delete).parameters) == ["rel_path"]
     restore = inspect.signature(tx.restore).parameters
-    assert list(restore) == ["snapshot_id", "paths"]
+    # Amended by M16-03T: M16-03 adds a keyword-only `into=None` (§6.10,
+    # 2026-10-22 "Restore into another target"), pinned in
+    # test_guard_restore_into_target.py.
+    assert list(restore) in (["snapshot_id", "paths"], ["snapshot_id", "paths", "into"])
     assert restore["paths"].default is None
+    if "into" in restore:
+        assert restore["into"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert restore["into"].default is None
 
 
 def test_constructed_no_module_global_is_a_boolean_switch(guard: Any) -> None:

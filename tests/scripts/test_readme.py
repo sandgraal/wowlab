@@ -28,7 +28,7 @@ from typing import Any
 import yaml
 
 # The modules those test files already loaded: loading them again would replace
-# them in sys.modules and break identity checks elsewhere (test_wiki_diagnose).
+# them in sys.modules and break identity checks elsewhere.
 from test_check_wiki import cw, gen
 from test_release import INSTALL_V010, WHEEL_V010_SHA256, rc
 

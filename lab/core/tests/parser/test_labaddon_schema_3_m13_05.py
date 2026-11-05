@@ -338,7 +338,7 @@ def test_constructed_schema_3_describes_the_new_sections() -> None:
     ) in lines
     assert (
         "Key bindings: 3 commands with a key, of 412 listed (commands and keys in --json); "
-        "binding set 2 (the character's: CHARACTER_BINDINGS is 2); read out of combat"
+        "binding set 2 (the character's own bindings); read out of combat"
     ) in lines
     assert (
         "  left out: 1 command of those listed not a plain upper-case name (text after the "
@@ -454,12 +454,11 @@ def test_constructed_item_types_name_each_item() -> None:
 @pytest.mark.parametrize(
     ("which", "words"),
     [
-        (1, "1 (the account's: ACCOUNT_BINDINGS is 1)"),
-        (2, "2 (the character's: CHARACTER_BINDINGS is 2)"),
+        (1, "1 (the account's bindings)"),
+        (2, "2 (the character's own bindings)"),
         (
             3,
-            "3 (the client's raw value, neither set by name: ACCOUNT_BINDINGS is 1, "
-            "CHARACTER_BINDINGS is 2)",
+            "3 (the client's raw value, neither set: the account's is 1, the character's is 2)",
         ),
     ],
 )
@@ -474,8 +473,8 @@ def test_constructed_binding_set_without_the_client_values() -> None:
     del raw["bindings"]["account_bindings"]
     del raw["bindings"]["character_bindings"]
     assert (
-        "binding set 2 (the client's raw value; ACCOUNT_BINDINGS and CHARACTER_BINDINGS not "
-        "recorded); read out of combat"
+        "binding set 2 (the client's raw value; which number is the account's and which the "
+        "character's was not recorded); read out of combat"
     ) in _text(_v3(raw))
 
 

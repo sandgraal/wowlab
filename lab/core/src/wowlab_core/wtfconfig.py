@@ -69,7 +69,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from wowlab_core import longpath
+from wowlab_core import snapshot
 
 __all__ = [
     "BindLine",
@@ -634,17 +634,20 @@ def parse_macros(data: bytes) -> MacrosDocument:
 
 
 # --------------------------------------------------------------------------
-# Path helpers: open read-only, never write (L1). A path past Windows' plain
-# limit is read by its extended-length spelling (`longpath`, M13-15).
+# Path helpers: open read-only, never write (L1), through the guarded opener
+# (`snapshot.read_regular_file`, M16-26): one non-blocking open that does not
+# follow a final link, then an `fstat` that must show a regular file, so a
+# FIFO or a link is refused (`UnsafeReadError`, or `ELOOP`) instead of read.
+# A path past Windows' plain limit is opened by its extended-length spelling.
 
 
 def read_config(path: Path) -> ConfigDocument:
-    return parse_config(longpath.read_bytes(path))
+    return parse_config(snapshot.read_regular_file(Path(path)))
 
 
 def read_bindings(path: Path) -> BindingsDocument:
-    return parse_bindings(longpath.read_bytes(path))
+    return parse_bindings(snapshot.read_regular_file(Path(path)))
 
 
 def read_macros(path: Path) -> MacrosDocument:
-    return parse_macros(longpath.read_bytes(path))
+    return parse_macros(snapshot.read_regular_file(Path(path)))

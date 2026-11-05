@@ -343,6 +343,14 @@ def test_the_notes_template_has_a_section_for_json_model_changes() -> None:
     assert "ADR-0031" in text
     assert "{{INSTALL}}" in text
     assert "sha256sum -c SHA256SUMS" in text
+    # M16-43: the attestation check names the release workflow and the tag,
+    # and the checked file, not the address, is what gets installed.
+    assert (
+        "gh attestation verify wowlab_core-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab "
+        "--signer-workflow sandgraal/wowlab/.github/workflows/release.yml "
+        "--source-ref refs/tags/{{TAG}}"
+    ) in text
+    assert "`uv tool install --python 3.12 ./wowlab_core-{{VERSION}}-py3-none-any.whl`" in text
 
 
 # ─── scripts/release_check.py ─────────────────────────────────────────────────

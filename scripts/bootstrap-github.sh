@@ -71,6 +71,5 @@ gh api "repos/$REPO/environments/release" \
 gh repo view "$REPO" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge \
   --jq '"   squash=\(.squashMergeAllowed) merge=\(.mergeCommitAllowed) rebase=\(.rebaseMergeAllowed) deleteOnMerge=\(.deleteBranchOnMerge)"'
 echo "done. Remaining owner steps:"
-echo "  - run 'claude setup-token', then add the CLAUDE_CODE_OAUTH_TOKEN secret (gh secret set CLAUDE_CODE_OAUTH_TOKEN; see docs/SETUP.md)."
 echo "  - make published releases immutable (assets and tag can no longer change):"
 echo "      gh api -X PUT repos/$REPO/immutable-releases"

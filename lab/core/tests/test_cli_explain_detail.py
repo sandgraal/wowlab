@@ -809,13 +809,14 @@ def _old_text(report: cli.ExplainReport) -> list[str]:
         return [f"{report.query}: no file-map row{where}: {result.reason}"]
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
+    cli._new_report()  # M16-15: the row's text in player words, as one run prints it
     return [
         f"{result.path or '.'} ({base})",
-        f"  what:         {e.what.replace('**', '')}",
+        f"  what:         {cli._player_copy(e.what.replace('**', ''))}",
         f"  written by:   {e.written_by.replace('**', '')}",
         f"  edit:         {report.verdict.words}",
         f"  tier:         {cli.tier_words(e.tier)}",
-        f"  read by:      {e.module}",
+        f"  read by:      {cli._reader_words(e.module)}",
         f"  file-map row: {e.id} ({e.doc_path})",
     ]
 
