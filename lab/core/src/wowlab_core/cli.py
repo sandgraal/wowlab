@@ -8556,7 +8556,9 @@ def char_binds(
         unreached_slots=found.unreached_slots,
         commands_left_out=found.commands_left_out,
         keys_left_out=found.keys_left_out,
-        left_out_note=_binds_left_out_note(found.commands_left_out, found.keys_left_out),
+        left_out_note=_binds_left_out_note(
+            found.commands_left_out, found.keys_left_out, _kept_clicks(record)
+        ),
         cannot_place=found.cannot_place,
         cannot_compare=found.cannot_compare,
         notes=[*found.notes, _CHAR_NOTES[0]],
@@ -8567,17 +8569,32 @@ def char_binds(
     _say_char_binds(report)
 
 
-def _binds_left_out_note(commands: int | None, keys: int | None) -> str | None:
+def _kept_clicks(record: labaddon.CharDB | None) -> int:
+    """How many click bindings a schema-5 record keeps (M16-45)."""
+    if isinstance(record, labaddon.CharDBV5) and isinstance(record.bindings, labaddon.BindingsV5):
+        return labaddon.kept_clicks(record.bindings)
+    return 0
+
+
+def _binds_left_out_note(commands: int | None, keys: int | None, kept: int = 0) -> str | None:
     """The record's two left-out counts as one sentence, which `char binds`
-    prints and `wowlab ui`'s Keys panel shows; None without both counts."""
+    prints and `wowlab ui`'s Keys panel shows; None without both counts.
+    `kept` (M16-45): the click bindings the record keeps, which `commands`
+    includes until this view places them."""
     if commands is None or keys is None:
         return None
-    return (
+    note = (
         "Left out of the bindings record, counted with no list: "
         f"{_plural(commands, 'command')} not named in plain upper case "
         "(a key bound straight to a spell, macro, item or click may be one), and "
         f"{_plural(keys, 'key')} not printable ASCII."
     )
+    if kept:
+        note += (
+            f" {_plural(kept, 'command')} of those {'is a click binding' if kept == 1 else 'are click bindings'} "
+            "to an action button, which the record keeps but this view does not place yet."
+        )
+    return note
 
 
 def _source_words(row: keymap.KeyRow) -> str:

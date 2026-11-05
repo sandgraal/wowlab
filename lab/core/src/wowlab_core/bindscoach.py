@@ -399,7 +399,7 @@ def _sections(
         if isinstance(section, labaddon.AbsentProbedSection):
             return f"no {name} record (the section is absent: {section.absent})"
     assert isinstance(bars, labaddon.ActionBars) and isinstance(binds, labaddon.Bindings)
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    why = _dropped(bars, _ACTIONBARS_NEEDS)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -408,7 +408,7 @@ def _sections(
             f"the action-bar record is incomplete ({'; '.join(why)}), so a slot dropped may "
             "hold the spell"
         )
-    why = _dropped(binds.probes, _BINDINGS_NEEDS)
+    why = _dropped(binds, _BINDINGS_NEEDS)
     if why:
         return (
             f"the bindings record is incomplete ({'; '.join(why)}), so a key dropped may reach "
@@ -466,13 +466,21 @@ def coach(
     if not isinstance(sections, str):
         bars, binds = sections
         spell_slots = {s.slot: s.id for s in bars.slots if s.type == "spell" and s.id is not None}
-        for b in binds.list_:
+        # A kept CLICK binding is unseen until the views map its `action`
+        # to a slot (M16-45 ruling): it counts with the left-out commands.
+        for b in labaddon.seen_bindings(binds):
             slot = command_slot(b.command)
             if slot is None or not b.keys:
                 continue
             command_of.setdefault(slot, b.command)
             keys_of.setdefault(slot, []).extend(key_cost(k, costs) for k in b.keys)
-        left_out, keys_left_out = binds.commands_left_out, binds.keys_left_out
+        left_out, keys_left_out = labaddon.unseen_commands(binds), binds.keys_left_out
+        for what, section in (("action-bar", bars), ("bindings", binds)):
+            if labaddon.dropped_unknown(section):
+                caveats.append(
+                    f"in the {what} record, {labaddon.DROPPED_NOT_RECORDED}, so a slot or key "
+                    "it dropped may change these reports"
+                )
 
     spells: list[CastSpell] = []
     frequent: list[FrequentOnHighCost] = []

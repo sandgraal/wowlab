@@ -48,7 +48,7 @@ still given, and what it holds is "cannot place".
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -207,26 +207,23 @@ def slot_page_note(slot: int) -> str:
     return f"page {page}, button {button}: no bar of the default UI shows this page"
 
 
-def dropped(probes: Sequence[labaddon.ApiProbe] | None, needs: frozenset[str]) -> list[str]:
-    """What a section's probes say was dropped: calls that raised, values
-    dropped as secret or untestable, and the needed functions missing.
-    Since schema 5 a record has probes only from a debug session (M16-45);
-    without them nothing can be said, and nothing is."""
-    if probes is None:
-        return []
-    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
-    errors = sum(p.errors for p in counted)
-    secret = sum(p.secret for p in counted)
-    out: list[str] = []
-    if errors or secret:
-        out.append(
-            f"{errors} call(s) raised an error and {secret} value(s) were dropped as secret "
-            "or untestable"
-        )
-    missing = sorted(p.api for p in probes if p.api in needs and not p.present)
-    if missing:
-        out.append(f"{', '.join(missing)} not present")
-    return out
+def dropped(
+    section: labaddon.Spellbook | labaddon.ActionBars | labaddon.Bindings, needs: frozenset[str]
+) -> list[str]:
+    """What a section says was dropped: calls that raised, values dropped as
+    secret or untestable, and the needed functions missing (from `probes`),
+    or since schema 5 its `dropped` count (`labaddon.dropped_words`)."""
+    return labaddon.dropped_words(section, needs)
+
+
+def unknown_note(
+    what: str, section: labaddon.Spellbook | labaddon.ActionBars | labaddon.Bindings
+) -> str | None:
+    """A note when a schema-5 section records neither `probes` nor
+    `dropped` (unknown stays unknown), or None."""
+    if not labaddon.dropped_unknown(section):
+        return None
+    return f"In the {what} record, {labaddon.DROPPED_NOT_RECORDED}."
 
 
 def spell_names(
@@ -380,7 +377,7 @@ def _usable_bars(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the action-bar section is absent: {section.absent}", None
-    why = dropped(section.probes, _ACTIONBARS_NEEDS)
+    why = dropped(section, _ACTIONBARS_NEEDS)
     untyped = sum(1 for s in section.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -400,7 +397,7 @@ def _usable_bindings(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the bindings section is absent: {section.absent}", None
-    why = dropped(section.probes, _BINDINGS_NEEDS)
+    why = dropped(section, _BINDINGS_NEEDS)
     note = (
         f"The bindings record is incomplete ({'; '.join(why)}): a key shown only in a file "
         "may be one the record dropped."
@@ -461,7 +458,9 @@ def join(
                 have.append(scope)
             file_keys.setdefault(b.key, []).append((b.action, scope))
     record_keys: dict[str, list[str]] = {}
-    for rb in binds.list_ if binds is not None else ():
+    # A kept CLICK binding is not placed until the views map its `action`
+    # to a slot (M16-45 ruling); it is counted with the left-out commands.
+    for rb in labaddon.seen_bindings(binds) if binds is not None else ():
         for k in rb.keys:
             have = pairs.setdefault((k, rb.command), [])
             if "record" not in have:
@@ -560,12 +559,16 @@ def join(
         notes.append(bars_note)
     if binds_note is not None:
         notes.append(binds_note)
+    if bars is not None and (unknown := unknown_note("action-bar", bars)) is not None:
+        notes.append(unknown)
+    if binds is not None and (unknown := unknown_note("bindings", binds)) is not None:
+        notes.append(unknown)
     if no_book is not None and bars is not None:
         notes.append(f"{no_book}: spells on the bars are given by id only.")
     return KeyMap(
         keys=rows,
         unreached_slots=unreached,
-        commands_left_out=binds.commands_left_out if binds is not None else None,
+        commands_left_out=labaddon.unseen_commands(binds) if binds is not None else None,
         keys_left_out=binds.keys_left_out if binds is not None else None,
         cannot_place=cannot_place,
         cannot_compare=cannot_compare,

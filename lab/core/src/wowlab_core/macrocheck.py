@@ -322,25 +322,14 @@ def _schema_words(record: labaddon.CharDB) -> str:
     )
 
 
-def _dropped(probes: Sequence[labaddon.ApiProbe] | None, needs: frozenset[str]) -> list[str]:
-    """What a section's own probes say it may be missing: calls that raised,
-    values dropped as secret or untestable, a needed function not there.
-    Since schema 5 probes are written only in a debug session (M16-45);
-    without them nothing can be said."""
-    if probes is None:
-        return []
-    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
-    errors = sum(p.errors for p in counted)
-    secret = sum(p.secret for p in counted)
-    out: list[str] = []
-    if errors or secret:
-        out.append(
-            f"{errors} call(s) raised an error and {secret} value(s) were dropped as secret "
-            "or untestable"
-        )
-    missing = sorted(p.api for p in probes if p.api in needs and not p.present)
-    if missing:
-        out.append(f"{', '.join(missing)} not present")
+def _dropped(section: labaddon.Spellbook | labaddon.ActionBars, needs: frozenset[str]) -> list[str]:
+    """What a section says it may be missing: calls that raised, values
+    dropped as secret or untestable, a needed function not there
+    (`labaddon.dropped_words`). A schema-5 section that records neither its
+    probes nor its `dropped` count says so: unknown stays unknown."""
+    out = labaddon.dropped_words(section, needs)
+    if labaddon.dropped_unknown(section):
+        out.append(labaddon.DROPPED_NOT_RECORDED)
     return out
 
 
@@ -355,7 +344,7 @@ def _spellbook(record: labaddon.CharDB | None, no_record: str) -> labaddon.Spell
         return f"no spellbook record (the section is absent: {record.spellbook.absent})"
     book = record.spellbook
     flyout = (book.item_types or {}).get("Flyout")
-    why = _dropped(book.probes, _SPELLBOOK_NEEDS)
+    why = _dropped(book, _SPELLBOOK_NEEDS)
     unnamed = sum(
         1 for i in book.list_ if i.spell_name is None and (flyout is None or i.type != flyout)
     )
@@ -379,7 +368,7 @@ def _actionbars(record: labaddon.CharDB | None, no_record: str) -> labaddon.Acti
     if isinstance(record.actionbars, labaddon.AbsentProbedSection):
         return f"no action-bar record (the section is absent: {record.actionbars.absent})"
     bars = record.actionbars
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    why = _dropped(bars, _ACTIONBARS_NEEDS)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")

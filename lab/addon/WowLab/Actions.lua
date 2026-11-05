@@ -28,8 +28,10 @@
 --               [verify], so `commands_left_out` counts only those it listed.
 --               Since schema 5 (M16-45; ADR-0026, amendment of 2026-10-22)
 --               one more shape is kept: `CLICK <frame>:<button>`, only when
---               the frame is an action button (clickAction below), with the
---               action slot it presses (`action`). Every other CLICK command
+--               the frame is an action button (clickAction below), with
+--               `action`: the button's `action` attribute when the bindings
+--               were gathered (for a paging bar, the slot of the page shown
+--               then). Every other CLICK command
 --               is counted in `commands_left_out` and `clicks_left_out`, and
 --               nothing more is read from its frame. Whether GetBinding lists
 --               CLICK commands at all is [verify].
@@ -101,6 +103,19 @@ end
 local function lookedUp(list)
     list[#list + 1] = probe("C_Secrets", type(C_Secrets) == "table" and C_Secrets or nil)
     list[#list + 1] = probe("canaccessvalue", type(canaccessvalue) == "function" and canaccessvalue or nil)
+end
+
+-- How many values the gather dropped (M16-45 round 1): over every probe,
+-- the calls that raised an error and the values dropped as secret or
+-- untestable. Written on every gathered record as `dropped`, debug or not;
+-- the per-API detail stays in `probes`, behind `/wowlab debug`.
+local function droppedCount(list)
+    local total = 0
+    for i = 1, #list do
+        local entry = list[i]
+        total = total + (ns.Number(entry.errors) or 0) + (ns.Number(entry.secret) or 0)
+    end
+    return total
 end
 
 local function tally(entry, ok, answered)
@@ -311,6 +326,7 @@ ns.Section({
                 end
             end
         end
+        record.dropped = ns.Number(droppedCount(asked))
         return record
     end,
 })
@@ -397,6 +413,7 @@ ns.Section({
                 end
             end
         end
+        record.dropped = ns.Number(droppedCount(asked))
         return record
     end,
 })
@@ -439,16 +456,24 @@ end
 -- The largest action slot number kept: the largest 32-bit signed integer.
 local MAX_ACTION_SLOT = 2147483647
 
+-- One attribute of a CLICK command's frame (M16-45). Called only through
+-- `pcall`, so the method lookup itself is protected too.
+local function attribute(f, name)
+    return f:GetAttribute(name)
+end
+
 -- The action slot a CLICK command presses, or nil (M16-45; ADR-0026,
--- amendment of 2026-10-22). The global the frame part names must be a table;
--- its `type` attribute must be exactly "action" (a button that presses one
+-- amendment of 2026-10-22). The global the frame part names must be a table
+-- that is a frame (its index 0 holds the client's userdata, read with rawget
+-- before any other index); its `type` attribute must be exactly "action" (a
+-- button that presses one
 -- of the client's numbered action slots: bar addons name these buttons
 -- themselves, while GSE, BindPad and `/run` targets are not of that type);
 -- and its `action` attribute must be a whole number from 1 to
 -- MAX_ACTION_SLOT. Each attribute is read through `pcall` and passed through
 -- `clean` (issecretvalue where the client has it). Nothing else is read from
 -- the frame, and the frame's name is never stored unless all of this holds.
-local function clickAction(isSecret, secret, attribute, frameName)
+local function clickAction(isSecret, secret, attributeProbe, frameName)
     -- The one dynamic global lookup in the addon, by the owner's ruling of
     -- 2026-10-22 (ADR-0026): `frameName` passed clickParts, and only the
     -- type of what it names is read here.
@@ -457,23 +482,29 @@ local function clickAction(isSecret, secret, attribute, frameName)
     if type(target) ~= "table" then
         return nil
     end
-    local okType, kind = pcall(target.GetAttribute, target, "type")
+    -- A frame's index 0 holds the client's userdata. rawget reads it without
+    -- any metatable, so a plain table posing as a frame stops here (the
+    -- second dynamic lookup the ruling allows, M16-45 round 1).
+    if type(rawget(target, 0)) ~= "userdata" then
+        return nil
+    end
+    local okType, kind = pcall(attribute, target, "type")
     if okType then
-        kind = clean(isSecret, secret, attribute, kind)
+        kind = clean(isSecret, secret, attributeProbe, kind)
     else
         kind = nil
     end
-    tally(attribute, okType, type(kind) == "string")
+    tally(attributeProbe, okType, type(kind) == "string")
     if not okType or kind ~= "action" then
         return nil
     end
-    local okSlot, slot = pcall(target.GetAttribute, target, "action")
+    local okSlot, slot = pcall(attribute, target, "action")
     if okSlot then
-        slot = clean(isSecret, secret, attribute, slot)
+        slot = clean(isSecret, secret, attributeProbe, slot)
     else
         slot = nil
     end
-    tally(attribute, okSlot, type(slot) == "number")
+    tally(attributeProbe, okSlot, type(slot) == "number")
     if okSlot and type(slot) == "number" and slot >= 1 and slot <= MAX_ACTION_SLOT and slot % 1 == 0 then
         return ns.Number(slot)
     end
@@ -512,8 +543,8 @@ ns.Section({
         local secret = probe("issecretvalue", isSecret)
         -- A frame's GetAttribute (CLICK commands, M16-45): looked up on each
         -- frame, so it is counted as present.
-        local attribute = probe("GetAttribute", true)
-        local asked = { set, count, binding, key, secret, attribute }
+        local attributeProbe = probe("GetAttribute", true)
+        local asked = { set, count, binding, key, secret, attributeProbe }
         lookedUp(asked)
         -- Written only in a debug session (M16-45).
         local list = nil
@@ -586,7 +617,7 @@ ns.Section({
                     -- is counted in clicks_left_out too.
                     local frameName = clickParts(click)
                     if frameName then
-                        action = clickAction(isSecret, secret, attribute, frameName)
+                        action = clickAction(isSecret, secret, attributeProbe, frameName)
                     end
                     if action then
                         name = ns.String(click)
@@ -623,6 +654,7 @@ ns.Section({
         record.commands_left_out = leftOut
         record.clicks_left_out = clicksLeftOut
         record.keys_left_out = keysLeftOut
+        record.dropped = ns.Number(droppedCount(asked))
         return record
     end,
 })

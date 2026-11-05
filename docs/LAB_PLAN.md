@@ -2252,35 +2252,51 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     this addon's schema, or `probe.lost` is set. `announced` is written by
     the addon's own logout write, and only when the first pass ran in that
     session; at `ADDON_LOADED` it is removed from the table in memory until
-    that write puts it back. So the line prints once per addon version and
-    after a session whose write never ran. A crash writes nothing, so after
-    a crash the file is as the last written session left it: one that
-    already wrote `announced` gives a quiet next login. The 15 s window
-    itself is unchanged.
+    that write puts it back. So the line prints once per schema (each new
+    lab-addon format), and after a session in which the client saved the
+    file but the addon's logout write did not finish. A crash cannot be
+    detected: a crash writes nothing, so the file is as the last session
+    that saved it left it, and one that already wrote `announced` gives a
+    quiet next login. The 15 s window itself is unchanged.
   - `/wowlab debug on|off` (per character, `debug = true` when on, from the
     next `/reload` or login) gates the research scaffolding: `probes` on
     `spellbook`, `actionbars` and `bindings`, and the six count-only
     barber-shop events with `events_received`. Off by default. The calls and
-    secret checks are the same either way.
+    secret checks are the same either way. Every gathered `spellbook`,
+    `actionbars` and `bindings` record carries `dropped` either way (round
+    1 of the M16-45 review, conductor's ruling of 2026-11-05): one whole
+    number, the calls that raised an error plus the values dropped as
+    secret or untestable, summed over its probes. The views use it as they
+    used the probes' counts ("the record is incomplete", and `binds
+    coach`'s "cannot judge"); a schema-5 section with neither `probes` nor
+    `dropped` reads "whether any value was dropped is not recorded".
   - After the first pass a change event only marks its section dirty. One
     pass gathers every dirty section at most once every 30 s, never in
-    combat (known from `PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`;
-    a pass whose timer ends in combat waits for the end of combat), and at
+    combat (known from `PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`,
+    and on each `PLAYER_ENTERING_WORLD` from `InCombatLockdown`, so a
+    `/reload` in combat is gated; a pass whose timer ends in combat waits
+    for the end of combat, and the first pass waits on its own flag), and at
     `PLAYER_LOGOUT`. `customization` still records at its barber-shop
     events, and `/wowlab save` gathers at once.
   - `talents.legacy` walks `Constants` once per session; a later gather asks
     `C_Traits.GetConfigIDBySystemID` again only for the system ids that
-    answered a config id then.
+    answered a config id then. A trait system with no config id at the first
+    gather is not asked again until the next login or `/reload`.
   - `bindings` stores a command `c` that `GetBinding` lists and that passes
     the secret check only when it is a plain upper-case name (as before) or
     when all three of ADR-0026's 2026-10-22 rules hold: `c` matches
     `^CLICK ([%a_][%w_]*):(%a%w*)$` with a frame part of at most 64 bytes
-    and a button part of at most 32; `f = _G[frame]` is a table and
+    and a button part of at most 32; `f = _G[frame]` is a table (whose
+    `rawget(f, 0)` is the client's userdata, checked first) and
     `pcall(f.GetAttribute, f, "type")` returns exactly `"action"`; and
     `pcall(f.GetAttribute, f, "action")` returns a number for which
     `issecretvalue` returns false (where the client has it), which the addon
     also keeps only when it is a whole number from 1 to 2147483647. The
-    record then keeps the command, `action` (the slot) and the keys. Every
+    record then keeps the command, `action` (the button's `action`
+    attribute when the bindings were gathered; for a paging bar, the slot of
+    the page shown then) and the keys. Until M16-46 maps `action` to a slot,
+    every view treats a kept `CLICK` command as unseen and counts it with
+    the left-out commands, as before schema 5. Every
     other command starting `CLICK ` is counted in `clicks_left_out` and in
     `commands_left_out`, and nothing else is read from its frame. Whether
     `GetBinding` lists `CLICK` commands at all is **[verify]**: the owner's
@@ -2291,10 +2307,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   refuses a schema it does not know. In schema 5 `probes` is optional on
   the three sections; `debug` is a boolean, `announced` a schema number;
   a kept `CLICK` command must have the shape above and an `action`, a plain
-  one must not. `char show` adds one line under the key bindings: how many
-  addon action buttons were kept and how many other `CLICK` commands were
-  left out. The keybind views name `CLICK` binds in M16-46. The next change
-  is schema 6.
+  one must not; `dropped` is a count. `char show` adds a line under the key
+  bindings (how many action buttons were kept, with that slot) and one per
+  Actions section with its `dropped` count, and the left-out line names the
+  `CLICK` commands whose button was looked at. `char binds`' left-out note
+  says how many of the counted commands are kept click bindings it does not
+  place yet. The keybind views place `CLICK` binds in M16-46. The next
+  change is schema 6.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's
@@ -4741,8 +4760,9 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - The keybind views see addon action bars through stored
      `CLICK <frame>:<button>` commands.
 9. **The lab-addon, schema 5 (ADR-0026, amended 2026-10-21).**
-   - The chat line prints once per addon version, or after an unclean
-     session.
+   - The chat line prints once per schema (each new lab-addon format), or
+     after a session whose logout write did not finish (a crash cannot be
+     detected).
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.

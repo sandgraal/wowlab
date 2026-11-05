@@ -274,7 +274,11 @@ local firstPassDone = false
 -- itself.
 local GATHER_INTERVAL = 30
 local inCombat = false
+-- A timer's pass waiting for the end of combat; `pending` stays set meanwhile.
 local waitingForCombat = false
+-- The first pass waiting for the end of combat (round 1): its own flag, so
+-- the end of combat resets `pending` only when a timer's pass set the wait.
+local firstPassWaiting = false
 
 local function gather(section, event)
     if section.off then
@@ -370,7 +374,7 @@ local function startFirstPass()
         firstPassDone = true
         -- Out of combat, like every later pass (M16-45).
         if inCombat then
-            waitingForCombat = true
+            firstPassWaiting = true
         else
             gatherDirty()
         end
@@ -711,14 +715,34 @@ end)
 
 ns.On("PLAYER_REGEN_ENABLED", function()
     inCombat = false
+    local run = false
+    if firstPassWaiting then
+        firstPassWaiting = false
+        run = true
+    end
     if waitingForCombat then
         waitingForCombat = false
         pending = false
+        run = true
+    end
+    if run then
         gatherDirty()
     end
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function()
+    -- Combat as the client says it now (round 1): a /reload in combat sends
+    -- no PLAYER_REGEN_DISABLED, so the flag is set here, and the first pass
+    -- waits for the end of combat. When the client cannot say, the flag is
+    -- left as the events set it.
+    if type(InCombatLockdown) == "function" then
+        local ok, locked = pcall(InCombatLockdown)
+        if ok and locked == true then
+            inCombat = true
+        elseif ok then
+            inCombat = false
+        end
+    end
     for _, section in ipairs(ns.sections) do
         if section.on_world and not section.off and not (section.heavy and ns.state[section.key]) then
             section.dirty = true

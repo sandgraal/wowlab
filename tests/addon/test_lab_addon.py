@@ -383,12 +383,19 @@ def _dynamic_lookups(tokens: list[Token]) -> list[Token]:
 # Exactly this statement, in this file, inside `clickAction`, once.
 CLICK_FRAME_FILE = "Actions.lua"
 CLICK_FRAME_LOOKUP = ("local", "target", "=", "_G", "[", "frameName", "]")
+# Round 1 (security F2): the frame's index 0 read past any metatable, before
+# any other index of it.
+CLICK_FRAME_RAWGET = ("type", "(", "rawget", "(", "target", ",", "0", ")", ")")
 
 
 def _is_click_frame_lookup(path: Path, tokens: list[Token], i: int) -> bool:
-    if path.name != CLICK_FRAME_FILE or tokens[i].text != "_G" or i < 3:
+    if path.name != CLICK_FRAME_FILE or i < 3:
         return False
-    return tuple(t.text for t in tokens[i - 3 : i + 4]) == CLICK_FRAME_LOOKUP
+    if tokens[i].text == "_G":
+        return tuple(t.text for t in tokens[i - 3 : i + 4]) == CLICK_FRAME_LOOKUP
+    if tokens[i].text == "rawget":
+        return tuple(t.text for t in tokens[i - 2 : i + 7]) == CLICK_FRAME_RAWGET
+    return False
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -406,16 +413,43 @@ def test_m16_45_the_click_frame_lookup_is_the_one_exception() -> None:
     path = ADDON / CLICK_FRAME_FILE
     tokens = _tokens(path)
     hits = [i for i in range(len(tokens)) if _is_click_frame_lookup(path, tokens, i)]
-    assert len(hits) == 1, hits
+    assert [tokens[i].text for i in hits] == ["_G", "rawget"], hits
+    # The rawget test comes right after the table test, before any index.
+    assert (
+        'local target = _G [ frameName ] if type ( target ) ~= "table" then return nil end '
+        'if type ( rawget ( target , 0 ) ) ~= "userdata" then return nil end '
+        'local okType , kind = pcall ( attribute , target , "type" )'
+    ) in _render(tokens)
+    assert _render(tokens).count("target .") == 0 and _render(tokens).count("target [") == 0
+    assert (
+        "local function attribute ( f , name ) return f : GetAttribute ( name ) end"
+    ) in _render(tokens)
+    # Security F3: frameName is bound once outside clickParts, from it, and
+    # nothing reassigns it before clickAction.
+    binds = [
+        _Flow(path, tokens).label_at(i)
+        for i in range(1, len(tokens) - 1)
+        if tokens[i].text == "frameName" and tokens[i + 1].text == "=" and not _is_field(tokens, i)
+    ]
+    assert binds == ["gather"], binds  # the bindings section's gather
+    assert (
+        "local _ , _ , frameName , button = string . find ( value , "
+        '"^CLICK ([%a_][%w_]*):(%a%w*)$" )'
+    ) in _render(tokens)  # clickParts' own local, returned only after the bounds
+    assert _render(tokens).count("frameName ,") == 1
+    assert (
+        "local frameName = clickParts ( click ) if frameName then "
+        "action = clickAction ( isSecret , secret , attributeProbe , frameName ) end"
+    ) in _render(tokens)
     source = path.read_text(encoding="utf-8")
-    start = source.index("local function clickAction(isSecret, secret, attribute, frameName)")
+    start = source.index("local function clickAction(isSecret, secret, attributeProbe, frameName)")
     end = source.index("\nend\n", start)
     lookup_line = tokens[hits[0]].line
     assert source.count("\n", 0, start) < lookup_line <= source.count("\n", 0, end) + 1
     assert '"^CLICK ([%a_][%w_]*):(%a%w*)$"' in source
     assert "#frameName <= 64 and #button <= 32" in source
     calls = re.findall(r"clickAction\(([^)]*)\)", source)
-    assert calls == ["isSecret, secret, attribute, frameName"] * 2, calls
+    assert calls == ["isSecret, secret, attributeProbe, frameName"] * 2, calls
     assert "local click = nil if not name then click = clickCommand ( found ) end" in _render(
         tokens
     )
@@ -424,17 +458,17 @@ def test_m16_45_the_click_frame_lookup_is_the_one_exception() -> None:
     # attribute, each through pcall and clean; nothing else is read.
     body = _render(tokens[hits[0] : hits[0] + 200])
     assert (
-        'local okType , kind = pcall ( target . GetAttribute , target , "type" ) '
-        "if okType then kind = clean ( isSecret , secret , attribute , kind ) "
+        'local okType , kind = pcall ( attribute , target , "type" ) '
+        "if okType then kind = clean ( isSecret , secret , attributeProbe , kind ) "
         "else kind = nil end"
     ) in body
     assert 'if not okType or kind ~= "action" then return nil end' in body
     assert (
-        'local okSlot , slot = pcall ( target . GetAttribute , target , "action" ) '
-        "if okSlot then slot = clean ( isSecret , secret , attribute , slot ) "
+        'local okSlot , slot = pcall ( attribute , target , "action" ) '
+        "if okSlot then slot = clean ( isSecret , secret , attributeProbe , slot ) "
         "else slot = nil end"
     ) in body
-    assert _render(tokens).count("target . GetAttribute") == 2
+    assert _render(tokens).count("pcall ( attribute ,") == 2
     # Every CLICK command not kept is counted twice; no other path counts one.
     assert (
         "if action then name = ns . String ( click ) "
@@ -2534,7 +2568,7 @@ def test_first_pass_runs_on_its_own_timer() -> None:
     # M16-45: the first pass, like every later one, waits for combat to end.
     assert (
         "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true "
-        "if inCombat then waitingForCombat = true else gatherDirty ( ) end end )" in first
+        "if inCombat then firstPassWaiting = true else gatherDirty ( ) end end )" in first
     )
     # Not merged into, nor swallowed by, the change-event debounce.
     assert "pending" not in first.split() and "schedule" not in first.split()
@@ -3270,6 +3304,12 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
         "whether there is a 15 s window; never called here",
     ),
     ("Core.lua", "clientInfo", "GetBuildInfo"): ({"test": 1, "call": 1}, "the `client` block"),
+    # M16-45 round 1: a /reload in combat sends no PLAYER_REGEN_DISABLED, so
+    # combat is asked once per loading screen; only `true` or `false` is kept.
+    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "InCombatLockdown"): (
+        {"test": 1, "call": 1},
+        "whether the player is in combat as the world is entered, through pcall",
+    ),
     # Client-given values (round 3): what the client passes to a function it
     # calls, and where Core.lua takes it. The dispatcher's first parameter
     # (the event frame) and the slash handler's second (the chat edit box)
@@ -3391,14 +3431,18 @@ HANDED_ON: dict[tuple[str, str, str], str] = {
         "a Constants value, tested as a number just before, handed now to "
         "C_Traits.GetConfigIDBySystemID through ns.Call"
     ),
-    # M16-45 (ADR-0026, amendment of 2026-10-22): the frame a CLICK binding
-    # names, tested as a table just before, is the self argument of its own
-    # GetAttribute, called now through pcall; it is never stored.
-    ("Actions.lua", "clickAction", 'pcall ( target . GetAttribute , target , "type" )'): (
-        'the frame as GetAttribute\'s self: frame:GetAttribute("type"), called now'
+    # M16-45 (ADR-0026, amendment of 2026-10-22; round 1): the frame a CLICK
+    # binding names, tested as a table just before. rawget reads its index 0
+    # now, with no metatable; `attribute` calls its GetAttribute now, inside
+    # pcall. It is never stored.
+    ("Actions.lua", "clickAction", "rawget ( target , 0 )"): (
+        "the frame, tested as a table; rawget reads its index 0 now, past any metatable"
     ),
-    ("Actions.lua", "clickAction", 'pcall ( target . GetAttribute , target , "action" )'): (
-        'the frame as GetAttribute\'s self: frame:GetAttribute("action"), called now'
+    ("Actions.lua", "clickAction", 'pcall ( attribute , target , "type" )'): (
+        'the frame handed to `attribute`, which calls frame:GetAttribute("type") now'
+    ),
+    ("Actions.lua", "clickAction", 'pcall ( attribute , target , "action" )'): (
+        'the frame handed to `attribute`, which calls frame:GetAttribute("action") now'
     ),
 }
 
@@ -5593,16 +5637,18 @@ def test_m13_05_the_new_sections_are_switchable_and_need_no_exception() -> None:
     """The M11-37 rules hold for Actions.lua with no sectionless exception:
     every call sits in section code that `/wowlab skip` stops. Its only
     listed exceptions are M16-45's three HANDED_ON entries in `clickAction`
-    (a CLICK binding's frame as the self argument of its own GetAttribute,
-    called now through pcall; ADR-0026, amendment of 2026-10-22)."""
+    (a CLICK binding's frame read by rawget at index 0, and handed twice to
+    `attribute`, which calls its GetAttribute now inside pcall; ADR-0026,
+    amendment of 2026-10-22)."""
     scan = _section_scan()
     assert not [f for f in scan.failures if "Actions.lua" in f], scan.failures
     for table in (SECTIONLESS_API, SECTIONLESS_CALLERS):
         assert not [key for key in table if key[0] == "Actions.lua"], table
     handed = [key for key in HANDED_ON if key[0] == "Actions.lua"]
     assert handed == [
-        ("Actions.lua", "clickAction", 'pcall ( target . GetAttribute , target , "type" )'),
-        ("Actions.lua", "clickAction", 'pcall ( target . GetAttribute , target , "action" )'),
+        ("Actions.lua", "clickAction", "rawget ( target , 0 )"),
+        ("Actions.lua", "clickAction", 'pcall ( attribute , target , "type" )'),
+        ("Actions.lua", "clickAction", 'pcall ( attribute , target , "action" )'),
     ], handed
 
 
@@ -5789,7 +5835,7 @@ def test_m13_05_bindings_ask_only_plain_commands() -> None:
     assert text.count("getKey ,") == 1
     assert 'string . find ( value , "^[%u%d_]+$" )' in text
     # M16-45: a CLICK command passed clickParts and clickAction, and keeps
-    # the action slot it presses.
+    # its button's action attribute.
     assert (
         "{ command = ns . String ( name ) , action = ns . Number ( action ) , keys = kept }" in text
     )
@@ -5961,12 +6007,40 @@ def _m13_05_cleaned_last(t: list[Token], start: int, end: int) -> bool:
     )
 
 
+def _m16_45_pinned_call(flow: _Flow, k: int) -> bool:
+    """M16-45 round 1 (security F2), the two calls the CLICK rule needs, each
+    pinned whole by `test_m16_45_the_click_frame_lookup_is_the_one_exception`:
+    the `:` and the call of `f:GetAttribute(name)` inside the one-line
+    `attribute`, which only `pcall` calls, and `rawget(target, 0)` in
+    `clickAction`'s frame test."""
+    t = flow.tokens
+    if flow.path.name != CLICK_FRAME_FILE:
+        return False
+    label = flow.label_at(k)
+    if (
+        label == "attribute"
+        and (
+            _render(t[k - 2 : k + 5]) == "return f : GetAttribute ( name )"  # the `:`
+            or _render(t[k - 4 : k + 3]) == "return f : GetAttribute ( name )"  # the call
+        )
+    ):
+        return True
+    return (
+        label == "clickAction"
+        and t[k].text == "("
+        and t[k - 1].text == "rawget"
+        and tuple(x.text for x in t[k - 3 : k + 6]) == CLICK_FRAME_RAWGET
+    )
+
+
 def _m13_05_call_problems(t: list[Token], flow: _Flow, own: set[str]) -> list[str]:
     """Every call in the file is of a function named in `own`,
     `_M13_05_BUILTINS` or `_M13_05_NS`, through a name nothing rebinds."""
     problems: list[str] = []
     allowed = own | _M13_05_BUILTINS | _M13_05_NS
     for k in range(1, len(t)):
+        if _m16_45_pinned_call(flow, k):
+            continue
         if t[k].kind == "op" and t[k].text == ":":
             problems.append(f"line {t[k].line}: a method call")
         if not flow.call_start(k):
@@ -6543,10 +6617,26 @@ def test_m16_45_change_events_mark_dirty_and_one_pass_runs_out_of_combat() -> No
     rendered = _render(t)
     assert "timerAfter ( 2 ," not in rendered
     assert 'ns . On ( "PLAYER_REGEN_DISABLED" , function ( ) inCombat = true end )' in rendered
+    # Round 1 (code 3): the first pass's wait has its own flag, so the end of
+    # combat resets `pending` only after a timer's pass set the wait.
     assert (
-        'ns . On ( "PLAYER_REGEN_ENABLED" , function ( ) inCombat = false '
-        "if waitingForCombat then waitingForCombat = false pending = false gatherDirty ( ) end end )"
+        'ns . On ( "PLAYER_REGEN_ENABLED" , function ( ) inCombat = false local run = false '
+        "if firstPassWaiting then firstPassWaiting = false run = true end "
+        "if waitingForCombat then waitingForCombat = false pending = false run = true end "
+        "if run then gatherDirty ( ) end end )"
     ) in rendered
+    assert rendered.count("firstPassWaiting = true") == 1
+    assert "firstPassWaiting = true" in _body(flow, "startFirstPass")
+    assert rendered.count("waitingForCombat = true") == 2
+    assert "firstPassWaiting" not in _body(flow, "schedule")
+    # Round 1 (code 4): a /reload in combat is gated: combat is asked as the
+    # world is entered, and only true or false is kept.
+    world = _body(flow, 'ns.On("PLAYER_ENTERING_WORLD")')
+    assert world.startswith(
+        'function ( ) if type ( InCombatLockdown ) == "function" then '
+        "local ok , locked = pcall ( InCombatLockdown ) "
+        "if ok and locked == true then inCombat = true elseif ok then inCombat = false end end"
+    ), world
     assert "else section . dirty = true schedule ( ) end end" in _body(flow, "onEvent")
     assert "gatherDirty ( ) ns . Write ( )" in _body(flow, 'ns.On("PLAYER_LOGOUT")')
 
@@ -6580,3 +6670,21 @@ def test_m16_45_readme_documents_schema_5() -> None:
         "Whether `GetBinding` lists `CLICK` commands at all is **[verify]**",
     ):
         assert phrase in readme, phrase
+
+
+def test_m16_45_every_gathered_actions_record_says_how_many_values_it_dropped() -> None:
+    """Round 1 (conductor's ruling, 2026-11-05): `probes` stays behind
+    `/wowlab debug`, but every gathered spellbook, actionbars and bindings
+    record carries `dropped`, one whole number: over every probe, the calls
+    that raised plus the values dropped as secret or untestable. No name, no
+    text."""
+    text = _render(_tokens(ACTIONS))
+    assert (
+        text.count("record . dropped = ns . Number ( droppedCount ( asked ) ) return record") == 3
+    )
+    assert text.count("dropped =") == 3
+    assert (
+        "local function droppedCount ( list ) local total = 0 for i = 1 , # list do "
+        "local entry = list [ i ] total = total + ( ns . Number ( entry . errors ) or 0 ) "
+        "+ ( ns . Number ( entry . secret ) or 0 ) end return total end"
+    ) in text

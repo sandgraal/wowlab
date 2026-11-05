@@ -6,8 +6,9 @@ Schema 5 is schema 4 with:
 - `probes` on `spellbook`, `actionbars` and `bindings` only in a debug
   session, so a schema-5 record without them is the usual case;
 - on `bindings`, `clicks_left_out` and kept `CLICK <frame>:<button>`
-  commands, each with `action`, the action slot it presses (ADR-0026,
-  amendment of 2026-10-22).
+  commands, each with `action`, the button's `action` attribute when the
+  bindings were gathered (ADR-0026, amendment of 2026-10-22);
+- (round 1) `dropped` on each Actions section, always written.
 
 No owner capture at schema 5 exists yet (the runbook is
 `docs/handoffs/M16-45.md`). Until it lands, every schema-5 record here is
@@ -49,15 +50,18 @@ def _raw() -> dict[str, Any]:
     return record
 
 
-def _schema_5(*, debug: bool = False) -> dict[str, Any]:
+def _schema_5(*, debug: bool = False, dropped: int | None = 0) -> dict[str, Any]:
     """The real schema-4 record as the schema-5 addon would write it:
-    `probes` only with `debug`, `clicks_left_out` on bindings, and the two
-    top-level keys."""
+    `probes` only with `debug`, `dropped` on each Actions section (always,
+    from round 1; `None` leaves it out, which the addon never does),
+    `clicks_left_out` on bindings, and the two top-level keys."""
     raw = copy.deepcopy(_raw())
     raw["schema"] = 5
     for key in ("spellbook", "actionbars", "bindings"):
         if not debug:
             raw[key].pop("probes", None)
+        if dropped is not None:
+            raw[key]["dropped"] = dropped
     raw["bindings"]["clicks_left_out"] = 0
     raw["announced"] = 5
     if debug:
@@ -80,6 +84,7 @@ def test_constructed_schema_5_without_probes_is_read() -> None:
         assert section.probes is None
     assert isinstance(record.bindings, labaddon.BindingsV5)
     assert record.bindings.clicks_left_out == 0
+    assert record.bindings.dropped == 0
     assert labaddon.unknown_keys(record) == []
 
 
@@ -93,8 +98,9 @@ def test_constructed_schema_5_debug_session_keeps_probes() -> None:
 def test_constructed_schema_5_text_says_nothing_of_missing_probes() -> None:
     text = "\n".join(labaddon.describe(labaddon.load_char(_schema_5())))
     assert "probes" not in text
-    assert "click bindings: 0 addon action buttons kept" in text
-    assert "0 others left out (counted above)" in text
+    assert "click bindings: 0 action buttons kept, each with the button's action slot when " in text
+    assert "values dropped (secret, untestable, or a call that failed): 0" in text
+    assert labaddon.DROPPED_NOT_RECORDED not in text
 
 
 def test_constructed_schema_5_click_binding_is_read_with_its_action_slot() -> None:
@@ -109,22 +115,89 @@ def test_constructed_schema_5_click_binding_is_read_with_its_action_slot() -> No
     kept = [b for b in binds.list_ if b.action is not None]
     assert [(b.command, b.action, b.keys) for b in kept] == [(CLICK, 13, ["SHIFT-1"])]
     text = "\n".join(labaddon.describe(record))
-    assert "click bindings: 1 addon action button kept with the action slot each presses" in text
-    assert "1 other left out" in text
+    assert "click bindings: 1 action button kept" in text
+    assert "(for a paging bar, the slot of the page shown then)" in text
+    assert (
+        "of those, 1 click binding whose button was looked at and is not an action button" in text
+    )
+    assert labaddon.kept_clicks(binds) == 1
+    assert labaddon.unseen_commands(binds) == binds.commands_left_out + 1
+    assert CLICK not in [b.command for b in labaddon.seen_bindings(binds)]
     dumped = json.loads(record.model_dump_json(by_alias=True))
     assert {"command": CLICK, "action": 13, "keys": ["SHIFT-1"]} in dumped["bindings"]["list"]
     assert labaddon.load_char(dumped) == record
 
 
-def test_constructed_schema_5_keymap_does_not_break_on_a_click_binding() -> None:
-    """The keybind views name CLICK binds in M16-46; until then a record
-    holding one, with no probes, still joins."""
+def test_constructed_schema_5_keymap_counts_a_kept_click_as_unseen() -> None:
+    """The keybind views place CLICK binds in M16-46; until then a kept one
+    is counted with the left-out commands and is not a row (ruling of
+    2026-11-05)."""
     raw = _schema_5()
     _with_click(raw)
     record = labaddon.load_char(raw)
+    assert isinstance(record, labaddon.CharDBV5) and record.bindings is not None
+    assert isinstance(record.bindings, labaddon.BindingsV5)
     joined = keymap.join_record(account=None, character=None, record=record)
-    assert joined is not None
-    assert keymap.dropped(None, frozenset({"GetBinding"})) == []
+    assert CLICK not in [row.command for row in joined.keys]
+    assert joined.commands_left_out == record.bindings.commands_left_out + 1
+    assert not any(labaddon.DROPPED_NOT_RECORDED in n for n in joined.notes)
+
+
+@pytest.mark.parametrize("section", ["spellbook", "actionbars", "bindings"])
+def test_constructed_schema_5_dropped_values_make_the_section_incomplete(section: str) -> None:
+    """`dropped` (round 1) takes the place of the probes' counts outside a
+    debug session: a count above 0 is "incomplete", as the probes were."""
+    raw = _schema_5()
+    raw[section]["dropped"] = 3
+    record = labaddon.load_char(raw)
+    found = getattr(record, section)
+    words = labaddon.dropped_words(found)
+    assert words == [
+        "3 value(s) were dropped as secret or untestable, or lost to a call that raised an error"
+    ]
+    assert not labaddon.dropped_unknown(found)
+    if section == "actionbars":
+        joined = keymap.join_record(account=None, character=None, record=record)
+        assert any("The action-bar record is incomplete (3 value(s)" in n for n in joined.notes)
+    if section == "bindings":
+        joined = keymap.join_record(account=None, character=None, record=record)
+        assert (
+            joined.keys_incomplete
+            == "the bindings record is incomplete, so a key may be one it dropped"
+        )
+
+
+def test_constructed_schema_5_without_dropped_says_it_is_not_recorded() -> None:
+    """A schema-5 record with neither `probes` nor `dropped` (not written by
+    this addon; defensive): unknown stays unknown."""
+    record = labaddon.load_char(_schema_5(dropped=None))
+    assert isinstance(record, labaddon.CharDBV5) and record.actionbars is not None
+    assert not isinstance(record.actionbars, labaddon.AbsentProbedSection)
+    assert labaddon.dropped_unknown(record.actionbars)
+    assert labaddon.dropped_words(record.actionbars) == []
+    joined = keymap.join_record(account=None, character=None, record=record)
+    assert f"In the action-bar record, {labaddon.DROPPED_NOT_RECORDED}." in joined.notes
+    assert f"In the bindings record, {labaddon.DROPPED_NOT_RECORDED}." in joined.notes
+    text = "\n".join(labaddon.describe(record))
+    assert text.count(labaddon.DROPPED_NOT_RECORDED) == 3
+
+
+def test_constructed_schema_5_debug_session_uses_the_probes() -> None:
+    raw = _schema_5(debug=True, dropped=5)
+    record = labaddon.load_char(raw)
+    assert record.bindings is not None and not isinstance(
+        record.bindings, labaddon.AbsentProbedSection
+    )
+    # The probes hold the detail; `dropped` is their sum (0 in the capture).
+    assert labaddon.dropped_words(record.bindings) == []
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, "3", True], ids=str)
+def test_constructed_dropped_that_is_not_a_count_is_refused(value: object) -> None:
+    raw = _schema_5()
+    raw["bindings"]["dropped"] = value
+    with pytest.raises(labaddon.LabAddonError, match="dropped"):
+        labaddon.load_char(raw)
 
 
 @pytest.mark.parametrize(

@@ -113,14 +113,26 @@ Schema 5 (M16-45) is schema 4, quieter, with one more kind of binding:
 - `probes` on `spellbook`, `actionbars` and `bindings`, and the count-only
   barber-shop events with `events_received` on `customization`, are
   written only in a debug session ("Debug" below);
+- every gathered `spellbook`, `actionbars` and `bindings` record carries
+  `dropped`, debug or not: one whole number, the calls that raised an error
+  plus the values dropped as secret or untestable, summed over its probes.
+  The Lab's views use it as they used the probes' counts ("the record is
+  incomplete"); a schema-5 record with neither `probes` nor `dropped` (this
+  addon never writes one) reads "whether any value was dropped is not
+  recorded";
 - `bindings` keeps a `CLICK <frame>:<button>` command when the frame is an
-  action button, with the action slot it presses (`action`), and counts
-  every other `CLICK` command in `clicks_left_out` as well as
-  `commands_left_out`;
+  action button, with `action`: the button's `action` attribute when the bindings were gathered (for a
+  paging bar, the slot of the page shown then). It counts every other `CLICK` command in `clicks_left_out` as well
+  as `commands_left_out`. Until the keybind views map `action` to a slot,
+  every view (`binds coach`, `binds list`, `char binds`, the macro checks)
+  treats a kept `CLICK` command as unseen and counts it with the left-out
+  commands, as before schema 5;
 - change events only mark their section dirty, and the dirty sections are
   gathered together at most once every 30 s, out of combat, and at logout
   (the barber-shop record still comes at the event, in the barber shop);
-- the `Constants` sweep of `talents.legacy` runs once per session.
+- the `Constants` sweep of `talents.legacy` runs once per session: a
+  trait system that gave no config id at the first gather is not asked
+  again until the next login or `/reload`.
 
 The Lab reads schema 1 to 4 files exactly as before and refuses a schema it
 does not know. The first logout with the M16-45 addon rewrites the file as
@@ -479,22 +491,27 @@ Notes on the fields:
   check, and for which all three hold:
   1. `c` matches `^CLICK ([%a_][%w_]*):(%a%w*)$`, with a frame part of at
      most 64 bytes and a button part of at most 32;
-  2. `_G[frame]` is a table, and `pcall(frame.GetAttribute, frame, "type")`
-     returns exactly `"action"`;
-  3. `pcall(frame.GetAttribute, frame, "action")` returns a number that
-     passes `issecretvalue` where the client has it. The addon also keeps
-     it only when it is a whole number from 1 to 2147483647, so that the
-     Lab's reader can take it.
+  2. `f = _G[frame]` is a table, and `pcall(f.GetAttribute, f, "type")`
+     returns exactly `"action"`. The addon first checks that `f[0]`, read
+     with `rawget` (no metatable), is the client's userdata, so only a real
+     frame is asked; it calls `GetAttribute` inside the `pcall`, through a
+     one-line `attribute(f, name)`;
+  3. `pcall(f.GetAttribute, f, "action")` returns a number for which
+     `issecretvalue` returns false (where the client has `issecretvalue`).
+     The addon also keeps it only when it is a whole number from 1 to
+     2147483647, so that the Lab's reader can take it.
 
-  The record then keeps the command, the action slot (`action`) and the
-  keys. Any other command that starts with `CLICK ` is counted in
+  The record then keeps the command, `action` (the button's `action`
+  attribute when the bindings were gathered; for a paging bar, the slot of
+  the page shown then) and the keys. Any other command that starts with `CLICK ` is counted in
   `clicks_left_out` and in `commands_left_out`, and nothing else is read
   from its frame. A button whose `type` is `action` presses one of the
   client's numbered action slots; bar addons (Bartender4, ElvUI, Dominos)
   name those buttons themselves, while a GSE sequence button (named after
   text the player typed), a BindPad button or a `/run SetBindingClick`
   target is not of that type, so a wrong guess only leaves a button out.
-  `_G[frame]` is the addon's one dynamic global lookup, by that ruling.
+  `_G[frame]` and `rawget(f, 0)` are the addon's only dynamic lookups, by
+  that ruling.
   Whether `GetBinding` lists `CLICK` commands at all is **[verify]**: the
   schema-5 capture settles it (`docs/handoffs/M16-45.md`).
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
@@ -575,22 +592,27 @@ Since schema 5 (M16-45) it prints only when the file's `announced` is not
 this addon's schema, or the probe was lost (`probe.lost`). `announced` is
 written by the addon's own logout write, and only when the first pass ran
 in that session; at `ADDON_LOADED` it is removed from the table in memory
-until that write puts it back. So the line prints once per addon version,
-again after any session whose write never ran (the file keeps no
-`announced`), and again after a session that ended before its first pass
-on a new version. A crash writes nothing at all, so a crash after a
-session that already wrote `announced` leaves the file as that session
-wrote it, and the next login is quiet: the window is still there, and
-`/wowlab skip` still works in it. The line is the reminder, not the window.
+until that write puts it back. So the line prints once per schema (each
+new lab-addon format), and again after a session in which the client saved
+the file but the addon's logout write did not finish (the file then keeps
+no `announced`), or one that ended before its first pass on a new schema.
+A crash cannot be detected: a crash writes nothing, so the file stays as
+the last session that saved it left it, and after one that already wrote
+`announced` the next login is quiet. The window is still there, and
+`/wowlab skip` still works in it. The line is the reminder, not the
+window.
 Until the first pass has run, change events gather nothing (what they would
 have gathered is taken by the pass). After it, a change event only marks
 its section dirty, and the dirty sections are gathered together by one pass
 at most once every 30 s (it was a 2 s debounce before schema 5), never in
 combat: a pass whose 30 s end in combat waits for `PLAYER_REGEN_ENABLED`,
 and no new timer starts meanwhile. The first pass waits for the end of
-combat the same way. Combat is known from `PLAYER_REGEN_DISABLED` and
-`PLAYER_REGEN_ENABLED`; `Actions.lua`'s sections still ask
-`InCombatLockdown` themselves. `customization` still records at the event
+combat the same way, on its own flag, so the end of combat resets the
+timer's state only when a timer's pass was waiting. Combat is known from
+`PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`, and on every
+`PLAYER_ENTERING_WORLD` from `InCombatLockdown` through `pcall` (a
+`/reload` in combat sends no `PLAYER_REGEN_DISABLED`); `Actions.lua`'s
+sections still ask `InCombatLockdown` themselves. `customization` still records at the event
 itself (the barber shop is open only then), and `PLAYER_LOGOUT` and
 `/wowlab save` gather at once. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
 A logout or `/reload` inside the 15 s still records: `PLAYER_LOGOUT` gathers
@@ -707,10 +729,13 @@ anything run at load or from an event handler outside a section.
   literal, an addon function, a client global, `ns.Fn(...)`, what `next`,
   `pairs`, `ipairs`, `select` or `unpack` return from one, a loop variable
   over one, and any local or helper parameter ever given one. The exceptions
-  are listed in `HANDED_ON`, each with its reason. Today there are four:
-  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`, and three
+  are listed in `HANDED_ON`, each with its reason. Today there are seven:
+  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`; three
   values `talents.legacy` reads out of the client's `Enum.TraitConfigType`
-  and `Constants` tables and hands at once to `C_Traits` or `string.find`.
+  and `Constants` tables and hands at once to `C_Traits` or `string.find`;
+  and, since schema 5, a `CLICK` binding's frame, read by `rawget` at index
+  0 and handed twice to `attribute`, which calls its `GetAttribute` at once
+  inside `pcall`.
 - Each file binds its `...` once, as `local <name>, ns = ...`, and uses it
   nowhere else. `ns` is written only as `ns.Name` (never `ns:Name`, which
   hands the namespace on as `self`), no function is defined with `:`, and
