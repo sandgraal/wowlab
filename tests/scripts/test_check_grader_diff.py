@@ -489,8 +489,31 @@ def test_constructed_repo_non_grader_and_new_files_may_change(repo: Path) -> Non
             "a conftest.py added",
         ),
         ("conftest.py", "", "a conftest.py added"),
-        ("lab/core/tests/_oracle.py", "def expected():\n    return 3\n", "a test support file"),
-        ("lab/core/tests/_oracle.py", None, "a test support file"),
+        (
+            "lab/core/tests/_oracle.py",
+            "def expected():\n    return 3\n",
+            "a test support or data file changed",
+        ),
+        ("lab/core/tests/_oracle.py", None, "a test support or data file deleted"),
+        # Constructed shadow package: lab/core/tests has no __init__.py, so a
+        # new tests/wowlab_core/ can stand in for the package a grader imports.
+        (
+            "lab/core/tests/wowlab_core/__init__.py",
+            "",
+            "a test support or data file added",
+        ),
+        (
+            "lab/core/tests/wowlab_core/guard.py",
+            "def answer():\n    return 1\n",
+            "a test support or data file added",
+        ),
+        ("lab/core/tests/_new_helper.py", "X = 1\n", "a test support or data file added"),
+        ("lab/core/tests/fixtures/data.txt", "b\n", "a test support or data file changed"),
+        ("lab/core/tests/fixtures/data.txt", None, "a test support or data file deleted"),
+        ("lab/core/tests/fixtures/new.bin", "\x00\n", "a test support or data file added"),
+        ("pytest.toml", '[pytest]\naddopts = ["-k", "not guard"]\n', "pytest configuration"),
+        (".pytest.toml", '[pytest]\naddopts = ["-k", "not guard"]\n', "pytest configuration"),
+        ("lab/core/tests/pytest.toml", "[pytest]\n", "pytest configuration"),
         ("lab/core/tests/parser/conftest.py", "X = 2\n", "a test support file"),
         ("lab/core/tests/pytest.ini", "[pytest]\naddopts = -p no:x\n", "pytest configuration"),
         (
@@ -513,6 +536,7 @@ def test_constructed_repo_support_and_config_changes_fail(
     base_files = {
         "lab/core/tests/_oracle.py": "def expected():\n    return 2\n",
         "lab/core/tests/parser/conftest.py": "X = 1\n",
+        "lab/core/tests/fixtures/data.txt": "a\n",
         "pyproject.toml": '[project]\nname = "x"\n',
         "setup.cfg": "[metadata]\nname = x\n",
         "tox.ini": "[tox]\nenvlist = a\n",
@@ -545,8 +569,11 @@ def test_constructed_repo_support_and_config_changes_fail(
         pytest.param(
             "tox.ini", "[tox]\nenvlist = a\n", "[tox]\nenvlist = b\n", id="tox-other-section"
         ),
-        pytest.param("lab/core/tests/_new_helper.py", None, "X = 1\n", id="new-helper"),
-        pytest.param("lab/core/tests/fixtures/data.txt", "a\n", "b\n", id="non-python"),
+        pytest.param(
+            "lab/core/tests/test_new_constructed.py", None, "X = 1\n", id="new-test-module"
+        ),
+        pytest.param("docs/notes.txt", "a\n", "b\n", id="outside-tests"),
+        pytest.param("lab/core/tests/fixtures/data.txt", "a\n", "a\n", id="unchanged-bytes"),
     ],
 )
 def test_constructed_support_changes_that_are_allowed(

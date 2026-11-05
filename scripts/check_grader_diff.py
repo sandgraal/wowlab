@@ -28,14 +28,18 @@ already on `main`.
 What else fails on such a change, each with its own reason, because it can
 neutralise a grader without touching one:
 
-- a test support file changed or deleted: any other tracked `.py` file
-  under a `tests/` directory (helper modules, oracles, `conftest.py`);
+- any file under a `tests/` directory, of any type, added, changed or
+  deleted, unless it is a new `test_*.py` module: helper modules, oracles,
+  `conftest.py`, packages (`lab/core/tests` has no `__init__.py`, so a new
+  `tests/wowlab_core/` or `_helper.py` could shadow what a grader imports),
+  fixtures and snapshot data;
 - a `conftest.py` added anywhere, or one outside `tests/` (the root one)
   changed or deleted;
 - pytest configuration changed: the `tool.pytest` table (which holds
   `[tool.pytest.ini_options]`) of any `pyproject.toml`, `[tool:pytest]` in
-  any `setup.cfg`, `[pytest]` in any `tox.ini`, and any `pytest.ini` or
-  `.pytest.ini`. A file that cannot be read for this fails closed.
+  any `setup.cfg`, `[pytest]` in any `tox.ini`, and any `pytest.toml`,
+  `.pytest.toml`, `pytest.ini` or `.pytest.ini` (pytest 9 reads the two
+  TOML files first). A file that cannot be read for this fails closed.
 
 Not covered, left to review: the Makefile's pytest command lines and the
 workflows' own pytest invocations, which also choose what runs.
@@ -459,6 +463,7 @@ def grader_reason(path: str, contents: Sequence[bytes], modules: set[str]) -> st
 # ─── test support files and pytest configuration ─────────────────────────────
 
 SUPPORT = "a test support file changed on a load-bearing PR"
+SUPPORT_DATA = "a test support or data file {how} on a load-bearing PR"
 NEW_CONFTEST = "a conftest.py added on a load-bearing PR"
 CONFIG = "pytest configuration changed on a load-bearing PR"
 
@@ -487,19 +492,30 @@ def _pyproject_pytest(data: bytes | None) -> object:
 def support_reason(path: str, base_data: bytes | None, head_data: bytes | None) -> str | None:
     """Why changing `path` (base -> head; None: absent) fails on a load-bearing PR.
 
-    For anything that is not a `test_*.py` file: a test support file, a
-    conftest.py, or pytest configuration. None when the change is allowed."""
+    For anything that is not a `test_*.py` file: any file under a `tests/`
+    directory (support, package or data), a conftest.py, or pytest
+    configuration. None when the change is allowed."""
     if base_data == head_data:
         return None
     parts = path.split("/")
     name = parts[-1]
     if name == "conftest.py":
         return NEW_CONFTEST if base_data is None else f"{SUPPORT} (conftest.py)"
-    if "tests" in parts[:-1] and name.endswith(".py") and not is_test_file(path):
-        # A new helper cannot change an existing grader without an edit to it.
-        return None if base_data is None else SUPPORT
+    config = _config_reason(name, base_data, head_data)
+    if config:
+        return config
+    if "tests" in parts[:-1] and not is_test_file(path):
+        # Any type, added too: a new module or package can shadow a grader's
+        # import, and fixture data is what a grader compares against.
+        how = "added" if base_data is None else "deleted" if head_data is None else "changed"
+        return SUPPORT_DATA.format(how=how)
+    return None
+
+
+def _config_reason(name: str, base_data: bytes | None, head_data: bytes | None) -> str | None:
+    """Why a change to a file called `name` changes pytest configuration, or None."""
     try:
-        if name in ("pytest.ini", ".pytest.ini"):
+        if name in ("pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"):
             return f"{CONFIG} ({name})"
         if name == "pyproject.toml":
             changed = _pyproject_pytest(base_data) != _pyproject_pytest(head_data)
@@ -550,6 +566,8 @@ def _blob(repo: Path, rev: str, path: str, tracked: set[str]) -> bytes | None:
 
 CONFIG_NAMES = (
     "conftest.py",
+    "pytest.toml",
+    ".pytest.toml",
     "pytest.ini",
     ".pytest.ini",
     "pyproject.toml",
@@ -559,9 +577,9 @@ CONFIG_NAMES = (
 
 
 def _relevant(path: str) -> bool:
-    """Whether `path` can be a grader, a test support file or pytest configuration."""
+    """Whether `path` can be a grader, a test support or data file, or pytest configuration."""
     parts = path.split("/")
-    return parts[-1] in CONFIG_NAMES or ("tests" in parts[:-1] and parts[-1].endswith(".py"))
+    return parts[-1] in CONFIG_NAMES or "tests" in parts[:-1]
 
 
 def run(repo: Path, base: str, head: str) -> tuple[int, list[str]]:
@@ -607,9 +625,10 @@ def run(repo: Path, base: str, head: str) -> tuple[int, list[str]]:
     if failures:
         out.append(
             "On a change to a load-bearing file, a grader may change only by deleting "
-            "complete xfail(strict=True) marker blocks, and test support files, "
-            "conftest.py and pytest configuration may not change (ADR-0013, AGENTS.md). "
-            "A grader or support file that is wrong is reported, and fixed by a "
+            "complete xfail(strict=True) marker blocks; no other file under tests/ may "
+            "be added, changed or deleted except a new test_*.py, no conftest.py may be "
+            "added, and pytest configuration may not change (ADR-0013, AGENTS.md). "
+            "A grader, support or data file that is wrong is reported, and fixed by a "
             "separate [TEST] change."
         )
         return 1, out
