@@ -3431,6 +3431,14 @@ lab-addon.
 | M12-10 alt-dashboard, M12-11 talent capture | not started | **defer** | M12-10 is a page over M12-09's data for one player's alts; M12-11 only serves the talent tickets. |
 | M12-12 Wave 3 review | — | **keep, smaller** | It now waits on M12-09 and M12-14 only, and records what was deferred. |
 
+*Note, 2026-11-04 (owner decision: nothing uses the Claude API):* the daily
+wiki job M12-14 built (`.github/workflows/wiki-daily.yml`) was deleted, with
+the `@claude` responder and the automated PR review, because each ran
+Claude in CI. `scripts/check_wiki.py` stays as a local gate for a wiki push;
+`scripts/wiki_diagnose.py` (it read only the Claude step's output) and
+`scripts/wiki_state.py` (the job's state and model context) were deleted
+with it. The conductor updates the wiki after a merge.
+
 The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
 They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay
 as the spec for when they do. M11-35 (schema 3, the config id) is folded into

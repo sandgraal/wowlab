@@ -1,4 +1,4 @@
-"""Grades for `scripts/check_wiki.py`, the daily wiki job's gate (M12-14).
+"""Grades for `scripts/check_wiki.py`, the local wiki gate (M12-14).
 
 Two kinds of input:
 
@@ -19,8 +19,8 @@ Two kinds of input:
   `fixtures/wiki-a47a7ee.commands.txt` records the leaf commands of its era
   (the Click tree at main 90b50c4), and the real-wiki baselines check
   coverage against that set: a command added to the CLI later is listed in
-  `Checker.added_since`, never a baseline failure. The program, and so the
-  daily job, still requires every current command (the constructed cases).
+  `Checker.added_since`, never a baseline failure. The program still
+  requires every current command (the constructed cases).
 """
 
 from __future__ import annotations
@@ -270,7 +270,7 @@ def test_constructed_missing_generated_page_fails(tmp_path: Path) -> None:
     (root / "_Sidebar.md").write_text("- [Home](Home)\n", encoding="utf-8")
     (root / "Command-Reference.md").write_text("# Command Reference\n", encoding="utf-8")
     assert _failures(root) == [
-        "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
+        "CLI-Reference.md: missing; generate it with scripts/gen_command_reference.py"
     ]
 
 
@@ -497,9 +497,7 @@ def _real_copy(tmp_path: Path) -> Path:
     return root
 
 
-MISSING_GENERATED = (
-    "CLI-Reference.md: missing; the job writes it with scripts/gen_command_reference.py"
-)
+MISSING_GENERATED = "CLI-Reference.md: missing; generate it with scripts/gen_command_reference.py"
 
 
 def _not_covered(command: str) -> str:
@@ -574,8 +572,7 @@ def test_constructed_a_new_command_keeps_the_real_baseline_and_the_rule_reports_
 
     The real-wiki baseline, which checks coverage against its era's command
     set, still passes and lists the command as added since the snapshot. The
-    coverage rule as the program and the daily job run it (no command set)
-    still reports it.
+    coverage rule as the program runs it (no command set) still reports it.
     """
     tree, name = _tree_with_a_new_command(group)
     assert name in cw.leaf_commands(tree)
