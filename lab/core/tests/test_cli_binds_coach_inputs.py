@@ -593,18 +593,19 @@ def test_default_character_tie_is_said_cross_capture(
 def test_default_character_without_a_usable_record_still_picks_the_log_by_name_constructed(
     flavor: Path, namesake: Path
 ) -> None:
-    """The top-ranked folder's record cannot be used: two case variants of
-    WowLab.lua, none spelled exactly, so none is read (constructed). Its
-    folder still names the character the log is chosen for."""
+    """The top-ranked folder's record cannot be used: it is not a literal
+    table (constructed, rejected by the parser, never run), and it is the
+    only character record, so it ranks first. Its folder still names the
+    character the log is chosen for. An invalid file, not two case variants
+    of the name, so that this holds on a case-insensitive volume too."""
     (flavor / OTHER_RECORD).unlink()
-    namesake.rename(namesake.with_name("WOWLAB.lua"))
-    shutil.copy2(SCHEMA_3, namesake.with_name("wowlab.lua"))
+    namesake.write_bytes(b"WowLabDB = function() end\n")
     caster_log(
         flavor, "Someone-Else-", cast(755, "Health Funnel"), name="WoWCombatLog-a.txt", offset=5
     )
     rep = report()
-    assert rep.record_file is None and rep.record_error is not None
-    assert "none was read" in rep.record_error
+    assert rep.record_file == NAMESAKE_RECORD and rep.record_error is not None
+    assert rep.record_schema is None
     assert rep.log.character_name == "Labchard"
     assert (rep.log.file, rep.log.chosen_by) == (f"Logs/{LOG_NAME}", "caster name")
 
