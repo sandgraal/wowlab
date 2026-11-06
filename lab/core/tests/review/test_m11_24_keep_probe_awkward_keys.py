@@ -32,7 +32,9 @@ import pytest
 from wowlab_core import luadata, svmerge
 
 TAKE_THEIRS: dict[str, Any] = {"take": "theirs"}
-WHOLE_KEY: dict[str, Any] = {"keys": ["WowLabCharDB"]}
+# `replace`: the whole-variable copy is `--key X --replace` since M16-12 (owner
+# decision of 2026-10-21, Q8); `--key X` alone now merges inside X.
+WHOLE_KEY: dict[str, Any] = {"keys": ["WowLabCharDB"], "replace": True}
 MODES = pytest.mark.parametrize(
     "mode", [TAKE_THEIRS, WHOLE_KEY], ids=["take-theirs", "key-whole-variable"]
 )

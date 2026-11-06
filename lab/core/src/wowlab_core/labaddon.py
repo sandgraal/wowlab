@@ -115,7 +115,7 @@ from pydantic import (
     model_validator,
 )
 
-from wowlab_core import layout, longpath, luadata, snapshot, wtfconfig
+from wowlab_core import filemap, layout, longpath, luadata, snapshot, wtfconfig
 from wowlab_core.layout import FsText
 
 __all__ = [
@@ -2243,8 +2243,15 @@ def survey(
         else:
             folder.odd[path] = reason
 
+    fm = filemap.load()
     for link in walk.symlinks:
-        note(link.path, NOT_FOLLOWED, link.entry_id, is_link=True)
+        # `_place` asks what the link's place looks like, a realm or digits
+        # folder by the file map's patterns, not which row applies: below a
+        # folder the walk does not take as an account, `link.entry_id` has no
+        # account row (M13-69), yet a linked realm there can still hide a
+        # character, and only following it would tell.
+        shape = fm.classify(tuple(link.path.split("/")), "flavor", "any")
+        note(link.path, NOT_FOLLOWED, shape.id if shape else None, is_link=True)
     for error in walk.errors:
         if error.path == "":  # the flavor folder itself could not be listed
             not_looked_at.append(NotLookedAt(path=lay.flavor_folder, reason=error.error))

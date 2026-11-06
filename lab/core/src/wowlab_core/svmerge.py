@@ -1,9 +1,9 @@
 """svmerge: a structural merge of one SavedVariables document (docs/LAB_PLAN.md
 §13.4 with its 2026-09-29 "M11-09T conductor rulings"; M11-09).
 
-`merge(ours, theirs, *, base=None, keys=(), take=None)` works on `luadata`
-documents and nothing else: it reads no file, writes no file, and executes
-nothing (L1, L3). Ours is the target, theirs the source. The `wowlab sv
+`merge(ours, theirs, *, base=None, keys=(), take=None, replace=False)` works
+on `luadata` documents and nothing else: it reads no file, writes no file,
+and executes nothing (L1, L3). Ours is the target, theirs the source. The `wowlab sv
 merge` command reads the files, runs the loader check and hands the merged
 document to `luadata.serialize` and the result to `guard` (L2).
 
@@ -15,6 +15,17 @@ Rules, by key path:
   `[1]`, `[1.0]` and the first positional entry are one key, as in Lua 5.1.
   For duplicate keys the entry Lua 5.1 would load is the one merged (the
   rule `LuaDocument.to_python` documents); the others are left as they are.
+- A table's array part is one value (M16-12, owner decision of 2026-10-21):
+  the keys 1..n, where n is the largest border on any of the three sides
+  (keys 1..n all present), are compared as one list. A list that differs
+  is one conflict (or one taken change, three-way) at the table's path,
+  never merged index by index; taking theirs makes ours' keys 1..n
+  exactly theirs' (an entry after a gap in theirs is written as `[k] =`,
+  never renumbered). Keys past every side's border are merged as keys.
+- Everything the merge removes from ours is listed in `removed`: a taken
+  list that drops or changes any of ours' entries (once, at the list's
+  path), a key under a table that theirs' value replaces, and a key a
+  `replace` copy does not hold.
 - Two-way (no `base`): a key whose values differ is a conflict. A key on one
   side only is `absent`, with the side it is missing from, and is neither
   added to ours nor deleted from it.
@@ -27,10 +38,13 @@ Rules, by key path:
   conflicts are still listed (with `resolved` set). Without it a conflict
   keeps ours, and the caller writes nothing while one is unresolved.
 - `keys` limits the merge. Each is a path in `wowlab sv dump --path` syntax
-  (`Var.key[3]["some key"]`), or `SRC=DST`. Two-way, theirs' subtree at
-  `SRC` is copied whole to `DST` in ours (a copy within one file is
-  `merge(doc, doc, keys=["SRC=DST"])`); three-way, the rules above apply
-  inside the named subtree only and nothing outside it is taken or listed.
+  (`Var.key[3]["some key"]`), or `SRC=DST`: theirs' subtree at `SRC` is
+  merged into `DST` in ours by the rules above, inside the named subtree
+  only, and nothing outside it is taken or listed (M16-12; a merge within
+  one file is `merge(doc, doc, keys=["SRC=DST"])`). Two-way, a `DST` ours
+  does not hold at all, or holds as an empty table when theirs' value is a
+  table, is theirs' subtree, whole. `replace=True` (two-way
+  only) copies each subtree whole instead, as `--key X --replace`.
   A `DST` whose parent tables ours does not have is reported `absent`; one
   whose parent is not a table is refused (`MergeError`).
 
@@ -90,6 +104,7 @@ __all__ = [
     "MergeResult",
     "PathStep",
     "Probe",
+    "Removed",
     "Side",
     "Taken",
     "check_keys",
@@ -146,6 +161,19 @@ class Absent(_Frozen):
     missing_from: Side
 
 
+class Removed(_Frozen):
+    """What the merge removes from the target (M16-12): a list taken from
+    theirs that drops or changes any of ours' entries (once, at the list's
+    table path, with `entries` set to ours' and theirs' entry counts), a
+    key under a table that theirs' value replaces, or a key a `replace`
+    copy does not hold. A key is listed at the highest key that goes, with
+    ours' value as `wowlab sv dump` shows it; the keys under it go with it."""
+
+    path: str
+    value: str
+    entries: tuple[int, int] | None = None  # a list replaced: (ours', theirs')
+
+
 class MergeResult(BaseModel):
     """What `merge` returns: the merged document (ours where nothing was
     taken) and what was found on the way, in document order."""
@@ -157,6 +185,7 @@ class MergeResult(BaseModel):
     conflicts: tuple[Conflict, ...]
     taken: tuple[Taken, ...]
     absent: tuple[Absent, ...]
+    removed: tuple[Removed, ...] = ()
 
     @property
     def unresolved(self) -> bool:
@@ -552,6 +581,55 @@ def _show(value: LuaValue | None) -> str:
     return "nil"
 
 
+# A list whose entries are all scalars is shown in full up to this many
+# characters (`{"Copper Ore", "Tin Ore"}`), else by its length.
+_LIST_SHOWN = 72
+
+
+def _show_list(values: Sequence[LuaValue | None]) -> str:
+    """An array part as one value: its entries 1..n (`None`: a gap). Only
+    real entries are counted; a gap is named (`{[1] = "a", [3] = "c"}`, or
+    `list (2 entries, a gap at [2])`)."""
+    items = list(values)
+    while items and items[-1] is None:
+        items.pop()
+    gaps = [k for k, v in enumerate(items, start=1) if v is None]
+    if all(v is None or not isinstance(v, LuaTable) for v in items):
+        if gaps:
+            shown = [f"[{k}] = {_show(v)}" for k, v in enumerate(items, start=1) if v is not None]
+        else:
+            shown = [_show(v) for v in items]
+        text = "{" + ", ".join(shown) + "}"
+        if len(text) <= _LIST_SHOWN:
+            return text
+    n = _count(items)
+    text = f"list ({n} entr{'y' if n == 1 else 'ies'}"
+    if gaps:
+        named = ", ".join(f"[{k}]" for k in gaps[:3]) + (", ..." if len(gaps) > 3 else "")
+        text += f", a gap at {named}" if len(gaps) == 1 else f", gaps at {named}"
+    return text + ")"
+
+
+def _same_list(a: Sequence[LuaValue | None], b: Sequence[LuaValue | None]) -> bool:
+    return len(a) == len(b) and all(
+        (x is None and y is None) or (x is not None and y is not None and _same(x, y))
+        for x, y in zip(a, b, strict=True)
+    )
+
+
+def _count(values: Sequence[LuaValue | None]) -> int:
+    return sum(v is not None for v in values)
+
+
+def _border(keys: _Keys) -> int:
+    """The largest n with the keys 1..n all present: the table's array
+    part, as Lua's length operator sees a table without holes."""
+    n = 0
+    while ("n", float(n + 1)) in keys.loaded:
+        n += 1
+    return n
+
+
 def _bare(value: LuaValue, lead: bytes | None) -> LuaValue:
     """`value` for placing in ours: `lead` in front, and every slot inside a
     table left to the serializer (the target's style); scalars keep their
@@ -584,6 +662,31 @@ def _adopt(theirs: LuaValue, ours: LuaValue | None) -> LuaValue:
 
 
 _BLANK = re.compile(rb"[ \t\f\v]*")
+
+
+_INDEX_COMMENT = re.compile(rb"-- \[\d+\]")
+
+
+def _unprefixed(slot: bytes | None, comment: bytes | None) -> bytes | None:
+    """`slot` without `comment` at its front (after blanks): a removed
+    entry's trailing comment, which the parser keeps at the start of the
+    slot after that entry (as `_appended` finds it in `close_lead`)."""
+    if not isinstance(slot, bytes) or comment is None:
+        return slot
+    m = _BLANK.match(slot)
+    start = m.end() if m is not None else 0
+    if slot.startswith(comment, start):
+        return slot[start + len(comment) :]
+    return slot
+
+
+def _prefixed(slot: bytes | None, comment: bytes | None) -> bytes | None:
+    """`slot` with ` comment` in front: the trailing comment of the entry
+    now before it, when that slot is given (a generated slot writes it from
+    `Entry.comment`)."""
+    if not isinstance(slot, bytes) or comment is None:
+        return slot
+    return b" " + comment + slot
 
 
 def _appended(table: LuaTable, entries: list[Entry], added: Sequence[Entry]) -> LuaTable:
@@ -709,6 +812,11 @@ class _Merger:
         self._conflicts: dict[str, Conflict] = {}
         self._taken: dict[str, Taken] = {}
         self._absent: dict[str, Absent] = {}
+        self._removed: dict[str, Removed] = {}
+
+    @property
+    def removed(self) -> tuple[Removed, ...]:
+        return tuple(self._removed.values())
 
     @property
     def conflicts(self) -> tuple[Conflict, ...]:
@@ -730,6 +838,66 @@ class _Merger:
 
     def conflict(self, item: Conflict) -> None:
         self._conflicts.setdefault(item.path, item)
+
+    def drop(self, path: str, value: LuaValue) -> None:
+        self._removed.setdefault(path, Removed(path=path, value=_show(value)))
+
+    def lost(self, ours: LuaValue, new: LuaValue, path: str) -> None:
+        """List what replacing `ours` with `new` at `path` removes: each key
+        of ours' table that `new` does not hold (the highest such key; the
+        keys under it go with it), and so on down the keys both hold. Ours'
+        array part is one value here too: listed once, at `path`, when the
+        new value drops or changes any of its entries."""
+        if not isinstance(ours, LuaTable):
+            return
+        o = _Keys(ours)
+        n = _Keys(new) if isinstance(new, LuaTable) else None
+        span = max(_border(o), 0 if n is None else _border(n))
+        ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
+        self.list_lost(
+            path, [o.value(k) for k in ids], [None if n is None else n.value(k) for k in ids]
+        )
+        listed = set(ids)
+        for index in o.order():
+            if o.ids[index] in listed:
+                continue
+            value = ours.entries[index].value
+            here = path + o.spelled(index)
+            kept = None if n is None else n.value(o.ids[index])
+            if kept is None:
+                self.drop(here, value)
+            else:
+                self.lost(value, kept, here)
+
+    def list_lost(
+        self, path: str, mine: Sequence[LuaValue | None], yours: Sequence[LuaValue | None]
+    ) -> None:
+        """Ours' list `mine` replaced by `yours`: one removal at the list's
+        `path` when an entry of ours is not in theirs' list (each of theirs'
+        entries matches one of ours at most). A list theirs only added to,
+        at either end or between entries, removes nothing."""
+        left = [y for y in yours if y is not None]
+        gone = False
+        for m in mine:
+            if m is None:
+                continue
+            match = next((i for i, y in enumerate(left) if _same(m, y)), None)
+            if match is None:
+                gone = True
+                break
+            del left[match]
+        if gone:
+            self._removed.setdefault(
+                path,
+                Removed(path=path, value=_show_list(mine), entries=(_count(mine), _count(yours))),
+            )
+
+    def replaced(self, ours: LuaValue, theirs: LuaValue, path: str) -> LuaValue:
+        """Theirs' value placed over ours' at `path`: listed as taken, and
+        whatever it removes from ours listed as removed."""
+        self.took(path, theirs)
+        self.lost(ours, theirs, path)
+        return _adopt(theirs, ours)
 
     def slot(
         self, ours: LuaValue | None, theirs: LuaValue | None, base: LuaValue | None, path: str
@@ -754,8 +922,7 @@ class _Merger:
             return ours
         if self.three and base is not None:
             if _same(ours, base):
-                self.took(path, theirs)
-                return _adopt(theirs, ours)
+                return self.replaced(ours, theirs, path)
             if _same(theirs, base):
                 return ours
         self.conflict(
@@ -768,26 +935,165 @@ class _Merger:
             )
         )
         if self.take == "theirs":
-            self.took(path, theirs)
-            return _adopt(theirs, ours)
+            return self.replaced(ours, theirs, path)
         return ours
+
+    def array(self, o: _Keys, t: _Keys, b: _Keys | None, span: int, path: str) -> bool:
+        """Whether theirs' array part replaces ours' (M16-12: the entries
+        1..`span` of a table are one value). The rules of `both`, applied to
+        the list: the same on both sides is kept; three-way, a list changed
+        on one side only is that side's; otherwise it is one conflict at the
+        table's path, which `take` resolves."""
+        ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
+        ours = [o.value(k) for k in ids]
+        theirs = [t.value(k) for k in ids]
+        if _same_list(ours, theirs):
+            return False
+        based = None if b is None else [b.value(k) for k in ids]
+        if self.three and based is not None:
+            if _same_list(ours, based):
+                return True
+            if _same_list(theirs, based):
+                return False
+        ours_shown, theirs_shown = _show_list(ours), _show_list(theirs)
+        if ours_shown == theirs_shown:
+            # Two lists that differ never read the same (lists of tables, or
+            # long ones): say how many entries differ.
+            differ = sum(not _same_list([x], [y]) for x, y in zip(ours, theirs, strict=True))
+            n = _count(ours)
+            ours_shown = theirs_shown = (
+                f"list ({n} entr{'y' if n == 1 else 'ies'}, {differ} differ)"
+            )
+        self.conflict(
+            Conflict(
+                path=path,
+                ours=ours_shown,
+                theirs=theirs_shown,
+                base=_show_list(based) if self.three and based is not None else None,
+                resolved=self.take,
+            )
+        )
+        return self.take == "theirs"
+
+    def take_list(
+        self,
+        ours: LuaTable,
+        theirs: LuaTable,
+        o: _Keys,
+        t: _Keys,
+        entries: list[Entry],
+        span: int,
+        path: str,
+    ) -> tuple[list[Entry], list[Entry], bytes | None]:
+        """Theirs' array part in place of ours': ours' entries with every
+        entry of the keys 1..`span` taken out (duplicates too, so none of
+        them loads), and theirs' entries for those keys written where ours'
+        list began, so the table holds exactly theirs' keys 1..`span`: an
+        entry is positional while the keys run on from 1, and `[k] =` after
+        a gap, never renumbered. Returns (entries, entries to append after
+        them: theirs' list when ours had none, the table's `close_lead`).
+
+        Index comments: a removed entry's trailing comment is at the front
+        of the slot after it (the next entry's `lead`, or `close_lead`).
+        Only that comment is taken off the slot; the rest (own-line
+        comments, the line break and indentation of what follows) stays.
+        When ours' list carried `-- [n]` comments, each written positional
+        entry gets its own, naming its key. The list is reported once, at
+        its path: taken, and removed when it drops any of ours' entries."""
+        ids: list[_KeyId] = [("n", float(k)) for k in range(1, span + 1)]
+        mine = [o.value(k) for k in ids]
+        yours = [t.value(k) for k in ids]
+        self._taken[path] = Taken(path=path, value=_show_list(yours))
+        self.list_lost(path, mine, yours)
+        listed = set(ids)
+        at = [i for i, kid in enumerate(o.ids) if kid in listed]
+        close = ours.close_lead
+        if not at:  # ours has no list: theirs' is appended, as any new entry
+            return entries, self.written(theirs, t, ids, yours, False), close
+        indexed = any(_INDEX_COMMENT.fullmatch(entries[i].comment or b"") for i in at)
+        written = self.written(theirs, t, ids, yours, indexed)
+        first = at[0]
+        before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
+        # What ends up in front of the slot after the written list: the last
+        # written entry's comment, or, when theirs' list is empty, the
+        # comment of the kept entry before ours' list (its slot was the
+        # first removed entry's lead).
+        lead_in = written[-1].comment if written else (before[-1].comment if before else None)
+        if written:
+            # The slot before ours' list (the kept entry's comment before it,
+            # own-line comments, the indentation) goes before theirs.
+            written[0] = written[0]._replace(lead=entries[first].lead)
+        out = list(before)
+        out += written
+        joined = False
+        for i, entry in enumerate(entries):
+            if i <= first or o.ids[i] in listed:
+                continue
+            if o.ids[i - 1] in listed:
+                lead = _unprefixed(entry.lead, entries[i - 1].comment)
+                if not joined:
+                    lead = _prefixed(lead, lead_in)
+                    joined = True
+                entry = entry._replace(lead=lead)
+            out.append(entry)
+        if o.ids[-1] in listed:  # a list entry ended the table: its comment is in close
+            close = _unprefixed(close, entries[-1].comment)
+            if not joined:
+                close = _prefixed(close, lead_in)
+        return out, [], close
+
+    def written(
+        self,
+        theirs: LuaTable,
+        t: _Keys,
+        ids: list[_KeyId],
+        yours: list[LuaValue | None],
+        indexed: bool,
+    ) -> list[Entry]:
+        """Theirs' entries for the keys `ids`: positional while the keys run
+        on from 1, `[k] =` after a gap; with `indexed`, each positional one
+        carries `-- [n]`."""
+        out: list[Entry] = []
+        npos = 0  # every positional entry of ours is a key 1..span, so none is left
+        for kid, value in zip(ids, yours, strict=True):
+            if value is None:
+                continue
+            entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
+            if entry.style is KeyStyle.POSITIONAL:
+                npos += 1
+                if indexed:
+                    entry = entry._replace(comment=b"-- [%d]" % npos)
+            out.append(entry)
+        return out
 
     def table(self, ours: LuaTable, theirs: LuaTable, base: LuaTable | None, path: str) -> LuaTable:
         o, t, b = _Keys(ours), _Keys(theirs), _keys(base)
+        # The array part, keys 1..span on any side, is one value (M16-12);
+        # every other key is merged key by key.
+        span = max(_border(o), _border(t), _border(b))
+        listed: set[_KeyId] = {("n", float(k)) for k in range(1, span + 1)}
         entries = list(ours.entries)
         changed = False
         for index in o.order():
             kid = o.ids[index]
+            if kid in listed:
+                continue
             entry = entries[index]
             merged = self.slot(entry.value, t.value(kid), b.value(kid), path + o.spelled(index))
             if merged is not entry.value and merged is not None:
                 entries[index] = entry._replace(value=merged)
                 changed = True
-        added: list[Entry] = []
-        npos = o.npos
+        tail: list[Entry] = []
+        npos = sum(e.style is KeyStyle.POSITIONAL for e in entries)
+        if span and self.array(o, t, None if base is None else b, span, path):
+            entries, tail, close = self.take_list(ours, theirs, o, t, entries, span, path)
+            ours = ours._replace(close_lead=close)
+            npos = sum(e.style is KeyStyle.POSITIONAL for e in [*entries, *tail])
+            changed = True
+        added: list[Entry] = list(tail)
         for index in t.order():
             kid = t.ids[index]
-            if kid in o.loaded:
+            if kid in o.loaded or kid in listed:
                 continue
             like = theirs.entries[index]
             merged = self.slot(None, like.value, b.value(kid), path + t.spelled(index))
@@ -956,7 +1262,8 @@ class _Change:
 
 
 class _Copy(_Change):
-    """Two-way `--key`: theirs' subtree, whole."""
+    """`--key` with `replace`: theirs' subtree, whole, and every key of ours'
+    that it does not hold listed as removed."""
 
     def __init__(self, merger: _Merger, source: _Found) -> None:
         self.merger = merger
@@ -969,8 +1276,36 @@ class _Copy(_Change):
             return ours
         if ours is not None and _same(ours, theirs):
             return ours
-        self.merger.took(path, theirs)
-        return _adopt(theirs, ours)
+        if ours is None:
+            self.merger.took(path, theirs)
+            return _adopt(theirs, None)
+        return self.merger.replaced(ours, theirs, path)
+
+
+class _Within(_Change):
+    """Two-way `--key` (M16-12): the two-way rules inside the subtree. A
+    destination ours does not hold at all, or holds as an empty table when
+    theirs' value is a table, is theirs' subtree, whole: it removes nothing
+    and overrides nothing (conductor's ruling, 2026-11-05)."""
+
+    def __init__(self, merger: _Merger, source: _Found) -> None:
+        self.merger = merger
+        self.source = source
+
+    def __call__(self, ours: LuaValue | None, path: str) -> LuaValue | None:
+        theirs = self.source.value
+        if theirs is None:
+            self.merger.missing(self.source.spelled, "theirs")
+            return ours
+        empty = isinstance(ours, LuaTable) and not ours.entries
+        if ours is None or (empty and isinstance(theirs, LuaTable)):
+            # A source that is not a table over an empty `{}` is a conflict
+            # (`slot`), never a silent replacement.
+            if ours is not None and _same(ours, theirs):
+                return ours
+            self.merger.took(path, theirs)
+            return _adopt(theirs, ours)
+        return self.merger.slot(ours, theirs, None, path)
 
 
 class _Limited(_Change):
@@ -998,11 +1333,13 @@ def merge(
     base: LuaDocument | None = None,
     keys: Iterable[str] = (),
     take: Side | None = None,
+    replace: bool = False,
 ) -> MergeResult:
     """Merge `theirs` into `ours` (§13.4; see the module docstring). Pure:
     reads nothing, writes nothing, and never changes its arguments (the
-    documents are immutable). `MergeError` for a `--key` that cannot be
-    read or placed, or a bad `take`."""
+    documents are immutable). `replace` copies each `keys` subtree whole
+    (two-way only). `MergeError` for a `--key` that cannot be read or
+    placed, a bad `take`, or `replace` without `keys` or with `base`."""
     for name, doc in (("ours", ours), ("theirs", theirs)):
         if not isinstance(doc, LuaDocument):
             raise MergeError(f"{name} is a luadata.LuaDocument, not {type(doc).__name__}")
@@ -1014,6 +1351,10 @@ def merge(
         raise MergeError("keys is a list of --key strings, not one string")
     parsed = [_parse_key(k) for k in keys]
     three = base is not None
+    if replace and not parsed:
+        raise MergeError("replace copies the --key subtrees whole; give at least one --key")
+    if replace and three:
+        raise MergeError("replace copies a subtree whole, so it takes no --base")
     merger = _Merger(three=three, take=take)
     if not parsed:
         document = merger.document(ours, theirs, base)
@@ -1028,8 +1369,10 @@ def merge(
                         "two-way merge; it takes no --base"
                     )
                 change: _Change = _Limited(merger, _find(theirs, src), _find(base, src))
-            else:
+            elif replace:
                 change = _Copy(merger, _find(theirs, src))
+            else:
+                change = _Within(merger, _find(theirs, src))
             document = placer.place(document, dst, change)
     return MergeResult(
         document=document,
@@ -1037,6 +1380,7 @@ def merge(
         conflicts=merger.conflicts,
         taken=merger.taken,
         absent=merger.absent,
+        removed=merger.removed,
     )
 
 
@@ -1150,10 +1494,12 @@ def keep_probe(ours: LuaDocument, result: MergeResult) -> tuple[MergeResult, boo
     conflicts = tuple(c for c in result.conflicts if not _under_probe(c.path))
     taken = tuple(t for t in result.taken if not _under_probe(t.path))
     absent = tuple(a for a in result.absent if not _under_probe(a.path))
-    touched = document is not merged or (conflicts, taken, absent) != (
+    removed = tuple(r for r in result.removed if not _under_probe(r.path))
+    touched = document is not merged or (conflicts, taken, absent, removed) != (
         result.conflicts,
         result.taken,
         result.absent,
+        result.removed,
     )
     if not touched:
         return result, False
@@ -1164,6 +1510,7 @@ def keep_probe(ours: LuaDocument, result: MergeResult) -> tuple[MergeResult, boo
             conflicts=conflicts,
             taken=taken,
             absent=absent,
+            removed=removed,
         ),
         True,
     )
