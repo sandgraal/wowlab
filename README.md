@@ -125,6 +125,7 @@ It runs every wowlab command except `ui` itself, `log tail --follow` and `looks 
 |---|---|---|
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. | `wowlab snap restore` · `wowlab undo` |
+| 🏷️ | **After the launch rename.** When a beta launches, the game's folder gets a new name. Log in once on the launched game, then put a snapshot or a profile into the new folder, or into another install folder on this machine: you name the target, and the plan shows both folders and which account folder goes where. Character settings go to the same realm and character only. | `snap restore <id> --into-flavor <folder>` · `--into-root <path>` · `profile apply <name> --into-flavor <folder>` |
 | 🎛️ | **Profiles.** Save named UI setups (`raid`, `clean`, `gamepad`) and switch between them with one command. You see the plan first, applying one also deletes files created since it was saved, and `wowlab undo` reverses it. | `wowlab profile save` · `profile apply` |
 | 🔀 | **Merge addon settings.** Copy one addon's settings between characters, or from a snapshot, without clobbering the rest. Conflicts are listed and never guessed, and it first checks that the client has been loading saved data correctly. | `wowlab sv merge` |
 

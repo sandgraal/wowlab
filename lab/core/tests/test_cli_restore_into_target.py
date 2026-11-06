@@ -55,7 +55,6 @@ def _refused_naming(option: str, *args: str) -> None:
     assert option in said, f"the refusal must name {option}: {said}"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("extra", [["--dry-run"], ["--yes"]], ids=["dry-run", "yes"])
 def test_snap_restore_after_a_rename_names_into_flavor_constructed(
     root: Path, flavor: Path, extra: list[str]
@@ -84,7 +83,6 @@ MALFORMED: tuple[tuple[str, list[str]], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "options", [pytest.param(o, id=f"constructed-{name}") for name, o in MALFORMED]
 )
@@ -116,7 +114,6 @@ def test_snap_restore_refuses_malformed_into_and_map_account_constructed(
     assert config.read_bytes() == saved
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_profile_apply_after_a_rename_names_into_flavor_constructed(
     root: Path, flavor: Path
 ) -> None:
@@ -129,7 +126,6 @@ def test_profile_apply_after_a_rename_names_into_flavor_constructed(
     assert guard.history() == ()
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_snap_restore_in_another_root_names_into_root_constructed(
     root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
