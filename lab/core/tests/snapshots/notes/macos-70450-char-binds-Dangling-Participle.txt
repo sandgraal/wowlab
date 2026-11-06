@@ -1,11 +1,14 @@
 exit 0
 Character: 1/Dangling-Participle in account 90000001#6
-Record: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua (schema 4), written <local time> (the file's modification time)
+Record: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
+  (schema 4), written <local time> (the file's modification time:
+  the character as of that save)
 Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
 Character bindings: no bindings-cache.wtf
-Keys: 130 (3 in a file and the record, 0 only in a file, 0 only in the record
-  with a file line putting the key on another command, 127 only in the record
-  with no file line for the key, 0 cleared)
+Keys: 130 (main-bar keys at page 1, with no form, stance or stealth; 3 in a file
+  and the record, 0 only in a file, 0 only in the record with a file line
+  putting the key on another command, 127 only in the record with no file line
+  for the key, 0 cleared)
   1                ACTIONBUTTON1                 1  casts Fireball (Rank 2, spell 143)  (record only (no file line for this key))
   2                ACTIONBUTTON2                 2  casts Arcane Missiles (Rank 1, spell 5143)  (record only (no file line for this key))
   3                ACTIONBUTTON3                 3  casts Frostbolt (Rank 2, spell 205)  (record only (no file line for this key))
@@ -145,4 +148,4 @@ Filled slots no key reaches on the page its bar shows by default: 5
 Left out of the bindings record, counted with no list: 1 command not named in
   plain upper case (a key bound straight to a spell, macro, item or click may be
   one), and 0 keys not printable ASCII.
-7 notes: --notes shows them
+6 notes: --notes shows them

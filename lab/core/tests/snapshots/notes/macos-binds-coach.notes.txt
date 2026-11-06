@@ -1,20 +1,28 @@
 exit 0
-Combat log: Logs/WoWCombatLog-040126_021630.txt (the newest) (79 lines; COMBAT_LOG_VERSION 22; your casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged against WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
+Combat log: Logs/WoWCombatLog-040126_021630.txt (the newest with casts by
+  Labchard) (79 lines; COMBAT_LOG_VERSION 22; your casts from 4/1/2026
+  02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged against
+  WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
   Your casts: 6 of 7 SPELL_CAST_SUCCESS record(s) (picked by the source flags: yours, and a player); 1 by other units
-Action bars and bindings: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua (schema 1) (written last; choose another with --character)
+Action bars and bindings:
+  WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua (schema
+  1) (its record has the newest schema (1) of the 2 characters' records, and of
+  the 2 at that schema it was written last; tied on that with
+  1/Labcharb-Labrealmf, it is the last by folder name; choose another with
+  --character)
 Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard,
   the left hand on W A S D and a mouse with two side buttons
   High-cost: 4 or more. Frequent: at least 5% of your casts and at least 5 casts.
 Your casts by spell (matched to slots by spell id):
-       2  Bane of Agony (980): no key
-       2  Corruption (172): no key
-       1  Immolate (348): no key
-       1  Shadow Bolt (695): no key
+       2  Bane of Agony (980): key unknown
+       2  Corruption (172): key unknown
+       1  Immolate (348): key unknown
+       1  Shadow Bolt (695): key unknown
 Frequent spells on high-cost keys: cannot judge (no action-bar or bindings
   record)
 Spells cast with no bind: cannot judge (no action-bar or bindings record)
-Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time):
-  cannot judge (no action-bar or bindings record)
+Binds to spells not cast in this log: cannot judge (no action-bar or bindings
+  record)
 Cannot judge because: no action-bar or bindings record (schema 1 has neither;
   install or update the lab-addon with the client closed (wowlab addon install
   lab), log in on this character, then log out or /reload; schema 3 is needed)
@@ -27,11 +35,18 @@ Notes:
   - The client adds to this file in batches, and only while combat logging is
     on: the latest events may not be on disk yet, and if logging is off, this
     file ends where logging was turned off or the client closed.
-  - The newest log under Logs/ is read (or the one --log names), whichever
-    character wrote it. Your casts are its SPELL_CAST_SUCCESS records whose
-    source flags say yours and a player (not a pet), never picked by a name or a
-    GUID, so a log written by another character than the record's makes these
-    reports wrong: check the log's time and choose it with --log.
+  - Without --character, the character judged is the one whose lab-addon record
+    has the newest schema, and of those the one written last: a newer schema
+    records more.
+  - Without --log, the newest of the 10 newest combat logs under Logs/ with
+    casts by the character judged is read (older logs are looked through only up
+    to 256 MiB); if none has any, the newest is read and a warning says whose
+    casts it holds. A log names a character <First>-<Realm>-. A Forever
+    character folder is <First>-<Second>, whose second name is not a realm; a
+    retail one is <Name> under its realm's folder. So the two are matched by
+    first name only, and two of your characters with one first name are not told
+    apart. Your casts are the log's SPELL_CAST_SUCCESS records whose source
+    flags say yours and a player (not a pet); the name only chooses the log.
   - The action bars and key bindings are the lab-addon's record as of its last
     save (logout or /reload), not the session in progress; the log may be older
     or newer than it. A key reaches a spell through the default UI's action

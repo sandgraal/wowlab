@@ -1,6 +1,9 @@
 exit 0
 Character: 1/Labcharb-Labrealmd in account 90000001#6
-Record: none (no WowLab.lua in 1/Labcharb-Labrealmd. Character folders in account 90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg. If none is listed: install the lab-addon (wowlab addon install lab), log in on the character, then log out or /reload.)
+Record: none (no WowLab.lua in 1/Labcharb-Labrealmd. Character folders in
+  account 90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg.
+  If none is listed: install the lab-addon (wowlab addon install lab), log in on
+  the character, then log out or /reload.)
 Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
 Character bindings: no bindings-cache.wtf
 Keys: 3

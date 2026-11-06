@@ -1,6 +1,8 @@
 exit 0
 Character: 1/Labchard-Labrealmg in account 90000001#6 (written last; choose another with --character)
-Record: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua (schema 1), written <local time> (the file's modification time)
+Record: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
+  (schema 1), written <local time> (the file's modification time:
+  the character as of that save)
 Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
 Character bindings: no bindings-cache.wtf
 Cannot place keys on action slots or compare the files with the record: schema 1

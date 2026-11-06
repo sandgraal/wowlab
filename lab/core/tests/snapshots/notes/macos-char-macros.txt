@@ -1,6 +1,8 @@
 exit 0
 Character: 1/Labchard-Labrealmg in account 90000001#6 (written last; choose another with --character)
-Record: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua (schema 1), written <local time> (the file's modification time)
+Record: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
+  (schema 1), written <local time> (the file's modification time:
+  the character as of that save)
 Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt, written <local time>
 Character macros: no macros-cache.txt
 Account bindings: WTF/Account/90000001#6/bindings-cache.wtf, written <local time>
@@ -15,4 +17,9 @@ Cannot judge for any macro: 2
     action-bar record; install the lab-addon with the client closed (wowlab
     addon install lab), log in on this character, then log out or /reload;
     schema 3 is needed)
-6 notes: --notes shows them
+macros-cache.txt is what the client last wrote; the server can replace it at
+  login when macro sync is on. In a real capture a macro made in a finished
+  session was missing from it (whether the client rewrites it at logout is not
+  yet confirmed), so a macro may be missing here, or still listed after you
+  deleted it.
+5 notes: --notes shows them

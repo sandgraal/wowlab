@@ -392,7 +392,7 @@ NotesOpt = Annotated[
     typer.Option(
         "--notes",
         help="Also print the standing notes: what the figures mean and what wowlab cannot "
-        "tell. Without it the text ends with a count of them.",
+        "tell. Without it, one line after the answer counts them.",
     ),
 ]
 YesOpt = Annotated[bool, typer.Option("--yes", "-y", help="Do not ask before changing files.")]
@@ -609,14 +609,27 @@ def _width() -> int:
     return max(width, 40)
 
 
-def _say_prose(text: str, indent: str = "", hang: str | None = None) -> None:
+# Stands for a space inside a value `_say_prose` keeps whole. `_safe` escapes
+# every C0 control, so the text it returns never holds one of its own.
+_HELD_SPACE = "\x00"
+
+
+def _say_prose(
+    text: str, indent: str = "", hang: str | None = None, keep: Sequence[str | None] = ()
+) -> None:
     """Prose on stdout, escaped by `_safe` and wrapped to the terminal width
     (`_width`). The first line starts with `indent`, the others with `hang`
-    (`indent` and two spaces when None). A word is never split, so a path
-    or a long name stays whole on its line."""
+    (`indent` and two spaces when None). Each value in `keep` is one
+    unbreakable token, spaces and all: every caller passes the paths and
+    folder names its text holds (a `~/...` path, a record's path, a realm
+    folder), and a word is never split, so no path is broken across lines;
+    a line holding a long one runs past the width instead."""
     rest = indent + "  " if hang is None else hang
+    safe = _safe(text)
+    for value in sorted({_safe(v) for v in keep if v and " " in v}, key=len, reverse=True):
+        safe = safe.replace(value, value.replace(" ", _HELD_SPACE))
     lines = textwrap.wrap(
-        _safe(text),
+        safe,
         width=_width(),
         initial_indent=indent,
         subsequent_indent=rest,
@@ -624,26 +637,45 @@ def _say_prose(text: str, indent: str = "", hang: str | None = None) -> None:
         break_on_hyphens=False,
     )
     for line in lines or [indent.rstrip()]:
-        typer.echo(line)
+        typer.echo(line.replace(_HELD_SPACE, " "))
 
 
-def _say_notes(notes: Sequence[str], show: bool, caveat: str | None = None) -> None:
+def _say_notes(
+    notes: Sequence[str],
+    show: bool,
+    caveat: str | None = None,
+    keep: Sequence[str | None] = (),
+) -> None:
     """The end of a text answer: at most one caveat that applies to this
     result, then, with --notes, the standing notes, each in player words
     (`_player_copy`), or else one footer line that counts them. A note that
-    is the caveat is not said twice."""
+    is the caveat is not said twice. `keep`: the paths and names in them,
+    which `_say_prose` keeps whole."""
     if caveat is not None:
-        _say_prose(_player_copy(caveat))
+        _say_prose(_player_copy(caveat), keep=keep)
     rest = [n for n in notes if n != caveat]
     if not rest:
         return
     if show:
         _say("Notes:")
         for note in rest:
-            _say_prose(_player_copy(note), indent="  - ", hang="    ")
+            _say_prose(_player_copy(note), indent="  - ", hang="    ", keep=keep)
         return
     them = "it" if len(rest) == 1 else "them"
     _say(f"{_plural(len(rest), 'note')}: --notes shows {them}")
+
+
+def _account_words(acct: layout.Account) -> list[str]:
+    """The account's folder names and character paths, as `_say_prose` keeps
+    them whole: a realm folder may hold spaces."""
+    words = [acct.folder]
+    for realm in acct.realms:
+        words.append(realm.folder)
+        words += [f"{realm.folder}/{c.folder}" for c in realm.characters]
+    return words
+
+
+_SAVED_AT = "the file's modification time: the character as of that save"
 
 
 def _home_words(path: str) -> str:
@@ -1643,6 +1675,7 @@ def _print_game_data(g: GameDataReport) -> str:
     return f"could not check ({g.detail})"
 
 
+_NUMBER_WORDS = {2: "two", 3: "three", 4: "four"}
 _SYNC_NOTE = (
     "When server sync is on, the server can replace your local key bindings, macros or "
     "settings at login; which other *-cache files it replaces is not known."
@@ -1651,8 +1684,9 @@ _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot 
 
 
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
-    """The doctor report as text, its standing notes behind --notes
-    (`_say_notes`) before the problems."""
+    """The doctor report as text, its problems last, then its standing
+    notes behind --notes (`_say_notes`). The first run's section, said only
+    once, comes after it."""
     notes: list[str] = []
     if report.install_root is not None:
         _say(f"Install: {report.install_root} (found by {report.found_by})")
@@ -1677,11 +1711,15 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"  Game data: {_print_game_data(f.game_data)}")
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
-            files = " or ".join(dict.fromkeys(sync.file for sync in f.sync_cvars))
+            files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))
+            names = len({sync.name for sync in f.sync_cvars})
             _say_prose(
-                f"  Server sync: not set in {files} (the client's default, and wowlab cannot "
-                "tell whether that default is on)",
+                f"  Server sync: the {_NUMBER_WORDS.get(names, str(names))} sync settings wowlab "
+                f"reads are not set in {' or '.join(files)} (when on, the server can replace "
+                "your bindings, macros or settings at login; not set is the client's default, "
+                "and wowlab cannot tell whether that default is on)",
                 hang="    ",
+                keep=files,
             )
         elif f.sync_cvars:
             _say("  Server sync:")
@@ -1726,15 +1764,15 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     else:
         _say("  no transactions in the journal")
     notes.append(_STORE_VERIFY_NOTE)
-    # The footer ends the report's own lines: the problems (why it exits 1)
-    # and the first run's undo line stay the last words, as before.
-    _say_notes(notes, show_notes)
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
         _say("Problems:")
         for problem in report.problems:
             _say(f"  {problem}")
+    # The footer ends the report (conductor's ruling, 2026-11-06): after the
+    # problems, before the first run's one-time section.
+    _say_notes(notes, show_notes)
 
 
 def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
@@ -5629,7 +5667,7 @@ def binds_coach(
     if json_out:
         _emit(report)
         return
-    _say_coach(report, notes_out)
+    _say_coach(report, notes_out, _account_words(acct))
 
 
 _SHORT_REASON = re.compile(r" \(|: |\. |, so ")
@@ -5642,7 +5680,9 @@ def _short_reason(reason: str) -> str:
     return reason[: m.start()] if m else reason
 
 
-def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
+def _say_coach(
+    report: BindsCoachReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
     counts = report.log.counts
     against = report.record_file or "no lab-addon record"
     if report.log.file is None or counts is None:
@@ -5655,19 +5695,23 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
             else "; none of your casts"
         )
         newest = {
-            "newest": " (the newest)",
+            # Not the judged character's log, perhaps: said here, so the
+            # caveat slot is free (domain review, M16-16).
+            "newest": " (the newest, whichever character wrote it; choose another with --log)",
             "--log": " (--log)",
             "caster name": f" (the newest with casts by {report.log.character_name})",
             None: "",
         }[report.log.chosen_by]
-        _say(
+        _say_prose(
             f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
-            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
+            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}",
+            keep=[report.log.file, report.record_file],
         )
+        held = [*keep, report.log.file, *report.log.casters]
         if report.log.warning is not None:
-            _say(f"  Warning: {report.log.warning}")
+            _say_prose(f"Warning: {report.log.warning}", indent="  ", hang="    ", keep=held)
         if report.log.scan_note is not None:
-            _say(f"  Note: {report.log.scan_note}")
+            _say_prose(f"Note: {report.log.scan_note}", indent="  ", hang="    ", keep=held)
         _say(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
             f"(picked by the source flags: yours, and a player); {counts.others} by other units"
@@ -5684,7 +5728,7 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
             _say(f"  {_plural(counts.unparsed, 'line')} the tokenizer could not read")
     if report.record_file is None:
         why = report.record_error or bindscoach.GET_RECORD
-        _say(f"Action bars and bindings: no lab-addon record ({why})")
+        _say_prose(f"Action bars and bindings: no lab-addon record ({why})", keep=keep)
     elif report.record_error is not None:
         _say(f"Action bars and bindings: {report.record_file} not read ({report.record_error})")
     else:
@@ -5692,12 +5736,13 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
         if report.chosen_by == "newest schema":
             because = report.chosen_because or "the newest record schema, then written last"
             picked = f" ({because}; choose another with --character)"
-        _say(
+        _say_prose(
             f"Action bars and bindings: {report.record_file} "
-            f"(schema {report.record_schema}){picked}"
+            f"(schema {report.record_schema}){picked}",
+            keep=[*keep, report.record_file],
         )
     if report.unseen is not None:
-        _say_note(report.unseen)
+        _say_prose(_player_copy(report.unseen))
     costs = report.costs
     table = costs.table
     # No absolute path: the tables' places are in --json and --notes (M16-16).
@@ -5715,18 +5760,21 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
         f"  High-cost: {table.high_cost} or more. Frequent: at least {table.frequent_share:.0%} "
         f"of your casts and at least {_plural(table.frequent_min_casts, 'cast')}."
     )
-    _say(f"Your casts by spell (matched to slots by {report.matched_by}):")
-    if not report.spells:
-        _say("  none")
-    for s in report.spells:
-        keys = _key_words(s.keys) if s.keys else "no key"
-        note = f"; {s.match_note}" if s.match_note else ""
-        _say(f"  {s.casts:>6}  {s.spell_name} ({s.spell_id}): {keys}{note}")
     # A report the coach cannot judge says so where its count would be: a 0
     # there read as "nothing wrong" (M16-16).
     unjudged: dict[str, str] = {}
     for c in report.cannot_judge:
         unjudged.setdefault(c.report, c.reason)
+    # Without bars or bindings the coach cannot see a key: "no key" would
+    # claim one (domain review, M16-16).
+    no_key = "key unknown" if "cast-without-bind" in unjudged else "no key"
+    _say(f"Your casts by spell (matched to slots by {report.matched_by}):")
+    if not report.spells:
+        _say("  none")
+    for s in report.spells:
+        keys = _key_words(s.keys) if s.keys else no_key
+        note = f"; {s.match_note}" if s.match_note else ""
+        _say(f"  {s.casts:>6}  {s.spell_name} ({s.spell_id}): {keys}{note}")
 
     def count(rule: str, n: int) -> str:
         if rule in unjudged:
@@ -5734,7 +5782,7 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
         return str(n)
 
     frequent = count("frequent-on-high-cost", len(report.frequent_on_high_cost))
-    _say_prose(f"Frequent spells on high-cost keys: {frequent}")
+    _say_prose(f"Frequent spells on high-cost keys: {frequent}", keep=keep)
     for f in report.frequent_on_high_cost:
         note = f"; {f.match_note}" if f.match_note else ""
         _say(
@@ -5791,7 +5839,7 @@ def _say_coach(report: BindsCoachReport, show_notes: bool = False) -> None:
     shown = [c for c in report.cannot_judge if not (withheld and c.report == "bound-never-cast")]
     for reason in dict.fromkeys(c.reason for c in shown):
         if _short_reason(reason) != reason:
-            _say_prose(f"Cannot judge because: {reason}")
+            _say_prose(f"Cannot judge because: {reason}", keep=keep)
     # @@CAVEAT@@
     caveats = [f"{c[:1].upper()}{c[1:]}." for c in report.caveats]
     standing = [*caveats[1:], *report.notes]
@@ -5885,11 +5933,24 @@ def macros_list(
 # is refused before it is read.
 _MACROS_LIMIT = 16 * 1024 * 1024
 
-_MACROS_CHECK_NOTES = [
+_MACRO_FILE_NOTE = (
     "macros-cache.txt is what the client last wrote; the server can replace it at login when "
     "macro sync is on. In a real capture (docs/LAB_FORMATS.md, 2026-10-16) a macro made in a "
     "finished session was missing from it (whether the client rewrites it at logout is "
-    "[verify]), so a macro may be missing here, or still listed after you deleted it.",
+    "[verify]), so a macro may be missing here, or still listed after you deleted it."
+)
+# The note in text: its marker as the sentence's own words, wherever it is
+# said ("whether ... is not yet confirmed"), as char gear does for its own.
+_MACRO_FILE_TEXT = _MACRO_FILE_NOTE.replace("logout is [verify])", "logout is not yet confirmed)")
+
+
+def _macro_notes(notes: Sequence[str]) -> list[str]:
+    """`notes` with the macros-cache.txt note in its text words."""
+    return [_MACRO_FILE_TEXT if n == _MACRO_FILE_NOTE else n for n in notes]
+
+
+_MACROS_CHECK_NOTES = [
+    _MACRO_FILE_NOTE,
     "The spellbook and action bars are the lab-addon's record as of its last save "
     "(logout or /reload), not the session in progress. It reads the player's spellbook "
     "only, so an item, a pet, mount or toy spell after /cast reads as not in the spellbook.",
@@ -6036,12 +6097,15 @@ def macros_check(
                 f"{f.scope.capitalize()} macros: {_plural(f.macros, 'macro')} in {f.file}"
                 + (extra if f.unknown_lines else "")
             )
+    held = [*_account_words(acct), report.record_file]
     if report.record_error is not None:
         place = report.record_file or "the WowLab.lua"
-        _say(f"Spellbook and action bars: {place} not read ({report.record_error})")
+        _say_prose(
+            f"Spellbook and action bars: {place} not read ({report.record_error})", keep=held
+        )
     elif report.record_file is None:
         hint = "use --character" if character is None else macrocheck.GET_RECORD
-        _say(f"Spellbook and action bars: no lab-addon record ({hint})")
+        _say_prose(f"Spellbook and action bars: no lab-addon record ({hint})", keep=held)
     else:
         _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
     if report.blank_names:
@@ -6068,15 +6132,18 @@ def macros_check(
                 indent="  ",
                 hang="    ",
             )
+    # Built so the marker reads as words: "... in bytes (not yet confirmed)."
     length = (
         f"Length: counted in {report.length_unit}; the client's limit is "
-        f"{report.length_limit}, and whether it counts characters or bytes is [verify]."
+        f"{report.length_limit}, counted in characters or in bytes [verify]."
     )
-    # The one caveat: the length rule's unknown, when a body is near the limit.
-    near = any(
+    # The one caveat: the length rule's unknown when a body is over the
+    # limit; otherwise that macros-cache.txt may be stale or replaced.
+    over = any(
         m.characters > report.length_limit or m.bytes > report.length_limit for m in report.macros
     )
-    _say_notes([length, *report.notes], notes_out, length if near else None)
+    caveat = length if over else _MACRO_FILE_TEXT
+    _say_notes([length, *_macro_notes(report.notes)], notes_out, caveat, keep=held)
 
 
 # ─── addons ──────────────────────────────────────────────────────────────────
@@ -8883,9 +8950,13 @@ def char_gear(
     if json_out:
         _emit(report)
         return
-    _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
+    held = [*_account_words(acct), target.path]
+    _say_prose(
+        f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}",
+        keep=held,
+    )
     _say(f"File: {target.path}")
-    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
     spec = report.spec
     if spec.absent is not None:
         _say(f"Spec: {spec.absent}")
@@ -8909,9 +8980,9 @@ def char_gear(
         _say(f"Averages: absent ({average.absent})")
     else:
         _say(
-            f"Averages (GetAverageItemLevel, as the client returns them): equipped "
-            f"{_num_words(average.equipped)}, overall {_num_words(average.overall)}, pvp "
-            f"{_num_words(average.pvp)}"
+            f"Averages (GetAverageItemLevel, as the client returns them, not the mean of the "
+            f"levels above): equipped {_num_words(average.equipped)}, overall "
+            f"{_num_words(average.overall)}, pvp {_num_words(average.pvp)}"
         )
     apis = sorted({s.item_level_api for s in filled if s.item_level_api is not None})
     if apis:
@@ -8937,7 +9008,7 @@ def char_gear(
         f"{_home_words(table.user_file)} (create the folder if it is missing); a value there "
         "replaces the shipped one."
     )
-    _say_notes([*standing, *_CHAR_NOTES], notes_out)
+    _say_notes([*standing, *_CHAR_NOTES], notes_out, keep=[_home_words(table.user_file)])
 
 
 class CharBindsFile(_Out):
@@ -9092,7 +9163,7 @@ def char_binds(
     if json_out:
         _emit(report)
         return
-    _say_char_binds(report, notes_out)
+    _say_char_binds(report, notes_out, _account_words(acct))
 
 
 def _binds_left_out_note(commands: int | None, keys: int | None) -> str | None:
@@ -9123,7 +9194,26 @@ def _source_words(row: keymap.KeyRow) -> str:
     return "record only: disagrees with the files"
 
 
-_KEYMAP_NO_BINDINGS = "Without a bindings record only the files' lines are listed"
+def _say_record(
+    path: str | None,
+    error: str | None,
+    schema: int | None,
+    mtime_ns: int | None,
+    keep: Sequence[str],
+) -> None:
+    """The Record line of `char binds` and `char macros`, wrapped, its paths
+    and folder names kept whole."""
+    held = [*keep, path]
+    if path is None:
+        _say_prose(f"Record: none ({error or keymap.GET_RECORD})", keep=held)
+    elif error is not None:
+        _say_prose(f"Record: {path} not read ({error})", keep=held)
+    else:
+        assert mtime_ns is not None
+        _say_prose(
+            f"Record: {path} (schema {schema}), written {_local_time(mtime_ns)} ({_SAVED_AT})",
+            keep=held,
+        )
 
 
 def _file_note(label: str, note: str) -> str:
@@ -9133,7 +9223,9 @@ def _file_note(label: str, note: str) -> str:
     return f"{label}: {text}."
 
 
-def _say_char_binds(report: CharBindsReport, show_notes: bool = False) -> None:
+def _say_char_binds(
+    report: CharBindsReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
     standing: list[str] = []
     if report.character is None:
         _say(
@@ -9143,16 +9235,9 @@ def _say_char_binds(report: CharBindsReport, show_notes: bool = False) -> None:
     else:
         picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
         _say(f"Character: {report.character} in account {report.account}{picked}")
-    if report.record_file is None:
-        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
-    elif report.record_error is not None:
-        _say(f"Record: {report.record_file} not read ({report.record_error})")
-    else:
-        assert report.record_mtime_ns is not None
-        _say(
-            f"Record: {report.record_file} (schema {report.record_schema}), written "
-            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
-        )
+    _say_record(
+        report.record_file, report.record_error, report.record_schema, report.record_mtime_ns, keep
+    )
     for f in report.files:
         label = "Account bindings" if f.scope == "account" else "Character bindings"
         # What each file is goes behind --notes: the same words on every run.
@@ -9174,9 +9259,11 @@ def _say_char_binds(report: CharBindsReport, show_notes: bool = False) -> None:
         )
     elif read:
         if report.cannot_place is not None:
-            _say_prose(f"Cannot place keys on action slots: {report.cannot_place}")
+            _say_prose(f"Cannot place keys on action slots: {report.cannot_place}", keep=keep)
         if report.cannot_compare is not None:
-            _say_prose(f"Cannot compare the files with the record: {report.cannot_compare}")
+            _say_prose(
+                f"Cannot compare the files with the record: {report.cannot_compare}", keep=keep
+            )
     tally = ""
     if report.cannot_compare is None:
         count = {a: sum(1 for k in report.keys if k.agreement == a) for a in _AGREEMENTS}
@@ -9186,12 +9273,15 @@ def _say_char_binds(report: CharBindsReport, show_notes: bool = False) -> None:
             f"another command, {count['not in a file']} only in the record with no file line "
             f"for the key, {count['cleared']} cleared)"
         )
-    _say_prose(f"Keys: {len(report.keys)}{tally}")
+    # Said inline, not as the caveat: what a main-bar key does depends on the
+    # page a form, stance or stealth shows (domain review, M16-16).
     if any(k.command.startswith("ACTIONBUTTON") and k.slot is not None for k in report.keys):
-        standing.append(
-            "Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
-            "form, stance or stealth active; another page they may show is not followed."
+        tally = (
+            f" (main-bar keys at page 1, with no form, stance or stealth; {tally[2:]}"
+            if tally
+            else " (main-bar keys at page 1, with no form, stance or stealth)"
         )
+    _say_prose(f"Keys: {len(report.keys)}{tally}")
     generic = False
     pad = f"  {'':<16} {'':<26} {'':>4}  "
     for k in report.keys:
@@ -9225,7 +9315,7 @@ def _say_char_binds(report: CharBindsReport, show_notes: bool = False) -> None:
     # The one caveat: what the record left out, else that keys at the
     # client's defaults are not listed. Both say the key list may be short.
     caveat = report.left_out_note or next(
-        (n for n in report.notes if n.startswith(_KEYMAP_NO_BINDINGS)), None
+        (n for n in report.notes if n == keymap.NO_BINDINGS_NOTE), None
     )
     _say_notes([*standing, *report.notes], show_notes, caveat)
 
@@ -9453,7 +9543,7 @@ def char_macros(
     if json_out:
         _emit(report)
         return
-    _say_char_macros(report, notes_out)
+    _say_char_macros(report, notes_out, _account_words(acct))
 
 
 def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> list[str]:
@@ -9469,7 +9559,9 @@ def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> li
     return lines
 
 
-def _say_char_macros(report: CharMacrosReport, show_notes: bool = False) -> None:
+def _say_char_macros(
+    report: CharMacrosReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
     if report.character is None:
         _say(
             f"Character: none in account {report.account} has a {labaddon.LAB_FILE_NAME}; "
@@ -9478,16 +9570,9 @@ def _say_char_macros(report: CharMacrosReport, show_notes: bool = False) -> None
     else:
         picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
         _say(f"Character: {report.character} in account {report.account}{picked}")
-    if report.record_file is None:
-        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
-    elif report.record_error is not None:
-        _say(f"Record: {report.record_file} not read ({report.record_error})")
-    else:
-        assert report.record_mtime_ns is not None
-        _say(
-            f"Record: {report.record_file} (schema {report.record_schema}), written "
-            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
-        )
+    _say_record(
+        report.record_file, report.record_error, report.record_schema, report.record_mtime_ns, keep
+    )
     for f in report.files:
         label = f"{f.scope.capitalize()} macros"
         if f.path is None or f.mtime_ns is None:
@@ -9519,7 +9604,8 @@ def _say_char_macros(report: CharMacrosReport, show_notes: bool = False) -> None
         for line in m.body_lines:
             _say(f"      {line}")
         for line in _placement_lines(m.placement, report.keys_incomplete):
-            _say_prose(line, indent="    ", hang="        ")
+            # The rule's own words carry the spec's markers (domain F8).
+            _say_prose(_player_copy(line), indent="    ", hang="        ", keep=keep)
         for finding in m.findings:
             _say_prose(
                 f"finding {finding.rule} (line {finding.line}): {finding.detail}",
@@ -9532,10 +9618,12 @@ def _say_char_macros(report: CharMacrosReport, show_notes: bool = False) -> None
             )
     _say(f"Cannot judge for any macro: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
-        _say_prose(f"{c.rule}: {_player_copy(c.reason)}", indent="  ", hang="    ")
-    # The one caveat: with a slot shown, that every slot is a candidate only.
-    caveat = macroplace.CANDIDATE_RULE if may_sit else None
-    _say_notes(report.notes, show_notes, caveat)
+        _say_prose(f"{c.rule}: {_player_copy(c.reason)}", indent="  ", hang="    ", keep=keep)
+    # The one caveat: with a slot shown, that every slot is a candidate only;
+    # otherwise that macros-cache.txt may be stale or replaced by the server,
+    # so "0 macros" may be wrong (domain review, M16-16).
+    caveat = macroplace.CANDIDATE_RULE if may_sit else _MACRO_FILE_TEXT
+    _say_notes(_macro_notes(report.notes), show_notes, caveat, keep=keep)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────

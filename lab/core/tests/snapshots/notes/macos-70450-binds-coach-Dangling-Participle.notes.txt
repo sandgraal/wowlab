@@ -1,7 +1,22 @@
 exit 0
-Combat log: Logs/WoWCombatLog-040126_021630.txt (the newest) (79 lines; COMBAT_LOG_VERSION 22; your casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged against WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
+Combat log: Logs/WoWCombatLog-040126_021630.txt (the newest, whichever character
+  wrote it; choose another with --log) (79 lines; COMBAT_LOG_VERSION 22; your
+  casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time),
+  judged against
+  WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
+  Warning: the only combat log has no casts by Dangling, the character judged;
+    its casts are by Labchard-LabrealmbPartbPartcPartd-: the findings below may
+    be about another character.
   Your casts: 6 of 7 SPELL_CAST_SUCCESS record(s) (picked by the source flags: yours, and a player); 1 by other units
-Action bars and bindings: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua (schema 4)
+Action bars and bindings:
+  WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua (schema
+  4)
+Left out of the bindings record, counted with no list: 1 binding command it did
+  not read, whether or not a key is bound to it (not named in plain upper case),
+  and 0 keys whose name is not printable ASCII. Any of these may reach a spell,
+  so a spell reported with no key may have one, and a key reported as costly may
+  not be the only one. A key bound straight to a spell or to an addon's button
+  may be in neither count (not yet confirmed).
 Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard,
   the left hand on W A S D and a mouse with two side buttons
   High-cost: 4 or more. Frequent: at least 5% of your casts and at least 5 casts.
@@ -24,19 +39,10 @@ Spells cast with no bind: 4
   Shadow Bolt (695): 1 cast: on no action slot: cast from a macro, the spellbook
     or an addon's button, with a key bound straight to it, or triggered by
     another spell or an item
-Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time): 8
-  1 (cost 1): slot 1, Fireball (143)
-  2 (cost 1): slot 2, Arcane Missiles (5143)
-  3 (cost 1): slot 3, Frostbolt (205)
-  4 (cost 1): slot 4, Fire Blast (2136)
-  5 (cost 2): slot 5, Blood Fury (20572)
-  Q (cost 1): slot 61, Arcane Intellect (1459)
-  BUTTON3 (cost 2): slot 62, Polymorph (118)
-  E (cost 1): slot 63, Frost Armor (168)
-The bindings record left out 1 command(s) that are not plain names (a key bound
-  straight to a spell, macro or click; an action-bar addon such as Bartender,
-  Dominos or ElvUI binds through these) and 0 key(s) that are not printable, so
-  a spell listed as cast with no bind may have one of those.
+Binds to spells not cast in this log: withheld, this log has 6 of your casts,
+  under the minimum sample of 200
+A spell listed as cast with no bind may be reached by one of the bindings the
+  coach cannot see (said at the top).
 Notes:
   - Casts are counted only from a combat log, which the client writes only while
     combat logging is on: type /combatlog in game before you play (whether it
@@ -44,11 +50,18 @@ Notes:
   - The client adds to this file in batches, and only while combat logging is
     on: the latest events may not be on disk yet, and if logging is off, this
     file ends where logging was turned off or the client closed.
-  - The newest log under Logs/ is read (or the one --log names), whichever
-    character wrote it. Your casts are its SPELL_CAST_SUCCESS records whose
-    source flags say yours and a player (not a pet), never picked by a name or a
-    GUID, so a log written by another character than the record's makes these
-    reports wrong: check the log's time and choose it with --log.
+  - Without --character, the character judged is the one whose lab-addon record
+    has the newest schema, and of those the one written last: a newer schema
+    records more.
+  - Without --log, the newest of the 10 newest combat logs under Logs/ with
+    casts by the character judged is read (older logs are looked through only up
+    to 256 MiB); if none has any, the newest is read and a warning says whose
+    casts it holds. A log names a character <First>-<Realm>-. A Forever
+    character folder is <First>-<Second>, whose second name is not a realm; a
+    retail one is <Name> under its realm's folder. So the two are matched by
+    first name only, and two of your characters with one first name are not told
+    apart. Your casts are the log's SPELL_CAST_SUCCESS records whose source
+    flags say yours and a player (not a pet); the name only chooses the log.
   - The action bars and key bindings are the lab-addon's record as of its last
     save (logout or /reload), not the session in progress; the log may be older
     or newer than it. A key reaches a spell through the default UI's action

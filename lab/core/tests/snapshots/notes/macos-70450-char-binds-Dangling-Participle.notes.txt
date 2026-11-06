@@ -1,11 +1,14 @@
 exit 0
 Character: 1/Dangling-Participle in account 90000001#6
-Record: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua (schema 4), written <local time> (the file's modification time)
+Record: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
+  (schema 4), written <local time> (the file's modification time:
+  the character as of that save)
 Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
 Character bindings: no bindings-cache.wtf
-Keys: 130 (3 in a file and the record, 0 only in a file, 0 only in the record
-  with a file line putting the key on another command, 127 only in the record
-  with no file line for the key, 0 cleared)
+Keys: 130 (main-bar keys at page 1, with no form, stance or stealth; 3 in a file
+  and the record, 0 only in a file, 0 only in the record with a file line
+  putting the key on another command, 127 only in the record with no file line
+  for the key, 0 cleared)
   1                ACTIONBUTTON1                 1  casts Fireball (Rank 2, spell 143)  (record only (no file line for this key))
   2                ACTIONBUTTON2                 2  casts Arcane Missiles (Rank 1, spell 5143)  (record only (no file line for this key))
   3                ACTIONBUTTON3                 3  casts Frostbolt (Rank 2, spell 205)  (record only (no file line for this key))
@@ -152,9 +155,6 @@ Notes:
   - Character bindings: a character has its own bindings-cache.wtf only when
     character-specific key bindings are on; without one it uses the account
     bindings.
-  - Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with
-    no form, stance or stealth active; another page they may show is not
-    followed.
   - Only in the record, no file line for the key: the file may hold only the
     changes from the client's defaults, or may not have been rewritten since the
     key was set.

@@ -215,21 +215,41 @@ def test_notes_option_is_in_help(path: tuple[str, ...]) -> None:
     assert "Also print the standing notes" in out
 
 
-@pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
-def test_prose_wraps_to_the_terminal_width(case: Case, make: Callable[[str], Path]) -> None:
-    """The notes, caveat and footer fit the width given; data lines (a key
-    row, a slot row, a path) are left whole, and are the same at any width."""
+# A character whose realm folder holds spaces (the `macos` capture's), with
+# no record: its path is in the prose of each command's Record and
+# cannot-judge lines.
+SPACED = "Labrealmb Partb Partc Partd/Labchard"
+WRAP_CASES: list[Case] = [
+    *CASES,
+    ("macos", ("char", "binds", "--character", SPACED)),
+    ("macos", ("char", "macros", "--character", SPACED)),
+    ("macos", ("binds", "coach", "--character", SPACED)),
+]
+
+
+@pytest.mark.parametrize("case", WRAP_CASES, ids=[_case_id(c) for c in WRAP_CASES])
+def test_prose_wraps_to_the_terminal_width_and_never_inside_a_path(
+    case: Case, make: Callable[[str], Path]
+) -> None:
+    """Every line of prose fits the width given. A line longer than that is
+    either a data line (a key row, a slot row, a file line), printed the same
+    at any width, or one holding a path, which is never broken: a realm
+    folder's spaces stay on one line."""
     overlay, args = case
     make(overlay)
     _past_first_run(args)
     narrow = run([*args, "--notes"], width=50).stdout
     wide = run([*args, "--notes"], width=200).stdout
-    notes = narrow[narrow.rindex("\nNotes:\n") :].splitlines()[2:]
-    assert notes
-    for line in notes:
-        assert len(line) <= 50 or " " not in line.strip(), line
+    wide_lines = set(wide.splitlines())
+    for line in narrow.splitlines():
+        assert len(line) <= 50 or line in wide_lines or "/" in line, line
     assert " ".join(narrow.split()) == " ".join(wide.split())
     assert len(narrow.splitlines()) > len(wide.splitlines())
+    for text in (narrow, wide):
+        flat = " ".join(text.split())
+        assert text.count(SPACED) == flat.count(SPACED)
+    if SPACED in args:
+        assert SPACED in narrow
 
 
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
@@ -248,13 +268,43 @@ def test_no_absolute_path_of_wowlabs_own_files(
 
 def test_doctor_folds_six_unset_sync_lines_into_one(make: Callable[[str], Path]) -> None:
     make("macos")
-    out = run(["doctor", "--offline"], width=200).stdout
+    out = run(["doctor", "--offline"], width=1000).stdout
     synced = [line for line in out.splitlines() if line.startswith("  Server sync")]
     assert synced == [
-        "  Server sync: not set in WTF/Config.wtf or WTF/Account/90000001#6/config-cache.wtf "
-        "(the client's default, and wowlab cannot tell whether that default is on)"
+        "  Server sync: the three sync settings wowlab reads are not set in WTF/Config.wtf or "
+        "WTF/Account/90000001#6/config-cache.wtf (when on, the server can replace your "
+        "bindings, macros or settings at login; not set is the client's default, and wowlab "
+        "cannot tell whether that default is on)"
     ]
     assert "synchronizeBindings" not in out
+
+
+def test_doctor_with_problems_matches_its_snapshot_constructed(
+    make: Callable[[str], Path], tmp_path: Path
+) -> None:
+    """Constructed (boundary): a manifest in the store that does not load.
+    The footer comes after the problems, the report's last lines (conductor's
+    ruling, 2026-11-06); doctor exits 1, as `problems` in --json says."""
+    make("macos")
+    _past_first_run(("doctor",))
+    manifests = tmp_path / "userdata" / "wowlab" / "store" / "manifests"
+    (manifests / "constructed-bad.json").write_text("{", encoding="utf-8")
+    result = run(["doctor", "--offline"])
+    assert result.exit_code == 1
+    lines = result.stdout.splitlines()
+    assert FOOTER.fullmatch(lines[-1])
+    assert lines[-3:-1] == ["Problems:", "  1 damaged snapshot manifest(s)"]
+    _snapshot(
+        "macos-doctor-problems-constructed.txt",
+        # Why the manifest does not load is the JSON library's message, which
+        # names its own version: not wowlab's words to pin.
+        re.sub(
+            r"^(  damaged: constructed-bad\.json: ).*$",
+            r"\1<why it does not load>",
+            f"exit {result.exit_code}\n{_placeholders(result.stdout, tmp_path)}",
+            flags=re.MULTILINE,
+        ),
+    )
 
 
 def test_doctor_lists_sync_lines_when_one_is_set(make: Callable[[str], Path]) -> None:
@@ -271,11 +321,11 @@ def test_coach_says_cannot_judge_where_a_count_would_be_0(make: Callable[[str], 
     """A schema-1 record has no bars or bindings: each of the three reports
     says "cannot judge", not 0, and the reason is said once in full."""
     make("macos")
-    out = run(["binds", "coach"], width=200).stdout
+    out = run(["binds", "coach"], width=1000).stdout
     short = "cannot judge (no action-bar or bindings record)"
     assert f"Frequent spells on high-cost keys: {short}" in out
     assert f"Spells cast with no bind: {short}" in out
-    assert re.search(rf"Binds to spells not cast in this log \(.*\): {re.escape(short)}", out)
+    assert f"Binds to spells not cast in this log: {short}" in out
     assert out.count("Cannot judge because: no action-bar or bindings record (schema 1") == 1
     assert not re.search(r"^(Frequent spells|Spells cast|Binds to spells).*: 0$", out, re.M)
 

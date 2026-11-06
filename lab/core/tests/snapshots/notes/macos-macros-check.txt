@@ -6,4 +6,9 @@ Cannot judge: 2
   spell-not-in-spellbook: no spellbook record (no character chosen; use
     --character)
   not-on-action-bar: no spellbook record (no character chosen; use --character)
-3 notes: --notes shows them
+macros-cache.txt is what the client last wrote; the server can replace it at
+  login when macro sync is on. In a real capture a macro made in a finished
+  session was missing from it (whether the client rewrites it at logout is not
+  yet confirmed), so a macro may be missing here, or still listed after you
+  deleted it.
+2 notes: --notes shows them
