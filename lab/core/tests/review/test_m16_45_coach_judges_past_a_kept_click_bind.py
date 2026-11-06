@@ -85,7 +85,12 @@ def _hedged(result: bindscoach.CoachResult) -> bool:
     cannot = [c.report for c in result.cannot_judge]
     if SPELL not in unbound:
         return True
-    return "cast-without-bind" in cannot or any("left out" in c for c in result.caveats)
+    if "cast-without-bind" in cannot:
+        return True
+    # Since M16-36 (#369) the left-out sentence lives in `unseen`, counted in
+    # `commands_unseen`, and the caveat says the coach "cannot see" those bindings.
+    # A kept CLICK bind that nothing counts leaves commands_unseen at 0: unhedged.
+    return result.commands_unseen > 0 and any("cannot see" in c for c in result.caveats)
 
 
 def test_positive_control_a_left_out_click_hedges_the_report_constructed() -> None:
