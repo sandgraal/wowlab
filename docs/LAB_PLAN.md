@@ -2929,6 +2929,64 @@ them as follows, and M11-09 builds to them.
   and returns the merged document with its `conflicts`, `taken` and
   `absent` lists.
 
+*Amended 2026-11-04 (M16-12; owner decision of 2026-10-21 on Q8,
+`docs/handoffs/outside-evaluation-2026-10.md`, "Owner decisions"; §18.1
+item 3):* two of the M11-09T rulings above change, and two disclosures are
+added. The M11-09T graders that encoded the old rulings are amended in the
+same change.
+
+- **An array part is one value.** The keys 1..n of a table, where n is the
+  largest border on any side (ours, theirs, base: the keys 1..n all
+  present, whether written positionally or as `[k] =`), are compared as
+  one list, by the rules a scalar has. Keys inside list entries are part
+  of the list; to merge the entries at one position on both sides, name
+  it with `--key …[n]` (a position, not a record: positions can differ
+  between characters, so check with `sv dump` first). Two-way, a
+  list that differs is one conflict at the table's path; three-way, a list
+  changed on one side only is that side's, and changed differently on both
+  is one conflict. Two lists that differ never print the same text: when
+  their counts match, the conflict says how many entries differ
+  (`list (9 entries, 3 differ)`). A list counts only its real entries and
+  names a gap (`list (2 entries, a gap at [2])`). `--take theirs` takes the whole list:
+  the table then holds exactly theirs' keys 1..n, nothing is merged index
+  by index, and a source entry after a gap inside 1..n is written as
+  `[k] =`, never renumbered. Keys past every side's border (a sparse
+  source's entries after a gap that no side's list reaches) are merged as
+  keys. This supersedes "positional entries are keyed by their index" for
+  conflicts; paths still spell positional entries `[n]`. The other keys of
+  a table are merged key by key as before. On the M11-03 pair the
+  conflicts are now the lists that differ and the leaves outside them (12
+  in all); the class tree's 52 against 54 nodes sit inside the one-entry
+  list at `…["class"]["config"]["trees"]`, which is one conflict, so
+  `nodes[53]` and `[54]` are no longer listed as absent.
+- **`--key X` merges inside `X`.** Two-way, `--key X` (and `--key
+  SRC=DST`) runs the normal two-way merge inside the subtree: differing
+  leaves and lists are conflicts, a key on one side only is absent and
+  kept. A destination the target does not hold at all, or holds as an
+  empty table `{}`, when the source's value is a table, is copied whole,
+  since that removes and overrides nothing (conductor's ruling,
+  2026-11-05; so a per-character key copied into an account file still
+  works). A source that is not a table over `{}` is a conflict. Three-way is unchanged.
+- **`--key X --replace`** is the old wholesale copy: theirs' subtree is
+  placed whole. `--replace` needs a `--key` and takes no `--base` (exit 2
+  for either). The library takes it as `merge(…, replace=True)`.
+- **Every removal is listed.** `MergeResult.removed` and the report's
+  `removed` (with `path`, the target's `value`, and `entries`) list what
+  the merge removes from the target: a list taken from theirs that drops
+  or changes any of ours' entries, listed once at the list's path with
+  `entries` holding ours' and theirs' counts (the plan prints
+  `BarCharDB["tracked"]  list replaced, 3 entries -> 2 (was {…})`;
+  appending to a list removes nothing); keys under a table that theirs'
+  value replaces; and keys a `--replace` copy lacks. A key is listed at
+  the highest key that goes; the keys under it go with it. A key outside a
+  list that is on one side only is never deleted. The plan prints them
+  before the prompt, under "N entries or settings removed from the
+  target". The report also gains `replace`. Both fields are additive to
+  `--json`.
+- **The notes print before the prompt.** The loader check's notes, and the
+  others the run collected, print with the plan before `Write the merge?
+  [y/N]`, and are not printed again after it.
+
 ### 13.5 Order
 
 ```
@@ -4022,6 +4080,8 @@ new command and the wiki"). `char show` is unchanged.
 *As built, 2026-10-22 (M13-77):* `CharBindsReport` gains `left_out_note` after `keys_left_out`: the sentence `char binds` prints for the two counts, "Left out of the bindings record, counted with no list: N command(s) not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and N key(s) not printable ASCII.", null when the record has no bindings section. The text form prints the field, and the Keys panel shows it as given instead of rebuilding the sentence from the counts (§14.5 D3). The two counts stay.
 
 *Amended 2026-10-19 (M14-07, the final `CharMacrosReport`):* `flavor_folder`, `account` (the Battle.net account folder name; local output only, ADR-0019), `character`, `chosen_by`, `files[{scope, path, mtime_ns, macros, unknown_lines}]`, `bindings_files` (`CharBindsFile`), `record_file`, `record_mtime_ns`, `record_schema`, `record_error`, `macros[{scope, file, position (1-based, file order), line (the VER header), id (the hex macro id, not the index), name, icon, body_lines, complete, bytes, characters, placement{status ("unconfirmed" | "none" | "confirmed"; no rule in M14 emits "confirmed"), candidate_index (the index the candidate numbering gives the record, not the client's), slots[{slot, page_note, unfollowed_page}], keys (keymap.KeyRow), reason}, findings (macrocheck.Finding), cannot_judge (macrocheck.CannotJudge)}]`, `cannot_judge` (not tied to one macro), `keys_incomplete` (why a bound key may be missing from `keys`; null when the bindings record is complete), `notes`. The candidate numbering is `macroplace.CANDIDATE_RULE`: the 120 offset is Retail's, from memory **[verify]**; counting records in file order is this tool's assumption **[verify]**; a `macros-cache.txt` older than the record moves every candidate. `docs/handoffs/M14-macro-place.md` is the owner's capture step that settles it.
+
+*Amended 2026-11-04 (M16-36, `binds coach`'s inputs and defaults):* `binds coach` no longer picks its character as `char show` does. Without `--character` it judges the character whose `WowLab.lua` has the newest record schema, then, among those, the one written last (ties: the last by folder name, said); every character's record is read to learn its schema, and one that cannot be read ranks below any that can. The text names the reason on the record's line ("its record has the newest schema (4) of the 3 characters' records; 1/X was written later, at schema 3; choose another with --character"), and `BindsCoachReport` carries it as `chosen_because`, with `chosen_by` `"newest schema"` (was `"latest"`). The `char` commands (`char show`, `char gear`, `char binds`, `char macros`) keep the latest-written rule above. The combat log is chosen by the caster: without `--log`, the newest of the 10 newest logs under `Logs/` whose own casts have a source name with the character folder's first name (compared without case, after Unicode NFC; the log writes `<First>-<Realm>-`, a Forever folder `<First>-<Second>`, `docs/GLOSSARY.md` "Second name", so the first name is all the two share); when none has, the newest, with a warning naming whose casts it holds. Older logs are read up to 256 MiB in all: one larger than what is left of that is not read and the scan goes on to the smaller ones, and one that cannot be read is skipped; `scan_note` names those logs in one line and says that `--log FILE` reads one. When another character folder of the account has the same first name (a retail-style `<Realm>/<First>/` twin holding only `AddOns.txt` is the same character and does not count), a match is `"first name shared"` and a warning names the other folders. The character's folder is used even when it has no usable record. `--log` reads the log named and warns the same way on a mismatch. Your casts are still picked by the source flags alone (§15.2); the name only chooses the log. `CoachLog` gains `character_name`, `casters` (`CastCounts.source_names`, at most 16 kept), `caster_match` (`"matches"` | `"first name shared"` | `"does not match"` | `"no casts"` | `"no caster name"` | `"no character"`), `warning` and `scan_note`; its `chosen_by` gains `"caster name"`. Before any finding, the text says how many binding commands the record did not read (whether or not a key is bound to them) and how many keys whose name is not printable ASCII it left out (`commands_unseen`, `keys_unseen`, `unseen`), in `char binds`'s words and naming no addon, and always, also at 0 and 0, that a key bound straight to a spell or to an addon's button may be in neither count **[verify]**. "Bound, never cast" is withheld below a minimum sample of the player's casts in the log, `never_cast_min_casts` in the key-cost table, **200** in the shipped table (a short log leaves out spells cast once a fight or less): the report says "withheld" with the count and the minimum, `never_cast_withheld` is true, and its `cannot_judge` row gives the reason (text and JSON give the same "cannot judge" count). When the report is judged and lists a key, it adds the caveat that a spell cast rarely (a long buff, a resurrection, a long cooldown) can be missing from any log. A player can set it in their own table, from 1 to 100000.
 
 ### 16.3 The character in the UI
 

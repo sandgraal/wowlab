@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -66,7 +66,7 @@ from wowlab_core.install import NOT_A_FLAVOR, NOT_A_FLAVOR_LINK, Install, folder
 # `is_link`: the one link test of discovery, the inventory walk, `tree` and
 # `explain`, defined in `install`, re-exported by `layout` (which this module
 # imports) and exported here (M13-35, M13-37).
-from wowlab_core.layout import FsText, Limits, is_link
+from wowlab_core.layout import FsText, Limits, is_link, not_account_on_disk, without_account_rows
 
 __all__ = [
     "NOT_A_FLAVOR",
@@ -350,6 +350,20 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
     entries = 0
     truncated = False
 
+    # M13-69: per flavor folder, each folder of `WTF/Account/` judged once
+    # (the rule of the inventory walk's `not_accounts`), and only when an
+    # account row would describe something below it.
+    judged: dict[tuple[str, ...], bool] = {}
+
+    def not_account(flavor: str, rel: tuple[str, ...]) -> Callable[[str], bool]:
+        def judge(name: str) -> bool:
+            key = (flavor, *rel[:2], name)
+            if key not in judged:
+                judged[key] = not_account_on_disk(root.joinpath(flavor, *rel[:2], name))
+            return judged[key]
+
+        return judge
+
     top = _Parent("root", None, (), None)
     stack = [_Frame(root, "root", None, (), 0, top, None, None)]
     while stack:
@@ -380,6 +394,8 @@ def find_gaps(install: Install, limits: Limits | None = None) -> GapReport:
             if kind == "link":
                 links.append(_install_rel(base, flavor, rel))
             matched = fm.matches(rel, base, _MAP_KIND[kind])
+            if base == "flavor" and flavor is not None:
+                matched, _ = without_account_rows(matched, rel, base, not_account(flavor, rel))
             describing = next((e for e in matched if not e.catch_all), None)
             size = st.st_size if kind == "file" else 0
             text = "/".join(rel)

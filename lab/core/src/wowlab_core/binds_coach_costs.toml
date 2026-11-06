@@ -16,6 +16,7 @@
 high_cost = 4             # a key costing this or more is a high-cost key
 frequent_share = 0.05     # a spell is frequent at this share of your casts or more ...
 frequent_min_casts = 5    # ... and at least this many casts
+never_cast_min_casts = 200  # "binds to spells not cast" is withheld below this many of your casts
 unlisted = 5              # the cost of a key not listed under [keys]
 
 [modifiers]
