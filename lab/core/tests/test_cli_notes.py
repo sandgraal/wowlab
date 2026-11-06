@@ -38,7 +38,7 @@ from test_cli_player_copy import Install, hits, sandbox
 from typer.testing import CliRunner
 
 import wowlab_core
-from wowlab_core import cli
+from wowlab_core import bindscoach, cli, gear
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots" / "notes"
 UPDATE = os.environ.get("WOWLAB_UPDATE_SNAPSHOTS") == "1"
@@ -110,16 +110,45 @@ def run(args: tuple[str, ...] | list[str], width: int = WIDTH) -> Any:
 
 # A path after a placeholder, or the `~` of a home path, up to the end of
 # its line, a quote or a parenthesis: where Windows prints a backslash.
-_PLACED_PATH = re.compile(r"(?:<tmp>|<package>|(?<![\w<])~)(?:\\\\|\\|/)[^\n\"()]*")
+# A `\` right after a placeholder already in the text, as the folder's own
+# separator (`<tmp>\World of Warcraft`). Every real path is put in `/` before
+# its placeholder goes in, so a run's output reaches this only for text given
+# with the placeholder; a `\` that can start an escape (`\n`, `\x85`, `\"`,
+# `\\`, `\u`) is left alone.
+_AFTER_PLACEHOLDER = re.compile(r"(<tmp>|<package>)\\(?![nrtbfvaux\"'\\/0-7])")
 
 
-def _placeholders(text: str, tmp_path: Path) -> str:
-    """The machine's folders as placeholders, and each path after one in
-    forward slashes: Windows prints `<tmp>\\World of Warcraft`, and `--json`
-    escapes that backslash, so both spellings become `/`."""
-    for real, placeholder in ((PACKAGE, "<package>"), (str(tmp_path), "<tmp>")):
-        text = text.replace(real.replace("\\", "\\\\"), placeholder).replace(real, placeholder)
-    text = _PLACED_PATH.sub(lambda m: m.group().replace("\\\\", "/").replace("\\", "/"), text)
+def _known_paths(tmp_path: Path) -> list[str]:
+    """Every path a run on the sandbox can print: each file and folder under
+    `tmp_path` (the install copy, the store, the user folders), the two the
+    output names before they exist, and the package's own files."""
+    config = tmp_path / "userconfig" / "wowlab"
+    found = [tmp_path, *tmp_path.rglob("*"), tmp_path / "userdata" / "wowlab" / "store"]
+    found += [config / gear.SLOTS_FILE, config / bindscoach.COSTS_FILE]
+    package = Path(PACKAGE)
+    found += [package, *package.iterdir()]
+    return [str(p) for p in found]
+
+
+def _placeholders(text: str, tmp_path: Path, paths: list[str] | None = None) -> str:
+    """The machine's folders as placeholders, each known path in forward
+    slashes. Windows prints `C:\\...\\t0\\World of Warcraft`, and `--json`
+    escapes each backslash: both spellings of each known path (`paths`, by
+    default `_known_paths`, and the `~\\...` spelling of one in the home
+    folder, which is `tmp_path` here) are rewritten, and nothing else is, so
+    an escape after a path (`\\n`, `\\x85`) is kept. On Linux no known path
+    holds a backslash: only the placeholders change."""
+    tmp = str(tmp_path)
+    known = set(_known_paths(tmp_path) if paths is None else paths)
+    known |= {
+        "~" + s[len(tmp) :] for s in known if s.startswith(tmp) and s[len(tmp) :][:1] in "\\/"
+    }
+    for real in sorted((s for s in known if "\\" in s), key=len, reverse=True):
+        slashed = real.replace("\\", "/")
+        text = text.replace(real.replace("\\", "\\\\"), slashed).replace(real, slashed)
+    for real, placeholder in ((PACKAGE, "<package>"), (tmp, "<tmp>")):
+        text = text.replace(real.replace("\\", "/"), placeholder)
+    text = _AFTER_PLACEHOLDER.sub(r"\1/", text)
     return _LOCAL_TIME.sub("<local time>", text)
 
 
@@ -128,21 +157,36 @@ def test_placeholders_put_windows_paths_in_forward_slashes_constructed() -> None
     tmp = Path(str(PureWindowsPath("C:/Users/x/AppData/Local/Temp/pytest-1/t0")))
     root = PureWindowsPath(str(tmp), "World of Warcraft")
     store = PureWindowsPath(str(tmp), "userdata", "wowlab", "store")
+    config = PureWindowsPath(str(tmp), "userconfig", "wowlab", "gear_slots.toml")
     user = PureWindowsPath("~", "userconfig", "wowlab", "gear_slots.toml")
+    known = [str(tmp), str(root), str(store), str(config)]
     text = f"Install: {root} (found by --root)\nSnapshot store: {store}\n  - put them in {user} (x)"
-    assert _placeholders(text, tmp) == (
+    assert _placeholders(text, tmp, known) == (
         "Install: <tmp>/World of Warcraft (found by --root)\n"
         "Snapshot store: <tmp>/userdata/wowlab/store\n"
         "  - put them in ~/userconfig/wowlab/gear_slots.toml (x)"
     )
     as_json = json.dumps({"path": str(store), "root": str(root)})
-    assert json.loads(_placeholders(as_json, tmp)) == {
+    assert json.loads(_placeholders(as_json, tmp, known)) == {
         "path": "<tmp>/userdata/wowlab/store",
         "root": "<tmp>/World of Warcraft",
     }
+    # An escape after a path is kept (the review probe's cases), in JSON and
+    # in text, and so is a later path that is not one of the known ones.
+    after = json.dumps({"error": f"{store}\nsecond line", "other": "D:\\elsewhere\\x"})
+    assert json.loads(_placeholders(after, tmp, known)) == {
+        "error": "<tmp>/userdata/wowlab/store\nsecond line",
+        "other": "D:\\elsewhere\\x",
+    }
+    escaped = f"File: {root}\\x85bar and {root}\\foo\\x85"
+    assert _placeholders(escaped, tmp, known) == (
+        "File: <tmp>/World of Warcraft\\x85bar and <tmp>/World of Warcraft\\foo\\x85"
+    )
     # A Linux run is unchanged, slashes, "/reload" and a lone "~" included.
     plain = "Install: <tmp>/World of Warcraft (x) then /reload; ~ alone\\n"
     assert _placeholders(plain, Path("/nowhere")) == plain
+    linux = json.dumps({"error": "/nowhere/x\nsecond", "file": "/nowhere/W o W/foo\\x85"})
+    assert _placeholders(linux, Path("/nowhere")) == linux.replace("/nowhere", "<tmp>")
 
 
 def _snapshot(name: str, actual: str) -> None:
