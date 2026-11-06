@@ -1676,9 +1676,10 @@ def _print_game_data(g: GameDataReport) -> str:
 
 
 _NUMBER_WORDS = {2: "two", 3: "three", 4: "four"}
+# What the sync lines themselves do not say (they say what sync replaces).
 _SYNC_NOTE = (
-    "When server sync is on, the server can replace your local key bindings, macros or "
-    "settings at login; which other *-cache files it replaces is not known."
+    "Which other *-cache files server sync replaces at login, besides key bindings, macros "
+    "and settings, is not known."
 )
 _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
 
@@ -1722,7 +1723,11 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 keep=files,
             )
         elif f.sync_cvars:
-            _say("  Server sync:")
+            _say_prose(
+                "  Server sync (when on, the server can replace your bindings, macros or "
+                "settings at login):",
+                hang="    ",
+            )
             for sync in f.sync_cvars:
                 value = (
                     f'"{sync.value}"'
@@ -5840,7 +5845,8 @@ def _say_coach(
     for reason in dict.fromkeys(c.reason for c in shown):
         if _short_reason(reason) != reason:
             _say_prose(f"Cannot judge because: {reason}", keep=keep)
-    # @@CAVEAT@@
+    # The one caveat is the first of the coach's own for this result; any
+    # other joins the standing notes.
     caveats = [f"{c[:1].upper()}{c[1:]}." for c in report.caveats]
     standing = [*caveats[1:], *report.notes]
     if costs.source == "default":

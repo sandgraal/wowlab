@@ -25,10 +25,11 @@ Nothing here reads or writes a real install.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import platformdirs
@@ -107,9 +108,41 @@ def run(args: tuple[str, ...] | list[str], width: int = WIDTH) -> Any:
     return result
 
 
+# A path after a placeholder, or the `~` of a home path, up to the end of
+# its line, a quote or a parenthesis: where Windows prints a backslash.
+_PLACED_PATH = re.compile(r"(?:<tmp>|<package>|(?<![\w<])~)(?:\\\\|\\|/)[^\n\"()]*")
+
+
 def _placeholders(text: str, tmp_path: Path) -> str:
-    text = text.replace(PACKAGE, "<package>").replace(str(tmp_path), "<tmp>")
+    """The machine's folders as placeholders, and each path after one in
+    forward slashes: Windows prints `<tmp>\\World of Warcraft`, and `--json`
+    escapes that backslash, so both spellings become `/`."""
+    for real, placeholder in ((PACKAGE, "<package>"), (str(tmp_path), "<tmp>")):
+        text = text.replace(real.replace("\\", "\\\\"), placeholder).replace(real, placeholder)
+    text = _PLACED_PATH.sub(lambda m: m.group().replace("\\\\", "/").replace("\\", "/"), text)
     return _LOCAL_TIME.sub("<local time>", text)
+
+
+def test_placeholders_put_windows_paths_in_forward_slashes_constructed() -> None:
+    """Constructed: the spellings a Windows run prints, in text and in JSON."""
+    tmp = Path(str(PureWindowsPath("C:/Users/x/AppData/Local/Temp/pytest-1/t0")))
+    root = PureWindowsPath(str(tmp), "World of Warcraft")
+    store = PureWindowsPath(str(tmp), "userdata", "wowlab", "store")
+    user = PureWindowsPath("~", "userconfig", "wowlab", "gear_slots.toml")
+    text = f"Install: {root} (found by --root)\nSnapshot store: {store}\n  - put them in {user} (x)"
+    assert _placeholders(text, tmp) == (
+        "Install: <tmp>/World of Warcraft (found by --root)\n"
+        "Snapshot store: <tmp>/userdata/wowlab/store\n"
+        "  - put them in ~/userconfig/wowlab/gear_slots.toml (x)"
+    )
+    as_json = json.dumps({"path": str(store), "root": str(root)})
+    assert json.loads(_placeholders(as_json, tmp)) == {
+        "path": "<tmp>/userdata/wowlab/store",
+        "root": "<tmp>/World of Warcraft",
+    }
+    # A Linux run is unchanged, slashes, "/reload" and a lone "~" included.
+    plain = "Install: <tmp>/World of Warcraft (x) then /reload; ~ alone\\n"
+    assert _placeholders(plain, Path("/nowhere")) == plain
 
 
 def _snapshot(name: str, actual: str) -> None:
@@ -227,6 +260,16 @@ WRAP_CASES: list[Case] = [
 ]
 
 
+def _held_path_overflows(line: str, width: int) -> bool:
+    """Whether `line` is over `width` only because it holds a path that
+    cannot be broken. textwrap (words never broken) lets a line run long
+    only when it is one token, alone after its indent, wider than the room:
+    that token must be a held path, with a slash inside it ("/reload" or
+    "/combatlog" alone is never one) and a realm folder's spaces kept."""
+    body = line.lstrip(" ").replace(SPACED, SPACED.replace(" ", "\x00"))
+    return len(line) > width and " " not in body and "/" in body[1:]
+
+
 @pytest.mark.parametrize("case", WRAP_CASES, ids=[_case_id(c) for c in WRAP_CASES])
 def test_prose_wraps_to_the_terminal_width_and_never_inside_a_path(
     case: Case, make: Callable[[str], Path]
@@ -242,7 +285,7 @@ def test_prose_wraps_to_the_terminal_width_and_never_inside_a_path(
     wide = run([*args, "--notes"], width=200).stdout
     wide_lines = set(wide.splitlines())
     for line in narrow.splitlines():
-        assert len(line) <= 50 or line in wide_lines or "/" in line, line
+        assert len(line) <= 50 or line in wide_lines or _held_path_overflows(line, 50), line
     assert " ".join(narrow.split()) == " ".join(wide.split())
     assert len(narrow.splitlines()) > len(wide.splitlines())
     for text in (narrow, wide):
@@ -311,8 +354,11 @@ def test_doctor_lists_sync_lines_when_one_is_set(make: Callable[[str], Path]) ->
     root = make("macos")
     config = root / "_classic_beta_" / "WTF" / "Config.wtf"
     config.write_bytes(config.read_bytes() + b'SET synchronizeBindings "1"\r\n')
-    out = run(["doctor", "--offline"]).stdout
-    assert "  Server sync:\n" in out
+    out = run(["doctor", "--offline"], width=1000).stdout
+    assert (
+        "  Server sync (when on, the server can replace your bindings, macros or settings at "
+        "login):\n" in out
+    )
     assert 'WTF/Config.wtf: synchronizeBindings "1"' in out
     assert "synchronizeMacros not set (the client's default" in out
 

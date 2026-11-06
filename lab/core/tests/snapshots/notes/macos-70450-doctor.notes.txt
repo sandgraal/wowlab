@@ -11,7 +11,6 @@ Snapshot store: <tmp>/userdata/wowlab/store
   1 snapshot(s) that load; none damaged
   no transactions in the journal
 Notes:
-  - When server sync is on, the server can replace your local key bindings,
-    macros or settings at login; which other *-cache files it replaces is not
-    known.
+  - Which other *-cache files server sync replaces at login, besides key
+    bindings, macros and settings, is not known.
   - wowlab snap verify re-hashes every object in the snapshot store.
