@@ -39,6 +39,7 @@ from typing import Any
 
 import pytest
 
+from wowlab_core import layout, profiles
 from wowlab_core.snapshot import SnapshotStore
 
 
@@ -296,3 +297,193 @@ def test_constructed_stray_folder_matching_no_target_account_still_restores(
     )
     assert not (target.path / "WTF" / "Account" / SRC_ACCOUNT).exists()
     assert stray(LEGACY) in set(changes(record_for(guard, store, "stray elsewhere").paths))
+
+
+# ─── round 2: a snapshot that holds no account folder at all ─────────────────
+# §6.10 as amended 2026-10-22: a snapshot with no account folder "restores
+# without a mapping and creates no account folder". Its only folder under
+# `WTF/Account/` may still be a stray one; the round-1 rule applies to it
+# all the same, and the early return for an account-less snapshot must not
+# skip it. `profile apply --into-flavor` reaches the same path through
+# `profiles.plan_apply` and `profiles.apply`.
+
+ACCOUNTLESS = {T.CONFIG: b'SET portal "US"\nSET constructed "source"\n'}
+
+
+def accountless_files(folder: str) -> dict[str, bytes]:
+    """The source: no account folder, one stray folder of account-level files."""
+    return {**ACCOUNTLESS, stray(folder): STRAY_BYTES}
+
+
+def accountless_world(
+    tmp_path: Path, store: SnapshotStore, spelling: str, target_files_: dict[str, bytes]
+) -> tuple[Path, Flavor, Flavor, str]:
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, accountless_files(spelling))
+    snapshot_id = snapshot_of(store, source)
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_files_)
+    return world, source, target, snapshot_id
+
+
+def refused_accountless(
+    guard: Any, tmp_path: Path, store: SnapshotStore, spelling: str, dry_run: bool
+) -> None:
+    """The target's `LEGACYACCT` is a real account. With no account folder in
+    the snapshot there is nothing to map, so the stray folder would be
+    written straight into it."""
+    world, _source, target, snapshot_id = accountless_world(
+        tmp_path, store, spelling, {**target_files(DST_ACCOUNT), **legacy_account(LEGACY)}
+    )
+    legacy_before = files_under(target.path, f"WTF/Account/{LEGACY}")
+    before = strict_state(world)
+
+    with guard.transaction(
+        target, label=f"accountless {dry_run}", store=store.path, dry_run=dry_run
+    ) as tx:
+        with pytest.raises(guard.GuardError) as refused:
+            tx.restore(snapshot_id, into=into(guard, target))
+        assert tx.plan == (), "nothing is planned for a refused restore"
+    assert_refused_naming(guard, refused.value, LEGACY)
+    assert files_under(target.path, f"WTF/Account/{LEGACY}") == legacy_before
+    assert strict_state(world) == before, "a refused restore writes nothing"
+
+
+@DRY_RUN
+@pytest.mark.xfail(strict=True, reason="M16-03 round 2: snapshot with no account folder")
+def test_constructed_accountless_snapshot_stray_folder_matching_a_target_account_is_refused(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dry_run: bool
+) -> None:
+    refused_accountless(guard, tmp_path, store, LEGACY, dry_run)
+
+
+@DRY_RUN
+def test_constructed_case_folded_accountless_snapshot_stray_folder_is_refused(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dry_run: bool
+) -> None:
+    """`legacyacct` against the target's `LEGACYACCT`. On dbeeae8 the gate's
+    case-collision check already refuses this, so it carries no marker (a
+    strict xfail would XPASS); the round-2 fix must keep refusing it."""
+    refused_accountless(guard, tmp_path, store, LEGACY_FOLDED, dry_run)
+
+
+def test_constructed_accountless_snapshot_stray_folder_of_another_name_still_restores(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    """Positive control: no target account has the stray folder's name, so
+    it restores under its own name, with no mapping, and no other account
+    folder is created or touched."""
+    _world, _source, target, snapshot_id = accountless_world(
+        tmp_path, store, LEGACY, target_files(DST_ACCOUNT)
+    )
+    dst_before = files_under(target.path, f"WTF/Account/{DST_ACCOUNT}")
+
+    with guard.transaction(target, label="accountless elsewhere", store=store.path) as tx:
+        tx.restore(snapshot_id, into=into(guard, target))
+
+    assert (target.path / stray(LEGACY)).read_bytes() == STRAY_BYTES
+    assert (target.path / T.CONFIG).read_bytes() == ACCOUNTLESS[T.CONFIG]
+    assert files_under(target.path, f"WTF/Account/{DST_ACCOUNT}") == dst_before
+    paths = set(changes(record_for(guard, store, "accountless elsewhere").paths))
+    assert stray(LEGACY) in paths
+    assert not any(DST_ACCOUNT in p for p in paths)
+
+
+# ─── round 2 through `profile apply --into-flavor` ───────────────────────────
+# A profile of account-level files: the `bindings` preset finds no account in
+# a source whose only folder is a stray one (`layout` does not count it), so
+# the profile names that folder as an explicit subtree, which `select`
+# accepts (narrower than `WTF/Account/`).
+
+
+def accountless_profile(store: SnapshotStore, source: Flavor) -> Any:
+    lay = layout.Layout(source.path, install_root=source.path.parent)
+    selection = profiles.select(
+        lay, subtrees=["WTF/Config.wtf", f"WTF/Account/{stray_folder(source)}"]
+    )
+    return profiles.save(store, source.path.parent, source, "constructed-stray", selection)
+
+
+def stray_folder(source: Flavor) -> str:
+    (name,) = [p.name for p in (source.path / "WTF" / "Account").iterdir() if p.is_dir()]
+    return name
+
+
+@pytest.mark.xfail(strict=True, reason="M16-03 round 2: snapshot with no account folder")
+def test_constructed_accountless_profile_plan_into_a_target_account_is_refused(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, accountless_files(LEGACY))
+    profile = accountless_profile(store, source)
+    target = make_install(
+        world / "Target WoW",
+        TARGET_FOLDER,
+        {**target_files(DST_ACCOUNT), **legacy_account(LEGACY)},
+    )
+    legacy_before = files_under(target.path, f"WTF/Account/{LEGACY}")
+    before = strict_state(world)
+
+    with pytest.raises(guard.GuardError) as refused:
+        profiles.plan_apply(
+            profile, target, target.path.parent, store=store, into=into(guard, target)
+        )
+    assert_refused_naming(guard, refused.value, LEGACY)
+    assert files_under(target.path, f"WTF/Account/{LEGACY}") == legacy_before
+    assert strict_state(world) == before, "a refused plan writes nothing"
+
+
+def test_constructed_accountless_profile_apply_rechecks_at_the_gate(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    """The plan is made while the target's `LEGACYACCT` is no account (no
+    such folder yet); by the apply it is a real account (a character was
+    created). The plan's own paths are unchanged, so only the gate's check
+    at the apply stands between the stray file and that account.
+
+    No marker: on dbeeae8 `apply` is already refused here, by the `paths=`
+    spelling check (a named path under what is now a target account folder),
+    so a strict xfail would XPASS. It holds the round-2 fix to keep the
+    apply refused, whichever check refuses it."""
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, accountless_files(LEGACY))
+    profile = accountless_profile(store, source)
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_files(DST_ACCOUNT))
+    plan = profiles.plan_apply(
+        profile, target, target.path.parent, store=store, into=into(guard, target)
+    )
+    assert stray(LEGACY) in {i.path for i in plan.plan}
+
+    character = {
+        k: v for k, v in legacy_account(LEGACY).items() if "/Labrealm/" in k
+    }  # a character folder only: the plan's paths stay as they were
+    G._put(target.path, character)
+    legacy_before = files_under(target.path, f"WTF/Account/{LEGACY}")
+    before = strict_state(world)
+
+    with pytest.raises(guard.GuardError) as refused:
+        profiles.apply(plan, target, store=store)
+    assert_refused_naming(guard, refused.value, LEGACY)
+    assert not (target.path / stray(LEGACY)).exists()
+    assert files_under(target.path, f"WTF/Account/{LEGACY}") == legacy_before
+    assert strict_state(world) == before, "a refused apply writes nothing"
+
+
+def test_constructed_accountless_profile_of_another_name_still_applies_into(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
+) -> None:
+    """Positive control for both profile tests: no target account has the
+    stray folder's name, so plan and apply write it under its own name."""
+    world = tmp_path / "world"
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, accountless_files(LEGACY))
+    profile = accountless_profile(store, source)
+    target = make_install(world / "Target WoW", TARGET_FOLDER, target_files(DST_ACCOUNT))
+    dst_before = files_under(target.path, f"WTF/Account/{DST_ACCOUNT}")
+
+    plan = profiles.plan_apply(
+        profile, target, target.path.parent, store=store, into=into(guard, target)
+    )
+    assert plan.accounts == ()
+    profiles.apply(plan, target, store=store)
+
+    assert (target.path / stray(LEGACY)).read_bytes() == STRAY_BYTES
+    assert files_under(target.path, f"WTF/Account/{DST_ACCOUNT}") == dst_before
