@@ -28,8 +28,8 @@ symlink, a target inside `.claude/worktrees` (stale agent worktrees are the
 conductor's to clean), and a target inside the checkout that holds a tracked
 file. It never looks at a game install.
 
-Removal is `shutil.rmtree` with no retry, relative to the opened directory's
-descriptor on Python 3.11 and later. Where `shutil.rmtree.avoids_symlink_attacks`
+Removal is `shutil.rmtree` with no retry, relative to the opened directory:
+by `dir_fd` on Python 3.11 and later, by `fchdir` into it on 3.9 and 3.10. Where `shutil.rmtree.avoids_symlink_attacks`
 is true it walks by descriptor and never follows a symlink; where it is false
 the run says so. What it cannot remove (a directory a test left read-only,
 say) is reported, not forced.
@@ -216,13 +216,36 @@ def _rmtree(
         shutil.rmtree(path, onexc=record, dir_fd=dir_fd)
     elif sys.version_info >= (3, 11):
         shutil.rmtree(path, onerror=record, dir_fd=dir_fd)
-    else:  # Python 3.9 and 3.10: no dir_fd; the caller passes a full path
+    else:  # Python 3.9 and 3.10: no dir_fd (see _rmtree_in)
         shutil.rmtree(path, onerror=record)
     if failed:
         shown = path if base is None else base / path
         first = failed[0] if base is None else base / failed[0]
         out.append(f"could not remove {len(failed)} entries under {shown}, first {first}")
     return not failed
+
+
+def _rmtree_in(dir_fd: int, name: str, base: Path, out: list[str]) -> bool:
+    """Remove the entry `name` of the directory open as `dir_fd`, never by its path.
+
+    On 3.11 and later, where rmtree walks by descriptor, `rmtree(name,
+    dir_fd=...)`. Otherwise (3.9 and 3.10, the macOS system python3, or a
+    platform where `avoids_symlink_attacks` is False and `dir_fd` raises
+    NotImplementedError) the process changes into the opened directory with
+    `fchdir` and removes `name` relative to it, then changes back.
+    """
+    if sys.version_info >= (3, 11) and shutil.rmtree.avoids_symlink_attacks:
+        try:
+            return _rmtree(name, out, dir_fd=dir_fd, base=base)
+        except NotImplementedError:
+            pass
+    saved = os.open(".", os.O_RDONLY)
+    try:
+        os.fchdir(dir_fd)
+        return _rmtree(name, out, base=base)
+    finally:
+        os.fchdir(saved)
+        os.close(saved)
 
 
 def remove(path: Path, repo: Path, run: Runner, out: list[str]) -> bool | None:
@@ -295,11 +318,7 @@ def _clean_open_dir(dir_fd: int, path: Path, out: list[str]) -> bool:
             ok = False
             continue
         if stat.S_ISDIR(st.st_mode):
-            if sys.version_info >= (3, 11):
-                done = _rmtree(name, out, dir_fd=dir_fd, base=path)
-            else:  # checked by _same just above
-                done = _rmtree(path / name, out)
-            ok = ok and done
+            ok = _rmtree_in(dir_fd, name, path, out) and ok
             continue
         if stat.S_ISLNK(st.st_mode):
             # `pytest-current` points at the newest session: kept while that

@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -390,3 +391,36 @@ def test_constructed_a_dir_swapped_for_a_link_after_the_check_removes_nothing(
     assert (victim / "pytest-2" / "data.bin").is_file()
     assert (tmp_path / "moved" / "pytest-1" / "data.bin").is_file()
     assert mine.is_symlink()
+
+
+@pytest.mark.parametrize("guarded", [True, False], ids=["dir-fd-raises", "unguarded"])
+def test_constructed_rmtree_without_dir_fd_support_falls_back_to_fchdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guarded: bool
+) -> None:
+    # Constructed: a platform where `shutil.rmtree(..., dir_fd=...)` raises
+    # NotImplementedError (avoids_symlink_attacks False on 3.11+). The session
+    # dirs are still removed, relative to the opened directory, the cwd is
+    # restored, and the .pytest_cache step still runs.
+    temproot = tmp_path / "tmp"
+    _fill(temproot / "pytest-of-alice" / "pytest-1" / "test_a0")
+    repo = _git_repo(tmp_path / "repo")
+    _fill(repo / ".pytest_cache")
+    _private(temproot)
+    real = shutil.rmtree
+    calls: list[str] = []
+
+    def no_dir_fd(path: Any, *args: Any, **kwargs: Any) -> None:
+        if kwargs.get("dir_fd") is not None:
+            calls.append("dir_fd")
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        calls.append(str(path))
+        real(path, *args, **kwargs)
+
+    no_dir_fd.avoids_symlink_attacks = guarded  # type: ignore[attr-defined]
+    monkeypatch.setattr(clean.shutil, "rmtree", no_dir_fd)
+    cwd = Path.cwd()
+    assert clean.main(_argv(temproot, repo)) == 0
+    assert Path.cwd() == cwd
+    assert not (temproot / "pytest-of-alice").exists()
+    assert not (repo / ".pytest_cache").exists()
+    assert "pytest-1" in calls  # removed by its name, relative to the opened dir
