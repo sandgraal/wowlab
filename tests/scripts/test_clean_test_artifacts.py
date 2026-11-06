@@ -45,6 +45,13 @@ def _git_repo(path: Path) -> Path:
     return path
 
 
+def _private(temproot: Path, user: str = "alice") -> None:
+    """Make `pytest-of-<user>` 0o700, as pytest creates it, whatever the umask."""
+    mine = temproot / f"pytest-of-{user}"
+    if mine.is_dir() and not mine.is_symlink():
+        mine.chmod(0o700)
+
+
 def _fill(path: Path, size: int = 1000) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "data.bin").write_bytes(b"x" * size)
@@ -84,6 +91,7 @@ def layout(tmp_path: Path) -> dict[str, Path]:
     outside = tmp_path / "outside"
     _fill(outside, 50)
     (mine / "pytest-current").symlink_to(outside, target_is_directory=True)
+    _private(temproot)
     # Neighbours that must stay.
     _fill(temproot / "pytest-of-bob", 70)
     (temproot / "unrelated.txt").write_text("keep\n", encoding="utf-8")
@@ -228,6 +236,7 @@ def test_constructed_a_read_only_dir_is_reported_never_chmodded(
     _fill(locked, 10)
     locked.chmod(0o500)
     repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
     code = clean.main(_argv(temproot, repo))
     if ROOT_USER:
         assert code == 0
@@ -255,6 +264,7 @@ def test_constructed_a_symlinks_target_is_never_changed(tmp_path: Path) -> None:
     (session / "test_a0" / "link").symlink_to(outside, target_is_directory=True)
     (session / "test_a0" / "file-link").symlink_to(outside / "data.bin")
     repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
     try:
         assert clean.main(_argv(temproot, repo)) == 0
         assert not (temproot / "pytest-of-alice").exists()
@@ -289,6 +299,7 @@ def test_constructed_a_pytest_dir_owned_by_another_user_is_refused(
     mine = temproot / "pytest-of-alice"
     _fill(mine / "pytest-1")
     repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
     owner = mine.lstat().st_uid
     monkeypatch.setattr(os, "getuid", lambda: owner + 1)
     assert clean.main(_argv(temproot, repo)) == 1
@@ -314,10 +325,11 @@ def test_constructed_a_running_session_is_left_by_pytests_lock_rule(
     (mine / "pytest-current").symlink_to(mine / "pytest-7", target_is_directory=True)
     (mine / "garbage-1234").mkdir()
     repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
     assert clean.main(_argv(temproot, repo)) == 0
     assert sorted(p.name for p in mine.iterdir()) == ["pytest-7", "pytest-current"]
     assert (mine / "pytest-7" / "test_a0" / "data.bin").is_file()
-    assert "a test session is still running" in capsys.readouterr().err
+    assert "a test session may still be running" in capsys.readouterr().err
 
 
 def test_constructed_the_current_link_to_a_finished_session_goes(tmp_path: Path) -> None:
@@ -328,6 +340,7 @@ def test_constructed_the_current_link_to_a_finished_session_goes(tmp_path: Path)
     (mine / "pytest-9" / ".lock").write_text("", encoding="utf-8")
     (mine / "pytest-current").symlink_to(mine / "pytest-8", target_is_directory=True)
     repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
     assert clean.main(_argv(temproot, repo)) == 0
     assert [p.name for p in mine.iterdir()] == ["pytest-9"]
 
@@ -341,3 +354,39 @@ def test_in_flight_follows_the_numbered_name_and_the_lock_age(tmp_path: Path) ->
     assert not clean.in_flight(tmp_path / "pytest-12", now + clean.LOCK_TIMEOUT + 1)
     assert not clean.in_flight(tmp_path / "pytest-x", now)
     assert not clean.in_flight(tmp_path / "other", now)
+
+
+def test_the_lock_timeout_is_pytests_own() -> None:
+    from _pytest.pathlib import LOCK_TIMEOUT
+
+    assert clean.LOCK_TIMEOUT == LOCK_TIMEOUT == 60 * 60 * 24 * 3
+
+
+def test_constructed_a_dir_swapped_for_a_link_after_the_check_removes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Constructed: right after the ownership check passes on the opened
+    # directory, pytest-of-alice is moved aside and replaced by a symlink to
+    # a victim directory (security review round 2). Nothing is removed from
+    # either: the path no longer names the directory that was opened.
+    temproot = tmp_path / "tmp"
+    mine = temproot / "pytest-of-alice"
+    _fill(mine / "pytest-1")
+    victim = tmp_path / "victim"
+    _fill(victim / "pytest-2")
+    repo = _git_repo(tmp_path / "repo")
+    _private(temproot)
+    real_check = clean.ownership_refusal
+
+    def check_then_swap(st: os.stat_result) -> str | None:
+        reason = real_check(st)
+        mine.rename(tmp_path / "moved")
+        mine.symlink_to(victim, target_is_directory=True)
+        return reason
+
+    monkeypatch.setattr(clean, "ownership_refusal", check_then_swap)
+    assert clean.main(_argv(temproot, repo)) == 1
+    assert "changed while cleaning; nothing more removed" in capsys.readouterr().err
+    assert (victim / "pytest-2" / "data.bin").is_file()
+    assert (tmp_path / "moved" / "pytest-1" / "data.bin").is_file()
+    assert mine.is_symlink()

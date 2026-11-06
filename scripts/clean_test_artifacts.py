@@ -7,13 +7,19 @@ and prunes the uv cache:
 - pytest's session temp dirs under `<temp root>/pytest-of-<user>`, where the
   temp root is `$PYTEST_DEBUG_TEMPROOT` or the system temp dir and `<user>`
   is the login name with every non-word character replaced by `_`, as pytest
-  names it. Only that directory is looked at. It must be a real directory
-  (not a symlink) owned by the current user and not writable by group or
-  others, as pytest itself requires before using it; otherwise nothing under
-  it is touched. A numbered session dir (`pytest-<n>`) whose `.lock` is
-  younger than LOCK_TIMEOUT belongs to a session still running (pytest's own
-  rule) and is skipped. Everything else in it is removed, and the directory
-  itself when it ends up empty.
+  names it. Only that directory is looked at. It is opened once, by
+  descriptor and without following a symlink, and must be owned by the
+  current user and not writable by group or others, as pytest itself
+  requires before using it; otherwise nothing under it is touched. Before
+  each entry is removed, and before the directory itself, the path is
+  checked to still name the directory that was opened; if it does not, the
+  run stops ("changed while cleaning"). A numbered session dir
+  (`pytest-<n>`) whose `.lock` is younger than LOCK_TIMEOUT (3 days, pytest's
+  own rule in `_pytest/pathlib.py`) belongs to a session that may still be
+  running and is skipped. Everything else in it is removed, and the
+  directory itself when it ends up empty. This needs POSIX (Linux, macOS):
+  Windows has no `os.getuid` for the ownership check and cannot open a
+  directory by descriptor, so there the directory is reported and left.
 - `.pytest_cache` at the root of this checkout.
 - `uv cache prune`: drops cache entries no environment uses any more.
 
@@ -22,9 +28,11 @@ symlink, a target inside `.claude/worktrees` (stale agent worktrees are the
 conductor's to clean), and a target inside the checkout that holds a tracked
 file. It never looks at a game install.
 
-Removal is `shutil.rmtree` with no retry: on Linux and macOS it walks by
-directory descriptor and never follows a symlink. What it cannot remove (a
-directory a test left read-only, say) is reported, not forced.
+Removal is `shutil.rmtree` with no retry, relative to the opened directory's
+descriptor on Python 3.11 and later. Where `shutil.rmtree.avoids_symlink_attacks`
+is true it walks by descriptor and never follows a symlink; where it is false
+the run says so. What it cannot remove (a directory a test left read-only,
+say) is reported, not forced.
 
 It runs on the system `python3` (3.9 or later, standard library only), not
 under `uv run`: `uv cache prune` waits for every running uv process to let go
@@ -53,9 +61,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRUNE_TIMEOUT = 120
-# pytest's LOCK_TIMEOUT (_pytest/pathlib.py): a session dir's `.lock` younger
-# than this is a session still running.
-LOCK_TIMEOUT = 60 * 60 * 3
+# pytest's LOCK_TIMEOUT (_pytest/pathlib.py, 3 days): a session dir's `.lock`
+# younger than this may belong to a session still running.
+LOCK_TIMEOUT = 60 * 60 * 24 * 3
+# Open a directory, never through a symlink (0 where the platform lacks a flag).
+OPEN_DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 NUMBERED = re.compile(r"pytest-\d+")
 WORKTREES = Path(".claude") / "worktrees"
 
@@ -157,15 +167,20 @@ def refusal(path: Path, repo: Path, run: Runner) -> str | None:
     return None
 
 
-def ownership_refusal(path: Path) -> str | None:
-    """Why the pytest dir is not ours to clean: pytest's own check, made here."""
-    st = path.lstat()
+def ownership_refusal(st: os.stat_result) -> str | None:
+    """Why the pytest dir is not ours to clean: pytest's own check (POSIX only)."""
     getuid = getattr(os, "getuid", None)
-    if getuid is not None and st.st_uid != getuid():
+    if getuid is None:
+        return "the ownership check needs POSIX (no os.getuid here)"
+    if st.st_uid != getuid():
         return f"it is owned by uid {st.st_uid}, not {getuid()}"
-    if getuid is not None and st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         return f"it is writable by group or others (mode {stat.S_IMODE(st.st_mode):o})"
     return None
+
+
+def _fresh(lock: os.stat_result, now: float | None) -> bool:
+    return lock.st_mtime > (time.time() if now is None else now) - LOCK_TIMEOUT
 
 
 def in_flight(session: Path, now: float | None = None) -> bool:
@@ -173,25 +188,40 @@ def in_flight(session: Path, now: float | None = None) -> bool:
     if not NUMBERED.fullmatch(session.name):
         return False
     try:
-        lock = (session / ".lock").lstat()
+        return _fresh((session / ".lock").lstat(), now)
     except OSError:
         return False
-    return lock.st_mtime > (time.time() if now is None else now) - LOCK_TIMEOUT
 
 
-def _rmtree(path: Path, out: list[str]) -> bool:
+def _in_flight_at(dir_fd: int, name: str) -> bool:
+    """`in_flight`, for the entry `name` of the directory open as `dir_fd`."""
+    if not NUMBERED.fullmatch(name):
+        return False
+    try:
+        return _fresh(os.stat(f"{name}/.lock", dir_fd=dir_fd, follow_symlinks=False), None)
+    except OSError:
+        return False
+
+
+def _rmtree(
+    path: Path | str, out: list[str], dir_fd: int | None = None, base: Path | None = None
+) -> bool:
     """shutil.rmtree, no retry and no chmod; report what it could not remove."""
     failed: list[str] = []
 
     def record(_func: Callable[..., object], name: str, _exc: object) -> None:
         failed.append(name)
 
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=record)
-    else:  # Python 3.9 to 3.11: the same handler under its older name
+    if sys.version_info >= (3, 12):  # this script also runs on 3.9
+        shutil.rmtree(path, onexc=record, dir_fd=dir_fd)
+    elif sys.version_info >= (3, 11):
+        shutil.rmtree(path, onerror=record, dir_fd=dir_fd)
+    else:  # Python 3.9 and 3.10: no dir_fd; the caller passes a full path
         shutil.rmtree(path, onerror=record)
     if failed:
-        out.append(f"could not remove {len(failed)} entries under {path}, first {failed[0]}")
+        shown = path if base is None else base / path
+        first = failed[0] if base is None else base / failed[0]
+        out.append(f"could not remove {len(failed)} entries under {shown}, first {first}")
     return not failed
 
 
@@ -208,40 +238,94 @@ def remove(path: Path, repo: Path, run: Runner, out: list[str]) -> bool | None:
     return _rmtree(path, out)
 
 
+def _same(dir_fd: int, path: Path) -> bool:
+    """Whether `path` still names the directory open as `dir_fd`."""
+    try:
+        return os.path.samestat(os.fstat(dir_fd), os.lstat(path))
+    except OSError:
+        return False
+
+
 def clean_pytest_dir(path: Path, repo: Path, run: Runner, out: list[str]) -> bool | None:
     """Clean `pytest-of-<user>`, leaving running sessions; True done, None absent, False not."""
     if not path.exists() and not path.is_symlink():
         return None
     reason = refusal(path, repo, run)
-    if reason is None and not path.is_dir():
-        reason = "it is not a directory"
-    if reason is None:
-        reason = ownership_refusal(path)
     if reason is not None:
         out.append(f"refused {path}: {reason}; nothing under it was touched")
         return False
+    try:
+        dir_fd = os.open(path, OPEN_DIR)
+    except OSError as err:
+        out.append(
+            f"refused {path}: it cannot be opened as a directory without following "
+            f"a link ({err.strerror}); nothing under it was touched"
+        )
+        return False
+    try:
+        return _clean_open_dir(dir_fd, path, out)
+    finally:
+        os.close(dir_fd)
+
+
+def _clean_open_dir(dir_fd: int, path: Path, out: list[str]) -> bool:
+    reason = ownership_refusal(os.fstat(dir_fd))
+    if reason is not None:
+        out.append(f"refused {path}: {reason}; nothing under it was touched")
+        return False
+    changed = f"{path} changed while cleaning; nothing more removed"
+    try:
+        names = sorted(os.listdir(dir_fd))
+    except OSError as err:
+        out.append(f"could not list {path}: {err}")
+        return False
     ok = True
-    kept: list[Path] = []
-    for entry in sorted(path.iterdir()):
-        if in_flight(entry):
-            kept.append(entry)
+    kept: list[str] = []
+    for name in names:
+        if not _same(dir_fd, path):
+            out.append(changed)
+            return False
+        if _in_flight_at(dir_fd, name):
+            kept.append(name)
             continue
-        if entry.is_symlink() or not entry.is_dir():
+        try:
+            st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError as err:
+            out.append(f"could not read {path / name}: {err}")
+            ok = False
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            if sys.version_info >= (3, 11):
+                done = _rmtree(name, out, dir_fd=dir_fd, base=path)
+            else:  # checked by _same just above
+                done = _rmtree(path / name, out)
+            ok = ok and done
+            continue
+        if stat.S_ISLNK(st.st_mode):
             # `pytest-current` points at the newest session: kept while that
             # session runs. Only the link is removed, never its target.
-            if entry.is_symlink() and in_flight(path / entry.readlink().name):
-                continue
             try:
-                entry.unlink()
-            except OSError as err:
-                out.append(f"could not remove {entry}: {err}")
-                ok = False
-        elif not _rmtree(entry, out):
+                target = os.readlink(name, dir_fd=dir_fd)
+            except OSError:
+                target = ""
+            if target and _in_flight_at(dir_fd, Path(target).name):
+                continue
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except OSError as err:
+            out.append(f"could not remove {path / name}: {err}")
             ok = False
-    for session in kept:
-        out.append(f"left {session}: a test session is still running (fresh .lock)")
-    if not any(path.iterdir()):
-        path.rmdir()
+    for name in kept:
+        out.append(f"left {path / name}: a test session may still be running (fresh .lock)")
+    if not _same(dir_fd, path):
+        out.append(changed)
+        return False
+    try:
+        if not os.listdir(dir_fd):
+            path.rmdir()
+    except OSError as err:
+        out.append(f"could not remove {path}: {err}")
+        ok = False
     return ok
 
 
@@ -284,7 +368,11 @@ def uv_prune(run: Runner, out: list[str]) -> bool:
 
 
 def main(argv: Sequence[str] | None = None, run: Runner = subprocess.run) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog="The pytest temp dir is cleaned on POSIX only (Linux, macOS): its "
+        "ownership check needs os.getuid. Do not run this while tests run.",
+    )
     parser.add_argument("--repo", type=Path, default=ROOT, help="the checkout (default: this one)")
     parser.add_argument("--temproot", type=Path, help="pytest's temp root (default: as pytest)")
     parser.add_argument("--user", help="the user in pytest-of-<user> (default: as pytest)")
@@ -294,6 +382,12 @@ def main(argv: Sequence[str] | None = None, run: Runner = subprocess.run) -> int
     repo: Path = args.repo.resolve()
     pytest_dir = pytest_temp_root(args.temproot, args.user)
     notes: list[str] = []
+    if not shutil.rmtree.avoids_symlink_attacks:
+        print(
+            "note: shutil.rmtree on this platform does not guard against symlink "
+            "races (avoids_symlink_attacks is False)",
+            file=sys.stderr,
+        )
     rows = []
     ok = True
     before = tree_size(pytest_dir)
