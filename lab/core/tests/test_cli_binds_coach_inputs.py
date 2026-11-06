@@ -258,7 +258,9 @@ def test_a_log_by_another_character_warns_cross_capture(record: Path) -> None:
         f"{LOG_CASTER}: the findings below may be about another character."
     )
     lines = ok("binds", "coach", "--character", CHARACTER).stdout.splitlines()
-    assert lines[0].startswith(f"Combat log: Logs/{LOG_NAME} (the newest) (79 lines;")
+    assert lines[0].startswith(
+        f"Combat log: Logs/{LOG_NAME} (the newest, whichever character wrote it; choose another with --log) (79 lines;"
+    )
     assert lines[1] == f"  Warning: {rep.log.warning}"
 
 
@@ -521,7 +523,19 @@ def test_a_judged_list_says_rare_spells_can_be_missing_constructed() -> None:
 def test_cannot_judge_counts_agree_in_text_and_json(record: Path) -> None:
     rep = report("--character", CHARACTER)
     text = ok("binds", "coach", "--character", CHARACTER).stdout
-    assert f"Cannot judge: {len(rep.cannot_judge)}\n" in text
+    # Each report the coach cannot judge says so on its own count line
+    # (M16-16): "withheld" for the sample, "cannot judge (...)" otherwise.
+    heading = {
+        "frequent-on-high-cost": "Frequent spells on high-cost keys: ",
+        "cast-without-bind": "Spells cast with no bind: ",
+        "bound-never-cast": "Binds to spells not cast in this log",
+    }
+    lines = text.splitlines()
+    assert rep.cannot_judge
+    for c in rep.cannot_judge:
+        (line,) = [x for x in lines if x.startswith(heading[c.report])]
+        assert ": withheld," in line or ": cannot judge (" in line, line
+    assert "Cannot judge: " not in text
 
 
 def test_no_casts_heading_has_no_sample_words_constructed(flavor: Path, record: Path) -> None:
@@ -533,7 +547,11 @@ def test_no_casts_heading_has_no_sample_words_constructed(flavor: Path, record: 
         offset=5,
     )
     text = ok("binds", "coach", "--character", CHARACTER, "--log", "WoWCombatLog-a.txt").stdout
-    assert "Binds to spells not cast in this log: 0\n" in text
+    # "Cannot judge", not a misleading 0 (M16-16).
+    assert (
+        "Binds to spells not cast in this log: cannot judge (the log has none of your casts)\n"
+        in text
+    )
     assert "judged from" not in text
 
 

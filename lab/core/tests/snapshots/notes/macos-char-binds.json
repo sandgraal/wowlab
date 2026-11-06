@@ -1,0 +1,83 @@
+{
+  "flavor_folder": "_classic_beta_",
+  "account": "90000001#6",
+  "character": "1/Labchard-Labrealmg",
+  "chosen_by": "latest",
+  "files": [
+    {
+      "scope": "account",
+      "path": "WTF/Account/90000001#6/bindings-cache.wtf",
+      "mtime_ns": 1700000000000000000,
+      "bind_lines": 3,
+      "unknown_lines": 0,
+      "note": "(account bindings; a character with character-specific key bindings on uses its own file instead [verify]. The server can replace this file at login when binding sync is on; see wowlab doctor)"
+    },
+    {
+      "scope": "character",
+      "path": null,
+      "mtime_ns": null,
+      "bind_lines": 0,
+      "unknown_lines": 0,
+      "note": "(a character has its own bindings-cache.wtf only when character-specific key bindings are on [verify]; without one it uses the account bindings)"
+    }
+  ],
+  "record_file": "WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua",
+  "record_mtime_ns": 1700000000000000000,
+  "record_schema": 1,
+  "record_error": null,
+  "keys": [
+    {
+      "key": "Q",
+      "command": "MULTIACTIONBAR1BUTTON1",
+      "slot": 61,
+      "page_note": "bottom left bar button 1, page 6",
+      "holds": null,
+      "does": "cannot place: no action-bar record",
+      "sources": [
+        "account file"
+      ],
+      "agreement": null,
+      "disagrees": false,
+      "note": null
+    },
+    {
+      "key": "BUTTON3",
+      "command": "MULTIACTIONBAR1BUTTON2",
+      "slot": 62,
+      "page_note": "bottom left bar button 2, page 6",
+      "holds": null,
+      "does": "cannot place: no action-bar record",
+      "sources": [
+        "account file"
+      ],
+      "agreement": null,
+      "disagrees": false,
+      "note": null
+    },
+    {
+      "key": "E",
+      "command": "MULTIACTIONBAR1BUTTON3",
+      "slot": 63,
+      "page_note": "bottom left bar button 3, page 6",
+      "holds": null,
+      "does": "cannot place: no action-bar record",
+      "sources": [
+        "account file"
+      ],
+      "agreement": null,
+      "disagrees": false,
+      "note": null
+    }
+  ],
+  "unreached_slots": [],
+  "commands_left_out": null,
+  "keys_left_out": null,
+  "left_out_note": null,
+  "cannot_place": "no action-bar record (schema 1 has none; install or update the lab-addon with the client closed (wowlab addon install lab), log in on this character, then log out or /reload; schema 3 is needed)",
+  "cannot_compare": "no bindings record (schema 1 has none; install or update the lab-addon with the client closed (wowlab addon install lab), log in on this character, then log out or /reload; schema 3 is needed)",
+  "notes": [
+    "A key reaches an action slot through the default UI's action buttons: button n of the bar showing page p is slot (p - 1) x 12 + n [verify]. The main bar is read at page 1 only, the page shown with no form, stance or stealth active; the pages shown by paging, a form, stance or stealth, or a possess, override or vehicle bar [verify], the pet and stance bars and an addon's buttons are not followed.",
+    "Without a bindings record only the files' lines are listed; a file may leave out keys at the client's defaults [verify], so keys not listed may still be bound.",
+    "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress."
+  ]
+}

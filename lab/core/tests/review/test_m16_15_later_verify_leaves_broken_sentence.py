@@ -38,16 +38,25 @@ def test_first_marker_reads_in_words_positive_control(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pc.sandbox(tmp_path, monkeypatch, "")
-    out = runner.invoke(cli.app, ["macros", "check", "--character", CHAR])
+    # The length note is behind --notes since M16-16; wide, so it does not wrap.
+    out = runner.invoke(
+        cli.app, ["macros", "check", "--character", CHAR, "--notes"], terminal_width=10_000
+    )
     assert out.exit_code == 0, out.stderr
-    assert "characters or bytes is (not yet confirmed)" in out.stdout
+    # The sentence is built so the marker reads as words (domain review of
+    # M16-16, D7): "... in characters or in bytes (not yet confirmed)."
+    assert "counted in characters or in bytes (not yet confirmed)." in out.stdout
 
 
 def test_no_sentence_is_left_without_its_predicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pc.sandbox(tmp_path, monkeypatch, "")
-    out = runner.invoke(cli.app, ["char", "macros", "--character", CHAR])
+    # The later markers are in the standing notes since M16-16: --notes, and
+    # wide, so a sentence is one line for the pattern below.
+    out = runner.invoke(
+        cli.app, ["char", "macros", "--character", CHAR, "--notes"], terminal_width=10_000
+    )
     assert out.exit_code == 0, out.stderr
     dangling = [line for line in out.stdout.splitlines() if DANGLING.search(line)]
     assert dangling == [], dangling

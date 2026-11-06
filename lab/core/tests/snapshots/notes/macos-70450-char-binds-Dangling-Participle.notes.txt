@@ -1,0 +1,173 @@
+exit 0
+Character: 1/Dangling-Participle in account 90000001#6
+Record: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
+  (schema 4), written <local time> (the file's modification time:
+  the character as of that save)
+Account bindings: WTF/Account/90000001#6/bindings-cache.wtf (3 bind lines), written <local time>
+Character bindings: no bindings-cache.wtf
+Keys: 130 (main-bar keys at page 1, with no form, stance or stealth; 3 in a file
+  and the record, 0 only in a file, 0 only in the record with a file line
+  putting the key on another command, 127 only in the record with no file line
+  for the key, 0 cleared)
+  1                ACTIONBUTTON1                 1  casts Fireball (Rank 2, spell 143)  (record only (no file line for this key))
+  2                ACTIONBUTTON2                 2  casts Arcane Missiles (Rank 1, spell 5143)  (record only (no file line for this key))
+  3                ACTIONBUTTON3                 3  casts Frostbolt (Rank 2, spell 205)  (record only (no file line for this key))
+  4                ACTIONBUTTON4                 4  casts Fire Blast (Rank 1, spell 2136)  (record only (no file line for this key))
+  5                ACTIONBUTTON5                 5  casts Blood Fury (Racial, spell 20572)  (record only (no file line for this key))
+  6                ACTIONBUTTON6                 6  uses item 1251  (record only (no file line for this key))
+  7                ACTIONBUTTON7                 7  empty slot (nothing recorded in it)  (record only (no file line for this key))
+  8                ACTIONBUTTON8                 8  empty slot (nothing recorded in it)  (record only (no file line for this key))
+  9                ACTIONBUTTON9                 9  empty slot (nothing recorded in it)  (record only (no file line for this key))
+  0                ACTIONBUTTON10               10  empty slot (nothing recorded in it)  (record only (no file line for this key))
+  NUMPADPLUS       ACTIONBUTTON11               11  uses item 5350  (record only (no file line for this key))
+  NUMPADMINUS      ACTIONBUTTON12               12  uses item 5349  (record only (no file line for this key))
+  Q                MULTIACTIONBAR1BUTTON1       61  casts Arcane Intellect (Rank 1, spell 1459)  (account file and record agree)
+  BUTTON3          MULTIACTIONBAR1BUTTON2       62  casts Polymorph (Rank 1, spell 118)  (account file and record agree)
+  E                MULTIACTIONBAR1BUTTON3       63  casts Frost Armor (Rank 1, spell 168)  (account file and record agree)
+  SHIFT-1          ACTIONPAGE1                   -  shows main-bar page 1  (record only (no file line for this key))
+  SHIFT-2          ACTIONPAGE2                   -  shows main-bar page 2  (record only (no file line for this key))
+  SHIFT-3          ACTIONPAGE3                   -  shows main-bar page 3  (record only (no file line for this key))
+  SHIFT-4          ACTIONPAGE4                   -  shows main-bar page 4  (record only (no file line for this key))
+  SHIFT-5          ACTIONPAGE5                   -  shows main-bar page 5  (record only (no file line for this key))
+  SHIFT-6          ACTIONPAGE6                   -  shows main-bar page 6  (record only (no file line for this key))
+  CTRL-V           ALLNAMEPLATES                 -  a binding command, not an action slot  (record only (no file line for this key))
+  F                ASSISTTARGET                  -  a binding command, not an action slot  (record only (no file line for this key))
+  T                ATTACKTARGET                  -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-1           BONUSACTIONBUTTON1            -  pet bar button 1 (not followed) (not yet confirmed)  (record only (no file line for this key))
+  CTRL-0           BONUSACTIONBUTTON10           -  pet bar button 10 (not followed)  (record only (no file line for this key))
+  CTRL-2           BONUSACTIONBUTTON2            -  pet bar button 2 (not followed)  (record only (no file line for this key))
+  CTRL-3           BONUSACTIONBUTTON3            -  pet bar button 3 (not followed)  (record only (no file line for this key))
+  CTRL-4           BONUSACTIONBUTTON4            -  pet bar button 4 (not followed)  (record only (no file line for this key))
+  CTRL-5           BONUSACTIONBUTTON5            -  pet bar button 5 (not followed)  (record only (no file line for this key))
+  CTRL-6           BONUSACTIONBUTTON6            -  pet bar button 6 (not followed)  (record only (no file line for this key))
+  CTRL-7           BONUSACTIONBUTTON7            -  pet bar button 7 (not followed)  (record only (no file line for this key))
+  CTRL-8           BONUSACTIONBUTTON8            -  pet bar button 8 (not followed)  (record only (no file line for this key))
+  CTRL-9           BONUSACTIONBUTTON9            -  pet bar button 9 (not followed)  (record only (no file line for this key))
+  MOUSEWHEELUP     CAMERAZOOMIN                  -  a binding command, not an action slot  (record only (no file line for this key))
+  MOUSEWHEELDOWN   CAMERAZOOMOUT                 -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-PAGEDOWN   CHATBOTTOM                    -  a binding command, not an action slot  (record only (no file line for this key))
+  PAGEDOWN         CHATPAGEDOWN                  -  a binding command, not an action slot  (record only (no file line for this key))
+  PAGEUP           CHATPAGEUP                    -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-SHIFT-PAGEDOWN COMBATLOGBOTTOM               -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-PAGEDOWN    COMBATLOGPAGEDOWN             -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-PAGEUP      COMBATLOGPAGEUP               -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-V          FRIENDNAMEPLATES              -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-C          ITEMCOMPARISONCYCLING         -  a binding command, not an action slot  (record only (no file line for this key))
+  NUMPAD0          JUMP                          -  a binding command, not an action slot  (record only (no file line for this key))
+  SPACE            JUMP                          -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL--           MASTERVOLUMEDOWN              -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-=           MASTERVOLUMEUP                -  a binding command, not an action slot  (record only (no file line for this key))
+  DOWN             MOVEBACKWARD                  -  a binding command, not an action slot  (record only (no file line for this key))
+  S                MOVEBACKWARD                  -  a binding command, not an action slot  (record only (no file line for this key))
+  UP               MOVEFORWARD                   -  a binding command, not an action slot  (record only (no file line for this key))
+  W                MOVEFORWARD                   -  a binding command, not an action slot  (record only (no file line for this key))
+  V                NAMEPLATES                    -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-DOWN       NEXTACTIONPAGE                -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-MOUSEWHEELDOWN NEXTACTIONPAGE                -  a binding command, not an action slot  (record only (no file line for this key))
+  END              NEXTVIEW                      -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-B          OPENALLBAGS                   -  a binding command, not an action slot  (record only (no file line for this key))
+  ENTER            OPENCHAT                      -  a binding command, not an action slot  (record only (no file line for this key))
+  /                OPENCHATSLASH                 -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-T          PETATTACK                     -  a binding command, not an action slot  (record only (no file line for this key))
+  DELETE           PITCHDOWN                     -  a binding command, not an action slot  (record only (no file line for this key))
+  INSERT           PITCHUP                       -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-MOUSEWHEELUP PREVIOUSACTIONPAGE            -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-UP         PREVIOUSACTIONPAGE            -  a binding command, not an action slot  (record only (no file line for this key))
+  HOME             PREVVIEW                      -  a binding command, not an action slot  (record only (no file line for this key))
+  R                REPLY                         -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-R          REPLY2                        -  a binding command, not an action slot  (record only (no file line for this key))
+  PRINTSCREEN      SCREENSHOT                    -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-F1          SHAPESHIFTBUTTON1             -  stance bar button 1 (not followed)  (record only (no file line for this key))
+  CTRL-F10         SHAPESHIFTBUTTON10            -  stance bar button 10 (not followed)  (record only (no file line for this key))
+  CTRL-F2          SHAPESHIFTBUTTON2             -  stance bar button 2 (not followed)  (record only (no file line for this key))
+  CTRL-F3          SHAPESHIFTBUTTON3             -  stance bar button 3 (not followed)  (record only (no file line for this key))
+  CTRL-F4          SHAPESHIFTBUTTON4             -  stance bar button 4 (not followed)  (record only (no file line for this key))
+  CTRL-F5          SHAPESHIFTBUTTON5             -  stance bar button 5 (not followed)  (record only (no file line for this key))
+  CTRL-F6          SHAPESHIFTBUTTON6             -  stance bar button 6 (not followed)  (record only (no file line for this key))
+  CTRL-F7          SHAPESHIFTBUTTON7             -  stance bar button 7 (not followed)  (record only (no file line for this key))
+  CTRL-F8          SHAPESHIFTBUTTON8             -  stance bar button 8 (not followed)  (record only (no file line for this key))
+  CTRL-F9          SHAPESHIFTBUTTON9             -  stance bar button 9 (not followed)  (record only (no file line for this key))
+  X                SITORSTAND                    -  a binding command, not an action slot  (record only (no file line for this key))
+  A                STRAFELEFT                    -  a binding command, not an action slot  (record only (no file line for this key))
+  D                STRAFERIGHT                   -  a binding command, not an action slot  (record only (no file line for this key))
+  G                TARGETLASTHOSTILE             -  a binding command, not an action slot  (record only (no file line for this key))
+  TAB              TARGETNEARESTENEMY            -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-TAB         TARGETNEARESTFRIEND           -  a binding command, not an action slot  (record only (no file line for this key))
+  F2               TARGETPARTYMEMBER1            -  a binding command, not an action slot  (record only (no file line for this key))
+  F3               TARGETPARTYMEMBER2            -  a binding command, not an action slot  (record only (no file line for this key))
+  F4               TARGETPARTYMEMBER3            -  a binding command, not an action slot  (record only (no file line for this key))
+  F5               TARGETPARTYMEMBER4            -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-F2         TARGETPARTYPET1               -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-F3         TARGETPARTYPET2               -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-F4         TARGETPARTYPET3               -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-F5         TARGETPARTYPET4               -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-F1         TARGETPET                     -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-TAB        TARGETPREVIOUSENEMY           -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-SHIFT-TAB   TARGETPREVIOUSFRIEND          -  a binding command, not an action slot  (record only (no file line for this key))
+  F1               TARGETSELF                    -  a binding command, not an action slot  (record only (no file line for this key))
+  BUTTON4          TOGGLEAUTORUN                 -  a binding command, not an action slot  (record only (no file line for this key))
+  NUMLOCK          TOGGLEAUTORUN                 -  a binding command, not an action slot  (record only (no file line for this key))
+  B                TOGGLEBACKPACK                -  a binding command, not an action slot  (record only (no file line for this key))
+  F12              TOGGLEBACKPACK                -  a binding command, not an action slot  (record only (no file line for this key))
+  F8               TOGGLEBAG1                    -  a binding command, not an action slot  (record only (no file line for this key))
+  F9               TOGGLEBAG2                    -  a binding command, not an action slot  (record only (no file line for this key))
+  F10              TOGGLEBAG3                    -  a binding command, not an action slot  (record only (no file line for this key))
+  F11              TOGGLEBAG4                    -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-M          TOGGLEBATTLEFIELDMINIMAP      -  a binding command, not an action slot  (record only (no file line for this key))
+  C                TOGGLECHARACTER0              -  a binding command, not an action slot  (record only (no file line for this key))
+  U                TOGGLECHARACTER2              -  a binding command, not an action slot  (record only (no file line for this key))
+  H                TOGGLECHARACTER4              -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-P          TOGGLECOLLECTIONS             -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-R           TOGGLEFPS                     -  a binding command, not an action slot  (record only (no file line for this key))
+  ESCAPE           TOGGLEGAMEMENU                -  a binding command, not an action slot  (record only (no file line for this key))
+  I                TOGGLEGROUPFINDER             -  a binding command, not an action slot  (record only (no file line for this key))
+  J                TOGGLEGUILDTAB                -  a binding command, not an action slot  (record only (no file line for this key))
+  Y                TOGGLELEGACYSYSTEM            -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-M           TOGGLEMUSIC                   -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-I          TOGGLEPETBOOK                 -  a binding command, not an action slot  (record only (no file line for this key))
+  K                TOGGLEPROFESSIONBOOK          -  a binding command, not an action slot  (record only (no file line for this key))
+  L                TOGGLEQUESTLOG                -  a binding command, not an action slot  (record only (no file line for this key))
+  NUMPADDIVIDE     TOGGLERUN                     -  a binding command, not an action slot  (record only (no file line for this key))
+  Z                TOGGLESHEATH                  -  a binding command, not an action slot  (record only (no file line for this key))
+  O                TOGGLESOCIAL                  -  a binding command, not an action slot  (record only (no file line for this key))
+  CTRL-S           TOGGLESOUND                   -  a binding command, not an action slot  (record only (no file line for this key))
+  P                TOGGLESPELLBOOK               -  a binding command, not an action slot  (record only (no file line for this key))
+  N                TOGGLETALENTS                 -  a binding command, not an action slot  (record only (no file line for this key))
+  ALT-Z            TOGGLEUI                      -  a binding command, not an action slot  (record only (no file line for this key))
+  M                TOGGLEWORLDMAP                -  a binding command, not an action slot  (record only (no file line for this key))
+  SHIFT-SPACE      TOGGLEWORLDSTATESCORES        -  a binding command, not an action slot  (record only (no file line for this key))
+  LEFT             TURNLEFT                      -  a binding command, not an action slot  (record only (no file line for this key))
+  RIGHT            TURNRIGHT                     -  a binding command, not an action slot  (record only (no file line for this key))
+  NUMPAD5          VEHICLEEXIT                   -  a binding command, not an action slot  (record only (no file line for this key))
+Filled slots no key reaches on the page its bar shows by default: 5
+  slot  64  casts Shatter Curse (Racial, spell 1299026)  (bottom left bar button 4, page 6)
+  slot  66  runs a macro that shows spell 1459 now; the record keeps no macro name or body  (bottom left bar button 6, page 6)
+  slot  69  casts Comprehend Scroll (Comprehension, spell 1296017)  (bottom left bar button 9, page 6)
+  slot  71  casts Conjure Water (Rank 1, spell 5504)  (bottom left bar button 11, page 6)
+  slot  72  casts Conjure Food (Rank 1, spell 587)  (bottom left bar button 12, page 6)
+Left out of the bindings record, counted with no list: 1 command not named in
+  plain upper case (a key bound straight to a spell, macro, item or click may be
+  one), and 0 keys not printable ASCII.
+Notes:
+  - Account bindings: a character with character-specific key bindings on uses
+    its own file instead. The server can replace this file at login when binding
+    sync is on; see wowlab doctor.
+  - Character bindings: a character has its own bindings-cache.wtf only when
+    character-specific key bindings are on; without one it uses the account
+    bindings.
+  - Only in the record, no file line for the key: the file may hold only the
+    changes from the client's defaults, or may not have been rewritten since the
+    key was set.
+  - A key reaches an action slot through the default UI's action buttons: button
+    n of the bar showing page p is slot (p - 1) x 12 + n. The main bar is read
+    at page 1 only, the page shown with no form, stance or stealth active; the
+    pages shown by paging, a form, stance or stealth, or a possess, override or
+    vehicle bar, the pet and stance bars and an addon's buttons are not
+    followed.
+  - The bindings files are what the client last wrote; the record is what
+    GetBindingKey returned at the lab-addon's last save. Neither is taken as the
+    truth: each row names the sources that have that key on that command, and
+    says where they disagree.
+  - WowLab.lua is written at logout, /reload or a clean exit (a crash writes
+    nothing): this is the character as of that save, not the session in
+    progress.
