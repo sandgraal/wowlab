@@ -1700,7 +1700,17 @@ class _Transaction:
             prefix = place.folder + "/"
         else:
             prefix = _into_prefix(manifest, into, place)
-            mapping = _account_mapping(manifest, prefix, into, place)
+            touched: set[str] | None = None
+            if paths is not None:
+                if isinstance(paths, str | bytes):
+                    raise GuardError("paths is an iterable of paths, not a single string")
+                paths = list(paths)
+                touched = {
+                    name
+                    for rel in paths
+                    if isinstance(rel, str) and (name := _account_of(rel.split("/"))) is not None
+                }
+            mapping = _account_mapping(manifest, prefix, into, place, touched=touched)
         wanted: list[tuple[str, Entry | None]] = []
         if paths is None:
             for entry in manifest.entries:
@@ -2402,11 +2412,49 @@ def _names(names: Iterable[str]) -> str:
     return ", ".join(listed) if listed else "none"
 
 
+def _refuse_others_on_target_accounts(
+    manifest: Manifest,
+    others: set[str],
+    target: dict[str, bool],
+    place: _Place,
+    touched: set[str] | None,
+) -> None:
+    """A folder the snapshot holds under `WTF/Account/` that is no account
+    goes back under its own name. Where the target has an account folder of
+    that name (compared case-folded, whatever the file system does with
+    case), that would write into an account no mapping named, or merge two
+    source folders into the one the automatic mapping chose: refused. With
+    `paths=`, only the folders the named paths lie below (`touched`) count,
+    so naming the other files is a way to restore without that folder."""
+    target_folded = {_fold(name): name for name in target}
+    for other in sorted(others):
+        if not _not_saved_variables(other):
+            continue  # the client's own folder, never an account
+        if touched is not None and other not in touched:
+            continue
+        hit = target_folded.get(_fold(other))
+        if hit is not None:
+            raise GuardError(
+                f"snapshot {manifest.id} holds {other!r} under WTF/Account/, a folder that is "
+                f"no account (an old-style folder with no character folder in it), and "
+                f"{place.flavor_dir} has the account folder {hit!r}; restoring it under its "
+                "own name would write into that account, so nothing is restored. Restore "
+                "without it by naming the files you want with --paths, or rename or remove "
+                f"{hit!r} in the target first"
+            )
+
+
 def _account_mapping(
-    manifest: Manifest, prefix: str, into: Target, place: _Place
+    manifest: Manifest,
+    prefix: str,
+    into: Target,
+    place: _Place,
+    *,
+    touched: set[str] | None = None,
 ) -> dict[str, str]:
     """The account folders a restore into `place` maps (§6.10 as amended
-    2026-10-22). Refusals name the accounts; nothing has been written."""
+    2026-10-22). Refusals name the accounts; nothing has been written.
+    `touched`: with `paths=`, the folders under `WTF/Account/` they name."""
     accounts, others = _source_accounts(manifest, prefix)
     given = None if into.accounts is None else dict(into.accounts)
     if not accounts:
@@ -2414,6 +2462,10 @@ def _account_mapping(
             raise GuardError(
                 f"snapshot {manifest.id} holds no account folder, but the account mapping "
                 f"names {_names(given)}; restore it without a mapping"
+            )
+        if others:
+            _refuse_others_on_target_accounts(
+                manifest, others, _target_accounts(place), place, touched
             )
         return {}
     target = _target_accounts(place)
@@ -2451,23 +2503,7 @@ def _account_mapping(
                 "snapshot holds as a folder that is no account"
             )
         mapping = given
-    # A folder the snapshot holds that is no account goes back under its own
-    # name. Where the target has an account folder of that name (compared
-    # case-folded, whatever the file system does with case), that would
-    # write into an account the mapping never named, or merge two source
-    # folders into the one the automatic mapping chose: refused.
-    target_folded = {_fold(name): name for name in target}
-    for other in sorted(others):
-        if not _not_saved_variables(other):
-            continue  # the client's own folder, never an account
-        hit = target_folded.get(_fold(other))
-        if hit is not None:
-            raise GuardError(
-                f"snapshot {manifest.id} holds {other!r} under WTF/Account/, a folder that is "
-                f"no account, and {place.flavor_dir} has the account folder {hit!r}; "
-                "restoring it under its own name would write into that account, so nothing "
-                "is restored"
-            )
+    _refuse_others_on_target_accounts(manifest, others, target, place, touched)
     linked = {_fold(name) for name, is_link in target.items() if is_link}
     for source, dest in mapping.items():
         if _fold(dest) in linked:

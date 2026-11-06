@@ -276,3 +276,36 @@ def test_snap_restore_into_takes_a_short_reference_and_a_pre_write_snapshot_cons
     pre = SnapshotStore().show(guard.history()[-1].snapshot_id)
     assert pre.kind == "pre-write"
     assert pre.flavor_folder == LAUNCH
+
+
+def test_snap_restore_into_clash_with_a_logged_in_account_and_paths_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """Logging in on the new folder can make a target account of the name of
+    a folder the snapshot holds as no account. The refusal says to use
+    --paths, and --paths restores the rest."""
+    legacy = flavor / "WTF" / "Account" / "LEGACYACCT"
+    legacy.mkdir()
+    (legacy / "bindings-cache.wtf").write_bytes(b"bind Q constructed-legacy\n")
+    a = _snapshot()
+    launch = root / LAUNCH
+    flavor.rename(launch)
+    saved = _later_session(launch)
+    target_legacy = launch / "WTF" / "Account" / "LEGACYACCT"
+    (target_legacy / "bindings-cache.wtf").write_bytes(b"bind Q constructed-login\n")
+    # The login made a character folder there: now it is an account folder.
+    character = target_legacy / "Labrealm" / "Labchar"
+    character.mkdir(parents=True)
+    (character / "macros-cache.txt").write_bytes(b"constructed: the login's macros\n")
+    before = _state(root)
+    mapping = ["--map-account", f"{ACCOUNT}={ACCOUNT}"]
+
+    result = run("snap", "restore", a.id, "--into-flavor", LAUNCH, *mapping, "--yes")
+    said = _plain(result.stdout + result.stderr)
+    assert result.exit_code != 0, said
+    assert "LEGACYACCT" in said and "--paths" in said, said
+    assert _state(root) == before
+
+    ok("snap", "restore", a.id, "--into-flavor", LAUNCH, *mapping, "--paths", CONFIG, "--yes")
+    assert (launch / CONFIG).read_bytes() == saved
+    assert (target_legacy / "bindings-cache.wtf").read_bytes() == b"bind Q constructed-login\n"

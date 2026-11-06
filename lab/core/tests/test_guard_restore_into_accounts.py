@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_guard_restore_into_others import LEGACY, STRAY_BYTES, legacy_account, stray
 from test_guard_restore_into_target import (
     DST_ACCOUNT,
     SOURCE_FOLDER,
@@ -105,3 +106,64 @@ def test_constructed_mapping_changed_after_validation_is_checked_again(
     ):
         tx.restore(snapshot_id, into=named)
     assert strict_state(world) == before
+
+
+# ─── a non-account folder that clashes with a target account: the way forward ─
+
+
+def _clash(tmp_path: Path, store: SnapshotStore, *, with_account: bool) -> tuple[Any, str, Path]:
+    """A snapshot holding a folder that is no account (`LEGACYACCT`, files
+    only), and a target where that name is a real account."""
+    world = tmp_path / "world"
+    files = source_files(SRC_ACCOUNT) if with_account else source_files()
+    files[stray(LEGACY)] = STRAY_BYTES
+    source = make_install(world / "Source WoW", SOURCE_FOLDER, files)
+    snapshot_id = snapshot_of(store, source)
+    target = make_install(
+        world / "Target WoW",
+        TARGET_FOLDER,
+        {**target_files(DST_ACCOUNT), **legacy_account(LEGACY)},
+    )
+    return target, snapshot_id, world
+
+
+@pytest.mark.parametrize(
+    "with_account", [True, False], ids=["constructed-mapped", "constructed-accountless"]
+)
+def test_constructed_clash_refusal_says_what_to_do_and_paths_avoid_it(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, with_account: bool
+) -> None:
+    target, snapshot_id, world = _clash(tmp_path, store, with_account=with_account)
+    accounts = {SRC_ACCOUNT: DST_ACCOUNT} if with_account else None
+    legacy = target.path / "WTF" / "Account" / LEGACY
+    legacy_before = {p: p.read_bytes() for p in legacy.rglob("*") if p.is_file()}
+    before = strict_state(world)
+
+    # The whole restore, and a named path below that folder, are refused; the
+    # whole restore's refusal says what the owner can do.
+    for paths in (None, [stray(LEGACY)]):
+        with (
+            guard.transaction(target, label="clash", store=store.path) as tx,
+            pytest.raises(guard.GuardError) as refused,
+        ):
+            tx.restore(snapshot_id, paths=paths, into=into(guard, target, accounts))
+        assert LEGACY in str(refused.value)
+        if paths is None:
+            assert "--paths" in str(refused.value), str(refused.value)
+            assert "rename or remove" in str(refused.value), str(refused.value)
+        assert strict_state(world) == before
+
+    # Naming files that do not lie below that folder restores them.
+    named = ["WTF/Config.wtf"]
+    if with_account:
+        named.append(f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf")
+    with guard.transaction(target, label="around the clash", store=store.path) as tx:
+        tx.restore(snapshot_id, paths=named, into=into(guard, target, accounts))
+    assert (target.path / "WTF/Config.wtf").read_bytes() == source_files()["WTF/Config.wtf"]
+    if with_account:
+        landed = target.path / f"WTF/Account/{DST_ACCOUNT}/bindings-cache.wtf"
+        assert (
+            landed.read_bytes()
+            == source_files(SRC_ACCOUNT)[f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf"]
+        )
+    assert {p: p.read_bytes() for p in legacy.rglob("*") if p.is_file()} == legacy_before

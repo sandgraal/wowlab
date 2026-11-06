@@ -349,7 +349,6 @@ def refused_accountless(
 
 
 @DRY_RUN
-@pytest.mark.xfail(strict=True, reason="M16-03 round 2: snapshot with no account folder")
 def test_constructed_accountless_snapshot_stray_folder_matching_a_target_account_is_refused(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, dry_run: bool
 ) -> None:
@@ -408,7 +407,6 @@ def stray_folder(source: Flavor) -> str:
     return name
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 round 2: snapshot with no account folder")
 def test_constructed_accountless_profile_plan_into_a_target_account_is_refused(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
 ) -> None:
