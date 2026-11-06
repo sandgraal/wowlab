@@ -1460,7 +1460,7 @@ Inputs are constructed and labelled. No flavor name appears in library-facing as
 
 ---
 
-## [x] M16-03 — [IMPL] `snap restore --into-flavor/--into-root`, `profile apply --into-flavor`
+## [ ] M16-03 — [IMPL] `snap restore --into-flavor/--into-root`, `profile apply --into-flavor`
 **Size:** M · **Depends on:** M16-03T · **Sources:** raider:F1, qa:F1 (EV-01)
 
 `guard.tx.restore(..., into=Target)` per §18.1 item 1, the CLI options, and the account-folder mapping option (`--map-account A=B`). The plan names both folders and every mapped account folder. The command is reachable from the UI through the existing dry-run confirm shape, with no UI change.
