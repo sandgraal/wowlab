@@ -1040,7 +1040,7 @@ Moved out of M13-59's acceptance by the conductor's ruling of 2026-10-18: the re
 
 ---
 
-## [ ] M13-69 — `filemap gaps` and symlink entry ids classify without the account list
+## [x] M13-69 — `filemap gaps` and symlink entry ids classify without the account list
 **Size:** XS · **Depends on:** M13-50
 
 Found 2026-10-18 in the code review of #280 (M13-50). `gaps.py` and `Symlink.entry_id` still classify through `fm.classify` alone, so below a folder of `WTF/Account/` that `layout` does not take as an account (the client's `SavedVariables/`, a leftover old-style folder) a file whose name matches an account row (`config-cache.wtf`, a nested `SavedVariables/<x>.lua`) still gets that row there, while `explain`, `tree --explain` and the walk give it none since M13-50: `filemap gaps` says "every path the walk reached has a row" where `explain` says "no file-map row". For what the client writes there (`Blizzard_*.lua` and `.lua.bak`) the two agree. Make both honour the walk's `not_accounts` as `Layout.classify` does (`Symlink.entry_id` calls `fm.classify` at `layout.py` ~682; `gaps.py` ~382 calls `fm.matches` and takes the first non-catch-all row, so it needs the same exclusion, not a `_pick` call); labelled constructed test with the client's folder holding a stray `config-cache.wtf`; `filemap gaps` output on the install fixtures byte-identical to `main`.
@@ -1559,7 +1559,7 @@ Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: 
 
 ---
 
-## [ ] M16-09 — Snapshot kinds, restore hints and short references
+## [x] M16-09 — Snapshot kinds, restore hints and short references
 **Size:** S · **Depends on:** M16-09T · **Sources:** raider:F2, newcomer:F12 (EV-08)
 
 §18.1 item 3.
@@ -1602,7 +1602,7 @@ The plan lists, under a "left alone" heading, the files under the snapshot's sub
 
 ---
 
-## [ ] M16-12 — `sv merge`: new rulings, every removal disclosed
+## [x] M16-12 — `sv merge`: new rulings, every removal disclosed
 **Size:** M · **Depends on:** nothing · **Sources:** addon-author:F1, F2, F13 (EV-11; owner Q8)
 
 §18.1 item 3. These change §13.4 (as a dated amendment in the PR):
@@ -1654,7 +1654,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-16 — Notes behind `--notes`; answers first
+## [x] M16-16 — Notes behind `--notes`; answers first
 **Size:** M · **Depends on:** M16-15 · **Sources:** raider:F12, designer:F13, product:F8, newcomer:F6, writer:F16 (EV-15; owner Q6)
 
 - `char gear`, `char binds` and `char macros`, `macros check`, `binds coach` and `doctor` print the data first, then at most one caveat for this result, then a footer line "N notes: --notes shows them".
@@ -1901,7 +1901,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-35 — `char list`: every character folder
+## [x] M16-35 — `char list`: every character folder
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F6 (owner Q10, the alt-dashboard's first slice)
 
 `char list` lists every character folder under the account. A folder without a `WowLab.lua` gets "no lab record" and what is known from its files: config, macros and SavedVariables counts. This amends §14.4. `--json` gains rows with `record: null`, an additive change that follows M13-72's decision.
@@ -1910,7 +1910,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-36 — The coach's inputs and defaults
+## [x] M16-36 — The coach's inputs and defaults
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F4, F10, product:F8 (EV-33)
 
 - Before any judgement, `binds coach` says when N keys are bound to commands it cannot see. This is generic, with no addon names.
@@ -1953,7 +1953,7 @@ Uses the stdlib `random`, with fixed seeds and iteration counts, inside `make te
 
 ---
 
-## [ ] M16-40 — CI enforces "graders activated by marker deletion only"
+## [x] M16-40 — CI enforces "graders activated by marker deletion only"
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F16 (EV-37)
 
 On a PR that touches a load-bearing file (ADR-0013: `luadata.py`, `guard.py`, and `proposal.py` once it exists), a job fails if a tracked grader file has any hunk other than the removal of an `xfail(strict=True)` block. A matching `protect_paths` rule for the implementer is proposed to the owner as a harness edit.
@@ -1982,7 +1982,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-43 — Releases a player can verify
+## [x] M16-43 — Releases a player can verify
 **Size:** S · **Depends on:** nothing · **Sources:** security:F6, architect:F11 (EV-42)
 
 - The README's install line carries `#sha256=`.
