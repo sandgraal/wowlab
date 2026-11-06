@@ -3,12 +3,20 @@
   "account": "90000001#6",
   "character": "1/Dangling-Participle",
   "chosen_by": "--character",
+  "chosen_because": null,
   "record_file": "WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua",
   "record_schema": 4,
   "record_error": null,
   "log": {
     "file": "Logs/WoWCombatLog-040126_021630.txt",
     "chosen_by": "newest",
+    "character_name": "Dangling",
+    "casters": [
+      "Labchard-LabrealmbPartbPartcPartd-"
+    ],
+    "caster_match": "does not match",
+    "warning": "the only combat log has no casts by Dangling, the character judged; its casts are by Labchard-LabrealmbPartbPartcPartd-: the findings below may be about another character.",
+    "scan_note": null,
     "counts": {
       "lines": 79,
       "unparsed": 0,
@@ -21,6 +29,9 @@
       "others": 1,
       "mine": 6,
       "sources": 1,
+      "source_names": [
+        "Labchard-LabrealmbPartbPartcPartd-"
+      ],
       "first_timestamp": "4/1/2026 02:16:37.862-4",
       "last_timestamp": "4/1/2026 02:17:00.351-4",
       "spells": [
@@ -55,6 +66,7 @@
       "high_cost": 4,
       "frequent_share": 0.05,
       "frequent_min_casts": 5,
+      "never_cast_min_casts": 200,
       "unlisted": 5,
       "modifiers": {
         "SHIFT": 1,
@@ -109,6 +121,9 @@
       }
     }
   },
+  "commands_unseen": 1,
+  "keys_unseen": 0,
+  "unseen": "Left out of the bindings record, counted with no list: 1 binding command it did not read, whether or not a key is bound to it (not named in plain upper case), and 0 keys whose name is not printable ASCII. Any of these may reach a spell, so a spell reported with no key may have one, and a key reported as costly may not be the only one. A key bound straight to a spell or to an addon's button may be in neither count [verify].",
   "matched_by": "spell id or spellbook name",
   "spells": [
     {
@@ -184,112 +199,22 @@
     }
   ],
   "on_unfollowed_page": [],
-  "bound_never_cast": [
+  "bound_never_cast": [],
+  "never_cast_withheld": true,
+  "cannot_judge": [
     {
-      "slot": 1,
-      "command": "ACTIONBUTTON1",
-      "keys": [
-        {
-          "key": "1",
-          "cost": 1
-        }
-      ],
-      "spell_id": 143,
-      "spell_name": "Fireball"
-    },
-    {
-      "slot": 2,
-      "command": "ACTIONBUTTON2",
-      "keys": [
-        {
-          "key": "2",
-          "cost": 1
-        }
-      ],
-      "spell_id": 5143,
-      "spell_name": "Arcane Missiles"
-    },
-    {
-      "slot": 3,
-      "command": "ACTIONBUTTON3",
-      "keys": [
-        {
-          "key": "3",
-          "cost": 1
-        }
-      ],
-      "spell_id": 205,
-      "spell_name": "Frostbolt"
-    },
-    {
-      "slot": 4,
-      "command": "ACTIONBUTTON4",
-      "keys": [
-        {
-          "key": "4",
-          "cost": 1
-        }
-      ],
-      "spell_id": 2136,
-      "spell_name": "Fire Blast"
-    },
-    {
-      "slot": 5,
-      "command": "ACTIONBUTTON5",
-      "keys": [
-        {
-          "key": "5",
-          "cost": 2
-        }
-      ],
-      "spell_id": 20572,
-      "spell_name": "Blood Fury"
-    },
-    {
-      "slot": 61,
-      "command": "MULTIACTIONBAR1BUTTON1",
-      "keys": [
-        {
-          "key": "Q",
-          "cost": 1
-        }
-      ],
-      "spell_id": 1459,
-      "spell_name": "Arcane Intellect"
-    },
-    {
-      "slot": 62,
-      "command": "MULTIACTIONBAR1BUTTON2",
-      "keys": [
-        {
-          "key": "BUTTON3",
-          "cost": 2
-        }
-      ],
-      "spell_id": 118,
-      "spell_name": "Polymorph"
-    },
-    {
-      "slot": 63,
-      "command": "MULTIACTIONBAR1BUTTON3",
-      "keys": [
-        {
-          "key": "E",
-          "cost": 1
-        }
-      ],
-      "spell_id": 168,
-      "spell_name": "Frost Armor"
+      "report": "bound-never-cast",
+      "reason": "withheld: the log has 6 of your casts, under the minimum sample of 200, and a spell you cast once a fight or less may simply not be in a log this short"
     }
   ],
-  "cannot_judge": [],
   "caveats": [
-    "the bindings record left out 1 command(s) that are not plain names (a key bound straight to a spell, macro or click; an action-bar addon such as Bartender, Dominos or ElvUI binds through these) and 0 key(s) that are not printable, so a spell listed as cast with no bind may have one of those"
+    "a spell listed as cast with no bind may be reached by one of the bindings the coach cannot see (said at the top)"
   ],
   "notes": [
     "Casts are counted only from a combat log, which the client writes only while combat logging is on: type /combatlog in game before you play (whether it stays on after logout has not been checked).",
     "The client adds to this file in batches, and only while combat logging is on: the latest events may not be on disk yet, and if logging is off, this file ends where logging was turned off or the client closed.",
-    "The newest log under Logs/ is read (or the one --log names), whichever character wrote it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet), never picked by a name or a GUID, so a log written by another character than the record's makes these reports wrong: check the log's time and choose it with --log.",
+    "Without --character, the character judged is the one whose lab-addon record has the newest schema, and of those the one written last: a newer schema records more.",
+    "Without --log, the newest of the 10 newest combat logs under Logs/ with casts by the character judged is read (older logs are looked through only up to 256 MiB); if none has any, the newest is read and a warning says whose casts it holds. A log names a character <First>-<Realm>-. A Forever character folder is <First>-<Second>, whose second name is not a realm; a retail one is <Name> under its realm's folder. So the two are matched by first name only, and two of your characters with one first name are not told apart. Your casts are the log's SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet); the name only chooses the log.",
     "The action bars and key bindings are the lab-addon's record as of its last save (logout or /reload), not the session in progress; the log may be older or newer than it. A key reaches a spell through the default UI's action buttons only: the main bar at page 1, and the bottom, right and extra bars. Its other pages (forms, stances, stealth, paging), the pet and stance bars, an addon's buttons, items and macros are not followed.",
     "An auto-repeating spell (a wand's Shoot, Auto Shot) may be logged once per shot rather than once per key press; that has not been checked against a real log, so its count may be high."
   ]

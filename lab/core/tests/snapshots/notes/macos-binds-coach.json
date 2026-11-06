@@ -2,13 +2,21 @@
   "flavor_folder": "_classic_beta_",
   "account": "90000001#6",
   "character": "1/Labchard-Labrealmg",
-  "chosen_by": "latest",
+  "chosen_by": "newest schema",
+  "chosen_because": "its record has the newest schema (1) of the 2 characters' records, and of the 2 at that schema it was written last; tied on that with 1/Labcharb-Labrealmf, it is the last by folder name",
   "record_file": "WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua",
   "record_schema": 1,
   "record_error": null,
   "log": {
     "file": "Logs/WoWCombatLog-040126_021630.txt",
-    "chosen_by": "newest",
+    "chosen_by": "caster name",
+    "character_name": "Labchard",
+    "casters": [
+      "Labchard-LabrealmbPartbPartcPartd-"
+    ],
+    "caster_match": "matches",
+    "warning": null,
+    "scan_note": null,
     "counts": {
       "lines": 79,
       "unparsed": 0,
@@ -21,6 +29,9 @@
       "others": 1,
       "mine": 6,
       "sources": 1,
+      "source_names": [
+        "Labchard-LabrealmbPartbPartcPartd-"
+      ],
       "first_timestamp": "4/1/2026 02:16:37.862-4",
       "last_timestamp": "4/1/2026 02:17:00.351-4",
       "spells": [
@@ -55,6 +66,7 @@
       "high_cost": 4,
       "frequent_share": 0.05,
       "frequent_min_casts": 5,
+      "never_cast_min_casts": 200,
       "unlisted": 5,
       "modifiers": {
         "SHIFT": 1,
@@ -109,6 +121,9 @@
       }
     }
   },
+  "commands_unseen": null,
+  "keys_unseen": null,
+  "unseen": null,
   "matched_by": "spell id",
   "spells": [
     {
@@ -156,6 +171,7 @@
   "cast_without_bind": [],
   "on_unfollowed_page": [],
   "bound_never_cast": [],
+  "never_cast_withheld": false,
   "cannot_judge": [
     {
       "report": "frequent-on-high-cost",
@@ -176,7 +192,8 @@
   "notes": [
     "Casts are counted only from a combat log, which the client writes only while combat logging is on: type /combatlog in game before you play (whether it stays on after logout has not been checked).",
     "The client adds to this file in batches, and only while combat logging is on: the latest events may not be on disk yet, and if logging is off, this file ends where logging was turned off or the client closed.",
-    "The newest log under Logs/ is read (or the one --log names), whichever character wrote it. Your casts are its SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet), never picked by a name or a GUID, so a log written by another character than the record's makes these reports wrong: check the log's time and choose it with --log.",
+    "Without --character, the character judged is the one whose lab-addon record has the newest schema, and of those the one written last: a newer schema records more.",
+    "Without --log, the newest of the 10 newest combat logs under Logs/ with casts by the character judged is read (older logs are looked through only up to 256 MiB); if none has any, the newest is read and a warning says whose casts it holds. A log names a character <First>-<Realm>-. A Forever character folder is <First>-<Second>, whose second name is not a realm; a retail one is <Name> under its realm's folder. So the two are matched by first name only, and two of your characters with one first name are not told apart. Your casts are the log's SPELL_CAST_SUCCESS records whose source flags say yours and a player (not a pet); the name only chooses the log.",
     "The action bars and key bindings are the lab-addon's record as of its last save (logout or /reload), not the session in progress; the log may be older or newer than it. A key reaches a spell through the default UI's action buttons only: the main bar at page 1, and the bottom, right and extra bars. Its other pages (forms, stances, stealth, paging), the pet and stance bars, an addon's buttons, items and macros are not followed.",
     "An auto-repeating spell (a wand's Shoot, Auto Shot) may be logged once per shot rather than once per key press; that has not been checked against a real log, so its count may be high."
   ]
