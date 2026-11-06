@@ -1,6 +1,6 @@
 Character: 1/Labchard-Labrealmg in account 90000001#6
 File: WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariables/WowLab.lua
-Written: <local time> (the file's modification time)
+Written: <local time> (the file's modification time: the character as of that save)
 Spec: id 1490 (index 1, from C_SpecializationInfo)
 Gear (slots 1 to 19 as the client numbers them, 9 filled):
   slot  1 Head       empty
@@ -22,7 +22,7 @@ Gear (slots 1 to 19 as the client numbers them, 9 filled):
   slot 17 Off Hand   empty
   slot 18 Ranged     Shadow Wand: Uncommon, item level 14, item 5071
   slot 19 Tabard     empty
-Averages (GetAverageItemLevel, as the client returns them): equipped 3.3125, overall 3.3125, pvp 3.3125
+Averages (GetAverageItemLevel, as the client returns them, not the mean of the levels above): equipped 3.3125, overall 3.3125, pvp 3.3125
 Item levels from C_Item.GetCurrentItemLevel.
 Slot names and quality words: the shipped default table, community documentation
   for Retail, not yet confirmed on Forever

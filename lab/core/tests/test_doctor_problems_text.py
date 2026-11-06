@@ -42,6 +42,11 @@ def _no_readable(root: Path, target: Path, *, empty: bool) -> str:
     )
 
 
+# The notes footer ends doctor's report, after its problems (M16-16;
+# conductor's ruling, 2026-11-06).
+_FOOTER = "1 note: --notes shows it\n"
+
+
 def _problems_block(problems: list[str]) -> str:
     return "Problems:\n" + "".join(f"  {p}\n" for p in problems)
 
@@ -69,7 +74,7 @@ def test_redact_prints_why_it_exits_1_as_the_json_does_constructed(tmp_path: Pat
 
     assert len(data["problems"]) == 1
     assert "; not taken: " in data["problems"][0]
-    assert text.endswith(_problems_block(data["problems"]))
+    assert text.endswith(_problems_block(data["problems"]) + _FOOTER)
 
 
 def test_a_later_run_with_no_readable_flavor_says_which_folders_and_why_constructed(
@@ -88,7 +93,7 @@ def test_a_later_run_with_no_readable_flavor_says_which_folders_and_why_construc
     assert data["first_run"] is None
     assert "First run" not in text
     assert data["problems"] == [_no_readable(root, target, empty=True)]
-    assert text.endswith(_problems_block(data["problems"]))
+    assert text.endswith(_problems_block(data["problems"]) + _FOOTER)
 
 
 def test_a_first_run_with_only_a_link_lists_the_problem_too_constructed(tmp_path: Path) -> None:
@@ -112,7 +117,7 @@ def test_with_nothing_not_taken_the_problem_keeps_its_old_words_constructed(tmp_
     )
 
     assert [p.endswith(" has no flavor folders") for p in data["problems"]] == [True]
-    assert text.endswith(_problems_block(data["problems"]))
+    assert text.endswith(_problems_block(data["problems"]) + _FOOTER)
 
 
 def test_no_problems_prints_no_problems_block(tmp_path: Path) -> None:

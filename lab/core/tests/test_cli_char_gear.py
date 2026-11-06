@@ -52,7 +52,7 @@ CASES = [
 ]
 # Runs committed without their own .build.info and .flavor.info (fixture index).
 FILES_ONLY = ("macos-70425", "macos-70450")
-_WRITTEN = re.compile(r"^Written: .* \(the file's modification time\)$", re.MULTILINE)
+_WRITTEN = re.compile(r"^Written: \S+ \S+ \S+ (\(the file's modification time.*\))$", re.MULTILINE)
 
 runner = CliRunner()
 
@@ -99,7 +99,7 @@ def ok(*args: str) -> Any:
 
 
 def _placeholders(text: str, user_config: Path) -> str:
-    text = _WRITTEN.sub("Written: <local time> (the file's modification time)", text)
+    text = _WRITTEN.sub(r"Written: <local time> \1", text)
     text = text.replace(gear.shipped_slots_path(), "<shipped gear_slots.toml>")
     return text.replace(str(user_config / gear.SLOTS_FILE), "<user gear_slots.toml>")
 

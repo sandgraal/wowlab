@@ -163,15 +163,15 @@ def test_char_binds_text_has_the_table_unreached_slots_and_counts_cross_capture(
     # What each file is went behind --notes (M16-16).
     assert lines[3] == "Character bindings: no bindings-cache.wtf"
     assert any(n.startswith("  - Character bindings: a character has") for n in lines)
+    # The main bar's page is said on the Keys line (domain review, M16-16).
     assert (
-        "Keys: 131 (3 in a file and the record, 0 only in a file, 0 only in the record with a "
+        "Keys: 131 (main-bar keys at page 1, with no form, stance or stealth; "
+        "3 in a file and the record, 0 only in a file, 0 only in the record with a "
         "file line putting the key on another command, 128 only in the record with no file "
         "line for the key, 0 cleared)"
     ) in lines
-    assert (
-        "  - Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
-        "form, stance or stealth active; another page they may show is not followed."
-    ) in lines
+    # Said on the Keys line above, not as a separate note (domain review, M16-16).
+    assert not any("Main-bar keys (ACTIONBUTTON1 to 12)" in line for line in lines)
     assert (
         "  1                ACTIONBUTTON1                 1  casts Immolate (Rank 2, spell 707)"
         "  (record only (no file line for this key))"
@@ -286,7 +286,7 @@ def test_case_variant_records_keep_the_latest_folder_as_char_macros_does_constru
         assert [f.scope for f in rep.files] == ["account", "character"]
     assert latest.record_error == pinned.record_error
     assert latest.keys == pinned.keys
-    lines = ok("char", "binds").stdout.splitlines()
+    lines = wide("char", "binds", notes=False).stdout.splitlines()
     assert "has a WowLab.lua" not in lines[0]
     assert lines[0] == (
         f"Character: 1/{CHARACTER} in account {ACCOUNT} "

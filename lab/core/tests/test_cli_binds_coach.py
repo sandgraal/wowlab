@@ -290,7 +290,9 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
 ) -> None:
     text = wide("binds", "coach", "--character", CHARACTER).stdout
     assert (
-        f"Combat log: Logs/{LOG_NAME} (the newest) (79 lines; COMBAT_LOG_VERSION 22; your "
+        # Whose log it may be is said on the line (domain review, M16-16).
+        f"Combat log: Logs/{LOG_NAME} (the newest, whichever character wrote it; choose another with --log) "
+        "(79 lines; COMBAT_LOG_VERSION 22; your "
         "casts from 4/1/2026 02:16:37.862-4 to 4/1/2026 02:17:00.351-4, log time), judged "
         f"against {RECORD}\n"
     ) in text

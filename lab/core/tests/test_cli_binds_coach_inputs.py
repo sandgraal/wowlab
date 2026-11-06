@@ -258,7 +258,9 @@ def test_a_log_by_another_character_warns_cross_capture(record: Path) -> None:
         f"{LOG_CASTER}: the findings below may be about another character."
     )
     lines = ok("binds", "coach", "--character", CHARACTER).stdout.splitlines()
-    assert lines[0].startswith(f"Combat log: Logs/{LOG_NAME} (the newest) (79 lines;")
+    assert lines[0].startswith(
+        f"Combat log: Logs/{LOG_NAME} (the newest, whichever character wrote it; choose another with --log) (79 lines;"
+    )
     assert lines[1] == f"  Warning: {rep.log.warning}"
 
 
