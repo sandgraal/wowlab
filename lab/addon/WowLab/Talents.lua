@@ -301,6 +301,11 @@ ns.Section({
 -- its id. Since schema 3 (M11-35) the record says which id that was
 -- (`left_out_config`) or why there was none (`left_out_config_absent`).
 -- Which of the configs is the Legacy system is not recorded.
+-- The once-per-session Constants sweep (M16-45): whether it ran, and the
+-- system ids that answered a config id then, each with its `found_by` text.
+local systemsSwept = false
+local answering = {}
+
 local function legacyConfigs(classConfig)
     local foundBy, order = {}, {}
     local function add(configID, how)
@@ -340,13 +345,29 @@ local function legacyConfigs(classConfig)
     local bySystem = ns.Fn(C_Traits, "GetConfigIDBySystemID")
     local haveSystems = bySystem and type(Constants) == "table"
     if haveSystems then
-        for group, fields in pairs(Constants) do
-            if type(fields) == "table" then
-                for key, value in pairs(fields) do
-                    if type(key) == "string" and type(value) == "number" and string.find(key, "SYSTEM_ID", 1, true) then
-                        add(ns.Call(bySystem, value), "system:" .. tostring(group) .. "." .. key)
+        -- The Constants sweep runs once per session (M16-45): the first
+        -- gather walks Constants and asks every `*SYSTEM_ID*` value; a later
+        -- gather asks again only the system ids that answered a number then,
+        -- so no new id reaches the client after the first gather.
+        if not systemsSwept then
+            systemsSwept = true
+            for group, fields in pairs(Constants) do
+                if type(fields) == "table" then
+                    for key, value in pairs(fields) do
+                        if type(key) == "string" and type(value) == "number" and string.find(key, "SYSTEM_ID", 1, true) then
+                            local configID = ns.Call(bySystem, value)
+                            local how = "system:" .. tostring(group) .. "." .. key
+                            if type(configID) == "number" then
+                                answering[#answering + 1] = { system = ns.Number(value), how = ns.String(how) }
+                            end
+                            add(configID, how)
+                        end
                     end
                 end
+            end
+        else
+            for _, known in ipairs(answering) do
+                add(ns.Call(bySystem, known.system), known.how)
             end
         end
     end

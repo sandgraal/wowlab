@@ -62,6 +62,12 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   the reports' `CharIdentity`, deriving `sex` (`Enum.UnitSex`) from
   `sex_raw` by `UNIT_SEX_TO_ENUM`; a schema 1 to 3 record reports every
   value absent. Schema 1 to 3 files are read exactly as before.
+- Schema 5 (M16-45) is schema 4, quieter: `debug` and `announced` at the
+  top; `probes` on the three schema-3 sections only in a debug session
+  (`None` otherwise); and on `bindings`, `clicks_left_out` and kept
+  `CLICK <frame>:<button>` commands, each with `action`, the action slot it
+  presses (ADR-0026, amendment of 2026-10-22). Schema 1 to 4 files are read
+  exactly as before.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -149,17 +155,22 @@ __all__ = [
     "AccountDBV2",
     "AccountDBV3",
     "AccountDBV4",
+    "AccountDBV5",
     "ActionBars",
+    "ActionBarsV5",
     "ActionSlot",
     "AllCharacters",
     "ApiProbe",
     "Binding",
+    "BindingV5",
     "Bindings",
+    "BindingsV5",
     "CharDB",
     "CharDBV1",
     "CharDBV2",
     "CharDBV3",
     "CharDBV4",
+    "CharDBV5",
     "CharIdentity",
     "CharacterFile",
     "ClassTalents",
@@ -179,6 +190,7 @@ __all__ = [
     "Spellbook",
     "SpellbookItem",
     "SpellbookLine",
+    "SpellbookV5",
     "TalentsV3",
     "choose_lab_file",
     "clip_reason",
@@ -1022,6 +1034,9 @@ ProbedApi = Literal[
     "GetNumBindings",
     "GetBinding",
     "GetBindingKey",
+    # Schema 5 (M16-45): a CLICK binding's frame, `type` and `action`
+    # attributes. The addon writes it in schema 5 only; numbers only.
+    "GetAttribute",
     "issecretvalue",
     "C_Secrets",
     "canaccessvalue",
@@ -1413,23 +1428,211 @@ class CharDBV4(CharDBV3):
     ) = None
 
 
-# A character or account document of any schema this reader knows.
-CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4
-AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4
+# ─── schema 5 (M16-45) ───────────────────────────────────────────────────────
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4]] = {
+# A `CLICK <frame>:<button>` binding command the addon keeps (ADR-0026,
+# amendment of 2026-10-22, rule (a)): the Lua pattern
+# `^CLICK ([%a_][%w_]*):(%a%w*)$`, a frame part of at most 64 bytes and a
+# button part of at most 32, ASCII only.
+ClickCommand = Annotated[
+    str,
+    StringConstraints(pattern=r"^CLICK [A-Za-z_][A-Za-z0-9_]{0,63}:[A-Za-z][A-Za-z0-9]{0,31}$"),
+]
+CLICK_PREFIX = "CLICK "
+# The action slot a kept CLICK command presses: a whole number from 1 to the
+# largest 32-bit signed integer (the addon keeps no other).
+ActionSlotNumber = Annotated[int, Field(ge=1, le=2**31 - 1)]
+
+
+class SpellbookV5(Spellbook):
+    """`spellbook` in schema 5: as in schema 3, with `probes` written only
+    in a debug session (`/wowlab debug on`); `None` otherwise. `dropped`
+    (always written by the addon) is how many values the gather dropped:
+    calls that raised an error plus values dropped as secret or untestable.
+    `None` only in a file the addon did not write that way."""
+
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+    dropped: Count | None = None
+
+
+class ActionBarsV5(ActionBars):
+    """`actionbars` in schema 5: as in schema 3, with `probes` written only
+    in a debug session, and `dropped` as on `SpellbookV5`."""
+
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+    dropped: Count | None = None
+
+
+class BindingV5(Binding):
+    """One binding in schema 5: a plain command as in schema 3, or a
+    `CLICK <frame>:<button>` command whose frame was an action button, with
+    `action`: the button's `action` attribute when the bindings were
+    gathered (for a paging bar, the slot of the page shown then; ADR-0026,
+    amendment of 2026-10-22). A CLICK command has `action`; a plain one has
+    none. Until the keybind views map `action` to a slot, every view treats
+    a kept CLICK binding as unseen (`unseen_commands`)."""
+
+    command: BindingCommand | ClickCommand
+    action: ActionSlotNumber | None = None
+
+    @model_validator(mode="after")
+    def _action_only_on_a_click(self) -> Self:
+        click = self.command.startswith(CLICK_PREFIX)
+        if click and self.action is None:
+            raise ValueError("a CLICK command is kept only with its button's action attribute")
+        if not click and self.action is not None:
+            raise ValueError("an action slot is kept only on a CLICK command")
+        return self
+
+
+class BindingsV5(Bindings):
+    """`bindings` in schema 5: schema 3's record, plus kept `CLICK`
+    commands (`BindingV5`) and `clicks_left_out`, the CLICK commands left
+    out under ADR-0026's rule of 2026-10-22, each also counted in
+    `commands_left_out`. `probes` only in a debug session; `dropped` as on
+    `SpellbookV5`. Whether `GetBinding` lists CLICK commands at all is
+    **[verify]**."""
+
+    clicks_left_out: Count
+    list_: Lst[BindingV5] = Field(alias="list")  # type: ignore[assignment]
+    probes: Lst[ApiProbe] | None = None  # type: ignore[assignment]
+    dropped: Count | None = None
+
+    @model_validator(mode="after")
+    def _clicks_are_left_out_commands(self) -> Self:
+        if self.clicks_left_out > self.commands_left_out:
+            raise ValueError("more CLICK commands left out than commands left out")
+        return self
+
+
+# What the views say for a schema-5 section that records neither `probes`
+# nor `dropped` (M16-45 round 1): unknown stays unknown.
+DROPPED_NOT_RECORDED = "whether any value was dropped is not recorded"
+
+
+def dropped_words(
+    section: Spellbook | ActionBars | Bindings, needs: frozenset[str] = frozenset()
+) -> list[str]:
+    """Why a section is incomplete, from what it records: with `probes`
+    (schema 3 and 4, and a schema-5 debug session), the calls that raised,
+    the values dropped as secret or untestable, and the `needs` functions
+    not present; otherwise (schema 5) its `dropped` count. Empty when
+    nothing was dropped, or when a schema-5 section records neither (see
+    `dropped_unknown`)."""
+    probes: list[ApiProbe] | None = section.probes  # None in schema 5 outside debug
+    out: list[str] = []
+    if probes is not None:
+        # A CLICK frame's GetAttribute (schema 5) is left out: a CLICK command
+        # it fails is counted in clicks_left_out, not dropped (M16-45 round 2).
+        counted = [p for p in probes if p.api not in LOOKED_UP and p.api != "GetAttribute"]
+        errors = sum(p.errors for p in counted)
+        secret = sum(p.secret for p in counted)
+        if errors or secret:
+            out.append(
+                f"{errors} call(s) raised an error and {secret} value(s) were dropped as "
+                "secret or untestable"
+            )
+        missing = sorted(p.api for p in probes if p.api in needs and not p.present)
+        if missing:
+            out.append(f"{', '.join(missing)} not present")
+        return out
+    count = (
+        section.dropped if isinstance(section, (SpellbookV5, ActionBarsV5, BindingsV5)) else None
+    )
+    if count:
+        out.append(
+            f"{count} value(s) were dropped as secret or untestable, or lost to a call that "
+            "raised an error"
+        )
+    return out
+
+
+def dropped_unknown(section: Spellbook | ActionBars | Bindings) -> bool:
+    """A schema-5 section that records neither `probes` nor `dropped`: the
+    views say `DROPPED_NOT_RECORDED` instead of assuming nothing was."""
+    if not isinstance(section, (SpellbookV5, ActionBarsV5, BindingsV5)):
+        return False
+    return section.probes is None and section.dropped is None
+
+
+def kept_clicks(binds: Bindings) -> int:
+    """How many kept `CLICK` commands a bindings record holds (schema 5)."""
+    return sum(1 for b in binds.list_ if getattr(b, "action", None) is not None)
+
+
+def unseen_commands(binds: Bindings) -> int:
+    """The commands a view cannot place: `commands_left_out`, plus every kept
+    `CLICK` command, until the keybind views map `action` to a slot
+    (conductor's ruling of 2026-11-05 on M16-45)."""
+    return binds.commands_left_out + kept_clicks(binds)
+
+
+def seen_bindings(binds: Bindings) -> list[Binding]:
+    """The bindings a view places: every listed one but a kept `CLICK`."""
+    return [b for b in binds.list_ if getattr(b, "action", None) is None]
+
+
+class AccountDBV5(_Record):
+    """`WowLabDB`, schema 5: as schema 1, only the number differs."""
+
+    schema_: Literal[5] = Field(alias="schema")
+
+
+class CharDBV5(CharDBV4):
+    """`WowLabCharDB`, schema 5 (M16-45): schema 4, quieter. `debug` is
+    `true` after `/wowlab debug on` (for the next load); `announced` is the
+    schema of the addon whose first pass last finished in a written
+    session (the chat line prints when it is not the addon's own). The
+    three schema-3 sections carry `probes` only in a debug session, and
+    `bindings` may keep `CLICK` commands (`BindingsV5`). Every other
+    section is read exactly as in schema 4, and a schema-5 record is a
+    `CharDBV4` to every reader of the earlier sections."""
+
+    schema_: Literal[5] = Field(alias="schema")  # type: ignore[assignment]
+    spellbook: (
+        Annotated[Annotated[SpellbookV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    actionbars: (
+        Annotated[
+            Annotated[ActionBarsV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT
+        ]
+        | None
+    ) = None
+    bindings: (
+        Annotated[Annotated[BindingsV5, Tag(_P)] | Annotated[AbsentProbedSection, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+    debug: bool | None = None
+    announced: Annotated[int, Field(ge=1, le=9999)] | None = None
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5
+AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4 | AccountDBV5
+
+CHAR_SCHEMAS: Mapping[
+    int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4] | type[CharDBV5]
+] = {
     1: CharDBV1,
     2: CharDBV2,
     3: CharDBV3,
     4: CharDBV4,
+    5: CharDBV5,
 }
 ACCOUNT_SCHEMAS: Mapping[
-    int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3] | type[AccountDBV4]
+    int,
+    type[AccountDBV1]
+    | type[AccountDBV2]
+    | type[AccountDBV3]
+    | type[AccountDBV4]
+    | type[AccountDBV5],
 ] = {
     1: AccountDBV1,
     2: AccountDBV2,
     3: AccountDBV3,
     4: AccountDBV4,
+    5: AccountDBV5,
 }
 
 
@@ -1670,7 +1873,7 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
-    record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
+    record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5 | None = None
     error: str | None = None
     same_as: FsText | None = None
     no_lab_record: FolderFacts | None = None
@@ -3174,6 +3377,20 @@ def _item_type_words(book: Spellbook) -> str:
     return f"by type: {words}"
 
 
+def _dropped_lines(section: Spellbook | ActionBars | Bindings) -> list[str]:
+    """Schema 5 (M16-45 round 1): how many values the section dropped, or
+    that the record does not say."""
+    if not isinstance(section, (SpellbookV5, ActionBarsV5, BindingsV5)):
+        return []
+    if section.dropped is not None:
+        return [
+            f"  values dropped (secret or untestable, or a call that failed): {section.dropped}"
+        ]
+    if section.probes is None:
+        return [f"  {DROPPED_NOT_RECORDED}"]
+    return []
+
+
 def _spellbook(book: Spellbook) -> list[str]:
     items = book.list_
     if not items:
@@ -3191,7 +3408,7 @@ def _spellbook(book: Spellbook) -> list[str]:
     if items:
         lines.append(f"  {_item_type_words(book)}; future (not yet learned) spells are items too")
     lines.extend(_skill_line(line) for line in book.skill_lines)
-    return lines + _probe_lines(book.probes) + _events(book)
+    return lines + _dropped_lines(book) + _probe_lines(book.probes) + _events(book)
 
 
 def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[str]:
@@ -3215,7 +3432,7 @@ def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[s
                 "shows now [verify]); a macro's name and body are never recorded"
             )
         )
-    return lines + _probe_lines(bars.probes) + _events(bars)
+    return lines + _dropped_lines(bars) + _probe_lines(bars.probes) + _events(bars)
 
 
 def _binding_set_words(record: Bindings) -> str:
@@ -3257,7 +3474,21 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
             "GetBinding at all [verify]"
         ),
     ]
-    return lines + _probe_lines(record.probes) + _events(record)
+    if isinstance(record, BindingsV5):
+        if record.clicks_left_out:
+            # The click bindings the action-button rule left out, for any of
+            # its reasons (shape, length, not a frame, the type, a secret or
+            # invalid slot; M16-45 round 2, domain 3).
+            lines[1] += (
+                f"; {record.clicks_left_out} of them click bindings the action-button rule "
+                "left out (their names are not kept)"
+            )
+        lines.append(
+            f"  click bindings: {_count(kept_clicks(record), 'action button')} kept, each with "
+            "the button's action slot when the bindings were read (for a paging bar, the slot "
+            "of the page shown then); the key views do not place them yet"
+        )
+    return lines + _dropped_lines(record) + _probe_lines(record.probes) + _events(record)
 
 
 APPEARANCES_EVENTS_NOTE = (

@@ -35,6 +35,8 @@
 --   Retail names; BARBER_SHOP_SUCCESS is the pre-9.0 name.
 --   WOWLAB_CONTROL_NOT_A_REAL_EVENT is made up on purpose: whether it gets an
 --   entry shows whether this client refuses a name it does not know.
+--   Since schema 5 (M16-45) the count-only events, and events_received with
+--   them, are registered only in a debug session (`/wowlab debug on`).
 -- - chr_model_id_absent: which outcome the GetViewingChrModel call had when
 --   the section gathered (missing, an error, nil, or not a number), from a
 --   direct pcall. It says how the call went, not why the client gave no id.

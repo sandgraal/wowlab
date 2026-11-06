@@ -127,10 +127,12 @@ def _bars(
         return None, no_bars
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the action-bar section is absent: {section.absent}"
-    why = keymap.dropped(section.probes, _ACTIONBARS_NEEDS)
+    why = keymap.dropped(section, _ACTIONBARS_NEEDS)
     untyped = sum(1 for s in section.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
+    if labaddon.dropped_unknown(section):
+        why.append(labaddon.DROPPED_NOT_RECORDED)
     return section, "; ".join(why) if why else None
 
 

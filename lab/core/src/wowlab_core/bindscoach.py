@@ -402,7 +402,9 @@ class CannotJudge(_Model):
 class CoachResult(_Model):
     matched_by: Literal["spell id or spellbook name", "spell id"]
     # The record's counts of the binding commands and keys it left out, which
-    # the coach cannot see; None without a usable bindings record.
+    # the coach cannot see; None without a usable bindings record. Since
+    # schema 5 (M16-45) `commands_unseen` includes the click bindings to an
+    # action button the record keeps, which the coach does not place yet.
     commands_unseen: int | None
     keys_unseen: int | None
     unseen: str | None  # said before any finding; None without a usable bindings record
@@ -433,7 +435,7 @@ def _sections(
         if isinstance(section, labaddon.AbsentProbedSection):
             return f"no {name} record (the section is absent: {section.absent})"
     assert isinstance(bars, labaddon.ActionBars) and isinstance(binds, labaddon.Bindings)
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    why = _dropped(bars, _ACTIONBARS_NEEDS)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -442,7 +444,7 @@ def _sections(
             f"the action-bar record is incomplete ({'; '.join(why)}), so a slot dropped may "
             "hold the spell"
         )
-    why = _dropped(binds.probes, _BINDINGS_NEEDS)
+    why = _dropped(binds, _BINDINGS_NEEDS)
     if why:
         return (
             f"the bindings record is incomplete ({'; '.join(why)}), so a key dropped may reach "
@@ -460,18 +462,42 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
-def unseen_words(commands: int, keys: int) -> str:
+def unseen_words(commands: int, keys: int, kept: int = 0) -> str:
     """What the coach cannot see in the bindings record, said before any
     finding whenever there is a bindings record, also at 0 and 0: the counts
     in `char binds`'s words, and `UNSEEN_NOTE`. Generic: the record does not
-    say which program, if any, bound them."""
-    counts = (
-        f"Left out of the bindings record, counted with no list: "
-        f"{_plural(commands, 'binding command')} it did not read, whether or not a key is "
-        f"bound to {'it' if commands == 1 else 'them'} (not named in plain upper case), and "
-        f"{_plural(keys, 'key')} whose "
-        "name is not printable ASCII."
-    )
+    say which program, if any, bound them. `kept` (schema 5, M16-45): the
+    click bindings to an action button the record keeps, which `commands`
+    includes; they were read, and are only not placed yet, so they are
+    said apart, and a clause whose count is 0 is then left out."""
+    if not kept:
+        counts = (
+            f"Left out of the bindings record, counted with no list: "
+            f"{_plural(commands, 'binding command')} it did not read, whether or not a key is "
+            f"bound to {'it' if commands == 1 else 'them'} (not named in plain upper case), and "
+            f"{_plural(keys, 'key')} whose "
+            "name is not printable ASCII."
+        )
+    else:
+        plain = commands - kept
+        parts = []
+        if plain:
+            parts.append(
+                f"{_plural(plain, 'binding command')} it did not read, whether or not a key is "
+                f"bound to {'it' if plain == 1 else 'them'} (not named in plain upper case)"
+            )
+        if keys:
+            parts.append(f"{_plural(keys, 'key')} whose name is not printable ASCII")
+        counts = (
+            "Left out of the bindings record, counted with no list: " + ", and ".join(parts) + ". "
+            if parts
+            else ""
+        )
+        counts += (
+            f"{_plural(kept, 'click binding')} to an action button "
+            f"{'is' if kept == 1 else 'are'} in the record, but the coach does not place "
+            f"{'it' if kept == 1 else 'them'} yet."
+        )
     if commands or keys:
         counts += (
             " Any of these may reach a spell, so a spell reported with no key may have one, "
@@ -545,15 +571,23 @@ def coach(
     if not isinstance(sections, str):
         bars, binds = sections
         spell_slots = {s.slot: s.id for s in bars.slots if s.type == "spell" and s.id is not None}
-        for b in binds.list_:
+        # A kept CLICK binding is unseen until the views map its `action`
+        # to a slot (M16-45 ruling): it counts with the left-out commands.
+        for b in labaddon.seen_bindings(binds):
             slot = command_slot(b.command)
             if slot is None or not b.keys:
                 continue
             command_of.setdefault(slot, b.command)
             keys_of.setdefault(slot, []).extend(key_cost(k, costs) for k in b.keys)
-        left_out, keys_left_out = binds.commands_left_out, binds.keys_left_out
+        left_out, keys_left_out = labaddon.unseen_commands(binds), binds.keys_left_out
+        for what, section in (("action-bar", bars), ("bindings", binds)):
+            if labaddon.dropped_unknown(section):
+                caveats.append(
+                    f"in the {what} record, {labaddon.DROPPED_NOT_RECORDED}, so a slot or key "
+                    "it dropped may change these reports"
+                )
         commands_unseen, keys_unseen = left_out, keys_left_out
-        unseen = unseen_words(left_out, keys_left_out)
+        unseen = unseen_words(left_out, keys_left_out, labaddon.kept_clicks(binds))
 
     spells: list[CastSpell] = []
     frequent: list[FrequentOnHighCost] = []

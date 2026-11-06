@@ -13,12 +13,13 @@ Records this character's equipped gear, spec, class talents, Legacy-tree candida
 barber-shop choices, collections, currencies, professions, spellbook, action
 bars, key bindings and the character's race, body type and class into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
-(`schema = 4` since M15-01; 3 since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
+(`schema = 5` since M16-45; 4 since M15-01; 3 since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
 clean exit. `/wowlab save` refreshes the tables in memory only; a crash
 writes nothing.
 `/wowlab skip <section>` and `/wowlab unskip <section>` switch one section
-off and on ("Switching a section off" below).
-`WowLabDB` (`## SavedVariables`) holds only `{ schema = 4 }` until a capture
+off and on ("Switching a section off" below). `/wowlab debug on|off` records
+the research probes from the next `/reload` or login ("Debug" below).
+`WowLabDB` (`## SavedVariables`) holds only `{ schema = 5 }` until a capture
 shows which data is account-wide. The addon writes one schema number into
 both variables.
 
@@ -35,13 +36,15 @@ both variables.
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
 
-### Table layout (schema 4)
+### Table layout (schema 5)
 
 ```
 WowLabCharDB = {
-  schema = 4,
+  schema = 5,
   probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
+  debug = true?,                              -- schema 5: /wowlab debug on, for the next load; left out when off
+  announced = <schema>?,                      -- schema 5: the version whose first pass last finished in a written session
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },
   gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed, item_level, item_level_api } },
@@ -61,13 +64,14 @@ WowLabCharDB = {
   professions = { list = { { position, skill_line, rank, max_rank, modifier } } },
   -- schema 3 (M13-05), each read only out of combat:
   spellbook = { item_types = { <name> = <number>, ... }, skill_lines = { { index, offset, count, guild, hidden, spec_id, off_spec_id } },
-                list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes },
-  actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
-  bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
+                list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes? },
+  actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes? },
+  bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, clicks_left_out, keys_left_out,
+               list = { { command, action?, keys = { "<key>", ... } } }, probes? },  -- clicks_left_out, action: schema 5
   -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
   identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent },
 }
-probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
+probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue; since schema 5 only in a debug session
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
 choices = { { option, choice_index, choice } }
 ```
@@ -100,6 +104,43 @@ install it with wowlab addon install lab, then log in and out on this
 character)", and refuses a schema it does not know. The first
 logout with the M15-01 addon rewrites the file as schema 4, and
 `probe.loads` keeps rising across that write.
+
+Schema 5 (M16-45) is schema 4, quieter, with one more kind of binding:
+
+- two keys at the top of `WowLabCharDB`: `debug` (`true` after
+  `/wowlab debug on`, left out when off) and `announced` ("The 15 s
+  window" below);
+- `probes` on `spellbook`, `actionbars` and `bindings`, and the count-only
+  barber-shop events with `events_received` on `customization`, are
+  written only in a debug session ("Debug" below);
+- every gathered `spellbook`, `actionbars` and `bindings` record carries
+  `dropped`, debug or not: one whole number, the calls that raised an error
+  plus the values dropped as secret or untestable, summed over its probes
+  but for `issecretvalue`'s own errors and a `CLICK` frame's `GetAttribute`
+  (the value `issecretvalue` could not test is already counted as secret,
+  and a `CLICK` command `GetAttribute` fails is counted in
+  `clicks_left_out`), so nothing is counted twice.
+  The Lab's views use it as they used the probes' counts ("the record is
+  incomplete"); a schema-5 record with neither `probes` nor `dropped` (this
+  addon never writes one) reads "whether any value was dropped is not
+  recorded";
+- `bindings` keeps a `CLICK <frame>:<button>` command when the frame is an
+  action button, with `action`: the button's `action` attribute when the bindings were gathered (for a
+  paging bar, the slot of the page shown then). It counts every other `CLICK` command in `clicks_left_out` as well
+  as `commands_left_out`. Until the keybind views map `action` to a slot,
+  every view (`binds coach`, `binds list`, `char binds`, the macro checks)
+  treats a kept `CLICK` command as unseen and counts it with the left-out
+  commands, as before schema 5;
+- change events only mark their section dirty, and the dirty sections are
+  gathered together at most once every 30 s, out of combat, and at logout
+  (the barber-shop record still comes at the event, in the barber shop);
+- the `Constants` sweep of `talents.legacy` runs once per session: a
+  trait system that gave no config id at the first gather is not asked
+  again until the next login or `/reload`.
+
+The Lab reads schema 1 to 4 files exactly as before and refuses a schema it
+does not know. The first logout with the M16-45 addon rewrites the file as
+schema 5, and `probe.loads` keeps rising across that write.
 
 Notes on the fields:
 
@@ -158,8 +199,9 @@ Notes on the fields:
   on-world section) and again on `BARBER_SHOP_APPEARANCE_APPLIED`, since
   a body type can change in the barber shop. That the event fires is
   confirmed (70425, M11-29 capture: `events_received` 1); that `UnitSex`
-  already returns the new body type when the debounced gather runs 2 s
-  after it is **[verify]**, and not tested by the M15-01 capture. If that
+  already returns the new body type when the next pass runs (up to 30 s
+  after it since schema 5; 2 s before) is **[verify]**, and not tested by
+  the M15-01 capture. If that
   gather is too early, the logout write does not gather again (the section
   is no longer dirty), so the file keeps the old value until the next
   loading screen or `/reload` (each `PLAYER_ENTERING_WORLD` gathers it
@@ -348,7 +390,9 @@ Notes on the fields:
   - `"InCombatLockdown raised an error, so whether the player is in combat is not known; nothing was read"`
 - `probes` (schema 3) is written on each of the three, gathered or absent
   for a missing function (not on the combat reasons above, which call
-  nothing). One entry per API the section asks, in a fixed order with
+  nothing). Since schema 5 it is written only in a debug session
+  (`/wowlab debug on`); the calls, the secret checks and the counts are the
+  same either way. One entry per API the section asks, in a fixed order with
   `issecretvalue`, `C_Secrets` and `canaccessvalue` last: `api` (its
   name), `present` (the function was
   there), `calls`, `errors` (calls that raised an error), `answered` and
@@ -368,6 +412,9 @@ Notes on the fields:
   - `GetMacroInfo`: returned an icon for the macro index, so the index names
     a macro;
   - `GetBindingKey`: returned at least one key;
+  - `GetAttribute` (schema 5): a `CLICK` frame's `type` attribute returned a
+    string, or its `action` attribute a number. It is looked up on each
+    frame, so `present` is always `true`;
   - `issecretvalue`: returned a boolean;
   - `C_Secrets`, `canaccessvalue`: never called, so `calls`, `errors`,
     `answered` and `secret` are 0; only `present` says anything.
@@ -442,6 +489,35 @@ Notes on the fields:
   command was counted in `commands_left_out`; whether it is the dragged
   spell stays **[verify]**. A gather walks at most
   4096 commands.
+
+  Since schema 5 (M16-45; ADR-0026, amendment of 2026-10-22) one more shape
+  is kept: a command `c` that `GetBinding` lists, that passes the secret
+  check, and for which all three hold:
+  1. `c` matches `^CLICK ([%a_][%w_]*):(%a%w*)$`, with a frame part of at
+     most 64 bytes and a button part of at most 32;
+  2. `f = _G[frame]` is a table, and `pcall(f.GetAttribute, f, "type")`
+     returns exactly `"action"`. The addon first checks that `f[0]`, read
+     with `rawget` (no metatable), is the client's userdata, so only a real
+     frame is asked; it calls `GetAttribute` inside the `pcall`, through a
+     one-line `attribute(f, name)`;
+  3. `pcall(f.GetAttribute, f, "action")` returns a number for which
+     `issecretvalue` returns false (where the client has `issecretvalue`).
+     The addon also keeps it only when it is a whole number from 1 to
+     2147483647, so that the Lab's reader can take it.
+
+  The record then keeps the command, `action` (the button's `action`
+  attribute when the bindings were gathered; for a paging bar, the slot of
+  the page shown then) and the keys. Any other command that starts with `CLICK ` is counted in
+  `clicks_left_out` and in `commands_left_out`, and nothing else is read
+  from its frame. A button whose `type` is `action` presses one of the
+  client's numbered action slots; bar addons (Bartender4, ElvUI, Dominos)
+  name those buttons themselves, while a GSE sequence button (named after
+  text the player typed), a BindPad button or a `/run SetBindingClick`
+  target is not of that type, so a wrong guess only leaves a button out.
+  `_G[frame]` and `rawget(f, 0)` are the addon's only dynamic lookups, by
+  that ruling.
+  Whether `GetBinding` lists `CLICK` commands at all is **[verify]**: the
+  schema-5 capture settles it (`docs/handoffs/M16-45.md`).
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
   for that load only; a later load that finds the probe clears it. A first
   load and a file that failed to load both show `loads = 1`.
@@ -461,8 +537,8 @@ saved list. `customization` also gets `events_received` the same way
 session) is written with its plain "switched off by the owner" reason and
 nothing else. `collections.appearances` has no events, so its reason gets
 nothing added. After M11-04, any change to the format is a new schema:
-M11-29's is schema 2, M13-05's is schema 3, M15-01's is schema 4, and the
-next one is schema 5.
+M11-29's is schema 2, M13-05's is schema 3, M15-01's is schema 4, M16-45's
+is schema 5, and the next one is schema 6.
 
 ### Switching a section off
 
@@ -511,21 +587,62 @@ after a later version renames a section) is ignored and dropped at the next
 save.
 
 The 15 s window. The first on-world pass after each `ADDON_LOADED` (login or
-`/reload`) runs 15 s after `PLAYER_ENTERING_WORLD`, on its own timer, and
-the addon says so in chat at that moment. That event fires just before the
-loading screen clears (**[verify]**), so a little less than 15 s is left
-once the world is visible, less on a slow first login. The chat line is
+`/reload`) runs 15 s after `PLAYER_ENTERING_WORLD`, on its own timer. That
+event fires just before the loading screen clears (**[verify]**), so a
+little less than 15 s is left once the world is visible, less on a slow
+first login. The chat line is
 `WowLab: recording in 15 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
-Until that pass has run, change events gather nothing (what they would have
-gathered is taken by the pass); after it, change events keep the 2 s
-debounce. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
+Since schema 5 (M16-45) it prints only when the file's `announced` is not
+this addon's schema, or the probe was lost (`probe.lost`). `announced` is
+written by the addon's own logout write, and only when the first pass ran
+in that session; at `ADDON_LOADED` it is removed from the table in memory
+until that write puts it back. So the line prints once per schema (each
+new lab-addon format), and again after a session in which the client saved
+the file but the addon's logout write did not finish (the file then keeps
+no `announced`), or one that ended before its first pass on a new schema.
+A crash cannot be detected: a crash writes nothing, so the file stays as
+the last session that saved it left it, and after one that already wrote
+`announced` the next login is quiet. The window is still there, and
+`/wowlab skip` still works in it. The line is the reminder, not the
+window.
+Until the first pass has run, change events gather nothing (what they would
+have gathered is taken by the pass). After it, a change event only marks
+its section dirty, and the dirty sections are gathered together by one pass
+at most once every 30 s (it was a 2 s debounce before schema 5), never in
+combat: a pass whose 30 s end in combat waits for `PLAYER_REGEN_ENABLED`,
+and no new timer starts meanwhile. The first pass waits for the end of
+combat the same way, on its own flag, so the end of combat resets the
+timer's state only when a timer's pass was waiting. Combat is known from
+`PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`, and on every
+`PLAYER_ENTERING_WORLD` from `InCombatLockdown` through `pcall` (a
+`/reload` in combat sends no `PLAYER_REGEN_DISABLED`); `Actions.lua`'s
+sections still ask `InCombatLockdown` themselves. `customization` still records at the event
+itself (the barber shop is open only then), and `PLAYER_LOGOUT` and
+`/wowlab save` gather at once. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
 A logout or `/reload` inside the 15 s still records: `PLAYER_LOGOUT` gathers
 every section still waiting, the crashing one included unless it was
 switched off first. `/wowlab save` inside the 15 s gathers at once, as
 always. If the client has no `C_Timer`, there is no window: the pass runs at
 once, as before. After the first pass, a section that crashes on a later
-change event (2 s debounce) gives no window; switch it off at the next
+change event (up to 30 s later) gives no window; switch it off at the next
 login.
+
+### Debug
+
+`/wowlab debug on` and `/wowlab debug off` switch the research scaffolding
+on and off from the next `/reload` or login, never in the same session
+(its events are registered at `ADDON_LOADED`); `/wowlab debug` says what
+this session and the next one have. It is off by default, per character,
+and saved as `WowLabCharDB.debug = true` (left out when off); `/reload` or
+log out to save a change. When on, the session:
+
+- writes `probes` on `spellbook`, `actionbars` and `bindings`;
+- registers the six count-only barber-shop events (the made-up control
+  `WOWLAB_CONTROL_NOT_A_REAL_EVENT` among them) and writes
+  `events_received` on `customization`.
+
+Nothing else changes: every section reads the same client values either
+way, and the secret checks run either way.
 
 What the switch does not do:
 
@@ -616,10 +733,13 @@ anything run at load or from an event handler outside a section.
   literal, an addon function, a client global, `ns.Fn(...)`, what `next`,
   `pairs`, `ipairs`, `select` or `unpack` return from one, a loop variable
   over one, and any local or helper parameter ever given one. The exceptions
-  are listed in `HANDED_ON`, each with its reason. Today there are four:
-  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`, and three
+  are listed in `HANDED_ON`, each with its reason. Today there are seven:
+  `ItemLocation` as the self of its own `CreateFromEquipmentSlot`; three
   values `talents.legacy` reads out of the client's `Enum.TraitConfigType`
-  and `Constants` tables and hands at once to `C_Traits` or `string.find`.
+  and `Constants` tables and hands at once to `C_Traits` or `string.find`;
+  and, since schema 5, a `CLICK` binding's frame, read by `rawget` at index
+  0 and handed twice to `attribute`, which calls its `GetAttribute` at once
+  inside `pcall`.
 - Each file binds its `...` once, as `local <name>, ns = ...`, and uses it
   nowhere else. `ns` is written only as `ns.Name` (never `ns:Name`, which
   hands the namespace on as `self`), no function is defined with `:`, and
@@ -666,7 +786,7 @@ on from one, fails the test until someone lists it on purpose.
 | `Enum.TraitConfigType` | talents.legacy: config types to ask for | called by forever-addon-kit's walker on 69893; which call found the Legacy config is not recorded: [verify] in M11-03 | n/a (table) |
 | `ToggleLegacySystemUI` | talents.legacy: marker that the Legacy panel exists (never called) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `UnitLevel` | talents.legacy: `player_level` (explains an empty list) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `C_Timer.After` | debounce gathering after change events | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
+| `C_Timer.After` | the 15 s first pass, and the change-event pass at most once every 30 s (schema 5) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `GetSpecialization` | spec: fallback only, if a client provides the global | confirmed by forever-addon-kit on 69893, re-verify in M11-03: **absent** on Forever | no |
 | `GetSpecializationInfo` | spec: fallback only, with the global above | confirmed by forever-addon-kit on 69893, re-verify in M11-03: **absent** on Forever | no |
 | `C_SpecializationInfo.GetSpecialization` | spec: index | [verify] | yes |
@@ -730,6 +850,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
 | `GetBindingKey` | bindings: the keys bound to a command now | ran on 70425 (M13-05 capture: 124 of 298 with a key; the 8 `bindings-cache.wtf` lines match, the other bound commands are unexplained); other builds: [verify] | yes |
+| `_G` (a frame's `GetAttribute`) | bindings: a `CLICK` command's frame, its `type` and `action` attributes only (schema 5) | [verify]: whether `GetBinding` lists `CLICK` commands at all, and what bar addons set, settle in the schema-5 capture | n/a (Lua global table; frame method) |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
 
@@ -746,7 +867,9 @@ they are **[verify]** like every other event: `ACTIVE_COMBAT_CONFIG_CHANGED`, `P
 `PET_JOURNAL_LIST_UPDATE`, `CURRENCY_DISPLAY_UPDATE`,
 `SKILL_LINES_CHANGED`, and since schema 3 `SPELLS_CHANGED`,
 `ACTIONBAR_SLOT_CHANGED`, `UPDATE_BINDINGS` and `PLAYER_REGEN_ENABLED` (a
-retry event: it re-gathers only a section a blocked gather left dirty). An
+retry event: it re-gathers only a section a blocked gather left dirty), and
+since schema 5 `PLAYER_REGEN_DISABLED` (with `PLAYER_REGEN_ENABLED`,
+registered by `Core.lua` to know when combat starts and ends). An
 event the client does not know is skipped and
 listed in the section's `events_unregistered` (an empty list when none was
 refused).
@@ -774,7 +897,8 @@ The six count-only events of M11-29 (`BARBER_SHOP_RESULT`,
 `BARBER_SHOP_COST_UPDATE`, `BARBER_SHOP_SUCCESS` and the made-up control
 `WOWLAB_CONTROL_NOT_A_REAL_EVENT`) are **[verify]**: they are registered by
 `customization`, only counted, and a refused one is left out of
-`events_received` rather than listed in `events_unregistered`.
+`events_received` rather than listed in `events_unregistered`. Since schema 5
+they are registered only in a debug session ("Debug" above).
 
 ## M11-03 [verify] checklist
 

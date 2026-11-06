@@ -377,10 +377,117 @@ def _dynamic_lookups(tokens: list[Token]) -> list[Token]:
     ]
 
 
+# The one dynamic global lookup the owner allowed (M16-45; ADR-0026,
+# amendment of 2026-10-22): `_G[frame]` for a `CLICK <frame>:<button>`
+# binding command whose frame part passed the bounded identifier pattern.
+# Exactly this statement, in this file, inside `clickAction`, once.
+CLICK_FRAME_FILE = "Actions.lua"
+CLICK_FRAME_LOOKUP = ("local", "target", "=", "_G", "[", "frameName", "]")
+# Round 1 (security F2): the frame's index 0 read past any metatable, before
+# any other index of it.
+CLICK_FRAME_RAWGET = ("type", "(", "rawget", "(", "target", ",", "0", ")", ")")
+
+
+def _is_click_frame_lookup(path: Path, tokens: list[Token], i: int) -> bool:
+    if path.name != CLICK_FRAME_FILE or i < 3:
+        return False
+    if tokens[i].text == "_G":
+        return tuple(t.text for t in tokens[i - 3 : i + 4]) == CLICK_FRAME_LOOKUP
+    if tokens[i].text == "rawget":
+        return tuple(t.text for t in tokens[i - 2 : i + 7]) == CLICK_FRAME_RAWGET
+    return False
+
+
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
 def test_sources_do_no_dynamic_global_lookup(path: Path) -> None:
-    bad = [f"{_where(path, t)} {t.text}" for t in _dynamic_lookups(_tokens(path))]
+    tokens = _tokens(path)
+    allowed = {id(tokens[i]) for i in range(len(tokens)) if _is_click_frame_lookup(path, tokens, i)}
+    bad = [f"{_where(path, t)} {t.text}" for t in _dynamic_lookups(tokens) if id(t) not in allowed]
     assert not bad, bad
+
+
+def test_m16_45_the_click_frame_lookup_is_the_one_exception() -> None:
+    """The `_G[frameName]` exception matches exactly once, inside
+    `clickAction`, whose only caller passes the frame part `clickParts`
+    returned (the bounded `^CLICK ([%a_][%w_]*):(%a%w*)$` shape)."""
+    path = ADDON / CLICK_FRAME_FILE
+    tokens = _tokens(path)
+    hits = [i for i in range(len(tokens)) if _is_click_frame_lookup(path, tokens, i)]
+    assert [tokens[i].text for i in hits] == ["_G", "rawget"], hits
+    # The rawget test comes right after the table test, before any index.
+    assert (
+        'local target = _G [ frameName ] if type ( target ) ~= "table" then return nil end '
+        'if type ( rawget ( target , 0 ) ) ~= "userdata" then return nil end '
+        'local okType , kind = pcall ( attribute , target , "type" )'
+    ) in _render(tokens)
+    assert _render(tokens).count("target .") == 0 and _render(tokens).count("target [") == 0
+    assert (
+        "local function attribute ( f , name ) return f : GetAttribute ( name ) end"
+    ) in _render(tokens)
+    # Security F3: frameName is bound once outside clickParts, from it, and
+    # nothing reassigns it before clickAction.
+    binds = [
+        _Flow(path, tokens).label_at(i)
+        for i in range(1, len(tokens) - 1)
+        if tokens[i].text == "frameName" and tokens[i + 1].text == "=" and not _is_field(tokens, i)
+    ]
+    assert binds == ["gather"], binds  # the bindings section's gather
+    assert (
+        "local _ , _ , frameName , button = string . find ( value , "
+        '"^CLICK ([%a_][%w_]*):(%a%w*)$" )'
+    ) in _render(tokens)  # clickParts' own local, returned only after the bounds
+    assert _render(tokens).count("frameName ,") == 1
+    assert (
+        "local frameName = clickParts ( click ) if frameName then "
+        "action = clickAction ( isSecret , secret , attributeProbe , frameName ) end"
+    ) in _render(tokens)
+    source = path.read_text(encoding="utf-8")
+    start = source.index("local function clickAction(isSecret, secret, attributeProbe, frameName)")
+    end = source.index("\nend\n", start)
+    lookup_line = tokens[hits[0]].line
+    assert source.count("\n", 0, start) < lookup_line <= source.count("\n", 0, end) + 1
+    assert '"^CLICK ([%a_][%w_]*):(%a%w*)$"' in source
+    assert "#frameName <= 64 and #button <= 32" in source
+    calls = re.findall(r"clickAction\(([^)]*)\)", source)
+    assert calls == ["isSecret, secret, attributeProbe, frameName"] * 2, calls
+    assert "local click = nil if not name then click = clickCommand ( found ) end" in _render(
+        tokens
+    )
+    assert "local frameName = clickParts(click)" in source
+    # (b) and (c): the type attribute exactly "action", then a numeric action
+    # attribute, each through pcall and clean; nothing else is read.
+    body = _render(tokens[hits[0] : hits[0] + 200])
+    assert (
+        'local okType , kind = pcall ( attribute , target , "type" ) '
+        "if okType then kind = clean ( isSecret , secret , attributeProbe , kind ) "
+        "else kind = nil end"
+    ) in body
+    assert 'if not okType or kind ~= "action" then return nil end' in body
+    assert (
+        'local okSlot , slot = pcall ( attribute , target , "action" ) '
+        "if okSlot then slot = clean ( isSecret , secret , attributeProbe , slot ) "
+        "else slot = nil end"
+    ) in body
+    assert _render(tokens).count("pcall ( attribute ,") == 2
+    # Round 2 (security pin): `attribute` is named only at its definition and
+    # in the two pinned pcalls.
+    named = [
+        _render(tokens[i - 3 : i + 3])
+        for i in range(3, len(tokens) - 3)
+        if tokens[i].text == "attribute" and not _is_field(tokens, i)
+    ]
+    assert named == [
+        "2147483647 local function attribute ( f",
+        "= pcall ( attribute , target",
+        "= pcall ( attribute , target",
+    ], named
+    # Every CLICK command not kept is counted twice; no other path counts one.
+    assert (
+        "if action then name = ns . String ( click ) "
+        "else clicksLeftOut = clicksLeftOut + 1 end end "
+        "if not name then leftOut = leftOut + 1 else"
+    ) in _render(tokens)
+    assert _render(tokens).count("clicksLeftOut = clicksLeftOut + 1") == 1
 
 
 def test_dynamic_lookup_constructed_environment_reads() -> None:
@@ -2470,9 +2577,10 @@ def test_first_pass_runs_on_its_own_timer() -> None:
     assert first.startswith(
         "function startFirstPass ( ) if firstPassStarted then return end firstPassStarted = true"
     )
+    # M16-45: the first pass, like every later one, waits for combat to end.
     assert (
-        "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true gatherDirty ( ) end )"
-        in first
+        "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true "
+        "if inCombat then firstPassWaiting = true else gatherDirty ( ) end end )" in first
     )
     # Not merged into, nor swallowed by, the change-event debounce.
     assert "pending" not in first.split() and "schedule" not in first.split()
@@ -2790,7 +2898,8 @@ def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
     assert listen.startswith(
         "function listen ( section ) local changes = { } "
         "for _ , event in ipairs ( section . events or { } ) do changes [ event ] = true end "
-        "local counts = nil if section . count_only then counts = { } end"
+        # M16-45: count-only events and their counts in a debug session only.
+        "local counts = nil if section . count_only and ns . debug then counts = { } end"
     ), listen
     assert _body(flow, "onEvent") == (
         f"function onEvent ( fired ) {OFF_GUARD} "
@@ -2809,8 +2918,8 @@ def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
         "elseif counts then counts [ event ] = 0 end end"
     ) in listen
     count_only_loop = (
-        "for _ , event in ipairs ( section . count_only or { } ) do "
-        "if ns . On ( event , onEvent ) and counts then counts [ event ] = 0 end end"
+        "if counts then for _ , event in ipairs ( section . count_only or { } ) do "
+        "if ns . On ( event , onEvent ) then counts [ event ] = 0 end end end"
     )
     assert listen.endswith(count_only_loop + " end"), listen
     # events_received is set in `listen` only; nothing else writes the count.
@@ -2895,8 +3004,9 @@ def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
     `probe.loads` keeps rising across the bump."""
     flow = _core()
     rendered = _render(flow.tokens)
-    # Schema 4 since M15-01 (3 since M13-05); the bump keeps every check below.
-    assert "ns . SCHEMA = 4" in rendered
+    # Schema 5 since M16-45 (4 since M15-01, 3 since M13-05); the bump keeps
+    # every check below.
+    assert "ns . SCHEMA = 5" in rendered
     assert rendered.count("ns . SCHEMA =") == 1
     assert "local db = { schema = ns . SCHEMA , probe = copyProbe ( ) ," in _body(flow, "ns.Write")
     assert "WowLabDB = { schema = ns . SCHEMA }" in _body(flow, "ns.Write")
@@ -2908,7 +3018,7 @@ def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
     loaded = _body(flow, 'ns.On("ADDON_LOADED")')
     assert "ns . probe = loadProbe ( WowLabCharDB )" in loaded
     assert "WowLabCharDB . probe = copyProbe ( )" in loaded
-    for label in ("loadProbe", "loadSkip", 'ns.On("ADDON_LOADED")'):
+    for label in ("loadProbe", "loadSkip", "loadQuiet", 'ns.On("ADDON_LOADED")'):
         assert "schema" not in _body(flow, label).replace("schema = ns . SCHEMA", ""), label
     tokens = _tokens(_customization_lua())
     start, end = _carry_body(tokens)
@@ -2935,10 +3045,10 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         assert "M11-29 capture step" in text
         assert "schema 2" in text
         assert "the schema stays 1" not in text.split("(M11-29")[-1]
-    # The README's layout is schema 4's since M15-01 (3's since M13-05), and
-    # schema 1 is still read.
-    assert "### Table layout (schema 4)" in raw_readme
-    assert "  schema = 4," in raw_readme
+    # The README's layout is schema 5's since M16-45 (4's since M15-01, 3's
+    # since M13-05), and schema 1 is still read.
+    assert "### Table layout (schema 5)" in raw_readme
+    assert "  schema = 5," in raw_readme
     assert "The Lab still reads schema 1 files" in readme
     # M4: the file shows only that the last write came from an open.
     for text in (readme, plan, formats):
@@ -3198,7 +3308,7 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
     ("Core.lua", "off", "frame"): ({"self": 1}, "UnregisterEvent's self argument"),
     ("Core.lua", "schedule", "timerAfter"): (
         {"test": 1, "call": 1},
-        "the 2 s change-event debounce",
+        "the change-event pass, at most once every GATHER_INTERVAL s (M16-45)",
     ),
     ("Core.lua", "startFirstPass", "timerAfter"): ({"call": 1}, "the 15 s first-pass window"),
     ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "timerAfter"): (
@@ -3206,6 +3316,12 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
         "whether there is a 15 s window; never called here",
     ),
     ("Core.lua", "clientInfo", "GetBuildInfo"): ({"test": 1, "call": 1}, "the `client` block"),
+    # M16-45 round 1: a /reload in combat sends no PLAYER_REGEN_DISABLED, so
+    # combat is asked once per loading screen; only `true` or `false` is kept.
+    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "InCombatLockdown"): (
+        {"test": 1, "call": 1},
+        "whether the player is in combat as the world is entered, through pcall",
+    ),
     # Client-given values (round 3): what the client passes to a function it
     # calls, and where Core.lua takes it. The dispatcher's first parameter
     # (the event frame) and the slash handler's second (the chat edit box)
@@ -3255,7 +3371,9 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
 # section's gather or carry literal is labelled with its key: `gather("gear")`.
 SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
     ("Core.lua", "ns.On"): {
-        ("Core.lua", _TOP): 3,  # ADDON_LOADED, PLAYER_ENTERING_WORLD, PLAYER_LOGOUT
+        # ADDON_LOADED, PLAYER_ENTERING_WORLD, PLAYER_LOGOUT, and (M16-45)
+        # PLAYER_REGEN_DISABLED and PLAYER_REGEN_ENABLED, which track combat
+        ("Core.lua", _TOP): 5,
         # the change events, the retry events (M13-05) and the count-only events
         ("Core.lua", "listen"): 3,
         ("Customization.lua", _TOP): 1,  # the race check
@@ -3324,6 +3442,19 @@ HANDED_ON: dict[tuple[str, str, str], str] = {
     ("Talents.lua", "legacyConfigs", "ns . Call ( bySystem , value )"): (
         "a Constants value, tested as a number just before, handed now to "
         "C_Traits.GetConfigIDBySystemID through ns.Call"
+    ),
+    # M16-45 (ADR-0026, amendment of 2026-10-22; round 1): the frame a CLICK
+    # binding names, tested as a table just before. rawget reads its index 0
+    # now, with no metatable; `attribute` calls its GetAttribute now, inside
+    # pcall. It is never stored.
+    ("Actions.lua", "clickAction", "rawget ( target , 0 )"): (
+        "the frame, tested as a table; rawget reads its index 0 now, past any metatable"
+    ),
+    ("Actions.lua", "clickAction", 'pcall ( attribute , target , "type" )'): (
+        'the frame handed to `attribute`, which calls frame:GetAttribute("type") now'
+    ),
+    ("Actions.lua", "clickAction", 'pcall ( attribute , target , "action" )'): (
+        'the frame handed to `attribute`, which calls frame:GetAttribute("action") now'
     ),
 }
 
@@ -5085,7 +5216,9 @@ _M11_37_CASES: dict[str, tuple[tuple[str, list[tuple[str, str]]], tuple[str, str
             "Core.lua",
             [
                 (
-                    "    if not timerAfter then\n        gatherDirty()\n        return\n    end\n",
+                    "    if not timerAfter then\n        if inCombat then\n"
+                    "            waitingForCombat = true\n        else\n"
+                    "            gatherDirty()\n        end\n        return\n    end\n",
                     "    timerAfter(0, gatherDirty)\n",
                 )
             ],
@@ -5513,12 +5646,22 @@ def test_m13_05_the_new_sections_read_nothing_in_combat() -> None:
 
 
 def test_m13_05_the_new_sections_are_switchable_and_need_no_exception() -> None:
-    """The M11-37 rules hold for Actions.lua with no listed exception: every
-    call sits in section code that `/wowlab skip` stops."""
+    """The M11-37 rules hold for Actions.lua with no sectionless exception:
+    every call sits in section code that `/wowlab skip` stops. Its only
+    listed exceptions are M16-45's three HANDED_ON entries in `clickAction`
+    (a CLICK binding's frame read by rawget at index 0, and handed twice to
+    `attribute`, which calls its GetAttribute now inside pcall; ADR-0026,
+    amendment of 2026-10-22)."""
     scan = _section_scan()
     assert not [f for f in scan.failures if "Actions.lua" in f], scan.failures
-    for table in (SECTIONLESS_API, SECTIONLESS_CALLERS, HANDED_ON):
+    for table in (SECTIONLESS_API, SECTIONLESS_CALLERS):
         assert not [key for key in table if key[0] == "Actions.lua"], table
+    handed = [key for key in HANDED_ON if key[0] == "Actions.lua"]
+    assert handed == [
+        ("Actions.lua", "clickAction", "rawget ( target , 0 )"),
+        ("Actions.lua", "clickAction", 'pcall ( attribute , target , "type" )'),
+        ("Actions.lua", "clickAction", 'pcall ( attribute , target , "action" )'),
+    ], handed
 
 
 _M13_05_GATHER = "        local blocked = combatReason()\n"
@@ -5703,7 +5846,11 @@ def test_m13_05_bindings_ask_only_plain_commands() -> None:
     assert "ns . Pack ( pcall ( getKey , name ) )" in text
     assert text.count("getKey ,") == 1
     assert 'string . find ( value , "^[%u%d_]+$" )' in text
-    assert "{ command = ns . String ( name ) , keys = kept }" in text
+    # M16-45: a CLICK command passed clickParts and clickAction, and keeps
+    # its button's action attribute.
+    assert (
+        "{ command = ns . String ( name ) , action = ns . Number ( action ) , keys = kept }" in text
+    )
 
 
 # Round 2 of the domain review: a blocked gather keeps the good record ---------
@@ -5872,12 +6019,40 @@ def _m13_05_cleaned_last(t: list[Token], start: int, end: int) -> bool:
     )
 
 
+def _m16_45_pinned_call(flow: _Flow, k: int) -> bool:
+    """M16-45 round 1 (security F2), the two calls the CLICK rule needs, each
+    pinned whole by `test_m16_45_the_click_frame_lookup_is_the_one_exception`:
+    the `:` and the call of `f:GetAttribute(name)` inside the one-line
+    `attribute`, which only `pcall` calls, and `rawget(target, 0)` in
+    `clickAction`'s frame test."""
+    t = flow.tokens
+    if flow.path.name != CLICK_FRAME_FILE:
+        return False
+    label = flow.label_at(k)
+    if (
+        label == "attribute"
+        and (
+            _render(t[k - 2 : k + 5]) == "return f : GetAttribute ( name )"  # the `:`
+            or _render(t[k - 4 : k + 3]) == "return f : GetAttribute ( name )"  # the call
+        )
+    ):
+        return True
+    return (
+        label == "clickAction"
+        and t[k].text == "("
+        and t[k - 1].text == "rawget"
+        and tuple(x.text for x in t[k - 3 : k + 6]) == CLICK_FRAME_RAWGET
+    )
+
+
 def _m13_05_call_problems(t: list[Token], flow: _Flow, own: set[str]) -> list[str]:
     """Every call in the file is of a function named in `own`,
     `_M13_05_BUILTINS` or `_M13_05_NS`, through a name nothing rebinds."""
     problems: list[str] = []
     allowed = own | _M13_05_BUILTINS | _M13_05_NS
     for k in range(1, len(t)):
+        if _m16_45_pinned_call(flow, k):
+            continue
         if t[k].kind == "op" and t[k].text == ":":
             problems.append(f"line {t[k].line}: a method call")
         if not flow.call_start(k):
@@ -5964,6 +6139,12 @@ _M13_05_SANITIZERS = {
         'if type ( value ) == "string" and # value <= 64 '
         'and string . find ( value , "^[%w%p]+$" ) then return value end return nil end'
     ),
+    # M16-45: a command that starts with "CLICK ", before clickParts.
+    "clickCommand": (
+        "local function clickCommand ( value ) "
+        'if type ( value ) == "string" and string . find ( value , "^CLICK " ) '
+        "then return value end return nil end"
+    ),
 }
 _M13_05_STORES = ("ns . Number (", "ns . String (", "ns . Bool (")
 _M13_05_COMPARE = frozenset({"==", "~=", "<", "<=", ">", ">="})
@@ -5993,7 +6174,10 @@ def _m13_05_sink_problems(t: list[Token], flow: _Flow, v: str, uses: list[int]) 
             continue
         if sole and t[i - 2].text in _M13_05_SANITIZERS and not _is_field(t, i - 2):
             continue
-        if nxt in _M13_05_COMPARE | {"+", "-"} or prev in _M13_05_COMPARE | {"+", "-"}:
+        # `%` (M16-45: an action slot tested as a whole number) gives a
+        # number, like `+` and `-`.
+        arithmetic = _M13_05_COMPARE | {"+", "-", "%"}
+        if nxt in arithmetic or prev in arithmetic:
             continue
         if _render(t[i - 4 : i + 2]) == f"math . min ( {v} ,":
             continue
@@ -6351,3 +6535,176 @@ def test_m13_05_readme_and_plan_document_schema_3() -> None:
         assert "`left_out_config_absent`" in text
         assert "`probes`" in text
         assert "out of combat" in text
+
+
+# M16-45: schema 5, a quieter addon ---------------------------------------------
+#
+# Source scans of Core.lua, Actions.lua and Talents.lua (nothing runs Lua, L3).
+# `test_m16_45_the_click_frame_lookup_is_the_one_exception` (above, beside the
+# dynamic-lookup test) pins the CLICK rule of ADR-0026's amendment of
+# 2026-10-22.
+
+TALENTS = ADDON / "Talents.lua"
+
+
+def test_m16_45_the_chat_line_prints_once_per_version_or_after_an_unclean_file() -> None:
+    """The first-pass line prints only when the file's `announced` is not this
+    schema or the probe was lost. `announced` is cleared from the live table
+    at ADDON_LOADED and written back only by the logout write of a session
+    whose first pass ran, so a session whose write never ran leaves none."""
+    flow = _core()
+    first = _body(flow, "startFirstPass")
+    assert (
+        'if ns . announced ~= ns . SCHEMA or ns . probe . lost then say ( "recording in "' in first
+    )
+    assert first.count("say (") == 1
+    write = _body(flow, "ns.Write")
+    assert (
+        "if firstPassDone then db . announced = ns . SCHEMA "
+        "else db . announced = ns . Number ( ns . announced ) end"
+    ) in write
+    loaded = _body(flow, 'ns.On("ADDON_LOADED")')
+    assert loaded.index("loadQuiet ( WowLabCharDB )") < loaded.index("loadSkip ( WowLabCharDB )")
+    assert loaded.endswith("WowLabCharDB . announced = nil end"), loaded
+    assert (
+        'if type ( saved . announced ) == "number" then '
+        "ns . announced = ns . Number ( saved . announced ) end"
+    ) in _body(flow, "loadQuiet")
+    rendered = _render(flow.tokens)
+    assert rendered.count("ns . announced =") == 2  # declared, and loaded
+    assert rendered.count("announced =") == 5  # and the write's two, and the clear
+
+
+def test_m16_45_debug_is_off_by_default_and_gates_the_probes_and_count_only_events() -> None:
+    """`/wowlab debug on|off` takes effect from the next load: ns.debug is
+    read once at ADDON_LOADED (only `true` is on), and the slash command
+    changes only what is saved. Outside a debug session no `probes` are
+    written and no count-only event is registered."""
+    flow = _core()
+    rendered = _render(flow.tokens)
+    assert "ns . debug = false" in rendered
+    assert rendered.count("ns . debug =") == 2
+    assert "ns . debug = saved . debug == true debugNext = ns . debug" in _body(flow, "loadQuiet")
+    command = _body(flow, "debugCommand")
+    assert 'if word == "on" or word == "off" then debugNext = word == "on"' in command
+    assert "ns . debug" in command and "ns . debug =" not in command
+    assert "if debugNext then db . debug = true else db . debug = nil end" in _body(
+        flow, "putDebug"
+    )
+    assert "putSkip ( db ) putDebug ( db )" in _body(flow, "ns.Write")
+    listen = _body(flow, "listen")
+    assert (
+        "local counts = nil if section . count_only and ns . debug then counts = { } end" in listen
+    )
+    assert "if counts then for _ , event in ipairs ( section . count_only or { } ) do" in listen
+    actions = _render(_tokens(ACTIONS))
+    gate = "lookedUp ( asked ) local list = nil if ns . debug then list = asked end"
+    assert actions.count(gate) == 3
+    assert actions.count("probes = list") == 9
+    # and the spellbook's own table of probes, built before the gate
+    assert actions.count("probes =") == 10 and actions.count("local probes = {") == 1
+    assert 'elseif command == "debug" then' in rendered and "debugCommand ( key )" in rendered
+
+
+def test_m16_45_change_events_mark_dirty_and_one_pass_runs_out_of_combat() -> None:
+    """After the first pass a change event only marks its section dirty and
+    asks `schedule`; one timer of 30 to 60 s gathers every dirty section,
+    never in combat (it waits for PLAYER_REGEN_ENABLED, keeping `pending`
+    so no second timer starts). PLAYER_LOGOUT still gathers at once."""
+    flow = _core()
+    t = flow.tokens
+    k = next(
+        i
+        for i in range(len(t) - 3)
+        if [x.text for x in t[i : i + 3]] == ["local", "GATHER_INTERVAL", "="]
+    )
+    assert 30 <= int(t[k + 3].text) <= 60
+    schedule = _body(flow, "schedule")
+    assert (
+        "pending = true timerAfter ( GATHER_INTERVAL , function ( ) "
+        "if firstPassDone and inCombat then waitingForCombat = true return end "
+        "pending = false if firstPassDone then gatherDirty ( ) end end )"
+    ) in schedule
+    assert "if inCombat then waitingForCombat = true else gatherDirty ( ) end return" in schedule
+    rendered = _render(t)
+    assert "timerAfter ( 2 ," not in rendered
+    assert 'ns . On ( "PLAYER_REGEN_DISABLED" , function ( ) inCombat = true end )' in rendered
+    # Round 1 (code 3): the first pass's wait has its own flag, so the end of
+    # combat resets `pending` only after a timer's pass set the wait.
+    assert (
+        'ns . On ( "PLAYER_REGEN_ENABLED" , function ( ) inCombat = false local run = false '
+        "if firstPassWaiting then firstPassWaiting = false run = true end "
+        "if waitingForCombat then waitingForCombat = false pending = false run = true end "
+        "if run then gatherDirty ( ) end end )"
+    ) in rendered
+    assert rendered.count("firstPassWaiting = true") == 1
+    assert "firstPassWaiting = true" in _body(flow, "startFirstPass")
+    assert rendered.count("waitingForCombat = true") == 2
+    assert "firstPassWaiting" not in _body(flow, "schedule")
+    # Round 1 (code 4): a /reload in combat is gated: combat is asked as the
+    # world is entered, and only true or false is kept.
+    world = _body(flow, 'ns.On("PLAYER_ENTERING_WORLD")')
+    assert world.startswith(
+        'function ( ) if type ( InCombatLockdown ) == "function" then '
+        "local ok , locked = pcall ( InCombatLockdown ) "
+        "if ok and locked == true then inCombat = true elseif ok then inCombat = false end end"
+    ), world
+    assert "else section . dirty = true schedule ( ) end end" in _body(flow, "onEvent")
+    assert "gatherDirty ( ) ns . Write ( )" in _body(flow, 'ns.On("PLAYER_LOGOUT")')
+
+
+def test_m16_45_the_constants_sweep_runs_once_per_session() -> None:
+    """talents.legacy walks `Constants` on its first gather only; a later
+    gather asks again only the system ids that answered a number then."""
+    text = _render(_tokens(TALENTS))
+    assert text.count("pairs ( Constants )") == 1
+    assert (
+        "if not systemsSwept then systemsSwept = true for group , fields in pairs ( Constants ) do"
+    ) in text
+    assert (
+        "else for _ , known in ipairs ( answering ) do "
+        "add ( ns . Call ( bySystem , known . system ) , known . how ) end end"
+    ) in text
+    assert "local systemsSwept = false local answering = { }" in text
+    assert text.count("systemsSwept = true") == 1
+
+
+def test_m16_45_readme_documents_schema_5() -> None:
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    for phrase in (
+        "Schema 5 (M16-45)",
+        "### Debug",
+        "/wowlab debug on",
+        "`clicks_left_out`",
+        "`announced`",
+        "at most once every 30 s",
+        "`Constants` sweep of `talents.legacy` runs once per session",
+        "Whether `GetBinding` lists `CLICK` commands at all is **[verify]**",
+    ):
+        assert phrase in readme, phrase
+
+
+def test_m16_45_every_gathered_actions_record_says_how_many_values_it_dropped() -> None:
+    """Round 1 (conductor's ruling, 2026-11-05): `probes` stays behind
+    `/wowlab debug`, but every gathered spellbook, actionbars and bindings
+    record carries `dropped`, one whole number: over every probe, the calls
+    that raised plus the values dropped as secret or untestable. No name, no
+    text."""
+    text = _render(_tokens(ACTIONS))
+    assert (
+        text.count("record . dropped = ns . Number ( droppedCount ( asked ) ) return record") == 3
+    )
+    assert text.count("dropped =") == 3
+    # Round 2 (domain 4): issecretvalue's own errors and a CLICK frame's
+    # GetAttribute are left out, so one value is not counted twice and a
+    # CLICK command left out is not also "dropped".
+    assert 'local NOT_DROPPED = { [ "issecretvalue" ] = true , [ "GetAttribute" ] = true }' in text
+    assert (
+        "local function droppedCount ( list ) local total = 0 for i = 1 , # list do "
+        "local entry = list [ i ] if not NOT_DROPPED [ entry . api ] then "
+        "total = total + ( ns . Number ( entry . errors ) or 0 ) "
+        "+ ( ns . Number ( entry . secret ) or 0 ) end end return total end"
+    ) in text
+    # The two names are the probes' own `api` strings.
+    assert 'probe ( "issecretvalue" , isSecret )' in text
+    assert 'probe ( "GetAttribute" , true )' in text
