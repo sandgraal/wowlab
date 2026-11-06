@@ -88,7 +88,9 @@ def record(flavor: Path) -> Path:
 
 
 def run(*args: str) -> Any:
-    return runner.invoke(cli.app, list(args))
+    # A terminal wide enough that no line wraps: these tests read what is
+    # said; how prose wraps is test_cli_notes.py's (M16-16).
+    return runner.invoke(cli.app, list(args), terminal_width=10_000)
 
 
 def ok(*args: str) -> Any:
@@ -154,6 +156,21 @@ def default_table() -> bindscoach.CostTable:
     return bindscoach.load_costs().table
 
 
+def sample_table() -> bindscoach.CostTable:
+    """The default table with "bound, never cast" judged from one cast up, so
+    that the real log's six casts are judged (M16-36)."""
+    return default_table().model_copy(update={"never_cast_min_casts": 1})
+
+
+SMALL_SAMPLE = "[coach]\nnever_cast_min_casts = 1\n"
+
+
+def small_sample(user_dirs: Path) -> None:
+    """A player's table judging "bound, never cast" from one cast up."""
+    user_dirs.mkdir(parents=True, exist_ok=True)
+    (user_dirs / bindscoach.COSTS_FILE).write_text(SMALL_SAMPLE, encoding="utf-8")
+
+
 def constructed_counts(*lines: str) -> combatlog.CastCounts:
     data = "".join(f"{line}\r\n" for line in (HEADER, *lines)).encode()
     return combatlog.cast_counts(combatlog.tokenize(data))
@@ -212,16 +229,42 @@ def test_binds_coach_on_the_real_log_and_record_cross_capture(
     assert rep.log.chosen_by == "newest"
     assert rep.frequent_on_high_cost == []  # six casts: none reaches five of one spell
     assert rep.cast_without_bind == []
+    # Six casts is under the shipped minimum sample (M16-36): withheld.
+    assert rep.bound_never_cast == []
+    assert [(c.report, c.reason) for c in rep.cannot_judge] == [
+        (
+            "bound-never-cast",
+            "withheld: the log has 6 of your casts, under the minimum sample of 200, and a "
+            "spell you cast once a fight or less may simply not be in a log this short",
+        )
+    ]
+    assert rep.caveats == []  # commands_left_out = 1, but nothing is cast with no bind
+    assert (rep.commands_unseen, rep.keys_unseen) == (1, 0)
+    assert any("/combatlog" in n for n in rep.notes)
+    assert _state(root) == before  # reads never write (L1)
+    assert not user_dirs.exists()  # nor into the user config folder
+    assert not (user_dirs.parent.parent / "userdata").exists()
+
+
+def test_binds_coach_bound_never_cast_on_the_real_log_cross_capture(
+    record: Path, user_dirs: Path
+) -> None:
+    """With the minimum sample lowered to one cast, the real log's six casts
+    leave eight bound spells never cast."""
+    small_sample(user_dirs)
+    rep = report("--character", CHARACTER)
+    assert rep.costs.table.never_cast_min_casts == 1
     assert [
         (b.slot, b.command, ", ".join(k.key for k in b.keys), b.spell_id, b.spell_name)
         for b in rep.bound_never_cast
     ] == NEVER_CAST
     assert rep.cannot_judge == []
-    assert rep.caveats == []  # commands_left_out = 1, but nothing is cast with no bind
-    assert any("/combatlog" in n for n in rep.notes)
-    assert _state(root) == before  # reads never write (L1)
-    assert not user_dirs.exists()  # nor into the user config folder
-    assert not (user_dirs.parent.parent / "userdata").exists()
+    text = ok("binds", "coach", "--character", CHARACTER).stdout
+    assert (
+        "Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time; judged "
+        "from 1 cast up): 8\n" in text
+    )
+    assert "  7 (cost 4): slot 7, Health Funnel (755)\n" in text
 
 
 def test_binds_coach_reads_the_log_filtered_to_the_cast_events(
@@ -269,12 +312,15 @@ def test_binds_coach_text_says_the_table_is_a_default_and_that_combatlog_must_be
         "holds Rank 3 (705)\n"
     ) in text
     assert (
-        "Binds to spells not cast in this log (6 casts, 02:16:37 to 02:17:00 log time): 8\n" in text
+        "Binds to spells not cast in this log: withheld, this log has 6 of your casts, under "
+        "the minimum sample of 200\n" in text
     )
-    assert "  7 (cost 4): slot 7, Health Funnel (755)\n" in text
+    # The withheld report says so on its own count line (M16-16): the JSON's
+    # one cannot-judge row, said once, in place of the old "Cannot judge: 1" list.
+    assert "Cannot judge" not in text
     assert "/combatlog" in text
     assert "The client adds to this file in batches" in text
-    assert "whichever character wrote it" in text and "--log" in text
+    assert "matched by first name only" in text and "--log" in text
     assert "An auto-repeating spell" in text
     assert "[verify]" not in text  # never printed to a player
 
@@ -283,9 +329,16 @@ def test_binds_coach_without_character_takes_the_latest_record(flavor: Path, rec
     newest = max(p.stat().st_mtime_ns for p in flavor.rglob("WowLab.lua"))
     os.utime(record, ns=(newest + 10**9, newest + 10**9))
     rep = report()
-    assert (rep.character, rep.chosen_by, rep.record_schema) == (f"1/{CHARACTER}", "latest", 3)
+    assert (rep.character, rep.chosen_by, rep.record_schema) == (
+        f"1/{CHARACTER}",
+        "newest schema",
+        3,
+    )
     text = ok("binds", "coach").stdout
-    assert "(written last; choose another with --character)" in text
+    assert (
+        "(its record has the newest schema (3) of the 3 characters' records; choose another "
+        "with --character)" in text
+    )
 
 
 # ─── constructed: one log per report ─────────────────────────────────────────
@@ -356,9 +409,16 @@ def test_cast_with_no_bind_clicked_and_on_no_slot_constructed(flavor: Path, reco
     assert rep.cast_without_bind[0].detail.startswith("on action slot(s) no key reaches: clicked")
     assert rep.cast_without_bind[1].detail.startswith("on no action slot: cast from a macro")
     # The record left one binding command out, so the report says it may be
-    # wrong, and names the action-bar addons that bind that way.
-    [left] = [c for c in rep.caveats if "left out 1 command(s)" in c]
-    assert "Bartender, Dominos or ElvUI" in left
+    # wrong, pointing at the sentence said before the findings (M16-36), which
+    # names no addon.
+    assert rep.caveats == [
+        "a spell listed as cast with no bind may be reached by one of the bindings the coach "
+        "cannot see (said at the top)"
+    ]
+    assert (
+        rep.unseen is not None
+        and "counted with no list: 1 binding command it did not read" in rep.unseen
+    )
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "Spells cast with no bind: 2\n" in text
     assert "  Summon Voidwalker (697): 1 cast (slots 69): on action slot(s) no key reaches" in text
@@ -368,7 +428,7 @@ def test_bound_never_cast_lists_only_bound_spell_slots_constructed() -> None:
     """Every bound spell slot but the one cast; item slots (8, 10, 11) and
     unbound spell slots (49, 50, 64 to 70) are never listed."""
     got = bindscoach.coach(
-        constructed_counts(cast(1120, "Drain Soul")), real_record(), default_table()
+        constructed_counts(cast(1120, "Drain Soul")), real_record(), sample_table()
     )
     assert [(b.slot, b.spell_id) for b in got.bound_never_cast] == sorted(
         [(s, i) for s, _, _, i, _ in NEVER_CAST if s != 4]
@@ -392,7 +452,7 @@ def test_bound_never_cast_cannot_judge_a_log_without_your_casts_constructed(
 
 def test_ranks_match_by_id_alone_without_a_spellbook_constructed() -> None:
     rec = real_record().model_copy(update={"spellbook": None})
-    got = bindscoach.coach(real_counts(), rec, default_table())
+    got = bindscoach.coach(real_counts(), rec, sample_table())
     assert got.matched_by == "spell id"
     assert [u.spell_name for u in got.cast_without_bind] == ["Immolate", "Shadow Bolt"]
     assert any("by spell id only" in c for c in got.caveats)
@@ -555,6 +615,7 @@ def test_the_shipped_table_parses_and_is_the_default() -> None:
     assert Path(costs.shipped).name == bindscoach.COSTS_FILE
     t = costs.table
     assert (t.high_cost, t.frequent_share, t.frequent_min_casts, t.unlisted) == (4, 0.05, 5, 5)
+    assert t.never_cast_min_casts == 200
     assert t.modifiers == {"SHIFT": 1, "CTRL": 2, "ALT": 2, "META": 2}
     assert all(k == k.upper() for k in t.keys)
 
@@ -593,6 +654,7 @@ def test_a_players_table_overrides_key_by_key_constructed(
         ("[coach]\nfrequent_share = 0\n", "[coach] frequent_share"),
         ("[coach]\nfrequent_share = 1.5\n", "[coach] frequent_share"),
         ("[coach]\nfrequent_min_casts = 0\n", "[coach] frequent_min_casts"),
+        ("[coach]\nnever_cast_min_casts = 0\n", "[coach] never_cast_min_casts"),
         ('[keys]\nQ = "cheap"\n', "[keys] Q: a cost is a whole number"),
         ("[keys]\nQ = true\n", "[keys] Q: a cost is a whole number"),
         ("[keys]\nQ = 1.5\n", "[keys] Q: a cost is a whole number"),
@@ -674,7 +736,7 @@ def test_ranks_bound_on_purpose_stay_apart_constructed() -> None:
     """Rank 1 Shadow Bolt (686) on slot 4 (key 4), rank 3 (705) on slot 5 (key
     5): a log casting 686 reaches key 4 only, and slot 5 is not cast."""
     rec = _with_slots(real_record(), {4: 686})
-    got = bindscoach.coach(constructed_counts(cast(686, "Shadow Bolt")), rec, default_table())
+    got = bindscoach.coach(constructed_counts(cast(686, "Shadow Bolt")), rec, sample_table())
     [s] = got.spells
     assert (s.matched_by, s.slots, [k.key for k in s.keys], s.match_note) == (
         "spell id",
@@ -684,7 +746,7 @@ def test_ranks_bound_on_purpose_stay_apart_constructed() -> None:
     )
     assert 5 in [b.slot for b in got.bound_never_cast]
     # A rank no slot holds (695) falls back to every slot holding a Shadow Bolt.
-    got = bindscoach.coach(constructed_counts(cast(695, "Shadow Bolt")), rec, default_table())
+    got = bindscoach.coach(constructed_counts(cast(695, "Shadow Bolt")), rec, sample_table())
     [s] = got.spells
     assert (s.matched_by, s.slots) == ("spell name", [4, 5, 50, 67])
     assert s.match_note == (
@@ -773,14 +835,15 @@ def test_many_left_out_commands_cannot_judge_no_bind_constructed() -> None:
     many = rec.model_copy(
         update={"bindings": binds.model_copy(update={"commands_left_out": limit})}
     )
-    got = bindscoach.coach(counts, many, default_table())
+    got = bindscoach.coach(counts, many, sample_table())
     assert got.cast_without_bind == []
     [c] = got.cannot_judge
-    assert c.report == "cast-without-bind" and "Bartender, Dominos or ElvUI" in c.reason
+    assert c.report == "cast-without-bind" and "an action-bar addon may bind" in c.reason
+    assert not {"Bartender", "Dominos", "ElvUI"} & set(c.reason.replace(",", " ").split())
     few = rec.model_copy(
         update={"bindings": binds.model_copy(update={"commands_left_out": limit - 1})}
     )
-    got = bindscoach.coach(counts, few, default_table())
+    got = bindscoach.coach(counts, few, sample_table())
     assert [u.spell_name for u in got.cast_without_bind] == ["Summon Voidwalker"]
     assert got.cannot_judge == []
 
@@ -795,11 +858,11 @@ def test_many_left_out_commands_cannot_judge_frequent_constructed() -> None:
     many = rec.model_copy(
         update={"bindings": binds.model_copy(update={"commands_left_out": limit})}
     )
-    got = bindscoach.coach(counts, many, default_table())
+    got = bindscoach.coach(counts, many, sample_table())
     assert got.frequent_on_high_cost == []
     [c] = got.cannot_judge
-    assert c.report == "frequent-on-high-cost" and "Bartender, Dominos or ElvUI" in c.reason
-    got = bindscoach.coach(counts, rec, default_table())
+    assert c.report == "frequent-on-high-cost" and "an action-bar addon may bind" in c.reason
+    got = bindscoach.coach(counts, rec, sample_table())
     assert [f.spell_name for f in got.frequent_on_high_cost] == ["Health Funnel"]
 
 
@@ -850,6 +913,17 @@ def test_a_players_table_with_a_byte_order_mark_is_read_constructed(
         ("[coach]\nunlisted = 1001\n", "[coach] unlisted: a cost is a whole number from 0 to"),
         ("[coach]\nfrequent_share = true\n", "[coach] frequent_share: a share is a fraction"),
         ("[coach]\nfrequent_min_casts = 0\n", "[coach] frequent_min_casts: a cost is a whole"),
+        (
+            "[coach]\nnever_cast_min_casts = 0\n",
+            "[coach] never_cast_min_casts: a number of casts is a whole number from 1 to 100000",
+        ),
+        (
+            "[coach]\nnever_cast_min_casts = 100001\n",
+            "[coach] never_cast_min_casts: a number of casts is a whole number from 1 to 100000",
+        ),
+        ("[coach]\nnever_cast_min_casts = true\n", "[coach] never_cast_min_casts: a number"),
+        ("[coach]\nnever_cast_min_casts = 2.5\n", "[coach] never_cast_min_casts: a number"),
+        ("[coach]\nnever_cast_min_casts = 100000\n", None),
         ("[coach]\nfrequent_share = 1\n", None),
         ("[coach]\nhigh_cost = 0\n", None),
     ],

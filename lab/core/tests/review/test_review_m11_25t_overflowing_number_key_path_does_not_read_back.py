@@ -45,8 +45,9 @@ def _check(tmp_path: Path, number: bytes) -> None:
     ours, theirs = luadata.parse(_doc(number, 1)), luadata.parse(_doc(number, 2))
     (conflict,) = svmerge.merge(ours, theirs).conflicts
     path = conflict.path
-    # --key with the printed path: two-way, so the subtree is copied whole.
-    limited = svmerge.merge(ours, theirs, keys=[path])
+    # --key with the printed path, copied whole: `--replace` since M16-12
+    # (owner decision of 2026-10-21, Q8); `--key` alone merges inside.
+    limited = svmerge.merge(ours, theirs, keys=[path], replace=True)
     assert [(t.path, t.value) for t in limited.taken] == [(path, "2")]
     f = tmp_path / "Num.lua"
     f.write_bytes(_doc(number, 1))

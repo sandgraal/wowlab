@@ -543,11 +543,36 @@ def _merge(*extra: str) -> Any:
 
 
 def _key_copy(key: str, *, file: str = PG) -> Any:
-    """Two-way `--key KEY` from the source character, with no answer at the
-    prompt (end of input, which is not a yes): §13.4 copies a `--key` subtree
-    whole, so the report lists what it would take, and nothing is written
-    (exit 1, "Nothing was changed")."""
-    return run("sv", "merge", file, "--from", CHAR_B, "--into", CHAR_A, "--key", key, "--json")
+    """Two-way `--key KEY --replace` from the source character, with no
+    answer at the prompt (end of input, which is not a yes): the subtree is
+    copied whole, so the report lists what it would take, and nothing is
+    written (exit 1, "Nothing was changed"). Amended by M16-12 (owner
+    decision of 2026-10-21, Q8): the wholesale copy these graders read paths
+    with is `--key X --replace`; `--key X` alone now merges inside `X`."""
+    return run(
+        "sv", "merge", file, "--from", CHAR_B, "--into", CHAR_A, "--key", key, "--replace",
+        "--json",
+    )  # fmt: skip
+
+
+_SIDES: list[dict[Chain, Any]] = []
+
+
+def _in_array_part(chain: Chain) -> bool:
+    """Whether a node sits in a table's array part (keys 1..n on either
+    side), which the two-way merge compares as one value since M16-12 (owner
+    decision of 2026-10-21, Q8): its leaves are no conflicts of their own."""
+    head, steps = chain
+    sides = _SIDES or _SIDES.extend((_by_chain(OURS), _by_chain(THEIRS))) or _SIDES
+    for depth, step in enumerate(steps):
+        parent = steps[:depth]
+        border = max(
+            next(k for k in range(1, 10**6) if (head, (*parent, _n(k))) not in side) - 1
+            for side in sides
+        )
+        if step[0] == "n" and step in {_n(k) for k in range(1, border + 1)}:
+            return True
+    return False
 
 
 def _items(report: dict[str, Any]) -> tuple[list[tuple[str, str]], list[tuple[str, str]], int]:
@@ -612,8 +637,18 @@ def _merge_round_trip(flavor: Path, *, escaped: bool) -> list[str]:
     expected = {
         _leaf_text(n)
         for c, n in ours.items()
-        if isinstance(n.value, luadata.LuaNumber) and c[1][:1] != (ONLY_OURS,)
+        if isinstance(n.value, luadata.LuaNumber)
+        and c[1][:1] != (ONLY_OURS,)
+        and not _in_array_part(c)
     }
+    # M16-12: a list is one conflict at its table's path, which must read
+    # back like any other; its entries are checked through --key below.
+    lists = [c for c in conflicts if c["ours"] not in expected]
+    for item in lists:
+        path = item["path"]
+        assert _control(path) == [], path
+        assert run("sv", "dump", str(flavor / PG_A), "--path", path).exit_code == 0, path
+    conflicts = [c for c in conflicts if c["ours"] in expected]
     assert {c["ours"] for c in conflicts} == expected, "every leaf on both sides differs"
     escape_chains = {chain for _i, chain, escape in CASES if escape}
     problems: list[str] = []
@@ -708,7 +743,9 @@ def test_sv_merge_taken_paths_read_back_after_the_write_constructed(
     wanted = {
         _leaf_text(n)
         for c, n in theirs.items()
-        if isinstance(n.value, luadata.LuaNumber) and c[1][:1] != (ONLY_THEIRS,)
+        if isinstance(n.value, luadata.LuaNumber)
+        and c[1][:1] != (ONLY_THEIRS,)
+        and not _in_array_part(c)
     }
     if json_out:
         taken = [(t["path"], t["value"]) for t in _report(result)["taken"]]
@@ -719,10 +756,16 @@ def test_sv_merge_taken_paths_read_back_after_the_write_constructed(
                 path, _steps, rest = _scan(line[4:])
                 if rest.startswith(" = "):
                     taken.append((path, rest[3:]))
+    # M16-12: a list is taken whole, as one item at its table's path.
+    lists = [(path, value) for path, value in taken if value not in wanted]
+    taken = [(path, value) for path, value in taken if value in wanted]
     assert {value for _path, value in taken} == wanted
     for path, value in taken:
         assert _control(path) == [], path
         assert _dump_line(flavor / PG_A, path) == (0, f"{path} = {value}\n")
+    for path, _value in lists:
+        assert _control(path) == [], path
+        assert _dump_line(flavor / PG_A, path)[0] == 0, path
 
 
 # ─── --key SRC=DST: printed paths and escapes on both sides ─────────────────
@@ -968,7 +1011,10 @@ def test_sv_merge_real_pair_every_printed_path_reads_back(flavor: Path) -> None:
     report = _report(result)
     items = [(c["path"], c) for c in report["conflicts"]]
     items += [(a["path"], a) for a in report["absent"]]
-    assert len(items) > 200
+    # M16-12 (owner decision of 2026-10-21, Q8): each differing list is one
+    # conflict, so the pair gives the library's 12 conflicts less the probe,
+    # which `sv merge` keeps from the target: 11, where M11-25T counted over 200.
+    assert len(items) == 11
     seen: set[str] = set()
     for path, item in items:
         _path, steps, rest = _scan(path)
@@ -991,5 +1037,6 @@ def test_sv_merge_real_pair_every_printed_path_reads_back(flavor: Path) -> None:
             assert (taken, absent, conflicts) == ([], [(path, "theirs")], 0)
         else:
             assert ([p for p, _value in taken], absent, conflicts) == ([path], [], 0)
-            if "theirs" in item:
+            # A list conflict shows the list (M16-12); the copy shows the table.
+            if "theirs" in item and not item["theirs"].startswith(("list (", "{")):
                 assert taken[0][1] == item["theirs"]

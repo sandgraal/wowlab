@@ -105,6 +105,7 @@ def _merge_gear() -> object:
         CHAR_A,
         "--key",
         "WowLabCharDB.gear",
+        "--replace",  # the wholesale copy since M16-12 (owner decision 2026-10-21, Q8)
         "--yes",
     )
 
