@@ -70,13 +70,14 @@ ns.debug = false
 local debugNext = false
 -- ns.announced (M16-45), saved as `announced`: the schema of the addon that
 -- last announced its first pass in chat and then finished a session with
--- that pass done. The chat line
--- prints only when this differs from ns.SCHEMA (a new addon version, or a
--- first run) or the file looks unclean (below). It is written only at the
--- addon's own logout write, and only when the first pass ran in that
--- session, so a session that crashed (a crash writes nothing) or ended before
--- its first pass leaves the earlier value, and the next load prints again
--- when that value is not this version's.
+-- that pass done. The chat line prints once per schema (each new lab-addon
+-- format): when this differs from ns.SCHEMA (a new schema, or a first run),
+-- or when the probe was lost. It is written only at the addon's own logout
+-- write, and only when the first pass ran in that session, and it is
+-- cleared from the live table at ADDON_LOADED, so a session in which the
+-- client saved the file but the logout write did not finish leaves none,
+-- and the next load prints again. A crash cannot be detected: a crash
+-- writes nothing, so the file stays as the last session that saved it.
 ns.announced = nil
 
 -- The absent reason of a switched-off section.
@@ -360,9 +361,9 @@ local function startFirstPass()
         return
     end
     firstPassStarted = true
-    -- M16-45: once per addon version, or after a file that looks unclean
-    -- (the probe was lost, or the file never recorded a finished first pass
-    -- of this version).
+    -- M16-45: once per schema (each new lab-addon format), or after a
+    -- session whose logout write did not finish (the file holds no
+    -- `announced`), or when the probe was lost.
     if ns.announced ~= ns.SCHEMA or ns.probe.lost then
         say(
             "recording in "
@@ -702,8 +703,8 @@ ns.On("ADDON_LOADED", function(_, name)
     WowLabCharDB.probe = copyProbe()
     putSkip(WowLabCharDB)
     -- Until this session's logout write puts it back (M16-45): a session
-    -- whose write never ran leaves no announced version, so the next load
-    -- prints the line again.
+    -- whose logout write did not finish leaves no `announced` in a file the
+    -- client saved, so the next load prints the line again.
     WowLabCharDB.announced = nil
 end)
 

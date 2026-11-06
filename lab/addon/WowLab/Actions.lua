@@ -108,12 +108,20 @@ end
 -- How many values the gather dropped (M16-45 round 1): over every probe,
 -- the calls that raised an error and the values dropped as secret or
 -- untestable. Written on every gathered record as `dropped`, debug or not;
--- the per-API detail stays in `probes`, behind `/wowlab debug`.
+-- the per-API detail stays in `probes`, behind `/wowlab debug`. Round 2
+-- leaves out two probes so nothing is counted twice: `issecretvalue`'s own
+-- errors (the value it could not test is already counted as secret on its
+-- API's probe), and a CLICK frame's `GetAttribute` (a CLICK command it
+-- fails is counted in clicks_left_out, not dropped).
+local NOT_DROPPED = { ["issecretvalue"] = true, ["GetAttribute"] = true }
+
 local function droppedCount(list)
     local total = 0
     for i = 1, #list do
         local entry = list[i]
-        total = total + (ns.Number(entry.errors) or 0) + (ns.Number(entry.secret) or 0)
+        if not NOT_DROPPED[entry.api] then
+            total = total + (ns.Number(entry.errors) or 0) + (ns.Number(entry.secret) or 0)
+        end
     end
     return total
 end

@@ -5114,7 +5114,10 @@ class BindsCoachReport(_Out):
     record_error: str | None  # why no WowLab.lua was read
     log: CoachLog
     costs: bindscoach.Costs
-    commands_unseen: int | None  # binding commands the record counts and leaves out
+    # Binding commands the record counts and leaves out, plus (schema 5,
+    # M16-45) the click bindings to an action button it keeps, which the coach
+    # does not place yet.
+    commands_unseen: int | None
     keys_unseen: int | None  # keys the record counts and leaves out
     unseen: str | None  # said before any finding; None without a usable bindings record
     matched_by: Literal["spell id or spellbook name", "spell id"]
@@ -8830,9 +8833,12 @@ class CharBindsReport(_Out):
     record_error: str | None  # why no WowLab.lua was read
     keys: list[keymap.KeyRow]
     unreached_slots: list[keymap.UnreachedSlot]
-    commands_left_out: int | None  # counts in the record's bindings section; None without one
+    # Counts in the record's bindings section; None without one. Since schema
+    # 5 (M16-45) `commands_left_out` includes the click bindings to an action
+    # button the record keeps, which this view does not place yet.
+    commands_left_out: int | None
     keys_left_out: int | None
-    left_out_note: str | None  # the two counts in the words the text form prints; None without them
+    left_out_note: str | None  # the counts in the words the text form prints; None without them
     cannot_place: str | None
     cannot_compare: str | None
     notes: list[str]
@@ -8969,18 +8975,34 @@ def _binds_left_out_note(commands: int | None, keys: int | None, kept: int = 0) 
     includes until this view places them."""
     if commands is None or keys is None:
         return None
-    note = (
-        "Left out of the bindings record, counted with no list: "
-        f"{_plural(commands, 'command')} not named in plain upper case "
-        "(a key bound straight to a spell, macro, item or click may be one), and "
-        f"{_plural(keys, 'key')} not printable ASCII."
-    )
-    if kept:
-        note += (
-            f" {_plural(kept, 'command')} of those {'is a click binding' if kept == 1 else 'are click bindings'} "
-            "to an action button, which the record keeps but this view does not place yet."
+    if not kept:
+        return (
+            "Left out of the bindings record, counted with no list: "
+            f"{_plural(commands, 'command')} not named in plain upper case "
+            "(a key bound straight to a spell, macro, item or click may be one), and "
+            f"{_plural(keys, 'key')} not printable ASCII."
         )
-    return note
+    # M16-45 round 2: a kept click binding is in the record, not left out;
+    # it is only not placed yet. Each count stands apart, and a clause whose
+    # count is 0 is left out.
+    parts = []
+    if commands - kept:
+        parts.append(
+            f"{_plural(commands - kept, 'command')} not named in plain upper case "
+            "(a key bound straight to a spell, macro, item or click may be one)"
+        )
+    if keys:
+        parts.append(f"{_plural(keys, 'key')} not printable ASCII")
+    note = (
+        "Left out of the bindings record, counted with no list: " + ", and ".join(parts) + ". "
+        if parts
+        else ""
+    )
+    return note + (
+        f"{_plural(kept, 'click binding')} to an action button "
+        f"{'is' if kept == 1 else 'are'} in the record, but this view does not place "
+        f"{'it' if kept == 1 else 'them'} yet."
+    )
 
 
 def _source_words(row: keymap.KeyRow) -> str:

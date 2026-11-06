@@ -115,7 +115,11 @@ Schema 5 (M16-45) is schema 4, quieter, with one more kind of binding:
   written only in a debug session ("Debug" below);
 - every gathered `spellbook`, `actionbars` and `bindings` record carries
   `dropped`, debug or not: one whole number, the calls that raised an error
-  plus the values dropped as secret or untestable, summed over its probes.
+  plus the values dropped as secret or untestable, summed over its probes
+  but for `issecretvalue`'s own errors and a `CLICK` frame's `GetAttribute`
+  (the value `issecretvalue` could not test is already counted as secret,
+  and a `CLICK` command `GetAttribute` fails is counted in
+  `clicks_left_out`), so nothing is counted twice.
   The Lab's views use it as they used the probes' counts ("the record is
   incomplete"); a schema-5 record with neither `probes` nor `dropped` (this
   addon never writes one) reads "whether any value was dropped is not

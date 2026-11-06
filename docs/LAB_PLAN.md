@@ -2266,7 +2266,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     `actionbars` and `bindings` record carries `dropped` either way (round
     1 of the M16-45 review, conductor's ruling of 2026-11-05): one whole
     number, the calls that raised an error plus the values dropped as
-    secret or untestable, summed over its probes. The views use it as they
+    secret or untestable, summed over its probes but for `issecretvalue`'s own
+    errors and a `CLICK` frame's `GetAttribute` (round 2: the value it could
+    not test is already counted, and a `CLICK` command it fails is counted in
+    `clicks_left_out`), so nothing is counted twice. The views use it as they
     used the probes' counts ("the record is incomplete", and `binds
     coach`'s "cannot judge"); a schema-5 section with neither `probes` nor
     `dropped` reads "whether any value was dropped is not recorded".
@@ -2309,10 +2312,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   a kept `CLICK` command must have the shape above and an `action`, a plain
   one must not; `dropped` is a count. `char show` adds a line under the key
   bindings (how many action buttons were kept, with that slot) and one per
-  Actions section with its `dropped` count, and the left-out line names the
-  `CLICK` commands whose button was looked at. `char binds`' left-out note
-  says how many of the counted commands are kept click bindings it does not
-  place yet. The keybind views place `CLICK` binds in M16-46. The next
+  Actions section with its `dropped` count, and the left-out line counts
+  the `CLICK` commands the action-button rule left out (their names are not
+  kept). `char binds`' left-out note and `binds coach`'s unseen sentence say
+  the kept click bindings apart from the left-out counts ("in the record, but
+  this view does not place them yet"), leaving out a clause whose count is
+  0; their `--json` counts (`commands_left_out`, `commands_unseen`) still
+  include them, as the ruling says. The keybind views place `CLICK` binds in M16-46. The next
   change is schema 6.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction

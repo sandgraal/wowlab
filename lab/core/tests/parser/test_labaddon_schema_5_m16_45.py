@@ -99,7 +99,7 @@ def test_constructed_schema_5_text_says_nothing_of_missing_probes() -> None:
     text = "\n".join(labaddon.describe(labaddon.load_char(_schema_5())))
     assert "probes" not in text
     assert "click bindings: 0 action buttons kept, each with the button's action slot when " in text
-    assert "values dropped (secret, untestable, or a call that failed): 0" in text
+    assert "values dropped (secret or untestable, or a call that failed): 0" in text
     assert labaddon.DROPPED_NOT_RECORDED not in text
 
 
@@ -117,9 +117,14 @@ def test_constructed_schema_5_click_binding_is_read_with_its_action_slot() -> No
     text = "\n".join(labaddon.describe(record))
     assert "click bindings: 1 action button kept" in text
     assert "(for a paging bar, the slot of the page shown then)" in text
+    # Round 2 (domain 3): the rule's other failures (shape, length, not a
+    # frame, a secret or invalid slot) are counted too, so the line does not
+    # say why.
     assert (
-        "of those, 1 click binding whose button was looked at and is not an action button" in text
+        "; 1 of them click bindings the action-button rule left out (their names are not kept)"
+        in text
     )
+    assert "looked at" not in text
     assert labaddon.kept_clicks(binds) == 1
     assert labaddon.unseen_commands(binds) == binds.commands_left_out + 1
     assert CLICK not in [b.command for b in labaddon.seen_bindings(binds)]
@@ -307,6 +312,96 @@ def test_constructed_get_attribute_probe_is_read_in_a_debug_session() -> None:
     record = labaddon.load_char(raw)
     assert record.bindings is not None and record.bindings.probes is not None
     assert "GetAttribute" in [p.api for p in record.bindings.probes]
+
+
+def test_constructed_get_attribute_errors_are_not_dropped_values() -> None:
+    """Round 2 (domain 4): a CLICK command whose frame's GetAttribute failed
+    is counted in clicks_left_out, so the debug probes' words leave the
+    GetAttribute probe out of "dropped", as the addon's `droppedCount`
+    does."""
+    raw = _schema_5(debug=True)
+    raw["bindings"]["probes"].insert(
+        -2,
+        {
+            "api": "GetAttribute",
+            "present": True,
+            "calls": 4,
+            "errors": 2,
+            "answered": 1,
+            "secret": 1,
+        },
+    )
+    record = labaddon.load_char(raw)
+    assert record.bindings is not None
+    assert not isinstance(record.bindings, labaddon.AbsentProbedSection)
+    assert labaddon.dropped_words(record.bindings) == []
+
+
+def _note(commands: int, keys: int, kept: int) -> str | None:
+    from wowlab_core import cli
+
+    return cli._binds_left_out_note(commands, keys, kept)
+
+
+def test_constructed_char_binds_note_says_kept_clicks_apart() -> None:
+    """Round 2 (domain 1, code 2): a kept click binding is in the record;
+    the sentence says so apart from the left-out counts, and leaves out a
+    clause whose count is 0. Without a kept click it is the M13-77 sentence,
+    unchanged."""
+    assert _note(1, 0, 0) == (
+        "Left out of the bindings record, counted with no list: 1 command not named in plain "
+        "upper case (a key bound straight to a spell, macro, item or click may be one), and "
+        "0 keys not printable ASCII."
+    )
+    assert _note(3, 2, 1) == (
+        "Left out of the bindings record, counted with no list: 2 commands not named in plain "
+        "upper case (a key bound straight to a spell, macro, item or click may be one), and "
+        "2 keys not printable ASCII. 1 click binding to an action button is in the record, "
+        "but this view does not place it yet."
+    )
+    assert _note(2, 0, 2) == (
+        "2 click bindings to an action button are in the record, but this view does not place "
+        "them yet."
+    )
+    assert _note(3, 0, 1) == (
+        "Left out of the bindings record, counted with no list: 2 commands not named in plain "
+        "upper case (a key bound straight to a spell, macro, item or click may be one). "
+        "1 click binding to an action button is in the record, but this view does not place "
+        "it yet."
+    )
+    for commands, keys, kept in [(3, 2, 1), (2, 0, 2), (3, 0, 1)]:
+        note = _note(commands, keys, kept)
+        assert note is not None and "not read" not in note and " 0 " not in note
+
+
+def test_constructed_coach_unseen_says_kept_clicks_apart() -> None:
+    from wowlab_core import bindscoach
+
+    assert bindscoach.unseen_words(3, 2) == bindscoach.unseen_words(3, 2, 0)
+    words = bindscoach.unseen_words(2, 0, 1)
+    assert words.startswith(
+        "Left out of the bindings record, counted with no list: 1 binding command it did not "
+        "read, whether or not a key is bound to it (not named in plain upper case). 1 click "
+        "binding to an action button is in the record, but the coach does not place it yet."
+    )
+    only_kept = bindscoach.unseen_words(1, 0, 1)
+    assert only_kept.startswith(
+        "1 click binding to an action button is in the record, but the coach does not place "
+        "it yet. Any of these may reach a spell"
+    )
+    assert "did not read" not in only_kept and "0 keys" not in only_kept
+
+
+def test_constructed_json_counts_include_kept_clicks() -> None:
+    """The ruling's sum stays in `--json`: `commands_left_out` (char binds)
+    and `commands_unseen` (binds coach) include kept click bindings."""
+    raw = _schema_5()
+    _with_click(raw)
+    record = labaddon.load_char(raw)
+    assert isinstance(record, labaddon.CharDBV5) and record.bindings is not None
+    assert isinstance(record.bindings, labaddon.BindingsV5)
+    joined = keymap.join_record(account=None, character=None, record=record)
+    assert joined.commands_left_out == record.bindings.commands_left_out + 1
 
 
 def test_constructed_account_schema_5() -> None:

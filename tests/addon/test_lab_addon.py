@@ -469,6 +469,18 @@ def test_m16_45_the_click_frame_lookup_is_the_one_exception() -> None:
         "else slot = nil end"
     ) in body
     assert _render(tokens).count("pcall ( attribute ,") == 2
+    # Round 2 (security pin): `attribute` is named only at its definition and
+    # in the two pinned pcalls.
+    named = [
+        _render(tokens[i - 3 : i + 3])
+        for i in range(3, len(tokens) - 3)
+        if tokens[i].text == "attribute" and not _is_field(tokens, i)
+    ]
+    assert named == [
+        "2147483647 local function attribute ( f",
+        "= pcall ( attribute , target",
+        "= pcall ( attribute , target",
+    ], named
     # Every CLICK command not kept is counted twice; no other path counts one.
     assert (
         "if action then name = ns . String ( click ) "
@@ -6683,8 +6695,16 @@ def test_m16_45_every_gathered_actions_record_says_how_many_values_it_dropped() 
         text.count("record . dropped = ns . Number ( droppedCount ( asked ) ) return record") == 3
     )
     assert text.count("dropped =") == 3
+    # Round 2 (domain 4): issecretvalue's own errors and a CLICK frame's
+    # GetAttribute are left out, so one value is not counted twice and a
+    # CLICK command left out is not also "dropped".
+    assert 'local NOT_DROPPED = { [ "issecretvalue" ] = true , [ "GetAttribute" ] = true }' in text
     assert (
         "local function droppedCount ( list ) local total = 0 for i = 1 , # list do "
-        "local entry = list [ i ] total = total + ( ns . Number ( entry . errors ) or 0 ) "
-        "+ ( ns . Number ( entry . secret ) or 0 ) end return total end"
+        "local entry = list [ i ] if not NOT_DROPPED [ entry . api ] then "
+        "total = total + ( ns . Number ( entry . errors ) or 0 ) "
+        "+ ( ns . Number ( entry . secret ) or 0 ) end end return total end"
     ) in text
+    # The two names are the probes' own `api` strings.
+    assert 'probe ( "issecretvalue" , isSecret )' in text
+    assert 'probe ( "GetAttribute" , true )' in text

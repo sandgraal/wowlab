@@ -1522,7 +1522,9 @@ def dropped_words(
     probes: list[ApiProbe] | None = section.probes  # None in schema 5 outside debug
     out: list[str] = []
     if probes is not None:
-        counted = [p for p in probes if p.api not in LOOKED_UP]
+        # A CLICK frame's GetAttribute (schema 5) is left out: a CLICK command
+        # it fails is counted in clicks_left_out, not dropped (M16-45 round 2).
+        counted = [p for p in probes if p.api not in LOOKED_UP and p.api != "GetAttribute"]
         errors = sum(p.errors for p in counted)
         secret = sum(p.secret for p in counted)
         if errors or secret:
@@ -3381,7 +3383,9 @@ def _dropped_lines(section: Spellbook | ActionBars | Bindings) -> list[str]:
     if not isinstance(section, (SpellbookV5, ActionBarsV5, BindingsV5)):
         return []
     if section.dropped is not None:
-        return [f"  values dropped (secret, untestable, or a call that failed): {section.dropped}"]
+        return [
+            f"  values dropped (secret or untestable, or a call that failed): {section.dropped}"
+        ]
     if section.probes is None:
         return [f"  {DROPPED_NOT_RECORDED}"]
     return []
@@ -3472,11 +3476,12 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
     ]
     if isinstance(record, BindingsV5):
         if record.clicks_left_out:
-            # A left-out click binding's button was looked at, unlike the
-            # other left-out commands (M16-45 round 1, domain F11).
+            # The click bindings the action-button rule left out, for any of
+            # its reasons (shape, length, not a frame, the type, a secret or
+            # invalid slot; M16-45 round 2, domain 3).
             lines[1] += (
-                f"; of those, {_count(record.clicks_left_out, 'click binding')} whose button "
-                "was looked at and is not an action button"
+                f"; {record.clicks_left_out} of them click bindings the action-button rule "
+                "left out (their names are not kept)"
             )
         lines.append(
             f"  click bindings: {_count(kept_clicks(record), 'action button')} kept, each with "
