@@ -108,16 +108,6 @@ def run(args: tuple[str, ...] | list[str], width: int = WIDTH) -> Any:
     return result
 
 
-# A path after a placeholder, or the `~` of a home path, up to the end of
-# its line, a quote or a parenthesis: where Windows prints a backslash.
-# A `\` right after a placeholder already in the text, as the folder's own
-# separator (`<tmp>\World of Warcraft`). Every real path is put in `/` before
-# its placeholder goes in, so a run's output reaches this only for text given
-# with the placeholder; a `\` that can start an escape (`\n`, `\x85`, `\"`,
-# `\\`, `\u`) is left alone.
-_AFTER_PLACEHOLDER = re.compile(r"(<tmp>|<package>)\\(?![nrtbfvaux\"'\\/0-7])")
-
-
 def _known_paths(tmp_path: Path) -> list[str]:
     """Every path a run on the sandbox can print: each file and folder under
     `tmp_path` (the install copy, the store, the user folders), the two the
@@ -148,7 +138,8 @@ def _placeholders(text: str, tmp_path: Path, paths: list[str] | None = None) -> 
         text = text.replace(real.replace("\\", "\\\\"), slashed).replace(real, slashed)
     for real, placeholder in ((PACKAGE, "<package>"), (tmp, "<tmp>")):
         text = text.replace(real.replace("\\", "/"), placeholder)
-    text = _AFTER_PLACEHOLDER.sub(r"\1/", text)
+    # A `\` the run printed after a placeholder is the run's own: kept, so a
+    # difference there is not hidden.
     return _LOCAL_TIME.sub("<local time>", text)
 
 

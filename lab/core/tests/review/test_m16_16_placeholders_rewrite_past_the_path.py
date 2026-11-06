@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import test_cli_notes as notes
@@ -26,7 +26,11 @@ TMP = Path("/nowhere")
 
 
 def test_positive_control_a_windows_path_after_tmp_is_normalised() -> None:
-    assert notes._placeholders("Install: <tmp>\\World of Warcraft (x)", TMP) == (
+    # The real Windows spelling, through the known paths (rewritten after
+    # review of 7f42070, with the code reviewer's approval).
+    tmp = Path(str(PureWindowsPath("C:/t0")))
+    known = [str(tmp), str(PureWindowsPath("C:/t0/World of Warcraft"))]
+    assert notes._placeholders("Install: C:\\t0\\World of Warcraft (x)", tmp, known) == (
         "Install: <tmp>/World of Warcraft (x)"
     )
 
