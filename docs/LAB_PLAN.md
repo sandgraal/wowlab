@@ -2533,6 +2533,20 @@ the limit `read` applies, before creating anything. `char show` adds
 "Recorded when the barber shop opened: a change applied during that visit
 may not be in it [verify]." to a record with `recorded_at` "open".
 
+*Amended 2026-11-09 (M13-80):* the class. A schema-4 record carries the
+character's class in its `identity` section (M15-01), so without `--class`
+`import-char` takes the look's class from `identity.class_id` and says so in
+one remark ("The class is the one the lab-addon recorded for this character
+(<class_file>, id <class_id>)."); that id is checked by the look against the
+build's `ChrClasses` exactly as a typed `--class` id is. `--class` still wins
+when given; when it names another class than the record's, one remark says
+so and that `--class` is used. A record of schema 1 to 3 keeps the "holds no
+class" remark unchanged; a schema-4 record whose class is absent gives the
+same remark with the reason. `LooksImportReport` gains `class_from`
+(`"--class"`, `"record"` or null) and the record's `recorded_class_id`,
+`recorded_class_file` and `recorded_class_absent`. The text output is
+otherwise unchanged.
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar

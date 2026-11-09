@@ -10870,6 +10870,17 @@ _NO_CLASS_REMARK = (
     "The record holds no class: class-restricted choices are noted, not refused; --class "
     "checks them."
 )
+_RECORDED_NO_CLASS_REMARK = (
+    "The record holds no class ({reason}): class-restricted choices are noted, not refused; "
+    "--class checks them."
+)
+_RECORDED_CLASS_REMARK = (
+    "The class is the one the lab-addon recorded for this character ({file}, id {id})."
+)
+_CLASS_DISAGREES_REMARK = (
+    "--class gives class {given}, but the lab-addon recorded {file} (id {id}) for this "
+    "character; --class is used."
+)
 
 
 class LooksImportReport(_Out):
@@ -10886,6 +10897,15 @@ class LooksImportReport(_Out):
     as_of_words: str  # how the record's moment is said: never the character's appearance now
     saved: bool
     look: LookReport
+    # Where `look.class_id` came from: the --class option, the record's
+    # `identity` (schema 4), or nowhere (None: no class in the look).
+    class_from: Literal["--class", "record"] | None = None
+    # The class the record holds (schema 4's `identity`), each beside the
+    # reason it holds no class id; exactly one of the id and the reason is
+    # set (the class file is beside the id when the record has both).
+    recorded_class_id: int | None = None
+    recorded_class_file: str | None = None
+    recorded_class_absent: str | None = None
 
 
 def _loads_ago_text(ago: int | None) -> str:
@@ -10897,7 +10917,7 @@ def _loads_ago_text(ago: int | None) -> str:
 
 
 def _import_remarks(
-    model: looks.Customizations, got: labaddon.CustomizationImport, class_id: int | None
+    model: looks.Customizations, got: labaddon.CustomizationImport, class_remarks: list[str]
 ) -> list[str]:
     at = got.recorded_at if got.recorded_at is not None else "not recorded"
     remarks = [
@@ -10940,8 +10960,7 @@ def _import_remarks(
             f"The barber shop was showing model {got.chr_model_id}; build {model.build}'s "
             f"tables give race {got.race_id} body type {got.body_type} model {expected}."
         )
-    if class_id is None:
-        remarks.append(_NO_CLASS_REMARK)
+    remarks.extend(class_remarks)
     if got.client_build is not None and got.client_build != model.build:
         remarks.append(
             f"Recorded by client build {got.client_build}; checked against build "
@@ -10949,6 +10968,39 @@ def _import_remarks(
             "come from a hotfix."
         )
     return remarks
+
+
+def _import_class(
+    model: looks.Customizations, record: labaddon.CharDB, given: str | None
+) -> tuple[int | None, Literal["--class", "record"] | None, labaddon.CharIdentity, list[str]]:
+    """The look's class, where it came from, the record's identity and the
+    remark that says so. --class wins over the record (said in one line when
+    they differ); a record of schema 1 to 3 holds no class and keeps the
+    remark it always had. The record's class id is checked by the look, as a
+    typed --class id is."""
+    identity = labaddon.identity_of(record)
+    recorded = identity.class_id
+    file = identity.class_file or "a class"
+    class_id = _resolve_class(model, given)
+    if class_id is not None:
+        remarks: list[str] = []
+        if recorded is not None and recorded != class_id:
+            remarks.append(
+                _CLASS_DISAGREES_REMARK.format(
+                    given=_class_words(model, class_id), file=file, id=recorded
+                )
+            )
+        return class_id, "--class", identity, remarks
+    if recorded is not None:
+        return recorded, "record", identity, [_RECORDED_CLASS_REMARK.format(file=file, id=recorded)]
+    if not isinstance(record, labaddon.CharDBV4):
+        return None, None, identity, [_NO_CLASS_REMARK]
+    return None, None, identity, [_RECORDED_NO_CLASS_REMARK.format(reason=identity.class_id_absent)]
+
+
+def _class_words(model: looks.Customizations, class_id: int) -> str:
+    known = model.classes.get(class_id)
+    return f"{known.name} ({class_id})" if known is not None else f"{class_id}"
 
 
 @looks_app.command("import-char", short_help="Save a character's recorded customization as a look.")
@@ -10972,7 +11024,9 @@ def looks_import_char(
     only); without --character, the one written last. A character with no
     recorded visit gets the addon's reason (exit 1). The look is checked like
     `looks save`: one the tables refuse is not saved (exit 1); an id the
-    tables lack is noted "(possibly a hotfix)".
+    tables lack is noted "(possibly a hotfix)". Without --class, the class is
+    the one the lab-addon recorded for the character, when its record holds
+    one; --class wins over it.
 
     \f
     JSON: LooksImportReport."""
@@ -10995,7 +11049,7 @@ def looks_import_char(
     with _open_gamedata() as data:
         version, build_remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    class_id = _resolve_class(model, class_)
+    class_id, class_from, identity, class_remarks = _import_class(model, record, class_)
     look = looks.Look(
         name=name,
         race_id=got.race_id,
@@ -11009,7 +11063,7 @@ def looks_import_char(
         recorded_client_build=got.client_build,
         look=look,
     )
-    remarks = [*_import_remarks(model, got, class_id), *build_remarks]
+    remarks = [*_import_remarks(model, got, class_remarks), *build_remarks]
     report = _look_report(model, saved, None, remarks, imported_remark=False)
     path: Path | None = None
     if not report.refused:
@@ -11026,6 +11080,10 @@ def looks_import_char(
         as_of_words=_AS_OF_WORDS[got.recorded_at],
         saved=path is not None,
         look=report,
+        class_from=class_from,
+        recorded_class_id=identity.class_id,
+        recorded_class_file=identity.class_file,
+        recorded_class_absent=identity.class_id_absent,
     )
     if json_out:
         _emit(out)
