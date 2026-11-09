@@ -3517,7 +3517,8 @@ the `@claude` responder and the automated PR review, because each ran
 Claude in CI. `scripts/check_wiki.py` stays as a local gate for a wiki push;
 `scripts/wiki_diagnose.py` (it read only the Claude step's output) and
 `scripts/wiki_state.py` (the job's state and model context) were deleted
-with it. The conductor updates the wiki after a merge.
+with it. Since 2026-11-09 (owner ruling) the owner updates the wiki from
+`docs/handoffs/wiki-pending.md`, which the conductor keeps.
 
 The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
 They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay

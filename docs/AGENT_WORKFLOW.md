@@ -158,11 +158,10 @@ removes or changes a command, an option, an output shape (text or
 implementer report's `user-facing changes:` field and in the PR body's
 "User-facing surface" box, with the wiki pages they affect. The wiki
 (`sandgraal/wowlab.wiki`) describes what is on `main`; implementers do not
-edit it. The conductor updates the wiki after a merge. (Until 2026-11-04 the
-daily wiki job also read merged PRs and documented them; it ran Claude and
-was deleted by owner decision that day.) *Owner ruling, 2026-11-09:* a
-wiki item in a ticket's acceptance is met when the merged PR names the
-wiki pages it affects. The conductor adds them to
+edit it. (Until 2026-11-04 the daily wiki job read merged PRs and
+documented them; it ran Claude and was deleted by owner decision that day.)
+*Owner ruling, 2026-11-09:* a wiki item in a ticket's acceptance is met when
+the merged PR names the wiki pages it affects. The conductor adds them to
 `docs/handoffs/wiki-pending.md`, and the owner updates the wiki from that
 list. From Wave 5 (M14)
 on, every command must also be reachable in `wowlab ui` (the parity test in
@@ -176,8 +175,8 @@ it is a local tool only).
 Since M12-15, the tests grade `check_wiki` against a frozen copy of the wiki
 together with the command set of its era
 (`tests/scripts/fixtures/wiki-<commit>.commands.txt`), so a PR that adds a
-command no longer breaks CI. The conductor still documents a new command on
-the wiki at merge.
+command no longer breaks CI. A new command is documented on the wiki by the
+owner, from `docs/handoffs/wiki-pending.md` (ruling of 2026-11-09).
 
 **Windows after merge (2026-10-15, owner decision).** `lab (windows)` is not
 a required check; it runs in `windows.yml` after each merge to `main`,

@@ -2083,7 +2083,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-53
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2211,7 +2211,7 @@ Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no
 
 `tests/scripts/test_lab_capture_followup5*.py` do `from conftest import DEFAULT_OFFSET`, which resolves to `lab/core/tests/review/conftest.py` when both trees are collected in one `-n 4` run, and the collection fails. Import the value from a uniquely named module instead.
 
-**Acceptance:** `uv run pytest -n 4 lab/core/tests/review tests/scripts` collects and passes; reviewed by `code-reviewer`.
+**Acceptance:** `uv run pytest --co tests/scripts/test_lab_capture_followup5.py lab/core/tests/review/test_m10_04_bare_value_error_names_a_later_token.py`, which fails with `ImportError` before the fix, collects after it; `uv run pytest -n 4 lab/core/tests/review tests/scripts` passes; reviewed by `code-reviewer`.
 
 ## [ ] M16-58 — The lab-addon static checks refuse a raw command string stored with `ns.String`
 **Size:** S · **Depends on:** M16-45 · **Sources:** the M16-45 code review (2026-11-05)
@@ -2234,30 +2234,37 @@ When the base revision has no `scripts/check_grader_diff.py`, the job falls back
 
 **Acceptance:** `make hooks-test` passes from `/home/user/<repo>` and from a scratchpad worktree; reviewed by `code-reviewer`.
 
-## [ ] M16-61 — `test_luadata_budget_constructed.py` does not crash an xdist worker
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-26 reviews (2026-11-04)
+## [ ] M16-61T — [TEST] `test_luadata_budget_constructed.py` does not crash an xdist worker
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-26 reviews (2026-11-04); the #385 review (2026-11-09)
 
-Under `-n 2` a worker crashes unpickling a `ProbeReading`. Find the cause and make the result picklable or keep it in the worker, without changing what the budget tests assert. `luadata.py` is load-bearing: the fix belongs in the test helpers, not in `luadata.py`; if it cannot, stop and report.
+Under `-n 2` a worker goes down: the controller cannot unpickle `ProbeReading`, a warning class defined in the grader itself (`lab/core/tests/test_luadata_budget_constructed.py`), giving `ModuleNotFoundError("No module named 'test_luadata_budget_constructed'")` and an INTERNALERROR. The fix edits a `luadata` grader, so it is a test-writer's (ADR-0013): move the class to an importable test-support module, or stop it crossing the worker boundary, without changing what any budget test asserts. The same pattern in `lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py` and `test_m10_04_escaped_key_list_at_budget_misses_time_target.py` is in scope.
 
-**Acceptance:** the file passes under `-n 2` five times in a row; reviewed by `code-reviewer`.
+**Acceptance:** `uv run pytest -q -n 2 lab/core/tests/test_luadata_budget_constructed.py` passes five times in a row with no worker down; each budget assertion is unchanged (the diff shows it); reviewed by `code-reviewer`.
 
-## [ ] M16-62 — The account-clash refusal suggests a snapshot before a hand removal
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-03 final domain review (2026-11-06)
+## [ ] M16-62T — [TEST] The account-clash refusal suggests a snapshot before a hand removal
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-03 final domain review (2026-11-06); the #385 review (2026-11-09)
 
-The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. Make it read "rename it, or run `wowlab snap create` and then remove it". This is a message change in `guard.py`: its grader asserts on the folder name, `--paths` and "rename or remove"; if any grader pins the old sentence, it is updated by a test-writer first.
+The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. The new wording is "rename it, or run `wowlab snap create` and then remove it". `lab/core/tests/test_guard_restore_into_accounts.py` asserts `"rename or remove"`; a test-writer changes that assertion to the new wording and adds one for `snap create`, as strict xfail until M16-62 lands (ADR-0013: `guard.py` is load-bearing).
 
-**Acceptance:** the new wording is tested; the full suite is green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`. User-facing: the refusal text.
+**Acceptance:** the graders are strict xfail on `main`'s `guard.py` and pass with the new message (shown with `--runxfail` on a scratch edit); reviewed by `code-reviewer`.
+
+## [ ] M16-62 — [IMPL] The account-clash refusal suggests a snapshot before a hand removal
+**Size:** XS · **Depends on:** M16-62T · **Sources:** as M16-62T
+
+Change the message in `guard._refuse_others_on_target_accounts` to M16-62T's wording.
+
+**Acceptance:** M16-62T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`. User-facing: the refusal text (wiki: Snapshots-and-Undo).
 
 ## [ ] M16-63 — `casc` player copy: no `[verify]` as a predicate, no ADR id in an error
 **Size:** XS · **Depends on:** nothing · **Sources:** the M15-05 reviews (2026-11-03)
 
-`casc.py` uses `[verify]` as a sentence's predicate (about lines 406 and 943) and puts "(ADR-0033)" in an error (about line 1326). Reword them under the player-copy rules (`.claude/rules/player-copy.md`).
+`casc.py` uses `[verify]` as a sentence's predicate in a runtime message ("its meaning is [verify]") and puts "(ADR-0033)" in an error message. Reword them under the player-copy rules (`.claude/rules/player-copy.md`).
 
 **Acceptance:** `test_cli_player_copy.py` covers the strings; reviewed by `code-reviewer`. User-facing: the reworded messages.
 
 ## [ ] M16-64 — The lab-addon writes no ticket id into WowLab.lua
 **Size:** XS · **Depends on:** M16-45 · **Sources:** the M15-01 reviews (2026-11-02)
 
-`lab/addon/WowLab/Collections.lua` writes "(M11-03)" into the saved file, where a player reads it. Remove ticket ids from every string the addon stores or prints, and add a static test that refuses `M\d\d-\d\d` in addon strings.
+`lab/addon/WowLab/Collections.lua` writes "(M11-03)" into the saved file, where a player reads it. Remove ticket ids from every string the addon stores or prints, update `lab/addon/README.md` where it documents that string, and add a static test that refuses `M\d\d-\d\d` in addon strings. It depends on M16-45 and lands before schema 5 is released, so the changed stored text is part of schema 5, not a new schema (LAB_PLAN §13.1); if a release with schema 5 has gone out first, stop and report.
 
 **Acceptance:** the static test, `make lint-lua`, and the addon suite pass; reviewed by `code-reviewer`. User-facing: the stored text.

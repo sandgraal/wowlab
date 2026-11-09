@@ -179,11 +179,11 @@ capture is a leak. No test needs a real install, and none writes to one.
 make setup         # uv sync, pre-commit, .env
 make lint          # ruff check + format --check + mypy --strict (the commit gate)
 make test          # pytest, all suites except @live
-make test-fast     # the local loop: parallel, no review/ probes, about 10 min (owner, 2026-11-09)
-make test-clean    # remove finished pytest temp dirs and .pytest_cache; never while tests run
+make test-fast     # local loop, about 10 min (owner, 2026-11-09): no review/ probes, no serial pass; not the proof of done
+make test-clean    # remove finished pytest temp dirs and .pytest_cache, prune the uv cache; never while tests run
 make test-parser   # parser fixtures + round-trip (run on any parser change)
 make hooks-test    # harness hooks under 3.12 and 3.9
-make ci            # all of the above
+make ci            # lint, lint-lua, test, test-parser, hooks-test
 uv run wowlab --version
 ```
 
