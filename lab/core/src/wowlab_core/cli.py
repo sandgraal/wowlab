@@ -1958,8 +1958,6 @@ def doctor(
     With --redact (or --redact-name) the first run is skipped: no intro, no
     scan, no question, no snapshot; --yes and --flavor are refused with it.
 
-    It makes no network request unless --check-builds is given.
-
     \f
     JSON: DoctorReport."""
     if offline:
