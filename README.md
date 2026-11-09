@@ -25,8 +25,15 @@
 
 - **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
 - **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
-- **Nothing is uploaded.** The only network traffic is to [wago.tools](https://wago.tools), for public game data, and a link you click opens in your own browser, carrying your character's race, body type, class, level and equipped item and bonus ids to that site. `wowlab doctor` downloads its list of game versions (`wowlab doctor --offline` skips that). `db2` and `looks` download game tables, sending your game's version number to ask for the matching ones; they have no `--offline`. Nothing else from your install is sent, and commands that use no game data make no request.
 - **It never touches the game itself:** no game memory, no `Data/` or program files, no key presses. Addon data is read as data, never run.
+
+<!-- network:begin -->
+**What leaves your machine. Nothing is uploaded: these three are wowlab's only network traffic, and no other command makes a request.**
+
+- `wowlab doctor --check-builds` downloads the public list of game versions from wago.tools, a community-run public site of game data, and looks for your installed versions in it; nothing from your install is sent. Without `--check-builds`, `doctor` makes no network request.
+- `wowlab db2` and `wowlab looks` download public game tables from wago.tools by version: to ask for the right ones, they send your installed game version in the request.
+- A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
+<!-- network:end -->
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
@@ -158,10 +165,10 @@ DBT_AllPersistentOptions["Default"]["DBM"]["TimerPoint"] = "TOPRIGHT"
 DBT_AllPersistentOptions["Default"]["DBM"]["HugeBarsEnabled"] = true
 …
 
-$ wowlab doctor --offline
+$ wowlab doctor
 Install: /Applications/World of Warcraft (found by a default location)
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
-  Game data: not checked (--offline)
+  Game data: not checked (--check-builds asks wago.tools)
 …
 Client: not running
 Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
@@ -181,7 +188,7 @@ Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
 | 🚪 | **One door for every change.** | Anything wowlab writes goes through a single *write gate*. The gate refuses while the game is running, takes a snapshot first, records what it did, and replaces files atomically. There is no "force" switch that skips any of that. |
 | 🚫 | **No Lua is ever run.** | Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed. |
 | 🧱 | **Nothing is lost.** | The parsers keep every byte they don't understand. An unedited file comes back byte for byte. |
-| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. The only network access is to wago.tools, for public game data: the version list `wowlab doctor` checks (`--offline` skips it) and the game tables `db2` and `looks` download, which send your game's version number, and a link you click opens in your own browser, carrying your character's race, body type, class, level and equipped item and bonus ids to that site. |
+| 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. Everything wowlab sends over the network is listed once, under "What leaves your machine" at the top. |
 | ⛔ | **Clearly out of bounds, permanently.** | No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings. |
 
 ## ⚙️ How it works

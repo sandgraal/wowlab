@@ -610,6 +610,11 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
             if _JSON in opts:
                 json_opt = _JSON
                 continue  # the server adds it itself; it is not a parameter here
+            if getattr(param, "hidden", False):
+                # An option `--help` does not show (`doctor --offline`, a
+                # no-op kept for old scripts, M16-07) is not offered here,
+                # and a request that names it is an unknown parameter.
+                continue
             params[str(param.name)] = _read_param(param)
         excluded = None
         confirm = None

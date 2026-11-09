@@ -759,10 +759,10 @@ _WORDS_BEFORE = (
     "Looks",
     "The page",
     "wowlab looks page",
-    "writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes",
+    "writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Download tables and write the page runs that command. It downloads the build's public game tables from wago.tools when wowlab does not have them yet, sending your game version, then writes",
     "pages/looks.html",
-    "in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.",
-    "Write the page",
+    "in wowlab's own data folder, never touching your game folder, and shows that file here. The page itself runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.",
+    "Download tables and write the page",
     "[title] The looks page",
 )
 

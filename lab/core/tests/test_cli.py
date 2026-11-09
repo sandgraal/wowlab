@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sys
 import zlib
 from collections.abc import Iterator
@@ -209,7 +210,7 @@ def _state(root: Path) -> dict[str, tuple[bytes | None, int]]:
 
 
 def test_doctor_reports_install_flavor_client_and_store(root: Path) -> None:
-    result = ok("doctor")
+    result = ok("doctor", "--check-builds")
     out = _plain(result.stdout)
     assert f"Install: {root} (found by ${install.ENV_ROOT})" in out
     assert f"Flavor {FLAVOR}: product wow_classic_beta, version {VERSION}" in out
@@ -224,7 +225,7 @@ def test_doctor_reports_install_flavor_client_and_store(root: Path) -> None:
 
 
 def test_doctor_json_validates_and_prints_only_the_version_of_a_match(root: Path) -> None:
-    report = _json(cli.DoctorReport, "doctor")
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
     assert report.install_root == str(root)
     (f,) = report.flavors
     assert (f.folder, f.version, f.game_data.status) == (FLAVOR, VERSION, "published")
@@ -243,7 +244,7 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     product or its config hashes (§6.6, M10-14 amendment)."""
     for path in (root / ".build.info", root / FLAVOR / ".flavor.info"):
         path.write_bytes(path.read_bytes().replace(b"wow_classic_beta", b"wow_constructed"))
-    result = ok("doctor")
+    result = ok("doctor", "--check-builds")
     out = result.stdout
     assert f"Game data: wago.tools lists version {VERSION}" in out
     assert "wow_classic_beta" not in out
@@ -251,7 +252,7 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     (matched,) = [b for b in listing["wow_classic_beta"] if b["version"] == VERSION]
     for field in ("build_config", "product_config", "cdn_config"):
         assert matched[field] not in out
-    report = _json(cli.DoctorReport, "doctor")
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
     assert report.flavors[0].game_data.model_dump() == {
         "status": "published",
         "version": VERSION,
@@ -259,9 +260,80 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     }
 
 
-def test_doctor_offline_makes_no_request(root: Path, replayed: list[httpx.Request]) -> None:
-    report = _json(cli.DoctorReport, "doctor", "--offline")
-    assert report.flavors[0].game_data.status == "not_checked"
+@pytest.fixture
+def no_socket(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Every socket that would open, recorded and refused (constructed): a
+    second seam under the replayed game data, so a request that went around
+    `_open_gamedata` would still be seen."""
+    opened: list[object] = []
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        opened.append(args)
+        raise OSError("a test refused a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    return opened
+
+
+@pytest.mark.parametrize("json_out", [(), ("--json",)], ids=["text", "json"])
+def test_doctor_is_offline_by_default(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object], json_out: tuple[str, ...]
+) -> None:
+    """Without --check-builds, `doctor` opens no socket and asks the game-data
+    seam nothing (M16-07); its first run included."""
+    result = ok("doctor", *json_out)
+    assert replayed == [] and no_socket == []
+    if json_out:
+        report = cli.DoctorReport.model_validate_json(result.stdout)
+        assert report.flavors[0].game_data.model_dump() == {
+            "status": "not_checked",
+            "version": VERSION,
+            "detail": "no --check-builds",
+        }
+    else:
+        assert "Game data: not checked (--check-builds asks wago.tools)" in result.stdout
+    assert "--offline" not in result.stdout + result.stderr
+
+
+def test_doctor_with_redact_is_offline_by_default(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object]
+) -> None:
+    ok("doctor", "--redact")
+    assert replayed == [] and no_socket == []
+
+
+def test_doctor_check_builds_asks_the_version_list_only(
+    root: Path, replayed: list[httpx.Request]
+) -> None:
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
+    assert report.flavors[0].game_data.status == "published"
+    assert [r.url.path for r in replayed] == ["/api/builds"]
+
+
+def test_doctor_offline_is_a_no_op_with_one_deprecation_line(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object]
+) -> None:
+    """`--offline` stays accepted: the same report as without it, one line on
+    stderr saying it does nothing, and it is not in `--help`."""
+    plain = ok("doctor", "--json")
+    old = ok("doctor", "--offline", "--json")
+    assert old.stdout == plain.stdout
+    assert old.stderr.count("--offline") == 1
+    assert old.stderr.strip().splitlines() == [cli._OFFLINE_DEPRECATED]
+    assert replayed == [] and no_socket == []
+    assert "--offline" not in _plain(ok("doctor", "--help").stdout)
+    assert "--check-builds" in _plain(ok("doctor", "--help").stdout)
+
+
+def test_doctor_offline_with_check_builds_is_refused(
+    root: Path, replayed: list[httpx.Request]
+) -> None:
+    result = run("doctor", "--offline", "--check-builds")
+    assert result.exit_code == cli.EXIT_USAGE
+    assert "contradict" in result.stderr
     assert replayed == []
 
 

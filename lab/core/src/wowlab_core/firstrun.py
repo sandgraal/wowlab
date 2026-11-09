@@ -36,7 +36,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wowlab_core import guard, install, layout, longpath, snapshot
+from wowlab_core import disclosure, guard, install, layout, longpath, snapshot
 from wowlab_core.snapshot import VerifyReport
 
 __all__ = [
@@ -247,21 +247,10 @@ def is_first_run(store: snapshot.SnapshotStore, inst: install.Install | None) ->
 # ─── text ────────────────────────────────────────────────────────────────────
 
 
-def intro_lines(*, offline: bool, store_path: Path) -> list[str]:
+def intro_lines(*, store_path: Path) -> list[str]:
     """What wowlab will and will not do, in plain words (ADR-0031's trust
-    model). Printed before `doctor` makes its network request."""
-    if offline:
-        network = (
-            "With --offline, as now, this check sends no request at all. Without it, it "
-            "downloads wago.tools' public list of game versions and looks for your "
-            "installed versions in it; nothing from your install is sent."
-        )
-    else:
-        network = (
-            "This check downloads wago.tools' public list of game versions and looks for "
-            "your installed versions in it; nothing from your install is sent. Run it with "
-            "--offline to skip that."
-        )
+    model), ending in the one "What leaves your machine" block
+    (`disclosure`). Printed before `doctor` would make a network request."""
     return [
         "First run: wowlab has no snapshot of this install yet. What it will and will not do:",
         "  - It reads your install and writes nothing there: no temporary, cache or lock "
@@ -275,8 +264,7 @@ def intro_lines(*, offline: bool, store_path: Path) -> list[str]:
         "changes the game's memory, and never runs code from your files: SavedVariables "
         "are read as data.",
         f"  - Snapshots are kept in wowlab's own store, {store_path}, never in your install.",
-        "  - Nothing is uploaded. The only network traffic is to wago.tools, a community-run "
-        "public site of game data. " + network,
+        *disclosure.lines(indent="  - "),
     ]
 
 

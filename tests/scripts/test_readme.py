@@ -122,15 +122,23 @@ LINK_CLAUSE = (
 SECURITY = ROOT / "SECURITY.md"
 
 
+# Since M16-07 the README says what leaves the machine once, in the generated
+# block (`wowlab_core.disclosure`, `lab/core/tests/test_disclosure.py` is its
+# drift test); its link row carries the same payload LINK_CLAUSE names.
+LINK_PAYLOAD = "your character's race, body type, class, level and equipped item and bonus ids"
+
+
 def test_the_trust_model_sentences_name_the_clicked_link() -> None:
+    from wowlab_core import disclosure
+
     screen = _first_screen()
-    assert (
-        "- **Nothing is uploaded.** The only network traffic is to [wago.tools]"
-        "(https://wago.tools), for public game data, " + LINK_CLAUSE + "." in screen
-    )
+    assert disclosure.render_markdown() in screen, "the network block is on the first screen"
+    (link,) = [row for row in disclosure.ROWS if "dressing-room link" in row]
+    assert "opens in your own browser, and only when you click it" in link
+    assert LINK_PAYLOAD + " to that site" in link and LINK_PAYLOAD in LINK_CLAUSE
     row = next(line for line in _readme().splitlines() if "**Stays on your machine.**" in line)
-    assert "The only network access is to wago.tools" in row
-    assert row.endswith("which send your game's version number, " + LINK_CLAUSE + ". |")
+    assert '"What leaves your machine"' in row, "the promise row points at the block"
+    assert "wago.tools" not in row, "and does not say it a second time"
     security = " ".join(SECURITY.read_text(encoding="utf-8").split())
     assert (
         "**Nothing leaves the machine.** The only network traffic is downloading public game "

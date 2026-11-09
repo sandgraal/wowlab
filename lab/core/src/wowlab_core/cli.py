@@ -1489,7 +1489,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
     return out
 
 
-def _game_data(flavors: Sequence[install.Flavor], offline: bool) -> dict[str, GameDataReport]:
+def _game_data(flavors: Sequence[install.Flavor], check_builds: bool) -> dict[str, GameDataReport]:
     reports: dict[str, GameDataReport] = {}
     pending: list[install.Flavor] = []
     for f in flavors:
@@ -1499,9 +1499,9 @@ def _game_data(flavors: Sequence[install.Flavor], offline: bool) -> dict[str, Ga
                 version=None,
                 detail=f".build.info has no version for product {f.product!r}",
             )
-        elif offline:
+        elif not check_builds:
             reports[f.folder] = GameDataReport(
-                status="not_checked", version=f.version, detail="--offline"
+                status="not_checked", version=f.version, detail="no --check-builds"
             )
         else:
             pending.append(f)
@@ -1580,11 +1580,12 @@ def _store_report() -> StoreReport:
 
 def _doctor(
     root: Path | None,
-    offline: bool,
+    check_builds: bool,
     on_found: Callable[[install.Install | None], None] | None = None,
 ) -> DoctorReport:
     """The doctor report. `on_found` is called once discovery has finished
-    (with None when no install was found), before any network request."""
+    (with None when no install was found), before any network request.
+    Without `check_builds` no request is made at all (M16-07)."""
     problems: list[str] = []
     inst: install.Install | None = None
     found_by: str | None = None
@@ -1615,7 +1616,7 @@ def _doctor(
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
     if inst is not None:
-        game = _game_data(inst.flavors, offline)
+        game = _game_data(inst.flavors, check_builds)
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -1671,7 +1672,7 @@ def _print_game_data(g: GameDataReport) -> str:
     if g.status == "no_version":
         return f"no version to look up ({g.detail})"
     if g.status == "not_checked":
-        return "not checked (--offline)"
+        return "not checked (--check-builds asks wago.tools)"
     return f"could not check ({g.detail})"
 
 
@@ -1780,7 +1781,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     _say_notes(notes, show_notes)
 
 
-def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
+def _doctor_redacted(root: Path | None, check_builds: bool, names: list[str]) -> DoctorReport:
     """`_doctor` through `doctorredact` (M13-09): every string redacted before it is printed."""
     try:
         extra = doctorredact.check_names(names)
@@ -1788,7 +1789,7 @@ def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> Doct
         raise CliError(str(exc), EXIT_USAGE) from None
     try:
         return doctorredact.redacted(
-            lambda: _doctor(root, offline), root, extra, doctorredact.DOCTOR_FIELDS
+            lambda: _doctor(root, check_builds), root, extra, doctorredact.DOCTOR_FIELDS
         )
     except doctorredact.RedactedError as exc:
         raise CliError(str(exc)) from None
@@ -1878,6 +1879,13 @@ def _first_run(
     )
 
 
+# The one deprecation line of `doctor --offline` (M16-07), on stderr.
+_OFFLINE_DEPRECATED = (
+    "--offline is no longer needed and does nothing: doctor makes no network request "
+    "unless --check-builds is given."
+)
+
+
 def _no_text(_line: str) -> None:
     """`say` with --json: the first-run text is not printed."""
 
@@ -1886,9 +1894,21 @@ def _no_text(_line: str) -> None:
 @_handled
 def doctor(
     root: RootOpt = None,
+    check_builds: Annotated[
+        bool,
+        typer.Option(
+            "--check-builds",
+            help="Ask wago.tools whether it lists each installed version (downloads its "
+            "public version list). Without it, doctor makes no network request.",
+        ),
+    ] = False,
     offline: Annotated[
         bool,
-        typer.Option("--offline", help="Do not ask wago.tools whether each version is listed."),
+        typer.Option(
+            "--offline",
+            hidden=True,
+            help="Does nothing: doctor is offline unless --check-builds is given.",
+        ),
     ] = False,
     yes: Annotated[
         bool,
@@ -1938,8 +1958,18 @@ def doctor(
     With --redact (or --redact-name) the first run is skipped: no intro, no
     scan, no question, no snapshot; --yes and --flavor are refused with it.
 
+    It makes no network request unless --check-builds is given.
+
     \f
     JSON: DoctorReport."""
+    if offline:
+        if check_builds:
+            raise CliError(
+                "--offline and --check-builds contradict each other; doctor is offline "
+                "unless --check-builds is given, so drop --offline",
+                EXIT_USAGE,
+            )
+        _note(_OFFLINE_DEPRECATED)
     if redact or redact_name:
         if yes or flavor is not None:
             raise CliError(
@@ -1947,7 +1977,7 @@ def doctor(
                 "run `wowlab doctor` without --redact to take a first snapshot",
                 EXIT_USAGE,
             )
-        report = _doctor_redacted(root, offline, redact_name or [])
+        report = _doctor_redacted(root, check_builds, redact_name or [])
         if json_out:
             _emit(report)
         else:
@@ -1969,11 +1999,11 @@ def doctor(
             _select_flavor(inst, flavor)  # a bad --flavor fails before any request
         first = firstrun.is_first_run(store, inst)
         if first and not json_out:
-            for line in firstrun.intro_lines(offline=offline, store_path=store.path):
+            for line in firstrun.intro_lines(store_path=store.path):
                 say(line)
             say("")
 
-    report = _doctor(root, offline, on_found)
+    report = _doctor(root, check_builds, on_found)
     if not json_out:
         _print_doctor(report, notes)
     if first:
@@ -11312,11 +11342,13 @@ def looks_page(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Write one self-contained HTML page (no network requests) to browse the
-    races, body types, classes, options and choices of the build's tables, with
-    what the tables say about each choice, and to view the saved looks checked
-    against that build. Never written into an install; names each damaged look
-    file and then exits 1, as `looks show` does.
+    """Write one self-contained HTML page to browse the races, body types,
+    classes, options and choices of the build's tables, with what the tables
+    say about each choice, and to view the saved looks checked against that
+    build. The build's public game tables are downloaded from wago.tools when
+    wowlab does not have them yet; the page itself makes no network request.
+    Never written into an install; names each damaged look file and then
+    exits 1, as `looks show` does.
 
     \f
     JSON: LooksPageReport."""
