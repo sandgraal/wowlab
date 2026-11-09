@@ -3609,12 +3609,15 @@ OrphansOpt = Annotated[
         "behind), with their size and the total.",
     ),
 ]
+_ORPHAN_REINSTALL = (
+    "If the addon is installed again it reads this file again, so deleting it loses those settings."
+)
 _ORPHAN_WHAT = (
     "A file is listed when Interface/AddOns/ holds no folder of its name, or when that "
-    "folder's TOC declares no SavedVariables (for an account-wide file) or no "
-    "SavedVariablesPerCharacter (for a character's file). Such a file is most often left "
-    "behind by an addon that was removed or renamed: the client does not delete it, and "
-    "neither does wowlab."
+    "folder's TOC declares no SavedVariables (account-wide file) or no "
+    "SavedVariablesPerCharacter (character file). Such a file is usually left by an addon "
+    "that was removed, renamed, or stopped saving at that scope. The client does not delete "
+    "it, and neither does wowlab. " + _ORPHAN_REINSTALL
 )
 _ORPHAN_BLIZZARD = (
     "Blizzard's own files (SavedVariables.lua and Blizzard_*.lua) are never listed: the "
@@ -3626,6 +3629,13 @@ def _lab_records_caveat(n: int) -> str:
     return (
         f"Not listed: {_plural(n, 'WowLab.lua file')}, the lab-addon's records, which wowlab "
         "reads whether or not the lab-addon is installed."
+    )
+
+
+def _no_toc_caveat(folders: Sequence[str]) -> str:
+    return (
+        f"Not listed: the saved data of {', '.join(folders)}, whose folder has no TOC named "
+        "after it (often an addon unzipped one folder too deep); `wowlab addons check` shows it."
     )
 
 
@@ -3706,14 +3716,15 @@ def _sv_orphans(
     """M16-34, `sv list --orphans`: the answer (a count, then the rows), at
     most one caveat for this result, then the standing notes or a footer."""
     found = addoncheck.orphan_saved_variables(files, lay.addons())
-    caveat: str | None = None
-    standing = [_ORPHAN_WHAT, _ORPHAN_BLIZZARD, _SV_TIMING, *no_account]
-    if found.lab_addon_records:
-        caveat = _lab_records_caveat(len(found.lab_addon_records))
-        if found.not_judged:
-            standing.insert(0, _not_judged_caveat(found.not_judged))
-    elif found.not_judged:
-        caveat = _not_judged_caveat(found.not_judged)
+    # What was left out, most telling first: the first is this result's one
+    # caveat, any other joins the standing notes ahead of them.
+    left_out = [
+        *([_lab_records_caveat(len(found.lab_addon_records))] if found.lab_addon_records else []),
+        *([_no_toc_caveat(found.no_toc)] if found.no_toc else []),
+        *([_not_judged_caveat(found.not_judged)] if found.not_judged else []),
+    ]
+    caveat = left_out[0] if left_out else None
+    standing = [*left_out[1:], _ORPHAN_WHAT, _ORPHAN_BLIZZARD, _SV_TIMING, *no_account]
     report = SvListReport(
         flavor_folder=flavor_folder,
         files=list(found.files),
@@ -3726,17 +3737,17 @@ def _sv_orphans(
     if not found.files:
         _say("No SavedVariables file is left without an installed addon that declares it.")
     else:
-        addons = {(f.addon or "").casefold() for f in found.files}
+        addons = {wtfconfig.fold_name(f.addon or "") for f in found.files}
         total = sum(f.size for f in found.files)
         verb = "is" if len(found.files) == 1 else "are"
-        _say(
+        _say_prose(
             f"{_plural(len(found.files), 'SavedVariables file')} of "
             f"{_plural(len(addons), 'addon')}, {_bytes(total)} in all, {verb} declared by no "
-            "installed addon:"
+            f"installed addon. {_ORPHAN_REINSTALL}"
         )
         for f in found.files:
             _say(_sv_row(f))
-    _say_notes(standing, notes_out, caveat, keep=[*found.not_judged, *no_account])
+    _say_notes(standing, notes_out, caveat, keep=[*found.not_judged, *found.no_toc, *no_account])
 
 
 def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:
@@ -6329,12 +6340,13 @@ _CHECK_DEFAULT = (
     "that each hold an AddOns.txt, which one the client reads is not known [verify]."
 )
 _CHECK_BLIZZARD = (
-    "A Blizzard_ dependency is one of the client's own addons, which load from game data, so "
-    "it is never counted as missing."
+    "A Blizzard_ dependency is taken to be one of the client's own addons, which load from "
+    "game data, not from Interface/AddOns/ [verify]. wowlab cannot see which ones this client "
+    "ships, so it never counts one as missing."
 )
 _CHECK_DEPS = (
-    "Only RequiredDeps and Dependencies are checked; an optional dependency is not. A "
-    "dependency counts as installed when Interface/AddOns/ holds a folder of its name."
+    "Only RequiredDeps and Dependencies are checked; OptionalDeps and other Dep-prefixed "
+    "directives (which the client may also treat as required [verify]) are not."
 )
 
 
@@ -6354,7 +6366,12 @@ def _check_caveat(check: addoncheck.AddonsCheck) -> str | None:
     return None
 
 
-def _check_interface(toc: addoncheck.TocCheck, interface: int | None) -> str:
+_TocRole = Literal["only", "several", "another game type"]
+
+
+def _check_interface(toc: addoncheck.TocCheck, interface: int | None, role: _TocRole) -> str:
+    """`role`: the addon's one TOC; one of several; or one of several when
+    another one matches this client, so this one is for another game type."""
     if toc.interface_status == "unread":
         return f"not read: {toc.error}"
     if toc.interface_status == "none":
@@ -6362,17 +6379,24 @@ def _check_interface(toc: addoncheck.TocCheck, interface: int | None) -> str:
     if toc.interface_status == "matches":
         return f"{toc.interface}: matches this client"
     if toc.interface_status == "differs":
+        if role == "another game type":
+            return f"{toc.interface}: for another game type"
+        if role == "several":
+            return f"{toc.interface}: not this client's {interface}"
         return f"{toc.interface}: this client is {interface}, so it is out of date"
     return f"{toc.interface}: this client's is not known"
 
 
-def _check_toc_lines(toc: addoncheck.TocCheck, interface: int | None, indent: str) -> list[str]:
-    lines = [f"{indent}interface   {_check_interface(toc, interface)}"]
+def _check_toc_lines(
+    toc: addoncheck.TocCheck, interface: int | None, indent: str, role: _TocRole
+) -> list[str]:
+    lines = [f"{indent}interface   {_check_interface(toc, interface, role)}"]
     if toc.interface_status == "unread":
         return lines
     if toc.dependencies:
         words = {
             "installed": "installed",
+            "installed_no_toc": "installed, but has no TOC the client loads",
             "missing": "not installed",
             "blizzard": "the client's own",
         }
@@ -6439,9 +6463,12 @@ def addons_check(
         _say("No addon folders.")
     else:
         missing = sum(1 for a in addons if a.missing_dependencies)
-        differs = sum(1 for a in addons if any(t.interface_status == "differs" for t in a.tocs))
+        differs = sum(1 for a in addons if a.out_of_date)
+        none_for_client = sum(1 for a in addons if a.no_toc_for_client)
         unloaded = sum(1 for a in addons if a.selection == "no_toc")
         bits = [f"{missing} missing a required addon", f"{differs} out of date"]
+        if none_for_client:
+            bits.append(f"{none_for_client} with several TOCs, none for this client's interface")
         if unloaded:
             bits.append(f"{unloaded} with no TOC the client loads")
         interface = (
@@ -6463,13 +6490,15 @@ def addons_check(
         if a.selection == "no_toc":
             _say("  no TOC file named after the folder; the client does not load it")
         elif len(a.tocs) == 1:
-            for line in _check_toc_lines(a.tocs[0], check.client_interface, "  "):
+            for line in _check_toc_lines(a.tocs[0], check.client_interface, "  ", "only"):
                 _say(line)
         else:
             _say(f"  {len(a.tocs)} TOC files; which one loads depends on the game type")
+            one_match = sum(1 for t in a.tocs if t.interface_status == "matches") == 1
             for toc in a.tocs:
+                role: _TocRole = "another game type" if one_match else "several"
                 _say(f"  {toc.file}")
-                for line in _check_toc_lines(toc, check.client_interface, "    "):
+                for line in _check_toc_lines(toc, check.client_interface, "    ", role):
                     _say(line)
         _say(f"  characters  {_check_characters(a, files)}")
     if addons:

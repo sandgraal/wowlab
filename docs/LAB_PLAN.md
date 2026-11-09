@@ -4751,18 +4751,29 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      loads depends on the game type). The client's interface comes from
      the flavor's version by the patch-number rule, as `addon install`
      fills it; without a version no interface is judged, and the one
-     caveat says so. A dependency is `RequiredDeps` or `Dependencies`; it
-     is installed when `Interface/AddOns/` holds a folder of its name (ASCII
-     case folded), and a `Blizzard_*` one is the client's own and never
-     missing. The characters are those whose `AddOns.txt` (read by
+     caveat says so. With several TOCs the client loads one by game type:
+     an addon is out of date only when its one TOC differs; with several,
+     the TOCs that match the client are the ones counted (their
+     dependencies alone), and when none matches the addon is reported as
+     "with several TOCs, none for this client's interface". A dependency is
+     `RequiredDeps` or `Dependencies` (not `OptionalDeps` or other `Dep*`
+     directives, which the client may also treat as required **[verify]**);
+     it is installed when `Interface/AddOns/` holds a folder of its name
+     (ASCII case folded), "installed, but has no TOC the client loads" when
+     that folder has none, and a `Blizzard_*` one is taken to be the
+     client's own **[verify]** and never counted missing. The characters are those whose `AddOns.txt` (read by
      `wtfconfig.parse_addons`, LAB_FORMATS amendment of 2026-11-09) lists
      the addon, with the state word as written; an unlisted addon is at the
      client's default and is not called disabled. `sv list --orphans` lists
      a file when no folder of its addon's name is installed, or that
      folder's TOCs declare no `SavedVariables` (an account file) or no
      `SavedVariablesPerCharacter` (a character file); a `.lua.bak` follows
-     its addon, Blizzard's files are never listed, and an addon whose TOC
-     could not be read is not judged. The lab-addon's `WowLab.lua` files
+     its addon, Blizzard's files are never listed, an addon whose TOC
+     could not be read is not judged, and the saved data of a folder with no
+     TOC named after it (often an addon unzipped one folder too deep) is
+     left out and named apart. The answer line says that an addon installed
+     again reads its file again, so deleting one loses those settings. The
+     lab-addon's `WowLab.lua` files
      are left out even when the lab-addon is not installed, because wowlab
      reads them; the caveat counts them. Both are read-only and offline,
      answer first, with one caveat at most and the standing notes behind

@@ -742,9 +742,12 @@ class AddonsDocument(BaseModel):
         """The last line naming ``addon`` (ASCII case folded, as folder names
         compare on the client's file systems **[verify]**), or None when the
         file does not list it."""
-        wanted = fold_name(addon)
-        found = [s for s in self.states if fold_name(s.name) == wanted]
-        return found[-1] if found else None
+        return self.by_folded_name.get(fold_name(addon))
+
+    @cached_property
+    def by_folded_name(self) -> dict[str, AddonState]:
+        """Each folded name's last line, built once per document."""
+        return {fold_name(s.name): s for s in self.states}
 
 
 def parse_addons(data: bytes) -> AddonsDocument:

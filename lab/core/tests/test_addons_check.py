@@ -232,17 +232,23 @@ def test_orphans_text_answers_first(root: Path, flavor: Path) -> None:
     out = ok("sv", "list", "--orphans")
     total = sum((flavor / p).stat().st_size for p in ORPHANS)
     lines = out.splitlines()
-    assert lines[0] == (
+    first_row = next(i for i, ln in enumerate(lines) if ln.startswith("account "))
+    answer = " ".join(ln.strip() for ln in lines[:first_row])
+    assert answer == (
         f"5 SavedVariables files of 4 addons, {total:,} bytes in all, are declared by no "
-        "installed addon:"
-    )
-    assert [ln.rsplit("  ", 1)[-1] for ln in lines[1:6]] == [
+        "installed addon. If the addon is installed again it reads this file again, so "
+        "deleting it loses those settings."
+    ), "the answer says what deleting one costs, not only behind --notes"
+    rows = lines[first_row : first_row + 5]
+    assert [ln.rsplit("  ", 1)[-1] for ln in rows] == [
         *ORPHANS[:3],
         f"{ORPHANS[3]} (previous write, .bak)",
         ORPHANS[4],
     ]
-    assert "WowLab" not in "\n".join(lines[1:6])
-    assert lines[6].startswith("Not listed: 3 WowLab.lua files, the lab-addon's records")
+    assert "WowLab" not in "\n".join(rows)
+    assert lines[first_row + 5].startswith(
+        "Not listed: 3 WowLab.lua files, the lab-addon's records"
+    )
     assert lines[-1] == "3 notes: --notes shows them"
     noted = ok("sv", "list", "--orphans", "--notes")
     assert "Notes:" in noted and "--notes shows" not in noted
@@ -308,3 +314,95 @@ def test_both_commands_leave_the_install_untouched(root: Path) -> None:
     ):
         ok(*args)
     assert _state(root) == before
+
+
+# ─── round 1 of the reviews ──────────────────────────────────────────────────
+
+
+def _two_tocs(flavor: Path, first: bytes, second: bytes) -> None:
+    folder = flavor / "Interface" / "AddOns" / "Twin"
+    folder.mkdir()
+    (folder / "Twin.toc").write_bytes(first)
+    (folder / "Twin_Vanilla.toc").write_bytes(second)
+
+
+def test_several_tocs_one_matching_is_not_out_of_date_constructed(flavor: Path) -> None:
+    """The client loads one TOC by game type: one that matches is enough,
+    and only its dependencies count."""
+    _two_tocs(
+        flavor,
+        b"## Interface: 120100\r\n## RequiredDeps: NotHere\r\n",
+        b"## Interface: 16001\r\n",
+    )
+    twin = {a.name: a for a in _check().check.addons}["Twin"]
+    assert twin.selection == "depends_on_game_type"
+    assert twin.counted_tocs == ("Twin_Vanilla.toc",)
+    assert (twin.out_of_date, twin.no_toc_for_client) == (False, False)
+    assert twin.missing_dependencies == (), "the other game type's dependency does not count"
+    out = ok("addons", "check")
+    assert out.startswith("3 addons: 2 missing a required addon, 2 out of date;")
+    assert "    interface   120100: for another game type\n" in out
+    assert "    interface   16001: matches this client\n" in out
+    # Only the two single-TOC DBM addons are out of date, not Twin.
+    assert sum(1 for a in _check().check.addons if a.out_of_date) == 2
+
+
+def test_several_tocs_one_matching_and_no_other_out_of_date_constructed(flavor: Path) -> None:
+    for name in ("DBM-Brawlers", "DBM-Challenges"):
+        shutil.rmtree(flavor / "Interface" / "AddOns" / name)
+    _two_tocs(flavor, b"## Interface: 120100\n", b"## Interface: 16001\n")
+    assert ok("addons", "check").startswith("1 addon: 0 missing a required addon, 0 out of date;")
+
+
+def test_several_tocs_none_matching_have_their_own_heading_constructed(flavor: Path) -> None:
+    _two_tocs(
+        flavor,
+        b"## Interface: 120100\n## RequiredDeps: NotHere\n",
+        b"## Interface: 50504\n",
+    )
+    twin = {a.name: a for a in _check().check.addons}["Twin"]
+    assert (twin.out_of_date, twin.no_toc_for_client) == (False, True)
+    assert twin.counted_tocs == ("Twin.toc", "Twin_Vanilla.toc")
+    assert twin.missing_dependencies == ("NotHere",)
+    out = ok("addons", "check")
+    assert out.startswith(
+        "3 addons: 3 missing a required addon, 2 out of date, 1 with several TOCs, none for "
+        "this client's interface;"
+    )
+    assert "    interface   120100: not this client's 16001\n" in out
+
+
+def test_a_dependency_with_no_loadable_toc_constructed(flavor: Path) -> None:
+    core = flavor / "Interface" / "AddOns" / "DBM-Core"
+    (core / "DBM-Core").mkdir(parents=True)  # unzipped one folder too deep
+    (core / "DBM-Core" / "DBM-Core.toc").write_bytes(b"## Interface: 16001\n")
+    brawlers = {a.name: a for a in _check().check.addons}["DBM-Brawlers"]
+    assert [d.status for d in brawlers.tocs[0].dependencies] == ["installed_no_toc"]
+    assert "DBM-Core (installed, but has no TOC the client loads)" in ok("addons", "check")
+
+
+def test_saved_data_of_a_folder_with_no_toc_is_not_an_orphan_constructed(flavor: Path) -> None:
+    deep = flavor / "Interface" / "AddOns" / "Syndicator" / "Syndicator"
+    deep.mkdir(parents=True)
+    (deep / "Syndicator.toc").write_bytes(b"## SavedVariables: SYNDICATOR_CONFIG\n")
+    lay = layout.Layout(flavor)
+    found = addoncheck.orphan_saved_variables(lay.saved_variables(), lay.addons())
+    assert found.no_toc == ("Syndicator",)
+    assert f"{SV_DIR}/Syndicator.lua" not in [f.path for f in found.files]
+    report = _orphans()
+    assert f"{SV_DIR}/Syndicator.lua" not in [f.path for f in report.files]
+    caveat = cli._no_toc_caveat(["Syndicator"])
+    assert caveat == (
+        "Not listed: the saved data of Syndicator, whose folder has no TOC named after it "
+        "(often an addon unzipped one folder too deep); `wowlab addons check` shows it."
+    )
+    # The lab-addon caveat comes first; this one leads the standing notes.
+    assert report.notes[:2] == [cli._lab_records_caveat(3), caveat]
+    assert "unzipped one folder too deep" in ok("sv", "list", "--orphans", "--notes")
+
+
+def test_orphan_addons_are_counted_by_folded_name_constructed(flavor: Path) -> None:
+    sv = flavor / SV_DIR
+    (sv / "syndicator.lua.bak").write_bytes((sv / "Syndicator.lua").read_bytes())
+    out = ok("sv", "list", "--orphans")
+    assert out.startswith("6 SavedVariables files of 4 addons,")

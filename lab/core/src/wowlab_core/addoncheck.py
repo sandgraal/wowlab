@@ -16,10 +16,17 @@ version"); nothing about a flavor is known here (L6).
   it, `differs` when it does not, `none` without the directive, `unknown`
   when the client's interface cannot be derived;
 - each `## RequiredDeps:` and `## Dependencies:` item: `installed` when an
-  addon folder of that name is present (ASCII case folded), `blizzard` for
-  a `Blizzard_*` name (the client loads its own addons from game data, not
-  from `Interface/AddOns/` **[verify]**, so their absence there says
-  nothing), `missing` otherwise;
+  addon folder of that name is present (ASCII case folded) and has a TOC
+  named after it, `installed_no_toc` when the folder has none (the client
+  does not load it), `blizzard` for a `Blizzard_*` name (taken to be one of
+  the client's own addons, which load from game data, not from
+  `Interface/AddOns/` **[verify]**, so their absence there says nothing),
+  `missing` otherwise;
+- with several TOCs the client loads one, by game type: the TOCs whose
+  interface matches the client's are the ones counted (their dependencies
+  alone make `missing_dependencies`); when none matches, all are counted and
+  the addon is `no_toc_for_client` rather than `out_of_date`, which is for
+  an addon whose one TOC differs (domain review of M16-34, round 1);
 - `## LoadOnDemand:` (`1` is on), `## Version:`;
 - the character folders whose `AddOns.txt` lists it, with the state word.
   An addon a file does not list is at the client's default, so a missing
@@ -32,11 +39,14 @@ folder's TOCs declares `## SavedVariables:` (an account file) or
 addon. Blizzard's files (`SavedVariables.lua`, `Blizzard_*.lua`) are never
 orphans, and neither are the lab-addon's own records (`WowLab.lua`), which
 wowlab reads whether or not the lab-addon is installed: they are counted
-apart. A folder whose TOCs could not all be read is not judged.
+apart. A folder whose TOCs could not all be read is not judged, and the
+saved data of a folder with no TOC named after it (often an addon unzipped
+one folder too deep: installed, and wanted) is left out and named apart.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from typing import Literal
 
@@ -72,7 +82,9 @@ class _Model(BaseModel):
 
 class Dependency(_Model):
     name: FsText
-    status: Literal["installed", "missing", "blizzard"]
+    # `installed_no_toc`: the folder is there, but holds no TOC named after
+    # it, so the client does not load it.
+    status: Literal["installed", "installed_no_toc", "missing", "blizzard"]
 
 
 class TocCheck(_Model):
@@ -103,7 +115,15 @@ class AddonCheck(_Model):
     blizzard: bool  # named like one of Blizzard's own addons
     selection: Literal["single", "depends_on_game_type", "no_toc"]
     tocs: tuple[TocCheck, ...]  # the TOCs the client may read, by file name
-    missing_dependencies: tuple[FsText, ...]  # over all its TOCs, in order, once each
+    # Those of `tocs` the client is taken to load: the one TOC; with several,
+    # those whose interface matches the client's, or all of them when none
+    # does (or when the client's interface is not known).
+    counted_tocs: tuple[FsText, ...]
+    # `out_of_date`: one TOC, whose interface is not the client's;
+    # `no_toc_for_client`: several TOCs, none for the client's interface.
+    out_of_date: bool
+    no_toc_for_client: bool
+    missing_dependencies: tuple[FsText, ...]  # over `counted_tocs`, in order, once each
     characters: tuple[CharacterState, ...]  # the AddOns.txt files that list it
 
 
@@ -130,6 +150,9 @@ class Orphans(_Model):
     files: tuple[layout.SavedVariablesFile, ...]  # declared by no installed TOC
     lab_addon_records: tuple[layout.SavedVariablesFile, ...]  # left out (see the docstring)
     not_judged: tuple[FsText, ...]  # addon folders whose TOCs could not all be read
+    # Addon folders that hold saved data but no TOC named after the folder
+    # (often an addon unzipped one folder too deep): their files are left out.
+    no_toc: tuple[FsText, ...] = ()
 
 
 def client_interface(version: str | None) -> int | None:
@@ -148,7 +171,9 @@ def _client_tocs(addon: layout.Addon) -> tuple[layout.AddonToc, ...]:
     return tuple(t for t in addon.tocs if t.matches_folder)
 
 
-def _check_toc(toc: layout.AddonToc, installed: frozenset[str], interface: int | None) -> TocCheck:
+def _check_toc(
+    toc: layout.AddonToc, installed: dict[str, layout.Addon], interface: int | None
+) -> TocCheck:
     doc = toc.document
     if doc is None:
         return TocCheck(
@@ -174,12 +199,16 @@ def _check_toc(toc: layout.AddonToc, installed: frozenset[str], interface: int |
     for key in _DEPENDENCY_KEYS:
         for name in doc.list_value(key):
             folded = _fold(name)
+            found = installed.get(folded)
+            dep_status: Literal["installed", "installed_no_toc", "missing", "blizzard"]
             if folded.startswith(_BLIZZARD_PREFIX):
-                dep_status: Literal["installed", "missing", "blizzard"] = "blizzard"
-            elif folded in installed:
-                dep_status = "installed"
-            else:
+                dep_status = "blizzard"
+            elif found is None:
                 dep_status = "missing"
+            elif found.selection == "no_toc":
+                dep_status = "installed_no_toc"
+            else:
+                dep_status = "installed"
             deps.append(Dependency(name=name, status=dep_status))
     lod = doc.get("LoadOnDemand")
     return TocCheck(
@@ -232,10 +261,14 @@ def _read_addons_txt(
 def _unsafe_words(exc: snapshot.UnsafeReadError) -> str:
     """An `UnsafeReadError` without the absolute path it starts with."""
     text = str(exc)
-    for tail in (" is not a regular file", " holds "):
-        at = text.find(tail)
-        if at != -1:
-            return text[at + 1 :]
+    # The messages are "<path> is not a regular file" and "<path> holds <n>
+    # bytes, more than <limit>". The path comes first and may hold the same
+    # words, so each is matched from the end of the message.
+    if text.endswith(" is not a regular file"):
+        return "is not a regular file"
+    at = text.rfind(" holds ")
+    if at != -1 and re.fullmatch(r"holds \d+ bytes, more than \d+", text[at + 1 :]):
+        return text[at + 1 :]
     return "not read"
 
 
@@ -244,14 +277,17 @@ def check_addons(lay: layout.Layout, version: str | None) -> AddonsCheck:
     `version` is the flavor's discovered version."""
     interface = client_interface(version)
     addons = lay.addons()
-    installed = frozenset(_fold(a.name) for a in addons)
+    installed = {_fold(a.name): a for a in addons}
     walk = lay.wtf_walk()
     lists = _read_addons_txt(lay, walk.wtf_files)
     checks: list[AddonCheck] = []
     for addon in addons:
         tocs = tuple(_check_toc(t, installed, interface) for t in _client_tocs(addon))
+        matching = [t for t in tocs if t.interface_status == "matches"]
+        several = len(tocs) > 1
+        counted = matching if several and matching else list(tocs)
         missing = tuple(
-            dict.fromkeys(d.name for t in tocs for d in t.dependencies if d.status == "missing")
+            dict.fromkeys(d.name for t in counted for d in t.dependencies if d.status == "missing")
         )
         characters: list[CharacterState] = []
         for meta, doc in lists:
@@ -273,6 +309,11 @@ def check_addons(lay: layout.Layout, version: str | None) -> AddonsCheck:
                 blizzard=addon.blizzard,
                 selection=addon.selection,
                 tocs=tocs,
+                counted_tocs=tuple(t.file for t in counted),
+                out_of_date=not several and any(t.interface_status == "differs" for t in tocs),
+                no_toc_for_client=several
+                and not matching
+                and any(t.interface_status == "differs" for t in tocs),
                 missing_dependencies=missing,
                 characters=tuple(characters),
             )
@@ -304,11 +345,16 @@ def orphan_saved_variables(
     orphans: list[layout.SavedVariablesFile] = []
     lab: list[layout.SavedVariablesFile] = []
     not_judged: dict[str, None] = {}
+    no_toc: dict[str, None] = {}
     for f in files:
         if f.blizzard or f.addon is None or _fold(f.addon).startswith(_BLIZZARD_PREFIX):
             continue
         folders = by_name.get(_fold(f.addon), [])
         tocs = [t for a in folders for t in _client_tocs(a)]
+        if folders and not tocs:
+            for a in folders:
+                no_toc[a.name] = None
+            continue
         if any(t.document is None for t in tocs):
             for a in folders:
                 not_judged[a.name] = None
@@ -319,4 +365,9 @@ def orphan_saved_variables(
             lab.append(f)
         else:
             orphans.append(f)
-    return Orphans(files=tuple(orphans), lab_addon_records=tuple(lab), not_judged=tuple(not_judged))
+    return Orphans(
+        files=tuple(orphans),
+        lab_addon_records=tuple(lab),
+        not_judged=tuple(not_judged),
+        no_toc=tuple(no_toc),
+    )
