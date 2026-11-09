@@ -75,9 +75,8 @@ def _body_query(text: str) -> str:
         data = json.loads(text)
     except ValueError:
         return text
-    if isinstance(data, dict) and isinstance(data.get("query"), str):
-        return data["query"]
-    return text
+    query = data.get("query") if isinstance(data, dict) else None
+    return query if isinstance(query, str) else text
 
 
 def _strip_graphql(text: str) -> str:
