@@ -10871,15 +10871,17 @@ _NO_CLASS_REMARK = (
     "checks them."
 )
 _RECORDED_NO_CLASS_REMARK = (
-    "The record holds no class ({reason}): class-restricted choices are noted, not refused; "
+    "The record holds no class: {reason}. Class-restricted choices are noted, not refused; "
     "--class checks them."
 )
-_RECORDED_CLASS_REMARK = (
-    "The class is the one the lab-addon recorded for this character ({file}, id {id})."
-)
+_RECORDED_CLASS_REMARK = "The class is the one the lab-addon recorded for this character: {cls}."
 _CLASS_DISAGREES_REMARK = (
-    "--class gives class {given}, but the lab-addon recorded {file} (id {id}) for this "
-    "character; --class is used."
+    "--class gives {given}, but the lab-addon recorded {cls} for this character; --class is used."
+)
+_RACES_DIFFER_REMARK = (
+    "The record's identity (race {identity}) and its customization (race {customization}) were "
+    "recorded in different sessions; the class is the identity's, which may not be the class "
+    "of the character that made this look."
 )
 
 
@@ -10906,6 +10908,10 @@ class LooksImportReport(_Out):
     recorded_class_id: int | None = None
     recorded_class_file: str | None = None
     recorded_class_absent: str | None = None
+    # The race the record's `identity` holds (None when it holds none). It
+    # can differ from `record.race_id`: the identity is gathered at each
+    # login, the customization record is carried from an earlier session.
+    recorded_race_id: int | None = None
 
 
 def _loads_ago_text(ago: int | None) -> str:
@@ -10971,31 +10977,44 @@ def _import_remarks(
 
 
 def _import_class(
-    model: looks.Customizations, record: labaddon.CharDB, given: str | None
+    model: looks.Customizations,
+    record: labaddon.CharDB,
+    got: labaddon.CustomizationImport,
+    given: str | None,
 ) -> tuple[int | None, Literal["--class", "record"] | None, labaddon.CharIdentity, list[str]]:
     """The look's class, where it came from, the record's identity and the
-    remark that says so. --class wins over the record (said in one line when
+    remarks that say so. --class wins over the record (said in one line when
     they differ); a record of schema 1 to 3 holds no class and keeps the
     remark it always had. The record's class id is checked by the look, as a
-    typed --class id is."""
+    typed --class id is. A class taken from an identity whose race is not the
+    customization record's is said to come from another session."""
     identity = labaddon.identity_of(record)
     recorded = identity.class_id
-    file = identity.class_file or "a class"
     class_id = _resolve_class(model, given)
     if class_id is not None:
         remarks: list[str] = []
         if recorded is not None and recorded != class_id:
             remarks.append(
                 _CLASS_DISAGREES_REMARK.format(
-                    given=_class_words(model, class_id), file=file, id=recorded
+                    given=_class_words(model, class_id), cls=_class_words(model, recorded)
                 )
             )
         return class_id, "--class", identity, remarks
     if recorded is not None:
-        return recorded, "record", identity, [_RECORDED_CLASS_REMARK.format(file=file, id=recorded)]
+        remarks = [_RECORDED_CLASS_REMARK.format(cls=_class_words(model, recorded))]
+        if identity.race_id is not None and identity.race_id != got.race_id:
+            remarks.append(
+                _RACES_DIFFER_REMARK.format(identity=identity.race_id, customization=got.race_id)
+            )
+        return recorded, "record", identity, remarks
     if not isinstance(record, labaddon.CharDBV4):
         return None, None, identity, [_NO_CLASS_REMARK]
-    return None, None, identity, [_RECORDED_NO_CLASS_REMARK.format(reason=identity.class_id_absent)]
+    return (
+        None,
+        None,
+        identity,
+        [_RECORDED_NO_CLASS_REMARK.format(reason=(identity.class_id_absent or "").rstrip("."))],
+    )
 
 
 def _class_words(model: looks.Customizations, class_id: int) -> str:
@@ -11049,7 +11068,7 @@ def looks_import_char(
     with _open_gamedata() as data:
         version, build_remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    class_id, class_from, identity, class_remarks = _import_class(model, record, class_)
+    class_id, class_from, identity, class_remarks = _import_class(model, record, got, class_)
     look = looks.Look(
         name=name,
         race_id=got.race_id,
@@ -11084,6 +11103,7 @@ def looks_import_char(
         recorded_class_id=identity.class_id,
         recorded_class_file=identity.class_file,
         recorded_class_absent=identity.class_id_absent,
+        recorded_race_id=identity.race_id,
     )
     if json_out:
         _emit(out)
