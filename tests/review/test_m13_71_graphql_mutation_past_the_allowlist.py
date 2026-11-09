@@ -58,7 +58,6 @@ def test_control_allowed_mutation_passes(tmp_path: Path) -> None:
 # Defects.
 
 
-@pytest.mark.xfail(strict=True, reason="M13-71 review: a lone CR ends a GraphQL comment")
 def test_a_comment_ended_by_a_lone_cr_hides_a_mutation_field(tmp_path: Path) -> None:
     # GraphQL's LineTerminator includes a lone "\r"; _strip_graphql ends a
     # comment only at "\n", so mergePullRequest is blanked as comment text.
@@ -66,7 +65,6 @@ def test_a_comment_ended_by_a_lone_cr_hides_a_mutation_field(tmp_path: Path) -> 
     assert _run(_input_body(tmp_path, query), tmp_path) == 2
 
 
-@pytest.mark.xfail(strict=True, reason='M13-71 review: \\""" does not end a block string')
 def test_an_escaped_triple_quote_desyncs_the_block_string_scan(tmp_path: Path) -> None:
     # In a GraphQL block string \""" is an escaped quote, not the end.
     # _strip_graphql ends the block there, so its later quotes pair up out of
@@ -82,9 +80,6 @@ def test_an_escaped_triple_quote_desyncs_the_block_string_scan(tmp_path: Path) -
     assert _run(f"gh api graphql -F query=@{qfile}", tmp_path) == 2
 
 
-@pytest.mark.xfail(
-    strict=True, reason="M13-71 review: only the literal endpoint `graphql` is judged"
-)
 @pytest.mark.parametrize("endpoint", ["/graphql", "https://api.github.com/graphql"])
 def test_another_spelling_of_the_graphql_endpoint_is_judged(tmp_path: Path, endpoint: str) -> None:
     # gh sends {"query": ...} as a POST body to either spelling.

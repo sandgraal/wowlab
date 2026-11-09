@@ -87,12 +87,16 @@ def _strip_graphql(text: str) -> str:
     while i < n:
         c = text[i]
         if c == "#":
-            while i < n and text[i] != "\n":
+            # GraphQL ends a comment at any line terminator, a lone CR included.
+            while i < n and text[i] not in "\r\n":
                 i += 1
             continue
         if text.startswith('"""', i):
-            end = text.find('"""', i + 3)
-            i = n if end < 0 else end + 3
+            # In a block string `\"""` is an escaped quote, not its end.
+            i += 3
+            while i < n and not text.startswith('"""', i):
+                i += 4 if text.startswith('\\"""', i) else 1
+            i += 3
             out.append('""')
             continue
         if c == '"':
@@ -283,8 +287,14 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
         # `-f query=...`, a `query=@<file>` (2026-10-19, M14-02 notes) and a JSON
         # body given with `--input <file>` (M13-71). A file that cannot be read
         # now is refused: write it first, then run the call.
+        # The GraphQL endpoint in any spelling gh accepts: `graphql`, `/graphql`
+        # or a full URL ending in `/graphql` (M13-71 review).
+        is_graphql = any(
+            not a.startswith("-") and a.split("?", 1)[0].rstrip("/").split("/")[-1] == "graphql"
+            for a in args[1:]
+        )
         queries: list[str] = []
-        for j, a in enumerate(args if "graphql" in args else ()):
+        for j, a in enumerate(args if is_graphql else ()):
             spec = ""
             body = ""
             if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
@@ -319,8 +329,10 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
                     "the call."
                 )
             try:
-                text = path.read_text(encoding="utf-8")
-            except OSError:
+                # newline="": judge the bytes gh sends, a lone CR included.
+                with path.open(encoding="utf-8", newline="") as handle:
+                    text = handle.read()
+            except (OSError, UnicodeDecodeError):
                 return (
                     "gh api graphql reads a query file to check it for mutations; "
                     "write the file first, then run the call."
@@ -329,7 +341,7 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
                 queries.append(_body_query(text))
             else:
                 queries.append(text)
-        if "graphql" in args:
+        if is_graphql:
             refusal = _graphql_refusal(queries, joined)
             if refusal:
                 return refusal
@@ -347,7 +359,7 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
                 "repo settings go through scripts/bootstrap-github.sh, run by the conductor."
             )
         has_body = any(a.startswith("-f") or a.startswith("-F") or a == "--input" for a in args)
-        if "repos/" in joined and "graphql" not in args and has_body:
+        if "repos/" in joined and not is_graphql and has_body:
             return "gh api POST against a repo endpoint is reserved for the bootstrap script."
     return None
 
