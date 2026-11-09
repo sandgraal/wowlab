@@ -7369,6 +7369,39 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
 _NOT_RESTORED_SHOWN = 10
 
 
+def _left_alone_lines(left_alone: Sequence[str]) -> list[str]:
+    """The text plan's "left alone" heading: the files added under the
+    snapshot's folders since it was taken, which a whole restore never
+    writes or deletes."""
+    if not left_alone:
+        return []
+    return [
+        f"  Left alone: {len(left_alone)} file(s) added since the snapshot was taken. "
+        "A whole restore never deletes them; name one with --paths to delete it:",
+        *(f"    {rel}" for rel in left_alone),
+    ]
+
+
+def _added_since(
+    store: snapshot.SnapshotStore, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[str, ...]:
+    """What a whole restore of `manifest` (spelled as this flavor spells it)
+    leaves alone, by the gate's rule: every regular file under its subtrees,
+    outside its excluded paths, that it does not hold. Reads directory
+    entries and `lstat` only, following no link; flavor-relative, sorted."""
+    prefix = folder + "/"
+    held = {e.path for e in manifest.entries}
+    ours = [s for s in manifest.subtrees if s == folder or s.startswith(prefix)]
+    if not ours:
+        return ()
+    listed = store.list_tree(install_root, ours, exclude=manifest.excluded)
+    return tuple(
+        path.removeprefix(prefix)
+        for path, kind in listed
+        if kind == "file" and path.startswith(prefix) and path not in held
+    )
+
+
 def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
     shown = [a for a in aside if a.disk != "same"]
     if not shown:
@@ -7555,6 +7588,9 @@ def snap_restore(
     """Put back files from a snapshot, through the write gate: the client must be
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
+    Without --paths, files added under the snapshot's folders since it was
+    taken are never deleted: the plan lists them under "Left alone".
+
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
@@ -7617,6 +7653,7 @@ def snap_restore(
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
     executables: list[SkippedPath] = []
+    left_alone: tuple[str, ...] = ()  # a whole restore's added files, never touched
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
         if target is not None:
             # The gate maps the account folders, or refuses, before anything
@@ -7652,10 +7689,14 @@ def snap_restore(
             try:
                 if not aside and not executables:
                     tx.restore(manifest.id, into=target)
+                    left_alone = tx.left_alone
                 else:
                     if any(not e.path.startswith(folder + "/") for e in rest):
                         # refused: a path outside this flavor
                         tx.restore(manifest.id, into=target)
+                    # Restored by name, so the gate lists nothing it leaves
+                    # alone: the same list, by the same rule, read here.
+                    left_alone = _added_since(store, manifest, inst.root, folder)
                     names, left = _names_for_whole(rest, inst.root, folder)
                     tx.restore(manifest.id, by_name(names), into=target)
             except guard.PathNotAllowedError as exc:
@@ -7705,7 +7746,7 @@ def snap_restore(
         )
 
     shots_differ = any(a.disk != "same" for a in aside)
-    if (not json_out or (prompting and plan)) and (plan or skipped or aside):
+    if (not json_out or (prompting and plan)) and (plan or skipped or aside or left_alone):
         show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
         if into_report is not None:
             for line in _into_lines(into_report, chosen):
@@ -7722,6 +7763,8 @@ def snap_restore(
         if aside:
             for line in _not_restored_lines(manifest.id, aside):
                 show(line)
+        for line in _left_alone_lines(left_alone):
+            show(line)
     if not plan:
         if json_out:
             _emit(report(applied=False))
