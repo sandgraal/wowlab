@@ -121,7 +121,8 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_none_on_undo(
         "transaction",
         "notes",
     ]
-    assert list(cli.UndoReport.model_fields) == undo_before
+    # M16-10 adds the text plan as `plan_lines`, last (additive).
+    assert list(cli.UndoReport.model_fields) == [*undo_before, "plan_lines"]
     assert list(cli.SvMergeReport.model_fields) == [
         *merge_before,
         "target_sha256",

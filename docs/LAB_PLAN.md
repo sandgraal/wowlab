@@ -4689,6 +4689,26 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
 3. **Plans that say what they lose.**
    - Plans and `snap diff` print key, macro and CVar changes by name for
      the WTF text files.
+     *Amended 2026-11-09 (M16-10):* under each changed `bindings-cache.wtf`,
+     `macros-cache.txt`, `config-cache.wtf` or `Config.wtf` (by file name,
+     in any folder) the lines are `key K: old -> new`, `macro "N": added`,
+     `removed` or `text`/`icon changed`, and `CVar N: "old" -> "new"`, with
+     `(not in the file)` for an absent side. They come from the `wtfconfig`
+     parsers (module `wtfdiff`): CVars by the last line setting the name,
+     compared without ASCII case; keys by the last `bind` line; macros by
+     name, two of one name compared in turn (`N (2)`); a macro's id is not
+     compared. When lines the parsers leave `Unknown` differ, one line says
+     so; when nothing differs by name, one line says only order, endings or
+     ids did. Under a SavedVariables file, one summary line: `values: R
+     removed, A added, C changed; size X -> Y` (`snap diff` then lists each
+     value as before). A plan names at most 20 per file and counts the
+     rest; `snap diff` lists all. Plan sides are read read-only: the disk
+     when it still hashes to the plan's `before`, else the snapshot store;
+     a side over 64 MiB or not readable back gets a "not compared" line.
+     `RestoreReport`, `ProfileApplyReport`, `UndoReport` and `DiffReport`
+     gain `plan_lines`: the text plan (for `snap diff`, its text output),
+     line by line as the terminal shows it (escaped), for the UI's confirm
+     step (EV-20). Additive only.
    - A whole restore lists what it leaves alone.
    - `sv merge` lists every key it removes. Its rulings change: an array
      part is merged as one value, and `--key X` merges inside `X`, with the
