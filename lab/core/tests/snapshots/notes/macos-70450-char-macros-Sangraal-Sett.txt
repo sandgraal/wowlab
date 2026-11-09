@@ -1,0 +1,21 @@
+exit 0
+Character: 1/Sangraal-Sett in account 90000001#6
+Record: WTF/Account/90000001#6/1/Sangraal-Sett/SavedVariables/WowLab.lua (schema
+  4), written <local time> (the file's modification time: the
+  character as of that save)
+Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt, written <local time>
+Character macros: no macros-cache.txt
+Account bindings: WTF/Account/90000001#6/bindings-cache.wtf, written <local time>
+Character bindings: no bindings-cache.wtf
+Macros: 0 (0 with a candidate slot, 0 with none; 0 findings)
+Cannot judge for any macro: 1
+  not-on-action-bar: the record has 2 macro slot(s) on 1/Sangraal-Sett's action
+    bars (slots 1 to 180), and how a slot's macro index maps to the ids in
+    macros-cache.txt is (not yet confirmed); so which macros are on one cannot
+    be told
+macros-cache.txt is what the client last wrote; the server can replace it at
+  login when macro sync is on. In a real capture a macro made in a finished
+  session was missing from it (whether the client rewrites it at logout is not
+  yet confirmed), so a macro may be missing here, or still listed after you
+  deleted it.
+5 notes: --notes shows them

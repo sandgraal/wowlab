@@ -1,0 +1,1996 @@
+{
+  "flavor_folder": "_classic_beta_",
+  "account": "90000001#6",
+  "character": "1/Dangling-Participle",
+  "chosen_by": "--character",
+  "files": [
+    {
+      "scope": "account",
+      "path": "WTF/Account/90000001#6/bindings-cache.wtf",
+      "mtime_ns": 1700000000000000000,
+      "bind_lines": 3,
+      "unknown_lines": 0,
+      "note": "(account bindings; a character with character-specific key bindings on uses its own file instead [verify]. The server can replace this file at login when binding sync is on; see wowlab doctor)"
+    },
+    {
+      "scope": "character",
+      "path": null,
+      "mtime_ns": null,
+      "bind_lines": 0,
+      "unknown_lines": 0,
+      "note": "(a character has its own bindings-cache.wtf only when character-specific key bindings are on [verify]; without one it uses the account bindings)"
+    }
+  ],
+  "record_file": "WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua",
+  "record_mtime_ns": 1700000000000000000,
+  "record_schema": 4,
+  "record_error": null,
+  "keys": [
+    {
+      "key": "1",
+      "command": "ACTIONBUTTON1",
+      "slot": 1,
+      "page_note": "main bar button 1, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "spell",
+        "id": 143,
+        "sub_type": "spell",
+        "name": "Fireball",
+        "subtext": "Rank 2"
+      },
+      "does": "casts Fireball (Rank 2, spell 143)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "2",
+      "command": "ACTIONBUTTON2",
+      "slot": 2,
+      "page_note": "main bar button 2, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "spell",
+        "id": 5143,
+        "sub_type": "spell",
+        "name": "Arcane Missiles",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Arcane Missiles (Rank 1, spell 5143)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "3",
+      "command": "ACTIONBUTTON3",
+      "slot": 3,
+      "page_note": "main bar button 3, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "spell",
+        "id": 205,
+        "sub_type": "spell",
+        "name": "Frostbolt",
+        "subtext": "Rank 2"
+      },
+      "does": "casts Frostbolt (Rank 2, spell 205)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "4",
+      "command": "ACTIONBUTTON4",
+      "slot": 4,
+      "page_note": "main bar button 4, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "spell",
+        "id": 2136,
+        "sub_type": "spell",
+        "name": "Fire Blast",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Fire Blast (Rank 1, spell 2136)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "5",
+      "command": "ACTIONBUTTON5",
+      "slot": 5,
+      "page_note": "main bar button 5, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "spell",
+        "id": 20572,
+        "sub_type": "spell",
+        "name": "Blood Fury",
+        "subtext": "Racial"
+      },
+      "does": "casts Blood Fury (Racial, spell 20572)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "6",
+      "command": "ACTIONBUTTON6",
+      "slot": 6,
+      "page_note": "main bar button 6, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "item",
+        "id": 1251,
+        "sub_type": null,
+        "name": null,
+        "subtext": null
+      },
+      "does": "uses item 1251",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "7",
+      "command": "ACTIONBUTTON7",
+      "slot": 7,
+      "page_note": "main bar button 7, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": null,
+      "does": "empty slot (nothing recorded in it)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "8",
+      "command": "ACTIONBUTTON8",
+      "slot": 8,
+      "page_note": "main bar button 8, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": null,
+      "does": "empty slot (nothing recorded in it)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "9",
+      "command": "ACTIONBUTTON9",
+      "slot": 9,
+      "page_note": "main bar button 9, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": null,
+      "does": "empty slot (nothing recorded in it)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "0",
+      "command": "ACTIONBUTTON10",
+      "slot": 10,
+      "page_note": "main bar button 10, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": null,
+      "does": "empty slot (nothing recorded in it)",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMPADPLUS",
+      "command": "ACTIONBUTTON11",
+      "slot": 11,
+      "page_note": "main bar button 11, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "item",
+        "id": 5350,
+        "sub_type": null,
+        "name": null,
+        "subtext": null
+      },
+      "does": "uses item 5350",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMPADMINUS",
+      "command": "ACTIONBUTTON12",
+      "slot": 12,
+      "page_note": "main bar button 12, page 1, the page shown with no form, stance or stealth active; paging, a form, stance or stealth, or a possess, override or vehicle bar [verify] shows another page, and the key then presses that page's slot (not followed)",
+      "holds": {
+        "type": "item",
+        "id": 5349,
+        "sub_type": null,
+        "name": null,
+        "subtext": null
+      },
+      "does": "uses item 5349",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "Q",
+      "command": "MULTIACTIONBAR1BUTTON1",
+      "slot": 61,
+      "page_note": "bottom left bar button 1, page 6",
+      "holds": {
+        "type": "spell",
+        "id": 1459,
+        "sub_type": "spell",
+        "name": "Arcane Intellect",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Arcane Intellect (Rank 1, spell 1459)",
+      "sources": [
+        "account file",
+        "record"
+      ],
+      "agreement": "both",
+      "disagrees": false,
+      "note": null
+    },
+    {
+      "key": "BUTTON3",
+      "command": "MULTIACTIONBAR1BUTTON2",
+      "slot": 62,
+      "page_note": "bottom left bar button 2, page 6",
+      "holds": {
+        "type": "spell",
+        "id": 118,
+        "sub_type": "spell",
+        "name": "Polymorph",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Polymorph (Rank 1, spell 118)",
+      "sources": [
+        "account file",
+        "record"
+      ],
+      "agreement": "both",
+      "disagrees": false,
+      "note": null
+    },
+    {
+      "key": "E",
+      "command": "MULTIACTIONBAR1BUTTON3",
+      "slot": 63,
+      "page_note": "bottom left bar button 3, page 6",
+      "holds": {
+        "type": "spell",
+        "id": 168,
+        "sub_type": "spell",
+        "name": "Frost Armor",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Frost Armor (Rank 1, spell 168)",
+      "sources": [
+        "account file",
+        "record"
+      ],
+      "agreement": "both",
+      "disagrees": false,
+      "note": null
+    },
+    {
+      "key": "SHIFT-1",
+      "command": "ACTIONPAGE1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 1",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-2",
+      "command": "ACTIONPAGE2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 2",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-3",
+      "command": "ACTIONPAGE3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 3",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-4",
+      "command": "ACTIONPAGE4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 4",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-5",
+      "command": "ACTIONPAGE5",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 5",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-6",
+      "command": "ACTIONPAGE6",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "shows main-bar page 6",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-V",
+      "command": "ALLNAMEPLATES",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F",
+      "command": "ASSISTTARGET",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "T",
+      "command": "ATTACKTARGET",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-1",
+      "command": "BONUSACTIONBUTTON1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 1 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-0",
+      "command": "BONUSACTIONBUTTON10",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 10 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-2",
+      "command": "BONUSACTIONBUTTON2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 2 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-3",
+      "command": "BONUSACTIONBUTTON3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 3 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-4",
+      "command": "BONUSACTIONBUTTON4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 4 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-5",
+      "command": "BONUSACTIONBUTTON5",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 5 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-6",
+      "command": "BONUSACTIONBUTTON6",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 6 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-7",
+      "command": "BONUSACTIONBUTTON7",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 7 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-8",
+      "command": "BONUSACTIONBUTTON8",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 8 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-9",
+      "command": "BONUSACTIONBUTTON9",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "pet bar button 9 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "MOUSEWHEELUP",
+      "command": "CAMERAZOOMIN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "MOUSEWHEELDOWN",
+      "command": "CAMERAZOOMOUT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-PAGEDOWN",
+      "command": "CHATBOTTOM",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "PAGEDOWN",
+      "command": "CHATPAGEDOWN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "PAGEUP",
+      "command": "CHATPAGEUP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-SHIFT-PAGEDOWN",
+      "command": "COMBATLOGBOTTOM",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-PAGEDOWN",
+      "command": "COMBATLOGPAGEDOWN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-PAGEUP",
+      "command": "COMBATLOGPAGEUP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-V",
+      "command": "FRIENDNAMEPLATES",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-C",
+      "command": "ITEMCOMPARISONCYCLING",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMPAD0",
+      "command": "JUMP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SPACE",
+      "command": "JUMP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL--",
+      "command": "MASTERVOLUMEDOWN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-=",
+      "command": "MASTERVOLUMEUP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "DOWN",
+      "command": "MOVEBACKWARD",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "S",
+      "command": "MOVEBACKWARD",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "UP",
+      "command": "MOVEFORWARD",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "W",
+      "command": "MOVEFORWARD",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "V",
+      "command": "NAMEPLATES",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-DOWN",
+      "command": "NEXTACTIONPAGE",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-MOUSEWHEELDOWN",
+      "command": "NEXTACTIONPAGE",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "END",
+      "command": "NEXTVIEW",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-B",
+      "command": "OPENALLBAGS",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "ENTER",
+      "command": "OPENCHAT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "/",
+      "command": "OPENCHATSLASH",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-T",
+      "command": "PETATTACK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "DELETE",
+      "command": "PITCHDOWN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "INSERT",
+      "command": "PITCHUP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-MOUSEWHEELUP",
+      "command": "PREVIOUSACTIONPAGE",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-UP",
+      "command": "PREVIOUSACTIONPAGE",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "HOME",
+      "command": "PREVVIEW",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "R",
+      "command": "REPLY",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-R",
+      "command": "REPLY2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "PRINTSCREEN",
+      "command": "SCREENSHOT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F1",
+      "command": "SHAPESHIFTBUTTON1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 1 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F10",
+      "command": "SHAPESHIFTBUTTON10",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 10 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F2",
+      "command": "SHAPESHIFTBUTTON2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 2 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F3",
+      "command": "SHAPESHIFTBUTTON3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 3 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F4",
+      "command": "SHAPESHIFTBUTTON4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 4 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F5",
+      "command": "SHAPESHIFTBUTTON5",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 5 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F6",
+      "command": "SHAPESHIFTBUTTON6",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 6 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F7",
+      "command": "SHAPESHIFTBUTTON7",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 7 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F8",
+      "command": "SHAPESHIFTBUTTON8",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 8 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-F9",
+      "command": "SHAPESHIFTBUTTON9",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "stance bar button 9 (not followed) [verify]",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "X",
+      "command": "SITORSTAND",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "A",
+      "command": "STRAFELEFT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "D",
+      "command": "STRAFERIGHT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "G",
+      "command": "TARGETLASTHOSTILE",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "TAB",
+      "command": "TARGETNEARESTENEMY",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-TAB",
+      "command": "TARGETNEARESTFRIEND",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F2",
+      "command": "TARGETPARTYMEMBER1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F3",
+      "command": "TARGETPARTYMEMBER2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F4",
+      "command": "TARGETPARTYMEMBER3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F5",
+      "command": "TARGETPARTYMEMBER4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-F2",
+      "command": "TARGETPARTYPET1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-F3",
+      "command": "TARGETPARTYPET2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-F4",
+      "command": "TARGETPARTYPET3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-F5",
+      "command": "TARGETPARTYPET4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-F1",
+      "command": "TARGETPET",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-TAB",
+      "command": "TARGETPREVIOUSENEMY",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-SHIFT-TAB",
+      "command": "TARGETPREVIOUSFRIEND",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F1",
+      "command": "TARGETSELF",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "BUTTON4",
+      "command": "TOGGLEAUTORUN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMLOCK",
+      "command": "TOGGLEAUTORUN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "B",
+      "command": "TOGGLEBACKPACK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F12",
+      "command": "TOGGLEBACKPACK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F8",
+      "command": "TOGGLEBAG1",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F9",
+      "command": "TOGGLEBAG2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F10",
+      "command": "TOGGLEBAG3",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "F11",
+      "command": "TOGGLEBAG4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-M",
+      "command": "TOGGLEBATTLEFIELDMINIMAP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "C",
+      "command": "TOGGLECHARACTER0",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "U",
+      "command": "TOGGLECHARACTER2",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "H",
+      "command": "TOGGLECHARACTER4",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-P",
+      "command": "TOGGLECOLLECTIONS",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-R",
+      "command": "TOGGLEFPS",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "ESCAPE",
+      "command": "TOGGLEGAMEMENU",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "I",
+      "command": "TOGGLEGROUPFINDER",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "J",
+      "command": "TOGGLEGUILDTAB",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "Y",
+      "command": "TOGGLELEGACYSYSTEM",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-M",
+      "command": "TOGGLEMUSIC",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-I",
+      "command": "TOGGLEPETBOOK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "K",
+      "command": "TOGGLEPROFESSIONBOOK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "L",
+      "command": "TOGGLEQUESTLOG",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMPADDIVIDE",
+      "command": "TOGGLERUN",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "Z",
+      "command": "TOGGLESHEATH",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "O",
+      "command": "TOGGLESOCIAL",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "CTRL-S",
+      "command": "TOGGLESOUND",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "P",
+      "command": "TOGGLESPELLBOOK",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "N",
+      "command": "TOGGLETALENTS",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "ALT-Z",
+      "command": "TOGGLEUI",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "M",
+      "command": "TOGGLEWORLDMAP",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "SHIFT-SPACE",
+      "command": "TOGGLEWORLDSTATESCORES",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "LEFT",
+      "command": "TURNLEFT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "RIGHT",
+      "command": "TURNRIGHT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    },
+    {
+      "key": "NUMPAD5",
+      "command": "VEHICLEEXIT",
+      "slot": null,
+      "page_note": null,
+      "holds": null,
+      "does": "a binding command, not an action slot",
+      "sources": [
+        "record"
+      ],
+      "agreement": "not in a file",
+      "disagrees": false,
+      "note": "not in a bindings file: the file may hold only the changes from the client's defaults, or may not have been rewritten since the key was set [verify]"
+    }
+  ],
+  "unreached_slots": [
+    {
+      "slot": 64,
+      "page_note": "bottom left bar button 4, page 6",
+      "unfollowed_page": false,
+      "holds": {
+        "type": "spell",
+        "id": 1299026,
+        "sub_type": "spell",
+        "name": "Shatter Curse",
+        "subtext": "Racial"
+      },
+      "does": "casts Shatter Curse (Racial, spell 1299026)"
+    },
+    {
+      "slot": 66,
+      "page_note": "bottom left bar button 6, page 6",
+      "unfollowed_page": false,
+      "holds": {
+        "type": "macro",
+        "id": 1459,
+        "sub_type": "spell",
+        "name": null,
+        "subtext": null
+      },
+      "does": "runs a macro that shows spell 1459 now [verify]; the record keeps no macro name or body"
+    },
+    {
+      "slot": 69,
+      "page_note": "bottom left bar button 9, page 6",
+      "unfollowed_page": false,
+      "holds": {
+        "type": "spell",
+        "id": 1296017,
+        "sub_type": "spell",
+        "name": "Comprehend Scroll",
+        "subtext": "Comprehension"
+      },
+      "does": "casts Comprehend Scroll (Comprehension, spell 1296017)"
+    },
+    {
+      "slot": 71,
+      "page_note": "bottom left bar button 11, page 6",
+      "unfollowed_page": false,
+      "holds": {
+        "type": "spell",
+        "id": 5504,
+        "sub_type": "spell",
+        "name": "Conjure Water",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Conjure Water (Rank 1, spell 5504)"
+    },
+    {
+      "slot": 72,
+      "page_note": "bottom left bar button 12, page 6",
+      "unfollowed_page": false,
+      "holds": {
+        "type": "spell",
+        "id": 587,
+        "sub_type": "spell",
+        "name": "Conjure Food",
+        "subtext": "Rank 1"
+      },
+      "does": "casts Conjure Food (Rank 1, spell 587)"
+    }
+  ],
+  "commands_left_out": 1,
+  "keys_left_out": 0,
+  "left_out_note": "Left out of the bindings record, counted with no list: 1 command not named in plain upper case (a key bound straight to a spell, macro, item or click may be one), and 0 keys not printable ASCII.",
+  "cannot_place": null,
+  "cannot_compare": null,
+  "notes": [
+    "A key reaches an action slot through the default UI's action buttons: button n of the bar showing page p is slot (p - 1) x 12 + n [verify]. The main bar is read at page 1 only, the page shown with no form, stance or stealth active; the pages shown by paging, a form, stance or stealth, or a possess, override or vehicle bar [verify], the pet and stance bars and an addon's buttons are not followed.",
+    "The bindings files are what the client last wrote; the record is what GetBindingKey returned at the lab-addon's last save. Neither is taken as the truth: each row names the sources that have that key on that command, and says where they disagree.",
+    "WowLab.lua is written at logout, /reload or a clean exit (a crash writes nothing): this is the character as of that save, not the session in progress."
+  ]
+}

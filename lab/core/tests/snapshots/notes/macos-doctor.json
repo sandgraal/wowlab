@@ -1,0 +1,75 @@
+{
+  "install_root": "<tmp>/World of Warcraft",
+  "found_by": "$WOWLAB_WOW_ROOT",
+  "install_error": null,
+  "locations": null,
+  "flavors": [
+    {
+      "folder": "_classic_beta_",
+      "product": "wow_classic_beta",
+      "version": "1.60.1.69913",
+      "build": 69913,
+      "matching_rows": 1,
+      "game_data": {
+        "status": "not_checked",
+        "version": "1.60.1.69913",
+        "detail": "--offline"
+      },
+      "sync_cvars": [
+        {
+          "file": "WTF/Config.wtf",
+          "account": null,
+          "name": "synchronizeBindings",
+          "value": null
+        },
+        {
+          "file": "WTF/Config.wtf",
+          "account": null,
+          "name": "synchronizeMacros",
+          "value": null
+        },
+        {
+          "file": "WTF/Config.wtf",
+          "account": null,
+          "name": "synchronizeConfig",
+          "value": null
+        },
+        {
+          "file": "WTF/Account/90000001#6/config-cache.wtf",
+          "account": "90000001#6",
+          "name": "synchronizeBindings",
+          "value": null
+        },
+        {
+          "file": "WTF/Account/90000001#6/config-cache.wtf",
+          "account": "90000001#6",
+          "name": "synchronizeMacros",
+          "value": null
+        },
+        {
+          "file": "WTF/Account/90000001#6/config-cache.wtf",
+          "account": "90000001#6",
+          "name": "synchronizeConfig",
+          "value": null
+        }
+      ]
+    }
+  ],
+  "other_dirs": [],
+  "client": {
+    "state": "not_running",
+    "processes": [],
+    "error": null
+  },
+  "store": {
+    "path": "<tmp>/userdata/wowlab/store",
+    "exists": true,
+    "snapshots": 1,
+    "damaged": [],
+    "transactions": 0,
+    "last_transaction": null,
+    "journal_error": null
+  },
+  "problems": [],
+  "first_run": null
+}

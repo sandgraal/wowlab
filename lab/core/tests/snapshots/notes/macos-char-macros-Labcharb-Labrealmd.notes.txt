@@ -1,0 +1,55 @@
+exit 0
+Character: 1/Labcharb-Labrealmd in account 90000001#6
+Record: none (no WowLab.lua in 1/Labcharb-Labrealmd. Character folders in
+  account 90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg.
+  If none is listed: install the lab-addon (wowlab addon install lab), log in on
+  the character, then log out or /reload.)
+Account macros: 0 macros in WTF/Account/90000001#6/macros-cache.txt, written <local time>
+Character macros: 1 macro in WTF/Account/90000001#6/1/Labcharb-Labrealmd/macros-cache.txt, written <local time>
+Account bindings: WTF/Account/90000001#6/bindings-cache.wtf, written <local time>
+Character bindings: no bindings-cache.wtf
+Macros: 1 (0 with a candidate slot, 1 with none; 0 findings)
+  character macro 1 "PolyArc" (id 0100000000000001, icon 134400, line 1, 41 characters)
+      /castsequence Arcane Intellect, Polymorph
+    placement: none: cannot place: no action-bar record: no lab-addon record: no
+        WowLab.lua in 1/Labcharb-Labrealmd. Character folders in account
+        90000001#6 that have one: 1/Labcharb-Labrealmf, 1/Labchard-Labrealmg. If
+        none is listed: install the lab-addon (wowlab addon install lab), log in
+        on the character, then log out or /reload.
+Cannot judge for any macro: 2
+  spell-not-in-spellbook: no spellbook record (install the lab-addon with the
+    client closed (wowlab addon install lab), log in on this character, then log
+    out or /reload; schema 3 is needed)
+  not-on-action-bar: no spellbook record (install the lab-addon with the client
+    closed (wowlab addon install lab), log in on this character, then log out or
+    /reload; schema 3 is needed)
+macros-cache.txt is what the client last wrote; the server can replace it at
+  login when macro sync is on. In a real capture a macro made in a finished
+  session was missing from it (whether the client rewrites it at logout is not
+  yet confirmed), so a macro may be missing here, or still listed after you
+  deleted it.
+Notes:
+  - An action slot holding a macro keeps an id only, never the macro's name or
+    body. With no subtype the id is taken to be the macro index (not yet
+    confirmed), and which macro of macros-cache.txt an index names is not known.
+    The candidate numbering gives account macros 1 to 120 and character macros
+    from 121: the offset of 120 is Retail's, from memory; counting the records
+    in each file's order is this tool's assumption. Every slot given here is a
+    candidate only. If macros-cache.txt is older than the record, positions in
+    it, and so every candidate here, may be off.
+  - A key reaches an action slot through the default UI's action buttons: button
+    n of the bar showing page p is slot (p - 1) x 12 + n. The main bar is read
+    at page 1 only, the page shown with no form, stance or stealth active; the
+    pages shown by paging, a form, stance or stealth, or a possess, override or
+    vehicle bar, the pet and stance bars and an addon's buttons are not
+    followed.
+  - Without a bindings record only the files' lines are listed; a file may leave
+    out keys at the client's defaults, so keys not listed may still be bound.
+  - Length: counted in characters and UTF-8 bytes of the body lines joined by
+    LF, with no final line break; over 255 characters is a finding, over 255
+    bytes only is cannot judge; the client's limit is 255, and whether it counts
+    characters or bytes is not yet confirmed.
+  - The spellbook and action bars are the lab-addon's record as of its last save
+    (logout or /reload), not the session in progress. It reads the player's
+    spellbook only, so an item, a pet, mount or toy spell after /cast reads as
+    not in the spellbook.

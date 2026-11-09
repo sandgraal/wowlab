@@ -60,6 +60,7 @@ __all__ = [
     "CANNOT_PLACE",
     "GET_RECORD",
     "NOT_IN_A_FILE_NOTE",
+    "NO_BINDINGS_NOTE",
     "UNFOLLOWED_SLOTS",
     "WHY_NOT_IN_A_FILE",
     "Agreement",
@@ -125,6 +126,12 @@ WHY_NOT_IN_A_FILE = (
     "rewritten since the key was set [verify]"
 )
 NOT_IN_A_FILE_NOTE = f"not in a bindings file: {WHY_NOT_IN_A_FILE}"
+# The note `join_record` adds without a bindings record: the key list may be
+# short. `char binds` says it as its one caveat, found by this constant.
+NO_BINDINGS_NOTE = (
+    "Without a bindings record only the files' lines are listed; a file may leave out "
+    "keys at the client's defaults [verify], so keys not listed may still be bound."
+)
 # What else shows a main-bar page than page 1 (`UNFOLLOWED_SLOTS`).
 _OTHER_PAGES = "paging, a form, stance or stealth, or a possess, override or vehicle bar [verify]"
 _PET = re.compile(r"BONUSACTIONBUTTON([1-9]|10)")
@@ -548,10 +555,7 @@ def join(
             "where they disagree."
         )
     else:
-        notes.append(
-            "Without a bindings record only the files' lines are listed; a file may leave out "
-            "keys at the client's defaults [verify], so keys not listed may still be bound."
-        )
+        notes.append(NO_BINDINGS_NOTE)
     if bars_note is not None:
         notes.append(bars_note)
     if binds_note is not None:

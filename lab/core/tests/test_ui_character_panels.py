@@ -377,7 +377,8 @@ def test_the_keys_panel_draws_the_rows_of_char_binds_cross_capture(
     # `char binds` prints word for word.
     params = _gear_params(PICKED)
     args = ["char", "binds", "--character", params["character"], "--account", params["account"]]
-    text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]])
+    # Wide, so the caveat is one line: the CLI wraps prose to the terminal (M16-16).
+    text = CliRunner().invoke(cli.app, [*args, "--flavor", params["flavor"]], terminal_width=10_000)
     assert text.exit_code == 0, text.stdout
     [left_out] = [ln for ln in text.stdout.splitlines() if ln.startswith("Left out of")]
     assert "(a key bound straight to a spell, macro, item or click may be one)" in left_out

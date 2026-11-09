@@ -52,7 +52,7 @@ CASES = [
 ]
 # Runs committed without their own .build.info and .flavor.info (fixture index).
 FILES_ONLY = ("macos-70425", "macos-70450")
-_WRITTEN = re.compile(r"^Written: .* \(the file's modification time\)$", re.MULTILINE)
+_WRITTEN = re.compile(r"^Written: \S+ \S+ \S+ (\(the file's modification time.*\))$", re.MULTILINE)
 
 runner = CliRunner()
 
@@ -99,7 +99,7 @@ def ok(*args: str) -> Any:
 
 
 def _placeholders(text: str, user_config: Path) -> str:
-    text = _WRITTEN.sub("Written: <local time> (the file's modification time)", text)
+    text = _WRITTEN.sub(r"Written: <local time> \1", text)
     text = text.replace(gear.shipped_slots_path(), "<shipped gear_slots.toml>")
     return text.replace(str(user_config / gear.SLOTS_FILE), "<user gear_slots.toml>")
 
@@ -265,7 +265,10 @@ def test_constructed_a_user_slot_table_is_used_and_named(
         '[slots]\n18 = "Wand"\n[quality]\n"nIQ2:" = "Green"\n', encoding="utf-8"
     )
     out = ok("char", "gear").stdout
-    assert f"your table {user_dirs / gear.SLOTS_FILE}, over the shipped default" in out
+    # Named, not printed as an absolute path (M16-16).
+    flat = " ".join(out.split())
+    assert "your gear_slots.toml in wowlab's user config folder, over the shipped default" in flat
+    assert str(user_dirs) not in out
     assert "slot 18 Wand" in out and "Shadow Wand: Green" in out
     report = cli.CharGearReport.model_validate_json(ok("char", "gear", "--json").stdout)
     assert any("your gear_slots.toml" in n for n in report.notes)
@@ -307,9 +310,10 @@ def test_char_gear_writes_nothing_into_the_install(
 def test_char_gear_text_carries_the_tables_verify_and_the_overall_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review round 1: the text says what the JSON notes say."""
+    """Review round 1: the text says what the JSON notes say; since M16-16
+    the overall note is behind --notes, and wraps to the terminal."""
     _install("macos-70425", tmp_path, monkeypatch)
-    out = ok("char", "gear").stdout
+    out = " ".join(ok("char", "gear", "--notes").stdout.split())
     assert "community documentation for Retail, not yet confirmed on Forever" in out
     assert "overall: on Retail, the best items owned, bags included" in out
     assert "from memory" not in out

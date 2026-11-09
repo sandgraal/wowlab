@@ -517,6 +517,38 @@ def _pick(
     return (found[0] if found else None), False
 
 
+def without_account_rows(
+    found: Iterable[FileMapEntry],
+    parts: tuple[str, ...],
+    base: Literal["root", "flavor"],
+    not_account: Callable[[str], bool],
+) -> tuple[tuple[FileMapEntry, ...], bool]:
+    """M13-69: every row of `found` (`FileMap.matches` of `parts`, in order)
+    that applies, and whether account rows were left out: below
+    `WTF/Account/<X>/` where `not_account(X)`, none of the rows of an account
+    folder applies, as `_pick` decides for one row. `not_account` is asked
+    only when an account row is among them. For a walk such as `gaps` that
+    takes a row other than the first (M13-50 rule, M13-69)."""
+    rows = tuple(found)
+    if (
+        base == "flavor"
+        and len(parts) >= 3
+        and parts[0].casefold() == _WTF.casefold()
+        and parts[1].casefold() == _ACCOUNT.casefold()
+        and any(_account_row(e) for e in rows)
+        and not_account(parts[2])
+    ):
+        return tuple(e for e in rows if not _account_row(e)), True
+    return rows, False
+
+
+def not_account_on_disk(folder: Path) -> bool:
+    """M13-69: `_not_account_on_disk`, for a walk outside this module
+    (`gaps`) that judges a folder of `WTF/Account/` where `Layout.classify`
+    with no list would."""
+    return _not_account_on_disk(folder)
+
+
 def _real_dirs(path: Path) -> list[str]:
     """The names of the real folders (no links) directly inside `path`;
     none when it cannot be listed."""
@@ -688,6 +720,16 @@ class Layout:
             entry_id=found.id if found else None,
         )
 
+    def _without_account_rows(self, link: Symlink, not_accounts: frozenset[str]) -> Symlink:
+        """`link` with its entry id taken again so that below a folder of
+        `WTF/Account/` named in `not_accounts` (the walk's, last parts) no
+        account row applies (M13-69, as `Layout.classify` does)."""
+        rel = tuple(link.path.split("/"))
+        found, dropped = _pick(self._filemap, rel, "flavor", "any", not_accounts.__contains__)
+        if not dropped:
+            return link
+        return link.model_copy(update={"entry_id": found.id if found else None})
+
     def _stat(
         self, rel: tuple[str, ...], entry: os.DirEntry[str], report: _Report
     ) -> _Entry | None:
@@ -799,6 +841,7 @@ class Layout:
         if wtf is None:
             return accounts, svs, wtf_files
         account_root = self._sub(wtf, _ACCOUNT, report)
+        first_link = len(report.symlinks)
         entries = [e for e in self._walk(wtf, report) if not self._os_metadata(e, report)]
         report.wtf_folders.extend(_rel_text(e.rel) for e in entries if e.is_dir)
         by_folder: dict[tuple[str, ...], list[_Entry]] = {}
@@ -812,6 +855,7 @@ class Layout:
             return tuple(e.rel[-1] for e in by_folder.get(rel, []) if e.is_dir)
 
         account_names: list[str] = []
+        strays: list[str] = []
         if account_root is not None:
             for name in dirs_in(account_root):
                 arel = (*account_root, name)
@@ -820,7 +864,15 @@ class Layout:
                     account_names.append(name)
                 else:
                     report.not_accounts.append(_rel_text(arel))
+                    strays.append(name)
         known = frozenset(account_names)
+        if strays:
+            # M13-69: a link met below a folder that is no account takes no
+            # account row, as `Layout.classify` gives it with this list.
+            report.symlinks[first_link:] = [
+                self._without_account_rows(s, frozenset(strays))
+                for s in report.symlinks[first_link:]
+            ]
 
         n_wtf = len(wtf)
         for e in entries:

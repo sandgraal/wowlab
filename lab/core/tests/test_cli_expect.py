@@ -126,6 +126,8 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_none_on_undo(
         *merge_before,
         "target_sha256",
         "merged_sha256",
+        "removed",  # M16-12: every key the merge removes, and --replace
+        "replace",
     ]
 
 

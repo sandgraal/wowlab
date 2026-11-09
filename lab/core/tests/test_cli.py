@@ -214,7 +214,11 @@ def test_doctor_reports_install_flavor_client_and_store(root: Path) -> None:
     assert f"Install: {root} (found by ${install.ENV_ROOT})" in out
     assert f"Flavor {FLAVOR}: product wow_classic_beta, version {VERSION}" in out
     assert f"Game data: wago.tools lists version {VERSION}" in out
-    assert "synchronizeBindings not set (client default; wowlab does not know" in out
+    # Six unset sync settings fold into one line (M16-16).
+    assert (
+        "Server sync: the three sync settings wowlab reads are not set in WTF/Config.wtf or "
+        "WTF/Account/" in " ".join(out.split())
+    )
     assert "Client: not running" in out
     assert "Snapshot store:" in out
 
