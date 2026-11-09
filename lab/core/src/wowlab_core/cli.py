@@ -2067,7 +2067,8 @@ class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
     entry_id: str
-    what: str
+    what: str  # the player's text (M16-17)
+    notes: str  # the spec's notes on the row (M16-17); "—" when it has none
     written_by: str
     edit: str
     tier: str
@@ -2128,6 +2129,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
+        notes=entry.notes,
         written_by=entry.written_by,
         edit=entry.edit,
         tier=entry.tier,
@@ -2448,7 +2450,7 @@ def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
         else:
             e = item.explained
             _say(f"      [{e.entry_id}] {_player_copy(_plain(e.what))}")
-            _say(f"      written by: {_plain(e.written_by)}")
+            _say(f"      written by: {_player_copy(_plain(e.written_by))}")
             _say(f"      edit: {e.verdict.words}")
 
 
@@ -3294,6 +3296,14 @@ def explain(
     ],
     root: RootOpt = None,
     flavor: FlavorOpt = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Also print the row's tier (how ordinary using this file is), "
+            "what in wowlab reads it, and the paths the row covers.",
+        ),
+    ] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """What a path in the install is, who writes it, whether wowlab may edit it.
@@ -3448,11 +3458,16 @@ def explain(
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
     _say(f"{result.path or '.'} ({base})")
     _say(f"  what:         {_player_copy(_plain(e.what))}")
-    _say(f"  written by:   {_plain(e.written_by)}")
+    _say(f"  written by:   {_player_copy(_plain(e.written_by))}")
     _say(f"  edit:         {report.verdict.words}")
-    _say(f"  tier:         {tier_words(e.tier)}")
-    _say(f"  read by:      {_reader_words(e.module)}")
-    _say(f"  file-map row: {e.id} ({e.doc_path})")
+    # M16-17: the tier, the reader and the row's own path pattern are the
+    # spec's words; they print only on request (`--json` always has them).
+    if verbose:
+        _say(f"  tier:         {tier_words(e.tier)}")
+        _say(f"  read by:      {_reader_words(e.module)}")
+        _say(f"  file-map row: {e.id} ({e.doc_path})")
+    else:
+        _say(f"  file-map row: {e.id}")
     if taken is not None:  # no install-root row matches below `_..._` today
         _say(f"  {taken.name}: {taken.note}")
     if nowhere:

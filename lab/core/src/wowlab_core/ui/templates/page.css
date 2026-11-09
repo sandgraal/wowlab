@@ -278,8 +278,10 @@ main { padding: var(--space-5) var(--space-6) var(--space-7); }
 .badge::before { font-family: var(--font-serif); font-size: 11px; }
 .badge-gate { color: var(--order); background: var(--order-bg); border-color: var(--order-border); }
 .badge-gate::before { content: "\25C6" / ""; }
-/* A placeholder says the `no` label whatever its level: painted as `no`. */
-.badge-no, .badge.badge-placeholder { color: var(--ruin); background: var(--ruin-bg); border-color: var(--ruin-border); }
+/* A placeholder says the `no` label whatever its level: painted as `no`.
+   Stone, not Ruin: red is for errors only, and "wowlab never changes it"
+   is reassurance, not a warning (M16-17). The glyph tells it from a folder. */
+.badge-no, .badge.badge-placeholder { color: var(--stone); background: var(--stone-bg); border-color: var(--stone-border); }
 .badge-no::before, .badge.badge-placeholder::before { content: "\2715" / ""; }
 .badge-unclassified { color: var(--void); background: var(--void-bg); border-color: var(--void-border); }
 .badge-unclassified::before { content: "?" / ""; }

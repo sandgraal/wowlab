@@ -17,9 +17,9 @@ wowlab Wellspring dresses a careful local tool in the world it serves: a shatter
 |---|---|---|
 | The latent life-force at the core | wowlab itself: the thing that keeps the player's data alive | `wellspring`: primary actions, focus, selection, success, the glow rising from the page floor |
 | Titan architects and their safeguards | The write gate, snapshots, undo | `brass` structure, corner brackets on every panel, the Order verdict |
-| Destruction | Files wowlab will never touch; refusals; errors | `ruin` |
+| Destruction | Refusals and errors, and nothing else (M16-17, 2026-11-09) | `ruin` |
 | Eldritch incursion, the unknown | Files no map row describes | `void` |
-| Inert bedrock | Folders, things not used | `stone` |
+| Inert bedrock | Folders, things not used, files wowlab never changes | `stone` |
 | Dimensional elsewhere | Links that point outside | `astral`, dotted |
 | Decay from outside | A file the server may overwrite at login | `blight`, dashed |
 | Two coalitions | The two themes | Warband (dark, default) and Bastion (light), each with its own `heraldry` |
@@ -31,7 +31,7 @@ The core belongs to neither coalition: `wellspring` is the one colour both theme
 The fantasy lives in colour, type, ornament and structure. It never lives in the words a player reads to make a decision.
 
 - The answer comes first, then at most one caveat. "wowlab can edit. Yes, through wowlab's write gate only, with the client closed."
-- Write to "you", about "your game folder". wowlab speaks of itself in the third person: "wowlab can edit", "wowlab won't touch".
+- Write to "you", about "your game folder". wowlab speaks of itself in the third person: "wowlab can edit", "wowlab never changes it".
 - Use the game's words for the game's things (SavedVariables, flavor folder, /reload, Battle.net app). Never invent lore names for real files or actions: a snapshot is a snapshot, not a "ward".
 - Lore names belong only to the design system (token names, theme names, this book) and to decorative headings that carry no instruction.
 - Sentence case. No exclamation marks, no emoji, no archaic voice ("thou", "ye"), no marketing adjectives.
@@ -51,7 +51,7 @@ The fantasy lives in colour, type, ornament and structure. It never lives in the
 - `brass-deep` for ornament only: corner brackets, dotted guides, the banner rule.
 - `wellspring` for the one thing to do or the one place you are: primary buttons, focus, the selected row's bar, the active tab's underline, success. Text on a wellspring fill is `on-wellspring`.
 - `heraldry` only on large shapes: the banner's top band, the codex's top edge, the cover.
-- The six forces (`order`, `ruin`, `void`, `stone`, `astral`, `blight`) only for verdicts, and `ruin` for errors. Each has `-bg` and `-border` partners.
+- The six forces (`order`, `ruin`, `void`, `stone`, `astral`, `blight`) only for verdicts and errors: `ruin` for errors and refusals only, never a badge; the other five for verdicts. Each has `-bg` and `-border` partners.
 
 **Type.** Three families, all OFL-licensed and shipped as files: no font is ever fetched.
 - `font-display`, Alegreya SC: the name (`display` 40px), titles (`title` 28px), panel headings (`heading` 20px), labels, tabs and buttons (`label` 15px), badges (`plaque` 13px). Lowercase text in this face sets as small capitals, so write labels in sentence case and let the face engrave them.
@@ -77,8 +77,8 @@ The fantasy lives in colour, type, ornament and structure. It never lives in the
 | Badge | Words | Glyph | Border |
 |---|---|---|---|
 | `badge-order` | wowlab can edit | ◆ | solid |
-| `badge-ruin` | wowlab won't touch | ✕ | solid |
 | `badge-void` | unknown | ? | solid |
+| `badge-stone` | wowlab never changes it | ✕ | solid |
 | `badge-stone` | folder, not used | ▪ | solid |
 | `badge-astral` | a link; wowlab won't follow it | ↗ | dotted |
 | `badge-blight` | server may overwrite | ≈ | dashed |
@@ -110,9 +110,8 @@ The `quality-*` tokens are a reference. The page never declares them: the server
 | `#run`, `#looks-write`, `.copy` | Button primary, Button secondary |
 | `#confirm`, `.confirm-box` | Button seal, confirm box |
 | `.badge-gate` | Order |
-| `.badge-no`, `.badge.badge-placeholder` | Ruin |
 | `.badge-unclassified` | Void |
-| `.badge-folder`, `.badge-not_applicable` | Stone |
+| `.badge-no`, `.badge.badge-placeholder`, `.badge-folder`, `.badge-not_applicable` | Stone |
 | `.badge.badge-link` | Astral (dotted) |
 | `.badge-server` | Blight (dashed) |
 | `.tree`, `.row`, `.twisty`, `.name`, `.note` | Tree |

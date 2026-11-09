@@ -1135,7 +1135,7 @@ def test_a_placeholder_verdict_has_its_own_badge_class_constructed(
     """A verdict with `placeholder` True (a path under a reparse point that
     is no link) gets the badge class `badge-placeholder`, on top of `badge`
     and its level's, in the tree and in the detail pane; its text is
-    Python's label, "wowlab won't touch". No other badge has the class.
+    Python's label, "wowlab never changes it". No other badge has the class.
     (Config.wtf's verdict swapped for the placeholder one Python makes:
     constructed.)"""
     rel = "WTF/Config.wtf"
@@ -1244,7 +1244,7 @@ def _effective(classes: set[str], css: str, scheme: str = "dark") -> dict[str, s
 @pytest.mark.parametrize("scheme", ["dark", "light"])
 @pytest.mark.parametrize("level", ["gate", "no", "folder", "not_applicable", "unclassified"])
 def test_the_placeholder_badge_is_painted_like_its_label(level: str, scheme: str) -> None:
-    """A placeholder badge says "wowlab won't touch", the `no` label, so on
+    """A placeholder badge says "wowlab never changes it", the `no` label, so on
     screen, in each colour scheme on its own, it is painted as a `no` badge
     whatever its row's level (backlog, M13-27T, 2026-10-16)."""
     css = _css()

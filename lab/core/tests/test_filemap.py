@@ -49,7 +49,7 @@ def test_every_doc_table_row_is_a_data_row() -> None:
 
 def test_drift_is_detected_constructed() -> None:
     doc = DOC.read_text(encoding="utf-8")
-    edited = doc.replace("| Account keybinds |", "| Account key bindings |")
+    edited = doc.replace("| Your key bindings for this account |", "| Account keybinds |")
     assert edited != doc
     assert render_doc(edited) == doc, "a hand edit inside the markers is overwritten"
     first = load().entries[0]
@@ -84,8 +84,8 @@ def test_packaged_data_is_the_repository_file() -> None:
 
 def test_render_section_shape() -> None:
     table = render_section("root").splitlines()
-    assert table[0] == "| Path | What | Written by / when | Edit | Tier | Module |"
-    assert table[1] == "|---|---|---|---|---|---|"
+    assert table[0] == "| Path | What | Notes | Written by / when | Edit | Tier | Module |"
+    assert table[1] == "|---|---|---|---|---|---|---|"
     assert table[2].startswith("| `.build.info` |")
 
 
@@ -105,19 +105,19 @@ def test_patterns_name_no_flavor_product_interface_or_build() -> None:
         '[[section]]\nid = "a"\ntitle = "A"\n'
         + (
             '[[entry]]\nid = "x"\nsection = "b"\n'
-            'base = "root"\ndoc_path = "p"\nwhat = "w"\nwritten_by = "c"\nedit = "no"\n'
+            'base = "root"\ndoc_path = "p"\nwhat = "w"\nnotes = "n"\nwritten_by = "c"\nedit = "no"\n'
             'tier = "A"\nmodule = "none"\nmatch = ["x"]\n'
         ),
         '[[section]]\nid = "a"\ntitle = "A"\n'
         + (
             '[[entry]]\nid = "x"\nsection = "a"\n'
-            'base = "root"\ndoc_path = "p | q"\nwhat = "w"\nwritten_by = "c"\nedit = "no"\n'
+            'base = "root"\ndoc_path = "p | q"\nwhat = "w"\nnotes = "n"\nwritten_by = "c"\nedit = "no"\n'
             'tier = "A"\nmodule = "none"\nmatch = ["x"]\n'
         ),
         '[[section]]\nid = "a"\ntitle = "A"\n'
         + (
             '[[entry]]\nid = "x"\nsection = "a"\n'
-            'base = "root"\ndoc_path = "p"\nwhat = "w"\nwritten_by = "c"\nedit = "no"\n'
+            'base = "root"\ndoc_path = "p"\nwhat = "w"\nnotes = "n"\nwritten_by = "c"\nedit = "no"\n'
             'tier = "A"\nmodule = "none"\nmatch = ["../x"]\n'
         ),
     ],
@@ -217,3 +217,57 @@ def test_entries_expose_the_edit_column() -> None:
     assert not fm.entry("account-folder").gated
     with pytest.raises(KeyError):
         fm.entry("no-such-entry")
+
+
+# ─── player text and spec notes (M16-17) ─────────────────────────────────────
+
+# What a player must not read in a row's `what` or `written_by`
+# (`.claude/rules/player-copy.md`): ticket, decision and invariant ids, a
+# pointer into the docs, a pointer to the doc's own table ("the rows
+# above"), and the Battle.net app's old name.
+_NOT_FOR_PLAYERS = re.compile(
+    r"M1\d-\d+|ADR-\d+|\bL[1-8]\b|LAB_PLAN|LAB_FORMATS|GLOSSARY|docs/|§"
+    r"|\brows? (?:above|below)\b|\bAgent\b",
+)
+# wowlab's modules, which a player's text never names in backticks.
+_MODULES = frozenset(
+    {"casc", "combatlog", "filemap", "guard", "install", "layout", "luadata", "process"}
+    | {"profiles", "snapshot", "svmerge", "toc", "verdict", "wtfconfig"}
+)
+
+
+@pytest.mark.parametrize("entry", load().entries, ids=lambda e: e.id)
+def test_what_and_written_by_are_a_players_text(entry: filemap.FileMapEntry) -> None:
+    """Each row's player text names no ticket, decision, invariant, doc or
+    module, never says "Agent", and carries at most one `[verify]`, so a
+    report of one row shows "(not yet confirmed)" at most once."""
+    for field in ("what", "written_by"):
+        text = getattr(entry, field)
+        assert not _NOT_FOR_PLAYERS.search(text), (entry.id, field, text)
+        assert not _MODULES & set(re.findall(r"`([a-z_]+)`", text)), (entry.id, field, text)
+    assert "[verify" not in entry.written_by, entry.id
+    assert entry.what.count("[verify") <= 1, entry.id
+
+
+def test_every_row_has_spec_notes() -> None:
+    """`notes` is required: a row says "—" when it has nothing to add."""
+    entries = load().entries
+    assert all(e.notes.strip() for e in entries)
+    assert DATA.read_text(encoding="utf-8").count("\nnotes = ") == len(entries)
+
+
+def test_a_row_without_notes_is_refused_constructed() -> None:
+    text = (
+        '[[section]]\nid = "a"\ntitle = "A"\n'
+        '[[entry]]\nid = "x"\nsection = "a"\nbase = "root"\ndoc_path = "p"\nwhat = "w"\n'
+        'written_by = "c"\nedit = "no"\ntier = "A"\nmodule = "none"\nmatch = ["x"]\n'
+    )
+    with pytest.raises(ValueError, match="notes"):
+        parse(text)
+
+
+def test_notes_are_rendered_beside_what() -> None:
+    """The doc carries the spec's notes in their own column, after What."""
+    row = render_section("root").splitlines()[2]
+    e = load().entry("build-info")
+    assert row.startswith(f"| {e.doc_path} | {e.what} | {e.notes} | {e.written_by} |")

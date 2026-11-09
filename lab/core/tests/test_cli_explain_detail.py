@@ -813,11 +813,10 @@ def _old_text(report: cli.ExplainReport) -> list[str]:
     return [
         f"{result.path or '.'} ({base})",
         f"  what:         {cli._player_copy(e.what.replace('**', ''))}",
-        f"  written by:   {e.written_by.replace('**', '')}",
+        f"  written by:   {cli._player_copy(e.written_by.replace('**', ''))}",
         f"  edit:         {report.verdict.words}",
-        f"  tier:         {cli.tier_words(e.tier)}",
-        f"  read by:      {cli._reader_words(e.module)}",
-        f"  file-map row: {e.id} ({e.doc_path})",
+        # M16-17: the tier, the reader and the row's path pattern are --verbose's
+        f"  file-map row: {e.id}",
     ]
 
 

@@ -352,6 +352,9 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["explain", "Data"],
         ["explain", "Cache"],
         ["explain", "Screenshots"],
+        # M16-17: the tier, the reader and the row's path pattern
+        *[["explain", p, "--verbose"] for p in (".", "Data", "Cache", "WTF/Config.wtf")],
+        *[["explain", p, "--verbose"] for p in sv_files[:3]],
         ["sv", "list"],
         *[["sv", "dump", p] for p in sv_files],
         ["cvar", "list"],

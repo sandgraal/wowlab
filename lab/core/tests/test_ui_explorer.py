@@ -1740,8 +1740,8 @@ def _declarations(css: str, selector: str) -> dict[str, str]:
 # "Verdicts"), with empty alternative text so the words are read once.
 _BADGES = {
     ".badge-gate": ("order", "\\25C6", "solid"),
-    ".badge-no": ("ruin", "\\2715", "solid"),
-    ".badge.badge-placeholder": ("ruin", "\\2715", "solid"),
+    ".badge-no": ("stone", "\\2715", "solid"),
+    ".badge.badge-placeholder": ("stone", "\\2715", "solid"),
     ".badge-unclassified": ("void", "?", "solid"),
     ".badge-folder": ("stone", "\\25AA", "solid"),
     ".badge-not_applicable": ("stone", "\\25AA", "solid"),
