@@ -65,9 +65,6 @@ def test_control_a_separate_method_flag_is_read(tmp_path: Path) -> None:
 # Defects.
 
 
-@pytest.mark.xfail(
-    strict=True, reason="M13-71 review round 3: a short-flag cluster hides the endpoint"
-)
 @pytest.mark.parametrize("cluster", ["-iX POST", "-iH 'Accept: x'", "-iq .data", "-ip x"])
 def test_a_short_flag_cluster_ending_in_a_value_flag_is_parsed(
     tmp_path: Path, cluster: str
@@ -75,9 +72,6 @@ def test_a_short_flag_cluster_ending_in_a_value_flag_is_parsed(
     assert _run(f"gh api {cluster} graphql -f query={MUTATION}", tmp_path) == 2
 
 
-@pytest.mark.xfail(
-    strict=True, reason="M13-71 review round 3: 'graphql' in a REST endpoint skips the body check"
-)
 @pytest.mark.parametrize(
     "command",
     [
@@ -90,8 +84,5 @@ def test_a_rest_post_naming_graphql_is_still_refused(tmp_path: Path, command: st
     assert _run(command, tmp_path) == 2
 
 
-@pytest.mark.xfail(
-    strict=True, reason="already on main: a short-flag cluster hides -X from the method check"
-)
 def test_a_mutating_method_in_a_short_flag_cluster_is_refused(tmp_path: Path) -> None:
     assert _run("gh api -iX PUT repos/o/r/pulls/1/merge", tmp_path) == 2

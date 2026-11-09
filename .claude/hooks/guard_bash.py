@@ -196,42 +196,73 @@ def _mutation_fields(query: str) -> list[str] | None:
     return fields
 
 
-_GH_API_VALUE_FLAGS = (
-    "-X",
-    "--method",
-    "-f",
-    "-F",
-    "--field",
-    "--raw-field",
-    "-H",
-    "--header",
-    "--input",
-    "-q",
-    "--jq",
-    "-t",
-    "--template",
-    "--hostname",
-    "--cache",
-    "-p",
-    "--preview",
-)
+# gh api's flags that take a value, by short letter and long name, mapped to
+# one canonical name. Every other flag is a switch.
+_GH_API_SHORT_VALUES = {
+    "X": "method",
+    "f": "field",
+    "F": "field",
+    "H": "header",
+    "q": "jq",
+    "t": "template",
+    "p": "preview",
+}
+_GH_API_LONG_VALUES = {
+    "method": "method",
+    "field": "field",
+    "raw-field": "field",
+    "header": "header",
+    "input": "input",
+    "jq": "jq",
+    "template": "template",
+    "hostname": "hostname",
+    "cache": "cache",
+    "preview": "preview",
+}
 
 
-def _gh_api_endpoint(args: list[str]) -> str:
-    """The endpoint argument of `gh api …`: the first argument that is not a
-    flag or a flag's value."""
-    skip = False
-    for a in args:
-        if skip:
-            skip = False
+def _parse_gh_api(args: list[str]) -> tuple[str, list[tuple[str, str]]]:
+    """The endpoint of `gh api …` and its valued options as (name, value), read
+    the way gh's flag parser (pflag) reads them: `--name value`,
+    `--name=value`, `-Xvalue`, `-X value` and short clusters such as
+    `-iX POST`, where the first value letter takes the rest of the token or
+    the next one (M13-71 review)."""
+    endpoint = ""
+    options: list[tuple[str, str]] = []
+    i = 0
+    only_args = False
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if only_args or not a.startswith("-") or a == "-":
+            if not endpoint:
+                endpoint = a
             continue
-        if a in _GH_API_VALUE_FLAGS:
-            skip = True
+        if a == "--":
+            only_args = True
             continue
-        if a.startswith("-"):
+        if a.startswith("--"):
+            name, eq, value = a[2:].partition("=")
+            canonical = _GH_API_LONG_VALUES.get(name)
+            if canonical is None:
+                continue
+            if not eq:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            options.append((canonical, value))
             continue
-        return a
-    return ""
+        letters = a[1:]
+        for k, letter in enumerate(letters):
+            canonical = _GH_API_SHORT_VALUES.get(letter)
+            if canonical is None:
+                continue
+            value = letters[k + 1 :]
+            if not value:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            options.append((canonical, value))
+            break
+    return endpoint, options
 
 
 def _graphql_refusal(queries: list[str], joined: str) -> str | None:
@@ -328,34 +359,23 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
         # now is refused: write it first, then run the call.
         # The GraphQL endpoint in any spelling gh accepts: `graphql`, `/graphql`
         # or a full URL ending in `/graphql` (M13-71 review).
-        endpoint = _gh_api_endpoint(args[1:])
+        endpoint, options = _parse_gh_api(args[1:])
+        has_body = any(name in ("field", "input") for name, _ in options)
         # Fail closed (M13-71 review): any endpoint spelling that names graphql,
         # whatever its case, fragment, parameters or percent-encoding, is judged
         # as GraphQL; an endpoint the shell has yet to expand is refused when
         # the call sends anything.
-        if any(ch in endpoint for ch in "$`") and (
-            "mutation" in joined.lower()
-            or any(a.startswith(("-f", "-F", "--field", "--raw-field", "--input")) for a in args)
-        ):
+        if any(ch in endpoint for ch in "$`") and (has_body or "mutation" in joined.lower()):
             return (
                 "gh api with an endpoint the shell expands cannot be checked; "
                 "write the endpoint literally."
             )
-        is_graphql = "graphql" in unquote(endpoint).lower()
+        plain = unquote(endpoint).lower()
+        is_graphql = "graphql" in plain
         queries: list[str] = []
-        for j, a in enumerate(args if is_graphql else ()):
-            spec = ""
-            body = ""
-            if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
-                spec = args[j + 1]
-            elif a.startswith(("-F", "-f")) and len(a) > 2 and not a.startswith("--"):
-                spec = a[2:]
-            elif a.startswith(("--field=", "--raw-field=")):
-                spec = a.split("=", 1)[1]
-            elif a == "--input" and j + 1 < len(args):
-                body = args[j + 1]
-            elif a.startswith("--input="):
-                body = a.split("=", 1)[1]
+        for name, value in options if is_graphql else ():
+            spec = value if name == "field" else ""
+            body = value if name == "input" else ""
             if spec.startswith("query=") and not spec.startswith("query=@"):
                 queries.append(spec[len("query=") :])
                 continue
@@ -394,21 +414,16 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
             refusal = _graphql_refusal(queries, joined)
             if refusal:
                 return refusal
-        method = ""
-        for j, a in enumerate(args):
-            if a in ("-X", "--method") and j + 1 < len(args):
-                method = args[j + 1]
-            elif a.startswith("-X") and len(a) > 2:
-                method = a[2:]
-            elif a.startswith("--method="):
-                method = a.split("=", 1)[1]
-        if method.upper() in ("PUT", "PATCH", "DELETE"):
+        methods = [value for name, value in options if name == "method"]
+        if any(m.upper() in ("PUT", "PATCH", "DELETE") for m in methods):
             return (
                 "gh api with a mutating method changes repo state; "
                 "repo settings go through scripts/bootstrap-github.sh, run by the conductor."
             )
-        has_body = any(a.startswith("-f") or a.startswith("-F") or a == "--input" for a in args)
-        if "repos/" in joined and not is_graphql and has_body:
+        # A body sent to a repo endpoint is refused whether or not the endpoint
+        # also names graphql: a real GraphQL endpoint never holds `repos/`
+        # (M13-71 review).
+        if ("repos/" in plain or (not is_graphql and "repos/" in joined)) and has_body:
             return "gh api POST against a repo endpoint is reserved for the bootstrap script."
     return None
 
