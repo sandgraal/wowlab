@@ -28,6 +28,7 @@ condition is kept.
 | #372 | M13-81 | Developer only: `make test-fast`, `make test-clean` | None |
 | #377 | M16-03 | `snap restore --into-flavor/--into-root`, `profile apply --into-flavor`; restoring after the launch rename; the clash refusal and `--paths` | Snapshots-and-Undo; Profiles |
 | #380 | M16-16 | Answers first, notes behind `--notes` on `doctor`, `char gear`, `char binds`, `char macros`, `macros check`, `binds coach` | CLI-Reference, and any page quoting their output (Lab-Addon-and-Characters, Getting-Started, Combat-Log) |
+| #384 | M13-80 | `looks import-char` takes the class from the lab-addon's identity record; `--json` gains five fields | Customization-Looks; Command-Reference |
 
 ## Merged between the last wiki pass (2026-10-22 09:07) and 2026-11-04
 
