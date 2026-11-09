@@ -31,7 +31,9 @@ interpreter, or an editor cannot be inspected here.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -54,11 +56,154 @@ from _common import (
 
 EVENT = "PreToolUse"
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
+_GRAPHQL_REFUSAL = (
+    "GraphQL mutations change repo state without a prompt; only the "
+    "review-thread reply/resolve mutations pr-shepherd issues are allowed."
+)
+_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 _RELEASE_SUBCOMMANDS = ("create", "edit", "upload", "delete", "delete-asset")
 _RELEASE_ONLY_OWNER = (
     "publishing a release (pushing a tag or `gh release …`) is the owner's action "
     "(ADR-0031, M13-11); ask the owner to run it."
 )
+
+
+def _body_query(text: str) -> str:
+    """The query a `gh api graphql --input` body sends: its JSON `query`, or,
+    when the body is not such JSON, the whole text (judged as a query)."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    if isinstance(data, dict) and isinstance(data.get("query"), str):
+        return data["query"]
+    return text
+
+
+def _strip_graphql(text: str) -> str:
+    """Comments and string literals blanked, so a name inside either is not read
+    as a field (M13-71)."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "#":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            i = n if end < 0 else end + 3
+            out.append('""')
+            continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            out.append('""')
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _skip_balanced(text: str, i: int, open_: str, close: str) -> int:
+    """The index after the bracket that closes the one at `i`, or -1."""
+    depth = 0
+    while i < len(text):
+        if text[i] == open_:
+            depth += 1
+        elif text[i] == close:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _mutation_fields(query: str) -> list[str] | None:
+    """The top-level field names of every `mutation` operation in `query`, or
+    None when a `mutation` keyword is there but its selection cannot be read
+    (the caller refuses then). An alias (`a: field`) yields the field."""
+    text = _strip_graphql(query)
+    fields: list[str] = []
+
+    def skip_ws(k: int) -> int:
+        while k < len(text) and (text[k].isspace() or text[k] == ","):
+            k += 1
+        return k
+
+    def skip_directives(k: int) -> int:
+        while k < len(text) and text[k] == "@":
+            m = _NAME.match(text, k + 1)
+            if not m:
+                return -1
+            k = skip_ws(m.end())
+            if k < len(text) and text[k] == "(":
+                k = _skip_balanced(text, k, "(", ")")
+                if k < 0:
+                    return -1
+                k = skip_ws(k)
+        return k
+
+    for m in re.finditer(r"(?<![_0-9A-Za-z])mutation(?![_0-9A-Za-z])", text):
+        k = skip_ws(m.end())
+        name = _NAME.match(text, k)
+        if name:
+            k = skip_ws(name.end())
+        if k < len(text) and text[k] == "(":
+            k = _skip_balanced(text, k, "(", ")")
+            if k < 0:
+                return None
+            k = skip_ws(k)
+        k = skip_directives(k)
+        if k < 0 or k >= len(text) or text[k] != "{":
+            return None
+        k = skip_ws(k + 1)
+        while True:
+            if k >= len(text):
+                return None
+            if text[k] == "}":
+                break
+            field = _NAME.match(text, k)
+            if not field:
+                return None
+            k = skip_ws(field.end())
+            if k < len(text) and text[k] == ":":
+                field = _NAME.match(text, skip_ws(k + 1))
+                if not field:
+                    return None
+                k = skip_ws(field.end())
+            fields.append(field.group(0))
+            if k < len(text) and text[k] == "(":
+                k = _skip_balanced(text, k, "(", ")")
+                if k < 0:
+                    return None
+                k = skip_ws(k)
+            k = skip_directives(k)
+            if k < 0:
+                return None
+            if k < len(text) and text[k] == "{":
+                k = _skip_balanced(text, k, "{", "}")
+                if k < 0:
+                    return None
+                k = skip_ws(k)
+    return fields
+
+
+def _graphql_refusal(queries: list[str], joined: str) -> str | None:
+    """Refuse a `gh api graphql` call that sends any mutation field outside the
+    allowlist. The fields are read from the parsed query text, never matched as
+    substrings of the command (M13-71). A `mutation` keyword in the command with
+    no query text to read is refused too."""
+    if not queries:
+        return _GRAPHQL_REFUSAL if "mutation" in joined.lower() else None
+    for query in queries:
+        fields = _mutation_fields(query)
+        if fields is None or any(f not in _ALLOWED_MUTATIONS for f in fields):
+            return _GRAPHQL_REFUSAL
+    return None
 
 
 def _is_tag_ref(dst: str) -> bool:
@@ -135,43 +280,60 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
         return "--admin bypasses branch protection; satisfy the required checks and threads."
     if args[:1] == ["api"]:
         joined = " ".join(args)
-        # A query passed as `-F query=@<file>` (or `-f`) is read from that file
-        # and judged like an inline one, so the file route cannot carry a
-        # mutation past the allowlist. A file that cannot be read is refused:
-        # write it first, then run the call (2026-10-19, M14-02 notes).
-        for j, a in enumerate(args):
+        # Every query text the call can send is collected and judged: an inline
+        # `-f query=...`, a `query=@<file>` (2026-10-19, M14-02 notes) and a JSON
+        # body given with `--input <file>` (M13-71). A file that cannot be read
+        # now is refused: write it first, then run the call.
+        queries: list[str] = []
+        for j, a in enumerate(args if "graphql" in args else ()):
             spec = ""
+            body = ""
             if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
                 spec = args[j + 1]
             elif a.startswith(("-F", "-f")) and len(a) > 2 and not a.startswith("--"):
                 spec = a[2:]
             elif a.startswith(("--field=", "--raw-field=")):
                 spec = a.split("=", 1)[1]
-            if spec.startswith("query=@"):
-                raw = spec[len("query=@") :]
-                expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
-                path = Path(expanded)
-                if cwd and not path.is_absolute():
-                    path = Path(cwd) / path
-                if not ok or os.path.normpath(str(path)) in written:
-                    return (
-                        "gh api graphql with query=@<file> is checked against the file as it is "
-                        "now; write the file in its own command, with a literal path, then run "
-                        "the call."
-                    )
-                try:
-                    joined += " " + path.read_text(encoding="utf-8")
-                except OSError:
-                    return (
-                        "gh api graphql with query=@<file> reads the file to check it for "
-                        "mutations; write the file first, then run the call."
-                    )
-        is_mutation = "graphql" in args and "mutation" in joined.lower()
-        if is_mutation and not any(m in joined for m in _ALLOWED_MUTATIONS):
-            return (
-                "GraphQL mutations change repo state without a prompt; only the "
-                "review-thread reply/resolve mutations pr-shepherd issues are allowed."
-            )
+            elif a == "--input" and j + 1 < len(args):
+                body = args[j + 1]
+            elif a.startswith("--input="):
+                body = a.split("=", 1)[1]
+            if spec.startswith("query=") and not spec.startswith("query=@"):
+                queries.append(spec[len("query=") :])
+                continue
+            raw = spec[len("query=@") :] if spec.startswith("query=@") else body
+            if not raw:
+                continue
+            if raw == "-":
+                return (
+                    "gh api reads that body from stdin, which this guard cannot check; "
+                    "write it to a file first and pass the file."
+                )
+            expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
+            path = Path(expanded)
+            if cwd and not path.is_absolute():
+                path = Path(cwd) / path
+            if not ok or os.path.normpath(str(path)) in written:
+                return (
+                    "gh api graphql with a query file is checked against the file as it is "
+                    "now; write the file in its own command, with a literal path, then run "
+                    "the call."
+                )
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                return (
+                    "gh api graphql reads a query file to check it for mutations; "
+                    "write the file first, then run the call."
+                )
+            if body:
+                queries.append(_body_query(text))
+            else:
+                queries.append(text)
+        if "graphql" in args:
+            refusal = _graphql_refusal(queries, joined)
+            if refusal:
+                return refusal
         method = ""
         for j, a in enumerate(args):
             if a in ("-X", "--method") and j + 1 < len(args):
