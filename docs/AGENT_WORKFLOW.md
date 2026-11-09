@@ -160,7 +160,11 @@ implementer report's `user-facing changes:` field and in the PR body's
 (`sandgraal/wowlab.wiki`) describes what is on `main`; implementers do not
 edit it. The conductor updates the wiki after a merge. (Until 2026-11-04 the
 daily wiki job also read merged PRs and documented them; it ran Claude and
-was deleted by owner decision that day.) From Wave 5 (M14)
+was deleted by owner decision that day.) *Owner ruling, 2026-11-09:* a
+wiki item in a ticket's acceptance is met when the merged PR names the
+wiki pages it affects. The conductor adds them to
+`docs/handoffs/wiki-pending.md`, and the owner updates the wiki from that
+list. From Wave 5 (M14)
 on, every command must also be reachable in `wowlab ui` (the parity test in
 the required `quality` job enforces it). *Amended 2026-10-14:* this said
 Wave 4; the first public release (ADR-0031) took that number.

@@ -1460,7 +1460,7 @@ Inputs are constructed and labelled. No flavor name appears in library-facing as
 
 ---
 
-## [ ] M16-03 — [IMPL] `snap restore --into-flavor/--into-root`, `profile apply --into-flavor`
+## [x] M16-03 — [IMPL] `snap restore --into-flavor/--into-root`, `profile apply --into-flavor`
 **Size:** M · **Depends on:** M16-03T · **Sources:** raider:F1, qa:F1 (EV-01)
 
 `guard.tx.restore(..., into=Target)` per §18.1 item 1, the CLI options, and the account-folder mapping option (`--map-account A=B`). The plan names both folders and every mapped account folder. The command is reachable from the UI through the existing dry-run confirm shape, with no UI change.
@@ -2177,3 +2177,87 @@ Restyle the page to `docs/design/WELLSPRING.md`. `page.css` is rewritten on cust
 - Reviewed by `code-reviewer` and `security-reviewer` (every `ui` diff).
 
 User-facing: the whole look of `wowlab ui`. The wiki's screenshots of the UI need replacing.
+
+---
+
+# M16 follow-ups found in review (filed 2026-11-09)
+
+The owner asked on 2026-11-09 that the reviewers' follow-ups be written up
+as tickets and built in this wave. Each one cites the review that found it.
+
+## [ ] M16-54 — `sv merge`: a comment on a kept key between list entries survives `--take theirs`
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-12 round-3 code review (2026-11-05)
+
+`_Merger.take_list` carries only the first junction's comment (`lead_in`) across removed entries. In `X = {"a", -- [1]` / `x = 1, -- about x` / `"b", -- [2]}`, taking theirs `{"q", x = 1}` writes `x = 1,` without `-- about x`, because that comment lived in the removed `"b"`'s lead. Apply `_prefixed(next_slot, kept.comment)` at every junction where a removed entry follows a kept one.
+
+**Acceptance:** a constructed test (labelled) on that shape keeps `-- about x`; the existing sv-merge suites and probes pass; reviewed by `code-reviewer`. User-facing: none beyond the kept comment.
+
+## [ ] M16-55 — The views' "values dropped" count leaves out `issecretvalue` errors, as the addon's `dropped` does
+**Size:** XS · **Depends on:** M16-45 · **Sources:** the M16-45 round-2 domain review (2026-11-06)
+
+`labaddon.dropped_words` (the probe path, used for schema 3 and 4 and in a schema-5 debug session) still counts `issecretvalue` errors, while the addon's `dropped` leaves them out, so a debug session can count one value twice. Add `p.api != "issecretvalue"` to the `counted` filter for schema 5, keep schema 3 and 4 output unchanged, and fix the singular "1 of them click bindings" wording in `char show`.
+
+**Acceptance:** constructed tests for the debug-session count and the singular; schema 3 and 4 outputs unchanged; reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `char show` wording.
+
+## [ ] M16-56 — A Dependabot action bump says which pin to update
+**Size:** XS · **Depends on:** nothing · **Sources:** #376, #371 (2026-11-05)
+
+Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no_cache.py` (the reviewed-action pins) with 20-odd failures that do not name the cause. Make the first failure say which action moved from which pin to which, and that its `action.yml` must be re-read for cache inputs before the pin in that file is updated; collapse the cascade into that one failure. Do not loosen the check.
+
+**Acceptance:** a constructed test with a moved pin shows the one clear failure; the current pins still pass; reviewed by `code-reviewer` and `security-reviewer` (`.github` policy).
+
+## [ ] M16-57 — `tests/scripts` imports its own conftest, not `review/`'s
+**Size:** XS · **Depends on:** nothing · **Sources:** the M13-81 reviews (2026-11-05)
+
+`tests/scripts/test_lab_capture_followup5*.py` do `from conftest import DEFAULT_OFFSET`, which resolves to `lab/core/tests/review/conftest.py` when both trees are collected in one `-n 4` run, and the collection fails. Import the value from a uniquely named module instead.
+
+**Acceptance:** `uv run pytest -n 4 lab/core/tests/review tests/scripts` collects and passes; reviewed by `code-reviewer`.
+
+## [ ] M16-58 — The lab-addon static checks refuse a raw command string stored with `ns.String`
+**Size:** S · **Depends on:** M16-45 · **Sources:** the M16-45 code review (2026-11-05)
+
+`tests/addon/test_lab_addon.py` (`_m13_05_sink_problems` and the store checks) accepts `record.x = ns.String(found)`, which stores a raw `GetBinding` command string, possibly player text; reproduced on `main` with 210 passed. Extend the store checks so a client value reaches a record only through the sanitizers already pinned (`clean`, `clickCommand`, the plain-command test), with mutation tests for the hole.
+
+**Acceptance:** the mutation above fails the suite; every current addon test passes; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-59 — The grader-diff job fails when the base copy of its script is missing
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-40 security review (2026-11-04)
+
+When the base revision has no `scripts/check_grader_diff.py`, the job falls back to the PR's own copy, so a PR could weaken the check it is judged by. Now that the script is on `main`, make that case a hard failure with a message.
+
+**Acceptance:** the job's step refuses when the base copy is absent (a test or an actionlint-checked shell test); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-60 — The harness tests pass from a checkout under a scratch directory
+**Size:** XS · **Depends on:** nothing · **Sources:** the M13-81 reviews (2026-11-05)
+
+`tests/harness/test_hooks.py::test_guard_bash_blocks_destructive_and_shell_writes` fails in 6 cases when the checkout sits under a scratch directory, because `guard_bash` allows `rm -rf` there. Make those cases use a target path that is never a scratch path, so the test grades the rule wherever the checkout lives. Conductor lane (harness).
+
+**Acceptance:** `make hooks-test` passes from `/home/user/<repo>` and from a scratchpad worktree; reviewed by `code-reviewer`.
+
+## [ ] M16-61 — `test_luadata_budget_constructed.py` does not crash an xdist worker
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-26 reviews (2026-11-04)
+
+Under `-n 2` a worker crashes unpickling a `ProbeReading`. Find the cause and make the result picklable or keep it in the worker, without changing what the budget tests assert. `luadata.py` is load-bearing: the fix belongs in the test helpers, not in `luadata.py`; if it cannot, stop and report.
+
+**Acceptance:** the file passes under `-n 2` five times in a row; reviewed by `code-reviewer`.
+
+## [ ] M16-62 — The account-clash refusal suggests a snapshot before a hand removal
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-03 final domain review (2026-11-06)
+
+The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. Make it read "rename it, or run `wowlab snap create` and then remove it". This is a message change in `guard.py`: its grader asserts on the folder name, `--paths` and "rename or remove"; if any grader pins the old sentence, it is updated by a test-writer first.
+
+**Acceptance:** the new wording is tested; the full suite is green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`. User-facing: the refusal text.
+
+## [ ] M16-63 — `casc` player copy: no `[verify]` as a predicate, no ADR id in an error
+**Size:** XS · **Depends on:** nothing · **Sources:** the M15-05 reviews (2026-11-03)
+
+`casc.py` uses `[verify]` as a sentence's predicate (about lines 406 and 943) and puts "(ADR-0033)" in an error (about line 1326). Reword them under the player-copy rules (`.claude/rules/player-copy.md`).
+
+**Acceptance:** `test_cli_player_copy.py` covers the strings; reviewed by `code-reviewer`. User-facing: the reworded messages.
+
+## [ ] M16-64 — The lab-addon writes no ticket id into WowLab.lua
+**Size:** XS · **Depends on:** M16-45 · **Sources:** the M15-01 reviews (2026-11-02)
+
+`lab/addon/WowLab/Collections.lua` writes "(M11-03)" into the saved file, where a player reads it. Remove ticket ids from every string the addon stores or prints, and add a static test that refuses `M\d\d-\d\d` in addon strings.
+
+**Acceptance:** the static test, `make lint-lua`, and the addon suite pass; reviewed by `code-reviewer`. User-facing: the stored text.
