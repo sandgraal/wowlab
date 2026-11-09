@@ -158,6 +158,7 @@ from wowlab_core import (
     pathfacts,
     process,
     profiles,
+    snaparchive,
     snapshot,
     svmerge,
     wtfconfig,
@@ -7010,6 +7011,79 @@ def snap_gc(
         )
     else:
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
+
+
+@snap_app.command("export", short_help="Write one snapshot to a file you can carry elsewhere.")
+@_handled
+def snap_export(
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
+    file: Annotated[
+        Path,
+        typer.Argument(
+            metavar="FILE",
+            help="The new file to write, outside any game install. An existing file is "
+            "never replaced.",
+        ),
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Write one snapshot, with every file it holds, into a single new FILE
+    that `wowlab snap import` reads on another computer. Reads the store
+    only and opens nothing in a game install; FILE inside an install is
+    refused.
+
+    \f
+    JSON: snaparchive.ExportReport."""
+    store = snapshot.SnapshotStore()
+    report = snaparchive.export_snapshot(store, _resolve_ref(store, snapshot_id), file)
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Exported snapshot {report.id} to {report.file}")
+    _say(
+        f"  {report.files} file(s), {_bytes(report.bytes)}; "
+        f"the archive is {_bytes(report.archive_bytes)}"
+    )
+
+
+@snap_app.command("import", short_help="Add a snapshot from a file snap export wrote.")
+@_handled
+def snap_import(
+    file: Annotated[
+        Path, typer.Argument(metavar="FILE", help="A file written by wowlab snap export.")
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Add the snapshot in FILE to this computer's store. Every file in it
+    is checked against its recorded size and content hash first; a damaged
+    or unexpected archive adds nothing. Changes nothing in a game install:
+    put the snapshot back with `wowlab snap restore`.
+
+    \f
+    JSON: snaparchive.ImportReport."""
+    store = snapshot.SnapshotStore()
+    with guard.store_lock(store.path, create=True):
+        report = snaparchive.import_snapshot(store, file)
+    if json_out:
+        _emit(report)
+        return
+    if report.added:
+        _say(f"Imported snapshot {report.id}")
+    else:
+        _say(f"Snapshot {report.id} is already in the store; nothing was added.")
+    _say(f"  taken: {report.created_at}")
+    if report.label:
+        _say(f"  label: {report.label}")
+    _say(
+        f"  of {report.flavor_folder} ({report.flavor_version or 'no version'}) "
+        f"in {report.install_root}"
+    )
+    _say(f"  {report.files} file(s)")
+    _say(
+        f"To put it into an install on this computer: wowlab snap restore {report.id} "
+        "--into-root <install folder> (add --into-flavor <folder> if its folder has "
+        "another name there)."
+    )
 
 
 _RELOGIN = (

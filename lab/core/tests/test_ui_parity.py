@@ -87,6 +87,8 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     # Owner rulings of 2026-10-15 (ADR-0029).
     ("log", "tail"): {"follow": "a run must end"},
     ("looks", "page"): {"out": "it can create a file anywhere outside an install"},
+    # M16-04: the same reason, so the same refusal.
+    ("snap", "export"): {"file": "it can create a file anywhere outside an install"},
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""
 

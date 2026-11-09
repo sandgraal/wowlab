@@ -1100,6 +1100,37 @@ include `labaddon`'s `WowLab.lua` reads (`char list`, `char show`, the
 survey) and `tree PATH` / `tree --install PATH`, which take a `\\?\`
 argument with a plain spelling by that spelling.
 
+*Amended 2026-11-09 (M16-04, §18.1 item 1):* a snapshot travels between
+computers as one zip archive, `wowlab_core.snaparchive`. It holds
+`manifest.json` (the manifest file byte for byte), one `objects/<sha256>`
+entry per distinct content (the file's bytes, deflated by the zip), and the
+zip comment `wowlab snapshot archive 1`; every entry is dated 1980-01-01,
+so one snapshot always exports to the same bytes. `snap export <id> FILE`
+reads the store only, checks every object against its name and size as it
+reads it, and creates FILE exclusively (`O_EXCL | O_NOFOLLOW`: an existing
+file or a link there is refused, never replaced or followed). FILE inside
+any install is refused by guard's inside-any-install rule, before FILE is
+created and again once it exists, before a byte is written; FILE inside the
+store is refused too. `snap import FILE` treats the archive as hostile: it
+is opened as a store file is (no link, no FIFO), nothing is extracted to a
+path, every entry name must be exactly `manifest.json` or `objects/` and
+64 lowercase hex digits, once each (anything else, including `..`, an
+absolute path, a directory, a link, encryption or an unknown compression,
+refuses the archive), the manifest must load as a store manifest does and be
+in the canonical encoding (`snapshot.parse_manifest`), the archive must
+hold exactly the objects the manifest names at the sizes it records, and
+the sizes are bounded (1 GiB an object, 16 GiB in all, 64 MiB of
+manifest, a million entries). `SnapshotStore.add_snapshot` then streams
+each object, at most one byte past its recorded size, into a staged file
+under `tmp/` while hashing it; only when every object has verified are they
+moved into their shards and the manifest written last, so a corrupt
+archive adds nothing. An id already in the store with the same bytes adds
+nothing; with other bytes (a relabelled copy) it is refused. The import
+holds the store lock. An imported snapshot keeps the install root it was
+taken of, so it is restored with `--into-root` (and `--into-flavor` when
+the folder has another name there). `wowlab ui` refuses `snap export`'s
+FILE, as it refuses `looks page --out`.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).

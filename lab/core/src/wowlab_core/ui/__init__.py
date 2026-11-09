@@ -51,8 +51,8 @@ arguments after `--`, flags given or not, never through a shell. Refused
 (403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): a leaf
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
-`follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install). `sv dump` always runs with `--install-only`
+`follow` (a run must end), and `looks page` with `out` and `snap export`
+with `file` (each can create a file anywhere outside an install). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -238,6 +238,8 @@ MAX_PENDING_CONFIRMS: int = 32
 _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
+    # M16-04: the same reason as `looks page --out`, so the same refusal.
+    ("snap", "export"): {"file": (False, "it can create a file anywhere outside an install")},
 }
 # Flags the server gives a leaf on every run, as it gives `--json`, and never
 # the page, by leaf path (M16-42). `sv dump` reads any file it is named, so

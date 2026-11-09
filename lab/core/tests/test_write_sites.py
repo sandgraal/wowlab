@@ -92,7 +92,8 @@ _UI_RUN = (
     "`wowlab ui` (ADR-0029, M13-24): starts only the same `wowlab` (this interpreter by "
     "absolute path, `-P -m wowlab_core`) with an argv list and no shell, built from the "
     "Click leaf's declared parameters; every leaf that declares --yes, `ui`, `log tail "
-    "--follow` and `looks page --out` are refused, so the child writes only what the CLI "
+    "--follow`, `looks page --out` and `snap export FILE` are refused, so the child writes "
+    "only what the CLI "
     "itself writes, never into an install outside the gate; the server writes no file"
 )
 _CLI = "lab/core/src/wowlab_core/cli.py"
@@ -107,7 +108,19 @@ _JOB = (
     "AssignProcessToJobObject, TerminateJobObject, CloseHandle; ntdll NtResumeProcess), "
     "all on handles the module created; it opens no other process and writes no file (L7)"
 )
+_SNAPARCHIVE = "lab/core/src/wowlab_core/snaparchive.py"
+_EXPORT_FILE = (
+    "`wowlab snap export` (M16-04): only the one new file the player named, created with "
+    "O_CREAT | O_EXCL | O_NOFOLLOW (an existing file or a link is never written through); "
+    "guard's inside-any-install rule and an inside-the-store check refuse it before it is "
+    "created and again once it exists, before a byte is written. Import reads an archive "
+    "only and extracts nothing to a path; what it adds goes through the store"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_SNAPARCHIVE, "import zipfile"): _EXPORT_FILE,
+    (_SNAPARCHIVE, "fd = os.open(target, flags, 0o666)"): _EXPORT_FILE,
+    (_SNAPARCHIVE, 'with os.fdopen(fd, "wb") as out:'): _EXPORT_FILE,
+    (_SNAPARCHIVE, "target.unlink()"): _EXPORT_FILE + "; its own file, after a failure",
     (_UI, "import subprocess"): _UI_RUN,
     (_WINJOB, "import ctypes"): _JOB,
     (_WINJOB, "from ctypes import wintypes"): _JOB,
