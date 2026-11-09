@@ -1112,6 +1112,13 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
                 EXIT_ERROR,
                 exc,
             )
+        except wtfconfig.WtfLimitError as exc:
+            _fail(
+                f"refused: this file is beyond what wowlab will read of it "
+                f"({exc}); nothing was printed",
+                EXIT_ERROR,
+                exc,
+            )
         except luadata.LuaDataError as exc:
             if json_out:
                 _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
@@ -1620,7 +1627,7 @@ def _doctor(
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
                 sync = _sync_cvars(lay)
-            except OSError as exc:
+            except (OSError, wtfconfig.WtfLimitError) as exc:
                 problems.append(f"{f.folder}: cannot read the config files: {exc}")
                 sync = []
             flavors.append(

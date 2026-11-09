@@ -795,6 +795,23 @@ Each parser exposes `lines` (everything, in order, typed or `Unknown`) and a
 convenience view. No writer in Wave 1; the document model must be sufficient
 for one (that is the reason `Unknown` lines are kept).
 
+*Amended 2026-11-09 (M16-25, §18.1 item 6):* budgets and the BOM.
+
+- **Budgets.** Each file type has a byte budget and a line budget:
+  `Config.wtf` and `config-cache.wtf` 4 MiB and 50,000 lines,
+  `bindings-cache.wtf` 4 MiB and 50,000 lines, `macros-cache.txt` 4 MiB
+  and 100,000 lines. The real files are a few KiB. A file over either
+  budget is refused with `WtfLimitError` at the first byte or the first
+  line past it (line, column, byte offset), before any line model is
+  built. The readers read at most the budget plus one byte. A serial RSS
+  probe measures a document at each budget at about 70 to 80 MiB of growth
+  on Linux, and a refusal at none.
+- **The BOM.** A leading UTF-8 BOM is the document's `bom`, a prefix token,
+  and never part of line 1. `to_bytes()` is `bom` followed by the lines, so
+  it stays byte-identical (L4), and a `SET` line right after the BOM is
+  line 1 for `cvar get`. Only the first three bytes can be the BOM. Whether
+  the client ever writes one is **[verify]**: no capture shows it.
+
 ### 6.6 `gamedata` — DB2 tables by build (M10-08)
 
 Source and rationale: ADR-0022, `docs/DATA_SOURCES.md` (wago.tools).
