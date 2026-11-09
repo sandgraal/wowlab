@@ -36,6 +36,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -195,6 +196,44 @@ def _mutation_fields(query: str) -> list[str] | None:
     return fields
 
 
+_GH_API_VALUE_FLAGS = (
+    "-X",
+    "--method",
+    "-f",
+    "-F",
+    "--field",
+    "--raw-field",
+    "-H",
+    "--header",
+    "--input",
+    "-q",
+    "--jq",
+    "-t",
+    "--template",
+    "--hostname",
+    "--cache",
+    "-p",
+    "--preview",
+)
+
+
+def _gh_api_endpoint(args: list[str]) -> str:
+    """The endpoint argument of `gh api …`: the first argument that is not a
+    flag or a flag's value."""
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in _GH_API_VALUE_FLAGS:
+            skip = True
+            continue
+        if a.startswith("-"):
+            continue
+        return a
+    return ""
+
+
 def _graphql_refusal(queries: list[str], joined: str) -> str | None:
     """Refuse a `gh api graphql` call that sends any mutation field outside the
     allowlist. The fields are read from the parsed query text, never matched as
@@ -289,10 +328,20 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
         # now is refused: write it first, then run the call.
         # The GraphQL endpoint in any spelling gh accepts: `graphql`, `/graphql`
         # or a full URL ending in `/graphql` (M13-71 review).
-        is_graphql = any(
-            not a.startswith("-") and a.split("?", 1)[0].rstrip("/").split("/")[-1] == "graphql"
-            for a in args[1:]
-        )
+        endpoint = _gh_api_endpoint(args[1:])
+        # Fail closed (M13-71 review): any endpoint spelling that names graphql,
+        # whatever its case, fragment, parameters or percent-encoding, is judged
+        # as GraphQL; an endpoint the shell has yet to expand is refused when
+        # the call sends anything.
+        if any(ch in endpoint for ch in "$`") and (
+            "mutation" in joined.lower()
+            or any(a.startswith(("-f", "-F", "--field", "--raw-field", "--input")) for a in args)
+        ):
+            return (
+                "gh api with an endpoint the shell expands cannot be checked; "
+                "write the endpoint literally."
+            )
+        is_graphql = "graphql" in unquote(endpoint).lower()
         queries: list[str] = []
         for j, a in enumerate(args if is_graphql else ()):
             spec = ""

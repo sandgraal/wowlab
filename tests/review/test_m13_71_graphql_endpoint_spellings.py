@@ -46,7 +46,6 @@ def test_control_the_plain_endpoint_is_judged(tmp_path: Path) -> None:
     assert _run(f"gh api graphql -f query={MUTATION}", tmp_path) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="M13-71 review round 2: a #fragment hides the endpoint")
 @pytest.mark.parametrize(
     "endpoint", ["graphql#x", "/graphql#x", "https://api.github.com/graphql#x"]
 )
@@ -54,7 +53,6 @@ def test_an_endpoint_with_a_fragment_is_judged(tmp_path: Path, endpoint: str) ->
     assert _run(f"gh api {shlex.quote(endpoint)} -f query={MUTATION}", tmp_path) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="M13-71 review round 2: a shell variable hides the endpoint")
 @pytest.mark.parametrize("command", ["E=graphql; gh api $E", "gh api ${E:-graphql}"])
 def test_an_endpoint_from_a_shell_variable_is_judged(tmp_path: Path, command: str) -> None:
     assert _run(f"{command} -f query={MUTATION}", tmp_path) == 2
