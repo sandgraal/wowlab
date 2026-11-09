@@ -1,6 +1,6 @@
 """`wtfconfig` against the real WTF captures (L4, L8; LAB_FORMATS §5-§7).
 
-Every `config-wtf`, `bindings` and `macros` row in the fixture index is
+Every `config-wtf`, `bindings`, `macros` and `addons-txt` row in the fixture index is
 round-tripped byte for byte, so a future capture is graded the day its row
 lands. The named tests pin what the Forever beta capture of 2026-09-22 shows
 (LAB_FORMATS amendments of that date). Facts the corpus does not contain
@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from wowlab_core.wtfconfig import (
+    AddonsDocument,
     BindingsDocument,
     BindLine,
     ConfigDocument,
@@ -25,6 +26,7 @@ from wowlab_core.wtfconfig import (
     MacroHeaderLine,
     MacrosDocument,
     Unknown,
+    parse_addons,
     parse_bindings,
     parse_config,
     parse_macros,
@@ -46,11 +48,12 @@ FOREVER_CONFIGS = [
 ]
 FOREVER_IDS = [p.relative_to(FIXTURES).as_posix() for p in FOREVER_CONFIGS]
 
-Parser = Callable[[bytes], ConfigDocument | BindingsDocument | MacrosDocument]
+Parser = Callable[[bytes], ConfigDocument | BindingsDocument | MacrosDocument | AddonsDocument]
 PARSERS: dict[str, Parser] = {
     "config-wtf": parse_config,
     "bindings": parse_bindings,
     "macros": parse_macros,
+    "addons-txt": parse_addons,  # M16-34
 }
 
 
@@ -71,7 +74,7 @@ ROWS = [(kind, name) for kind in PARSERS for name in _indexed(kind)]
 def test_index_has_every_wtf_text_kind() -> None:
     kinds = {kind for kind, _ in ROWS}
     assert kinds == set(PARSERS), f"no fixture row for {set(PARSERS) - kinds}"
-    assert len(ROWS) >= 6, ROWS
+    assert len(ROWS) >= 7, ROWS
 
 
 @pytest.mark.parser
