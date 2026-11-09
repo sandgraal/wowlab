@@ -2844,6 +2844,18 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
 
 
+def _addons_check_view(at: _At) -> list[_ViewSpec] | str:
+    """M16-34: a character's AddOns.txt is read by `addons check`, which
+    names the characters that list each installed addon."""
+    return [
+        (
+            ("addons", "check"),
+            _flavor(at),
+            "check each addon against this client, and which characters' AddOns.txt list it",
+        )
+    ]
+
+
 def _addon_executable(at: _At) -> list[_ViewSpec] | str:
     """An addon folder named like a bundle (`Interface/AddOns/Foo.app/`) is
     still an addon folder, and `addons list` lists it. Anything inside an
@@ -2909,6 +2921,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "account-bindings-cache": _account_binds,
     "account-macros-cache": _account_macros,
     "character-wtf-config": _character_wtf,
+    "character-addons-txt": _addons_check_view,
     "addons-folder": _addons_list,
     "addon": _addons_list,
     "addon-executable": _addon_executable,
