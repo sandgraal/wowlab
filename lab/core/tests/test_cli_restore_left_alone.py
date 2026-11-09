@@ -12,7 +12,7 @@ The install is the captured tree as `test_cli.py` builds it (copied into
 Inputs labelled `constructed` in the test names (L8): files added since the
 snapshot (an addon file, a SavedVariables file, a font), a screenshot, an
 addon's `helper.sh`, a `.DS_Store`, a symbolic link to a file outside the
-install, and edited copies of captured files standing for a later session.
+install, a renamed flavor folder and account folder, and edited copies of captured files standing for a later session.
 Nothing reads or writes a real install.
 """
 
@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from test_cli import (
+    ACCOUNT,
     SV_DIR,
     SYNDICATOR,
     _flip_syndicator,
@@ -203,6 +204,46 @@ def test_restored_by_name_around_skipped_files_commits_constructed(
     assert done.applied and [i.path for i in done.plan] == [TOC]
     assert (flavor / TOC).read_bytes() == saved
     assert _files(flavor, ADDED) == before
+
+
+@pytest.mark.parametrize("by_name", [False, True], ids=["whole", "by-name"])
+def test_into_a_renamed_folder_lists_by_the_targets_spelling_constructed(
+    root: Path, flavor: Path, by_name: bool
+) -> None:
+    """Into a renamed flavor folder whose account folder was renamed too: the
+    snapshot's files, mapped, are held; only the file added there is listed,
+    by the gate (whole) and by the command (restored by name around a
+    skipped executable)."""
+    if by_name:
+        (flavor / HELPER).write_bytes(b"#!/bin/sh\necho constructed\n")
+    a = _snapshot()
+    launch = root / "_classic_"  # constructed: the launch rename
+    flavor.rename(launch)
+    accounts = launch / "WTF" / "Account"
+    (accounts / ACCOUNT).rename(accounts / "90000002#1")  # constructed account folder
+    _flip_syndicator_at(launch, "90000002#1")
+    if by_name:
+        (launch / HELPER).write_bytes(b"#!/bin/sh\necho constructed later\n")
+        plan = _json(
+            cli.RestoreReport, "snap", "restore", a.id, "--into-flavor", "_classic_", "--dry-run"
+        )
+        assert [s.path for s in plan.skipped] == [HELPER]
+    added = {"WTF/Account/90000002#1/SavedVariables/AddedSince.lua": b"AddedSinceDB = {}\n"}
+    before = _add(launch, added)
+
+    planned = ok("snap", "restore", a.id, "--into-flavor", "_classic_", "--dry-run").stdout
+    assert _left_alone(planned) == sorted(added)
+    done = ok("snap", "restore", a.id, "--into-flavor", "_classic_", "--yes").stdout
+    assert _left_alone(done) == sorted(added)
+    assert _files(launch, added) == before
+
+
+def _flip_syndicator_at(flavor: Path, account: str) -> None:
+    path = flavor / SYNDICATOR.replace(ACCOUNT, account)
+    data = path.read_bytes()
+    old = b'"show_tooltips_on_shift"] = false'
+    assert old in data
+    path.write_bytes(data.replace(old, b'"show_tooltips_on_shift"] = true'))
 
 
 def test_help_says_a_whole_restore_never_deletes_added_files() -> None:
