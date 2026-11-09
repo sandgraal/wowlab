@@ -257,7 +257,10 @@ def _parse_gh_api(args: list[str]) -> tuple[str, list[tuple[str, str]]]:
             if canonical is None:
                 continue
             value = letters[k + 1 :]
-            if not value:
+            if value.startswith("="):
+                # pflag reads `-X=PUT` as `PUT`: one `=` is dropped.
+                value = value[1:]
+            elif not value:
                 value = args[i] if i < len(args) else ""
                 i += 1
             options.append((canonical, value))

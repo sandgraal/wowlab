@@ -66,7 +66,6 @@ def test_control_a_spaced_query_file_is_judged(tmp_path: Path) -> None:
 # Defects.
 
 
-@pytest.mark.xfail(strict=True, reason="M13-71 review round 4: -X=VALUE keeps the '='")
 @pytest.mark.parametrize(
     "command",
     ["gh api -X=PUT repos/o/r/pulls/1/merge", "gh api -iX=DELETE repos/o/r/git/refs/heads/x"],
@@ -75,7 +74,6 @@ def test_a_short_method_written_with_equals_is_refused(tmp_path: Path, command: 
     assert _run(command, tmp_path) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="M13-71 review round 4: -F=query=@file keeps the '='")
 @pytest.mark.parametrize("flag", ["-F=", "-iF="])
 def test_a_short_field_written_with_equals_is_judged(tmp_path: Path, flag: str) -> None:
     assert _run(f"gh api graphql {flag}query=@{_query_file(tmp_path)}", tmp_path) == 2
