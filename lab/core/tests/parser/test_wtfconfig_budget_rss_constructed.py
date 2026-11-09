@@ -85,10 +85,6 @@ REFUSED_LIMIT = 8 * 1024 * 1024
 TRIES = 5 if sys.platform == "darwin" else 1  # see the luadata probe
 
 
-class ProbeReading(UserWarning):
-    """A child's raw reading, shown in the warnings summary (not a fault)."""
-
-
 def _probe(kind: str, over: bool) -> tuple[str, str, str, int]:
     for _ in range(TRIES):
         out = subprocess.run(
@@ -99,7 +95,12 @@ def _probe(kind: str, over: bool) -> tuple[str, str, str, int]:
         ).stdout.split()
         outcome, what, detail, grown = out[0], out[1], out[2], int(out[3])
         warnings.warn(
-            ProbeReading(f"{sys.platform} {kind} {outcome}: growth {grown / 2**20:.2f} MiB"),
+            # A plain UserWarning: the readings show in the warnings summary
+            # (not a fault). A warning class defined here could not be
+            # unpickled by an xdist controller, which cannot import a module
+            # under `parser/` by name.
+            f"probe reading, {sys.platform} {kind} {outcome}: growth {grown / 2**20:.2f} MiB",
+            UserWarning,
             stacklevel=2,
         )
         if grown > 0 or over:
