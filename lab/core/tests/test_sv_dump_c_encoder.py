@@ -37,6 +37,21 @@ def _before(file: str, path: str | None, doc_rows: list[tuple[str, str, luadata.
     return "".join(parts)
 
 
+def _same(out: str, expected: str) -> None:
+    """`out == expected`, failing with the first differing offset and a short
+    window: pytest's own diff of a one-line megabyte string takes minutes."""
+    if out == expected:
+        return
+    i = next((n for n, (a, b) in enumerate(zip(out, expected, strict=False)) if a != b), None)
+    if i is None:
+        i = min(len(out), len(expected))
+    lo = max(0, i - 40)
+    pytest.fail(
+        f"first difference at {i} (lengths {len(out)} vs {len(expected)}): "
+        f"{out[lo : i + 40]!r} vs {expected[lo : i + 40]!r}"
+    )
+
+
 def _dump(*args: str) -> str:
     result = runner.invoke(cli.app, ["sv", "dump", "--json", *args])
     assert result.exit_code == 0, (result.stderr, repr(result.exception))
@@ -52,7 +67,7 @@ def test_dump_json_is_byte_identical_to_the_iterencode_output(sv: Path) -> None:
     doc = luadata.read(sv)
     tops = [("variable", a.name, a.value) for a in doc.assignments]
     out = _dump(str(sv))
-    assert out == _before(str(sv), None, tops)
+    _same(out, _before(str(sv), None, tops))
     cli.SvDumpReport.model_validate_json(out)
 
 
@@ -62,7 +77,7 @@ def test_dump_json_with_path_is_byte_identical_to_the_iterencode_output() -> Non
     name = doc.assignments[0].name
     value = cli._resolve_path(doc, name)
     out = _dump(str(sv), "--path", name)
-    assert out == _before(str(sv), name, [("path", name, value)])
+    _same(out, _before(str(sv), name, [("path", name, value)]))
 
 
 def test_dump_json_at_max_depth_constructed(tmp_path: Path) -> None:
@@ -71,5 +86,50 @@ def test_dump_json_at_max_depth_constructed(tmp_path: Path) -> None:
     f.write_bytes(b"Deep = " + b"{" * depth + b'"\\255\\0x"' + b"}" * depth + b"\n")
     doc = luadata.read(f)
     out = _dump(str(f))
-    assert out == _before(str(f), None, [("variable", "Deep", doc.assignments[0].value)])
+    _same(out, _before(str(f), None, [("variable", "Deep", doc.assignments[0].value)]))
     assert len(json.loads(out)["values"]) == depth + 1
+
+
+# Constructed (L8, hostile/boundary): the real SavedVariables fixtures are pure
+# ASCII and carry no lone surrogate, so on their own they cannot tell
+# `ensure_ascii=True` from False, nor a row encoded without `_json_text`. Raw
+# UTF-8 (é and an astral U+1F600), bytes that are not UTF-8 (raw and as `\ddd`),
+# a NUL escape, and a key of one non-UTF-8 byte that `--path` names with a lone
+# surrogate (U+DCFF, what `surrogateescape` gives for 0xFF).
+HOSTILE = (
+    b"Hostile = {\n"
+    b'\t["\\255"] = {\n'
+    b'\t\t"caf\xc3\xa9 \xf0\x9f\x98\x80",\n'
+    b'\t\t"caf\\195\\169 \\240\\159\\152\\128",\n'
+    b'\t\t"raw \xff\xfe and \\233",\n'
+    b'\t\t"nul \\0 here",\n'
+    b"\t\t[\"k\xc3\xa9\"] = 'v\xf0\x9f\x98\x80',\n"
+    b"\t},\n"
+    b"}\n"
+)
+HOSTILE_PATH = 'Hostile["\udcff"]'
+
+
+def _hostile(tmp_path: Path) -> Path:
+    f = tmp_path / "Hostile.lua"
+    f.write_bytes(HOSTILE)
+    return f
+
+
+def test_dump_json_hostile_text_constructed(tmp_path: Path) -> None:
+    f = _hostile(tmp_path)
+    doc = luadata.read(f)
+    out = _dump(str(f))
+    _same(out, _before(str(f), None, [("variable", "Hostile", doc.assignments[0].value)]))
+    assert out.isascii()
+    cli.SvDumpReport.model_validate_json(out)
+
+
+def test_dump_json_hostile_path_with_a_lone_surrogate_constructed(tmp_path: Path) -> None:
+    f = _hostile(tmp_path)
+    doc = luadata.read(f)
+    value = cli._resolve_path(doc, HOSTILE_PATH)
+    out = _dump(str(f), "--path", HOSTILE_PATH)
+    _same(out, _before(str(f), HOSTILE_PATH, [("path", HOSTILE_PATH, value)]))
+    assert '"name":"Hostile[\\"\\u0000DCFF\\"]"' in out
+    cli.SvDumpReport.model_validate_json(out)
