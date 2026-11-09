@@ -2239,12 +2239,12 @@ When the base revision has no `scripts/check_grader_diff.py`, the job falls back
 
 Under `-n 2` a worker goes down: the controller cannot unpickle `ProbeReading`, a warning class defined in the grader itself (`lab/core/tests/test_luadata_budget_constructed.py`), giving `ModuleNotFoundError("No module named 'test_luadata_budget_constructed'")` and an INTERNALERROR. The fix edits a `luadata` grader, so it is a test-writer's (ADR-0013): move the class to an importable test-support module, or stop it crossing the worker boundary, without changing what any budget test asserts. The same pattern in `lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py` and `test_m10_04_escaped_key_list_at_budget_misses_time_target.py` is in scope.
 
-**Acceptance:** `uv run pytest -q -n 2 lab/core/tests/test_luadata_budget_constructed.py` passes five times in a row with no worker down; each budget assertion is unchanged (the diff shows it); reviewed by `code-reviewer`.
+**Acceptance:** `uv run pytest -q -n 2 lab/core/tests/test_luadata_budget_constructed.py lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py lab/core/tests/review/test_m10_04_escaped_key_list_at_budget_misses_time_target.py` passes five times in a row with no worker down; each budget assertion is unchanged (the diff shows it); reviewed by `code-reviewer`.
 
 ## [ ] M16-62T — [TEST] The account-clash refusal suggests a snapshot before a hand removal
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-03 final domain review (2026-11-06); the #385 review (2026-11-09)
 
-The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. The new wording is "rename it, or run `wowlab snap create` and then remove it". `lab/core/tests/test_guard_restore_into_accounts.py` asserts `"rename or remove"`; a test-writer changes that assertion to the new wording and adds one for `snap create`, as strict xfail until M16-62 lands (ADR-0013: `guard.py` is load-bearing).
+The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. The new wording is "rename it, or run `wowlab snap create` and then remove it". `lab/core/tests/test_guard_restore_into_accounts.py` asserts `"rename or remove"` in a test that also checks what must stay true now (the refusal names the folder and `--paths`, and the world is unchanged). A test-writer removes only the old-wording assertion from that test, which stays active, and adds a new test asserting the new wording and `snap create`, strict xfail until M16-62 lands (ADR-0013: `guard.py` is load-bearing).
 
 **Acceptance:** the graders are strict xfail on `main`'s `guard.py` and pass with the new message (shown with `--runxfail` on a scratch edit); reviewed by `code-reviewer`.
 
