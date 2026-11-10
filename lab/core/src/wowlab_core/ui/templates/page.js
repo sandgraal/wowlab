@@ -1902,7 +1902,7 @@
   byId("char-macros-findings").addEventListener("change", () => filterMacros());
 
   // ─── the looks tab (M14-04, §16.3) ───
-  // "Write the page" runs `looks page` (no parameters: its default place
+  // "Download tables and write the page" runs `looks page` (no parameters: its default place
   // under the data folder's pages/, never `--out`), then reads that file
   // from /api/looks-page, whose path the server builds itself, and puts the
   // text in #looks-frame as its document. The frame is sandboxed with
@@ -1965,7 +1965,7 @@
     // own, so a failure is never drawn above an older page.
     frame.hidden = true;
     try {
-      looksSay("Writing the looks page…", false);
+      looksSay("Downloading the tables wowlab does not have yet and writing the looks page…", false);
       // Exit 1 with a report: the page was written, and some look files
       // are damaged (the CLI names them on stderr).
       const reply = await runJson(["looks", "page"], {}, true);

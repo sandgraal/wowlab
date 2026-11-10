@@ -13,7 +13,7 @@
       "game_data": {
         "status": "not_checked",
         "version": "1.60.1.69913",
-        "detail": "--offline"
+        "detail": "no --check-builds"
       },
       "sync_cvars": [
         {

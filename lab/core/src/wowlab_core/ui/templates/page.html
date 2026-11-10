@@ -118,9 +118,9 @@
 </section>
 <section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
 <h2 class="unseen">Looks</h2>
-<p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes <code>pages/looks.html</code> in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
+<p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Download tables and write the page runs that command. It downloads the build's public game tables from wago.tools when wowlab does not have them yet, sending your game version, then writes <code>pages/looks.html</code> in wowlab's own data folder, never touching your game folder, and shows that file here. The page itself runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
 <div class="toolbar panel">
-<button id="looks-write" type="button">Write the page</button>
+<button id="looks-write" type="button">Download tables and write the page</button>
 <p id="looks-status" role="status"></p>
 </div>
 <div id="looks-where" class="looks-where" hidden></div>

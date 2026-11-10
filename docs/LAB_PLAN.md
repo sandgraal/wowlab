@@ -1357,6 +1357,8 @@ wowlab sv dump FILE [--json] [--path 'Var.key[3].name']   # path grammar: §13.4
 wowlab cvar list|get NAME [--scope global|account|character]
 wowlab binds list / wowlab macros list
 wowlab addons list [--json]
+wowlab addons check [--json] [--notes]               # §18.1 item 8 (M16-34)
+wowlab sv list --orphans [--json] [--notes]          # §18.1 item 8 (M16-34)
 wowlab db2 builds | wowlab db2 fetch TABLE [--build B] | wowlab db2 head TABLE
 wowlab log tail [--follow]
 wowlab snap create [-m LABEL] | list | show ID | diff A B | verify | gc
@@ -3651,6 +3653,11 @@ and the CI job stays on.
   logging on (`/combatlog`); the command says so.
 - **First run.** `wowlab doctor` asks wago.tools whether each installed
   version is listed unless `--offline` is given; the first-run text says so.
+  *Amended 2026-11-09 (M16-07, §18.1 item 2):* `doctor` is offline by
+  default and asks only with `--check-builds`; `--offline` is a no-op that
+  prints one deprecation line. The first-run text ends in the one "What
+  leaves your machine" block (`wowlab_core.disclosure`), which README.md and
+  docs/INSTALL.md carry between `network:begin`/`network:end` markers.
   A WTF folder under OneDrive, Dropbox or Syncthing may hold placeholder or
   conflict files; snapshots never follow a link (M11-18); a sync folder is
   detected by heuristics and reported as such, never refused.
@@ -4712,6 +4719,44 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
 3. **Plans that say what they lose.**
    - Plans and `snap diff` print key, macro and CVar changes by name for
      the WTF text files.
+     *Amended 2026-11-09 (M16-10):* under each changed `bindings-cache.wtf`,
+     `macros-cache.txt`, `config-cache.wtf` or `Config.wtf` (by file name,
+     in any folder) the lines are `key K: old -> new`, `macro "N": added`,
+     `removed` or `text`/`icon changed`, and `CVar N: "old" -> "new"`. An
+     absent side is `(no line: the client's default binding)` for a key and
+     `(no line: set elsewhere or the client default)` for a CVar (`null` in
+     `--json`). They come from the `wtfconfig` parsers (module `wtfdiff`):
+     CVars by the last line setting the name, compared without ASCII case;
+     keys by the last `bind` line (that the client applies the last line is
+     believed, not observed **[verify]**). Every `SET` line is shown as a
+     CVar whatever it holds, `SET CACHE-…` lines included. Macros are
+     matched by name, two of one name compared in file order (`"N" (2)`,
+     and one line under the file says an inserted or removed one shifts the
+     rest); a blank or whitespace-only name is shown by its place, `macro
+     (blank name, 17th)`; a macro's id is not compared. When lines the
+     parsers leave `Unknown` differ, one line says so; when nothing differs
+     by name, one line says what can still differ (for macros: order or
+     ids, so a button that holds a macro may run a different one). Under a
+     SavedVariables file, one summary line: `values: R removed, A added, C
+     changed; size X -> Y` (`snap diff` then lists each value as before). A
+     plan names at most 20 per file and counts the rest; `snap diff` lists
+     all. Plan sides are read read-only: the disk when it still hashes to
+     the plan's `before`, else the snapshot store; a side over 64 MiB (a
+     stored one by its recorded size, before any read) or not readable back
+     gets a "not compared" line. `undo` compares what the disk holds now
+     with what it puts back, and when that is not what the transaction
+     wrote (the client rewrites these files at logout), a line says the
+     comparison includes those later changes. A plan that names a change
+     in a bindings, macros or CVar file (a SavedVariables summary alone
+     does not count) adds one line saying each file is one scope (machine,
+     account or character): bindings come from the account or the character
+     file as "Character Specific Key Bindings" sets, account and character
+     macros are two sets, and each CVar is read from the file of its own
+     scope. `snap restore` and `undo` then add the login caveat before the
+     prompt and do not repeat it after the write. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
+     text output), line by line as the terminal shows it (escaped), for the
+     UI's confirm step (EV-20). Additive only.
    - A whole restore lists what it leaves alone.
    - `sv merge` lists every key it removes. Its rulings change: an array
      part is merged as one value, and `--key X` merges inside `X`, with the
@@ -4767,6 +4812,41 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      which characters enable it.
    - `sv list --orphans` lists SavedVariables that no installed TOC
      declares.
+   - *Amended 2026-11-09 (M16-34, as built):* `addons check` checks each
+     TOC named after its folder (with suffixed TOCs each one, since which
+     loads depends on the game type). The client's interface comes from
+     the flavor's version by the patch-number rule, as `addon install`
+     fills it; without a version no interface is judged, and the one
+     caveat says so. With several TOCs the client loads one by game type:
+     an addon is out of date only when its one TOC differs; with several,
+     the TOCs that match the client are taken to be the ones it loads
+     **[verify]** and are the ones counted (their dependencies alone), and when none matches the addon is reported as
+     "with several TOCs, none for this client's interface". A dependency is
+     `RequiredDeps` or `Dependencies` (not `OptionalDeps` or other `Dep*`
+     directives, which the client may also treat as required **[verify]**);
+     it is installed when `Interface/AddOns/` holds a folder of its name
+     (ASCII case folded), "installed, but has no TOC the client loads" when
+     that folder has none (such an addon is counted in the summary as
+     "needing an addon that has no TOC the client loads", JSON
+     `unloadable_dependencies`), and a `Blizzard_*` one is taken to be the
+     client's own **[verify]** and never counted missing. The characters are those whose `AddOns.txt` (read by
+     `wtfconfig.parse_addons`, LAB_FORMATS amendment of 2026-11-09) lists
+     the addon, with the state word as written; an unlisted addon is at the
+     client's default and is not called disabled. `sv list --orphans` lists
+     a file when no folder of its addon's name is installed, or that
+     folder's TOCs declare no `SavedVariables` (an account file) or no
+     `SavedVariablesPerCharacter` (a character file); a `.lua.bak` follows
+     its addon, Blizzard's files are never listed, an addon whose TOC
+     could not be read is not judged, and the saved data of a folder with no
+     TOC named after it (often an addon unzipped one folder too deep) is
+     left out and named apart. The answer line says that an addon installed
+     again reads its file again, so deleting one loses those settings. The
+     lab-addon's `WowLab.lua` files
+     are left out even when the lab-addon is not installed, because wowlab
+     reads them; the caveat counts them. Both are read-only and offline,
+     answer first, with one caveat at most and the standing notes behind
+     `--notes`. JSON: `AddonsCheckReport`, and `SvListReport` gains
+     `orphans` (false without the option), an additive change.
    - `char list` lists every character folder, with "no lab record" where
      there is no `WowLab.lua`.
    - The keybind views see addon action bars through stored
