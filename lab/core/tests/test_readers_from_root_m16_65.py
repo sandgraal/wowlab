@@ -116,6 +116,10 @@ def test_the_install_root_of_a_path_is_the_folder_above_the_flavor(root: Path) -
     assert labaddon._install_root_of(root / FLAVOR / CHAR_REL) == root
     assert labaddon._install_root_of(root / FLAVOR / "wtf" / "account" / "x") == root
     assert labaddon._install_root_of(root / "nothing.lua") is None
+    # The first pair: a realm folder named WTF holding one named Account
+    # below the account cannot move the root (constructed names).
+    deep = root / FLAVOR / ACCT_REL / "WTF" / "Account" / "SavedVariables" / "WowLab.lua"
+    assert labaddon._install_root_of(deep) == root
 
 
 def test_constructed_char_show_names_the_linked_folder(
@@ -123,16 +127,17 @@ def test_constructed_char_show_names_the_linked_folder(
 ) -> None:
     real = labaddon.read_char
 
-    def swapped(path: Path) -> Any:
+    def swapped(path: Path, **kwargs: Any) -> Any:
         if not _account(root).is_symlink():
             _link_out(_account(root), tmp_path)
-        return real(path)
+        return real(path, **kwargs)
 
     monkeypatch.setattr(labaddon, "read_char", swapped)
     done = CliRunner().invoke(cli.app, ["char", "show", "--character", CHAR_A])
     assert done.exit_code not in (0, None), done.output
     assert "linked folder" in done.stderr, done.stderr
     assert str(_account(root)) in done.stderr, done.stderr
+    assert snapshot.CHANGED_WHILE_READ in done.stderr, done.stderr
     assert done.stdout == ""
 
 
@@ -156,6 +161,7 @@ def test_constructed_char_list_row_names_the_linked_folder(
     for error in errors:
         assert "linked folder" in error, error
         assert str(_account(root)) in error, error
+        assert error.endswith(snapshot.CHANGED_WHILE_READ), error
 
 
 def test_constructed_char_list_counts_refuse_a_linked_folder(root: Path, tmp_path: Path) -> None:
@@ -224,6 +230,7 @@ def test_constructed_sv_merge_names_the_linked_folder(
     assert done.exit_code not in (0, None), done.output
     assert "linked folder" in done.stderr, done.stderr
     assert str(_account(root)) in done.stderr, done.stderr
+    assert snapshot.CHANGED_WHILE_READ in done.stderr, done.stderr
 
 
 # ─── the detail under a plan or an undo ─────────────────────────────────────
@@ -236,13 +243,32 @@ def test_constructed_detail_reads_name_the_linked_folder(root: Path, tmp_path: P
     link = _link_out(_account(root), tmp_path)
     now = cli._disk_now(flavor, CONFIG_REL)
     assert isinstance(now, cli._Unread)
-    assert now.why is not None and str(link) in now.why and "linked folder" in now.why
+    assert now.why == f"the install's copy is reached through a linked folder, {link}"
     store = snapshot.SnapshotStore(tmp_path / "store-constructed")
     before = cli._on_disk(store, flavor, CONFIG_REL, hashlib.sha256(data).hexdigest())
     assert isinstance(before, cli._Unread), "the file behind the link was read"
-    assert before.why is not None and str(link) in before.why
+    assert before.why == now.why
     lines = cli._detail_lines(CONFIG_REL, now, b"", limit=20)
-    assert len(lines) == 1 and "not compared" in lines[0] and str(link) in lines[0], lines
+    assert lines == [
+        f"{cli._DETAIL_INDENT}(not compared: the install's copy is reached through a linked "
+        f"folder, {link})"
+    ]
+
+
+def test_constructed_detail_of_a_file_that_is_a_link_says_so(root: Path, tmp_path: Path) -> None:
+    flavor = root / FLAVOR
+    config = flavor / CONFIG_REL
+    data = config.read_bytes()
+    outside = tmp_path / "config-constructed.wtf"
+    shutil.move(config, outside)
+    config.symlink_to(outside)
+    now = cli._disk_now(flavor, CONFIG_REL)
+    assert isinstance(now, cli._Unread) and now.why == "the install's copy is a link"
+    store = snapshot.SnapshotStore(tmp_path / "store-constructed")
+    before = cli._on_disk(store, flavor, CONFIG_REL, hashlib.sha256(data).hexdigest())
+    assert isinstance(before, cli._Unread) and before.why == now.why
+    lines = cli._detail_lines(CONFIG_REL, b"", now, limit=20)
+    assert lines == [f"{cli._DETAIL_INDENT}(not compared: the install's copy is a link)"]
 
 
 def test_detail_of_an_unreadable_side_keeps_its_general_words() -> None:
@@ -252,34 +278,100 @@ def test_detail_of_an_unreadable_side_keeps_its_general_words() -> None:
     ]
 
 
+# ─── the words of a link refusal ────────────────────────────────────────────
+
+
+def test_a_link_refusal_ends_with_what_the_player_can_do(tmp_path: Path) -> None:
+    """One sentence for the listing and the readers: the rule, then the way
+    out; a listed file adds that it changed while read."""
+    path, folder = tmp_path / "a" / "b.lua", tmp_path / "a"
+    through = snapshot.LinkedPathError(path, folder, final=False)
+    assert str(through) == (
+        f"{path} is reached through a linked folder, {folder}; wowlab does not read through "
+        "links, so it reads this only when the real folder is there"
+    )
+    final = snapshot.LinkedPathError(path, path, final=True)
+    assert str(final) == (
+        f"{path} is a link; wowlab does not read through links, so it reads this only when "
+        "the real file is there"
+    )
+    changed = through.changed_while_read()
+    assert str(changed) == f"{through}; it changed while wowlab read it; run the command again"
+    assert changed.folder == folder and not changed.final
+    assert changed.changed_while_read() is changed
+    assert f"a link; {snapshot.not_read_through('one')}" == labaddon.NOT_FOLLOWED
+
+
 # ─── sv dump through a shortcut into the install ────────────────────────────
 
 
-def test_constructed_folders_passed_through_resolve_each_link(root: Path, tmp_path: Path) -> None:
+def _shortcut(root: Path, tmp_path: Path, to: Path) -> Path:
     shortcut = tmp_path / "MySV-constructed"
-    shortcut.symlink_to(_account(root), target_is_directory=True)
-    _link_out(_account(root), tmp_path)
-    seen = cli._folders_passed_through(shortcut / "SavedVariables" / "x.lua")
-    assert root in seen
-    assert cli._really_inside(shortcut / "SavedVariables" / "x.lua", root)
+    shortcut.symlink_to(to, target_is_directory=True)
+    return shortcut
 
 
-def test_constructed_folders_passed_through_stop_at_a_link_loop(tmp_path: Path) -> None:
+def test_constructed_a_link_met_inside_the_install_is_named(root: Path, tmp_path: Path) -> None:
+    shortcut = _shortcut(root, tmp_path, _account(root))
+    link = _link_out(_account(root), tmp_path)
+    file = shortcut / "SavedVariables" / "x.lua"
+    assert not cli._really_inside(file, root)
+    assert cli._link_out_of_install(file, root) == link
+
+
+def test_constructed_a_link_met_outside_the_install_is_not_counted(
+    root: Path, tmp_path: Path
+) -> None:
+    elsewhere = tmp_path / "Elsewhere-constructed" / "Inner"
+    elsewhere.mkdir(parents=True)
+    shortcut = _shortcut(root, tmp_path, elsewhere.parent)
+    assert cli._link_out_of_install(shortcut / "Inner" / "x.lua", root) is None
+
+
+def test_constructed_dotdot_after_a_shortcut_steps_out_of_its_target(
+    root: Path, tmp_path: Path
+) -> None:
+    """POSIX takes a `..` after a link in the link's target, so the walk does."""
+    shortcut = _shortcut(root, tmp_path, root / FLAVOR / "WTF" / "Account")
+    link = _link_out(_account(root), tmp_path)
+    file = Path(f"{shortcut}/../Account/{ACCOUNT}/SavedVariables/x.lua")
+    assert cli._link_out_of_install(file, root) == link
+
+
+def test_constructed_dotdot_climbing_out_of_the_install_meets_no_link_in_it(
+    root: Path, tmp_path: Path
+) -> None:
+    file = Path(f"{root}/../Loose-constructed/x.lua")
+    assert cli._link_out_of_install(file, root) is None
+
+
+def test_constructed_a_link_loop_ends_the_walk(root: Path, tmp_path: Path) -> None:
     loop = tmp_path / "loop-constructed"
     loop.symlink_to(loop)
-    seen = cli._folders_passed_through(loop / "a" / "b.lua")
-    assert tmp_path in seen
+    assert cli._link_out_of_install(loop / "a" / "b.lua", root) is None
 
 
 def test_constructed_sv_dump_through_a_shortcut_with_a_folder_linked_out_is_refused(
     root: Path, tmp_path: Path
 ) -> None:
-    shortcut = tmp_path / "MySV-constructed"
-    shortcut.symlink_to(_account(root), target_is_directory=True)
-    _link_out(_account(root), tmp_path)
+    shortcut = _shortcut(root, tmp_path, _account(root))
+    link = _link_out(_account(root), tmp_path)
+    file = shortcut / "SavedVariables" / "Blizzard_AuctionHouseUI.lua"
+    done = CliRunner().invoke(cli.app, ["sv", "dump", str(file)])
+    assert done.exit_code == cli.EXIT_REFUSED, done.output
+    assert done.stderr.strip() == (
+        f"wowlab: refused: {file} leads into the install at {root} by a link, "
+        + snapshot.linked_folder_words("and it", link)
+    ), done.stderr
+    assert done.stdout == ""
+
+
+def test_constructed_sv_dump_through_a_plain_shortcut_keeps_its_words(
+    root: Path, tmp_path: Path
+) -> None:
+    shortcut = _shortcut(root, tmp_path, _account(root))
     done = CliRunner().invoke(
         cli.app, ["sv", "dump", str(shortcut / "SavedVariables" / "Blizzard_AuctionHouseUI.lua")]
     )
     assert done.exit_code == cli.EXIT_REFUSED, done.output
-    assert "not spelled under" in done.stderr, done.stderr
-    assert done.stdout == ""
+    assert "but not spelled under that folder" in done.stderr, done.stderr

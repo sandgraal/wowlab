@@ -821,7 +821,7 @@ def test_unfollowed_page_in_text_constructed(
     flavor: Path, record: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rec = _with_slots(real_record(), {}, {73: 999004})
-    monkeypatch.setattr(labaddon, "read_char", lambda path: rec)
+    monkeypatch.setattr(labaddon, "read_char", lambda path, **kwargs: rec)
     put_log(flavor, HEADER, cast(999004, "Form Spell"))
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "Spells only on main-bar pages the coach does not follow: 1\n" in text

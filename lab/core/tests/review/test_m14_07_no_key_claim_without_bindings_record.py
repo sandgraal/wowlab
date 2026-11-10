@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import platformdirs
 import pytest
@@ -52,8 +53,8 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(install.ENV_ROOT, str(root))
     original = labaddon.read_char
 
-    def no_bindings(path: Path) -> labaddon.CharDB:
-        record = original(path)
+    def no_bindings(path: Path, **kwargs: Any) -> labaddon.CharDB:
+        record = original(path, **kwargs)
         absent = labaddon.AbsentProbedSection(absent="constructed: not gathered")
         return record.model_copy(update={"bindings": absent})
 

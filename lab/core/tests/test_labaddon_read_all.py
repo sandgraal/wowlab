@@ -51,7 +51,9 @@ FIRST = "1/Labchard-Labrealmg"
 SECOND = "1/Labcharb-Labrealmf"
 NO_ADDON = "1/Labcharb-Labrealmd"  # a captured character folder without the lab-addon's file
 TWIN = "Labrealmb Partb Partc Partd/Labchard"  # the <Realm>/<First>/ twin: only AddOns.txt
-NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_FOLLOWED = (
+    "a link; wowlab does not read through links, so it reads this only when the real one is there"
+)
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 
 POSIX_PERMISSIONS = pytest.mark.skipif(

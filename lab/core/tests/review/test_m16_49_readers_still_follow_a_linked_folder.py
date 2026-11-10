@@ -72,11 +72,11 @@ def test_char_show_refuses_an_account_folder_swapped_for_a_link(
     real = labaddon.read_char
     seen: list[bytes] = []
 
-    def swapped(path: Path) -> Any:
+    def swapped(path: Path, **kwargs: Any) -> Any:
         if not account.is_symlink():
             _link_out(account, tmp_path)
         seen.append(Path(path).read_bytes()[: len(MARKER)])  # what the read will see
-        return real(path)
+        return real(path, **kwargs)
 
     monkeypatch.setattr(labaddon, "read_char", swapped)
     done = CliRunner().invoke(cli.app, ["char", "show", "--json"])

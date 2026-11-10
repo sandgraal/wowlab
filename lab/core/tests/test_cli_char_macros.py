@@ -453,8 +453,8 @@ def test_no_bindings_record_qualifies_no_key_reaches_it_constructed(
     _twenty_nine(flavor)
     original = labaddon.read_char
 
-    def no_bindings(path: Path) -> labaddon.CharDB:
-        record = original(path)
+    def no_bindings(path: Path, **kwargs: Any) -> labaddon.CharDB:
+        record = original(path, **kwargs)
         absent = labaddon.AbsentProbedSection(absent="constructed: not gathered")
         return record.model_copy(update={"bindings": absent})
 

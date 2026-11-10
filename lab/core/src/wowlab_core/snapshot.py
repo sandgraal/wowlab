@@ -238,24 +238,53 @@ def open_regular_file(
     return fd, st
 
 
+def not_read_through(what: str) -> str:
+    """The words every refusal of a link ends with (M16-65): the rule, then
+    what the player can do. `what` is what the link stands in place of
+    ("folder", "file", "one")."""
+    return (
+        f"wowlab does not read through links, so it reads this only when the real {what} is there"
+    )
+
+
+CHANGED_WHILE_READ = "it changed while wowlab read it; run the command again"
+"""Said after a link refusal of a file a listing had just found behind no
+link (M16-65)."""
+
+
+def linked_folder_words(subject: object, folder: Path) -> str:
+    """`subject` reached through the linked folder `folder`, in the one
+    sentence the readers and `sv dump` use (M16-65)."""
+    return f"{subject} is reached through a linked folder, {folder}; {not_read_through('folder')}"
+
+
 class LinkedPathError(UnsafeReadError):
     """A file asked for under an install root is reached through a link: a
     folder on the way that is a link (`folder` names it, `final` is False),
     or the file itself (`folder` is the file, `final` is True). Nothing
-    behind the link was read (M16-49)."""
+    behind the link was read (M16-49). `changed` is set when a listing had
+    found the file behind no link just before (`changed_while_read`,
+    M16-65)."""
 
-    def __init__(self, path: Path, folder: Path, *, final: bool) -> None:
+    def __init__(self, path: Path, folder: Path, *, final: bool, changed: bool = False) -> None:
         self.path = path
         self.folder = folder
         self.final = final
+        self.changed = changed
         if final:
-            text = f"{path} is a link, and wowlab does not read through one"
+            text = f"{path} is a link; {not_read_through('file')}"
         else:
-            text = (
-                f"{path} is reached through a linked folder, {folder}, "
-                "and wowlab does not read through one"
-            )
+            text = linked_folder_words(path, folder)
+        if changed:
+            text += f"; {CHANGED_WHILE_READ}"
         super().__init__(text)
+
+    def changed_while_read(self) -> LinkedPathError:
+        """The same refusal, saying the file changed while it was read: for a
+        caller that had just listed it behind no link."""
+        if self.changed:
+            return self
+        return LinkedPathError(self.path, self.folder, final=self.final, changed=True)
 
 
 _OPEN_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd

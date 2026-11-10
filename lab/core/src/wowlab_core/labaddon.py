@@ -1532,11 +1532,14 @@ def parse_account(data: bytes) -> AccountDB:
 def _install_root_of(path: Path) -> Path | None:
     """The install root a file in a flavor's `WTF/Account/` tree lies under,
     as `path` spells it: the folder above the flavor folder that holds the
-    last `WTF/Account` pair of folders in it (compared without case). None
-    when `path` has no such pair with a flavor folder and a root above it.
-    Nothing is opened; the names come from the path, never a flavor (L6)."""
+    first `WTF/Account` pair of folders in it (compared without case), so no
+    folder name below the account (a realm folder named `WTF`, say) can move
+    it. None when `path` has no such pair with a flavor folder and a root
+    above it. Nothing is opened; the names come from the path, never a
+    flavor (L6). For a library caller that gives no root; the CLI gives the
+    install's."""
     parts = Path(path).absolute().parts
-    for i in range(len(parts) - 2, 1, -1):
+    for i in range(2, len(parts) - 1):
         if (
             parts[i].casefold() == _WTF.casefold()
             and parts[i + 1].casefold() == _ACCOUNT.casefold()
@@ -1592,7 +1595,7 @@ _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # is refused on its own without charging this one.
 MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
-NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_FOLLOWED = f"a link; {snapshot.not_read_through('one')}"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 A_FOLDER = "a folder, not a file"
 
@@ -1925,6 +1928,9 @@ class _Reader:
         limit = min(luadata.MAX_FILE_BYTES, self.left)
         try:
             data = snapshot.read_regular_file(path, limit=limit, expect=st, root=self.install_root)
+        except snapshot.LinkedPathError as exc:
+            # The walk found this file behind no link a moment ago.
+            return _Read(error=_os_error(exc.changed_while_read(), path))
         except snapshot.UnsafeReadError as exc:
             if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
                 return self._spent(account, who, grew=True)
@@ -2036,6 +2042,9 @@ class _Counter:
             data = snapshot.read_regular_file(
                 path, limit=min(MAX_COUNTED_FILE_BYTES, self.left), root=self.install_root
             )
+        except snapshot.LinkedPathError as exc:
+            # The walk listed this file behind no link a moment ago.
+            return None, f"{name} not read: {_os_error(exc.changed_while_read(), path)}"
         except OSError as exc:
             return None, f"{name} not read: {_os_error(exc, path)}"
         self.left -= len(data)
