@@ -215,7 +215,7 @@ flowchart LR
     W1["<b>Waves 1 to 3</b><br/>library and CLI, write gate,<br/>snapshots, profiles, sv merge,<br/>lab-addon, character list"]:::done
     W4["<b>Wave 4 · v0.1.0</b><br/>first run, explorer,<br/>macro checker, keybind coach"]:::done
     W5["<b>Wave 5 · on main</b><br/>confirm step in the browser,<br/>Character tab: gear, keys, macros"]:::done
-    W6["<b>Wave 6 · under way</b><br/>character studio,<br/>the data half"]:::next
+    W6["<b>Wave 6 · paused</b><br/>character studio,<br/>the data half"]:::next
     W7["<b>Wave 7 · planned</b><br/>the viewer in<br/>the Character tab"]:::plan
     W1 --> W4 --> W5 --> W6 -.-> W7
     classDef done fill:#2b2410,stroke:#f3c969,color:#fff1c2
@@ -226,7 +226,7 @@ flowchart LR
 - ✅ **Waves 1 to 3** are done. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
 - ✅ **Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). **v0.1.0 is out**: install it with the one `uv tool install` line above and check the download against the published SHA-256 sums ([the release page](https://github.com/sandgraal/wowlab/releases/tag/v0.1.0)). No installer, no app store, no hosted version. The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded.
 - ✅ **Wave 5 is on `main`**, aimed at the second public release: the confirm step for all six commands that change your install, `looks page` inside the browser view, `wowlab char gear`, `char binds` and `char macros`, and the Character tab.
-- 🧭 **Wave 6 is under way** (picked 2026-10-19, paused 2026-10-21 while the next release is prepared): the data half of the character studio, of which only the archive reader is on `main`. See below.
+- 🧭 **Wave 6 is paused** (picked 2026-10-19, paused 2026-10-21 while the next release is prepared): the data half of the character studio, of which only the archive reader is on `main`. See below.
 
 | | Still open before the next release | |
 |---|---|---|

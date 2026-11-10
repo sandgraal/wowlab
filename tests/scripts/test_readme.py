@@ -231,6 +231,8 @@ def test_the_wave_6_sentences_match_main() -> None:
     assert "None of this is built yet" not in readme
     assert "when the first reader ships" not in readme
     assert "Wave 6 · picked" not in readme and "Wave 6 is picked" not in readme
+    assert "Wave 6 · under way" not in readme and "Wave 6 is under way" not in readme
+    assert "Wave 6 · paused" in readme and "Wave 6 is paused" in readme
     assert "only the archive reader is on `main`" in readme
     assert "no command uses it yet, so no wowlab command reads `Data/`" in readme
 

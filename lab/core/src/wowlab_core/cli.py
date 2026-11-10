@@ -8567,7 +8567,7 @@ def undo(
     `snap restore`, `profile apply`, `sv merge`, `addon install` or
     `addon remove`, or an earlier undo. It shows the plan and asks first, then
     puts your files back as they were before that change, from the snapshot
-    taken before it; files that change created are deleted.
+    taken before it; files it added are deleted.
 
     Undo steps back one change only. An undo is itself a change, so running
     `wowlab undo` a second time redoes what the first one undid. To go further
