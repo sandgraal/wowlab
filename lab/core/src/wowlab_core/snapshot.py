@@ -255,10 +255,12 @@ the read then met as one (M16-65)."""
 
 def _shown(path: Path, within: Path | None) -> str:
     """`path` as the player reads it: relative to `within` (the flavor
-    folder) with `/` between parts when it lies under it, else in full."""
+    folder) with `/` between parts when it lies under it, else in full.
+    The flavor folder itself is named by its own name, never "." (M16-81)."""
     if within is not None:
         with contextlib.suppress(ValueError):
-            return path.relative_to(within).as_posix()
+            shown = path.relative_to(within).as_posix()
+            return within.name if shown == "." else shown
     return str(path)
 
 
