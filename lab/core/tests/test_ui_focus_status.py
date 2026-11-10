@@ -120,6 +120,12 @@ _STEPS = r"""
         const button = ids.commands.all().find((e) => e.tagName === "button" && e.textContent === step.run_command);
         if (!button) { out.steps.push({ missing: step.run_command }); continue; }
         button.fire("click"); await tick();
+        // Fields to fill before Run (a required field left empty is not run).
+        for (const [name, value] of Object.entries(step.fill || {})) {
+          const input = ids.fields.all().find((e) => e.id === "param-" + name);
+          if (!input) { out.steps.push({ missing: "field " + name }); continue; }
+          input.value = value; input.fire("input");
+        }
         ids.run.fire("click"); await tick();
         out.steps.push(focusView());
       } else if (step.confirm_click !== undefined) {
@@ -290,7 +296,7 @@ def test_a_refused_explain_is_an_alert_then_a_status_again_constructed(
     out = _drive(tmp_path / "node", scenario)
     refused, answered = out["steps"]
     assert refused["explain"] == {
-        "text": "Refused: the server refused this run",
+        "text": "The server refused this request: the server refused this run",
         "role": "alert",
     }, refused
     assert answered["explain"]["role"] == "status", answered
@@ -342,8 +348,11 @@ def test_a_refused_run_is_an_alert_and_a_clean_run_a_status_constructed(
     ]
     out = _drive(tmp_path / "node", scenario)
     no, yes = out["steps"]
-    assert no["status"] == {"text": "Refused: not offered", "role": "alert"}, no
-    assert yes["status"] == {"text": "Exit code 0", "role": "status"}, yes
+    assert no["status"] == {
+        "text": "The server refused this request: not offered",
+        "role": "alert",
+    }, no
+    assert yes["status"] == {"text": "Done (exit code 0).", "role": "status"}, yes
 
 
 def test_the_confirm_note_is_written_only_while_its_box_shows_constructed(

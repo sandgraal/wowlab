@@ -231,6 +231,11 @@ main { padding: var(--space-5) var(--space-6) var(--space-7); }
   background: var(--surface-raised); border: 1px solid var(--brass-deep); border-radius: var(--radius-md);
 }
 .confirm-box p { margin: 0 0 var(--space-3); }
+.confirm-box h3 {
+  margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 15px; line-height: 20px;
+  font-weight: 700; letter-spacing: 0.05em; color: var(--brass);
+}
+.confirm-box .plan-lines { margin: 0 0 var(--space-3); }
 #confirm {
   display: inline-flex; align-items: center; min-height: 36px; cursor: pointer;
   padding: var(--space-2) var(--space-5); border-radius: var(--radius-md);
@@ -369,7 +374,7 @@ main { padding: var(--space-5) var(--space-6) var(--space-7); }
 }
 .field small { display: block; color: var(--text-muted); font-size: 15px; line-height: 22px; }
 .field input[type="text"], .field textarea { width: 100%; max-width: 40rem; }
-.field.needed input { outline: 2px solid var(--wellspring); outline-offset: 1px; }
+.field.needed input, .field.needed textarea { outline: 2px solid var(--wellspring); outline-offset: 1px; }
 .field-refused { color: var(--text-muted); font-size: 14px; line-height: 20px; font-style: italic; }
 pre, .jt {
   margin: 0; padding: var(--space-3); color: var(--text); background: var(--surface-sunken);
@@ -394,6 +399,7 @@ pre:empty { display: none; }
 .jt-number { color: var(--jt-number); }
 .jt-boolean, .jt-null { color: var(--jt-literal); }
 .jt-more { margin: var(--space-1) 0; font-size: 13px; }
+.result-details > summary { cursor: pointer; color: var(--text-muted); font-size: 15px; line-height: 22px; margin: var(--space-2) 0; }
 .jt-raw > summary { cursor: pointer; color: var(--text-muted); font-size: 15px; line-height: 22px; margin-top: var(--space-2); }
 
 /* ─── the Gaps tab ─── */

@@ -346,7 +346,10 @@ def test_the_confirmed_result_names_the_journal_record_and_the_undo_hint(
         "token": None,
         "note": f"Journaled as {RECORD}. `wowlab undo` reverses it.",
         "needs": None,
+        "plan_lines": [],
+        "label": None,
     }
+    assert done["outcome"] == {"text": "After Confirm: Done (exit code 0).", "alert": False}
 
 
 @pytest.mark.parametrize(
@@ -429,7 +432,7 @@ def test_the_page_shows_the_confirmed_note_and_no_confirm(tmp_path: Path) -> Non
     out = _drive(tmp_path, replies, [{"pick": "snap gc"}, {"click": "run"}, {"click": "confirm"}])
     _, planned, confirmed = out["steps"]
     assert not planned["confirmHidden"]
-    assert confirmed["status"].startswith("Confirmed: exit code 0")
+    assert confirmed["status"] == "After Confirm: Done (exit code 0)."
     assert confirmed["note"] == note and not confirmed["boxHidden"]
     assert confirmed["confirmHidden"]
 
@@ -723,7 +726,14 @@ def test_a_guard_refusal_reaches_the_page_as_exit_3_with_no_token(real: Real) ->
         plan = real.plan(RESTORE, {**root, "snapshot_id": snap_id})
     assert plan["exit_code"] == 3
     assert "refused by the write gate" in plan["stderr"]
-    assert plan["confirm"] == {"stage": "plan", "token": None, "note": None, "needs": None}
+    assert plan["confirm"] == {
+        "stage": "plan",
+        "token": None,
+        "note": None,
+        "needs": None,
+        "plan_lines": [],
+        "label": None,
+    }
     assert _state(real.root) == state
     # A confirmed run refused the same way offers nothing either.
     real.through(INSTALL, {**root, "name": "lab"})
@@ -734,7 +744,14 @@ def test_a_guard_refusal_reaches_the_page_as_exit_3_with_no_token(real: Real) ->
         done = real.confirm(UNDO, token, {})
     assert done["exit_code"] == 3
     assert "refused by the write gate" in done["stderr"]
-    assert done["confirm"] == {"stage": "confirmed", "token": None, "note": None, "needs": None}
+    assert done["confirm"] == {
+        "stage": "confirmed",
+        "token": None,
+        "note": None,
+        "needs": None,
+        "plan_lines": [],
+        "label": None,
+    }
     assert _state(real.root) == installed
 
 

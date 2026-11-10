@@ -538,7 +538,7 @@ def test_a_refusal_shows_the_servers_word_constructed(
         }
     )
     out = _drive(tmp_path / "node", scenario)
-    assert out["steps"][0]["errors"] == ["Refused: excluded"]
+    assert out["steps"][0]["errors"] == ["The server refused this request: excluded"]
     assert out["steps"][0]["rows"] == []
 
 

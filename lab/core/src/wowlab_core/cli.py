@@ -8193,7 +8193,9 @@ def snap_gc(
     JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
-        report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
+        report = snapshot.GcReport(
+            dry_run=dry_run, unreferenced=(), unreferenced_bytes=0, removed=()
+        )
         if json_out:
             _emit(report)
         else:
@@ -8221,6 +8223,9 @@ def snap_gc(
                 )
             _confirm("Remove them?", yes)
             report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
+    # `dry_run` says whether this was a dry run: a run that was not, and found
+    # nothing to remove, did not list as a dry run (M16-21).
+    report = report.model_copy(update={"dry_run": dry_run})
     if json_out:
         _emit(report)
         return

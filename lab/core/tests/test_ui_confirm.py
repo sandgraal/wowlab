@@ -357,7 +357,14 @@ def test_the_confirmed_argv_is_the_plan_without_dry_run_and_with_yes_appended(
     assert token is not None
     status, payload = _confirm(server, path, token, params)
     assert status == 200, payload
-    assert payload["confirm"] == {"stage": "confirmed", "token": None, "note": None, "needs": None}
+    assert payload["confirm"] == {
+        "stage": "confirmed",
+        "token": None,
+        "note": None,
+        "needs": None,
+        "plan_lines": [],
+        "label": None,
+    }
     plan, confirmed = recorder.argvs()
     if plan_argv is not None:
         assert (plan, confirmed) == (plan_argv, confirmed_argv)
@@ -766,8 +773,14 @@ def _result(stdout: object, offer: dict[str, Any] | None) -> dict[str, Any]:
         "stdout": json.dumps(stdout),
         "stderr": "",
     }
+    stage = None
     if offer is not None:
         reply["confirm"] = offer
+        stage = offer["stage"]
+    # The server's own words for how this run ended (M16-21): a plan is
+    # marked when the server minted a token for it.
+    marked = offer is not None and bool(offer.get("token"))
+    reply["outcome"] = ui._outcome(ui._Run(0, [], [], False, False), stage, marked)
     return reply
 
 
@@ -823,11 +836,11 @@ def test_the_page_offers_confirm_only_with_a_token_and_sends_it_with_the_plans_p
     out = _drive(tmp_path, replies, steps)
     picked, planned, confirmed, again = out["steps"]
     assert picked["run"] == "Show the plan" and picked["boxHidden"] and picked["confirmHidden"]
-    assert planned["status"].startswith("Plan, nothing was changed")
+    assert planned["status"] == "Plan only: nothing was changed."
     assert planned["note"] == "Nothing to remove. Confirm runs it anyway."
     assert not planned["boxHidden"] and not planned["confirmHidden"]
     assert not planned["confirmDisabled"]
-    assert confirmed["status"].startswith("Confirmed: exit code 0")
+    assert confirmed["status"] == "After Confirm: Done (exit code 0)."
     assert confirmed["confirmHidden"] and confirmed["boxHidden"]
     assert again == confirmed  # one click, one confirmed run
     bodies = [r["body"] for r in out["requests"]]
@@ -879,4 +892,4 @@ def test_the_page_sends_the_plans_params_and_drops_confirm_when_a_field_changes(
         {"command": ["doctor"], "params": {"flavor": "_x_"}},
         {"command": ["doctor"], "params": {"flavor": "_x_"}, "confirm": "tok-2"},
     ]
-    assert out["steps"][-1]["status"].startswith("Confirmed")
+    assert out["steps"][-1]["status"] == "After Confirm: Done (exit code 0)."
