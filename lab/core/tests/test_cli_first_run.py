@@ -654,8 +654,9 @@ def test_wtf_itself_a_link_is_said_plainly_constructed(
     assert "WTF itself is a link, so the settings and SavedVariables behind it are not" in out
     assert (
         f"WTF is a link into a folder Dropbox appears to sync ({elsewhere}). wowlab does "
-        "not follow it, so your settings and SavedVariables are not in this snapshot; back "
-        "up the folder it points to yourself."
+        "not read through links, so it reads this only when the real folder is there: your "
+        "settings and SavedVariables are not in this snapshot; back up the folder it points "
+        "to yourself."
     ) in out
     assert "  WTF: a link, not followed" in out
     assert "still reads and snapshots it" not in out

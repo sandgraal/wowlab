@@ -2674,22 +2674,45 @@ def _tree_items(
                 f"{area.files} files in {area.folders} folders, not listed one by one",
             )
     for link in inv.symlinks:
-        add(link.path, "symlink", None, _link_note(link.target, link.inside_install))
+        stands_for = _link_stands_for(
+            lay.classify(link.path, is_dir=False, not_accounts=not_accounts),
+            lay.classify(link.path, is_dir=True, not_accounts=not_accounts),
+        )
+        add(link.path, "symlink", None, _link_note(link.target, link.inside_install, stands_for))
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
 
 
-def _link_note(target: str | None, inside: bool | None) -> str:
+def _link_note(target: str | None, inside: bool | None, stands_for: str = "folder") -> str:
     """`tree`'s note for a link, at the install root and in a flavor folder
     alike (M13-35). `inside` None: where it points is unknown, as for a WCI
-    link or a WSL symlink, whose link text cannot be read."""
+    link or a WSL symlink, whose link text cannot be read. It ends in the
+    readers' words for a link (M16-80), as `labaddon.NOT_FOLLOWED` and
+    `labaddon.LINKED_FILE` say it: `stands_for` is "folder" or "file"
+    (`_link_stands_for`)."""
     to = f" to {target}" if target is not None else ""
     if inside is None:
         where = "where it points is unknown"
     else:
         where = f"{'inside' if inside else 'outside'} the install"
-    return f"link{to} ({where}), not followed"
+    return f"link{to} ({where}), not followed; {snapshot.not_read_through(stands_for)}"
+
+
+def _link_stands_for(
+    as_file: layout.Classified | layout.Unclassified,
+    as_folder: layout.Classified | layout.Unclassified,
+) -> str:
+    """What a link stands in place of, for `_link_note` (M16-80): "file"
+    where the file map has a row for its place that only a file there gets
+    (a linked `WTF/Config.wtf`), else "folder", the readers' default
+    (`labaddon`). The link is never followed: `as_file` and `as_folder` are
+    its place classified as each kind."""
+    if not isinstance(as_file, layout.Classified):
+        return "folder"
+    if isinstance(as_folder, layout.Classified) and as_folder.entry.id == as_file.entry.id:
+        return "folder"
+    return "file"
 
 
 _SELECTION_WORDS = {
@@ -2821,7 +2844,11 @@ def tree(
         return
     _say(f"{chosen.folder} in {inst.root}")
     if flavor_link:
-        _note("{} is a link; wowlab does not follow it, so nothing in it is listed.", chosen.folder)
+        # M16-80: the readers' words for a linked folder.
+        _note(
+            "{} is a link; " + snapshot.not_read_through("folder") + ". Nothing in it is listed.",
+            chosen.folder,
+        )
     for item in items:
         _say_tree_item(item.path, item, explain)
     if truncated:
@@ -2911,7 +2938,15 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            note = _link_note(*layout.link_facts(root / e.name, real_root))
+            stands_for = (
+                "folder"
+                if e.name in flavors
+                else _link_stands_for(
+                    layout.classify(e.name, inst, is_dir=False),
+                    layout.classify(e.name, inst, is_dir=True),
+                )
+            )
+            note = _link_note(*layout.link_facts(root / e.name, real_root), stands_for)
             if e.name in flavors:
                 # M13-35: as `tree` says it for this flavor folder alone.
                 note = f"flavor folder; {note}; nothing in it is listed"
@@ -8997,7 +9032,11 @@ def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> l
         )
     if unread:
         top = unread[0].path.split("/", 1)[0]
-        clauses.append(f"{len(unread)} not read ({top}/ is now a link, wowlab does not follow it)")
+        # M16-80: the readers' sentence for a file behind a linked folder.
+        subject = "it" if len(unread) == 1 else "each"
+        clauses.append(
+            f"{len(unread)} not read ({snapshot.linked_folder_words(subject, f'{top}/')})"
+        )
     lines = [
         f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
         f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '

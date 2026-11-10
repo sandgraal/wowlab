@@ -827,7 +827,12 @@ def test_tree_install_names_a_root_link_without_following_it_constructed(
     (item,) = [i for i in report.items if i.path == "linked-constructed"]
     assert item.kind == "symlink"
     assert item.verdict.restorable is None
-    assert item.note is not None and item.note.endswith(", not followed")
+    # M16-80: the readers' words; a name at the install root no row has for
+    # a file alone stands for a folder.
+    assert item.note is not None and item.note.endswith(
+        ", not followed; wowlab does not read through links, so it reads this only "
+        "when the real folder is there"
+    )
 
 
 def test_tree_items_carry_base_and_flavor_folder(root: Path) -> None:
