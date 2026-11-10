@@ -800,12 +800,15 @@ for one (that is the reason `Unknown` lines are kept).
 - **Budgets.** Each file type has a byte budget and a line budget:
   `Config.wtf` and `config-cache.wtf` 4 MiB and 50,000 lines,
   `bindings-cache.wtf` 4 MiB and 50,000 lines, `macros-cache.txt` 4 MiB
-  and 100,000 lines. The real files are a few KiB. A file over either
-  budget is refused with `WtfLimitError` at the first byte or the first
-  line past it (line, column, byte offset), before any line model is
-  built. The readers read at most the budget plus one byte. A serial RSS
-  probe measures a document at each budget at about 70 to 80 MiB of growth
-  on Linux, and a refusal at none.
+  and 50,000 lines. The real files are a few KiB; a full macros file is at
+  most about 38,700 lines (150 records of up to 258 lines, the slot counts
+  **[verify]**). A file over either budget is refused with `WtfLimitError`
+  at the first byte or the first line past it (line, column, byte offset),
+  before any line model is built. The readers read at most the budget plus
+  one byte. A serial RSS probe parses the densest shapes at each budget,
+  two-line macro records included. It measured about 35 to 61 MiB of
+  growth on Linux, at most 61 MiB for config, holds Linux under 100 MiB,
+  and measured a refusal at none.
 - **The BOM.** A leading UTF-8 BOM is the document's `bom`, a prefix token,
   and never part of line 1. `to_bytes()` is `bom` followed by the lines, so
   it stays byte-identical (L4), and a `SET` line right after the BOM is

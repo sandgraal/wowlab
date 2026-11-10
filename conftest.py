@@ -56,6 +56,8 @@ SERIAL_FILES: frozenset[str] = frozenset(
         "lab/core/tests/test_luadata_budget_constructed.py",
         # RSS of a child parsing a WTF document at its budget (VmHWM; M16-25).
         "lab/core/tests/parser/test_wtfconfig_budget_rss_constructed.py",
+        # RSS of a child parsing two-line macro records at MACROS_BUDGET (VmHWM).
+        "lab/core/tests/review/test_review_m16_25_macros_record_density.py",
     }
 )
 

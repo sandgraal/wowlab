@@ -179,19 +179,27 @@ class WtfBudget(BaseModel):
 # 130 lines, and every `config-cache.wtf`, `bindings-cache.wtf` and
 # `macros-cache.txt` in the corpus is under 1.1 KiB (fixtures/README.md). A
 # client's whole CVar set is a few thousand names and a full key map a few
-# thousand binds; a macros file holds a few hundred records at most, of at
-# most 255 characters each, so at most about 260 lines a record. Each budget
-# is ten times or more above what those allow, and bounds what one parse
-# holds: a line model costs about 0.4 to 0.7 KiB, so a document at its
-# budget stays under 100 MiB (the serial RSS probe,
-# `tests/parser/test_wtfconfig_budget_rss_constructed.py`, measures it).
+# thousand binds. A macros file holds one account's or one character's
+# macros (120 and 30 slots are believed **[verify]**), each body at most 255
+# characters, so a record is at most 258 lines (`VER`, 256 body lines of
+# breaks alone, `END`) and a full file at most about 38,700 lines.
+#
+# The budgets also bound what one parse holds. A line model costs about 0.4
+# to 0.7 KiB, and a two-line macro record also builds a `Macro` view entry.
+# The serial RSS probe (`tests/parser/test_wtfconfig_budget_rss_constructed.py`)
+# measures the densest shapes at each budget on Linux, the document and its
+# views: about 61 MiB for config (the worst case), 55 MiB for bindings,
+# 35 MiB for one long macro record and 55 MiB for 25,000 two-line macro
+# records. Every document at its budget stays under 100 MiB, and the probe
+# holds Linux to that. The macros line budget was 100,000 lines until review
+# (M16-25 round 1): 50,000 two-line records then grew RSS by about 117 MiB.
 
 #: `Config.wtf` and `config-cache.wtf` (`parse_config`, `read_config`).
 CONFIG_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
 #: `bindings-cache.wtf` (`parse_bindings`, `read_bindings`).
 BINDINGS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
 #: `macros-cache.txt` (`parse_macros`, `read_macros`).
-MACROS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=100_000)
+MACROS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
 
 
 class WtfLimitError(ValueError):

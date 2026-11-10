@@ -204,9 +204,10 @@ def test_constructed_budgets_are_far_above_the_real_files() -> None:
     for budget in (CONFIG_BUDGET, BINDINGS_BUDGET, MACROS_BUDGET):
         assert budget.max_bytes >= 1024 * 1024
         assert budget.max_lines >= 10_000
-    # A macros file at its most (a few hundred records of up to 255 body
-    # lines each) needs more lines than a config file.
-    assert MACROS_BUDGET.max_lines > CONFIG_BUDGET.max_lines
+    # A macros file at its most: 150 records (120 account and 30 character
+    # slots are believed [verify]) of up to 258 lines each (`VER`, a
+    # 255-character body of line breaks alone, `END`).
+    assert MACROS_BUDGET.max_lines >= 150 * 258
 
 
 # ── the readers ─────────────────────────────────────────────────────────────

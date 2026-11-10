@@ -4,7 +4,9 @@ CONSTRUCTED inputs (L8: boundary and hostile cases), and every test id says
 so. For each file type a child process builds the densest document its
 budget allows (exactly `max_lines` typed lines filling `max_bytes`, every
 name distinct, so no view shares an entry), parses it, builds its views, and
-reports its own peak RSS growth. A second child does the same one line past
+reports its own peak RSS growth. Macros get two shapes: one record with
+every other line a body line, and two-line records (`VER`, `END`), the most
+`Macro` view entries the budget allows (added after review round 1). A second child does the same one line past
 the budget, where the refusal must come before any line model is built.
 
 The file is `serial` (root `conftest.py`): an RSS reading is calibrated on
@@ -33,9 +35,10 @@ import resource, sys
 from wowlab_core import wtfconfig
 kind, over = sys.argv[1], sys.argv[2] == "over"
 budget = {"config": wtfconfig.CONFIG_BUDGET, "bindings": wtfconfig.BINDINGS_BUDGET,
-          "macros": wtfconfig.MACROS_BUDGET}[kind]
+          "macros": wtfconfig.MACROS_BUDGET,
+          "macro-records": wtfconfig.MACROS_BUDGET}[kind]
 parse = {"config": wtfconfig.parse_config, "bindings": wtfconfig.parse_bindings,
-         "macros": wtfconfig.parse_macros}[kind]
+         "macros": wtfconfig.parse_macros, "macro-records": wtfconfig.parse_macros}[kind]
 width = budget.max_bytes // budget.max_lines  # bytes per line, ending included
 
 def line(i):
@@ -45,6 +48,14 @@ def line(i):
     if kind == "bindings":
         text = b"bind K%d " % i
         return text + b"A" * (width - len(text) - 1) + b"\n"
+    if kind == "macro-records":
+        # Two-line records, `VER` then `END`: the most records (and so the
+        # most `Macro` view entries) the line budget allows; each pair of
+        # lines fills two lines' share of the byte budget.
+        if i % 2:
+            return b"END\n"
+        text = b'VER 3 %X "m%d' % (i, i)
+        return text + b"n" * (2 * width - len(text) - len(b'" "1"\n') - 4) + b'" "1"\n'
     if i == 0:
         return b'VER 3 01 "n" "1"\n'
     text = b"/cast %d " % i
@@ -71,15 +82,18 @@ except wtfconfig.WtfLimitError as err:
 else:
     views = (doc.cvars, doc.effective()) if kind == "config" else (
         doc.bindings if kind == "bindings" else doc.macros)
+    grown = peak() - before
     assert doc.to_bytes() == data
-    print("parsed", len(doc.lines), "-", peak() - before, len(data))
+    print("parsed", len(doc.lines), len(views), grown, len(data))
 """
 
-# Measured on Linux (M16-25): about 75 MiB for config, 68 MiB for bindings
-# and 76 MiB for macros at the budget. The limit leaves room for another
-# platform's allocator; a budget that let a document hold several times
-# that would fail here.
-PARSED_LIMIT = 160 * 1024 * 1024
+# Measured on Linux (M16-25): see the numbers beside the budgets in
+# `wtfconfig.py`. Linux is held to the bound that comment states (under
+# 100 MiB). Elsewhere the limit leaves room for another platform's
+# allocator; a budget that let a document hold several times that would
+# still fail here.
+PARSED_LIMIT = (100 if sys.platform.startswith("linux") else 160) * 1024 * 1024
+KINDS = ["config", "bindings", "macros", "macro-records"]
 # The refusal counts line breaks at C speed and builds nothing per line.
 REFUSED_LIMIT = 8 * 1024 * 1024
 TRIES = 5 if sys.platform == "darwin" else 1  # see the luadata probe
@@ -108,15 +122,19 @@ def _probe(kind: str, over: bool) -> tuple[str, str, str, int]:
     return outcome, what, detail, grown
 
 
-@pytest.mark.parametrize("kind", ["config", "bindings", "macros"], ids=lambda k: f"constructed-{k}")
+@pytest.mark.parametrize("kind", KINDS, ids=lambda k: f"constructed-{k}")
 def test_constructed_document_at_the_budget_stays_under_the_memory_limit(kind: str) -> None:
-    outcome, _, _, grown = _probe(kind, over=False)
+    outcome, _, views, grown = _probe(kind, over=False)
     assert outcome == "parsed"
+    if kind == "macro-records":
+        from wowlab_core import wtfconfig
+
+        assert int(views) == wtfconfig.MACROS_BUDGET.max_lines // 2, "one record per two lines"
     assert grown > 0, "the child read no growth: it is not measuring the parse"
     assert grown < PARSED_LIMIT, f"a {kind} document at its budget grew RSS by {grown} bytes"
 
 
-@pytest.mark.parametrize("kind", ["config", "bindings", "macros"], ids=lambda k: f"constructed-{k}")
+@pytest.mark.parametrize("kind", KINDS, ids=lambda k: f"constructed-{k}")
 def test_constructed_one_line_past_the_budget_is_refused_before_building_lines(kind: str) -> None:
     outcome, what, line, grown = _probe(kind, over=True)
     assert (outcome, what) == ("refused", "lines")
