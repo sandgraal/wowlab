@@ -994,7 +994,7 @@ Found 2026-10-18 in the security review of #277 (M13-53). `check_wiki` has no ma
 
 ---
 
-## [ ] M13-65 — CI hygiene: pin the actionlint binary, show skipped tests on Windows, note the old cache entries
+## [x] M13-65 — CI hygiene: pin the actionlint binary, show skipped tests on Windows, note the old cache entries
 **Size:** XS · **Depends on:** M13-42
 
 Three small items found 2026-10-18 in the security and code reviews of #278 (M13-42) and the code review of #276 (M13-51). (1) `ci.yml` runs `raven-actions/actionlint` with its default `version: latest`, so the binary is downloaded unpinned and unchecked on every run, and shellcheck or pyflakes may be installed unpinned too; pin `version:` and verify the download as the gitleaks job does. (2) `windows.yml`'s parallel and serial pytest steps run `-q` without `-rs`, so a Windows-only test that skips is invisible in the log (M13-51 had to prove its two end-to-end tests ran from pass counts); add `-rs` (the long-paths step already has `-rxXs`). (3) Owner item, not CI: cache entries saved for `main` before M13-42 stay until GitHub evicts them; `gh cache delete --all` once clears them.
@@ -1058,7 +1058,7 @@ Found 2026-10-19 in the code review of #287 (M14-06), on `main` before it. `laba
 
 ---
 
-## [ ] M13-71 — `guard_bash.py`: a GraphQL body passed with `--input`, and the mutation allowlist as a substring match
+## [x] M13-71 — `guard_bash.py`: a GraphQL body passed with `--input`, and the mutation allowlist as a substring match
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the code review of #289, on `main` before it. (1) `_check_gh` reads a query given inline or as `query=@<file>` (since #289) but never a JSON body passed with `gh api graphql --input <file>`, so `{"query":"mutation{mergePullRequest…}"}` in that file passes the guard. (2) The allowlist is a substring match over the command text plus the query text: a file holding `mutation{mergePullRequest(…)} # resolveReviewThread`, or an inline query with an allowed name placed in any argument, passes. Read `--input` bodies the way `query=@` files are read (JSON, the `query` key), and match the mutation's field names in the parsed text (the identifiers that follow `mutation{` or `mutation(...){`) against the allowlist instead of searching the whole string. Harness tests for both, under 3.12 and 3.9, stdlib only.
@@ -1133,7 +1133,7 @@ Found 2026-10-19 when #307 went red through no change of its own. The `Secret sc
 **Acceptance:** a dated line in `.github/workflows/ci.yml` beside the scan step recording the ruling; if the range changes, `tests/repo/test_workflows_use_no_cache.py` and the workflow tests still pass and the PR's own gitleaks job is green; reviewed by `security-reviewer`. User-facing: none.
 
 ---
-## [ ] M13-80 — `looks import-char` reads the class from the identity record
+## [x] M13-80 — `looks import-char` reads the class from the identity record
 **Size:** XS · **Depends on:** M15-01
 
 Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLASS_REMARK` because no record carried the character's class; since schema 4 (M15-01) `identity.class_id` and `identity.class_file` do. Read them when the record is schema 4, keep the remark for older schemas, and say in the output which it was. `--class` still wins when given; when it disagrees with the record, say so in one line and use `--class` (an explicit flag beats a recorded value; settled in the review of #316); the record's `class_id` is checked against the tables the way `--class` is. Text output otherwise byte-identical to `main`; `--json` gains the class fields if the report lacks them, listed in the release notes (M13-47's guard).
@@ -1473,7 +1473,7 @@ Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-fac
 
 ---
 
-## [ ] M16-04 — `snap export` and `snap import`
+## [x] M16-04 — `snap export` and `snap import`
 **Size:** S · **Depends on:** nothing · **Sources:** raider:F1 (EV-02)
 
 - `snap export <id> FILE` writes one archive (manifest plus objects) to a path the player names, outside the install. Nothing in the install is opened for writing (L1).
@@ -1514,7 +1514,7 @@ The same session runs the binding and macro persistence tests (`docs/handoffs/M1
 
 ---
 
-## [ ] M16-07 — "What leaves your machine", once, and `doctor` offline by default
+## [x] M16-07 — "What leaves your machine", once, and `doctor` offline by default
 **Size:** S · **Depends on:** nothing · **Sources:** writer:F2, designer:F5, security:F11, product:F11 (EV-06; owner Q5)
 
 - One generated block between markers, in README, INSTALL and the `doctor` first-run intro. It has three rows:
@@ -1536,7 +1536,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`'s def
 
 ---
 
-## [ ] M16-08 — Help and docs drift
+## [x] M16-08 — Help and docs drift
 **Size:** XS · **Depends on:** nothing · **Sources:** writer:F8, F13, F15; newcomer:F8; security:F12 (EV-07; owner Q11)
 
 - `undo --help` names every write it reverses, drops the `guard.undo(...)` sentence, and says that a second `undo` redoes the change.
@@ -1571,7 +1571,7 @@ Guard creates the pre-write snapshot (`store.create(... label="guard pre-write: 
 
 ---
 
-## [ ] M16-10 — Plan and diff lines by name for bindings, macros and CVars
+## [x] M16-10 — Plan and diff lines by name for bindings, macros and CVars
 **Size:** M · **Depends on:** nothing · **Sources:** raider:F9, a11y:F4, designer:F2 (EV-09)
 
 - `snap diff` and every write plan that touches `bindings-cache.wtf`, `macros-cache.txt`, `config-cache.wtf` or `Config.wtf` print key old→new, macros added, removed or changed by name, and CVars old→new. They use the existing parsers.
@@ -1591,7 +1591,7 @@ The restore plan is built in `guard` (`tx.restore`, `PlanItem`), so this changes
 
 ---
 
-## [ ] M16-11 — A whole restore says what it leaves alone
+## [x] M16-11 — A whole restore says what it leaves alone
 **Size:** S · **Depends on:** M16-11T · **Sources:** qa:F2 (EV-10)
 
 The plan lists, under a "left alone" heading, the files under the snapshot's subtrees that were added since the snapshot. README, `snap restore --help` and the wiki say that a whole restore never deletes them.
@@ -1631,7 +1631,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-14 — Pipe handling
+## [x] M16-14 — Pipe handling
 **Size:** XS · **Depends on:** nothing · **Sources:** raider:F16, newcomer:F5, qa:F5, writer:F14 (EV-13)
 
 `BrokenPipeError` and SIGPIPE are handled once at the entry point. The exit is 0 when the work completed, with no errno line. A write never aborts mid-plan because stdout closed.
@@ -1666,7 +1666,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-17 — File-map text: player words, and spec notes
+## [x] M16-17 — File-map text: player words, and spec notes
 **Size:** S · **Depends on:** nothing · **Sources:** writer:F4, F12, newcomer:F3, F16, designer:F9 (EV-16)
 
 - Each `filemap.toml` row gets a player `what` and a spec `notes`.
@@ -1733,6 +1733,8 @@ Every fenced `wowlab` command in README and INSTALL runs against the fixture san
 - A `WowlabError` base with `exit_code`. Module errors subclass it, and `_handled` catches the base.
 - Under `--json`, an `ErrorReport {kind, message, exit_code}` also goes to stdout. The stderr line and the exit codes are unchanged.
 
+*Added 2026-11-10 (the M16-18 review):* `wowlab ui`'s explain pane calls `explain --json` with `partial` and draws the report it gets; once an error also prints an `ErrorReport` on stdout, keep the pane showing the error when the report has no `result`.
+
 **Acceptance:** tests on three error kinds; `make ci` green. Reviewed by `code-reviewer`. User-facing: `--json` error output (additive).
 
 ---
@@ -1759,14 +1761,14 @@ Inputs are constructed and labelled.
 
 ---
 
-## [ ] M16-24 — `sv dump --json` on the C encoder
+## [x] M16-24 — `sv dump --json` on the C encoder
 **Size:** XS · **Depends on:** nothing · **Sources:** architect:F3, qa:F9 (EV-22)
 
 **Acceptance:** `_stream_dump` encodes each row with `encoder.encode(...)`. Output is byte-identical to `main` on every fixture and on a constructed 10 MiB file, and the time is reported. Reviewed by `code-reviewer`.
 
 ---
 
-## [ ] M16-25 — WTF parser budgets and the BOM
+## [x] M16-25 — WTF parser budgets and the BOM
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F7, F8 (EV-23)
 
 - Byte and line budgets per file type, refused with a position.
@@ -1885,7 +1887,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-34 — `wowlab addons check` and `sv list --orphans`
+## [x] M16-34 — `wowlab addons check` and `sv list --orphans`
 **Size:** M · **Depends on:** nothing · **Sources:** raider:F8, addon-author:F5, F15, product:F10 (EV-32; owner Q10, first slices of addon-audit and sv-health)
 
 - `addons check` reports, per addon:
@@ -1941,7 +1943,7 @@ An `@live` test hashes the real install: contents, sizes, modes, and file and di
 
 ---
 
-## [ ] M16-39T — [TEST] Seeded mutation test for `luadata` and the WTF parsers
+## [x] M16-39T — [TEST] Seeded mutation test for `luadata` and the WTF parsers
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F15 (EV-36T)
 
 Uses the stdlib `random`, with fixed seeds and iteration counts, inside `make test-parser`. The invariants:
@@ -1962,7 +1964,7 @@ On a PR that touches a load-bearing file (ADR-0013: `luadata.py`, `guard.py`, an
 
 ---
 
-## [ ] M16-41 — The store at rest
+## [x] M16-41 — The store at rest
 **Size:** S · **Depends on:** nothing · **Sources:** security:F7 (EV-40)
 
 The store tree is created 0700 and its files 0600, whatever the umask. Existing stores are fixed on their next write. `doctor` and `snap verify` warn when the store is readable by others.
@@ -1994,7 +1996,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-44 — The capture tool and free text
+## [x] M16-44 — The capture tool and free text
 **Size:** S · **Depends on:** nothing · **Sources:** security:F8, F10 (EV-43)
 
 - The capture tool's automatic SavedVariables picks skip a deny-list of chat-log, mail and note addons, which can be added only with `--sv` and an extra confirmation.
@@ -2047,7 +2049,7 @@ Built only if M16-05's macro-place answer cannot place macros without a join key
 
 ---
 
-## [ ] M16-49T — [TEST] `luadata.read` and the `wtfconfig` readers refuse a parent-directory link out of the install
+## [x] M16-49T — [TEST] `luadata.read` and the `wtfconfig` readers refuse a parent-directory link out of the install
 **Size:** S · **Depends on:** M16-26 · **Sources:** the M16-26T security review (2026-10-22)
 
 Found in review on 2026-10-22, and not in M16-26's scope. `O_NOFOLLOW` checks only the last part of a path, and the readers take no install root. So `WTF -> ../Elsewhere` reads `Elsewhere/Config.wtf` while `tree` reports the `WTF` entry as "link, not followed". Strict-xfail graders, constructed and labelled, for `luadata.read` and each `wtfconfig` `read_*`, with the install root given:
@@ -2185,7 +2187,7 @@ User-facing: the whole look of `wowlab ui`. The wiki's screenshots of the UI nee
 The owner asked on 2026-11-09 that the reviewers' follow-ups be written up
 as tickets and built in this wave. Each one cites the review that found it.
 
-## [ ] M16-54 — `sv merge`: a comment on a kept key between list entries survives `--take theirs`
+## [x] M16-54 — `sv merge`: a comment on a kept key between list entries survives `--take theirs`
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-12 round-3 code review (2026-11-05)
 
 `_Merger.take_list` carries only the first junction's comment (`lead_in`) across removed entries. In `X = {"a", -- [1]` / `x = 1, -- about x` / `"b", -- [2]}`, taking theirs `{"q", x = 1}` writes `x = 1,` without `-- about x`, because that comment lived in the removed `"b"`'s lead. Apply `_prefixed(next_slot, kept.comment)` at every junction where a removed entry follows a kept one.
@@ -2206,7 +2208,7 @@ Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no
 
 **Acceptance:** a constructed test with a moved pin shows the one clear failure; the current pins still pass; reviewed by `code-reviewer` and `security-reviewer` (`.github` policy).
 
-## [ ] M16-57 — `tests/scripts` imports its own conftest, not `review/`'s
+## [x] M16-57 — `tests/scripts` imports its own conftest, not `review/`'s
 **Size:** XS · **Depends on:** nothing · **Sources:** the M13-81 reviews (2026-11-05)
 
 `tests/scripts/test_lab_capture_followup5*.py` do `from conftest import DEFAULT_OFFSET`, which resolves to `lab/core/tests/review/conftest.py` when both trees are collected in one `-n 4` run, and the collection fails. Import the value from a uniquely named module instead.
@@ -2234,14 +2236,14 @@ When the base revision has no `scripts/check_grader_diff.py`, the job falls back
 
 **Acceptance:** `make hooks-test` passes from `/home/user/<repo>` and from a scratchpad worktree; reviewed by `code-reviewer`.
 
-## [ ] M16-61T — [TEST] `test_luadata_budget_constructed.py` does not crash an xdist worker
+## [x] M16-61T — [TEST] `test_luadata_budget_constructed.py` does not crash an xdist worker
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-26 reviews (2026-11-04); the #385 review (2026-11-09)
 
 Under `-n 2` a worker goes down: the controller cannot unpickle `ProbeReading`, a warning class defined in the grader itself (`lab/core/tests/test_luadata_budget_constructed.py`), giving `ModuleNotFoundError("No module named 'test_luadata_budget_constructed'")` and an INTERNALERROR. The fix edits a `luadata` grader, so it is a test-writer's (ADR-0013): move the class to an importable test-support module, or stop it crossing the worker boundary, without changing what any budget test asserts. The same pattern in `lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py` and `test_m10_04_escaped_key_list_at_budget_misses_time_target.py` is in scope.
 
 **Acceptance:** `uv run pytest -q -n 2 lab/core/tests/test_luadata_budget_constructed.py lab/core/tests/review/test_m10_04_dense_array_misses_memory_target.py lab/core/tests/review/test_m10_04_escaped_key_list_at_budget_misses_time_target.py` passes five times in a row with no worker down; each budget assertion is unchanged (the diff shows it); reviewed by `code-reviewer`.
 
-## [ ] M16-62T — [TEST] The account-clash refusal suggests a snapshot before a hand removal
+## [x] M16-62T — [TEST] The account-clash refusal suggests a snapshot before a hand removal
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-03 final domain review (2026-11-06); the #385 review (2026-11-09)
 
 The refusal ends "rename or remove '<folder>' in the target first". A folder removed by hand is outside wowlab's snapshot and journal, so `wowlab undo` cannot bring it back. The new wording is "rename it, or run `wowlab snap create` and then remove it". `lab/core/tests/test_guard_restore_into_accounts.py` asserts `"rename or remove"` in a test that also checks what must stay true now (the refusal names the folder and `--paths`, and the world is unchanged). A test-writer removes only the old-wording assertion from that test, which stays active, and adds a new test asserting the new wording and `snap create`, strict xfail until M16-62 lands (ADR-0013: `guard.py` is load-bearing).
@@ -2255,7 +2257,7 @@ Change the message in `guard._refuse_others_on_target_accounts` to M16-62T's wor
 
 **Acceptance:** M16-62T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`. User-facing: the refusal text (wiki: Snapshots-and-Undo).
 
-## [ ] M16-63 — `casc` player copy: no `[verify]` as a predicate, no ADR id in an error
+## [x] M16-63 — `casc` player copy: no `[verify]` as a predicate, no ADR id in an error
 **Size:** XS · **Depends on:** nothing · **Sources:** the M15-05 reviews (2026-11-03)
 
 `casc.py` uses `[verify]` as a sentence's predicate in a runtime message ("its meaning is [verify]") and puts "(ADR-0033)" in an error message. Reword them under the player-copy rules (`.claude/rules/player-copy.md`).
@@ -2268,3 +2270,88 @@ Change the message in `guard._refuse_others_on_target_accounts` to M16-62T's wor
 `lab/addon/WowLab/Collections.lua` writes "(M11-03)" into the saved file, where a player reads it. Remove ticket ids from every string the addon stores or prints, update `lab/addon/README.md` where it documents that string, and add a static test that refuses `M\d\d-\d\d` in addon strings. It depends on M16-45 and lands before schema 5 is released, so the changed stored text is part of schema 5, not a new schema (LAB_PLAN §13.1); if a release with schema 5 has gone out first, stop and report.
 
 **Acceptance:** the static test, `make lint-lua`, and the addon suite pass; reviewed by `code-reviewer`. User-facing: the stored text.
+
+# M16 follow-ups found in review (filed 2026-11-10)
+
+Filed by the conductor from the reviews of #400–#417, as the owner asked on
+2026-11-09. Each cites the review that found it.
+
+## [ ] M16-65 — The remaining install readers open from the install root
+**Size:** M · **Depends on:** M16-49 · **Sources:** the M16-49 security reviews (2026-11-10)
+
+M16-49 converted `sv dump`, `cvar`, `binds`, `macros`, `char binds`, `char macros`, `macros check`, `doctor` and `addons check`. These still check only the last part of the path, so a folder swapped for a link between a listing and the read is followed:
+- `cli._read_sv` (the `sv merge` and copy paths);
+- `labaddon._read`, `read_char`, `read_account`, `_Reader.read` (which passes `expect=st`, refused together with `root`) and the WTF counts;
+- `explain` detail's `_disk_now` and `_on_disk`.
+
+`sv dump` through a path that enters the install by a link into one of its subfolders, with a folder inside the install linked out, still takes the last-part-only fallback. Resolve the spelled path one component at a time and refuse when any folder passed through is inside the install. The security reviewer's two local probes (`char show` swapped account folder; the shortcut case) seed the tests.
+
+**Acceptance:** each reader above refuses a linked folder with the folder named; the probes pass; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the same refusal on `sv merge`, `char show` and its siblings, and `explain` detail.
+
+## [ ] M16-66T — [TEST] `guard` creates the store root and `journal/` private
+**Size:** XS · **Depends on:** M16-41 · **Sources:** the M16-41 reviews (2026-11-10)
+
+`guard` makes the store root and `journal/` with its default mode (0755 under umask 0022); M16-41 makes them private only at the next store write. Graders, strict xfail: under umask 0022 the first guard write leaves the root and `journal/` at 0700 before anything is written into them.
+
+**Acceptance:** strict xfail on `main`; pass with a scratch fix; reviewed by `code-reviewer`.
+
+## [ ] M16-66 — [IMPL] `guard` creates the store root and `journal/` private
+**Size:** XS · **Depends on:** M16-66T · **Sources:** as M16-66T
+
+**Acceptance:** M16-66T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-67 — `snap export` writes its archive 0600
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-41 security review (2026-11-10)
+
+The archive holds the same settings and saved data as the store, but is created 0666 less the umask at the path the player names. Create it 0600 (POSIX; a note on Windows).
+
+**Acceptance:** a test under umask 0022; reviewed by `code-reviewer` and `security-reviewer`. User-facing: the archive's mode.
+
+## [ ] M16-68 — `SnapshotStore.put_object` and `gc` refuse a store inside an install
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-41 code review (2026-11-10)
+
+`create` refuses a store inside an install (`_refuse_inside_any_install`); `put_object` and `gc(dry_run=False)` do not, so a library caller can write or delete objects there. The CLI is covered by `guard.store_lock`. Add the same check.
+
+**Acceptance:** constructed tests; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-69T — [TEST] Leftover temp files are cleaned before the pre-write snapshot
+**Size:** S · **Depends on:** M16-13 · **Sources:** the M16-13 security review (2026-11-10)
+
+`_open_record` takes the pre-write snapshot before it removes leftover `.wowlab-*.tmp` files, so the snapshot holds them, and a later whole restore that is not filtered by the file map could bring one back at a path no journal names as a temp. The reviewer recommends cleaning up first, keeping snapshots lossless, rather than excluding temp names from snapshots. Graders, strict xfail: after an interrupted change, the next change's pre-write snapshot holds no journaled leftover temp, and the removals are still journaled.
+
+**Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
+**Size:** S · **Depends on:** M16-69T · **Sources:** as M16-69T
+
+**Acceptance:** M16-69T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-70T — [TEST] Journal record ids are ASCII digits only
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
+
+`guard._RECORD_NAME` uses `\d` without `re.ASCII`, so a record named with Arabic-Indic digits loads (and `doctor` now prints its id). Graders, strict xfail: such a file is not loaded as a record.
+
+**Acceptance:** strict xfail on `main`; reviewed by `code-reviewer`.
+
+## [ ] M16-70 — [IMPL] Journal record ids are ASCII digits only
+**Size:** XS · **Depends on:** M16-70T · **Sources:** as M16-70T
+
+**Acceptance:** M16-70T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-71 — `doctor` reports a change whose rollback did not finish
+**Size:** XS · **Depends on:** M16-13 · **Sources:** the M16-13 code review (2026-11-10)
+
+M16-13 flags the most recent `open` record. A most recent record in `rollback_incomplete` also left files part-changed and is not reported. Report it the same way, with the line that puts things back.
+
+**Acceptance:** a constructed test; reviewed by `code-reviewer` and `security-reviewer`. User-facing: `doctor`.
+
+## [ ] M16-72 — Leftovers from the M16-04 to M16-26 reviews
+**Size:** S · **Depends on:** nothing · **Sources:** the reviews of #386–#395 (2026-11-09)
+
+Each item is small and independent; split if one grows:
+- `snap diff`'s `_lua_diff` reads SavedVariables with no size cap; give it the `luadata` budget.
+- `redact` is quadratic on long runs of `/`; make it linear (a constructed timing test).
+- `file:///home/<login>` redacts to `fil<HOME>`; keep the scheme.
+- The Windows descriptor check in the M16-49T junction graders is a no-op; report it to a test-writer if it is a grader of a load-bearing file.
+
+**Acceptance:** one test per item; reviewed by `code-reviewer` (and `security-reviewer` for `redact`).
