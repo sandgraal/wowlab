@@ -97,6 +97,7 @@ still makes at most `MAX_DIRECTORY_BYTES // 46` (about 793,000) of them."""
 _CHUNK = 1 << 20
 _FIXED_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: the same snapshot, the same bytes
 _O_NOFOLLOW: int = getattr(os, "O_NOFOLLOW", 0)
+_UNIX_HOST = 3  # the zip "version made by" host byte for Unix (APPNOTE 4.4.2)
 
 
 class ArchiveError(SnapshotError):
@@ -352,7 +353,13 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
 def _member(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, date_time=_FIXED_TIME)
     info.compress_type = zipfile.ZIP_DEFLATED
-    info.external_attr = (stat.S_IFREG | 0o644) << 16
+    # Private as the store's own files are (M16-41, M16-76): a player who
+    # unpacks the archive by hand gets 0600 files, not world-readable ones.
+    # Unpackers honour these bits only from a Unix "made by" host, and
+    # `ZipInfo` says FAT on Windows, so the host is named here too; that
+    # also keeps the archive the same bytes whatever system exported it.
+    info.create_system = _UNIX_HOST
+    info.external_attr = (stat.S_IFREG | 0o600) << 16
     return info
 
 

@@ -176,6 +176,38 @@ def test_export_is_deterministic_constructed(
     assert second.read_bytes() == archive.read_bytes()
 
 
+def test_every_member_is_a_private_unix_file_constructed(archive: Path) -> None:
+    """M16-76: a player who unpacks the archive by hand gets 0600 files,
+    as the store's own are (M16-41); a Unix "made by" host is what makes an
+    unpacker honour the bits, whatever system exported the archive."""
+    entries = _entries(archive)
+    assert entries, "the archive has members"
+    for info, _ in entries:
+        assert not info.is_dir(), f"{info.filename}: no directory entries"
+        assert info.create_system == 3, f"{info.filename}: made-by host {info.create_system}"
+        mode = info.external_attr >> 16
+        assert stat.S_IFMT(mode) == stat.S_IFREG, f"{info.filename}: {oct(mode)}"
+        assert stat.S_IMODE(mode) == 0o600, f"{info.filename}: {oct(stat.S_IMODE(mode))}"
+
+
+def test_import_accepts_the_members_older_exports_stamped_0644_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], archive: Path
+) -> None:
+    """M16-76 changed only what export stamps: an archive from before it,
+    whose members say 0644, imports as before, to the same snapshot."""
+    _, manifest = source
+
+    def as_before(
+        entries: list[tuple[zipfile.ZipInfo, bytes]],
+    ) -> list[tuple[zipfile.ZipInfo, bytes]]:
+        return [_entry(info.filename, data, mode=stat.S_IFREG | 0o644) for info, data in entries]
+
+    old = _rewrite(archive, as_before, comment=ARCHIVE_COMMENT)
+    store = SnapshotStore(tmp_path / "store-b")
+    report = snaparchive.import_snapshot(store, old)
+    assert report.added and store.show(manifest.id) == manifest and store.verify().ok
+
+
 def test_import_reuses_objects_already_in_the_store_constructed(
     tmp_path: Path, archive: Path
 ) -> None:
