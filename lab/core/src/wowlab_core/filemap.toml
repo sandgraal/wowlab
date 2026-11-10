@@ -179,6 +179,25 @@ tier = "—"
 module = "`process` (name only)"
 match = ["*.exe", "*.app/", "*.app/**"]
 
+# Before the `WTF/`, `Interface/` and `Fonts/` rows, which would match it
+# first otherwise: the write gate leaves it beside the file it was replacing.
+[[entry]]
+id = "wowlab-temp"
+section = "flavor"
+base = "flavor"
+doc_path = "`.wowlab-<32 hex>.tmp` (in any folder under `WTF/`, `Interface/` or `Fonts/`)"
+what = "Left by a wowlab change that was interrupted (the computer stopped, or wowlab was closed mid-write). The file beside it is either as it was or fully changed, never half-written. The next change wowlab makes to this game version, or `wowlab undo`, removes it"
+notes = "The write gate's temp file (§6.10): the new bytes, written and fsynced beside the target, then renamed over it, so it never holds the bytes from before the change. Its name is journaled before it exists; on entering, the next transaction on this flavor (an undo included) removes the temps the journal names, matching the name exactly in lowercase. Not in the journal (another store, a name in other letter case) means nothing removes it. A snapshot taken while it is there holds it (qa:F3, 2026-11-10)"
+written_by = "wowlab, while it writes a change"
+edit = "no"
+tier = "—"
+module = "`guard` (creates and removes it)"
+match = [
+  "WTF/**/.wowlab-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].tmp",
+  "Interface/**/.wowlab-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].tmp",
+  "Fonts/**/.wowlab-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].tmp",
+]
+
 [[entry]]
 id = "wtf-folder"
 section = "flavor"
