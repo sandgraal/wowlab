@@ -202,11 +202,41 @@ def test_the_ui_statements_the_owner_rulings_require() -> None:
     screen = _first_screen()
     assert "`wowlab ui` changes game files only when you confirm a plan it showed you." in screen
     assert UI_RUNS in screen
-    # One description of what the UI runs, used everywhere it is described.
-    assert _readme().count(UI_RUNS) == 2
+    # One description of what the UI runs, said once (M16-08 dropped the copy).
+    assert _readme().count(UI_RUNS) == 1
+    assert "What the browser explorer runs, exactly" not in _readme()
     # ADR-0029, owner ruling of 2026-10-16: the token URL on shared Linux.
     assert "On a shared Linux machine" in screen
     assert (
         "in their process listing for a while "
         "(a newly started browser can keep it in its command line)" in screen
     )
+
+
+# M16-08 (owner Q11): what the captures behind the parsers cover, said plainly.
+TESTED_ON = (
+    "wowlab is built and tested on Forever on macOS; retail and Windows SavedVariables "
+    "are untested."
+)
+
+
+def test_the_first_screen_says_what_it_was_tested_on() -> None:
+    assert TESTED_ON in _first_screen()
+
+
+def test_the_wave_6_sentences_match_main() -> None:
+    """The archive reader is on `main` (`casc.py`), and no command reads `Data/`."""
+    readme = _readme()
+    assert (ROOT / "lab" / "core" / "src" / "wowlab_core" / "casc.py").is_file()
+    assert "None of this is built yet" not in readme
+    assert "when the first reader ships" not in readme
+    assert "Wave 6 · picked" not in readme and "Wave 6 is picked" not in readme
+    assert "only the archive reader is on `main`" in readme
+    assert "no command uses it yet, so no wowlab command reads `Data/`" in readme
+
+
+def test_redacted_output_is_not_promised_for_later() -> None:
+    for name in ("SECURITY.md", "CONTRIBUTING.md"):
+        text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
+        assert "`wowlab doctor --redact`" in text, name
+        assert "once it ships" not in text, name
