@@ -213,9 +213,9 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 When all three hold, the record keeps the command, the action slot number and the keys. When any fails, the command is counted in `commands_left_out` and in a new `clicks_left_out`, and nothing else is read from the frame. A button whose `type` is `action` presses one of the client's numbered action slots. Bar addons such as Bartender4, ElvUI and Dominos generate those buttons' names themselves; GSE, BindPad and `/run` targets are not of that type. A wrong guess therefore only leaves a button out, and no text the player typed is stored. Whether `GetBinding` lists `CLICK` commands at all is [verify]; the schema-5 capture settles it.
 
----
-
 **Amended by (2026-11-10, ADR-0036; Proposed with it):** the addon may record other players' character, realm and guild names, and the player's notes about them, only for a feature turned on under ADR-0036 and on its terms (local only, opt-in, deletable, never in the repository or in shared output). GUIDs, chat and whispers stay excluded. Every other rule here is unchanged.
+
+---
 
 ## ADR-0027 — Generated local pages are self-contained static HTML
 
