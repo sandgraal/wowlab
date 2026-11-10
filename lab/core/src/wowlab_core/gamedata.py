@@ -92,6 +92,7 @@ __all__ = [
     "UnexpectedResponse",
     "WagoSource",
     "builds",
+    "cached_rows",
     "default_cache_dir",
     "resolve_build",
     "rows",
@@ -790,8 +791,7 @@ class GameData:
 
     def table_path(self, name: str, build: str) -> Path:
         """Where ``(name, build)`` is or would be cached. No I/O."""
-        _check_key(name, build)
-        return self._cache_dir / "tables" / build / f"{name}.csv"
+        return _table_path(self._cache_dir, name, build)
 
     def sidecar(self, name: str, build: str) -> Sidecar | None:
         """The fetch record beside a cached table, if there is one."""
@@ -915,6 +915,25 @@ def _iter_rows(path: Path) -> Iterator[dict[str, str]]:
                     f"header has {len(header)}"
                 )
             yield dict(zip(header, record, strict=True))
+
+
+def _table_path(cache_dir: Path, name: str, build: str) -> Path:
+    _check_key(name, build)
+    return cache_dir / "tables" / build / f"{name}.csv"
+
+
+def cached_rows(
+    name: str, build: str, *, cache_dir: Path | None = None
+) -> Iterator[dict[str, str]] | None:
+    """Rows of the table already cached for exactly ``build``, or None when
+    none is. Never fetches, never writes, and needs no ``Source``: a reader
+    that only names what the cache already holds (M16-31). Raises
+    ``ValueError`` for a malformed key and ``MalformedTable`` (while
+    iterating) as ``rows`` does."""
+    path = _table_path(cache_dir if cache_dir is not None else default_cache_dir(), name, build)
+    if not path.is_file():
+        return None
+    return _iter_rows(path)
 
 
 def _sidecar_path(table_path: Path) -> Path:

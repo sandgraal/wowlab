@@ -1090,7 +1090,10 @@
   // ─── the character tab (M14-08, §16.3) ───
   // A picker from `char list --json --brief` (no records: the picker needs
   // none), latest-written first, and for the
-  // character picked, a header and its gear from `char gear --json`. Every
+  // character picked, a header and its gear from `char gear --json`. The
+  // header's class, race and spec names are the report's `names`, read by
+  // the CLI from game tables already cached for the client; this script
+  // holds none, and shows the id when a name is missing. Every
   // name and colour comes from the report: a slot's name is its `slot_name`,
   // an item's is its `name`, and its colour is a class built from its
   // `colour` code (`colourClass`) that the server's stylesheet paints from
@@ -1152,18 +1155,23 @@
     );
   }
 
-  // Latest-written first; rows with no time last; ties by account and folder.
+  // Latest-written first; rows with no time last; a tie in time by the
+  // newest record schema (`record_schema`; rows without one after it), then
+  // by account and folder.
   function latestFirst(entries) {
-    const time = (e) => (typeof e.mtime_ns === "number" ? e.mtime_ns : null);
+    const num = (v) => (typeof v === "number" ? v : null);
     const path = (e) => String(e.account) + "/" + String(e.realm_folder) + "/" + String(e.label);
+    const newestFirst = (x, y) => {
+      if (x === y) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return y - x;
+    };
     return entries.slice().sort((a, b) => {
-      const ta = time(a);
-      const tb = time(b);
-      if (ta !== tb) {
-        if (ta === null) return 1;
-        if (tb === null) return -1;
-        return tb - ta;
-      }
+      const byTime = newestFirst(num(a.mtime_ns), num(b.mtime_ns));
+      if (byTime) return byTime;
+      const bySchema = newestFirst(num(a.record_schema), num(b.record_schema));
+      if (bySchema) return bySchema;
       return path(a) < path(b) ? -1 : path(a) > path(b) ? 1 : 0;
     });
   }
@@ -1292,13 +1300,42 @@
     drawDressing(report.dressing);
   }
 
-  function charFact(list, label, value) {
+  // One fact; `title`, when given, is the exact value behind the one shown.
+  function charFact(list, label, value, title) {
     list.appendChild(make("dt", label));
-    list.appendChild(make("dd", value));
+    const dd = make("dd", value);
+    if (typeof title === "string" && title) dd.title = title;
+    list.appendChild(dd);
   }
 
   function numberWords(value) {
     return typeof value === "number" ? String(value) : "not returned";
+  }
+
+  // An average item level to one decimal, the client's exact figure as the title.
+  function averageFact(list, label, value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      charFact(list, label, value.toFixed(1), "rounded to one decimal; exact: " + String(value));
+    } else {
+      charFact(list, label, numberWords(value));
+    }
+  }
+
+  // A value the record does not hold, with the record's reason when it
+  // gives one, as `char gear` prints it.
+  function notRecorded(absent) {
+    return typeof absent === "string" && absent ? "not recorded: " + visible(absent) : "not recorded";
+  }
+
+  // A class, race or spec: its name from the game tables wowlab already
+  // downloaded for this client (`names`), with the id as the title (and
+  // `more` after it); else the id; with no id, the record's reason.
+  function namedFact(list, label, name, id, absent, more) {
+    const idWords = typeof id === "number" ? label.toLowerCase() + " id " + id : "";
+    const title = idWords && more ? idWords + "; " + more : idWords;
+    if (idWords && typeof name === "string" && name) charFact(list, label, visible(name), title);
+    else if (idWords) charFact(list, label, idWords, more || "");
+    else charFact(list, label, notRecorded(absent));
   }
 
   function drawCharHeader(entry, report) {
@@ -1306,17 +1343,31 @@
     header.replaceChildren(make("h2", visible(entry.label)));
     const facts = make("dl");
     facts.className = "char-facts";
-    charFact(facts, "Character folder", visible(String(report.character)));
-    const spec = report.spec && typeof report.spec === "object" ? report.spec : {};
-    if (typeof spec.absent === "string") charFact(facts, "Spec", visible(spec.absent));
-    else charFact(facts, "Spec id", numberWords(spec.id));
-    const average = report.average && typeof report.average === "object" ? report.average : {};
+    const obj = (v) => (v && typeof v === "object" ? v : {});
+    const identity = obj(report.identity);
+    const names = obj(report.names);
+    const spec = obj(report.spec);
+    charFact(facts, "Level", typeof report.level === "number" ? String(report.level) : notRecorded(report.level_absent));
+    // Without a cached name, the class's file name as the client gave it ("MAGE").
+    const classWords = typeof names.class_name === "string" && names.class_name ? names.class_name : identity.class_file;
+    namedFact(facts, "Class", classWords, identity.class_id, identity.class_id_absent);
+    // One reason said once: a race missing for the class's reason says so.
+    const raceAbsent =
+      typeof identity.class_id !== "number" && typeof identity.race_id_absent === "string" &&
+      identity.race_id_absent === identity.class_id_absent
+        ? "as for Class"
+        : identity.race_id_absent;
+    namedFact(facts, "Race", names.race, identity.race_id, raceAbsent);
+    // What the client calls the specialization, whatever its name reads.
+    namedFact(facts, "Spec", names.spec, spec.id, spec.absent, "the client's specialization, not the talent points spent");
+    const average = obj(report.average);
     if (typeof average.absent === "string") {
       charFact(facts, "Average item level", "absent (" + visible(average.absent) + ")");
     } else {
-      charFact(facts, "Average item level, equipped", numberWords(average.equipped));
-      charFact(facts, "Average item level, overall", numberWords(average.overall));
+      averageFact(facts, "Average item level, equipped", average.equipped);
+      averageFact(facts, "Average item level, overall", average.overall);
     }
+    charFact(facts, "Character folder", visible(String(report.character)));
     charFact(facts, "File", shown(String(report.file)));
     charFact(facts, "Written", localTime(report.mtime_ns) + " (the file's modification time)");
     header.appendChild(facts);

@@ -849,7 +849,9 @@ def test_an_older_record_keeps_the_no_class_remark(
     assert [r for r in report.look.remarks if "class" in r.casefold()] == [cli._NO_CLASS_REMARK]
     assert report.recorded_class_id is None
     assert report.recorded_class_file is None
-    assert (report.recorded_class_absent or "").startswith(f"the record is schema {schema};")
+    assert (report.recorded_class_absent or "").startswith(
+        "this record predates the identity section;"
+    )
     text = ok("looks", "import-char", "undead2", "--root", str(root), "--build", BUILD).stdout
     assert "  class:     not given (class-restricted choices are noted, not refused)\n" in text
     assert text.count(f"\n{cli._NO_CLASS_REMARK}\n") == 1

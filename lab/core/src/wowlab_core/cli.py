@@ -10492,6 +10492,22 @@ def char_list(
         raise typer.Exit(EXIT_ERROR)
 
 
+class CharNames(_Out):
+    """The spec, race and class names `char gear --json` gives beside their
+    ids (M16-31): each the `Name_lang` (or, for a body type of 1, the
+    non-empty female form) of the row with that id in the game-data table
+    already cached for `build`, the installed client's version. A name is
+    None when the install has no version, no such table is cached, the
+    table has no row for the id or cannot be read, or the record holds no
+    id; the page then shows the id. Nothing is fetched: `wowlab db2 fetch`
+    fills the cache."""
+
+    build: str | None
+    spec: str | None
+    race: str | None
+    class_name: str | None
+
+
 class CharGearReport(_Out):
     """`wowlab char gear --json`: one character's equipped gear from the
     lab-addon's `gear` record, slot by slot in the client's slot order, each
@@ -10505,6 +10521,11 @@ class CharGearReport(_Out):
     spec: gear.GearSpec
     # The race, body type and class (M15-01), as `char show --json` gives it.
     identity: labaddon.CharIdentity
+    # The character's level as the record holds it (the talent block's
+    # `player_level`, read at the save), or None (M16-31).
+    level: int | None
+    level_absent: str | None  # why there is no level; None when there is one
+    names: CharNames
     average: gear.GearAverage
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
@@ -10530,6 +10551,8 @@ _GEAR_OVERALL_NOTE = (
     "overall: on Retail, the best items owned, bags included (community documentation, "
     "[verify] on Forever)."
 )
+# Said by the page as the Spec row's title (M16-31); in the text, behind --notes.
+_GEAR_SPEC_NOTE = "Spec is the client's specialization, not the talent points spent."
 
 
 def _gear_table_note(source: gear.SlotTableSource) -> str:
@@ -10543,6 +10566,90 @@ def _gear_table_note(source: gear.SlotTableSource) -> str:
         f"Slot names and quality words: your {gear.SLOTS_FILE} in wowlab's user config folder, "
         "over the shipped default."
     )
+
+
+# The cached tables the names are read from, with the column of the female
+# form of the name in each (M16-31). Table and column names, not game data.
+_NAME_TABLES = {
+    "spec": ("ChrSpecialization", "FemaleName_lang"),
+    "race": ("ChrRaces", "Name_female_lang"),
+    "class_name": ("ChrClasses", "Name_female_lang"),
+}
+
+
+def _cached_name(table: str, female: str, build: str, row_id: int, sex: int | None) -> str | None:
+    """The name of row `row_id` in `table` as cached for `build`, or None."""
+    try:
+        rows = gamedata.cached_rows(table, build)
+        if rows is None:
+            return None
+        for row in rows:
+            if row.get("ID") != str(row_id):
+                continue
+            name = (row.get(female) or "").strip() if sex == 1 else ""
+            name = name or (row.get("Name_lang") or "").strip()
+            return name or None
+    except (ValueError, OSError, gamedata.GameDataError):
+        return None
+    return None
+
+
+def _char_names(
+    version: str | None, spec: gear.GearSpec, identity: labaddon.CharIdentity
+) -> CharNames:
+    """Names for the record's ids from the tables cached for `version`."""
+    ids = {"spec": spec.id, "race": identity.race_id, "class_name": identity.class_id}
+    found: dict[str, str | None] = dict.fromkeys(ids)
+    if version is not None:
+        for field, row_id in ids.items():
+            if row_id is not None:
+                table, female = _NAME_TABLES[field]
+                found[field] = _cached_name(table, female, version, row_id, identity.sex)
+    return CharNames(
+        build=version, spec=found["spec"], race=found["race"], class_name=found["class_name"]
+    )
+
+
+def _named(label: str, name: str | None, row_id: int | None, absent: str | None) -> str:
+    """One header line as the UI's Character tab draws it (M16-31): the name
+    with its id, else the id, else why there is none."""
+    if row_id is not None:
+        ident = f"{label.lower()} id {row_id}"
+        return f"{label}: {name} ({ident})" if name else f"{label}: {ident}"
+    return f"{label}: not recorded: {absent or 'not returned'}"
+
+
+def _header_lines(report: CharGearReport) -> list[str]:
+    """Level, class, race and spec, with the page's fallbacks."""
+    ident = report.identity
+    names = report.names
+    level = (
+        f"Level: {report.level}"
+        if report.level is not None
+        else f"Level: not recorded: {report.level_absent or 'not returned'}"
+    )
+    # One reason said once: a race missing for the class's reason says so.
+    race_absent = ident.race_id_absent
+    if ident.class_id is None and race_absent is not None and race_absent == ident.class_id_absent:
+        race_absent = "as for Class"
+    spec = report.spec
+    spec_line = _named("Spec", None, spec.id, spec.absent)
+    if spec.id is not None:
+        index = "index not returned" if spec.index is None else f"index {spec.index}"
+        where = f"{index}, from {spec.api}"
+        spec_line = (
+            f"Spec: {names.spec} (spec id {spec.id}, {where})"
+            if names.spec
+            else f"Spec: spec id {spec.id} ({where})"
+        )
+    return [
+        level,
+        _named(
+            "Class", names.class_name or ident.class_file, ident.class_id, ident.class_id_absent
+        ),
+        _named("Race", names.race, ident.race_id, race_absent),
+        spec_line,
+    ]
 
 
 def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
@@ -10632,19 +10739,22 @@ def char_gear(
         )
     notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE]
     identity = labaddon.identity_of(record)
+    spec = gear.spec_of(record)
+    level = dressing.level_of(record)
     report = CharGearReport(
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
         mtime_ns=target.mtime_ns,
-        spec=gear.spec_of(record),
+        spec=spec,
         identity=identity,
+        level=level,
+        level_absent=labaddon.level_absent_of(record) if level is None else None,
+        names=_char_names(chosen.version, spec, identity),
         average=gear.average_of(section),
         slots=filled,
         empty_slots=empty,
         notes=notes,
-        dressing=dressing.build(
-            identity, filled, version=chosen.version, level=dressing.level_of(record)
-        ),
+        dressing=dressing.build(identity, filled, version=chosen.version, level=level),
     )
     if json_out:
         _emit(report)
@@ -10656,13 +10766,8 @@ def char_gear(
     )
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
-    spec = report.spec
-    if spec.absent is not None:
-        _say(f"Spec: {spec.absent}")
-    else:
-        ident = "id not returned" if spec.id is None else f"id {spec.id}"
-        index = "index not returned" if spec.index is None else f"index {spec.index}"
-        _say(f"Spec: {ident} ({index}, from {spec.api})")
+    for line in _header_lines(report):
+        _say(line)
     _say(
         f"Gear (slots {section.first_slot} to {section.last_slot} as the client numbers them, "
         f"{len(filled)} filled):"
@@ -10700,7 +10805,7 @@ def char_gear(
     standing = [
         # The marker stands for an adjective here; said in words (M16-15).
         note.replace("[verify] on Forever", "not yet confirmed on Forever")
-        for note in (_GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE)
+        for note in (_GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE, _GEAR_SPEC_NOTE)
     ]
     standing.append(
         f"To use your own slot names or quality words, put the values to change in "

@@ -189,6 +189,7 @@ __all__ = [
     "identity_of",
     "is_lab_file_name",
     "legacy_headline",
+    "level_absent_of",
     "load_account",
     "load_char",
     "parse_account",
@@ -1670,6 +1671,9 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
+    # The record's schema, set with `summary` (kept with --brief too): the
+    # UI's picker breaks a file-time tie by the newest schema (M16-31).
+    record_schema: int | None = None
     record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
     error: str | None = None
     same_as: FsText | None = None
@@ -1702,6 +1706,8 @@ class CharacterFile(BaseModel):
             raise ValueError("a CharacterFile with an error holds no record")
         if self.same_as is not None and self.error is None:
             raise ValueError("a CharacterFile that is the same file as another holds an error")
+        if self.record_schema is not None and self.summary is None:
+            raise ValueError("a CharacterFile holds a record schema only beside its summary")
         return self
 
     @property
@@ -1792,6 +1798,7 @@ class _Read(NamedTuple):
 
     record: CharDB | None = None  # None unless the reader keeps records
     summary: str | None = None  # set when the file was read and parsed
+    record_schema: int | None = None  # set with `summary`
     error: str | None = None
     same_as: str | None = None  # a hard link to the file read on this character's row
 
@@ -1907,7 +1914,11 @@ class _Reader:
         # file systems report it for every file) says nothing, so it is never kept.
         if st.st_ino:
             self.seen[key] = (account, who)
-        return _Read(record=record if self.keep_records else None, summary=summary(record))
+        return _Read(
+            record=record if self.keep_records else None,
+            summary=summary(record),
+            record_schema=record.schema_,
+        )
 
 
 def _grew_past(path: Path, limit: int) -> bool:
@@ -2039,6 +2050,7 @@ class _Folder:
         place: Place = "file",
         record: CharDB | None = None,
         summary: str | None = None,
+        record_schema: int | None = None,
         error: str | None = None,
         same_as: str | None = None,
         no_lab_record: FolderFacts | None = None,
@@ -2052,6 +2064,7 @@ class _Folder:
             place=place,
             mtime_ns=mtime_ns,
             summary=summary,
+            record_schema=record_schema,
             record=record,
             error=error,
             same_as=same_as,
@@ -2106,6 +2119,7 @@ class _Folder:
             found.mtime_ns,
             record=got.record,
             summary=got.summary,
+            record_schema=got.record_schema,
             error=got.error,
             same_as=got.same_as,
         )
@@ -2399,15 +2413,30 @@ def _identity_reason(record: Identity, name: str) -> str:
     return f"the record holds neither {name} nor {name}_absent"
 
 
+def level_absent_of(char: CharDB) -> str | None:
+    """Why the record holds no level (`talents.legacy.player_level`, the
+    level the reports read), or None when it holds one (M16-31)."""
+    talents = char.talents
+    if talents is None:
+        return f"the talent record is {NOT_IN_FILE}"
+    legacy = talents.legacy
+    if legacy is None:
+        return f"the legacy talent record is {NOT_IN_FILE}"
+    if isinstance(legacy, AbsentSection):
+        return f"the legacy talent record is {_absent(legacy, events_shown=False)}"
+    if legacy.player_level is None:
+        return "the legacy talent record holds no level"
+    return None
+
+
 def identity_of(char: CharDB) -> CharIdentity:
     """The character's identity from its record (M15-01); never raises for a
     record the models read. A record of schema 1 to 3 has none, and says so
     for every value."""
     if not isinstance(char, CharDBV4):
         return _all_absent(
-            f"the record is schema {char.schema_}; identity is recorded from schema 4 "
-            "(the lab-addon from M15-01: install it with wowlab addon install lab, then log "
-            "in and out on this character)"
+            "this record predates the identity section; log in and out on this character "
+            "with a current lab-addon (wowlab addon install lab updates it)"
         )
     section = char.identity
     if section is None:

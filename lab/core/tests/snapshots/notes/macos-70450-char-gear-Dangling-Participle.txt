@@ -2,7 +2,10 @@ exit 0
 Character: 1/Dangling-Participle in account 90000001#6
 File: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
 Written: <local time> (the file's modification time: the character as of that save)
-Spec: id 1482 (index 1, from C_SpecializationInfo)
+Level: 10
+Class: MAGE (class id 8)
+Race: race id 2
+Spec: spec id 1482 (index 1, from C_SpecializationInfo)
 Gear (slots 1 to 19 as the client numbers them, 9 filled):
   slot  1 Head       empty
   slot  2 Neck       empty
@@ -27,4 +30,4 @@ Averages (GetAverageItemLevel, as the client returns them, not the mean of the l
 Item levels from C_Item.GetCurrentItemLevel.
 Slot names and quality words: the shipped default table, community documentation
   for Retail, not yet confirmed on Forever
-6 notes: --notes shows them
+7 notes: --notes shows them

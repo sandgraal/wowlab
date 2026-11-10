@@ -35,6 +35,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+import platformdirs
 import pytest
 import test_ui_explorer as first_stage
 from test_ui_explorer import (
@@ -51,6 +52,7 @@ from test_ui_explorer import (
     _send,
     _stdout,
 )
+from typer.testing import CliRunner
 
 from wowlab_core import cli, gear, ui
 
@@ -90,6 +92,7 @@ function charView() {
     pickerDisabled: picker.disabled,
     header: ids["char-header"].textContent,
     headerFacts: ids["char-header"].all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e.textContent),
+    headerTitles: ids["char-header"].all().filter((e) => e.tagName === "dd").map((e) => e.title),
     notes: ids["char-header"].all().filter((e) => e.tagName === "li").map((e) => e.textContent),
     gearText: gearBox.textContent,
     errors: gearBox.all().filter((e) => has(e, "char-error")).map((e) => e.textContent),
@@ -397,17 +400,37 @@ def test_the_gear_rows_match_char_gear_for_the_picked_one(
 
 
 def test_the_header_carries_spec_averages_and_the_notes(
-    server: Any, timed: Path, tmp_path: Path
+    server: Any, timed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scenario = _scenario(server, [{"char_tab": True}], [NEWER])
+    # The header's names depend on the game-data cache in the user data
+    # directory. The server's child would read the real one (on Windows
+    # platformdirs does not follow the environment), so the report drawn is
+    # `char gear --json` run here, with an empty one in `tmp_path` (M16-31).
+    data = tmp_path / "userdata" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: data)
+    args = ["char", "gear", "--character", NEWER, "--account", ACCOUNT, "--flavor", FLAVOR]
+    done = CliRunner().invoke(cli.app, [*args, "--json"])
+    assert done.exit_code == 0, done.output
+    _set_report(scenario, NEWER, json.loads(done.stdout))
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
     report = _report(scenario, NEWER)
     facts = dict(zip(view["headerFacts"][::2], view["headerFacts"][1::2], strict=True))
     assert facts["Character folder"] == report["character"] == NEWER
-    assert facts["Spec id"] == str(report["spec"]["id"])
-    assert facts["Average item level, equipped"] == str(report["average"]["equipped"])
-    assert facts["Average item level, overall"] == str(report["average"]["overall"])
+    # A schema-1 record and no cached game tables: the level from its talent
+    # block, the spec by its id, and no class or race (M16-31; the named
+    # header is graded in `test_ui_character_header.py`).
+    assert facts["Spec"] == f"spec id {report['spec']['id']}"
+    assert facts["Level"] == str(report["level"]) == "13"
+    # No ticket id and no doubled bracket: the reason in player words, once.
+    assert facts["Class"] == (
+        "not recorded: this record predates the identity section; log in and out on this "
+        "character with a current lab-addon (wowlab addon install lab updates it)"
+    )
+    assert facts["Race"] == "not recorded: as for Class"
+    assert facts["Average item level, equipped"] == f"{report['average']['equipped']:.1f}"
+    assert facts["Average item level, overall"] == f"{report['average']['overall']:.1f}"
     assert facts["File"] == report["file"]
     assert facts["Written"] == f"{_local(NEWER_NS)} (the file's modification time)"
     # The two notes `char show` prints about what the file is, and the rest.
