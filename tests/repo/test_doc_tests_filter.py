@@ -58,6 +58,17 @@ DYNAMIC: dict[str, str] = {
     "lab/core/tests/review/test_review_m16_17_player_text_lint_misses_modules_and_docs_constructed.py": (
         "the same name-only glob as test_filemap.py's _SPEC_DOCS"
     ),
+    "lab/core/tests/test_ui_wellspring.py": (
+        "it reads docs/design/wellspring-tokens.json, which is not Markdown, so "
+        "the docs-only filter never skips a change to it"
+    ),
+    "tests/repo/test_bidi_controls.py": (
+        "the f-string is a constructed file name fed to the bidi scanner, not a path it opens"
+    ),
+    "tests/harness/test_hooks.py": (
+        "it builds docs/ folders inside temporary repos and passes docs paths "
+        "to the hooks as input; see NAMED_NOT_READ"
+    ),
 }
 
 _QUOTED = re.compile(r"""["']docs/([\w./-]+?\.md)\b""")
@@ -65,7 +76,9 @@ _JOINED = re.compile(r'"docs"((?:\s*/\s*"[\w.-]+")+)')
 _JOINPATH = re.compile(r'joinpath\(\s*"docs"((?:\s*,\s*"[\w.-]+")+)\s*\)')
 _PART = re.compile(r'"([\w.-]+)"')
 _ROOT = re.compile(r"""["'](CONTRIBUTING|SECURITY|CODE_OF_CONDUCT)\.md["']""")
-_DYNAMIC = re.compile(r'"docs"\s*\)\s*\.\s*r?glob\(|["\']docs/["\']\s*\+')
+_DYNAMIC = re.compile(r'"docs"\s*\)\s*\.\s*r?glob\(|["\']docs/["\']\s*\+|\bf["\']docs/')
+# A "docs" path part: `/ "docs"`, `"docs" /` or `joinpath("docs"`.
+_DOCS_PART = re.compile(r'/\s*"docs"|"docs"\s*/|joinpath\(\s*"docs"')
 
 
 def _filter_step() -> dict:
@@ -96,8 +109,26 @@ def named_docs(text: str) -> set[str]:
     return found
 
 
+def _resolved_spans(text: str) -> list[tuple[int, int]]:
+    spans = []
+    for pattern in (_JOINED, _JOINPATH):
+        for m in pattern.finditer(text):
+            parts = _PART.findall(m.group(1))
+            if parts and parts[-1].endswith(".md"):
+                spans.append((m.start(), m.end()))
+    return spans
+
+
 def is_dynamic(text: str) -> bool:
-    return bool(_DYNAMIC.search(text))
+    """A docs path this scan cannot resolve to one `.md` file."""
+    if _DYNAMIC.search(text):
+        return True
+    spans = _resolved_spans(text)
+    for m in _DOCS_PART.finditer(text):
+        docs_at = text.index('"docs"', m.start())
+        if not any(start <= docs_at < end for start, end in spans):
+            return True
+    return False
 
 
 def _sources() -> list[tuple[str, str]]:
@@ -183,3 +214,8 @@ def test_the_scanner_finds_each_form_constructed() -> None:
     assert is_dynamic('x = (ROOT / "docs").rglob("*.md")')
     assert is_dynamic('x = ROOT / ("docs/" + name)')
     assert not is_dynamic('x = ROOT / "docs" / "INSTALL.md"')
+    assert not is_dynamic('x = ROOT.joinpath("docs", "SETUP.md")')
+    assert is_dynamic('DOCS = ROOT / "docs"\nx = (DOCS / "GLOSSARY.md").read_text()')
+    assert is_dynamic('DOCS = ROOT / "docs"\nfor p in DOCS.glob("*.md"): pass')
+    assert is_dynamic('p = ROOT / f"docs/{name}.md"')
+    assert is_dynamic("p = ROOT / f'docs/{name}.md'")
