@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 from pathlib import Path
 
@@ -89,7 +90,9 @@ def test_the_printed_line_puts_back_what_was_there_before_the_change_constructed
     before = (flavor / CONFIG).read_bytes()
     record_id = _fail_to_roll_back(root, flavor)
     printed = next(p for p in json.loads(run("doctor", "--json").stdout)["problems"] if "undo" in p)
-    argv = shlex.split(printed.rsplit("run: ", 1)[1])
+    found = re.search(r"wowlab undo --expect ([0-9]{8}-[0-9a-f]{8})\b", printed)
+    assert found is not None, printed
+    argv = shlex.split(found.group(0))
     assert argv == ["wowlab", "undo", "--expect", record_id]
 
     ok(*argv[1:], "--yes")
@@ -107,6 +110,11 @@ def test_the_printed_line_puts_back_what_was_there_before_the_change_constructed
     after = run("doctor")
     assert after.exit_code == 0, after.output
     assert "Problems:" not in after.stdout
+
+    # "running wowlab undo again brings it back": a second undo undoes the
+    # undo, and the other program's bytes are in the file again.
+    ok("undo", "--yes")
+    assert (flavor / CONFIG).read_bytes() == OTHER
 
 
 def test_a_finished_rollback_is_not_a_problem_constructed(root: Path, flavor: Path) -> None:

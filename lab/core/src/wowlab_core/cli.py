@@ -1996,15 +1996,18 @@ def _interrupted(record_id: str) -> str:
 def _rollback_unfinished(record_id: str) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
-    could not put every file back (another program changed one meanwhile,
-    or the system refused), so some files may hold its new bytes and others
-    not, as for `_interrupted`. The undo takes a snapshot of the files as
-    they are before it writes, so what the other program wrote is kept."""
+    could not put every file back. Usually another program (the game)
+    changed a file mid-change, and the gate left that program's bytes in
+    place; a file may also still hold the change. The undo replaces those
+    newer bytes, but takes a snapshot of the files first, so a second undo
+    (which undoes the undo) brings them back."""
     return (
         "the last change wowlab made failed, and putting the files back did not finish "
-        f"(record {record_id}): some files may be changed and others not. The undo keeps "
-        "a snapshot of the files as they are now. To put back what was there before the "
-        f"change, run: wowlab undo --expect {record_id}"
+        f"(record {record_id}): a file may have been changed by another program, such as "
+        "the game, while wowlab was writing, or may still hold wowlab's change. To put back "
+        f"what was there before the change, run: wowlab undo --expect {record_id}. That "
+        "replaces what is in those files now; the undo keeps a copy, and running wowlab undo "
+        "again brings it back."
     )
 
 
