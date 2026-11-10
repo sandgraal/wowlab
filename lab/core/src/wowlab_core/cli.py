@@ -1229,9 +1229,18 @@ _NAME_THE_INSTALL = (
 )
 
 
-def _install_words(exc: install.InstallError) -> str:
-    """Why there is no install to read, then how to name one: every such
-    error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
+# The same, where the install must be the one wowlab finds by itself and
+# `--root` is only checked against it (`sv dump --install-only`).
+_NAME_THE_INSTALL_BY_ITSELF = (
+    f"set {install.ENV_ROOT} to the install folder (the one that holds {install.BUILD_INFO}); "
+    "with --install-only, --root does not choose the install, it is only checked against "
+    "the one wowlab finds by itself"
+)
+
+
+def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> str:
+    """Why there is no install to read, then how to name one (`how`): every
+    such error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
     if isinstance(exc, install.InstallNotFoundError):
         looked = []
         if exc.searched:
@@ -1248,8 +1257,8 @@ def _install_words(exc: install.InstallError) -> str:
             found = f"no WoW install found where the game installs by default ({'; '.join(looked)})"
         else:
             found = "no WoW install found: wowlab knows no default install location on this system"
-        return f"{found}; {_NAME_THE_INSTALL}"
-    return f"{exc}; {_NAME_THE_INSTALL}"
+        return f"{found}; {how}"
+    return f"{exc}; {how}"
 
 
 # The command that lists what a command of each group names (M16-19): a
@@ -4294,6 +4303,11 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
     refusing; where it gives the stored case (Windows), it is allowed."""
     try:
         found, _ = _discover(None)
+    except install.InstallError as exc:
+        # --root cannot help here, given or not: only the variable can.
+        words = _install_words(exc, _NAME_THE_INSTALL_BY_ITSELF)
+        raise CliError(f"refused: {words}", EXIT_REFUSED) from exc
+    try:
         home = longpath.realpath(found.root)
         if root is not None and longpath.realpath(_discover(root)[0].root) != home:
             raise CliError(

@@ -218,7 +218,13 @@ def test_sv_dump_install_only_with_no_install_names_root_and_the_variable(
     assert result.exit_code == cli.EXIT_REFUSED
     line = _one_line(result.stderr)
     assert line.startswith("wowlab: refused: no WoW install found")
-    assert NAMES_THE_INSTALL in line
+    # --root cannot choose the install here, so it is named but not offered.
+    assert NAMES_THE_INSTALL not in line
+    assert line.endswith(
+        "; set WOWLAB_WOW_ROOT to the install folder (the one that holds .build.info); "
+        "with --install-only, --root does not choose the install, it is only checked "
+        "against the one wowlab finds by itself"
+    )
 
 
 def test_looks_with_no_install_names_root_and_the_variable(

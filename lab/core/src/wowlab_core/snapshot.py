@@ -1271,8 +1271,10 @@ class SnapshotStore:
         """A full disk or quota under the store, in words (M16-19): the
         store and the room left on its disk, when that can be read."""
         why = exc.strerror or str(exc)
+        # The store, or the nearest folder above it that exists yet.
+        where = next((p for p in (self.path, *self.path.parents) if p.exists()), self.path)
         try:
-            free = f"{shutil.disk_usage(self.path).free:,} bytes free"
+            free = f"{shutil.disk_usage(where).free:,} bytes free"
         except OSError:
             free = "its free space could not be read"
         return StoreFullError(
@@ -1511,6 +1513,8 @@ class SnapshotStore:
                 raise SnapshotError(f"the store {self.path} vanished as it was created") from None
             return None
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for the store's folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot open the store {self.path}: {exc}") from exc
 
     @contextlib.contextmanager
@@ -1535,8 +1539,7 @@ class SnapshotStore:
                 with contextlib.suppress(OSError):
                     os.close(fd)
 
-    @staticmethod
-    def _open_child_dir(parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:
+    def _open_child_dir(self, parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:
         """A descriptor on the directory `name` of `parent_fd`, opened with
         `O_DIRECTORY | O_NOFOLLOW` and holding the device and inode its
         `lstat` showed; see `_store_dir`."""
@@ -1550,6 +1553,8 @@ class SnapshotStore:
                 raise SnapshotError(f"{path} vanished as it was created") from None
             return None
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for a new folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
         if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
             raise _linked_store_dir(path)
@@ -1591,6 +1596,8 @@ class SnapshotStore:
                     raise _linked_store_dir(path)
                 checked.append((path, st))
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for a new folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
         return _StoreDir(path, None, tuple(checked))
 
