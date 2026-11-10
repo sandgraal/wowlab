@@ -95,7 +95,7 @@ OBJECTS_DIR_ENTRY = "objects/"
 link (M11-18). No object name or stray path under `objects/` ends in `/`."""
 
 _CHUNK = 1 << 20
-_ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
+_ID_RE = re.compile(r"\A[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8}\Z")  # ASCII digits only (M16-77)
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 # A full disk, and (where the platform has it) a full quota.
@@ -1102,11 +1102,43 @@ IMPORT_CLOCK_ALLOWANCE = timedelta(minutes=10)
 """How far past this computer's clock an imported snapshot's date may be
 (two computers' clocks differ a little); a later one is refused (M16-04)."""
 
-_CREATED_AT_RE = re.compile(r"\A(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z\Z")
+# ASCII digits only (M16-77): `int()` reads any Unicode digit, and a date in
+# other digits would sort after every real one.
+_CREATED_AT_RE = re.compile(
+    r"\A([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{6})Z\Z"
+)
 
 
 def _one_component(value: str) -> bool:
     return value not in ("", ".", "..") and "/" not in value and "\x00" not in value
+
+
+def _dated_as_its_id(manifest: Manifest) -> datetime:
+    """The moment `manifest.created_at` names, held to its id: well formed
+    (ASCII digits only) and the moment the id carries, as `create` writes
+    it. `created_at` is outside the fingerprint, and `latest`, `~N` and
+    `explain` order snapshots by it, so a manifest whose date is not its
+    id's could sort newest for ever (M16-77). Raises
+    `ManifestIntegrityError`."""
+    sid = manifest.id
+    match = _CREATED_AT_RE.match(manifest.created_at)
+    try:
+        if match is None:
+            when = None
+        else:
+            year, month, day, hour, minute, second, micro = (int(g) for g in match.groups())
+            when = datetime(year, month, day, hour, minute, second, micro, tzinfo=UTC)
+    except ValueError:
+        when = None
+    if when is None:
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at!r} is malformed"
+        )
+    if sid[: len("YYYYmmddTHHMMSS.ffffffZ")] != f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z":
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at} is not the moment its id carries"
+        )
+    return when
 
 
 def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -> None:
@@ -1126,23 +1158,7 @@ def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -
 
     Raises `ManifestIntegrityError`."""
     sid = manifest.id
-    match = _CREATED_AT_RE.match(manifest.created_at)
-    try:
-        if match is None:
-            when = None
-        else:
-            year, month, day, hour, minute, second, micro = (int(g) for g in match.groups())
-            when = datetime(year, month, day, hour, minute, second, micro, tzinfo=UTC)
-    except ValueError:
-        when = None
-    if when is None:
-        raise ManifestIntegrityError(
-            f"manifest {sid}: its date {manifest.created_at!r} is malformed"
-        )
-    if sid[: len("YYYYmmddTHHMMSS.ffffffZ")] != f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z":
-        raise ManifestIntegrityError(
-            f"manifest {sid}: its date {manifest.created_at} is not the moment its id carries"
-        )
+    when = _dated_as_its_id(manifest)
     clock = datetime.now(UTC) if now is None else now.astimezone(UTC)
     if when > clock + IMPORT_CLOCK_ALLOWANCE:
         raise ManifestIntegrityError(
@@ -2254,6 +2270,7 @@ class SnapshotStore:
             )
         if manifest.id != name or not _ID_RE.match(manifest.id):
             raise ManifestIntegrityError(f"manifest {path.name} carries id {manifest.id!r}")
+        _dated_as_its_id(manifest)  # its date is its id's moment (M16-77)
         actual = tree_fingerprint(manifest.subtrees, manifest.excluded, manifest.entries)
         if actual != manifest.fingerprint:
             raise ManifestIntegrityError(

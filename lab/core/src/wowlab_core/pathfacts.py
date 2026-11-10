@@ -38,8 +38,9 @@ __all__ = [
 ]
 
 _CHUNK = 1 << 20
-# A manifest file's name: its snapshot id, which sorts by creation time.
-_MANIFEST_NAME = re.compile(r"\A(\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8})\.json\Z")
+# A manifest file's name: its snapshot id, which sorts by creation time. ASCII
+# digits only, as `snapshot._ID_RE` (M16-77).
+_MANIFEST_NAME = re.compile(r"\A([0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8})\.json\Z")
 
 Live = Literal["same", "differs", "missing", "unreadable"]
 
