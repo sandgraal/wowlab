@@ -648,9 +648,9 @@ def test_install_only_reads_the_path_it_checked(
     read: list[Path] = []
     real_read = luadata.read
 
-    def spy(path: Path, **kwargs: Any) -> Any:
+    def spy(path: Path) -> Any:
         read.append(Path(path))
-        return real_read(path, **kwargs)
+        return real_read(path)
 
     monkeypatch.setattr(luadata, "read", spy)
     given = install / FLAVOR / "WTF" / ".." / "WTF" / SV_REL.removeprefix("WTF/")

@@ -164,10 +164,10 @@ def _swap_before_read(
     on it: what a change between `layout`'s listing and the read looks like."""
     real = getattr(wtfconfig, reader)
 
-    def swapped(target: Path, **kwargs: Any) -> Any:
+    def swapped(target: Path) -> Any:
         if Path(target) == path and not path.is_symlink() and path.is_file():
             _make(kind, path.parent, path.name, tmp_path)
-        return real(target, **kwargs)
+        return real(target)
 
     monkeypatch.setattr(wtfconfig, reader, swapped)
 
