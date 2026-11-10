@@ -226,22 +226,189 @@ def open_regular_file(
     return fd, st
 
 
+class LinkedPathError(UnsafeReadError):
+    """A file asked for under an install root is reached through a link: a
+    folder on the way that is a link (`folder` names it, `final` is False),
+    or the file itself (`folder` is the file, `final` is True). Nothing
+    behind the link was read (M16-49)."""
+
+    def __init__(self, path: Path, folder: Path, *, final: bool) -> None:
+        self.path = path
+        self.folder = folder
+        self.final = final
+        if final:
+            text = f"{path} is a link, and wowlab does not read through one"
+        else:
+            text = (
+                f"{path} is reached through a linked folder, {folder}, "
+                "and wowlab does not read through one"
+            )
+        super().__init__(text)
+
+
+_OPEN_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
+"""Whether `os.open` takes a `dir_fd` here (POSIX). Decided at import, while
+`os.open` is the real one; whether the walk uses it is decided at each call,
+from `_O_NOFOLLOW` (`open_regular_file_from_root`)."""
+
+_LINK_REFUSAL_ERRNOS = frozenset({errno.ELOOP, errno.ENOTDIR, errno.EMLINK})
+"""What an `O_NOFOLLOW` open of a link gives: `ELOOP` (Linux, macOS), or
+`ENOTDIR` / `EMLINK` (BSDs) when `O_DIRECTORY` is also asked."""
+
+
+def _components_under(path: Path, root: Path) -> tuple[str, ...]:
+    """The components of `path` below `root`, compared by `pathlib`'s parts
+    (so with case on POSIX, without on Windows), both made absolute first
+    without resolving anything. Refused (`UnsafeReadError`) when `path` is
+    not under `root`, is `root` itself, or holds a `..` below it."""
+    full, base = path.absolute(), root.absolute()
+    n = len(base.parts)
+    if len(full.parts) <= n or type(base)(*full.parts[:n]) != base:
+        raise UnsafeReadError(f"{path} is not inside {root}")
+    rest = full.parts[n:]
+    if ".." in rest:
+        raise UnsafeReadError(f"{path} climbs out of a folder with '..', so it is not read")
+    return rest
+
+
+def _refused_as_link(exc: OSError, name: str, dir_fd: int) -> bool:
+    """Whether `exc`, from an `O_NOFOLLOW` open of `name` in `dir_fd`, was a
+    refusal of a link (as against a missing or wrong-kind entry)."""
+    if exc.errno not in _LINK_REFUSAL_ERRNOS:
+        return False
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return _is_link_stat(st)
+
+
+def open_regular_file_from_root(path: Path, root: Path) -> tuple[int, os.stat_result]:
+    """Open `path`, a file under the install root `root`, as
+    `open_regular_file` opens it, but from `root` one component at a time,
+    so no link anywhere between the root and the file is followed (M16-49).
+
+    `path` is the full path; its components below `root` are compared as
+    `pathlib` spells them. A path not under `root`, or one with a `..`
+    below it, is refused with `UnsafeReadError` before anything is opened.
+    What is above `root` (a link to the games folder, say) is the caller's
+    choice; the walk starts at `root`.
+
+    With `O_NOFOLLOW` (read from `_O_NOFOLLOW` at each call, POSIX): `root`
+    is opened once by path, then each folder by name relative to the
+    descriptor before it with `O_DIRECTORY | O_NOFOLLOW`, then the file by
+    name relative to the last folder's descriptor. Each descriptor is held
+    until the next is open, so a folder swapped for a link mid-walk is
+    either refused or the original is read. A link met is refused with
+    `LinkedPathError`, which names it.
+
+    Without `O_NOFOLLOW` (Windows) `os.open` takes no `dir_fd`: each folder
+    is checked by `lstat` (a link or junction refused), the file is opened
+    by its path as `open_regular_file` does, and each folder's `lstat` is
+    checked again after the open against the first. A folder swapped for a
+    link and back between those checks is not seen: that window remains.
+
+    The caller owns the descriptor returned; on any error every descriptor
+    opened here is closed."""
+    path, root = Path(path), Path(root)
+    rest = _components_under(path, root)
+    if _O_NOFOLLOW and _OPEN_BY_DIR_FD:
+        return _open_by_dir_fd(path, root, rest)
+    return _open_by_lstat(path, root, rest)
+
+
+def _open_by_dir_fd(path: Path, root: Path, rest: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    held = os.open(root, dir_flags)
+    try:
+        at = root
+        for name in rest[:-1]:
+            at = at / name
+            try:
+                fd = os.open(name, dir_flags | _O_NOFOLLOW, dir_fd=held)
+            except OSError as exc:
+                if _refused_as_link(exc, name, held):
+                    raise LinkedPathError(path, at, final=False) from exc
+                exc.filename = os.fspath(at)  # the path the caller knows
+                raise
+            os.close(held)
+            held = fd
+        name = rest[-1]
+        try:
+            return open_regular_file(Path(name), dir_fd=held)
+        except UnsafeReadError as exc:
+            # With a dir_fd, O_NOFOLLOW and no `expect`, the one refusal
+            # left is the fstat's; said with the whole path.
+            raise UnsafeReadError(f"{path} is not a regular file") from exc
+        except OSError as exc:
+            if _refused_as_link(exc, name, held):
+                raise LinkedPathError(path, path, final=True) from exc
+            exc.filename = os.fspath(path)
+            raise
+    finally:
+        os.close(held)
+
+
+def _open_by_lstat(path: Path, root: Path, rest: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    folders = [root.joinpath(*rest[: i + 1]) for i in range(len(rest) - 1)]
+    seen: list[tuple[int, int]] = []
+    for folder in folders:
+        st = _lstat_at(folder, None)
+        if _is_link_stat(st):
+            raise LinkedPathError(path, folder, final=False)
+        if not stat.S_ISDIR(st.st_mode):
+            raise UnsafeReadError(f"{folder} is not a folder")
+        seen.append(_file_identity(st))
+    try:
+        fd, st = open_regular_file(path)
+    except UnsafeReadError as exc:
+        if exc.__class__ is UnsafeReadError and _is_link_path(path):
+            raise LinkedPathError(path, path, final=True) from exc
+        raise
+    try:
+        for folder, identity in zip(folders, seen, strict=True):
+            after = _lstat_at(folder, None)
+            if _is_link_stat(after):
+                raise LinkedPathError(path, folder, final=False)
+            if _file_identity(after) != identity:
+                raise UnsafeReadError(f"{folder} changed as {path} was opened")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, st
+
+
+def _is_link_path(path: Path) -> bool:
+    try:
+        return _is_link_stat(_lstat_at(path, None))
+    except OSError:
+        return False
+
+
 def read_regular_file(
     path: Path,
     *,
     limit: int | None = None,
     expect: os.stat_result | None = None,
     dir_fd: int | None = None,
+    root: Path | None = None,
 ) -> bytes:
     """The bytes of `path`, opened as `open_regular_file` opens it (relative
-    to `dir_fd` when one is given).
+    to `dir_fd` when one is given), or from the install root `root` one
+    component at a time when one is given (`open_regular_file_from_root`;
+    not with `expect` or `dir_fd`).
 
     With a `limit`, a file whose `fstat` size is over it is refused before
     any read, and at most `limit + 1` bytes are read, so one that grows past
     it while being read is refused too (`UnsafeReadError`). The descriptor is
     closed on every path.
     """
-    fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
+    if root is not None:
+        if expect is not None or dir_fd is not None:
+            raise ValueError("root is not combined with expect or dir_fd")
+        fd, st = open_regular_file_from_root(path, root)
+    else:
+        fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
     try:
         if limit is not None and st.st_size > limit:
             raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")

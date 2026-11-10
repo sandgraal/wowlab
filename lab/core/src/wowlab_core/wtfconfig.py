@@ -990,10 +990,15 @@ def count_macro_records(data: bytes) -> int:
 _READ_CHUNK = 1024 * 1024
 
 
-def _read(path: Path, budget: WtfBudget) -> tuple[bytes, int]:
+def _read(path: Path, budget: WtfBudget, root: Path | None) -> tuple[bytes, int]:
     """At most the file's first `max_bytes + 1` bytes, and its size as the
-    open file's `fstat` showed it (or as far as it was read, if it grew)."""
-    fd, st = snapshot.open_regular_file(Path(path))
+    open file's `fstat` showed it (or as far as it was read, if it grew).
+    With `root`, the open starts at that install root and takes one
+    component at a time, so a linked folder on the way is refused too."""
+    if root is None:
+        fd, st = snapshot.open_regular_file(Path(path))
+    else:
+        fd, st = snapshot.open_regular_file_from_root(Path(path), Path(root))
     try:
         cap = budget.max_bytes + 1
         chunks: list[bytes] = []
@@ -1012,22 +1017,33 @@ def _read(path: Path, budget: WtfBudget) -> tuple[bytes, int]:
     return b"".join(chunks), max(st.st_size, total)
 
 
-def read_config(path: Path) -> ConfigDocument:
-    data, size = _read(path, CONFIG_BUDGET)
+# Each reader takes the install root `path` lies under as `root` (M16-49):
+# the open then starts there and refuses a link in any folder on the way, and
+# a path not under it. Without `root` only the final component is checked.
+
+
+def read_config(path: Path | str, *, root: Path | str | None = None) -> ConfigDocument:
+    data, size = _read(Path(path), CONFIG_BUDGET, None if root is None else Path(root))
     return _parse_config(data, size)
 
 
-def read_bindings(path: Path) -> BindingsDocument:
-    data, size = _read(path, BINDINGS_BUDGET)
+def read_bindings(path: Path | str, *, root: Path | str | None = None) -> BindingsDocument:
+    data, size = _read(Path(path), BINDINGS_BUDGET, None if root is None else Path(root))
     return _parse_bindings(data, size)
 
 
-def read_macros(path: Path) -> MacrosDocument:
-    data, size = _read(path, MACROS_BUDGET)
+def read_macros(path: Path | str, *, root: Path | str | None = None) -> MacrosDocument:
+    data, size = _read(Path(path), MACROS_BUDGET, None if root is None else Path(root))
     return _parse_macros(data, size)
 
 
-def read_addons(path: Path, *, limit: int = MAX_ADDONS_TXT_BYTES) -> AddonsDocument:
+def read_addons(
+    path: Path | str, *, limit: int = MAX_ADDONS_TXT_BYTES, root: Path | str | None = None
+) -> AddonsDocument:
     """A character's ``AddOns.txt``; one over ``limit`` bytes is refused
     (``UnsafeReadError``) before it is read."""
-    return parse_addons(snapshot.read_regular_file(Path(path), limit=limit))
+    return parse_addons(
+        snapshot.read_regular_file(
+            Path(path), limit=limit, root=None if root is None else Path(root)
+        )
+    )

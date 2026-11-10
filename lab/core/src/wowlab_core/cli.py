@@ -1614,7 +1614,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
         is_account = f.scope == "account" and name == "config-cache.wtf"
         if not (is_machine or is_account):
             continue
-        doc = wtfconfig.read_config(lay.flavor_path / f.path)
+        doc = wtfconfig.read_config(lay.flavor_path / f.path, root=lay.install_root)
         for cvar in _SYNC_CVARS:
             found = doc.get(cvar)
             out.append(
@@ -4196,7 +4196,39 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
-def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
+def _sv_file_and_root(path: str, root: Path | None, flavor: str | None) -> tuple[Path, Path | None]:
+    """FILE as `_sv_file` finds it, and the root of the install it lies in
+    (M16-49): the install `--root` or discovery names, when FILE is under it
+    as spelled; otherwise None, and the file is read with only its last part
+    checked for a link."""
+    given = Path(_plain_arg(path))
+    if not (given.is_absolute() or longpath.lexists(given)):
+        _, _, lay = _open(root, flavor)
+        return lay.flavor_path / given, lay.install_root
+    try:
+        found, _ = _discover(root)
+    except install.InstallError:
+        return given, None
+    return given, _lexically_under(given, found.root)
+
+
+def _lexically_under(path: Path, root: Path) -> Path | None:
+    """`root`, absolute, when `path` is under it as spelled (no `..` below
+    it, no link resolved); otherwise None."""
+    full, base = path.absolute(), Path(root).absolute()
+    n = len(base.parts)
+    if len(full.parts) <= n or type(base)(*full.parts[:n]) != base or ".." in full.parts[n:]:
+        return None
+    return base
+
+
+_SV_LAST_PART_ONLY = (
+    "This file is not in an install wowlab found, so only the file itself was checked for a "
+    "link: a linked folder on the way to it was not looked for."
+)
+
+
+def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
     the real path of the install wowlab finds by itself, without `--root`
@@ -4205,7 +4237,8 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
     arguments cannot plant an install around the file. Nothing of the file is
     read first, so a refusal quotes none of it; the caller reads the real path
     that was checked, not the spelling given (returns both: the spelling for
-    the report). No install found is refused (exit 3) as well. Where
+    the report), with the real path of the install, which the read starts
+    from. No install found is refused (exit 3) as well. Where
     `realpath` keeps the case a name was given in (macOS, Linux), a file of
     the install named in another case is refused: the check errs towards
     refusing; where it gives the stored case (Windows), it is allowed."""
@@ -4227,7 +4260,7 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
         inside = False
     if not inside:
         raise CliError(f"refused: {target} is not in the install at {found.root}", EXIT_REFUSED)
-    return target, real
+    return target, real, Path(home)
 
 
 @sv_app.command("dump", short_help="One SavedVariables file as data, value by value.")
@@ -4266,14 +4299,20 @@ def sv_dump(
 
     \f
     JSON: SvDumpReport."""
+    last_part_only = False
     if install_only:
-        # Read the path that was checked; opening it without following a
-        # link on the way is EV-24's.
-        target, real = _sv_inside_install(file, root, flavor)
-        doc = luadata.read(real)
+        # Read the real path that was checked, opened from the real path of
+        # the install one folder at a time (M16-49), so a folder swapped for
+        # a link after the check is refused, not followed.
+        target, real, home = _sv_inside_install(file, root, flavor)
+        doc = luadata.read(real, root=home)
     else:
-        target = _sv_file(file, root, flavor)
-        doc = luadata.read(target)
+        target, install_root = _sv_file_and_root(file, root, flavor)
+        if install_root is not None:
+            doc = luadata.read(target, root=install_root)
+        else:
+            doc = luadata.read(target)
+            last_part_only = True
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
@@ -4288,6 +4327,8 @@ def sv_dump(
         for a in doc.assignments:
             for p, v in _flatten(a.name, a.value):
                 _say(f"{p} = {v}")
+    if last_part_only:
+        _note(_SV_LAST_PART_ONLY)
     _note(_SV_TIMING)
 
 
@@ -5283,7 +5324,11 @@ def _read_config(
     target, found = _wtf_file(lay, name, scope, account, character)
     if found is None:
         return target, None, None
-    return target, found.path, wtfconfig.read_config(lay.flavor_path / found.path)
+    return (
+        target,
+        found.path,
+        wtfconfig.read_config(lay.flavor_path / found.path, root=lay.install_root),
+    )
 
 
 def _no_file(what: str, target: _Target) -> str:
@@ -5435,7 +5480,11 @@ def binds_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "bindings-cache.wtf", scope, account, character)
-    doc = wtfconfig.read_bindings(lay.flavor_path / found.path) if found else None
+    doc = (
+        wtfconfig.read_bindings(lay.flavor_path / found.path, root=lay.install_root)
+        if found
+        else None
+    )
     report = BindsReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6178,7 +6227,11 @@ def macros_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "macros-cache.txt", scope, account, character)
-    doc = wtfconfig.read_macros(lay.flavor_path / found.path) if found else None
+    doc = (
+        wtfconfig.read_macros(lay.flavor_path / found.path, root=lay.install_root)
+        if found
+        else None
+    )
     report = MacrosReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6336,7 +6389,9 @@ def macros_check(
         if found is None:
             files.append(MacrosFile(scope=scope, file=None, macros=0, unknown_lines=0))
             continue
-        data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+        data = snapshot.read_regular_file(
+            lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
+        )
         doc = wtfconfig.parse_macros(data)
         files.append(
             MacrosFile(
@@ -10150,7 +10205,11 @@ def _char_binds_file(
         ]
         scope = "character"
     target = found[0] if found else None
-    doc = wtfconfig.read_bindings(lay.flavor_path / target.path) if target else None
+    doc = (
+        wtfconfig.read_bindings(lay.flavor_path / target.path, root=lay.install_root)
+        if target
+        else None
+    )
     note = _ACCOUNT_BINDINGS if scope == "account" else _NO_CHARACTER_BINDINGS
     if scope == "character" and doc is not None:
         note = _bindings_note("character", True)
@@ -10475,7 +10534,9 @@ def _char_macros_file(
     _, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, who)
     if found is None:
         return CharMacrosFile(scope=scope, path=None, mtime_ns=None, macros=0, unknown_lines=0), []
-    data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+    data = snapshot.read_regular_file(
+        lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
+    )
     doc = wtfconfig.parse_macros(data)
     return (
         CharMacrosFile(

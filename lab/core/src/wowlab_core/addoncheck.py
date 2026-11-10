@@ -240,7 +240,9 @@ def _read_addons_txt(
         doc: wtfconfig.AddonsDocument | None = None
         error: str | None = None
         try:
-            doc = wtfconfig.read_addons(lay.flavor_path.joinpath(*f.path.split("/")))
+            doc = wtfconfig.read_addons(
+                lay.flavor_path.joinpath(*f.path.split("/")), root=lay.install_root
+            )
         except snapshot.UnsafeReadError as exc:
             error = _unsafe_words(exc)
         except OSError as exc:
@@ -264,6 +266,10 @@ def _read_addons_txt(
 
 def _unsafe_words(exc: snapshot.UnsafeReadError) -> str:
     """An `UnsafeReadError` without the absolute path it starts with."""
+    if isinstance(exc, snapshot.LinkedPathError):
+        if exc.final:
+            return "is a link, not followed"
+        return f"is reached through a linked folder, {exc.folder.name}, not followed"
     text = str(exc)
     # The messages are "<path> is not a regular file" and "<path> holds <n>
     # bytes, more than <limit>". The path comes first and may hold the same

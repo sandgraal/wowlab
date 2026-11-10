@@ -405,7 +405,6 @@ def test_constructed_tree_parses_through_the_link(case: Case, root: Path) -> Non
 # ─── a regular path reads byte for byte, with the root given ────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-from-root"))
 def test_a_regular_path_reads_byte_for_byte_from_the_root(
     reader: Reader, root: Path, fds: FdWatch
@@ -423,7 +422,6 @@ def test_a_regular_path_reads_byte_for_byte_from_the_root(
     fds.assert_none_left()
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 def test_real_luadata_read_from_the_root_takes_str_paths(root: Path) -> None:
     """`luadata.read` is typed `str | Path`; a `str` path and root still work."""
     path, data = _copy_in(root, SV)
@@ -432,7 +430,6 @@ def test_real_luadata_read_from_the_root_takes_str_paths(root: Path) -> None:
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-unrelated-link-constructed"))
 def test_a_link_off_the_path_does_not_stop_a_regular_read(
     reader: Reader, root: Path, tmp_path: Path
@@ -449,7 +446,6 @@ def test_a_link_off_the_path_does_not_stop_a_regular_read(
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-root-through-a-link-constructed"))
 def test_a_root_reached_through_a_link_reads(reader: Reader, root: Path, tmp_path: Path) -> None:
     """The walk starts at the root the caller gives; a link above it (macOS's
@@ -467,7 +463,6 @@ def test_a_root_reached_through_a_link_reads(reader: Reader, root: Path, tmp_pat
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("case", _parent_cases(("out-relative", "out-absolute")))
 def test_a_parent_link_out_of_the_install_is_refused(case: Case, root: Path, fds: FdWatch) -> None:
     """`WTF -> ../Elsewhere` and its kin: the read would leave the install."""
@@ -485,7 +480,6 @@ def test_a_parent_link_out_of_the_install_is_refused(case: Case, root: Path, fds
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("case", _parent_cases(("inside",)))
 def test_a_parent_link_inside_the_install_is_refused(case: Case, root: Path, fds: FdWatch) -> None:
     """`tree` reports any link as "link, not followed", wherever it points;
@@ -523,7 +517,6 @@ def _no_o_nofollow_cases() -> list[Any]:
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("case", _no_o_nofollow_cases())
 def test_without_o_nofollow_a_link_is_refused_and_no_dir_fd_is_used(
     case: Case | tuple[Reader, str], root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
@@ -548,7 +541,6 @@ def test_without_o_nofollow_a_link_is_refused_and_no_dir_fd_is_used(
     fds.assert_none_left()
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-no-o-nofollow"))
 def test_without_o_nofollow_a_regular_path_reads_with_no_dir_fd(
     reader: Reader, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
@@ -570,7 +562,6 @@ def test_without_o_nofollow_a_regular_path_reads_with_no_dir_fd(
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("where", ["out", "inside"])
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-final-link"))
 def test_a_final_link_is_still_refused_from_the_root(
@@ -604,7 +595,6 @@ DOTDOT_SHAPES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("shape", DOTDOT_SHAPES)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-dotdot"))
 def test_a_dotdot_component_is_refused(
@@ -661,7 +651,6 @@ NOT_UNDER = [
 ]
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("shape", NOT_UNDER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-not-under-root"))
 def test_a_path_not_under_the_root_is_refused(
@@ -719,7 +708,6 @@ def test_a_path_not_under_the_root_is_refused(
     fds.assert_none_left()
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("spelling", ["trailing-separator", "trailing-dot"])
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-root-spelled"))
 def test_a_root_spelled_with_a_trailing_separator_or_dot_reads(
@@ -764,7 +752,6 @@ def _race_cases() -> list[Any]:
 
 
 @needs_symlink
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize(("reader", "level", "when", "mode"), _race_cases())
 def test_a_parent_swapped_for_a_link_mid_read_never_reads_outside(
     reader: Reader,
@@ -860,7 +847,6 @@ class ChainSpy:
 
 
 @pytest.mark.skipif(not O_NOFOLLOW_REAL, reason="needs O_NOFOLLOW and O_DIRECTORY (POSIX)")
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("reader", READERS, ids=_ids("real-walk-shape"))
 def test_the_walk_opens_each_component_from_the_one_before(
     reader: Reader, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
@@ -908,7 +894,6 @@ windows_only = pytest.mark.skipif(
 
 
 @windows_only
-@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("case", _parent_cases(("junction-out", "junction-inside")))
 def test_a_parent_junction_is_refused(case: Case, root: Path, fds: FdWatch) -> None:
     """A junction `lstat`s as a directory in CPython; the walk must still

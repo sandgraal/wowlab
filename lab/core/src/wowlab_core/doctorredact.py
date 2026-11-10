@@ -144,7 +144,7 @@ def identities(root: Path | None) -> Identities:
         )
         for f in walk.wtf_files:
             if f.name.casefold() in _CONFIG_NAMES:
-                _harvest(lay.flavor_path / f.path, found)
+                _harvest(lay.flavor_path / f.path, lay.install_root, found)
     return found
 
 
@@ -197,9 +197,9 @@ def _account_names(folders: tuple[str, ...], found: Identities) -> None:
             found.characters.add(below[2])
 
 
-def _harvest(path: Path, found: Identities) -> None:
+def _harvest(path: Path, root: Path, found: Identities) -> None:
     try:
-        doc = wtfconfig.read_config(path)
+        doc = wtfconfig.read_config(path, root=root)
     except (OSError, ValueError):
         return
     for name in _REALM_CVARS:
