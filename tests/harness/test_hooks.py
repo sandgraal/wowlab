@@ -177,17 +177,32 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
 
 # ─── guard_bash: destructive and shell writes ────────────────────────────────
 
+# Relative targets resolve against the payload's cwd, and anything under /tmp
+# is a scratch path the guard lets `rm -rf` clear. Grading the rule from a
+# checkout that itself sits under /tmp would then pass every relative case, so
+# these run from a fixed cwd that is never a scratch path (M16-60).
+NOT_SCRATCH_CWD = "/srv/wowlab-checkout"
+
 
 @pytest.mark.parametrize(
     ("command", "needle"),
     [
         ("rm -rf lab/src", "recursive+force"),
         ("cd lab && rm -r -f ../docs", "recursive+force"),
-        ("sudo rm --recursive --force /Volumes/x", "recursive+force"),
         ("rm -rf .venv/../lab", "recursive+force"),
         ("rm -rf lab/src/coverage_models", "recursive+force"),
         ("rm -rf node_modules", "recursive+force"),  # not a scratch dir in a Python-only repo
         ("find lab -name '*.py' -delete", "find -delete"),
+    ],
+)
+def test_guard_bash_blocks_destructive_relative_targets(command: str, needle: str) -> None:
+    assert_blocked(run_hook("guard_bash.py", bash(command, cwd=NOT_SCRATCH_CWD)), needle)
+
+
+@pytest.mark.parametrize(
+    ("command", "needle"),
+    [
+        ("sudo rm --recursive --force /Volumes/x", "recursive+force"),
         ("pkill -f pytest", "machine"),
         ("sudo pkill python", "machine"),
         ("killall pytest", "machine"),
