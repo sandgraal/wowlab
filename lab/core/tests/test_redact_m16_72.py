@@ -20,12 +20,12 @@ import pytest
 from wowlab_core import redact
 from wowlab_core.redact import HOME
 
-# Long enough that the quadratic walk takes minutes (about 20 s at 40 000
-# before M16-72, growing with the square), short enough that a linear walk
-# takes a few milliseconds on any runner.
-RUN = 200_000
+# Long enough that the quadratic walk misses the limit (about 5 s at 20 000
+# before M16-72), short enough that it fails in seconds rather than running
+# into pytest's own timeout; a linear walk takes a few milliseconds.
+RUN = 20_000
 # Generous: a slow, loaded CI runner is still two orders of magnitude inside it.
-LIMIT_SECONDS = 5.0
+LIMIT_SECONDS = 1.0
 
 
 @pytest.mark.parametrize(
