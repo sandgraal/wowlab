@@ -1330,6 +1330,9 @@ class SnapshotStore:
         """Directory descriptors held during one `create` (`_holding_dirs`)."""
         self._root_private = False
         """True once `_private_root` has run within the current `_holding_dirs`."""
+        self._root_pinned = False
+        """True while `put_object` writes into the root it checked (M16-68):
+        a held root its path no longer names is refused, not reopened."""
 
     # -- layout ------------------------------------------------------------
 
@@ -1591,6 +1594,20 @@ class SnapshotStore:
             guard._refuse_inside_any_install(self.path, "the store")
         except guard.GuardError as exc:
             raise StoreLocationError(str(exc)) from exc
+
+    def _recheck_inside_any_install(self) -> None:
+        """`_refuse_inside_any_install` again, after the store's folder was
+        opened or created (M16-68 fix round 1). A refusal here says that the
+        second check caught it, and names the folder: it may have been
+        created inside the install, and is left as it is."""
+        try:
+            self._refuse_inside_any_install()
+        except StoreLocationError as exc:
+            raise StoreLocationError(
+                f"{exc} (found by the second check, after the store folder {self.path} "
+                "was opened or created and before anything was written; nothing was "
+                "removed, so check that folder)"
+            ) from exc.__cause__
 
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
@@ -1981,6 +1998,12 @@ class SnapshotStore:
                 self._private_root(key, fd, create=create)
                 return fd
             os.close(fd)  # gone or replaced: open afresh, which refuses a link
+            if not key and self._root_pinned:
+                raise StoreLocationError(
+                    f"the store {self.path} no longer names the folder that was checked "
+                    "(a folder on its path was replaced after the check); "
+                    "nothing was written, and nothing was removed"
+                )
         if parent_fd is None:
             fresh = self._open_root(create=create)
         else:
@@ -2344,13 +2367,35 @@ class SnapshotStore:
 
         Any `OSError` on the way (M11-31), such as a directory planted at the
         object's path, is raised as `SnapshotError` naming that path; the
-        staged copy is removed and nothing is written in its place."""
+        staged copy is removed and nothing is written in its place.
+
+        A store inside any install is refused (`StoreLocationError`) before
+        anything is created, by `create`'s rule (L1; M16-68). The rule runs
+        again once the store's folder is opened (or created), before the
+        first byte is written, as `guard`'s `take_store` does after its
+        mkdir (§6.10, defence in depth): a parent swapped for a link into an
+        install in between is refused too. That refusal removes nothing,
+        and names the folder it may have created. From then on the write is
+        pinned to the root that was checked (fix round 2): where directory
+        descriptors are held (POSIX), a store path that no longer names that
+        held root is refused with `StoreLocationError` rather than opened
+        afresh. Where they are not (Windows), the store is walked by path,
+        and a same-user swap after the second check is the window §6.10
+        (amended 2026-09-28) leaves out of scope."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
+        self._refuse_inside_any_install()
         try:
             with self._holding_dirs():
                 self._refuse_linked_store_dirs()
-                digest, _ = self._store_stream(io.BytesIO(data), set())
+                with self._store_dir((), create=True):
+                    pass  # the root, made and (with descriptors) held
+                self._recheck_inside_any_install()
+                self._root_pinned = True
+                try:
+                    digest, _ = self._store_stream(io.BytesIO(data), set())
+                finally:
+                    self._root_pinned = False
         except OSError as exc:
             planned = hashlib.sha256(data).hexdigest()
             raise SnapshotError(self._cannot_store(planned, exc)) from exc
@@ -2894,6 +2939,10 @@ class SnapshotStore:
         link (on Windows also a junction) or not a directory, or is missing
         while `objects/` holds anything: a dangling link or an unmounted
         volume would otherwise make every object look unreferenced.
+
+        Unless `dry_run`, a store inside any install is refused
+        (`StoreLocationError`) before anything is listed or removed, by
+        `create`'s rule (L1; M16-68). A dry run only reads, and is allowed.
         """
         if isinstance(keep, str | bytes):
             raise SnapshotError("keep is an iterable of SHA-256 digests, not a single string")
@@ -2902,6 +2951,8 @@ class SnapshotStore:
             if not isinstance(digest, str) or not _SHA_RE.match(digest):
                 raise SnapshotError(f"not a SHA-256 hex digest: {digest!r}")
             referenced.add(digest)
+        if not dry_run:
+            self._refuse_inside_any_install()
         self._refuse_gc_without_manifests()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
