@@ -69,13 +69,19 @@
 <p id="help"></p>
 <div id="fields"></div>
 <button id="run" type="button" disabled>Run</button>
-<p id="status" role="status"></p>
+<p id="status" role="status" tabindex="-1"></p>
 <div id="confirm-box" class="confirm-box" hidden>
+<div id="plan-box" hidden>
+<h3 id="plan-heading" tabindex="-1">Plan</h3>
+<pre id="plan-lines" class="plan-lines" hidden></pre>
+</div>
 <p id="confirm-note" role="status"></p>
 <button id="confirm" type="button" hidden>Confirm</button>
 </div>
+<details id="result-details" class="result-details" hidden><summary>Details</summary>
 <div id="result-tree" class="jt" hidden></div>
 <details id="result-raw" class="jt-raw" hidden><summary>Output as printed</summary><pre id="stdout"></pre></details>
+</details>
 <pre id="stderr"></pre>
 </section>
 </div>

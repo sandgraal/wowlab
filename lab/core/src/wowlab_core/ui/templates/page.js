@@ -11,7 +11,11 @@
 //   decides whether the plan may be confirmed, by handing back a one-time
 //   token, and Confirm sends that token with the plan's own command and
 //   parameters; a confirmed run shows the server's note (its journal record
-//   and the `wowlab undo` hint) and never another Confirm;
+//   and the `wowlab undo` hint) and never another Confirm. The plan's lines,
+//   Confirm's words and how each run ended (its exit code in words) are the
+//   server's too (M16-21): the page puts the plan above Confirm, keeps the
+//   report behind a closed "Details", and moves focus to the plan's heading,
+//   then after Confirm to the sentence that says how it ended;
 // - the character (M14-08, M14-09): a picker from `char list --json`, and
 //   for the one picked its gear from `char gear --json`, its keys from
 //   `char binds --json` and its macros from `char macros --json`;
@@ -165,7 +169,8 @@
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
       const text = String(result.stderr || "").trim();
-      const error = text || "wowlab " + command.join(" ") + " ended with exit code " + result.exit_code + ".";
+      const ended = result.outcome && typeof result.outcome.text === "string" ? result.outcome.text : "";
+      const error = text || "wowlab " + command.join(" ") + ": " + (ended || "it did not finish.");
       if (partial) {
         try {
           const data = JSON.parse(result.stdout);
@@ -2090,7 +2095,13 @@
     } else {
       input = make("input");
       input.type = "text";
-      if (param.required) input.required = true;
+    }
+    // A field the command declares required is marked in its label, which
+    // is its accessible name, and as `required`, which a screen reader
+    // announces; it is checked before Run (`missing`).
+    if (param.required && param.kind !== "flag") {
+      input.required = true;
+      label.appendChild(make("span", " (required)"));
     }
     input.id = id;
     box.appendChild(label);
@@ -2122,15 +2133,21 @@
     confirmNoteSeq += 1;
     byId("confirm-box").hidden = true;
     byId("confirm-note").textContent = "";
+    byId("plan-box").hidden = true;
+    byId("plan-lines").textContent = "";
+    byId("plan-lines").hidden = true;
     const button = byId("confirm");
     button.hidden = true;
     button.disabled = true;
+    button.textContent = "Confirm";
     for (const { box } of inputs) box.classList.remove("needed");
   }
 
-  // What the server said about a plan run: its note, a Confirm when it
-  // minted a token, and the field to fill when it named one. The page adds
-  // no rule of its own: no token, no Confirm.
+  // What the server said about a plan run: its note, and when it minted a
+  // token, the plan under its heading, then Confirm named by the server's
+  // label; the field to fill when it named one. The page adds no rule of its
+  // own: no token, no plan heading and no Confirm. Focus goes to the plan's
+  // heading, or to the field to fill.
   function showOffer(offer, command, params) {
     if (!offer || offer.stage !== "plan") return;
     const note = typeof offer.note === "string" ? offer.note : "";
@@ -2139,9 +2156,18 @@
     confirmSay(shown(note));
     if (token) {
       pending = { command: command, params: params, token: token };
+      const lines = Array.isArray(offer.plan_lines)
+        ? offer.plan_lines.filter((line) => typeof line === "string")
+        : [];
+      const planLines = byId("plan-lines");
+      planLines.textContent = lines.map(shown).join("\n");
+      planLines.hidden = lines.length === 0;
+      byId("plan-box").hidden = false;
       const button = byId("confirm");
+      if (typeof offer.label === "string" && offer.label) button.textContent = offer.label;
       button.hidden = false;
       button.disabled = false;
+      byId("plan-heading").focus();
     }
     if (typeof offer.needs === "string") {
       for (const { param, input, box } of inputs) {
@@ -2197,8 +2223,23 @@
     return params;
   }
 
+  // The first field the command declares required that is empty, or null.
+  function missing() {
+    for (const entry of inputs) {
+      const { param, input } = entry;
+      if (!param.required || param.kind === "flag") continue;
+      const empty = param.multiple
+        ? input.value.split("\n").every((line) => line === "")
+        : input.value === "";
+      if (empty) return entry;
+    }
+    return null;
+  }
+
   // One run from the form, or, with `confirming`, the confirmed run of the
   // plan the server offered: the same command and parameters, and its token.
+  // A form with a required field left empty is not run: the field is marked
+  // and focused, and the status line says which.
   async function run(confirming) {
     if (current === null) return;
     const command = current;
@@ -2207,6 +2248,14 @@
       if (pending === null || pending.command !== command) return;
       body = { command: command.path, params: pending.params, confirm: pending.token };
     } else {
+      const empty = missing();
+      if (empty !== null) {
+        for (const { box } of inputs) box.classList.remove("needed");
+        empty.box.classList.add("needed");
+        say("Fill in " + empty.param.label + " first: it is required.", true);
+        empty.input.focus();
+        return;
+      }
       body = { command: command.path, params: collect() };
     }
     clearConfirm();
@@ -2233,14 +2282,15 @@
       }
       // A failed run's error report repeats the error line shown below it,
       // and names a class: it is not drawn.
-      showResult(errorReport(result) ? null : result.stdout);
+      // A run of the confirm step keeps its report behind a closed
+      // "Details": the plan above Confirm is what it shows first.
+      showResult(errorReport(result) ? null : result.stdout, !result.confirm);
       byId("stderr").textContent = result.stderr;
-      const notes = [];
-      if (result.timed_out) notes.push("stopped at its time limit");
-      if (result.truncated) notes.push("output cut at its size limit");
       const stage = result.confirm && result.confirm.stage;
-      const head = stage === "plan" ? "Plan, nothing was changed: exit code " : stage === "confirmed" ? "Confirmed: exit code " : "Exit code ";
-      say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""), result.exit_code !== 0);
+      // How the run ended, in the server's words (exit codes as words, and
+      // "Plan" only for a plan that ended with its marker).
+      const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+      say(outcome ? outcome.text : "", Boolean(outcome && outcome.alert));
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
       if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
@@ -2255,7 +2305,12 @@
     } catch (error) {
       if (seq === runSeq) say("The request failed: " + error, true);
     } finally {
-      if (seq === runSeq) button.disabled = false;
+      if (seq === runSeq) {
+        button.disabled = false;
+        // After Confirm (which is gone now), focus goes to the sentence
+        // that says how it ended, a refusal included.
+        if (confirming) byId("status").focus();
+      }
     }
   }
 
@@ -2454,15 +2509,19 @@
     return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
   }
 
-  // Shows one run's stdout: a tree when it is one JSON document, else the
-  // text as printed. null clears the result.
-  function showResult(stdout) {
+  // Shows one run's stdout under "Details": a tree when it is one JSON
+  // document, else the text as printed. "Details" is open when `open`, else
+  // closed (a run of the confirm step). null clears the result.
+  function showResult(stdout, open) {
+    const details = byId("result-details");
     const tree = byId("result-tree");
     const raw = byId("result-raw");
     tree.replaceChildren();
     tree.hidden = true;
     raw.hidden = true;
     raw.open = false;
+    details.hidden = !stdout;
+    details.open = Boolean(open);
     byId("stdout").textContent = stdout || "";
     if (!stdout) return;
     let value;

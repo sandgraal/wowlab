@@ -800,10 +800,13 @@ const fetchStub = async (url, opts) => {
   else if (key === "tree") stdout = scenario.trees[params.flavor || scenario.first_flavor];
   else if (key === "filemap gaps") stdout = scenario.gaps;
   else if (key === "explain") stdout = scenario.explains[norm(params.path)];
+  // The server's `outcome` for a plain run with this exit code (M16-21),
+  // as `_scenario` read it from the server's own code.
+  const outcome = (c) => (scenario.outcomes || {})[String(c)];
   if (typeof stdout !== "string") {
-    return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
+    return answer({ exit_code: 2, timed_out: false, truncated: false, outcome: outcome(2), stdout: "", stderr: "harness: no reply for " + key });
   }
-  return answer({ exit_code: code, timed_out: false, truncated: false, stdout: stdout, stderr: stderr });
+  return answer({ exit_code: code, timed_out: false, truncated: false, outcome: outcome(code), stdout: stdout, stderr: stderr });
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
@@ -1145,6 +1148,10 @@ def _scenario(
         "explains": explains,
         "runs": [],
         "steps": steps,
+        # What the server says about a plain run that exits with each code.
+        "outcomes": {
+            str(code): ui._outcome(ui._Run(code, [], [], False, False), None) for code in range(4)
+        },
     }
     return scenario, first
 

@@ -71,12 +71,16 @@ def test_a_failed_runs_error_report_is_not_drawn(
     reply = first_stage._run(server, ["sv", "dump"], {"file": "Nope-m16-22.lua"}).json()
     assert reply["exit_code"] == cli.EXIT_ERROR, reply
     report = cli.ErrorReport.model_validate_json(reply["stdout"])
-    steps: list[dict[str, Any]] = [{"run_command": "sv dump"}, {"result_view": True}]
+    steps: list[dict[str, Any]] = [
+        {"run_command": "sv dump", "fill": {"file": "Nope-m16-22.lua"}},
+        {"result_view": True},
+    ]
     scenario, _ = _scenario(server, [], steps)
     scenario["held"] = _held(reply)
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]
-    assert view["status"] == "Exit code 1", view
+    # The exit code in words (M16-21), as the server says it.
+    assert view["status"] == reply["outcome"]["text"] == "Could not (exit code 1).", view
     assert view["stdout"] == "" and view["treeHidden"] and view["rawHidden"], view
     assert report.kind not in json.dumps(view), view
     assert f"wowlab: {report.message}" in view["stderr"], view
@@ -94,7 +98,10 @@ def test_a_partial_report_is_still_drawn_constructed(
         "stdout": partial,
         "stderr": "wowlab: some characters could not be read\n",
     }
-    steps: list[dict[str, Any]] = [{"run_command": "sv dump"}, {"result_view": True}]
+    steps: list[dict[str, Any]] = [
+        {"run_command": "sv dump", "fill": {"file": "Nope-m16-22.lua"}},
+        {"result_view": True},
+    ]
     scenario, _ = _scenario(server, [], steps)
     scenario["held"] = _held(reply)
     out = _drive(tmp_path / "node", scenario)
