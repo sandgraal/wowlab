@@ -1248,11 +1248,12 @@ class SnapshotStore:
         root: Path,
         subtree: str,
         excluded: Sequence[str],
-        entries: Callable[[Path], Sequence[os.DirEntry[str]]] = longpath.entries,
+        entries: Callable[[Path], Sequence[os.DirEntry[str]]] | None = None,
     ) -> Iterator[tuple[str, Path]]:
         """Yield `(relative posix path, absolute path)` for every non-directory.
-        `entries` lists one directory (`longpath.entries` unless a caller that
-        already holds the listing passes its own)."""
+        `entries` lists one directory; None means `longpath.entries`, looked
+        up at call time, unless a caller that already holds the listing
+        passes its own."""
         if any(_is_under(subtree, x) for x in excluded):
             return
         self._refuse_symlinked_parent(root, subtree)
@@ -1271,7 +1272,8 @@ class SnapshotStore:
         while stack:
             rel_dir, abs_dir = stack.pop()
             try:
-                children = sorted(entries(abs_dir), key=lambda d: d.name)
+                listed = longpath.entries(abs_dir) if entries is None else entries(abs_dir)
+                children = sorted(listed, key=lambda d: d.name)
             except FileNotFoundError:
                 _confirm_gone(abs_dir)
                 continue  # removed while we walked
@@ -2007,9 +2009,7 @@ class SnapshotStore:
         excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
         found: dict[str, Literal["file", "symlink", "other"]] = {}
         for subtree in wanted:
-            for rel, abs_path in self._walk(
-                root, subtree, excluded, longpath.entries if entries is None else entries
-            ):
+            for rel, abs_path in self._walk(root, subtree, excluded, entries):
                 if rel in found:
                     continue
                 try:
