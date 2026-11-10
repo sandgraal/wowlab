@@ -594,12 +594,30 @@ def test_explain_hashes_only_the_named_path_and_writes_nothing(
     ok("snap", "create")
     opened: list[Path] = []
     real = snapshot.open_regular_file
+    walking: list[bool] = []  # inside the walk from the root: its own opens are not recorded
 
     def spy(path: Path, **kw: Any) -> Any:
-        opened.append(Path(path))
+        if not walking:
+            opened.append(Path(path))
         return real(path, **kw)
 
     monkeypatch.setattr(snapshot, "open_regular_file", spy)
+    # The hash opens the path from the install root (M16-79), so it is
+    # recorded once, by its full path, here. The walk's own last open (by
+    # name in a folder's descriptor on POSIX, by full path on the `lstat`
+    # walk Windows takes) goes through `open_regular_file` and is not
+    # recorded a second time.
+    real_from_root = snapshot.open_regular_file_from_root
+
+    def spy_from_root(path: Path, root_: Path) -> Any:
+        opened.append(Path(path))
+        walking.append(True)
+        try:
+            return real_from_root(path, root_)
+        finally:
+            walking.pop()
+
+    monkeypatch.setattr(snapshot, "open_regular_file_from_root", spy_from_root)
     before = _state(root)
     explained(SYNDICATOR)
     ok("explain", SYNDICATOR)
