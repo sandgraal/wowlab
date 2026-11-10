@@ -116,9 +116,10 @@ _MACROS_FILE = "macros-cache.txt"
 _TOO_BROAD = frozenset({"wtf", "wtf/account", "interface", "fonts"})
 
 MAX_DELETES = 2000
-"""The most files one apply may delete. The gate re-walks the install for
-each delete, so a plan far beyond this costs minutes; above it the apply is
-refused with the count (a guard listing cache is the follow-up)."""
+"""The most files one apply may delete; above it the apply is refused with
+the count. Guard's write-ahead journal rewrites its whole record on every
+delete, so the cost grows with the square of the count (M16-23: about 16 s
+CPU at 2,000, 243 s at 8,000); an incremental journal is the follow-up."""
 
 SERVER_NOTE = (
     "the server may replace this at your next login (synchronize* CVars; see `wowlab doctor`)"

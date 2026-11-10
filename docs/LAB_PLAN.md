@@ -2695,8 +2695,12 @@ after the PR #96 reviews:*
   installed since are removed with their SavedVariables, and addons updated
   since go back to the saved version, which an addon manager will not know
   about. One apply deletes at most 2,000 files; above that it is refused
-  with the count and a pointer to `snap restore` or a narrower profile (the
-  gate re-walks the install per delete; a gate-side listing cache is a
+  with the count and a pointer to `snap restore` or a narrower profile
+  (restated 2026-11-10, M16-23: the gate's directory listings are now
+  memoized per transaction, but its write-ahead journal rewrites its whole
+  record on every delete, so the cost grows with the square of the count:
+  2,000 deletes take about 16 s CPU, 8,000 about 243 s and 20,000 about
+  1,570 s on the development container; an incremental journal is the
   follow-up).
 - **The lab-addon is always left alone** (owner decision c). The lab-addon's
   code (`Interface/AddOns/WowLab/`) and its SavedVariables (`WowLab.lua`) are
