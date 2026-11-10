@@ -655,7 +655,7 @@ def test_classify_outside_root_other_dirs_and_hints_constructed(tmp_path: Path) 
     missing_any = classify(f"{FLAVOR}/WTF/Account/ACC/9", install)
     assert isinstance(missing_any, Unclassified)
     assert missing_any.reason == (
-        "not found; nothing is at this path, and no file-map row matches a name like this; "
+        "not found; nothing is at this path, and no file-map row matches this whole path; "
         "end it with / to see what a folder by this name would be (/ works on Windows too)"
     )
     missing_slash = classify(f"{FLAVOR}/WTF/Account/ACC/9/", install)

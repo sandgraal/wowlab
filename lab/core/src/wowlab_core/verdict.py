@@ -50,9 +50,7 @@ _SERVER_WORDS = "; the server may replace it at login (sync settings: wowlab doc
 _UNCLASSIFIED_WORDS = "no file-map row; wowlab does not know what this file is"
 _UNCLASSIFIED_FOLDER_WORDS = "no file-map row; wowlab does not know what this folder is"
 # The same words as `layout`'s reason for such a path (M13-29).
-_NOT_FOUND_WORDS = (
-    "not found; nothing is at this path, and no file-map row matches a name like this"
-)
+_NOT_FOUND_WORDS = "not found; nothing is at this path, and no file-map row matches this whole path"
 # What a restore can do at a path with nothing on it: put back a copy a
 # snapshot holds, or, naming the path with --paths, delete a file created
 # there after the snapshot (`guard` deletes a named path the snapshot's

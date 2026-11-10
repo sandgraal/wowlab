@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _explain_exit import expected_exit
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap
@@ -34,7 +35,8 @@ def root(tmp_path: Path) -> Path:
 
 def _run(*args: str) -> str:
     result = CliRunner().invoke(cli.app, list(args))
-    assert result.exit_code == 0, result.output
+    # M16-18: a path that matches nothing exits 1.
+    assert result.exit_code == expected_exit(args, result.stdout), result.output
     return result.stdout
 
 

@@ -116,7 +116,7 @@ import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
 
@@ -141,6 +141,7 @@ from wowlab_core import (
     combatlog,
     doctorredact,
     dressing,
+    filemap,
     firstrun,
     gamedata,
     gaps,
@@ -2919,6 +2920,24 @@ _SHELL_LABELS = {
 }
 
 
+class ExplainCandidate(_Out):
+    """M16-18: one path, or one file-map row, a name `explain` did not find
+    as typed may mean."""
+
+    # A file or folder on disk, relative to its flavor folder; None for a
+    # row that names the name but matches no path found.
+    path: str | None
+    flavor_folder: str | None
+    entry_id: str | None  # the row the path has, or the row itself
+    doc_path: str | None  # that row's path pattern, as the file map writes it
+
+
+# The most candidates `explain` prints; `--json` has them all.
+_CANDIDATES_SHOWN = 20
+# At most this many candidates are each explained in full (M16-18).
+_CANDIDATES_EXPLAINED = 3
+
+
 class ExplainReport(_Out):
     """`wowlab explain --json`."""
 
@@ -2944,6 +2963,11 @@ class ExplainReport(_Out):
     # did not take as a flavor (`Install.not_taken`), with why. Left out of
     # the JSON when None, so every other path prints as before.
     not_taken: install.NotTaken | None = Field(default=None, exclude_if=lambda v: v is None)
+    # M16-18: for a relative path with nothing on disk and no row, what its
+    # last part names: the files by that name in the flavor folders read,
+    # then the rows that name it and match none of them. Left out of the
+    # JSON when empty, so every other path prints as before.
+    candidates: list[ExplainCandidate] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -3574,6 +3598,19 @@ def explain(
         # M13-27: the line the text output prints, carried in the JSON so
         # `wowlab ui` shows Python's words and words nothing itself.
         facts = facts.model_copy(update={"words": _snapshot_line(facts, captured)})
+    # M16-18: a relative path not on disk, with no row: what its last part
+    # names, in the flavor folder it is read in (every one, with several and
+    # none chosen).
+    candidates: list[ExplainCandidate] = []
+    if (
+        relative
+        and nowhere
+        and isinstance(result, layout.Unclassified)
+        and result.base is not None
+        and _not_taken_at(inst, judged) is None
+    ):
+        folders = [chosen_folder] if chosen_folder else [f.folder for f in inst.flavors]
+        candidates = _explain_candidates(inst, path, folders)
     report = ExplainReport(
         query=path,
         result=result,
@@ -3586,9 +3623,19 @@ def explain(
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
         absent=nowhere,
         not_taken=_not_taken_at(inst, judged),
+        candidates=candidates,
+    )
+    # M16-18: a path that matches nothing (outside the install, or nothing
+    # on disk under any reading, no row, and nothing by its name) exits 1.
+    matched = not (
+        isinstance(result, layout.Unclassified)
+        and (result.base is None or nowhere)
+        and not candidates
     )
     if json_out:
         _emit(report)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     taken = report.not_taken
     if isinstance(result, layout.Unclassified):
@@ -3615,6 +3662,10 @@ def explain(
         ):
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
+        if candidates:
+            _say_candidates(inst, candidates, root)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
@@ -3630,6 +3681,73 @@ def explain(
     if nowhere:
         _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)
+
+
+def _explain_candidates(
+    inst: install.Install, path: str, folders: Sequence[str]
+) -> list[ExplainCandidate]:
+    """M16-18: the paths in `folders` (flavor folders) whose last parts are
+    `path`'s, with their rows; then the rows that name it and that none of
+    those paths has. Empty for a path with `.` or `..` in it."""
+    parts = list(PurePath(path).parts)
+    if not parts or any(p in (".", "..") for p in parts):
+        return []
+    found: list[ExplainCandidate] = []
+    for folder in folders:
+        base = Path(inst.root) / folder
+        for rel in layout.named_paths(base, parts):
+            got = layout.classify(base / rel, inst)
+            entry = got.entry if isinstance(got, layout.Classified) else None
+            found.append(
+                ExplainCandidate(
+                    path=rel,
+                    flavor_folder=folder,
+                    entry_id=entry.id if entry else None,
+                    doc_path=_plain(entry.doc_path) if entry else None,
+                )
+            )
+    seen = {c.entry_id for c in found}
+    rows = [
+        ExplainCandidate(path=None, flavor_folder=None, entry_id=e.id, doc_path=_plain(e.doc_path))
+        for e in filemap.load().named(parts)
+        if e.id not in seen
+    ]
+    return found + rows
+
+
+def _say_candidates(
+    inst: install.Install, candidates: Sequence[ExplainCandidate], root: Path | None
+) -> None:
+    """M16-18: what a name not found as typed may mean, listed, and each
+    explained when there are `_CANDIDATES_EXPLAINED` or fewer."""
+    paths = [c for c in candidates if c.path is not None]
+    rows = [c for c in candidates if c.path is None]
+    if paths:
+        _say(f"  on disk by this name ({len(paths)}):")
+        for c in paths[:_CANDIDATES_SHOWN]:
+            _say(f"    {c.path} (in {c.flavor_folder})")
+        if len(paths) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(paths) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if rows:
+        _say(f"  file-map rows for a file by this name ({len(rows)}):")
+        for c in rows[:_CANDIDATES_SHOWN]:
+            _say(f"    {c.entry_id}: {c.doc_path}")
+        if len(rows) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(rows) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if len(candidates) > _CANDIDATES_EXPLAINED:
+        _say("  explain one of them by the path shown")
+        return
+    fm = filemap.load()
+    for c in candidates:
+        _say("")
+        if c.path is not None:
+            # Named from the install root, so it is read where it was found.
+            explain(path=f"{c.flavor_folder}/{c.path}", root=root, flavor=None, json_out=False)
+        elif c.entry_id is not None:
+            e = fm.entry(c.entry_id)
+            _say(f"{c.doc_path} (file-map row {e.id}; nothing by this name was found)")
+            _say(f"  what:         {_player_copy(_plain(e.what))}")
+            _say(f"  written by:   {_plain(e.written_by)}")
 
 
 def _say_detail(report: ExplainReport, captured: str) -> None:
@@ -4178,17 +4296,91 @@ def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
     return value
 
 
-def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
+def _sv_file(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> Path:
     """FILE as `sv dump` takes it, plain (a `\\\\?\\` spelling named by its plain
-    one, so no output shows it), looked up past the plain limit too (M13-44)."""
+    one, so no output shows it), looked up past the plain limit too (M13-44).
+    A relative FILE that is not there, under the current folder or the
+    flavor folder, is a name `sv list` lists (M16-18): `_sv_named`."""
     given = Path(_plain_arg(path))
     if given.is_absolute() or longpath.lexists(given):
         return given
-    _, _, lay = _open(root, flavor)
-    return lay.flavor_path / given
+    _, chosen, lay = _open(root, flavor)
+    direct = lay.flavor_path / given
+    if longpath.lexists(direct):
+        return direct
+    return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
 
-def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
+def _sv_named(
+    lay: layout.Layout,
+    folder: str,
+    given: Path,
+    account: str | None,
+    character: str | None,
+) -> layout.SavedVariablesFile:
+    """M16-18: the one SavedVariables file `sv list` lists that `given`
+    names: by its path relative to its account folder
+    (`SavedVariables/<Addon>.lua`, `<Realm>/<Character>/SavedVariables/…`),
+    by its file name, or by its addon name (a `.bak` only by its name or
+    path), case-insensitively, among the files of `--account` and
+    `--character` when given; `--account` alone prefers its account-wide
+    file. None is exit 1 and several exit 2, each with the paths that would
+    do."""
+    files = list(lay.wtf_walk().saved_variables)
+    if account is not None or character is not None:
+        acct = _select_account(lay, account)
+        files = [f for f in files if f.account == acct.folder]
+        if character is not None:
+            char = _select_character(acct, character)
+            files = [
+                f
+                for f in files
+                if f.realm_folder == char.realm_folder and f.character_folder == char.folder
+            ]
+    text = "/".join(given.parts)
+    key = text.casefold()
+
+    def in_account(f: layout.SavedVariablesFile) -> str:
+        return f.path.split("/", 3)[3] if f.path.count("/") >= 3 else f.path
+
+    found = [
+        f
+        for f in files
+        if key in (in_account(f).casefold(), _sv_name(f).casefold())
+        or (not f.backup and f.addon is not None and f.addon.casefold() == key)
+    ]
+    if account is not None and character is None and len(found) > 1:
+        # `--account` alone names the account-wide file among several.
+        found = [f for f in found if f.scope == "account"] or found
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise CliError(
+            f"no SavedVariables file {text!r}: nothing at that path in the flavor folder "
+            f"{folder}, and no file `wowlab sv list` lists has that name, addon or path "
+            "in its account folder"
+        )
+    listing = "; ".join(f.path for f in found)
+    raise CliError(
+        f"{text!r} names {len(found)} SavedVariables files ({listing}); pick one with "
+        "--account or --character, or name it by its path in the account folder",
+        EXIT_USAGE,
+    )
+
+
+def _sv_inside_install(
+    file: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
     the real path of the install wowlab finds by itself, without `--root`
@@ -4209,7 +4401,7 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
                 f"refused: --root {root} is not the install wowlab finds, {found.root}",
                 EXIT_REFUSED,
             )
-        target = _sv_file(file, root, flavor)
+        target = _sv_file(file, root, flavor, account, character)
     except install.InstallError as exc:
         raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
     try:
@@ -4229,7 +4421,8 @@ def sv_dump(
         str,
         typer.Argument(
             help="A SavedVariables file: absolute, relative to the current folder, "
-            "or relative to the flavor folder."
+            "or relative to the flavor folder; else as `sv list` lists it: an addon "
+            "name, a file name, or a path relative to its account folder."
         ),
     ],
     path: Annotated[
@@ -4249,6 +4442,22 @@ def sv_dump(
             "The browser view always passes this.",
         ),
     ] = False,
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            help="When FILE is a name several files have: the account folder's "
+            "(its account-wide file, unless --character names one of its characters).",
+        ),
+    ] = None,
+    character: Annotated[
+        str | None,
+        typer.Option(
+            "--character",
+            help="When FILE is a name several files have: this character folder's, "
+            "as <Character> or <Realm folder>/<Character>.",
+        ),
+    ] = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -4261,10 +4470,10 @@ def sv_dump(
     if install_only:
         # Read the path that was checked; opening it without following a
         # link on the way is EV-24's.
-        target, real = _sv_inside_install(file, root, flavor)
+        target, real = _sv_inside_install(file, root, flavor, account, character)
         doc = luadata.read(real)
     else:
-        target = _sv_file(file, root, flavor)
+        target = _sv_file(file, root, flavor, account, character)
         doc = luadata.read(target)
     if path is not None:
         value = _resolve_path(doc, path)

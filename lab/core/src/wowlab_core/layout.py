@@ -66,7 +66,8 @@ from __future__ import annotations
 import os
 import re
 import stat
-from collections.abc import Callable, Iterable, Iterator
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Annotated, Any, Literal
@@ -1492,7 +1493,9 @@ NO_ROW = "no file-map row matches"
 """`Unclassified.reason` for a path that is there but has no row."""
 NOT_FOUND = "not found; nothing is at this path"
 """How every reason for a path that is not on disk begins (M13-29)."""
-NO_ROW_LIKE = "no file-map row matches a name like this"
+NO_ROW_LIKE = "no file-map row matches this whole path"
+"""Rows match a whole path, never a bare name: a row may still name a file
+by this path's last part elsewhere (M16-18; `explain` lists them)."""
 AS_FOLDER = "end it with / to see what a folder by this name would be (/ works on Windows too)"
 _NOT_FOUND_REASON = f"{NOT_FOUND}, and {NO_ROW_LIKE}"
 
@@ -1595,6 +1598,42 @@ def classify(
     return _classify(
         absolute, Path(install.root), folders, _dir_hint(path, is_dir), probe=is_dir is None
     )
+
+
+def _name_key(name: str) -> str:
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def named_paths(folder: Path, parts: Sequence[str]) -> list[str]:
+    """Every path under `folder` (relative to it, `/`-separated, sorted)
+    whose last segments are `parts`, compared case-insensitively and in
+    NFC (M16-18: `explain config-cache.wtf` finds the files by that name),
+    shallowest first.
+    Files, folders and links count; a link is never followed and a folder
+    that cannot be listed is skipped. Reads only."""
+    want = tuple(_name_key(p) for p in parts)
+    if not want:
+        return []
+    found: list[str] = []
+    stack: list[tuple[Path, tuple[str, ...]]] = [(folder, ())]
+    while stack:
+        here, rel = stack.pop()
+        try:
+            listed = longpath.entries(here)
+        except (OSError, ValueError):
+            continue
+        for entry in listed:
+            path = (*rel, entry.name)
+            if len(path) >= len(want) and tuple(_name_key(p) for p in path[-len(want) :]) == want:
+                found.append("/".join(path))
+            try:
+                if entry.is_dir(follow_symlinks=False) and not is_link(
+                    here / entry.name, entry.stat(follow_symlinks=False)
+                ):
+                    stack.append((here / entry.name, path))
+            except OSError:
+                continue
+    return sorted(found, key=lambda p: (p.count("/"), p))
 
 
 def layouts(install: Install, limits: Limits | None = None) -> tuple[Layout, ...]:

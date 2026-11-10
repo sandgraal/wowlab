@@ -96,7 +96,7 @@ It runs every wowlab command except `ui` itself, `log tail --follow` and `looks 
 | You're thinking… | wowlab's answer |
 |---|---|
 | **"I broke my UI and I don't know how."** | Take a snapshot before you experiment. If something goes wrong, `wowlab undo` puts every file back exactly as it was. |
-| **"What is `config-cache.wtf` and can I delete it?"** | `wowlab explain` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. |
+| **"What is `config-cache.wtf`, and is it safe to change?"** | `wowlab explain config-cache.wtf` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. A bare file name is enough: it finds every file by that name. |
 | **"My addon settings are a mess."** | Read any addon's saved settings as plain text, with nothing executed and nothing changed. Merge one addon's settings between characters without touching the rest. |
 | **"I play on the Forever beta and nothing is documented."** | wowlab was built against a real Forever install: its folder layout, file formats and combat log are written up in plain words. |
 | **"My macros and keybinds grew over years."** | `wowlab macros check` finds broken spell names, overlong and duplicate macros, and macros on no action bar. `wowlab binds coach` reads your own combat log and shows the spells you cast most on your worst keys. |
@@ -342,7 +342,7 @@ uv run wowlab --help        # every command
 Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`docs/INSTALL.md`](docs/INSTALL.md), [`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
 
 > [!TIP]
-> Exit codes: `0` ok, `1` error, `2` usage, `3` refused by the write gate. Only these six commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
+> Exit codes: `0` ok, `1` error (and `explain` of a path that matches nothing), `2` usage, `3` refused by the write gate. Only these six commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
 
 <details>
 <summary><b>Developer commands</b></summary>
