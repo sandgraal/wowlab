@@ -170,6 +170,7 @@ from wowlab_core import (
 )
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
+    WOWLAB_TEMP_ROW,
     Verdict,
     gate_names_but_for_executable,
     gate_refuses_stat,
@@ -1591,6 +1592,11 @@ class DoctorReport(_Out):
     # `Install.not_taken`: each name of `other_dirs` with why it was not
     # taken (M13-45). Left out of the JSON when empty, as there.
     not_taken: list[install.NotTaken] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # The root given is a folder that holds no .build.info, is not a flavor
+    # folder, and has no install above it (`_could_be_an_install`): the text
+    # names the Battle.net app's Scan and Repair (M16-13). Left out of the
+    # JSON when false.
+    build_info_missing: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1733,6 +1739,7 @@ def _doctor(
     inst: install.Install | None = None
     found_by: str | None = None
     install_error: str | None = None
+    build_info_missing = False
     locations: Locations | None = None
     try:
         inst, found_by = _discover(root)
@@ -1753,6 +1760,13 @@ def _doctor(
     except install.InstallError as exc:
         install_error = str(exc)
         problems.append(install_error)
+        build_info_missing = (
+            isinstance(exc, install.NotAnInstallError)
+            and exc.reason == "missing"
+            and exc.root_exists
+            and not exc.hint
+            and _could_be_an_install(exc.root)
+        )
     if on_found is not None:
         on_found(inst)
 
@@ -1791,6 +1805,8 @@ def _doctor(
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     if store.journal_error:
         problems.append("the journal of the write gate cannot be read")
+    elif store.last_transaction is not None and store.last_transaction.state == "open":
+        problems.append(_interrupted(store.last_transaction.id))
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1802,7 +1818,39 @@ def _doctor(
         store=store,
         problems=problems,
         not_taken=list(inst.not_taken) if inst is not None else [],
+        build_info_missing=build_info_missing,
     )
+
+
+def _could_be_an_install(root: Path) -> bool:
+    """Whether `root`, which holds no .build.info, could be an install that
+    lost it (M16-13): a folder, and inside no install (no folder above it
+    holds a regular .build.info). Reads only; any error is a no."""
+    try:
+        if not longpath.is_dir(root):
+            return False
+        return not any(longpath.is_file(p / install.BUILD_INFO) for p in root.parents)
+    except OSError:
+        return False
+
+
+def _interrupted(record_id: str) -> str:
+    """The `doctor` problem for a most recent journal record still `open`
+    (M16-13): a change that was killed, or is running now, so some files
+    may hold its new bytes and others not. `undo --expect` names exactly
+    that record, and refuses if another change is journaled first."""
+    return (
+        f"the last change wowlab made did not finish (record {record_id}): some files may "
+        "be changed and others not. To put back what was there before it, run: "
+        f"wowlab undo --expect {record_id}"
+    )
+
+
+# Where the Battle.net app repairs an install, a missing .build.info included.
+_SCAN_AND_REPAIR = (
+    "  If this is the game's folder and its .build.info went missing, the Battle.net app "
+    "puts it back: choose the game, then the gear beside Play, then Scan and Repair."
+)
 
 
 def _print_game_data(g: GameDataReport) -> str:
@@ -1853,6 +1901,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"Install: {report.install_root} (found by {report.found_by})")
     else:
         _say(f"Install: {report.install_error}")
+        if report.build_info_missing:
+            _say_prose(_SCAN_AND_REPAIR, hang="  ", keep=["Battle.net app", "Scan and Repair"])
         if report.locations is not None:
             for loc in report.locations.searched:
                 _say(f"  searched, no install there: {loc}")
@@ -2164,7 +2214,9 @@ def doctor(
         if inst is not None and flavor is not None:
             _select_flavor(inst, flavor)  # a bad --flavor fails before any request
         first = firstrun.is_first_run(store, inst)
-        if first and not json_out:
+        # With no install, the verdict on the folder comes first (M16-13):
+        # the intro follows the report instead (no request is made then).
+        if first and not json_out and inst is not None:
             for line in firstrun.intro_lines(store_path=store.path):
                 say(line)
             say("")
@@ -2172,6 +2224,10 @@ def doctor(
     report = _doctor(root, check_builds, on_found)
     if not json_out:
         _print_doctor(report, notes)
+        if first and found[0] is None:
+            say("")  # the first run's section adds the blank line after it
+            for line in firstrun.intro_lines(store_path=store.path):
+                say(line)
     if first:
         result = _first_run(found[0], store, flavor, yes, json_out, say)
         problems = list(report.problems)
@@ -3217,15 +3273,17 @@ def _hints(
     views: Sequence[ExplainView],
     *,
     absent: bool = False,
+    snapshot_hints: bool = True,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
     that the latest snapshot holds, when the file on disk differs from that
     copy or is gone. A first-snapshot hint for such a file when no snapshot
-    covers it or none ever held it, and no manifest was unreadable."""
+    covers it or none ever held it, and no manifest was unreadable. Neither
+    without `snapshot_hints` (wowlab's own leftover temp file, M16-13)."""
     hints: list[ExplainHint] = []
     with_root = ["--root", root] if root is not None else []
-    if verdict.restorable is True and facts is not None and facts.error is None:
+    if snapshot_hints and verdict.restorable is True and facts is not None and facts.error is None:
         latest = facts.snapshot_id
         if (
             latest is not None
@@ -3910,7 +3968,16 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
+    leftover = isinstance(judged, layout.Classified) and judged.entry.id == WOWLAB_TEMP_ROW
+    hints = _hints(
+        verdict,
+        facts,
+        judged.flavor_folder,
+        given_root,
+        views,
+        absent=absent,
+        snapshot_hints=not leftover,
+    )
     return stat_, facts, views, note, hints
 
 
@@ -8429,8 +8496,8 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
     if others:
         lines.append(
             f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-            "with --paths to restore it):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata; name one with --paths to restore it):"
         )
         lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
     if executables:
@@ -9336,8 +9403,8 @@ def _apply_plan_lines(
     if plan.skipped:
         lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata, "
-            "addon executables):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata, addon executables):"
         )
         for sk in plan.skipped:
             undone = f"  ({extra}; not deleted)"

@@ -392,7 +392,10 @@ def test_no_install_says_how_to_point_at_one(
     result = run("doctor", "--offline")
     assert result.exit_code == 1
     out = result.stdout
-    assert out.startswith("First run: wowlab has no snapshot of this install yet.")
+    # With no install, the verdict comes first and the first-run text after
+    # the report (M16-13; before, the intro opened the output).
+    assert out.startswith("Install: no install found at the default locations")
+    assert out.index("Problems:") < out.index("First run: wowlab has no snapshot")
     assert 'wowlab doctor --root "<that folder>"' in out
     assert 'export WOWLAB_WOW_ROOT="<that folder>"' in out
     assert '$env:WOWLAB_WOW_ROOT = "<that folder>"' in out

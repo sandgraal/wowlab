@@ -263,6 +263,13 @@ class Verdict(BaseModel):
         return self
 
 
+# The file-map row of the write gate's own leftover temp file (M16-13): its
+# Edit words say wowlab removes it, as the row's `what` does, rather than
+# offering a restore of it.
+WOWLAB_TEMP_ROW = "wowlab-temp"
+_WOWLAB_TEMP_WORDS = "no; leave it to wowlab, which removes it at its next change or undo"
+
+
 def edit_level(edit: str) -> Level:
     """The level of a file-map Edit cell. Raises `ValueError` on a cell
     outside the fixed mapping."""
@@ -385,15 +392,18 @@ def verdict_of(
             words=words,
         )
     level = edit_level(entry.edit)
+    words = _edit_words(
+        entry.edit,
+        level,
+        entry.tier,
+        restorable=can_restore,
+        folder=folder or level == "folder",
+    )
+    if entry.id == WOWLAB_TEMP_ROW and level == "no" and not folder:
+        words = _WOWLAB_TEMP_WORDS
     return Verdict(
         level=level,
         restorable=None if folder or level == "folder" else can_restore,
         server_may_replace=entry.edit == f"{_GATE} {_SERVER_MAY_REPLACE}",
-        words=_edit_words(
-            entry.edit,
-            level,
-            entry.tier,
-            restorable=can_restore,
-            folder=folder or level == "folder",
-        ),
+        words=words,
     )
