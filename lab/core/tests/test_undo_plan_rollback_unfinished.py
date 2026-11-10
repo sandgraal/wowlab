@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 from test_cli import (
+    ACCOUNT,
     SV_DIR,
     SYNDICATOR,
     flavor,  # noqa: F401
@@ -77,9 +78,10 @@ def _plan(record: guard.HistoryRecord, flavor: Path) -> list[str]:
         "failed, and putting the files back did not finish)",
         f"  in {flavor}:",
         f"  put back   {CONFIG}  (as it was before that transaction)",
-        "      (changed by another program while that change ran, or since: the lines below "
-        "compare what is on disk now with what undo puts back, and include that program's "
-        "changes)",
+        "      (changed by another program, such as the game, while that change ran, or since: "
+        "the lines below compare what is on disk now with what undo puts back; undo replaces "
+        "that program's changes, but keeps a copy first, and running wowlab undo again brings "
+        "them back)",
         '      CVar useTargetFPS: "1" -> "0"',
         "  Each file is one scope (machine, account or character): key bindings come from "
         'the account or the character file, as "Character Specific Key Bindings" sets; '
@@ -133,9 +135,22 @@ def test_the_undo_takes_exactly_the_listed_step_constructed(root: Path, flavor: 
     assert not (flavor / CREATED).exists()
 
 
+NOTHING = (
+    "  every file already holds what was there before that transaction, so the undo changes no file"
+)
+NOTHING_UNFINISHED = (
+    f"{NOTHING}; answering yes records the undo, and wowlab doctor stops reporting that change"
+)
+UNDONE_NOTHING = (
+    "Undone; no file needed changing. This undo is journaled, but there is nothing for "
+    "`wowlab undo` to reverse."
+)
+
+
 def test_a_plan_that_changes_nothing_says_so_constructed(root: Path, flavor: Path) -> None:
     """A rollback that finished left every file as it was before: the undo
-    changes no file, and the plan says that instead of listing steps."""
+    changes no file, the plan says that instead of listing steps, and the
+    undo says there is nothing for a second undo to reverse."""
     (discovered,) = install.read_install(root).flavors
     with pytest.raises(_StopError):  # noqa: SIM117 - the exit is what rolls back
         with guard.transaction(discovered, label="constructed: fails cleanly") as tx:
@@ -148,6 +163,69 @@ def test_a_plan_that_changes_nothing_says_so_constructed(root: Path, flavor: Pat
         f'Undo {record.id} ("constructed: fails cleanly", {record.created_at}; '
         "failed, and its files were put back)",
         f"  in {flavor}:",
-        "  every file already holds what was there before that transaction, so the undo "
-        "changes no file",
+        NOTHING,
     ]
+    done = ok("undo", "--expect", record.id, "--yes")
+    assert done.stdout.splitlines()[-1] == UNDONE_NOTHING, done.stdout
+    assert "again reverses it" not in done.stdout
+    again = ok("undo", "--yes")
+    assert "changed no files" in again.stdout, again.stdout
+
+
+def test_an_unfinished_plan_that_changes_nothing_says_what_yes_does_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """A change whose rollback did not finish, whose files all hold what was
+    there before it again (the other program's file put back by hand): the
+    plan says answering yes records the undo, which `doctor` then stops
+    reporting."""
+    original = (flavor / CONFIG).read_bytes()
+    record = _fail_to_roll_back(root, flavor)
+    (flavor / CONFIG).write_bytes(original)
+    assert cli._undo_lines(record) == [
+        f'Undo {record.id} ("constructed: fails", {record.created_at}; '
+        "failed, and putting the files back did not finish)",
+        f"  in {flavor}:",
+        NOTHING_UNFINISHED,
+    ]
+    assert run("doctor").exit_code == 1
+    done = ok("undo", "--expect", record.id, "--yes")
+    assert done.stdout.splitlines()[-1] == UNDONE_NOTHING, done.stdout
+    assert ok("doctor").exit_code == 0
+    assert (flavor / CONFIG).read_bytes() == original
+
+
+def test_a_created_file_that_cannot_be_read_stays_listed_constructed(
+    root: Path, flavor: Path, tmp_path: Path
+) -> None:
+    """Where the rollback removed a created file, a link now stands: wowlab
+    does not read through it, so it cannot tell that the undo would leave it
+    alone, and the plan lists the delete (constructed: the link)."""
+    record = _fail_to_roll_back(root, flavor)
+    elsewhere = tmp_path / "elsewhere.lua"
+    elsewhere.write_bytes(b"Elsewhere = {}\n")
+    (flavor / CREATED).symlink_to(elsewhere)
+    lines = cli._undo_lines(record)
+    assert f"  delete     {CREATED}  (created by that transaction)" in lines, lines
+    assert NOTHING not in lines
+
+
+def test_a_folder_the_rollback_removed_is_not_listed_constructed(root: Path, flavor: Path) -> None:
+    """A folder the change created and its rollback removed is not listed;
+    one that is there again is (constructed: the folder made by hand)."""
+    folder = f"WTF/Account/{ACCOUNT}/Constructed"
+    (discovered,) = install.read_install(root).flavors
+    with pytest.raises(_StopError):  # noqa: SIM117 - the exit is what rolls back
+        with guard.transaction(discovered, label="constructed: new folder") as tx:
+            tx.write(f"{folder}/Constructed.lua", b"Constructed = {}\n")
+            raise _StopError
+    record = guard.history()[-1]
+    assert record.state == "rolled_back"
+    assert record.created_dirs == (folder,)
+    assert not (flavor / folder).exists()
+    remove = f"  remove folder {folder}  (created by that transaction, if empty)"
+    lines = cli._undo_lines(record)
+    assert remove not in lines and lines[-1] == NOTHING, lines
+    (flavor / folder).mkdir()
+    lines = cli._undo_lines(record)
+    assert remove in lines and NOTHING not in lines, lines

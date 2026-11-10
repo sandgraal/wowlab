@@ -8620,15 +8620,23 @@ _CHANGED_SINCE = (
 # For a change whose rollback did not finish: the gate leaves a file another
 # program changed while the change ran as that program left it.
 _CHANGED_DURING = (
-    f"{_DETAIL_INDENT}(changed by another program while that change ran, or since: the lines "
-    "below compare what is on disk now with what undo puts back, and include that "
-    "program's changes)"
+    f"{_DETAIL_INDENT}(changed by another program, such as the game, while that change ran, "
+    "or since: the lines below compare what is on disk now with what undo puts back; undo "
+    "replaces that program's changes, but keeps a copy first, and running wowlab undo again "
+    "brings them back)"
 )
 # Every journaled path already holds its pre-transaction bytes and no folder
-# it created is left: the undo changes nothing on disk.
+# it created is left: the undo changes nothing on disk. For a change that did
+# not finish, or whose rollback did not, `doctor` reports it until it is
+# undone, so that line says what answering yes does.
 _NOTHING_TO_PUT_BACK = (
     "  every file already holds what was there before that transaction, so the undo changes no file"
 )
+_NOTHING_TO_PUT_BACK_UNFINISHED = (
+    f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
+    "reporting that change"
+)
+_NOTHING_LINES = frozenset({_NOTHING_TO_PUT_BACK, _NOTHING_TO_PUT_BACK_UNFINISHED})
 
 
 def _read_detail(flavor_path: Path, rel: str) -> bytes:
@@ -9542,7 +9550,8 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     folders = [d for d in last.created_dirs if os.path.lexists(flavor_path / d)]
     lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
     if not listed and not folders:
-        lines.append(_NOTHING_TO_PUT_BACK)
+        unfinished = last.state in ("open", "rollback_incomplete")
+        lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
     return lines
 
@@ -9641,6 +9650,13 @@ def undo(
     done = report(applied=True, transaction=guard.history()[-1].id)
     if json_out:
         _emit(done)
+        return
+    if not _NOTHING_LINES.isdisjoint(plan_lines):
+        # No file changed, so no login note applies (`--json` keeps them).
+        _say(
+            "Undone; no file needed changing. This undo is journaled, but there is nothing "
+            "for `wowlab undo` to reverse."
+        )
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
     for n in done.notes:
