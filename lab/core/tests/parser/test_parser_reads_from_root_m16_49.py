@@ -27,17 +27,28 @@ reader the install root and opens from it one component at a time
   of the root lexically, stays under it lexically but resolves outside
   through a link, or resolves back inside;
 - a path that is not lexically under the root is refused, never downgraded
-  to M16-26's final-component check; that includes a root that differs from
-  the path's prefix only in case (decision: refused, on every volume; the
-  prefix is compared by its components as `pathlib` spells them, not by
-  device and inode). A root given as `str` with a trailing separator or a
-  trailing `/.` is the same root and reads;
+  to M16-26's final-component check. The prefix is compared by its
+  components as `pathlib` spells them, not by device and inode. So on POSIX
+  a root that differs from the path's prefix only in case is refused, on
+  every volume (decision). On Windows, `PureWindowsPath` compares without
+  case, so `c:\\` against `C:\\` is the same prefix; there the case-variant
+  root may be refused or read byte for byte, and the grader takes either. A
+  root given as `str` with a trailing separator or a trailing `/.` is the
+  same root and reads;
 - a parent directory swapped for a link while the read is under way (POSIX,
   a race injected through `os.open` / `os.lstat` / `os.stat`) either makes
   the read refuse or leaves it reading the original file; it never returns
-  the capture behind the link. Only opening each component relative to the
-  descriptor of the one before (`dir_fd`, `O_NOFOLLOW`) passes this; a
-  per-component `lstat` followed by an open of the whole path does not;
+  the capture behind the link. The link is swapped in before call N and
+  either left there or swapped back out before call N+1, so a check after
+  the open sees the original folder again. A per-component `lstat` followed
+  by an open of the whole path fails this, with or without a re-check
+  (device and inode) after the open;
+- on POSIX, with the real `O_NOFOLLOW`, the walk is graded by its shape
+  too: the root is opened once with no `dir_fd`; every later `os.open` is
+  one component, relative (`dir_fd`) to the descriptor the open before it
+  returned, the first of them to the root's; each carries `O_NOFOLLOW`, and
+  each directory open carries `O_DIRECTORY`. The race graders cannot
+  enumerate every interleaving; this one closes what they leave;
 - on Windows, a real NTFS junction at a parent level, out of the install or
   inside it, is refused (`_winapi.CreateJunction`, as
   `test_snapshot_junctions.py` makes them; runs on the `lab (windows)` job).
@@ -58,7 +69,10 @@ The seam (M16-49's to fill):
   `os.open` call carries one. That path then checks each component with
   `lstat` and opens by path, so a window remains between the check and the
   open on Windows. These graders cannot close it; it belongs in M16-49's
-  report.
+  report. Note for the implementer: the existing walks
+  (`profiles._DIR_FD_WALK`, `snapshot._WRITE_BY_DIR_FD`) decide at import
+  time, so reusing them as they are fails the 63 graders that set
+  `snapshot._O_NOFOLLOW` to 0; the decision must be made at call time.
 
 Today the keyword does not exist, so every marked grader fails with
 `TypeError`; the marker names `raises=TypeError` so a partial implementation
@@ -111,6 +125,12 @@ FLAVOR = "_flavor_"
 REFUSAL_ERRNOS = {errno.ELOOP, errno.ENOTDIR, errno.EMLINK}
 """What an `O_NOFOLLOW` open of a link gives: `ELOOP` (Linux, macOS), and
 `ENOTDIR` or `EMLINK` (BSDs) when `O_DIRECTORY` is also asked."""
+
+O_NOFOLLOW: int = getattr(os, "O_NOFOLLOW", 0)
+O_DIRECTORY: int = getattr(os, "O_DIRECTORY", 0)
+O_NOFOLLOW_REAL = bool(O_NOFOLLOW) and bool(O_DIRECTORY)
+"""The platform has both flags (POSIX). Read here, at import, before any
+grader sets `snapshot._O_NOFOLLOW` to 0."""
 
 needs_symlink = pytest.mark.skipif(
     sys.platform == "win32", reason="symlinks need a privilege on Windows"
@@ -650,11 +670,13 @@ def test_a_path_not_under_the_root_is_refused(
     """With `root=` given, a path that is not under it is refused with
     `UnsafeReadError` before anything is opened, never read with M16-26's
     final-component check instead. `root-in-another-case` gives the root as
-    `install` for a path under `Install`: refused on every volume, also where
-    the two name one directory (decision: the prefix is compared by its
-    components, not proved the same by device and inode).
+    `install` for a path under `Install`. On POSIX it is refused on every
+    volume, also where the two name one directory (decision: the prefix is
+    compared by its components, not proved the same by device and inode).
+    On Windows `PureWindowsPath` compares without case, so the two are the
+    same prefix there: a refusal or a byte-for-byte read are both accepted.
     `root-a-string-prefix` gives `Inst` for a path under `Install`."""
-    original, _ = _copy_in(root, reader)
+    original, data = _copy_in(root, reader)
     comps = _components(reader)
     given_root = root
     if shape.startswith("elsewhere"):
@@ -679,6 +701,16 @@ def test_a_path_not_under_the_root_is_refused(
         assert str(path).startswith(str(given_root))
     assert path.is_file(), "the path names a real file; only where it is is wrong"
     spy = OpenSpy(monkeypatch)
+
+    if shape == "root-in-another-case" and sys.platform == "win32":
+        try:
+            document = reader.read(path, given_root)
+        except OSError as exc:
+            _assert_shape_refused(exc, reader, spy)
+        else:
+            assert reader.to_bytes(document) == data, "read as the same root, byte for byte"
+        fds.assert_none_left()
+        return
 
     with pytest.raises(OSError) as caught:
         reader.read(path, given_root)
@@ -706,41 +738,53 @@ def test_a_root_spelled_with_a_trailing_separator_or_dot_reads(
 
 
 def _race_cases() -> list[Any]:
-    """(reader, parent level to swap, call number at which to swap): the
-    flavor folder, `WTF` and the file's own folder, swapped before the
-    reader's 1st, 2nd, ... `os.open` / `os.lstat` / `os.stat` call, up to two
-    more calls than the path has components."""
+    """(reader, parent level to swap, call number at which to swap, whether
+    the link is swapped back out): the flavor folder, `WTF` and the file's
+    own folder, swapped before the reader's 1st, 2nd, ... `os.open` /
+    `os.lstat` / `os.stat` call, up to two more calls than the path has
+    components; `stay` leaves the link there, `back` restores the folder
+    before the next call (so a re-check after an open sees the original)."""
     cases = []
     for reader in READERS:
         comps = _components(reader)
         for level in sorted({0, 1, len(comps) - 2}):
             for when in range(1, len(comps) + 3):
-                below = "/".join(comps[: level + 1])
-                cases.append(
-                    pytest.param(
-                        reader,
-                        level,
-                        when,
-                        id=f"constructed-race-{reader.name}-{below}-call{when}",
+                for mode in ("stay", "back"):
+                    below = "/".join(comps[: level + 1])
+                    cases.append(
+                        pytest.param(
+                            reader,
+                            level,
+                            when,
+                            mode,
+                            id=f"constructed-race-{mode}-{reader.name}-{below}-call{when}",
+                        )
                     )
-                )
     return cases
 
 
 @needs_symlink
 @pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
-@pytest.mark.parametrize(("reader", "level", "when"), _race_cases())
+@pytest.mark.parametrize(("reader", "level", "when", "mode"), _race_cases())
 def test_a_parent_swapped_for_a_link_mid_read_never_reads_outside(
-    reader: Reader, level: int, when: int, root: Path, monkeypatch: pytest.MonkeyPatch
+    reader: Reader,
+    level: int,
+    when: int,
+    mode: str,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fds: FdWatch,
 ) -> None:
     """Just before the reader's `when`-th `os.open`, `os.lstat` or `os.stat`
     call, the parent folder at `level` is renamed away and a link to a
     folder outside the install takes its place, holding a decoy (a different
-    real capture) at the same relative path. The read must refuse, or return
-    the original file's bytes; it must never return the decoy. A walk that
-    holds each folder's descriptor and opens the next by name with
-    `O_NOFOLLOW` passes; checking each folder and then opening the whole path
-    does not."""
+    real capture) at the same relative path. With `back`, the link is
+    removed and the folder renamed back just before the next such call. The
+    read must refuse, or return the original file's bytes; it must never
+    return the decoy, and it leaves no descriptor open. A walk that holds
+    each folder's descriptor and opens the next by name with `O_NOFOLLOW`
+    passes; checking each folder and then opening the whole path does not,
+    with or without a re-check after the open."""
     original, data = _copy_in(root, reader)
     comps = _components(reader)
     swapped = root.joinpath(*comps[: level + 1])
@@ -751,19 +795,27 @@ def test_a_parent_swapped_for_a_link_mid_read_never_reads_outside(
     decoy = decoy_file.read_bytes()
     assert decoy != data, "the decoy is a different capture"
 
-    state = {"calls": 0, "armed": True, "swapped": False}
+    state = {"calls": 0, "armed": True, "done": False}
+    aside = swapped.with_name(swapped.name + ".real")
 
-    def swap() -> None:
-        swapped.rename(swapped.with_name(swapped.name + ".real"))
+    def swap_in() -> None:
+        swapped.rename(aside)
         swapped.symlink_to(target_dir, target_is_directory=True)
-        state["swapped"] = True
+
+    def swap_back() -> None:
+        swapped.unlink()
+        aside.rename(swapped)
 
     def counted(real: Callable[..., Any]) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if state["armed"] and not state["swapped"]:
+            if state["armed"] and not state["done"]:
                 state["calls"] += 1
                 if state["calls"] == when:
-                    swap()
+                    swap_in()
+                    state["done"] = mode == "stay"
+                elif state["calls"] == when + 1:
+                    swap_back()
+                    state["done"] = True
             return real(*args, **kwargs)
 
         return call
@@ -776,14 +828,75 @@ def test_a_parent_swapped_for_a_link_mid_read_never_reads_outside(
     except OSError as exc:
         state["armed"] = False
         _assert_refused(exc, reader)
+        fds.assert_none_left()
         return
     finally:
         state["armed"] = False
     got = reader.to_bytes(document)
     assert got != decoy, (
-        f"{reader.name} returned the capture behind the swapped-in link (swap before call {when})"
+        f"{reader.name} returned the capture behind the swapped-in link "
+        f"(swapped in before call {when}, {mode})"
     )
     assert got == data, "the read returned the original file's bytes"
+    fds.assert_none_left()
+
+
+# ─── the walk's shape, POSIX with the real O_NOFOLLOW ───────────────────────
+
+
+class ChainSpy:
+    """Records every `os.open` call: (path, flags, dir_fd, returned fd)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[tuple[str, int, int | None, int]] = []
+        real = os.open
+
+        def spy(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+            fd = real(path, flags, mode, dir_fd=dir_fd)
+            self.calls.append((os.fspath(path), flags, dir_fd, fd))
+            return fd
+
+        monkeypatch.setattr(os, "open", spy)
+
+
+@pytest.mark.skipif(not O_NOFOLLOW_REAL, reason="needs O_NOFOLLOW and O_DIRECTORY (POSIX)")
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("reader", READERS, ids=_ids("real-walk-shape"))
+def test_the_walk_opens_each_component_from_the_one_before(
+    reader: Reader, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
+) -> None:
+    """With the real `O_NOFOLLOW`: the root is opened once, by path, with no
+    `dir_fd`; every later `os.open` names one component, relative to the
+    descriptor the open before it returned (the first to the root's), in the
+    path's order, with `O_NOFOLLOW`; each folder with `O_DIRECTORY`, the file
+    without it. Nothing else is opened. A walk that checks by path and opens
+    the whole path, with or without a re-check, fails this whatever the
+    timing of a race."""
+    path, data = _copy_in(root, reader)
+    spy = ChainSpy(monkeypatch)
+
+    assert reader.to_bytes(reader.read(path, root)) == data
+
+    comps = _components(reader)
+    calls = spy.calls
+    assert len(calls) == 1 + len(comps), (
+        f"expected the root and {len(comps)} components opened, saw {[c[0] for c in calls]}"
+    )
+    first_path, _, first_dir_fd, previous = calls[0]
+    assert Path(first_path) == root, f"the first open is the root, by path: {calls[0]}"
+    assert first_dir_fd is None, f"the root is opened by path, with no dir_fd: {calls[0]}"
+    for i, (name, flags, dir_fd, fd) in enumerate(calls[1:]):
+        assert name == comps[i], f"open {i + 1} names {name!r}, expected {comps[i]!r}"
+        assert dir_fd == previous, (
+            f"{name!r} is opened relative to the descriptor before it ({previous}), not {dir_fd}"
+        )
+        assert flags & O_NOFOLLOW == O_NOFOLLOW, f"{name!r} is opened with O_NOFOLLOW"
+        is_dir = i < len(comps) - 1
+        assert bool(flags & O_DIRECTORY) == is_dir, (
+            f"{name!r}: O_DIRECTORY on every folder and not on the file"
+        )
+        previous = fd
+    fds.assert_none_left()
 
 
 # ─── Windows: a real junction at a parent level is refused ──────────────────
@@ -797,7 +910,7 @@ windows_only = pytest.mark.skipif(
 @windows_only
 @pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
 @pytest.mark.parametrize("case", _parent_cases(("junction-out", "junction-inside")))
-def test_a_parent_junction_is_refused(case: Case, root: Path) -> None:
+def test_a_parent_junction_is_refused(case: Case, root: Path, fds: FdWatch) -> None:
     """A junction `lstat`s as a directory in CPython; the walk must still
     refuse it, out of the install or inside it, as `tree` reports it."""
     linked = _linked(root, case)
@@ -807,3 +920,4 @@ def test_a_parent_junction_is_refused(case: Case, root: Path) -> None:
 
     _assert_refused(caught.value, case.reader)
     assert linked.link.is_junction(), "the junction is left as it was"
+    fds.assert_none_left()
