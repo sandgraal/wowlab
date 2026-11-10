@@ -48,7 +48,10 @@ jobs:
   # and CLAUDE.md are never docs-only: they are agent instructions and the
   # harness, and changes to them must be validated. README.md is not
   # docs-only either: tests/scripts/test_readme.py grades its first screen
-  # (M13-10), so a README-only PR runs the suite.
+  # (M13-10), so a README-only PR runs the suite. The same holds for every
+  # doc a test reads (`doc_tests` below, M16-83): a PR touching only one of
+  # them runs the tests that grade it. tests/repo/test_doc_tests_filter.py
+  # fails when a test starts reading a doc this list leaves out.
   changes:
     name: Detect doc-only changes
     runs-on: ubuntu-latest
@@ -56,7 +59,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      docs_only: ${{ steps.filter.outputs.non_docs == 'false' }}
+      docs_only: ${{ steps.filter.outputs.non_docs == 'false' && steps.filter.outputs.doc_tests == 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,6 +76,17 @@ jobs:
               - '!CONTRIBUTING.md'
               - '!SECURITY.md'
               - '!CODE_OF_CONDUCT.md'
+            doc_tests:
+              - 'CONTRIBUTING.md'
+              - 'SECURITY.md'
+              - 'docs/BACKLOG.md'
+              - 'docs/DECISIONS.md'
+              - 'docs/INSTALL.md'
+              - 'docs/LAB_FILE_MAP.md'
+              - 'docs/LAB_FORMATS.md'
+              - 'docs/LAB_PLAN.md'
+              - 'docs/handoffs/M11-03.md'
+              - 'docs/handoffs/M13-10-macos.md'
 
   quality:
     name: Lint, typecheck, tests
