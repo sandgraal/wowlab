@@ -188,17 +188,24 @@ _HOME_END = r"(?![\w.\-~])"
 # last blank, quote or bracket before its first separator (a drive letter or a
 # `~` before it is part of it) and runs to the end of the line, a tab or a
 # quote (`"`, `'`, `<`, `>`, `|`), as `_HOME_SHAPE_RE` does: any folder name
-# may hold spaces, the last one too (`D:\Games\John Smith`). It also ends
-# before a blank followed by `(`, so `<path> (found by $WOWLAB_WOW_ROOT)`
-# keeps the variable's name. Words that follow a path on its line are taken
-# as path text; that over-replaces only the login, and only there.
+# may hold spaces, the last one too (`D:\Games\John Smith`), and brackets
+# (`D:\Games\Backup (jsmit)`). It ends before a blank followed by one of the
+# Lab's own glosses (`_PATH_GLOSSES`), so `Install: <path> (found by
+# $WOWLAB_WOW_ROOT)` keeps the variable's name. Words that follow a path on
+# its line are taken as path text; that over-replaces only the login, and
+# only there.
 # The lookbehind anchors each token at the start of its run, and a run of
-# blanks is taken possessively (`++`) before the `(` check, so the match is
+# blanks is taken possessively (`++`) before the gloss check, so the match is
 # linear in the text.
+_PATH_GLOSSES = ("(found by ",)
 _PATH_LEAD = r"[^\s\"'<>|()\[\]{},;=\\/]"
 _PATH_TOKEN_RE = re.compile(
     r"(?<!" + _PATH_LEAD + r")"
-    r"(?:" + _PATH_LEAD + r"*[\\/](?:[^\s\"'<>|]|[^\S\r\n\t]++(?!\())*"
+    r"(?:"
+    + _PATH_LEAD
+    + r"*[\\/](?:[^\s\"'<>|]|[^\S\r\n\t]++(?!"
+    + "|".join(re.escape(g) for g in _PATH_GLOSSES)
+    + r"))*"
     r"|~" + _PATH_LEAD + r"+)"
 )
 # Shorter than this, a name is replaced only as a whole word: a two-letter

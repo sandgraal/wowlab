@@ -290,6 +290,16 @@ def test_constructed_a_login_is_replaced_only_inside_a_path(text: str, expected:
         ("John Smith", r"D:\Games\John Smith", rf"D:\Games\{USER}"),
         # As `repr()` (and so `str(OSError)`) writes a Windows path.
         ("jsmit", r"'E:\\Games\\Copy of jsmit'", rf"'E:\\Games\\Copy of {USER}'"),
+        # Round 2: a bracket in a folder name is path text, not a gloss.
+        ("jsmit", r"D:\Games\Backup (jsmit)", rf"D:\Games\Backup ({USER})"),
+        ("jsmit", r"D:\Games\Backup (jsmit)\WoW", rf"D:\Games\Backup ({USER})\WoW"),
+        ("jsmit", "/srv/old (jsmit) files", f"/srv/old ({USER}) files"),
+        # The Lab's own gloss after a path ends the token; the variable keeps its name.
+        (
+            "jsmit",
+            r"Install: D:\jsmit (found by $WOWLAB_WOW_JSMIT)",
+            rf"Install: D:\{USER} (found by $WOWLAB_WOW_JSMIT)",
+        ),
     ],
 )
 def test_constructed_a_login_in_the_last_folder_name_is_replaced(
@@ -312,6 +322,9 @@ def test_constructed_path_tokens_scale_linearly() -> None:
         ("a" * 50 + " ") * 20_000,
         "x/" + " " * 200_000,
         "x/" + " " * 200_000 + "(",
+        "x/" + " (" * 100_000,
+        "x/" + " (found by" * 20_000,
+        "x/" + " " * 200_000 + "(found by ",
         "~" * 200_000,
     ):
         redact._PATH_TOKEN_RE.sub("", text)
