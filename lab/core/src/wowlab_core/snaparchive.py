@@ -471,7 +471,7 @@ def _check_end_record(
     if at < 0:
         raise ArchiveError("the file is too short to be a snapshot archive")
     raw = _read_at(handle, at, _EOCD.size + len(ARCHIVE_COMMENT))
-    sig, _disk, _cd_disk, here, count, cd_size, cd_offset, comment_len = _EOCD.unpack(
+    sig, disk, cd_disk, here, count, cd_size, cd_offset, comment_len = _EOCD.unpack(
         raw[: _EOCD.size]
     )
     if (
@@ -480,16 +480,24 @@ def _check_end_record(
         or raw[_EOCD.size :] != ARCHIVE_COMMENT
     ):
         raise ArchiveError("the file is not a snapshot archive written by wowlab snap export")
+    # `zipfile` finds the end record by the last end signature in the file's
+    # tail (`rfind`): one anywhere after this record's first byte would make
+    # it read a different record from the one bounded here. And an export is
+    # one disk, so its disk fields are 0.
+    if _EOCD_SIG in raw[1:] or disk != 0 or cd_disk != 0:
+        raise ArchiveError("the archive's end record is not one wowlab snap export writes")
     limits = (max_entries, max_directory_bytes)
     _bound(max(here, count), cd_size, cd_offset, file_size, limits)
     locator_at = at - _ZIP64_LOCATOR.size
     if locator_at < 0:
         return
-    lsig, _ldisk, zip64_at, _disks = _ZIP64_LOCATOR.unpack(
+    lsig, ldisk, zip64_at, disks = _ZIP64_LOCATOR.unpack(
         _read_at(handle, locator_at, _ZIP64_LOCATOR.size)
     )
     if lsig != _ZIP64_LOCATOR_SIG:
         return
+    if ldisk != 0 or disks > 1:
+        raise ArchiveError("the archive's Zip64 locator names another disk")
     found = 0
     for place in {zip64_at, locator_at - _ZIP64_EOCD.size}:
         if place < 0 or place + _ZIP64_EOCD.size > locator_at:
@@ -497,6 +505,8 @@ def _check_end_record(
         fields = _ZIP64_EOCD.unpack(_read_at(handle, place, _ZIP64_EOCD.size))
         if fields[0] != _ZIP64_EOCD_SIG:
             continue
+        if fields[4] != 0 or fields[5] != 0:
+            raise ArchiveError("the archive's Zip64 record names another disk")
         found += 1
         _bound(max(fields[6], fields[7]), fields[8], fields[9], file_size, limits)
     if not found:

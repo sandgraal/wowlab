@@ -733,3 +733,23 @@ def test_explains_baseline_reports_an_imported_snapshot_as_imported_constructed(
     assert facts.snapshot_id == report.id != own.id
     assert facts.kind == "imported"
     assert facts.newer_pre_write is None
+
+
+@pytest.mark.parametrize(
+    ("disk", "cd_disk"), [(1, 0), (0, 1), (0x4B50, 0x0605)], ids=lambda v: f"constructed-{v}"
+)
+def test_an_end_record_with_nonzero_disk_fields_is_refused_constructed(
+    tmp_path: Path, archive: Path, monkeypatch: pytest.MonkeyPatch, disk: int, cd_disk: int
+) -> None:
+    """Review round 3: an export is one disk, so both disk fields are 0. The
+    last pair spells a second end signature inside the record, where
+    `zipfile`'s `rfind` would find a different record; it is refused before
+    `zipfile` reads anything."""
+    raw = bytearray(archive.read_bytes())
+    at = len(raw) - 22 - len(ARCHIVE_COMMENT)
+    raw[at + 4 : at + 8] = struct.pack("<2H", disk, cd_disk)
+    patched = tmp_path / "disks.zip"
+    patched.write_bytes(bytes(raw))
+    spy = _Spy(monkeypatch)
+    _refused(tmp_path, patched, ArchiveError, "end record")
+    assert spy.calls == 0
