@@ -1950,6 +1950,10 @@ def _doctor(
         problems.append("the journal of the write gate cannot be read")
     elif store.last_transaction is not None and store.last_transaction.state == "open":
         problems.append(_interrupted(store.last_transaction.id))
+    elif (
+        store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
+    ):
+        problems.append(_rollback_unfinished(store.last_transaction.id))
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1985,6 +1989,24 @@ def _interrupted(record_id: str) -> str:
     return (
         f"the last change wowlab made did not finish (record {record_id}): some files may "
         "be changed and others not. To put back what was there before it, run: "
+        f"wowlab undo --expect {record_id}"
+    )
+
+
+def _rollback_unfinished(record_id: str) -> str:
+    """The `doctor` problem for a most recent journal record in
+    `rollback_incomplete` (M16-71): the change failed and the write gate
+    could not put every file back. Usually another program (the game)
+    changed a file mid-change, and the gate left that program's bytes in
+    place; a file may also still hold the change. The undo replaces those
+    newer bytes, but takes a snapshot of the files first, so a second undo
+    (which undoes the undo) brings them back."""
+    return (
+        "the last change wowlab made failed, and putting the files back did not finish "
+        f"(record {record_id}): a file may have been changed by another program, such as "
+        "the game, while wowlab was writing, or may still hold wowlab's change. To put back "
+        "what was there before the change, run this; it replaces what is in those files "
+        "now, but the undo keeps a copy and running wowlab undo again brings it back: "
         f"wowlab undo --expect {record_id}"
     )
 
