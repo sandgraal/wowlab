@@ -184,19 +184,22 @@ _HOME_SHAPE_RE = re.compile(
 # the start of a longer name (`/home/bob` is not the home of `/home/bobby`).
 _HOME_END = r"(?![\w.\-~])"
 # A path-shaped token (M16-44), where a login is replaced: text that holds a
-# path separator (`/` or `\\`, a run of them counting as one). It starts at the
-# last whitespace, quote or bracket before its first separator and ends at
-# the first one after its last separator; between two separators a folder
-# name may hold spaces (`C:\\Program Files\\...`). A drive letter (`D:`) or a
-# `~` before the first separator is part of it. Two paths in one sentence
-# (`/a/b and c/d`) make one token: the words between them are then treated
-# as path text, which over-replaces only the login, and only there.
-# The lookbehind anchors each token at the start of its run, so a long run
-# with no separator is walked once, not once per character.
+# path separator (`/` or `\`), or a `~name` home reference. It starts at the
+# last blank, quote or bracket before its first separator (a drive letter or a
+# `~` before it is part of it) and runs to the end of the line, a tab or a
+# quote (`"`, `'`, `<`, `>`, `|`), as `_HOME_SHAPE_RE` does: any folder name
+# may hold spaces, the last one too (`D:\Games\John Smith`). It also ends
+# before a blank followed by `(`, so `<path> (found by $WOWLAB_WOW_ROOT)`
+# keeps the variable's name. Words that follow a path on its line are taken
+# as path text; that over-replaces only the login, and only there.
+# The lookbehind anchors each token at the start of its run, and a run of
+# blanks is taken possessively (`++`) before the `(` check, so the match is
+# linear in the text.
+_PATH_LEAD = r"[^\s\"'<>|()\[\]{},;=\\/]"
 _PATH_TOKEN_RE = re.compile(
-    r"(?<![^\s\"'<>|()\[\]{},;=\\/])[^\s\"'<>|()\[\]{},;=\\/]*"
-    r"(?:[\\/][^\r\n\t\"'<>|\\/]*(?=[\\/]))*"
-    r"[\\/]+[^\s\"'<>|()\[\]{},;=\\/]*"
+    r"(?<!" + _PATH_LEAD + r")"
+    r"(?:" + _PATH_LEAD + r"*[\\/](?:[^\s\"'<>|]|[^\S\r\n\t]++(?!\())*"
+    r"|~" + _PATH_LEAD + r"+)"
 )
 # Shorter than this, a name is replaced only as a whole word: a two-letter
 # character name inside "Install" is not that character.

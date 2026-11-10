@@ -267,10 +267,35 @@ def test_the_scrub_tool_takes_its_identifier_patterns_from_the_package() -> None
         ("'/Volumes/root/WoW' and root", f"'/Volumes/{USER}/WoW' and root"),
         ("~/root and root/", f"~/{USER} and {USER}/"),
         ("(/opt/root)", f"(/opt/{USER})"),
+        # Round 1: the last folder name may hold spaces too, to the line's end
+        # or a quote; `~name` is a path; a blank then `(` ends the token.
+        (r"D:\Games\WoW root", rf"D:\Games\WoW {USER}"),
+        ("/srv/games/my root", f"/srv/games/my {USER}"),
+        ("~root", f"~{USER}"),
+        ("see ~root/wow", f"see ~{USER}/wow"),
+        (r"C:\Program Files (x86)\root\x", rf"C:\Program Files (x86)\{USER}\x"),
+        (
+            "Install: /x/root/World of Warcraft (found by $WOWLAB_WOW_ROOT)",
+            f"Install: /x/{USER}/World of Warcraft (found by $WOWLAB_WOW_ROOT)",
+        ),
     ],
 )
 def test_constructed_a_login_is_replaced_only_inside_a_path(text: str, expected: str) -> None:
     assert redact.Redactor(users=["root"])(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("login", "text", "expected"),
+    [
+        ("John Smith", r"D:\Games\John Smith", rf"D:\Games\{USER}"),
+        # As `repr()` (and so `str(OSError)`) writes a Windows path.
+        ("jsmit", r"'E:\\Games\\Copy of jsmit'", rf"'E:\\Games\\Copy of {USER}'"),
+    ],
+)
+def test_constructed_a_login_in_the_last_folder_name_is_replaced(
+    login: str, text: str, expected: str
+) -> None:
+    assert redact.Redactor(users=[login])(text) == expected
 
 
 def test_constructed_a_login_that_is_also_a_name_still_goes_everywhere() -> None:
@@ -281,5 +306,12 @@ def test_constructed_a_login_that_is_also_a_name_still_goes_everywhere() -> None
 def test_constructed_path_tokens_scale_linearly() -> None:
     # Hostile shapes for the path-token pattern: separator runs, and a long
     # run with no separator. Each is matched in one pass, not one per byte.
-    for text in ("/" * 200_000, "a/" * 100_000, ("a" * 50 + " ") * 20_000, "x/" + " " * 200_000):
+    for text in (
+        "/" * 200_000,
+        "a/" * 100_000,
+        ("a" * 50 + " ") * 20_000,
+        "x/" + " " * 200_000,
+        "x/" + " " * 200_000 + "(",
+        "~" * 200_000,
+    ):
         redact._PATH_TOKEN_RE.sub("", text)

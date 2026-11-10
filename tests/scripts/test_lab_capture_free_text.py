@@ -4,9 +4,10 @@ The scrub finds identifiers by pattern; a chat log, a mailbox or a note a
 player typed about someone else holds none of those patterns and would pass.
 So the automatic SavedVariables selection never picks a chat-log, mail or
 notes addon's file: one is captured only when `--sv` names it and
-`--confirm-free-text` names it again. And any SavedVariables string value of
-`FREE_TEXT_MIN_WORDS` words or more is flagged "free text, review by hand"
-in the run's output (a note; nothing is refused for it).
+`--confirm-free-text` names it again. And any SavedVariables string, key or
+value, of `FREE_TEXT_MIN_WORDS` words or more (or `FREE_TEXT_MIN_LETTERS`
+non-ASCII letters) is flagged "free text, review by hand" in the run's output
+(a note; nothing is refused for it).
 
 CONSTRUCTED INPUT. Every tree and every byte string here is synthetic, built
 in `tmp_path` or inline, with invented names and invented sentences. No test
@@ -66,13 +67,40 @@ def install(tmp_path: Path) -> Path:
         "MyGuildNotes.lua",  # by word: a note addon the list does not name
         "WhisperPop.lua",
         "Blizzard_ChatFrameLog.lua",
+        # Round 1: more free-text addons, by name or by word.
+        "ElvUI.lua",
+        "TotalRP3.lua",
+        "MyRolePlay.lua",
+        "XRP.lua",
+        "Guild_Roster_Manager.lua",
+        "Spy.lua",
+        "Listener.lua",
+        "BadBoy.lua",
+        "SomeGuildBank.lua",
+        "CombatLogger.lua",
+        "LootHistory.lua",
+        "RPHelper.lua",
+        "my_rp_profiles.lua",
+        # A copy or a renamed file still contains the name; NFKC folds fullwidth.
+        "Elephant - Copy.lua",
+        "Elephant .lua",
+        "\uff25\uff4c\uff45\uff50\uff48\uff41\uff4e\uff54.lua",
+        "WIMBLE.lua",
+        # Suffixes past `.lua` (round 1, item 4).
+        "Elephant.lua.old",
+        "Elephant.lua~",
+        "ELEPHANT.LUA.OLD",
     ],
 )
 def test_constructed_chat_mail_and_note_addons_are_denied(name: str) -> None:
     assert lab_capture.is_free_text_sv(name)
 
 
-@pytest.mark.parametrize("name", ["Details.lua", "Bartender4.lua", "Deep.lua", "WIMBLE.lua"])
+@pytest.mark.parametrize(
+    "name",
+    # `rp` inside a word is no roleplay tag (a bare substring would hold these).
+    ["Details.lua", "Bartender4.lua", "Deep.lua", "WarpDeplete.lua", "Sharpie.lua", "WowLab.lua"],
+)
 def test_constructed_other_addons_are_not_denied(name: str) -> None:
     assert not lab_capture.is_free_text_sv(name)
 
@@ -166,8 +194,24 @@ def test_constructed_long_string_values_are_flagged_with_a_place_not_the_text(
         (b"x = [[one two three\nfour five]]\n", 1),
         (b"x = [==[one two three four five]==]\n", 1),
         # A key, not a value.
-        (b'x = { ["one two three four five"] = 1 }\n', 0),
-        (b'x = { [ "one two three four five" ]\n= 1 }\n', 0),
+        # Keys are strings a player may have typed too (round 1).
+        (b'x = { ["one two three four five"] = 1 }\n', 1),
+        (b'x = { [ "meet me at the bank" ]\n= true }\n', 1),
+        # Escapes and spaces that are blanks once decoded (round 1).
+        (b'x = "one\\32two\\032three\\x20four\\9five"\n', 1),
+        (b'x = "one\\10two\\013three\\x0afour\\x0Dfive"\n', 1),
+        (b'x = "one~`two~`three~`four~`five"\n', 1),
+        ('x = "one\u00a0two\u00a0three\u00a0four\u00a0five"\n'.encode(), 1),
+        ('x = "one\u3000two\u3000three\u3000four\u3000five"\n'.encode(), 1),
+        # Digits after an escape are not a blank: `\\321` is one byte, not a space.
+        (b'x = "one\\321two\\3299three"\n', 0),
+        # CJK and other non-ASCII text without blanks: ten letters or more.
+        ('x = "\u660e\u5929\u665a\u4e0a\u5728\u94f6\u884c\u95e8\u53e3\u89c1"\n'.encode(), 1),
+        ('x = "\u660e\u5929\u665a\u4e0a\u5728\u94f6\u884c\u95e8\u53e3"\n'.encode(), 0),
+        (
+            'x = { ["\u4eca\u65e5\u306f\u3069\u3046\u3082\u3042\u308a\u304c\u3068"] = 1 }\n'.encode(),
+            1,
+        ),
         # Comments are not values.
         (b"-- one two three four five\nx = 1\n", 0),
         (b"--[[ one two three four five ]]\nx = 1\n", 0),
@@ -207,3 +251,20 @@ def test_constructed_free_text_is_only_looked_for_in_saved_variables(tmp_path: P
     identity = lab_capture.Identity()
     outcome = lab_capture.process(item, identity)
     assert not [n for n in outcome.result.notes if lab_capture.FREE_TEXT_LABEL in n]
+
+
+@pytest.mark.parametrize("name", ["Elephant.lua.old", "Elephant.lua~", "Elephant - Copy.lua"])
+def test_constructed_a_suffixed_or_copied_sv_name_needs_the_confirmation(
+    install: Path, tmp_path: Path, name: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 1, item 4: the gate is on the whole name, not on `.lua` alone."""
+    saved = install / "_retail_" / "WTF" / "Account" / ACCOUNT / "SavedVariables"
+    (saved / name).write_bytes(CHAT_LOG.encode())
+    out = tmp_path / "incoming"
+    assert capture(install, out, "--sv", name) == 2
+    assert f"--confirm-free-text {name}" in capsys.readouterr().err
+    assert not out.exists() or outputs(out) == {}
+    assert capture(install, out, "--sv", name, "--confirm-free-text", name) == 0
+    printed = capsys.readouterr().out
+    # The free-text flag looks at a `.lua.old` or `.lua~` copy as well.
+    assert f"look   {lab_capture.FREE_TEXT_LABEL} x2 (first at byte" in printed
