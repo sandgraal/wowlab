@@ -1701,7 +1701,9 @@ class LastTransaction(_Out):
     id: str
     created_at: str
     label: str
-    state: str
+    # The write gate's closed set of states, so `doctor --redact` can keep it
+    # as-is: a state names nobody (M16-85).
+    state: guard._State
     paths: int
 
 

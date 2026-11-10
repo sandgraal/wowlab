@@ -96,3 +96,24 @@ def test_a_state_this_version_does_not_know_is_not_printed_by_name() -> None:
     words = cli._journal_state_words("some_later_state")
     assert "some_later_state" not in words
     assert words == "in a state this version of wowlab does not know"
+
+
+@pytest.mark.parametrize(
+    ("state", "name"),
+    [
+        ("open", "Open"),
+        ("committed", "committed"),
+        ("rolled_back", "back"),
+        ("rollback_incomplete", "incomplete"),
+    ],
+)
+def test_json_redact_keeps_the_state_name_when_a_redacted_name_collides_constructed(
+    monkeypatch: pytest.MonkeyPatch, flavor: Path, state: str, name: str
+) -> None:
+    """A state names nobody, so `--redact` keeps it as it is, even when a
+    name to redact is the state or a word of it."""
+    _journal(monkeypatch, flavor, state)
+    report = json.loads(run("doctor", "--json", "--redact", "--redact-name", name).stdout)
+    assert report["store"]["last_transaction"]["state"] == state
+    line = _store_line(run("doctor", "--redact", "--redact-name", name).stdout)
+    assert f"({WORDS[state]};" in line, line
