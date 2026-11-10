@@ -2694,22 +2694,66 @@ def _tree_items(
                 f"{area.files} files in {area.folders} folders, not listed one by one",
             )
     for link in inv.symlinks:
-        add(link.path, "symlink", None, _link_note(link.target, link.inside_install))
+        stands_for = _link_stands_for(
+            lay.classify(link.path, is_dir=False, not_accounts=not_accounts),
+            lay.classify(link.path, is_dir=True, not_accounts=not_accounts),
+        )
+        add(link.path, "symlink", None, _link_note(link.target, link.inside_install, stands_for))
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
 
 
-def _link_note(target: str | None, inside: bool | None) -> str:
+def _link_note(target: str | None, inside: bool | None, stands_for: str = "folder") -> str:
     """`tree`'s note for a link, at the install root and in a flavor folder
     alike (M13-35). `inside` None: where it points is unknown, as for a WCI
-    link or a WSL symlink, whose link text cannot be read."""
+    link or a WSL symlink, whose link text cannot be read. It ends in the
+    readers' words for a link (M16-80), as `labaddon.NOT_FOLLOWED` and
+    `labaddon.LINKED_FILE` say it: `stands_for` is "folder", "file" or
+    "one" (`_link_stands_for`)."""
     to = f" to {target}" if target is not None else ""
     if inside is None:
         where = "where it points is unknown"
     else:
         where = f"{'inside' if inside else 'outside'} the install"
-    return f"link{to} ({where}), not followed"
+    return f"link{to} ({where}), not followed; {snapshot.not_read_through(stands_for)}"
+
+
+_FLAVOR_LINK_NOTE = (
+    "{} is a link; wowlab does not read through links, so it reads this only when the "
+    "real folder is there. Nothing in it is listed."
+)
+"""`tree`'s stderr line for a flavor folder that is a link (M13-35), in the
+readers' words for a linked folder (M16-80: `snapshot.not_read_through`).
+A literal, as every `_note` message is; a test holds it to those words."""
+
+
+def _link_stands_for(
+    as_file: layout.Classified | layout.Unclassified,
+    as_folder: layout.Classified | layout.Unclassified,
+) -> str:
+    """What a link stands in place of, for `_link_note` (M16-80), from the
+    file map alone, as the link is never followed: `as_file` and `as_folder`
+    are its place classified as each kind. "file" where only a file there
+    gets a row (a linked `WTF/Config.wtf`), "folder" where only a folder
+    does, or where one row takes both and the place is the folder that row's
+    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). Otherwise,
+    one row for both kinds below that folder (a font file, an addon's
+    `.toc`), different rows, or none: "one", which says neither."""
+    file_row = as_file.entry if isinstance(as_file, layout.Classified) else None
+    folder_row = as_folder.entry if isinstance(as_folder, layout.Classified) else None
+    if file_row is not None and folder_row is None:
+        return "file"
+    if folder_row is not None and file_row is None:
+        return "folder"
+    if (
+        file_row is not None
+        and folder_row is not None
+        and file_row.id == folder_row.id
+        and folder_row.heads_a_subtree(as_folder.path.split("/"))
+    ):
+        return "folder"
+    return "one"
 
 
 _SELECTION_WORDS = {
@@ -2841,7 +2885,7 @@ def tree(
         return
     _say(f"{chosen.folder} in {inst.root}")
     if flavor_link:
-        _note("{} is a link; wowlab does not follow it, so nothing in it is listed.", chosen.folder)
+        _note(_FLAVOR_LINK_NOTE, chosen.folder)
     for item in items:
         _say_tree_item(item.path, item, explain)
     if truncated:
@@ -2931,7 +2975,15 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            note = _link_note(*layout.link_facts(root / e.name, real_root))
+            stands_for = (
+                "folder"
+                if e.name in flavors
+                else _link_stands_for(
+                    layout.classify(e.name, inst, is_dir=False),
+                    layout.classify(e.name, inst, is_dir=True),
+                )
+            )
+            note = _link_note(*layout.link_facts(root / e.name, real_root), stands_for)
             if e.name in flavors:
                 # M13-35: as `tree` says it for this flavor folder alone.
                 note = f"flavor folder; {note}; nothing in it is listed"
@@ -9017,7 +9069,12 @@ def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> l
         )
     if unread:
         top = unread[0].path.split("/", 1)[0]
-        clauses.append(f"{len(unread)} not read ({top}/ is now a link, wowlab does not follow it)")
+        # M16-80: the readers' rule for a link, said of the folder that is now one.
+        subject = "it" if len(unread) == 1 else "each"
+        clauses.append(
+            f"{len(unread)} not read ({subject} is reached through {top}/, which is now a "
+            "link, and wowlab does not read through links)"
+        )
     lines = [
         f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
         f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '
