@@ -19,6 +19,7 @@ Nothing reads or writes a real install.
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -104,10 +105,15 @@ def test_whole_restore_lists_added_files_and_never_touches_them_constructed(
     )
     assert _left_alone(text) == sorted(ADDED)
 
-    # --json and the plan are as before: only what the restore changes.
+    # The plan items are as before: only what the restore changes. The left-alone
+    # text reaches --json only inside plan_lines (the text plan, line by line);
+    # no other field carries it and no field was added for it.
     plan = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
     assert [i.path for i in plan.plan] == [SYNDICATOR]
-    assert "left" not in plan.model_dump_json().lower()
+    assert any("Left alone" in ln for ln in plan.plan_lines)
+    rest = plan.model_dump(mode="json", exclude={"plan_lines"})
+    assert "left" not in json.dumps(rest).lower()
+    assert not any("left" in name.lower() for name in cli.RestoreReport.model_fields)
 
     done = ok("snap", "restore", a.id, "--yes")
     assert _left_alone(done.stdout) == sorted(ADDED)

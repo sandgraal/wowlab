@@ -8480,7 +8480,6 @@ def snap_restore(
 
     shots_differ = any(a.disk != "same" for a in aside)
     plan_lines: list[str] = []
-    body = 0
     if plan or skipped or aside or left_alone:
         plan_lines.append(
             f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)"
@@ -8501,12 +8500,10 @@ def snap_restore(
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
-        body = len(plan_lines)
+        plan_lines.extend(_left_alone_lines(left_alone))
         plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
-    # The "left alone" list is text only; --json keeps to what the restore changes.
-    shown = plan_lines[:body] + _left_alone_lines(left_alone) + plan_lines[body:]
     if not json_out or (prompting and plan):
-        for line in shown:
+        for line in plan_lines:
             show(line)
     if not plan:
         if json_out:
