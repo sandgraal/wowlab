@@ -3938,7 +3938,9 @@ def _rows(tops: Sequence[tuple[str, str, luadata.LuaValue]]) -> Iterator[dict[st
 def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) -> None:
     """Write `SvDumpReport` JSON to stdout row by row: only one row is held
     at a time, and nothing is indented (a deep file would otherwise print a
-    wall of spaces on every line)."""
+    wall of spaces on every line). Each row is one `encode` call, which takes
+    the C encoder; `iterencode` would take the pure-Python one (M16-24). A row
+    is at most three levels deep, so the C encoder's recursion is bounded."""
     encoder = json.JSONEncoder(ensure_ascii=True, separators=(",", ":"))
     out = typer.get_text_stream("stdout")
     head = {"file": _json_text(file), "path": None if path is None else _json_text(path)}
@@ -3946,8 +3948,7 @@ def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) ->
     for n, row in enumerate(rows):
         if n:
             out.write(",")
-        for chunk in encoder.iterencode(_map_strings(row, _json_text)):
-            out.write(chunk)
+        out.write(encoder.encode(_map_strings(row, _json_text)))
     out.write("]}\n")
     out.flush()
 
