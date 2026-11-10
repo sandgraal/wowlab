@@ -382,7 +382,6 @@ def test_the_watch_sees_an_entry_go_in_and_the_mode_then_constructed(tmp_path: P
 @posix_only
 @pytest.mark.parametrize("kind", [FRESH_EXPLICIT, FRESH_DEFAULT])
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_the_first_write_makes_the_store_root_0700_before_anything_goes_in_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path, mask: int, kind: str
 ) -> None:
@@ -398,7 +397,6 @@ def test_the_first_write_makes_the_store_root_0700_before_anything_goes_in_const
 @posix_only
 @pytest.mark.parametrize("kind", [FRESH_EXPLICIT, FRESH_DEFAULT, MADE_BY_A_SNAPSHOT])
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_the_first_write_makes_journal_0700_before_a_record_goes_in_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path, mask: int, kind: str
 ) -> None:
@@ -415,7 +413,6 @@ def test_the_first_write_makes_journal_0700_before_a_record_goes_in_constructed(
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_after_the_first_write_root_journal_and_their_files_are_private_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path
 ) -> None:
@@ -437,7 +434,6 @@ def test_after_the_first_write_root_journal_and_their_files_are_private_construc
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_a_dry_run_on_a_new_store_makes_the_root_0700_before_its_lock_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path
 ) -> None:
@@ -456,7 +452,6 @@ def test_a_dry_run_on_a_new_store_makes_the_root_0700_before_its_lock_constructe
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_store_lock_create_makes_the_root_0700_before_its_lock_constructed(
     guard: Any, tmp_path: Path
 ) -> None:
@@ -507,7 +502,6 @@ MADE_SCENARIOS = {
 
 @posix_only
 @pytest.mark.parametrize("scenario", list(MADE_SCENARIOS))
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-66 not implemented")
 def test_guard_makes_the_root_and_journal_with_mode_0700_in_the_mkdir_itself_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path, scenario: str
 ) -> None:
