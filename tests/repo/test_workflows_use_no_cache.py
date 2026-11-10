@@ -96,6 +96,7 @@ CACHE_OFF: Mapping[str, str] = {
 ALLOWED: Mapping[str, frozenset[str]] = {
     "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, TRIVY}),
     "latest-release.yml": frozenset({CHECKOUT, SETUP_UV}),
+    "perf-nightly.yml": frozenset({CHECKOUT, SETUP_UV}),
     "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST}),
     "windows.yml": frozenset({CHECKOUT, SETUP_UV}),
 }
@@ -397,7 +398,7 @@ def test_a_moved_pin_names_the_action_both_refs_and_every_workflow() -> None:
                 step["uses"] = f"astral-sh/setup-uv@{new}"
     assert _moved_pins(workflows) == [
         f"astral-sh/setup-uv moved from {SETUP_UV.partition('@')[2]} to {new} in "
-        "ci.yml, latest-release.yml, release.yml, windows.yml. Re-read "
+        "ci.yml, latest-release.yml, perf-nightly.yml, release.yml, windows.yml. Re-read "
         f"astral-sh/setup-uv's action.yml at {new}, and every action it nests, "
         "for cache inputs and caches on by default; only then update the pin "
         "(and CACHE_OFF and the note above it) in tests/repo/test_workflows_use_no_cache.py."

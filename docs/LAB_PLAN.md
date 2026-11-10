@@ -1626,6 +1626,77 @@ renders it. Before this, the whole record printed on one line with `\x0a`
 escapes. A record that cannot be formatted prints one escaped line naming it
 instead of logging's own error report, which prints the record raw.
 
+### 6.12 Command-level performance budget (M16-27)
+
+*Added 2026-11-10 (M16-27, §18.1 item 6).* Five commands have a cost
+target, checked every night by `.github/workflows/perf-nightly.yml` on
+GitHub's `ubuntu-latest` (the reference runner) and never on the PR path.
+The job runs `scripts/perf_budget.py`; it makes no live call (ADR-0012) and
+touches no real install or snapshot store.
+
+- **The sandbox.** The captured `macos/` fixture tree, copied into a
+  temporary folder under a flavor folder whose name means nothing
+  (discovery reads `.flavor.info`, L6), grown with 20,000 constructed files
+  shaped like the M16-23T grader's tree: one in eight a SavedVariables file
+  in the account folder, the rest addon files in folders of 40. The home and
+  user data directories point into the sandbox, and each command gets
+  `--root`.
+- **The measure.** Each command runs as its own `python -m wowlab_core`
+  process, five times (the whole restore three), and the least child CPU
+  time (user plus system) is kept: load only adds time. It is divided by
+  the least CPU time of a fixed pure-Python calibration loop measured in
+  the same job (dict, string and integer work), so a faster or slower
+  runner moves both sides together.
+- **The verdict.** A command fails when its ratio is over 1.5 times its
+  baseline below.
+- **The absolute check (§18.1 item 6).** The gate's whole-restore check of
+  the 20,000-file tree with nothing to change takes at most 5 s of
+  wall-clock time, best of three runs: `tx.restore(ID)` in a dry-run
+  transaction, the snapshot taken of the same tree, timed with
+  `perf_counter` in a child process around that call alone, as the
+  M16-23T scaling grader times it. The interpreter start, discovery and
+  opening the transaction are outside the timer; the manifest is read
+  inside `tx.restore`, so it is inside. The `snap restore ID --dry-run`
+  command around it (discovery, the check and the printed plan) is timed
+  too, and its wall-clock time is printed for information only; its CPU
+  time is the `whole-restore` row below.
+
+| Command | What is run | Baseline ratio |
+|---|---|---|
+| `whole-restore` | `snap restore ID --dry-run --json`, the 20,000-file tree, nothing to change | 15.6 |
+| `sv-dump-json` | `sv dump --json` of a captured character `WowLab.lua` (23 KB) | 2.5 |
+| `sv-merge` | `sv merge WowLab.lua --into` one captured character `--from` the other `--json` (conflicts listed, nothing written, exit 1) | 7.8 |
+| `addons-list` | `addons list --json` | 2.5 |
+| `version` | `wowlab --version` | 2.4 |
+
+**These baselines are provisional** until they are re-recorded from the
+first runs of the nightly job on `main`, on `ubuntu-latest`. They were set
+on the development container on 2026-11-10 from five runs of the
+20,000-file tree: four at load averages of 10 to 19 from other sessions,
+and one on the quiet machine (load average about 1). The calibration loop
+took 0.24 to 0.27 s CPU. The ratios measured were 12.9 to 15.6 (whole
+restore; 3.2 to 4.0 s CPU), 2.0 to 2.4 (`sv dump --json`), 6.9 to 7.7 (`sv
+merge`), 2.0 to 2.4 (`addons list`) and 2.1 to 2.4 (`--version`). Most of
+each short command is the interpreter start and the imports, about 0.5 s
+CPU. Each baseline is the highest ratio recorded, rounded up to one
+decimal, with no padding: the 1.5 times of the verdict is the whole
+tolerance. From one run to the next the ratios moved by up to about 20 %,
+loaded or quiet (a sixth, checking run on the quiet machine gave 15.5 for
+the whole restore and passed every row). Using CPU time rather than
+wall-clock time, and the least of several runs, keeps load from moving
+them more than that.
+
+The gate's check took 2.48 and 2.64 s of wall-clock time in the two quiet
+runs (the `snap restore --dry-run` command around it took 3.22 and
+3.71 s). The four loaded runs timed the whole command only, at 4.9 to
+8.6 s of wall-clock time.
+
+To re-set a baseline after an intended change, run the workflow by hand,
+read the ratios its log prints (`python scripts/perf_budget.py --record`
+prints them and checks nothing), and change this table and
+`BASELINE` in the script together; `tests/scripts/test_perf_budget.py`
+keeps them equal.
+
 ## 7. Repository layout
 
 ```
