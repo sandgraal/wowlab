@@ -510,7 +510,10 @@ def test_a_record_without_gear_shows_the_commands_reason_constructed(
     path.write_bytes(b'\nWowLabCharDB = {\n["schema"] = 1,\n}\n')
     os.utime(path, ns=(NEWER_NS, NEWER_NS))
     reply = _run(server, ["char", "gear"], _gear_params(NEWER)).json()
-    assert reply["exit_code"] == 1 and reply["stdout"] == ""
+    assert reply["exit_code"] == 1
+    # The UI runs --json: the error alone as a report (M16-22).
+    report = cli.ErrorReport.model_validate_json(reply["stdout"])
+    assert f"wowlab: {report.message}" in reply["stderr"]
     assert "no gear in" in reply["stderr"]
     scenario = _scenario(server, [{"char_tab": True}], [])
     scenario["held"].append(

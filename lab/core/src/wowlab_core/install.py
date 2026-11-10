@@ -67,6 +67,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wowlab_core import longpath, snapshot
+from wowlab_core.errors import WowlabError
 from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
@@ -174,7 +175,7 @@ NO_READABLE_FLAVOR = "has no flavor folder wowlab can read (a real folder named 
 # ─── errors ──────────────────────────────────────────────────────────────────
 
 
-class InstallError(Exception):
+class InstallError(WowlabError):
     """Base class for everything this module raises on purpose."""
 
 

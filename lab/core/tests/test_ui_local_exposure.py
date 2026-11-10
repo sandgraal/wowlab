@@ -500,7 +500,11 @@ def test_sv_dump_refuses_a_file_outside_the_install_and_quotes_none_of_it(
     target = outside[which]
     result = _dump(server, str(target))
     assert result["exit_code"] == cli.EXIT_REFUSED, result
-    assert result["stdout"] == ""
+    # The UI runs --json: stdout holds the error line alone, as a report
+    # (M16-22), and nothing of the file.
+    report = cli.ErrorReport.model_validate_json(result["stdout"])
+    assert f"wowlab: {report.message}" in result["stderr"].splitlines()
+    assert SECRET not in result["stdout"]
     assert "not in the install" in result["stderr"]
     for text in (SECRET, "secret_api_key", "constructed-passwd-line", "root:x"):
         assert text not in result["stdout"] + result["stderr"], text
@@ -563,7 +567,9 @@ def test_sv_dump_refuses_the_install_named_in_another_case(server: Any, install:
     variant = install.parent / install.name.swapcase()
     result = _dump(server, str(variant / FLAVOR / SV_REL))
     assert result["exit_code"] == cli.EXIT_REFUSED, result
-    assert result["stdout"] == ""
+    # The error alone, as a report (M16-22): nothing of the file.
+    report = cli.ErrorReport.model_validate_json(result["stdout"])
+    assert f"wowlab: {report.message}" in result["stderr"].splitlines()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="a junction is a Windows link")

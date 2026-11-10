@@ -18,7 +18,9 @@ reader the install root and opens from it one component at a time
 - the refusal is an `OSError` that is not `FileNotFoundError`: the helper's
   `UnsafeReadError`, or the open's own `ELOOP` / `ENOTDIR` / `EMLINK` (which
   of the three a refused `O_NOFOLLOW | O_DIRECTORY` open gives differs by
-  platform), and it leaves no descriptor open;
+  platform), and it leaves no descriptor open (listed from `/proc/self/fd`
+  or `/dev/fd`; on Windows by probing the C runtime's descriptor table, and
+  by renaming the file to show no handle still holds it: M16-73T);
 - a regular path still reads byte for byte (L4) and changes nothing (L1),
   also when an unrelated link sits elsewhere in the install, and also when
   the root itself is reached through a link (what is above the root is the
@@ -342,20 +344,48 @@ class OpenSpy:
         )
 
 
-def _open_fds() -> set[int] | None:
-    """This process's open descriptors, where the platform lists them."""
+WINDOWS_FD_SLOTS = 8192
+"""The size of the C runtime's descriptor table on Windows (UCRT: 128 arrays
+of 64 slots). `os.open` there is the runtime's `_wopen`, which hands out the
+lowest free slot, so every descriptor the readers can open lies below it."""
+
+
+def _fd_identity(fd: int) -> tuple[int, int] | None:
+    """What an open descriptor refers to, `(st_dev, st_ino)`, or None for a
+    free slot. On Windows `os.fstat` fills these from
+    `GetFileInformationByHandle` (volume serial number, file index) for a
+    file or folder; a pipe or console gives zeros, before and after alike."""
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return None  # EBADF: not open (or the listing's own, closed by now)
+    return (st.st_dev, st.st_ino)
+
+
+def _open_fds() -> dict[int, tuple[int, int]]:
+    """This process's open descriptors and what each refers to.
+
+    Linux lists them in `/proc/self/fd`, macOS in `/dev/fd`. Windows lists
+    none (M16-73T: before it, this returned None there and the watch checked
+    nothing), so every slot of the C runtime's table is probed with
+    `os.fstat`, which raises `EBADF` on a free one. That sees every
+    descriptor `os.open` or `open()` returns, but not a bare Win32 handle
+    (`_winapi.CreateFile`) that never got a descriptor; `_assert_not_held_open`
+    covers that on Windows. A platform with neither fails here, so the watch
+    is never silently a no-op."""
     for listing in (Path("/proc/self/fd"), Path("/dev/fd")):
         if listing.is_dir():
-            fds = set()
-            for entry in list(listing.iterdir()):
-                fd = int(entry.name)
-                try:
-                    os.fstat(fd)
-                except OSError:
-                    continue  # the listing's own descriptor, closed by now
-                fds.add(fd)
-            return fds
-    return None
+            candidates = [int(entry.name) for entry in list(listing.iterdir())]
+            break
+    else:
+        assert sys.platform == "win32", f"no descriptor listing on {sys.platform}"
+        candidates = list(range(WINDOWS_FD_SLOTS))
+    fds = {}
+    for fd in candidates:
+        identity = _fd_identity(fd)
+        if identity is not None:
+            fds[fd] = identity
+    return fds
 
 
 class FdWatch:
@@ -363,11 +393,34 @@ class FdWatch:
         self.before = _open_fds()
 
     def assert_none_left(self) -> None:
-        if self.before is None:
-            return
         after = _open_fds()
-        assert after is not None
-        assert after <= self.before, f"descriptors left open: {sorted(after - self.before)}"
+        left = sorted(set(after) - set(self.before))
+        assert not left, f"descriptors left open: {left}"
+        changed = sorted(fd for fd in after if after[fd] != self.before[fd])
+        assert not changed, (
+            f"descriptors changed what they refer to (one closed, another left in its slot): "
+            f"{[(fd, self.before[fd], after[fd]) for fd in changed]}"
+        )
+
+
+def _assert_not_held_open(path: Path) -> None:
+    """Windows: nothing in this process still holds `path` open.
+
+    A handle opened without `FILE_SHARE_DELETE` blocks a rename of the file
+    with a sharing violation (`PermissionError`, winerror 32). The C
+    runtime's `_wopen` (so `os.open` and `open()`) shares read and write
+    only, and so does a `_winapi.CreateFile` without that flag: a reader that
+    leaks either fails here, the second one where the descriptor watch cannot
+    see it. Elsewhere a rename succeeds over an open file, so this checks
+    nothing and returns."""
+    if sys.platform != "win32":
+        return
+    moved = path.with_name(f"{path.name}.held-open-check")
+    try:
+        path.replace(moved)
+    except PermissionError as exc:
+        raise AssertionError(f"{path} is still held open: {exc}") from exc
+    moved.replace(path)
 
 
 @pytest.fixture
@@ -420,6 +473,7 @@ def test_a_regular_path_reads_byte_for_byte_from_the_root(
         "the read changed nothing (L1)"
     )
     fds.assert_none_left()
+    _assert_not_held_open(path)
 
 
 def test_real_luadata_read_from_the_root_takes_str_paths(root: Path) -> None:
@@ -906,3 +960,126 @@ def test_a_parent_junction_is_refused(case: Case, root: Path, fds: FdWatch) -> N
     _assert_refused(caught.value, case.reader)
     assert linked.link.is_junction(), "the junction is left as it was"
     fds.assert_none_left()
+    _assert_not_held_open(linked.target_file)
+
+
+# ─── the descriptor checks themselves catch a leak (M16-73T) ────────────────
+#
+# Until M16-73T `_open_fds` returned None on Windows and every
+# `fds.assert_none_left()` above returned without checking. These controls
+# leak on purpose and require the checks to fail, with their own message,
+# on every platform the suite runs on; the Windows-only ones also leak beside
+# a real junction refusal and through a bare Win32 handle.
+
+
+def test_the_descriptor_watch_lists_this_platform(tmp_path: Path) -> None:
+    """The listing exists here (Linux `/proc/self/fd`, macOS `/dev/fd`,
+    Windows the C runtime's table) and sees a descriptor just opened, with
+    the file it refers to."""
+    path = tmp_path / "probe.bin"
+    path.write_bytes(b"probe")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        listed = _open_fds()
+        assert fd in listed, f"descriptor {fd} is open but not listed on {sys.platform}"
+        again = os.open(path, os.O_RDONLY)
+        try:
+            assert listed[fd] == _fd_identity(again) != (0, 0), (
+                "the listing names the file the slot holds"
+            )
+        finally:
+            os.close(again)
+    finally:
+        os.close(fd)
+    assert fd not in _open_fds(), "a closed descriptor is not listed"
+
+
+@pytest.mark.parametrize("how", ["os-open", "builtin-open"])
+def test_constructed_the_descriptor_watch_catches_a_leak(
+    how: str, tmp_path: Path, fds: FdWatch
+) -> None:
+    path = tmp_path / "leaked.bin"
+    path.write_bytes(b"leaked")
+    leaked = os.open(path, os.O_RDONLY) if how == "os-open" else path.open("rb")
+    try:
+        with pytest.raises(AssertionError, match="descriptors left open"):
+            fds.assert_none_left()
+    finally:
+        if isinstance(leaked, int):
+            os.close(leaked)
+        else:
+            leaked.close()
+    fds.assert_none_left()
+
+
+def test_constructed_the_descriptor_watch_catches_a_slot_reused_for_another_file(
+    tmp_path: Path,
+) -> None:
+    """The same descriptor numbers before and after are not enough: a reader
+    that closed a caller's descriptor and left one of its own in that slot
+    is caught by what the slot refers to."""
+    first, second = tmp_path / "first.bin", tmp_path / "second.bin"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    slot = os.open(first, os.O_RDONLY)
+    try:
+        watch = FdWatch()
+        other = os.open(second, os.O_RDONLY)
+        os.dup2(other, slot)  # the slot now holds `second`
+        os.close(other)
+        with pytest.raises(AssertionError, match="descriptors changed what they refer to"):
+            watch.assert_none_left()
+    finally:
+        os.close(slot)
+
+
+@windows_only
+def test_constructed_a_leak_beside_a_junction_refusal_is_caught(root: Path, fds: FdWatch) -> None:
+    """The acceptance of M16-73: on the `lab (windows)` job, a descriptor
+    left open on the file behind a junction (what a reader that followed it
+    and forgot to close would leave) fails both checks the junction graders
+    run, while the refusal itself still holds."""
+    case = _parent_cases(("junction-out",))[0].values[0]
+    linked = _linked(root, case)
+    leaked = os.open(linked.path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        with pytest.raises(OSError) as caught:
+            case.reader.read(linked.path, root)
+        _assert_refused(caught.value, case.reader)
+        with pytest.raises(AssertionError, match="descriptors left open"):
+            fds.assert_none_left()
+        with pytest.raises(AssertionError, match="still held open"):
+            _assert_not_held_open(linked.target_file)
+    finally:
+        os.close(leaked)
+    fds.assert_none_left()
+    _assert_not_held_open(linked.target_file)
+
+
+@windows_only
+def test_constructed_a_bare_handle_is_caught_by_the_held_open_check(
+    root: Path, fds: FdWatch
+) -> None:
+    """A Win32 handle with no C runtime descriptor (`_winapi.CreateFile`) is
+    not in the descriptor table, so the descriptor watch cannot see it; the
+    rename check does, because the handle does not share delete access."""
+    import _winapi  # Windows only; skipped elsewhere
+
+    file_share_read = 0x1  # FILE_SHARE_READ, without FILE_SHARE_DELETE
+    path, _ = _copy_in(root, SV)
+    handle = _winapi.CreateFile(
+        str(path),
+        _winapi.GENERIC_READ,
+        file_share_read,
+        _winapi.NULL,
+        _winapi.OPEN_EXISTING,
+        0,
+        _winapi.NULL,
+    )
+    try:
+        fds.assert_none_left()  # the limit of the descriptor watch, stated
+        with pytest.raises(AssertionError, match="still held open"):
+            _assert_not_held_open(path)
+    finally:
+        _winapi.CloseHandle(handle)
+    _assert_not_held_open(path)

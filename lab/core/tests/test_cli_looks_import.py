@@ -382,7 +382,11 @@ def test_no_visit_gives_the_addons_reason_and_saves_nothing(
     extra = ("--character", character, *(("--json",) if json_out else ()))
     result = _import(unvisited, "nope", *extra)
     assert result.exit_code == 1
-    assert result.stdout == ""
+    if json_out:  # the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert f"wowlab: {report.message}" in result.stderr
+    else:
+        assert result.stdout == ""
     assert f"1/{character}: nothing to import" in result.stderr
     assert f"customization is absent, with the addon's reason: {NO_VISIT_REASON}" in result.stderr
     assert "nothing was saved" in result.stderr
@@ -792,7 +796,11 @@ def test_no_customization_record_still_has_nothing_to_import(
         identified, "nope", "--character", DANGLING, *(("--json",) if json_out else ())
     )
     assert result.exit_code == 1
-    assert result.stdout == ""
+    if json_out:  # the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert f"wowlab: {report.message}" in result.stderr
+    else:
+        assert result.stdout == ""
     assert result.stderr == (
         f"wowlab: 1/{DANGLING}: nothing to import: customization is absent, with the addon's "
         f"reason: {NO_VISIT_REASON}; nothing was saved\n"

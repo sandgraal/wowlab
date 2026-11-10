@@ -952,7 +952,12 @@ def test_db2_table_the_build_lacks_exits_1_with_the_reason(
 
     assert result.exit_code == 1, (result.stdout, result.stderr, result.exception)
     assert isinstance(result.exception, SystemExit), "a clean exit, not an uncaught error"
-    assert result.stdout == ""
+    if json_out:  # under --json, the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert (report.kind, report.exit_code) == ("TableNotPublished", 1)
+        assert f"wowlab: {report.message}\n" == result.stderr
+    else:
+        assert result.stdout == ""
     assert result.stderr == (
         f"wowlab: table {LACKING_TABLE!r} is not published for build {LISTED_BUILD!r}: "
         f"wago.tools answered HTTP 400 for "
