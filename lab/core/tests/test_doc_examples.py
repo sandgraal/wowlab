@@ -12,26 +12,34 @@ What the test reads from a document:
 - A fenced block is a *shell block* when its language is a shell (`bash`,
   `sh`, `console`, `powershell`, ...), or when it is `text` or untagged and
   has a `$ ` prompt line. Every other block (`mermaid`, a folder layout) is
-  not a command and is not read.
+  not a command block.
 - In a shell block without prompts every non-blank, non-comment line is a
   command (a trailing `\\` continues it). In a block with prompts the `$ `
   lines are commands and the lines under each are its shown output.
-- A shell block runs only when every command in it is a `wowlab` command
-  (`uv run wowlab` counts). Each runs in document order, in one sandbox per
-  document, and must exit 0. Its shown output, when there is any, must match
-  what it prints (stdout and stderr as a terminal shows them): a line that is
-  only `…` stands for any number of lines the document trims, a `…` inside a
-  line for any text, and every other line must be there as shown, in order,
-  with no line in between that the document does not trim.
-- A shell block that is preceded by `<!-- not-run: <reason> -->` (the nearest
-  non-blank line above its fence) is skipped. The skips are listed in `SKIPS`
-  below; a skip without a reason, a marker that no block follows, and a shell
-  block that is neither runnable nor marked all fail.
+- A command *runs* when it is a `wowlab` command (`uv run wowlab` is the same
+  CLI on the sandbox) and it exits on its own: `wowlab ui` and
+  `wowlab log tail --follow` do not. Every command that runs must exit 0, and
+  its shown output, when there is any, must match what it prints (stdout and
+  stderr as a terminal shows them): a line that is only `…` stands for any
+  number of lines the document trims, a `…` inside a line for any text, and
+  every other line must be there as shown, in order, with no line in between
+  that the document does not trim. The commands of one fenced block run in
+  order in one fresh sandbox, as a player would type them.
+- A block that holds a command that does not run (an install, the network, a
+  command of another program, one that does not exit) is preceded by
+  `<!-- not-run: <reason> -->`, the nearest non-blank line above its fence.
+  The reason covers those commands only; the block's other `wowlab` commands
+  still run. Every skipped command is listed in `SKIPS` below. A skip without
+  a reason, a marker that no block follows, a marker on a block whose every
+  command runs, a skipped command in a block with no marker, and a `wowlab`
+  line in a block that is not a command block all fail.
 
 Two placeholders stand for what differs between machines: `<ACCOUNT>` is the
 account folder, and `/path/to/World of Warcraft` is the install folder. Both
 are replaced by the sandbox's own before a command runs or its output is
-compared.
+compared. The sandbox's install is found as most players' is, at a default
+location: `WOWLAB_WOW_ROOT` is unset and the default locations are the
+sandbox's install folder (as `test_install.py` injects them).
 """
 
 from __future__ import annotations
@@ -45,7 +53,7 @@ import pytest
 from test_cli_player_copy import ACCOUNT, sandbox
 from typer.testing import CliRunner
 
-from wowlab_core import cli
+from wowlab_core import cli, install
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCS = ("README.md", "docs/INSTALL.md")
@@ -55,9 +63,13 @@ SHELLS = frozenset({"bash", "sh", "shell", "zsh", "console", "powershell", "pwsh
 TEXTS = frozenset({"", "text"})
 MARKER = re.compile(r"^<!--\s*not-run\b(?P<rest>.*?)-->$")
 PROMPT = "$ "
+WOWLAB_LINE = re.compile(r"^(uv run )?wowlab(\s|$)")
 
-# The skipped blocks, by document and the block's first command, with the
-# reason the document gives. A new skip is added here on purpose.
+# Every command that does not run, by document, with the reason its block
+# gives. A new skip is added here on purpose.
+_FROM_SOURCE = "a source checkout, from the network"
+_NO_EXIT = "`wowlab ui` does not exit"
+_OWN_SHELL = "sets a variable in your own shell"
 SKIPS: tuple[tuple[str, str, str], ...] = (
     (
         "README.md",
@@ -68,16 +80,13 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "README.md",
-        "wowlab doctor        # finds your install; on a first run, says what wowlab will do "
-        "and offers a first snapshot",
-        "`wowlab ui` does not exit",
+        "wowlab ui            # the explorer in your browser: every file in your install, "
+        "and whether it is safe to touch",
+        _NO_EXIT,
     ),
-    ("README.md", "wowlab ui", "`wowlab ui` does not exit"),
-    (
-        "README.md",
-        "git clone https://github.com/sandgraal/wowlab && cd wowlab",
-        "a source checkout, from the network",
-    ),
+    ("README.md", "wowlab ui", _NO_EXIT),
+    ("README.md", "git clone https://github.com/sandgraal/wowlab && cd wowlab", _FROM_SOURCE),
+    ("README.md", "make setup", _FROM_SOURCE),
     (
         "docs/INSTALL.md",
         "gh attestation verify wowlab_core-<version>-py3-none-any.whl "
@@ -89,39 +98,38 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     (
         "docs/INSTALL.md",
         "uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl",
-        "an install",
+        "an install, from the network",
     ),
-    (
-        "docs/INSTALL.md",
-        "git clone https://github.com/sandgraal/wowlab",
-        "a source checkout, from the network",
-    ),
+    ("docs/INSTALL.md", "git clone https://github.com/sandgraal/wowlab", _FROM_SOURCE),
+    ("docs/INSTALL.md", "cd wowlab", _FROM_SOURCE),
+    ("docs/INSTALL.md", "uv sync --frozen", _FROM_SOURCE),
     (
         "docs/INSTALL.md",
         "find ~ -name .build.info -path '*World of Warcraft*' 2>/dev/null",
         "searches your own folders, not a wowlab command",
     ),
-    (
-        "docs/INSTALL.md",
-        'export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"',
-        "sets a variable in your own shell",
-    ),
-    (
-        "docs/INSTALL.md",
-        '$env:WOWLAB_WOW_ROOT = "D:\\Games\\World of Warcraft"',
-        "sets a variable in your own shell",
-    ),
-    ("docs/INSTALL.md", "wowlab ui", "`wowlab ui` does not exit"),
+    ("docs/INSTALL.md", 'export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"', _OWN_SHELL),
+    ("docs/INSTALL.md", '$env:WOWLAB_WOW_ROOT = "D:\\Games\\World of Warcraft"', _OWN_SHELL),
+    ("docs/INSTALL.md", 'setx WOWLAB_WOW_ROOT "D:\\Games\\World of Warcraft"', _OWN_SHELL),
+    ("docs/INSTALL.md", "wowlab ui", _NO_EXIT),
 )
 
 # The commands that run, by document, as the document writes them.
 RUNS: dict[str, tuple[str, ...]] = {
     "README.md": (
+        "wowlab doctor        # finds your install; on a first run, says what wowlab will do "
+        "and offers a first snapshot",
+        "wowlab snap create   # snapshot your setup before you experiment",
         "wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua",
         "wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua",
         "wowlab doctor",
+        "uv run wowlab doctor        # finds your install and checks everything",
+        "uv run wowlab --help        # every command",
     ),
-    "docs/INSTALL.md": ('wowlab doctor --root "/path/to/World of Warcraft"',),
+    "docs/INSTALL.md": (
+        "uv run wowlab doctor",
+        'wowlab doctor --root "/path/to/World of Warcraft"',
+    ),
 }
 
 
@@ -134,10 +142,14 @@ class Command:
 
 @dataclass
 class Block:
+    """Commands of one fenced block that share a fate: all run (`skip` is
+    None), or none does (`skip` is the marker's reason). A marked fence with
+    commands of both kinds gives two of these, with the same `line`."""
+
     line: int  # 1-based line of the opening fence
     lang: str
     commands: list[Command] = field(default_factory=list)
-    skip: str | None = None  # the not-run reason, when the block is marked
+    skip: str | None = None
 
 
 @dataclass
@@ -191,7 +203,7 @@ def _commands(lang: str, start: int, body: list[str]) -> list[Command]:
 
 
 def read_blocks(text: str) -> Read:
-    """The shell blocks of a Markdown document, and what is wrong with its markers."""
+    """The command blocks of a Markdown document, and what is wrong with its markers."""
     lines = text.splitlines()
     blocks: list[Block] = []
     problems: list[str] = []
@@ -226,31 +238,67 @@ def read_blocks(text: str) -> Read:
             if not rest.startswith(":") or not rest[1:].strip():
                 problems.append(f"line {above + 1}: a not-run marker without a reason")
             skip = rest[1:].strip() if rest.startswith(":") else ""
-        if commands:
-            blocks.append(Block(i + 1, lang, commands, skip))
+        if not commands and lang in TEXTS:
+            strays = [n for n, line in enumerate(body) if WOWLAB_LINE.match(line.strip())]
+            if strays:
+                problems.append(
+                    f"line {i + 2 + strays[0]}: a wowlab command in a block that is not read "
+                    "as commands; fence it as bash, or prompt it with `$ `"
+                )
+        runs = [c for c in commands if _runs(c.text)]
+        skipped = [c for c in commands if not _runs(c.text)]
+        if runs:
+            blocks.append(Block(i + 1, lang, runs, None))
+        if skipped and skip is not None:
+            blocks.append(Block(i + 1, lang, skipped, skip))
+        elif skipped:
+            problems.append(
+                f"line {skipped[0].line}: {skipped[0].text!r} does not run here (an install, "
+                "the network, another program, or a command that does not exit); "
+                "mark the block <!-- not-run: <reason> -->"
+            )
+        elif marker and commands:
+            problems.append(
+                f"line {above + 1}: a not-run marker on a block whose every command runs"
+            )
         elif marker:
             problems.append(f"line {above + 1}: a not-run marker above a block with no command")
         i = end + 1
     for n, line in enumerate(lines):
         if MARKER.match(line.strip()) and n not in claimed:
             problems.append(f"line {n + 1}: a not-run marker that no fenced block follows")
-    for block in blocks:
-        if block.skip is None and not all(_is_wowlab(c.text) for c in block.commands):
-            others = [c.text for c in block.commands if not _is_wowlab(c.text)]
-            problems.append(
-                f"line {block.line}: runs {others[0]!r}, which is not a wowlab command; "
-                "mark the block <!-- not-run: <reason> -->"
-            )
     return Read(blocks, problems)
 
 
+def _uncomment(command: str) -> str:
+    """`command` without its shell comment: a `#` that starts a word outside
+    quotes, as the shell reads it. (`shlex.split(..., comments=True)` also
+    cuts at a `#` inside a word, such as an account folder `90000001#6`, which
+    the shell keeps.)"""
+    quote = ""
+    escaped = False
+    word_start = True  # the next character starts a word
+    for n, char in enumerate(command):
+        at_start, word_start = word_start, False
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and at_start:
+            return command[:n]
+        elif char.isspace():
+            word_start = True
+    return command
+
+
 def _argv(command: str) -> list[str]:
-    """A command's words; a word that starts with `#` starts a comment."""
-    words = shlex.split(command)
-    for n, word in enumerate(words):
-        if word.startswith("#"):
-            words = words[:n]
-            break
+    """A command's words, without its comment; `uv run wowlab` is `wowlab`."""
+    words = shlex.split(_uncomment(command))
     if words[:2] == ["uv", "run"]:
         words = words[2:]
     return words
@@ -262,6 +310,15 @@ def _is_wowlab(command: str) -> bool:
     except ValueError:
         return False
     return bool(words) and words[0] == "wowlab"
+
+
+def _runs(command: str) -> bool:
+    """Whether a command runs on the sandbox: a wowlab command that exits."""
+    if not _is_wowlab(command):
+        return False
+    words = _argv(command)[1:]
+    never_exits = words[:1] == ["ui"] or (words[:2] == ["log", "tail"] and "--follow" in words)
+    return not never_exits
 
 
 def _line_matches(shown: str, printed: str) -> bool:
@@ -318,12 +375,13 @@ def test_markers_are_well_formed(name: str) -> None:
 
 
 def test_the_skips_are_listed() -> None:
-    """Every skipped block, with its reason; a new skip is a change here."""
+    """Every command that does not run, with its reason; a new skip is a change here."""
     skips = [
-        (name, block.commands[0].text, block.skip or "")
+        (name, command.text, block.skip or "")
         for name in DOCS
         for block in read_blocks(_doc(name)).blocks
         if block.skip is not None
+        for command in block.commands
     ]
     assert skips == list(SKIPS)
 
@@ -332,23 +390,28 @@ def test_the_skips_are_listed() -> None:
 def test_every_example_runs_on_the_fixture_sandbox(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    root = sandbox(tmp_path, monkeypatch, "")
-    places = {"<ACCOUNT>": ACCOUNT, INSTALL_PLACEHOLDER: str(root)}
-
-    def fill(text: str) -> str:
-        for placeholder, value in places.items():
-            text = text.replace(placeholder, value)
-        return text
-
     runner = CliRunner()
     ran: list[str] = []
     problems: list[str] = []
     for block in read_blocks(_doc(name)).blocks:
         if block.skip is not None:
             continue
+        # Each block in a fresh sandbox, its install found at a default location.
+        home = tmp_path / f"block-{block.line}"
+        home.mkdir()
+        root = sandbox(home, monkeypatch, "")
+        monkeypatch.delenv(install.ENV_ROOT)
+        monkeypatch.setattr(install, "default_roots", lambda *a, _r=root, **k: (_r,))
+        places = {"<ACCOUNT>": ACCOUNT, INSTALL_PLACEHOLDER: str(root)}
+
+        def fill(text: str, places: dict[str, str] = places) -> str:
+            for placeholder, value in places.items():
+                text = text.replace(placeholder, value)
+            return text
+
         for command in block.commands:
             ran.append(command.text)
-            args = _argv(fill(command.text))[1:]
+            args = [fill(word) for word in _argv(command.text)[1:]]
             result = runner.invoke(cli.app, args, terminal_width=80)
             where = f"{name}:{command.line}: {command.text}"
             if result.exit_code != 0:
@@ -382,18 +445,51 @@ def test_a_skip_without_a_reason_fails_constructed() -> None:
         assert read_blocks(doc).problems == ["line 1: a not-run marker without a reason"]
 
 
-def test_a_marker_must_sit_on_a_command_block_constructed() -> None:
-    doc = "<!-- not-run: stray -->\n\ntext\n\n<!-- not-run: no command -->\n```mermaid\nA --> B\n```\n"
+def test_a_marker_must_sit_on_a_block_with_a_skip_constructed() -> None:
+    doc = (
+        "<!-- not-run: stray -->\n\ntext\n\n"
+        "<!-- not-run: no command -->\n```mermaid\nA --> B\n```\n"
+        "<!-- not-run: all run -->\n```bash\nwowlab doctor\n```\n"
+    )
     assert read_blocks(doc).problems == [
         "line 5: a not-run marker above a block with no command",
+        "line 9: a not-run marker on a block whose every command runs",
         "line 1: a not-run marker that no fenced block follows",
     ]
 
 
-def test_an_unmarked_block_of_other_commands_fails_constructed() -> None:
-    doc = "```bash\nwowlab doctor\nuv tool install wowlab\n```\n"
-    (problem,) = read_blocks(doc).problems
-    assert "'uv tool install wowlab', which is not a wowlab command" in problem
+def test_an_unmarked_skip_fails_constructed() -> None:
+    for line in ("uv tool install wowlab", "wowlab ui", "wowlab log tail --follow"):
+        doc = f"```bash\nwowlab doctor\n{line}\n```\n"
+        (problem,) = read_blocks(doc).problems
+        assert problem.startswith(f"line 3: {line!r} does not run here"), problem
+
+
+def test_a_marked_block_still_runs_its_wowlab_commands_constructed() -> None:
+    doc = (
+        "<!-- not-run: a source checkout -->\n```bash\n"
+        "git clone x\nuv run wowlab doctor\nwowlab ui\nwowlab snap creat\n```\n"
+    )
+    read = read_blocks(doc)
+    assert read.problems == []
+    runs, skipped = read.blocks
+    assert (runs.skip, [c.text for c in runs.commands]) == (
+        None,
+        ["uv run wowlab doctor", "wowlab snap creat"],  # a typo runs, and fails there
+    )
+    assert (skipped.skip, [c.text for c in skipped.commands]) == (
+        "a source checkout",
+        ["git clone x", "wowlab ui"],
+    )
+
+
+def test_a_wowlab_line_outside_a_command_block_fails_constructed() -> None:
+    for fence in ("```", "```text"):
+        for line in ("wowlab doctor", "uv run wowlab --help"):
+            doc = f"{fence}\nsome words\n{line}\n```\n"
+            (problem,) = read_blocks(doc).problems
+            assert problem.startswith("line 3: a wowlab command in a block that is not read")
+    assert read_blocks("```\nlab/core/   wowlab-core: the library\n```\n").problems == []
 
 
 def test_commands_and_shown_output_are_read_constructed() -> None:
@@ -424,8 +520,25 @@ def test_commands_and_shown_output_are_read_constructed() -> None:
         (8, "wowlab explain 'a b#1'", ["first", TRIM]),
         (12, "uv run wowlab doctor", []),
     ]
-    assert _argv("wowlab explain 'a b#1'  # note") == ["wowlab", "explain", "a b#1"]
     assert _argv("uv run wowlab doctor") == ["wowlab", "doctor"]
+
+
+@pytest.mark.parametrize(
+    ("command", "argv"),
+    [
+        ("wowlab explain 'a b#1'  # note", ["wowlab", "explain", "a b#1"]),
+        ('wowlab explain "#weird"', ["wowlab", "explain", "#weird"]),
+        (
+            "wowlab explain WTF/Account/90000001#6/x.lua",
+            ["wowlab", "explain", "WTF/Account/90000001#6/x.lua"],
+        ),
+        ("wowlab doctor   # it's the first run", ["wowlab", "doctor"]),
+        ("wowlab explain a\\ #b", ["wowlab", "explain", "a #b"]),
+        ("# only a comment", []),
+    ],
+)
+def test_comments_are_cut_as_the_shell_cuts_them_constructed(command: str, argv: list[str]) -> None:
+    assert _argv(command) == argv
 
 
 @pytest.mark.parametrize(

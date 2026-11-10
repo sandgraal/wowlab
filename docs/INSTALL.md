@@ -87,7 +87,7 @@ checked:
 
 3. Install the file you checked, not the address:
 
-   <!-- not-run: an install -->
+   <!-- not-run: an install, from the network -->
    ```bash
    uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl
    ```

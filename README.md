@@ -144,7 +144,7 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page (inside the browser view too 🆕). Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 <details>
-<summary><b>See it in action</b> (output from a test copy of a Forever install; `…` marks lines left out)</summary>
+<summary><b>See it in action</b> (output from a test copy of a Forever install; `…` marks what is left out)</summary>
 
 ```text
 $ wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua
@@ -162,8 +162,9 @@ DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260
 …
 
 $ wowlab doctor
+First run: wowlab has no snapshot of this install yet. What it will and will not do:
 …
-Install: /path/to/World of Warcraft (found by $WOWLAB_WOW_ROOT)
+Install: /path/to/World of Warcraft (found by a default location)
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
   Game data: not checked (--check-builds asks wago.tools)
 …
