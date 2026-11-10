@@ -69,7 +69,7 @@ WOWLAB_LINE = re.compile(r"^(uv run )?wowlab(\s|$)")
 # gives. A new skip is added here on purpose.
 _FROM_SOURCE = "a source checkout, from the network"
 _NO_EXIT = "`wowlab ui` does not exit"
-_OWN_SHELL = "sets a variable in your own shell"
+_OWN_SHELL = "sets a variable on your own machine"
 SKIPS: tuple[tuple[str, str, str], ...] = (
     (
         "README.md",
@@ -317,7 +317,9 @@ def _runs(command: str) -> bool:
     if not _is_wowlab(command):
         return False
     words = _argv(command)[1:]
-    never_exits = words[:1] == ["ui"] or (words[:2] == ["log", "tail"] and "--follow" in words)
+    never_exits = words[:1] == ["ui"] or (
+        words[:2] == ["log", "tail"] and bool({"--follow", "-f"} & set(words))
+    )
     return not never_exits
 
 
@@ -459,7 +461,13 @@ def test_a_marker_must_sit_on_a_block_with_a_skip_constructed() -> None:
 
 
 def test_an_unmarked_skip_fails_constructed() -> None:
-    for line in ("uv tool install wowlab", "wowlab ui", "wowlab log tail --follow"):
+    for line in (
+        "uv tool install wowlab",
+        "wowlab ui",
+        "wowlab log tail --follow",
+        "wowlab log tail -f",
+        "uv run wowlab log tail --json -f",
+    ):
         doc = f"```bash\nwowlab doctor\n{line}\n```\n"
         (problem,) = read_blocks(doc).problems
         assert problem.startswith(f"line 3: {line!r} does not run here"), problem

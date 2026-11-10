@@ -173,13 +173,13 @@ wowlab doctor --root "/path/to/World of Warcraft"
 
 or for every command with `WOWLAB_WOW_ROOT`:
 
-<!-- not-run: sets a variable in your own shell -->
+<!-- not-run: sets a variable on your own machine -->
 ```bash
 # macOS or Linux (add it to your shell's profile to keep it)
 export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"
 ```
 
-<!-- not-run: sets a variable in your own shell -->
+<!-- not-run: sets a variable on your own machine -->
 ```powershell
 # Windows PowerShell, this window only
 $env:WOWLAB_WOW_ROOT = "D:\Games\World of Warcraft"
