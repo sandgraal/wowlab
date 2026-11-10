@@ -2737,13 +2737,23 @@ def _link_stands_for(
     are its place classified as each kind. "file" where only a file there
     gets a row (a linked `WTF/Config.wtf`), "folder" where only a folder
     does, or where one row takes both and the place is the folder that row's
-    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). Otherwise,
-    one row for both kinds below that folder (a font file, an addon's
-    `.toc`), different rows, or none: "one", which says neither."""
+    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). "file", too,
+    where a file there has its own row and a folder there only the general
+    row of a folder above it (`Logs/WoWCombatLog.txt`: `combat-log` as a
+    file, `logs-other`, which hangs from `Logs`, as a folder; M16-91).
+    Otherwise, one row for both kinds below that folder (a font file, an
+    addon's `.toc`), other different rows, or none: "one", which says
+    neither."""
     file_row = as_file.entry if isinstance(as_file, layout.Classified) else None
     folder_row = as_folder.entry if isinstance(as_folder, layout.Classified) else None
     if file_row is not None and folder_row is None:
         return "file"
+    if file_row is not None and folder_row is not None and file_row.id != folder_row.id:
+        parts = as_folder.path.split("/")
+        if not folder_row.heads_a_subtree(parts) and any(
+            folder_row.heads_a_subtree(parts[:n]) for n in range(1, len(parts))
+        ):
+            return "file"
     if folder_row is not None and file_row is None:
         return "folder"
     if (
