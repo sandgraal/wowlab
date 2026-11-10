@@ -339,7 +339,7 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
                 behind = "what is behind it is"
             lines.append(
                 f"  {hint.path} is a link into a folder {hint.service} appears to sync "
-                f"({hint.link_target}). {snapshot.not_read_through('folder')}: {behind} not "
+                f"({hint.link_target}). wowlab does not read through links, so {behind} not "
                 "in this snapshot; back up the folder it points to yourself."
             )
             continue

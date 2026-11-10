@@ -434,10 +434,14 @@ named in `Inventory.reparse_points` (M13-33).
 *Amended 2026-11-10 (M16-80):* each `tree` link note above now goes on
 after "not followed" in the readers' words (M16-65,
 `snapshot.not_read_through`): "…, not followed; wowlab does not read
-through links, so it reads this only when the real folder is there", or
-"real file" where the file map has a row for the link's place that only a
-file there gets (a linked `WTF/Config.wtf` or SavedVariables file). A flavor
-folder that is a link is "real folder" always, and `tree`'s stderr line for
+through links, so it reads this only when the real folder is there". The
+link is never followed, so the word comes from the file map: "real file"
+where only a file at the link's place gets a row (a linked `WTF/Config.wtf`
+or SavedVariables file); "real folder" where only a folder does, or where
+one row takes both and the place is the folder that row's subtree hangs
+from (`Fonts`, `Interface/AddOns/<addon>`); "real one" otherwise (no row, a
+font file or an addon's `.toc` under a row that takes both, or different
+rows for each). A flavor folder that is a link is "real folder" always, and `tree`'s stderr line for
 one reads "<folder> is a link; wowlab does not read through links, so it
 reads this only when the real folder is there. Nothing in it is listed."
 `install.NotTaken.note`, `doctor` and the other "not followed" tags are

@@ -2689,8 +2689,8 @@ def _link_note(target: str | None, inside: bool | None, stands_for: str = "folde
     alike (M13-35). `inside` None: where it points is unknown, as for a WCI
     link or a WSL symlink, whose link text cannot be read. It ends in the
     readers' words for a link (M16-80), as `labaddon.NOT_FOLLOWED` and
-    `labaddon.LINKED_FILE` say it: `stands_for` is "folder" or "file"
-    (`_link_stands_for`)."""
+    `labaddon.LINKED_FILE` say it: `stands_for` is "folder", "file" or
+    "one" (`_link_stands_for`)."""
     to = f" to {target}" if target is not None else ""
     if inside is None:
         where = "where it points is unknown"
@@ -2712,16 +2712,28 @@ def _link_stands_for(
     as_file: layout.Classified | layout.Unclassified,
     as_folder: layout.Classified | layout.Unclassified,
 ) -> str:
-    """What a link stands in place of, for `_link_note` (M16-80): "file"
-    where the file map has a row for its place that only a file there gets
-    (a linked `WTF/Config.wtf`), else "folder", the readers' default
-    (`labaddon`). The link is never followed: `as_file` and `as_folder` are
-    its place classified as each kind."""
-    if not isinstance(as_file, layout.Classified):
+    """What a link stands in place of, for `_link_note` (M16-80), from the
+    file map alone, as the link is never followed: `as_file` and `as_folder`
+    are its place classified as each kind. "file" where only a file there
+    gets a row (a linked `WTF/Config.wtf`), "folder" where only a folder
+    does, or where one row takes both and the place is the folder that row's
+    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). Otherwise,
+    one row for both kinds below that folder (a font file, an addon's
+    `.toc`), different rows, or none: "one", which says neither."""
+    file_row = as_file.entry if isinstance(as_file, layout.Classified) else None
+    folder_row = as_folder.entry if isinstance(as_folder, layout.Classified) else None
+    if file_row is not None and folder_row is None:
+        return "file"
+    if folder_row is not None and file_row is None:
         return "folder"
-    if isinstance(as_folder, layout.Classified) and as_folder.entry.id == as_file.entry.id:
+    if (
+        file_row is not None
+        and folder_row is not None
+        and file_row.id == folder_row.id
+        and folder_row.heads_a_subtree(as_folder.path.split("/"))
+    ):
         return "folder"
-    return "file"
+    return "one"
 
 
 _SELECTION_WORDS = {
@@ -9037,10 +9049,11 @@ def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> l
         )
     if unread:
         top = unread[0].path.split("/", 1)[0]
-        # M16-80: the readers' sentence for a file behind a linked folder.
+        # M16-80: the readers' rule for a link, said of the folder that is now one.
         subject = "it" if len(unread) == 1 else "each"
         clauses.append(
-            f"{len(unread)} not read ({snapshot.linked_folder_words(subject, f'{top}/')})"
+            f"{len(unread)} not read ({subject} is reached through {top}/, which is now a "
+            "link, and wowlab does not read through links)"
         )
     lines = [
         f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "

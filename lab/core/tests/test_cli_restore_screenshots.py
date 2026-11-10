@@ -278,9 +278,8 @@ def test_screenshots_behind_a_link_are_not_read_and_counted_apart_constructed(
     assert [i.path for i in report.plan] == [SYNDICATOR]
     text = _plain(ok("snap", "restore", a.id, "--dry-run").stdout)
     assert (
-        f"They stay in snapshot {a.id}; 2 not read (each is reached through a linked folder, "
-        "Screenshots/; wowlab does not read through links, so it reads this only when the "
-        "real folder is there):"
+        f"They stay in snapshot {a.id}; 2 not read (each is reached through Screenshots/, "
+        "which is now a link, and wowlab does not read through links):"
     ) in text
     assert f"    {SHOT_A}  [behind_link]" in text
     assert "differ" not in text
@@ -303,8 +302,8 @@ def test_one_changed_and_one_unread_are_both_counted_constructed(root: Path, fla
     )
     assert lines[0].endswith(
         "They stay in snapshot S1; 1 differs from or is missing on disk; 1 not read "
-        "(it is reached through a linked folder, Screenshots/; wowlab does not read through "
-        "links, so it reads this only when the real folder is there):"
+        "(it is reached through Screenshots/, which is now a link, and wowlab does not read "
+        "through links):"
     )
     assert lines[0].startswith("  Not restored: 3 screenshot(s) wowlab never writes")
     assert lines[1:] == [f"    {SHOT_A}  [missing]", f"    {SHOT_B}  [behind_link]"]
