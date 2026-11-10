@@ -15,8 +15,9 @@ else in this file is the implementer's to change.
 
 The seam
 --------
-- `HistoryRecord.paths_left` (the name is this file's choice; the ticket
-  and the plan give none): a tuple of the flavor-relative, `/`-separated
+- `HistoryRecord.paths_left: tuple[str, ...]` (the name was this file's
+  choice, accepted by both reviewers of #453; the ticket and the plan give
+  none): a tuple of the flavor-relative, `/`-separated
   paths the rollback of this record left as they are, spelled as the
   record's `paths` spell them. A tuple, like every other sequence on the
   frozen record (`created_dirs`, `temps_removed`, `temps_left`).
@@ -24,17 +25,25 @@ The seam
   (committed, rolled back), and names exactly the left-alone paths of one
   that is: never a path the rollback put back, never one that already held
   its pre-transaction content, never an absolute path, never the note's
-  message text. Order is not pinned (the rollback walks the paths in
-  reverse); duplicates are not allowed.
+  message text. Every entry is one of the record's own `paths` (or a path
+  whose only operation was refused, which `paths` need not name), has no
+  empty, `.` or `..` part and no control character. Order is not pinned
+  (the rollback walks the paths in reverse); duplicates are not allowed. A
+  path name may contain `; ` (the gate allows it), so the list cannot come
+  from splitting the note.
 - `undo()` is a transaction: its own record follows the same rule.
 - A journal record the M16-71 gate wrote (format 2, no structured list)
-  still reads through `history()`. What it shows for a `rollback_incomplete`
-  one is not pinned beyond "only paths the record names"; a committed one
-  shows none.
-
-Not covered, and reported as open questions: a directory the rollback
-created and could not remove (the note names it as `dir/`); whether the
-list reaches the journal file under a particular key.
+  still reads through `history()` with `paths_left == ()`, whatever its
+  note says: the note is never parsed (reviewers' ruling on #453).
+- The journal file carries the list under the key `paths_left` (whatever
+  the format number). A record read back from disk whose `paths_left` is
+  not a list of paths the record journals (its `paths`, or refused paths
+  if the gate journals those), flavor-relative and plain, or that
+  names a path on a record that is not `rollback_incomplete`, is damaged:
+  `history()` raises `GuardError` and nothing in the install or the store
+  changes (`_load_journal`: "a damaged record is an error, never skipped").
+- A directory the rollback created and could not remove stays out of the
+  list (reviewers' ruling on #453; not graded here).
 
 Everything is constructed, as in `test_guard_owner_decisions.py`, whose
 synthetic install, fixtures and race hooks (`AfterJournalFsync`,
@@ -42,7 +51,8 @@ synthetic install, fixtures and race hooks (`AfterJournalFsync`,
 is a tree under `tmp_path`, the user data directory is redirected, the
 process table is injected. "Another program" is this test process writing
 the install directly, outside guard. The refusals are a `PermissionError`
-injected into `os.replace` / `os.unlink` for one target path only.
+injected into `os.replace` / `os.rename` / `os.unlink` for one target
+path only (`os.rename` is how guard creates a missing target on Windows).
 """
 
 from __future__ import annotations
@@ -105,6 +115,7 @@ refused = OD.refused
 
 FIELD = "paths_left"  # judgment call: the spec names the list but not the field
 FAILURE = "constructed failure"
+ODD = "WTF/Account/ACCT/SavedVariables/odd; name.lua"  # constructed: the gate allows `;`
 EXTERNAL_AGAIN = b"constructed: another program changed it again after the refusal\n"
 
 
@@ -122,15 +133,24 @@ def left_alone(record: Any) -> tuple[str, ...]:
     return value
 
 
-def assert_left_alone(record: Any, expected: Iterable[str], flavor: Flavor) -> None:
-    """`record` names exactly `expected`, flavor-relative and bare."""
+def assert_left_alone(
+    record: Any, expected: Iterable[str], flavor: Flavor, *, refused: Iterable[str] = ()
+) -> None:
+    """`record` names exactly `expected`, flavor-relative and bare. Each entry
+    is one of the record's `paths`, or one of `refused`: a path whose only
+    operation was refused, which §6.10 keeps out of what `undo()` acts on, so
+    `paths` need not name it."""
     value = left_alone(record)
     want = sorted(expected)
     assert len(value) == len(set(value)), f"{FIELD} names a path twice: {value!r}"
     assert sorted(value) == want, f"{FIELD} is {value!r}, expected {want!r}"
+    journaled = {p.path for p in record.paths} | set(refused)
     for item in value:
         assert not Path(item).is_absolute() and "\\" not in item, f"not flavor-relative: {item!r}"
         assert str(flavor.path) not in item and FLAVOR_FOLDER not in item, item
+        assert item in journaled, f"{item!r} is not one of the record's paths {journaled!r}"
+        assert not {"", ".", ".."} & set(item.split("/")), f"not a plain path: {item!r}"
+        assert not any(ord(c) < 32 or c == "\x7f" for c in item), f"control char: {item!r}"
     dumped = record.model_dump(mode="json")
     assert sorted(dumped[FIELD]) == want, "the list is part of the public record's JSON"
 
@@ -156,18 +176,21 @@ def _same(path: Any, target: Path) -> bool:
 
 
 class RefuseAt:
-    """`os.replace` (to `target`) and `os.unlink` (of `target`) raise
-    `PermissionError`, as a system that refuses the rollback would. Every
-    other call goes through."""
+    """`os.replace` and `os.rename` (to `target`) and `os.unlink` (of
+    `target`) raise `PermissionError`, as a system that refuses the rollback
+    would. `os.rename` is guard's create of a missing target on Windows.
+    Every other call goes through."""
 
     def __init__(self, target: Path) -> None:
         self.target = target
         self.fired = False
         self._replace = os.replace
+        self._rename = os.rename
         self._unlink = os.unlink
 
     def arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(os, "replace", self._replace_or_refuse)
+        monkeypatch.setattr(os, "rename", self._rename_or_refuse)
         monkeypatch.setattr(os, "unlink", self._unlink_or_refuse)
 
     def _refuse(self) -> None:
@@ -178,6 +201,11 @@ class RefuseAt:
         if _same(dst, self.target):
             self._refuse()
         self._replace(src, dst, *args, **kwargs)
+
+    def _rename_or_refuse(self, src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        if _same(dst, self.target):
+            self._refuse()
+        self._rename(src, dst, *args, **kwargs)
 
     def _unlink_or_refuse(self, path: Any, *args: Any, **kwargs: Any) -> None:
         if _same(path, self.target):
@@ -231,6 +259,10 @@ OTHER_PROGRAM_CASES = (
     ("removed-after-a-write", CONFIG, "write", "remove"),
     ("recreated-after-a-delete", BINDINGS, "delete", "create"),
     ("changed-after-a-create", NEW_SAVED, "write", "modify"),
+    # A name with the note's own separator in it: a list read back from the
+    # note (split on "; ", then on ": ") would name "name.lua" or the half
+    # before the semicolon, never this path.
+    ("changed-after-a-create-of-a-name-with-a-semicolon", ODD, "write", "modify"),
 )
 
 
@@ -345,7 +377,7 @@ def test_constructed_a_refused_path_is_listed_only_if_the_disk_moved_after_guard
     if moved_again:
         assert CONFIG in error_text(raised.value)
         assert record.state == "rollback_incomplete"
-        assert_left_alone(record, [CONFIG], flavor)
+        assert_left_alone(record, [CONFIG], flavor, refused=[CONFIG])
     else:
         assert record.state == "rolled_back"
         assert_left_alone(record, [], flavor)
@@ -443,21 +475,35 @@ def test_constructed_an_undo_that_ends_rollback_incomplete_names_the_path(
     assert config.read_bytes() == EXTERNAL
     last = guard.history(store=store)[-1]
     assert last.label != "mine" and last.state == "rollback_incomplete"
-    assert_left_alone(last, [CONFIG], flavor)
+    assert_left_alone(last, [CONFIG], flavor, refused=[CONFIG])
     assert_left_alone(record_for(guard, SnapshotStore(store), "mine"), [], flavor)
 
 
 # ─── records the M16-71 gate wrote still read ────────────────────────────────
 
 
+PLAIN_NOTE = (
+    f"{CONFIG}: changed by something else after this transaction last wrote it; left as it is"
+)
+HOSTILE_NOTE = "../../etc/passwd: x; \x1b[31mWTF/Config.wtf\u202e: y"  # constructed
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        pytest.param(PLAIN_NOTE, id="constructed-plain-note"),
+        pytest.param(HOSTILE_NOTE, id="constructed-hostile-note"),
+    ],
+)
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_format_2_records_without_the_list_still_read(
-    guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None
+    guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None, note: str
 ) -> None:
     """Two format-2 records laid out as the gate on main before M16-84 writes
     them (no structured list; the left-alone path only in the note) read
-    through `history()`: the committed one names nothing, the
-    `rollback_incomplete` one names at most the path its note names."""
+    through `history()`, and both name nothing: the note is never parsed,
+    whether it names a journaled path or carries traversal and terminal
+    escapes."""
     store = tmp_path / "store"
     root = install_root.resolve()
     pre = SnapshotStore(store).create(
@@ -471,13 +517,9 @@ def test_constructed_format_2_records_without_the_list_still_read(
     (store / "journal").mkdir(parents=True)
     states = {
         "00000001-0123abcd": ("committed", None),
-        "00000002-0123abce": (
-            "rollback_incomplete",
-            f"{CONFIG}: changed by something else after this transaction last wrote it; "
-            "left as it is",
-        ),
+        "00000002-0123abce": ("rollback_incomplete", note),
     }
-    for number, (record_id, (state, note)) in enumerate(states.items(), start=1):
+    for number, (record_id, (state, text_note)) in enumerate(states.items(), start=1):
         record = {
             "cleanup_finished": True,
             "created_at": f"2026-11-0{number}T12:00:00.000000Z",
@@ -488,7 +530,7 @@ def test_constructed_format_2_records_without_the_list_still_read(
             "id": record_id,
             "install_root": str(root),
             "label": state,
-            "note": note,
+            "note": text_note,
             "paths": [
                 {"after": sha(NEW_CONFIG), "before": sha(ALLOWLISTED_FILES[CONFIG]), "path": CONFIG}
             ],
@@ -504,4 +546,78 @@ def test_constructed_format_2_records_without_the_list_still_read(
     loaded = {r.label: r for r in guard.history(store=store)}
     assert set(loaded) == {"committed", "rollback_incomplete"}
     assert_left_alone(loaded["committed"], [], flavor)
-    assert set(left_alone(loaded["rollback_incomplete"])) <= {CONFIG}
+    assert_left_alone(loaded["rollback_incomplete"], [], flavor)
+
+
+# ─── a damaged list on disk is a damaged record ──────────────────────────────
+
+WORLD_OUTSIDE = "<world>/outside/x"  # replaced by the absolute path under `world`
+
+# (id, the `paths_left` value written into the record, the state it is given)
+HOSTILE_LISTS: tuple[tuple[str, object, str], ...] = (
+    ("traversal", ["../../etc"], "rollback_incomplete"),
+    ("traversal-into-data", ["../Data/data.001"], "rollback_incomplete"),
+    ("absolute-posix", ["/etc/passwd"], "rollback_incomplete"),
+    ("absolute-under-world-outside", [WORLD_OUTSIDE], "rollback_incomplete"),
+    ("unc", ["//constructed-server/share/x"], "rollback_incomplete"),
+    ("terminal-clear", ["WTF/Config.wtf\x1b[2J"], "rollback_incomplete"),
+    ("terminal-hyperlink", ["WTF/\x1b]8;;http://x\x07Config.wtf"], "rollback_incomplete"),
+    ("bidi-override", ["WTF/\u202eftw.gifnoC"], "rollback_incomplete"),
+    ("not-in-the-record-paths", ["WTF/Other.wtf"], "rollback_incomplete"),
+    ("duplicate", [CONFIG, CONFIG], "rollback_incomplete"),
+    ("on-a-committed-record", [CONFIG], "committed"),
+    ("not-a-string", [1], "rollback_incomplete"),
+    ("a-bare-string", CONFIG, "rollback_incomplete"),
+)
+
+
+@pytest.mark.parametrize(
+    ("hostile", "state"),
+    [pytest.param(v, st, id=f"constructed-{n}") for n, v, st in HOSTILE_LISTS],
+)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
+def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    flavor: Flavor,
+    idle: None,
+    hostile: object,
+    state: str,
+) -> None:
+    """A real `rollback_incomplete` record (another program changed
+    Config.wtf; the icon was put back) is written by the gate with
+    `paths_left: [Config.wtf]` in its journal file, and reads back with it:
+    that is the positive control. Its list is then replaced on disk (and, for
+    one case, its state): `history()` raises `GuardError` and changes nothing
+    in the install or the store."""
+    store = tmp_path / "store"
+
+    def body(tx: Any) -> None:
+        tx.write(ICON, ICON_NEW)
+        tx.write(CONFIG, NEW_CONFIG)
+        (flavor.path / CONFIG).write_bytes(EXTERNAL)
+
+    fail_inside(guard, flavor, store, "failing", body)
+    record = record_for(guard, SnapshotStore(store), "failing")
+    assert record.state == "rollback_incomplete"
+    assert {p.path for p in record.paths} == {ICON, CONFIG}
+    assert_left_alone(record, [CONFIG], flavor)
+    file = store / "journal" / f"{record.id}.json"
+    raw = json.loads(file.read_bytes().decode("ascii"))
+    assert raw.get(FIELD) == [CONFIG], f"the journal file carries {FIELD!r}: {sorted(raw)}"
+
+    if hostile == [WORLD_OUTSIDE]:
+        hostile = [(world / "outside" / "x").as_posix()]
+    raw[FIELD] = hostile
+    raw["state"] = state
+    if state != "rollback_incomplete":
+        raw["note"] = None
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
+    file.write_bytes(text.encode("ascii"))
+    install_before, store_before = G.content(world), G.content(store)
+
+    with pytest.raises(guard.GuardError):
+        guard.history(store=store)
+    assert G.content(world) == install_before, "reading a damaged record touched the install"
+    assert G.content(store) == store_before, "reading a damaged record touched the store"
