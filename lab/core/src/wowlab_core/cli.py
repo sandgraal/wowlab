@@ -164,6 +164,7 @@ from wowlab_core import (
     snapshot,
     svmerge,
     wtfconfig,
+    wtfdiff,
 )
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
@@ -7232,6 +7233,10 @@ class DiffReport(_Out):
     removed: list[snapshot.Entry]
     changed: list[ChangedFile]
     mode_changed: list[snapshot.Change]
+    # The text output, line by line, as the terminal shows it: under a changed
+    # bindings, macros or CVar file the keys, macros and CVars by name, under
+    # a SavedVariables file one summary line (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 def _is_saved_variables(path: str) -> bool:
@@ -7310,31 +7315,60 @@ def snap_diff(
         changed=changed,
         mode_changed=list(diff.mode_changed),
     )
+    lines = [f"From {diff.a} to {diff.b}:"]
+    if a_version != b_version:
+        lines.append(
+            f"  ({diff.a} was taken on {_version(a_version)}; {diff.b} on {_version(b_version)})"
+        )
+    if diff.is_empty:
+        lines.append("  no differences")
+    lines.extend(f"  added    {e.path}" for e in report.added)
+    lines.extend(f"  removed  {e.path}" for e in report.removed)
+    for cf in report.changed:
+        lines.append(f"  changed  {cf.path}")
+        lines.extend(_diff_detail_lines(store, cf))
+    lines.extend(
+        f"  mode     {m.path} ({m.before.mode:o} -> {m.after.mode:o})" for m in report.mode_changed
+    )
+    report = report.model_copy(update={"plan_lines": [_safe(line) for line in lines]})
     if json_out:
         _emit(report)
         return
-    _say(f"From {diff.a} to {diff.b}:")
-    if a_version != b_version:
-        _say(f"  ({diff.a} was taken on {_version(a_version)}; {diff.b} on {_version(b_version)})")
-    if diff.is_empty:
-        _say("  no differences")
-    for e in report.added:
-        _say(f"  added    {e.path}")
-    for e in report.removed:
-        _say(f"  removed  {e.path}")
-    for cf in report.changed:
-        _say(f"  changed  {cf.path}")
-        if cf.lua_note:
-            _say(f"      ({cf.lua_note})")
-        for lc in cf.lua or []:
+    for line in lines:
+        _say(line)
+
+
+def _diff_detail_lines(store: snapshot.SnapshotStore, cf: ChangedFile) -> list[str]:
+    """The lines under one changed file of `snap diff`: every key, macro or
+    CVar by name; for SavedVariables the summary line, then each value."""
+    if _is_saved_variables(cf.path):
+        before_size, after_size = _bytes(cf.before.size), _bytes(cf.after.size)
+        lines: list[str] = []
+        if cf.lua is None:
+            if cf.lua_note:
+                lines.append(f"{_DETAIL_INDENT}({cf.lua_note})")
+            lines.append(_sv_summary(None, 0, 0, before_size, after_size))
+            return lines
+        removed = sum(1 for lc in cf.lua if lc.after is None)
+        added = sum(1 for lc in cf.lua if lc.before is None)
+        lines.append(
+            _sv_summary(removed, added, len(cf.lua) - removed - added, before_size, after_size)
+        )
+        for lc in cf.lua:
             if lc.before is None:
-                _say(f"      + {lc.path} = {lc.after}")
+                lines.append(f"{_DETAIL_INDENT}+ {lc.path} = {lc.after}")
             elif lc.after is None:
-                _say(f"      - {lc.path} = {lc.before}")
+                lines.append(f"{_DETAIL_INDENT}- {lc.path} = {lc.before}")
             else:
-                _say(f"      ~ {lc.path}: {lc.before} -> {lc.after}")
-    for m in report.mode_changed:
-        _say(f"  mode     {m.path} ({m.before.mode:o} -> {m.after.mode:o})")
+                lines.append(f"{_DETAIL_INDENT}~ {lc.path}: {lc.before} -> {lc.after}")
+        return lines
+    if wtfdiff.kind_of(cf.path) is None:
+        return []
+    if cf.before.sha256 is None or cf.after.sha256 is None:
+        return []  # a link on one side: no bytes to compare
+    before = _stored(store, cf.before.sha256, cf.before.size)
+    after = _stored(store, cf.after.sha256, cf.after.size)
+    return _detail_lines(cf.path, before, after, limit=None)
 
 
 @snap_app.command("verify", short_help="Check every stored file and snapshot.")
@@ -7475,6 +7509,228 @@ def _plan_line(item: guard.PlanItem) -> str:
     return f"  replace  {item.path}  ({_bytes(item.size or 0)})"
 
 
+# ─── changes by name (M16-10) ────────────────────────────────────────────────
+#
+# Under a changed bindings, macros or CVar file, `snap diff` and the plans
+# of `snap restore`, `profile apply` and `undo` say what changes by name;
+# under a changed SavedVariables file, how many values go and the size.
+# Both sides are read read-only (the snapshot store, or the install through
+# the guarded opener) and parsed as data by the existing parsers.
+
+_DETAIL_INDENT = "      "
+_DETAIL_PLAN_LIMIT = 20  # named lines per file in a plan; `snap diff` lists every one
+_DETAIL_READ_LIMIT = 64 * 1024 * 1024  # a side larger than this is not compared
+_VALUE_WIDTH = 60
+
+
+class _Unread:
+    """A side that holds bytes wowlab could not read back (missing from the
+    store, changed on disk since the plan's hash, or over the size limit)."""
+
+
+_UNREAD = _Unread()
+type _Side = bytes | _Unread | None
+
+
+_NO_KEY_LINE = "(no line: the client's default binding)"
+_NO_CVAR_LINE = "(no line: set elsewhere or the client default)"
+_SCOPE_LINE = (
+    "  Each file is one scope (machine, account or character): key bindings come from "
+    'the account or the character file, as "Character Specific Key Bindings" sets; '
+    "account and character macros are two separate sets; each CVar is read from the "
+    "file of its own scope."
+)
+
+
+def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
+    """The lines a plan ends with before the prompt when it named a key,
+    macro or CVar change (`named`: a bindings, macros or CVar file got
+    detail lines): the scope line, and the login caveat when a path in it
+    is one the caveat is about. A SavedVariables-only plan gets neither."""
+    if not named:
+        return []
+    return [_SCOPE_LINE, *_relogin_notes(paths)]
+
+
+def _value_text(value: str | None, *, cvar: bool) -> str:
+    if value is None:
+        return _NO_CVAR_LINE if cvar else _NO_KEY_LINE
+    if len(value) > _VALUE_WIDTH:
+        value = value[: _VALUE_WIDTH - 3] + "..."
+    return f'"{value}"' if cvar else value
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _macro_label(change: wtfdiff.NamedChange) -> str:
+    """A macro's name as printed: quoted, `(2)` for the second of a name; a
+    blank or whitespace-only name by its place among the file's macros."""
+    if not change.name.strip():
+        return f"(blank name, {_ordinal(change.position)})"
+    label = f'"{change.name}"'
+    return label if change.occurrence <= 1 else f"{label} ({change.occurrence})"
+
+
+def _named_line(change: wtfdiff.NamedChange) -> str:
+    if change.what == "macro":
+        if change.before is None:
+            how = "added"
+        elif change.after is None:
+            how = "removed"
+        else:
+            how = " and ".join(change.parts) + " changed"
+        return f"{_DETAIL_INDENT}macro {_macro_label(change)}: {how}"
+    label = "key" if change.what == "key" else "CVar"
+    cvar = change.what == "cvar"
+    return (
+        f"{_DETAIL_INDENT}{label} {change.name}: {_value_text(change.before, cvar=cvar)}"
+        f" -> {_value_text(change.after, cvar=cvar)}"
+    )
+
+
+def _wtf_lines(
+    kind: wtfdiff.Kind, before: bytes | None, after: bytes | None, limit: int | None
+) -> list[str]:
+    try:
+        diff = wtfdiff.compare(kind, before, after)
+    except ValueError as exc:  # a parser invariant; never expected on real bytes
+        return [f"{_DETAIL_INDENT}(not compared by name: {exc})"]
+    lines = [_named_line(c) for c in diff.changes]
+    if limit is not None and len(lines) > limit:
+        more = len(lines) - limit
+        lines = [*lines[:limit], f"{_DETAIL_INDENT}... and {more} more (snap diff lists them all)"]
+    if diff.repeated_names:
+        lines.append(
+            f"{_DETAIL_INDENT}macros with the same name are compared in file order; an "
+            "inserted or removed one shifts the rest"
+        )
+    if diff.other_lines_differ:
+        lines.append(
+            f"{_DETAIL_INDENT}other lines differ too (for example a binding mode or modifier "
+            "line), which wowlab does not read by name"
+        )
+    elif not diff.changes and before is not None and after is not None:
+        if kind == "macros":
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name; the macros' order or ids differ, "
+                "and a button that holds a macro may then run a different one"
+            )
+        else:
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name (the order, line endings, spelling "
+                "or a line an earlier one overrides differ)"
+            )
+    return lines
+
+
+def _size_text(data: bytes | None) -> str:
+    return "none" if data is None else _bytes(len(data))
+
+
+def _sv_summary(
+    removed: int | None, added: int, changed: int, before_size: str, after_size: str
+) -> str:
+    """The one summary line under a SavedVariables file; `removed` is None
+    when the values were not compared (a side does not parse)."""
+    size = f"size {before_size} -> {after_size}"
+    if removed is None:
+        return f"{_DETAIL_INDENT}values not compared; {size}"
+    return f"{_DETAIL_INDENT}values: {removed} removed, {added} added, {changed} changed; {size}"
+
+
+def _sv_lines(before: bytes | None, after: bytes | None) -> list[str]:
+    try:
+        old = _leaves(before) if before is not None else {}
+        new = _leaves(after) if after is not None else {}
+    except luadata.LuaDataError:
+        return [_sv_summary(None, 0, 0, _size_text(before), _size_text(after))]
+    removed = sum(1 for p in old if p not in new)
+    added = sum(1 for p in new if p not in old)
+    changed = sum(1 for p, v in new.items() if p in old and old[p] != v)
+    return [_sv_summary(removed, added, changed, _size_text(before), _size_text(after))]
+
+
+def _detail_lines(path: str, before: _Side, after: _Side, *, limit: int | None) -> list[str]:
+    """The lines under one changed file: by name for a bindings, macros or
+    CVar file, the summary for a SavedVariables file, else none."""
+    kind = wtfdiff.kind_of(path)
+    if kind is None and not _is_saved_variables(path):
+        return []
+    if isinstance(before, _Unread) or isinstance(after, _Unread):
+        return [f"{_DETAIL_INDENT}(not compared: wowlab could not read both versions back)"]
+    if kind is not None:
+        return _wtf_lines(kind, before, after, limit)
+    return _sv_lines(before, after)
+
+
+def _wants_detail(path: str) -> bool:
+    return wtfdiff.kind_of(path) is not None or _is_saved_variables(path)
+
+
+def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = None) -> _Side:
+    """An object's bytes from the store, checked against its hash. One whose
+    recorded `size` is over the detail limit is not read; with no recorded
+    size, one that inflates past the limit is refused."""
+    if sha is None:
+        return None
+    if size is not None and size > _DETAIL_READ_LIMIT:
+        return _UNREAD
+    try:
+        return store.read_object(sha, size=_DETAIL_READ_LIMIT if size is None else size)
+    except (snapshot.SnapshotError, OSError):
+        return _UNREAD
+
+
+_CHANGED_SINCE = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the client at logout: "
+    "the lines below compare what is on disk now with what undo puts back, and include "
+    "those later changes)"
+)
+
+
+def _disk_now(flavor_path: Path, rel: str) -> _Side:
+    """What the install holds at `rel` now, read-only through the guarded
+    opener: None when nothing is there, `_UNREAD` when it cannot be read as
+    a regular file under the detail limit (a link, a FIFO, too large)."""
+    try:
+        return snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _UNREAD
+
+
+def _on_disk(store: snapshot.SnapshotStore, flavor_path: Path, rel: str, sha: str | None) -> _Side:
+    """The bytes the install holds at `rel` when they still hash to `sha`
+    (read-only, through the guarded opener), else the store's copy."""
+    if sha is None:
+        return None
+    try:
+        data = snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+    except OSError:
+        data = None
+    if data is not None and hashlib.sha256(data).hexdigest() == sha:
+        return data
+    return _stored(store, sha)
+
+
+def _plan_item_lines(
+    store: snapshot.SnapshotStore, flavor_path: Path, item: guard.PlanItem
+) -> list[str]:
+    """The detail lines under one item of a write plan: `before` is on disk
+    now, `after` is what the write puts there (a stored object)."""
+    if not _wants_detail(item.path):
+        return []
+    before = _on_disk(store, flavor_path, item.path, item.before)
+    after = _stored(store, item.after, item.size)
+    return _detail_lines(item.path, before, after, limit=_DETAIL_PLAN_LIMIT)
+
+
 class SkippedPath(_Out):
     """A file a whole-snapshot restore left alone (owner decision 2026-09-27)."""
 
@@ -7537,6 +7793,9 @@ class RestoreReport(_Out):
     # With --into-flavor or --into-root: where the snapshot was taken, and the
     # account folders mapped. Left out of the JSON otherwise.
     into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 class UndoReport(_Out):
@@ -7554,6 +7813,9 @@ class UndoReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the undo itself
     notes: list[str]
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 def _client_managed(
@@ -8138,26 +8400,35 @@ def snap_restore(
             transaction=transaction,
             notes=notes,
             into=into_report,
+            plan_lines=[_safe(line) for line in plan_lines],
         )
 
     shots_differ = any(a.disk != "same" for a in aside)
-    if (not json_out or (prompting and plan)) and (plan or skipped or aside):
-        show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
+    plan_lines: list[str] = []
+    if plan or skipped or aside:
+        plan_lines.append(
+            f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)"
+        )
         if into_report is not None:
-            for line in _into_lines(into_report, chosen):
-                show(line)
+            plan_lines.extend(_into_lines(into_report, chosen))
         if manifest.flavor_version != chosen.version:
-            show(
+            plan_lines.append(
                 f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
                 f"now on {_version(chosen.version)}."
             )
+        detailed = False
         for item in plan:
-            show(_plan_line(item))
-        for line in _skipped_lines(skipped):
-            show(line)
+            plan_lines.append(_plan_line(item))
+            detail = _plan_item_lines(store, chosen.path, item)
+            plan_lines.extend(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
+        plan_lines.extend(_skipped_lines(skipped))
         if aside:
-            for line in _not_restored_lines(manifest.id, aside):
-                show(line)
+            plan_lines.extend(_not_restored_lines(manifest.id, aside))
+        plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
+    if not json_out or (prompting and plan):
+        for line in plan_lines:
+            show(line)
     if not plan:
         if json_out:
             _emit(report(applied=False))
@@ -8204,7 +8475,47 @@ def snap_restore(
         return
     say(f"Restored {len(plan)} file(s). `wowlab undo` puts back what was there before.")
     for n in done.notes:
-        say(n)
+        if n not in plan_lines:  # the plan above already said it
+            say(n)
+
+
+def _undo_lines(last: guard.HistoryRecord) -> list[str]:
+    """`undo`'s text plan. Under each file, what the undo changes by name:
+    from what the install holds at that path now (read read-only through
+    the guarded opener, whatever it holds) to what was there before that
+    transaction (in its pre-write snapshot), since the undo replaces the
+    file whatever is on disk. When the disk no longer holds what that
+    transaction wrote (the client rewrites these files at logout), a line
+    says the comparison includes those later changes."""
+    store = snapshot.SnapshotStore()
+    flavor_path = Path(last.flavor_path)
+    lines = [
+        f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})',
+        f"  in {last.flavor_path}:",
+    ]
+    detailed = False
+    for p in last.paths:
+        if p.before is None:
+            lines.append(f"  delete     {p.path}  (created by that transaction)")
+        elif p.after is None:
+            lines.append(f"  recreate   {p.path}  (deleted by that transaction)")
+        else:
+            lines.append(f"  put back   {p.path}  (as it was before that transaction)")
+        if _wants_detail(p.path):
+            now = _disk_now(flavor_path, p.path)
+            back = _stored(store, p.before)
+            detail = _detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT)
+            if detail and not isinstance(now, _Unread):
+                now_sha = None if now is None else hashlib.sha256(now).hexdigest()
+                if now_sha != p.after:
+                    lines.append(_CHANGED_SINCE)
+            lines.extend(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
+    lines.extend(
+        f"  remove folder {d}  (created by that transaction, if empty)" for d in last.created_dirs
+    )
+    lines.extend(_plan_footer(detailed, [p.path for p in last.paths]))
+    return lines
 
 
 @app.command(short_help="Undo the last change wowlab made to your game files.")
@@ -8261,28 +8572,22 @@ def undo(
             applied=applied,
             transaction=transaction,
             notes=_relogin_notes(touched) if applied else [],
+            plan_lines=[_safe(line) for line in plan_lines],
         )
 
+    plan_lines: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
+    plan_lines = _undo_lines(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
-        show(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
-        show(f"  in {last.flavor_path}:")
-        for p in last.paths:
-            if p.before is None:
-                show(f"  delete     {p.path}  (created by that transaction)")
-            elif p.after is None:
-                show(f"  recreate   {p.path}  (deleted by that transaction)")
-            else:
-                show(f"  put back   {p.path}  (as it was before that transaction)")
-        for d in last.created_dirs:
-            show(f"  remove folder {d}  (created by that transaction, if empty)")
+        for line in plan_lines:
+            show(line)
     try:
         _confirm("Undo it?", yes)
     except typer.Exit:
@@ -8304,7 +8609,8 @@ def undo(
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
     for n in done.notes:
-        _say(n)
+        if n not in plan_lines:  # the plan above already said it
+            _say(n)
 
 
 # ─── profile ─────────────────────────────────────────────────────────────────
@@ -8368,6 +8674,9 @@ class ProfileApplyReport(_Out):
     # With --into-flavor: where the profile was saved, and the account
     # folders mapped. Left out of the JSON otherwise.
     into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 def _profile_summary(p: profiles.Profile) -> ProfileSummary:
@@ -8566,7 +8875,9 @@ def profile_delete(name: NameArg, json_out: JsonOpt = False) -> None:
         _say(f"Deleted profile {name}; snapshot {m.id} stays in the store, labelled {m.label!r}.")
 
 
-def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> None:
+def _apply_plan_lines(
+    store: snapshot.SnapshotStore, flavor_path: Path, plan: profiles.ApplyPlan
+) -> list[str]:
     # Into another flavor folder, a file the profile does not hold was not
     # "added since": it is the target folder's own.
     extra = (
@@ -8574,30 +8885,38 @@ def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> 
         if plan.source_flavor_path is None
         else "in the target folder, not in the profile"
     )
+    lines: list[str] = []
+    detailed = False
     for item in plan.plan:
         line = _plan_line(item)
         if item.after is None:
             line += f"  ({extra})"
-        show(line)
+        lines.append(line)
+        detail = _plan_item_lines(store, flavor_path, item)
+        lines.extend(detail)
+        detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
+    if detailed:
+        # The login caveat is the command's own LOGIN_NOTE, shown after the plan.
+        lines.append(_SCOPE_LINE)
     if plan.skipped:
-        show(
+        lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
             "client-written backups, Blizzard_* folders, file-browser metadata, "
             "addon executables):"
         )
         for sk in plan.skipped:
             undone = f"  ({extra}; not deleted)"
-            show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
+            lines.append(
+                f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else "")
+            )
     if plan.left:
-        show(f"  Left alone ({len(plan.left)} path(s)):")
-        for lp in plan.left:
-            show(f"    {lp.path}  ({lp.reason})")
+        lines.append(f"  Left alone ({len(plan.left)} path(s)):")
+        lines.extend(f"    {lp.path}  ({lp.reason})" for lp in plan.left)
     if plan.cache_files:
-        show("  *-cache files in this change:")
-        for c in plan.cache_files:
-            show(f"    {c.path}: {c.note}")
-    for n in plan.notes[1:]:  # the scope note (first) is printed under the header
-        show(n)
+        lines.append("  *-cache files in this change:")
+        lines.extend(f"    {c.path}: {c.note}" for c in plan.cache_files)
+    lines.extend(plan.notes[1:])  # the scope note (first) is printed under the header
+    return lines
 
 
 @profile_app.command(
@@ -8699,25 +9018,29 @@ def profile_apply(
             transaction=transaction,
             notes=notes,
             into=into_report,
+            plan_lines=[_safe(line) for line in plan_lines],
         )
 
-    if (not json_out or (prompting and plan.plan)) and (plan.plan or plan.skipped or plan.left):
-        show(
+    plan_lines: list[str] = []
+    if plan.plan or plan.skipped or plan.left:
+        plan_lines.append(
             f"Apply profile {name} (snapshot {manifest.id}) to {chosen.path}: "
             f"{len(plan.plan)} change(s)"
         )
         if into_report is not None:
-            for line in _into_lines(into_report, chosen):
-                show(line)
-        show(f"  {plan.notes[0]}")
+            plan_lines.extend(_into_lines(into_report, chosen))
+        plan_lines.append(f"  {plan.notes[0]}")
         if manifest.flavor_version != chosen.version:
-            show(
+            plan_lines.append(
                 f"  Saved on version {_version(manifest.flavor_version)}; {chosen.folder} is "
                 f"now on {_version(chosen.version)}."
             )
-        _print_apply_plan(show, plan)
+        plan_lines.extend(_apply_plan_lines(store, chosen.path, plan))
         if plan.plan:
-            show(profiles.LOGIN_NOTE)
+            plan_lines.append(profiles.LOGIN_NOTE)
+    if not json_out or (prompting and plan.plan):
+        for line in plan_lines:
+            show(line)
     if not plan.plan:
         if json_out:
             _emit(report(applied=False))
