@@ -18,7 +18,7 @@ days.
 
 Report a problem with your own install privately as above, or as an issue
 if it is not a security or privacy problem. Paste only redacted output
-(`wowlab doctor --redact`, once it ships), never your character, realm or
+(`wowlab doctor --redact`), never your character, realm or
 account folder names, your BattleTag or your home path. If you pasted one
 by mistake, edit it out and tell us; a public issue keeps its edit history.
 

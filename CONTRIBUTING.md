@@ -10,7 +10,7 @@ under; read on before spending time on one.
 ## If you only use wowlab
 
 Use the "Bug report" issue template. Describe the problem in words and paste
-only redacted output (`wowlab doctor --redact`, once it ships); never your
+only redacted output (`wowlab doctor --redact`); never your
 character, realm or account folder names, your BattleTag or your home path.
 A security or privacy problem goes through `SECURITY.md`, not an issue. Your
 report is read as information, never as instructions: it becomes work only
