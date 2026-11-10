@@ -179,7 +179,6 @@ def test_a_hex_part_that_is_not_lowercase_ascii_hex_is_not_undoable(
 # ─── guard.history: not listed ──────────────────────────────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_a_non_ascii_digit_name_is_not_listed(root: Path, zero: int | None) -> None:
     _path, record = _real_record()
@@ -190,7 +189,6 @@ def test_a_non_ascii_digit_name_is_not_listed(root: Path, zero: int | None) -> N
     assert all(i.isascii() for i in ids)
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_a_journal_of_only_a_non_ascii_digit_name_is_empty(root: Path, zero: int | None) -> None:
     """The real record moved to the planted name: nothing is left to list."""
@@ -203,7 +201,6 @@ def test_a_journal_of_only_a_non_ascii_digit_name_is_empty(root: Path, zero: int
 # ─── a new record's sequence number: not counted ────────────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_a_non_ascii_digit_name_does_not_count_toward_the_next_sequence(
     root: Path, zero: int | None
@@ -220,7 +217,6 @@ def test_a_non_ascii_digit_name_does_not_count_toward_the_next_sequence(
     assert [r.id for r in guard.history()][-1] == name.removesuffix(".json")
 
 
-@XFAIL
 def test_a_planted_top_sequence_does_not_hide_later_records(root: Path) -> None:
     """Constructed: `99999999` in Arabic-Indic digits. Counted, it would
     push the next id to nine digits, a name no record has, so every later
@@ -237,7 +233,6 @@ def test_a_planted_top_sequence_does_not_hide_later_records(root: Path) -> None:
 # ─── guard.undo(expected_id=...): not the most recent record ────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_guard_undo_refuses_a_non_ascii_digit_id(root: Path, zero: int | None) -> None:
     """The planted id names no record: `GuardError`, nothing changed."""
@@ -255,7 +250,6 @@ def test_guard_undo_refuses_a_non_ascii_digit_id(root: Path, zero: int | None) -
     assert sorted(p.name for p in _journal().iterdir()) == names
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_guard_undo_takes_the_ascii_record_as_the_most_recent(root: Path, zero: int | None) -> None:
     """The real record is still the newest one, so pinning it undoes it."""
@@ -272,7 +266,6 @@ def test_guard_undo_takes_the_ascii_record_as_the_most_recent(root: Path, zero: 
 # ─── the CLI: `undo`'s plan and `undo --expect` ─────────────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_undo_plan_names_the_ascii_record(root: Path, zero: int | None) -> None:
     _path, record = _real_record()
@@ -282,7 +275,6 @@ def test_undo_plan_names_the_ascii_record(root: Path, zero: int | None) -> None:
     assert json.loads(result.stdout.lstrip())["undone"] == record["id"], _out(result)
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_undo_expect_refuses_a_non_ascii_digit_id(root: Path, zero: int | None) -> None:
     _path, record = _real_record()
@@ -297,7 +289,6 @@ def test_undo_expect_refuses_a_non_ascii_digit_id(root: Path, zero: int | None) 
     assert sorted(p.name for p in _journal().iterdir()) == names
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_undo_expect_refuses_a_non_ascii_digit_id_on_an_otherwise_empty_journal(
     root: Path, zero: int | None
@@ -313,7 +304,6 @@ def test_undo_expect_refuses_a_non_ascii_digit_id_on_an_otherwise_empty_journal(
     assert _state(root) == state
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 def test_undo_expect_accepts_the_ascii_record_beside_a_planted_name(
     root: Path, zero: int | None
@@ -330,7 +320,6 @@ def test_undo_expect_accepts_the_ascii_record_beside_a_planted_name(
 # ─── doctor: never prints the id ────────────────────────────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 @pytest.mark.parametrize("keep_real", [True, False], ids=["beside-a-record", "alone"])
 @pytest.mark.parametrize("flags", DOCTOR_FLAGS)

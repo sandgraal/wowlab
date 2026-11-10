@@ -319,7 +319,7 @@ _JOURNAL_DIR = "journal"
 _JOURNAL_FORMAT = 2
 # Format 1 is what the M10-11 gate wrote: no temp paths, no cleanup.
 _READABLE_FORMATS = frozenset({1, _JOURNAL_FORMAT})
-_RECORD_NAME = re.compile(r"\A(\d{8})-[0-9a-f]{8}\.json\Z")
+_RECORD_NAME = re.compile(r"\A([0-9]{8})-[0-9a-f]{8}\.json\Z")
 _MAX_RECORD_BYTES = 64 << 20
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 _TEMP_PREFIX = ".wowlab-"
