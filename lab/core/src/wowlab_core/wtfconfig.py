@@ -1,5 +1,6 @@
-"""WTF text formats: ``Config.wtf``, ``config-cache.wtf``, ``bindings-cache.wtf``
-and ``macros-cache.txt`` (docs/LAB_PLAN.md §6.5, docs/LAB_FORMATS.md §5-§7).
+"""WTF text formats: ``Config.wtf``, ``config-cache.wtf``, ``bindings-cache.wtf``,
+``macros-cache.txt`` (docs/LAB_PLAN.md §6.5, docs/LAB_FORMATS.md §5-§7) and a
+character's ``AddOns.txt`` (M16-34; LAB_FORMATS amendment of 2026-09-22).
 
 Read-only and lossless (L1, L4). Every parser works on bytes and returns a
 document whose ``lines`` hold everything in the file, in order, each line
@@ -52,6 +53,12 @@ Grammars (anything that does not match exactly is ``Unknown``):
   (compared byte for byte: no case folding, no trimming). Lines outside a
   record are ``Unknown``. A record that reaches the end of the file without
   ``END`` is reported with ``complete=False``.
+- ``<addon>: <state>`` in ``AddOns.txt``: the addon name is a run of bytes
+  other than ``:``, CR and LF; one ``: `` follows; the state is a run of
+  bytes other than space, ``:``, CR and LF. Only ``enabled`` is observed;
+  ``disabled`` is **[verify]**, and any other word is kept as written. An
+  addon the file does not list is at the client's default, so a missing
+  name is not "disabled".
 
 Hand-edited lines that the client may still read (``set`` in lower case,
 extra spaces or tabs, an unquoted value) **[verify]** do not match these
@@ -91,6 +98,10 @@ __all__ = [
     "BOM",
     "CONFIG_BUDGET",
     "MACROS_BUDGET",
+    "MAX_ADDONS_TXT_BYTES",
+    "AddonState",
+    "AddonStateLine",
+    "AddonsDocument",
     "BindLine",
     "Binding",
     "BindingsDocument",
@@ -110,9 +121,11 @@ __all__ = [
     "count_cvar_names",
     "count_macro_records",
     "fold_name",
+    "parse_addons",
     "parse_bindings",
     "parse_config",
     "parse_macros",
+    "read_addons",
     "read_bindings",
     "read_config",
     "read_macros",
@@ -131,6 +144,10 @@ _BIND = re.compile(rb"bind ([^ \r\n]+) ([^ \r\n][^\r\n]*)")
 _QUOTED_ACTION = re.compile(rb'"([^"]*)"')
 _VER = re.compile(rb'VER ([0-9]+) ([0-9A-Fa-f]+) "([^\r\n]*)" "([^" \r\n]*)"')
 _END = b"END"
+_ADDON_STATE = re.compile(rb"([^:\r\n]+): ([^ :\r\n]+)")
+MAX_ADDONS_TXT_BYTES = 1 << 20
+"""`read_addons` refuses a larger ``AddOns.txt``: the real one is 2 lines,
+and one line per installed addon stays far below this."""
 _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
@@ -445,6 +462,36 @@ class MacroEndLine(_Line):
 
 ConfigLine = Annotated[SetLine | Unknown, Field(discriminator="kind")]
 BindingsLine = Annotated[BindLine | Unknown, Field(discriminator="kind")]
+
+
+class AddonStateLine(_Line):
+    """``<addon>: <state>`` in a character's ``AddOns.txt``."""
+
+    kind: Literal["addon-state"] = "addon-state"
+
+    @model_validator(mode="after")
+    def _matches(self) -> AddonStateLine:
+        if _ADDON_STATE.fullmatch(self.text) is None:
+            raise ValueError(f"not an addon state line: {self.text!r}")
+        return self
+
+    def _match(self) -> re.Match[bytes]:
+        match = _ADDON_STATE.fullmatch(self.text)
+        assert match is not None  # guaranteed by the validator
+        return match
+
+    @property
+    def name(self) -> str:
+        """The addon's name as written."""
+        return _text(self._match().group(1))
+
+    @property
+    def state(self) -> str:
+        """The state word as written (``enabled`` observed)."""
+        return _text(self._match().group(2))
+
+
+AddonsLine = Annotated[AddonStateLine | Unknown, Field(discriminator="kind")]
 MacrosLine = Annotated[
     MacroHeaderLine | MacroBodyLine | MacroEndLine | Unknown, Field(discriminator="kind")
 ]
@@ -820,6 +867,84 @@ def _parse_macros(data: bytes, size: int | None) -> MacrosDocument:
 
 
 # --------------------------------------------------------------------------
+# AddOns.txt
+
+
+class AddonState(BaseModel):
+    """One ``<addon>: <state>`` line, with its position in ``lines``.
+    ``enabled`` is True for ``enabled``, False for ``disabled`` (a word not
+    yet seen in a real file **[verify]**) and None for any other word."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    name: str
+    state: str
+    enabled: bool | None
+    index: int
+
+
+class AddonsDocument(BaseModel):
+    """A parsed ``AddOns.txt`` of a character folder: which addons are
+    enabled for that character. Which of a Forever character's two copies
+    the client reads, and whether it reads this file at all there, are
+    **[verify]** (LAB_FORMATS, amendment of 2026-09-22).
+
+    Frozen, and validated to equal ``parse_addons(self.to_bytes())``.
+    ``model_copy(update=...)`` skips validation and keeps the cached views,
+    so build a new document instead.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    lines: tuple[AddonsLine, ...]
+
+    @model_validator(mode="after")
+    def _line_sequence(self) -> AddonsDocument:
+        _check_line_sequence(self.lines)
+        _reject_typed_text(self.lines, _ADDON_STATE, "addon state")
+        return self
+
+    def to_bytes(self) -> bytes:
+        return _join(self.lines)
+
+    def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
+        """``(index, text)`` for every ``Unknown`` line (not in ``states``)."""
+        return _unknown_lines(self.lines)
+
+    @cached_property
+    def states(self) -> tuple[AddonState, ...]:
+        """Every ``<addon>: <state>`` line, in file order."""
+        out = []
+        for i, line in enumerate(self.lines):
+            if isinstance(line, AddonStateLine):
+                state = line.state
+                enabled = True if state == "enabled" else False if state == "disabled" else None
+                out.append(AddonState(name=line.name, state=state, enabled=enabled, index=i))
+        return tuple(out)
+
+    def state_of(self, addon: str) -> AddonState | None:
+        """The last line naming ``addon`` (ASCII case folded, as folder names
+        compare on the client's file systems **[verify]**), or None when the
+        file does not list it."""
+        return self.by_folded_name.get(fold_name(addon))
+
+    @cached_property
+    def by_folded_name(self) -> dict[str, AddonState]:
+        """Each folded name's last line, built once per document."""
+        return {fold_name(s.name): s for s in self.states}
+
+
+def parse_addons(data: bytes) -> AddonsDocument:
+    lines: list[AddonStateLine | Unknown] = []
+    for text, ending in split_lines(data):
+        if _ADDON_STATE.fullmatch(text) is not None:
+            lines.append(AddonStateLine(text=text, ending=ending))
+        else:
+            lines.append(Unknown(text=text, ending=ending))
+    return AddonsDocument(lines=tuple(lines))
+
+
+# --------------------------------------------------------------------------
 # Counts without a document (M16-35): one pass over the bytes, by the same
 # line split and grammar as the parsers above, building no line models.
 
@@ -900,3 +1025,9 @@ def read_bindings(path: Path) -> BindingsDocument:
 def read_macros(path: Path) -> MacrosDocument:
     data, size = _read(path, MACROS_BUDGET)
     return _parse_macros(data, size)
+
+
+def read_addons(path: Path, *, limit: int = MAX_ADDONS_TXT_BYTES) -> AddonsDocument:
+    """A character's ``AddOns.txt``; one over ``limit`` bytes is refused
+    (``UnsafeReadError``) before it is read."""
+    return parse_addons(snapshot.read_regular_file(Path(path), limit=limit))
