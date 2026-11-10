@@ -117,6 +117,10 @@ uv run wowlab doctor
 From a source checkout every command is `uv run wowlab …`. The examples
 below write `wowlab …`.
 
+**If `wowlab` is not found** after `uv tool install` reported success, the
+folder uv puts its commands in is not on your `PATH` yet (uv warns about
+this as it installs). Run `uv tool update-shell`, then open a new terminal.
+
 ## Pointing wowlab at your install
 
 The install folder is the one that holds `.build.info`, with the flavor
@@ -135,6 +139,27 @@ Without help, wowlab looks only where the game installs by default:
 - macOS: `/Applications/World of Warcraft`
 - Windows: `World of Warcraft` at the top of each drive, then under
   `Program Files (x86)` and `Program Files`, the system drive first
+
+On Linux there is no default: the game runs under Wine, Lutris or
+Proton, inside a Windows-style folder tree called a prefix, and wowlab
+does not search prefixes. These are the places such installs usually are;
+yours may differ, and the folder you want is the `World of Warcraft`
+folder that holds `.build.info`:
+
+- Wine: `~/.wine/drive_c/Program Files (x86)/World of Warcraft`
+- Lutris (its Battle.net installer): `~/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft`
+- Steam with Proton (Battle.net added as a non-Steam game):
+  `~/.local/share/Steam/steamapps/compatdata/<number>/pfx/drive_c/Program Files (x86)/World of Warcraft`,
+  where `<number>` is the id Steam gave the shortcut; with Steam from
+  Flatpak, the same path under `~/.var/app/com.valvesoftware.Steam/.local/share/Steam/`
+
+To search your home folder for it:
+
+```bash
+find ~ -name .build.info -path '*World of Warcraft*' 2>/dev/null
+```
+
+The folder that line prints, without `/.build.info`, is the install folder.
 
 If yours is somewhere else, name it for one command with `--root`:
 
