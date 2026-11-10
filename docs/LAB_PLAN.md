@@ -3653,6 +3653,11 @@ and the CI job stays on.
   logging on (`/combatlog`); the command says so.
 - **First run.** `wowlab doctor` asks wago.tools whether each installed
   version is listed unless `--offline` is given; the first-run text says so.
+  *Amended 2026-11-09 (M16-07, §18.1 item 2):* `doctor` is offline by
+  default and asks only with `--check-builds`; `--offline` is a no-op that
+  prints one deprecation line. The first-run text ends in the one "What
+  leaves your machine" block (`wowlab_core.disclosure`), which README.md and
+  docs/INSTALL.md carry between `network:begin`/`network:end` markers.
   A WTF folder under OneDrive, Dropbox or Syncthing may hold placeholder or
   conflict files; snapshots never follow a link (M11-18); a sync folder is
   detected by heuristics and reported as such, never refused.
