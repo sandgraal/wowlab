@@ -704,6 +704,38 @@ def test_a_foreign_host_is_refused(planted: Any, recorder: Recorder) -> None:
         assert _argv_of(_run(planted, ["echo"], {"path": "x"}, host=host))[0] == "echo"
 
 
+def test_a_refusal_survives_a_body_that_arrives_after_it(planted: Any, recorder: Recorder) -> None:
+    """A refusal answers before the body is read. A body still arriving once
+    the reply is sent (the client sends headers and body in two writes) must
+    not turn the close into an abort: on Windows an RST destroys the reply
+    the client has not read yet (WinError 10053). Constructed: the headers,
+    the refusal read in full, and only then the body."""
+    body = json.dumps({"command": ["echo"], "params": {"path": "x"}}).encode()
+    head = (
+        f"POST {_target(planted, '/api/run')} HTTP/1.1\r\n"
+        "Host: evil.example\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    ).encode("ascii")
+    with socket.create_connection(("127.0.0.1", _port(planted)), timeout=_HANG) as sock:
+        sock.sendall(head)
+        reply = b""
+        while chunk := sock.recv(65536):
+            reply += chunk
+        status, _, rest = reply.partition(b"\r\n")
+        assert status.split()[1] == b"403", status
+        assert json.loads(rest.partition(b"\r\n\r\n")[2]) == {"error": "host"}
+        # The server has sent its reply and FIN; the body arrives now. The
+        # server must still be reading (and discarding), so neither these
+        # writes nor the read after them meets a reset.
+        sock.sendall(body)
+        time.sleep(0.2)
+        sock.sendall(body)
+        time.sleep(0.2)
+        assert sock.recv(1) == b""
+    assert recorder.calls() == []
+
+
 def _bad_origins(port: int) -> list[str]:
     return [
         "http://evil.example",

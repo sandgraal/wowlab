@@ -149,6 +149,7 @@ import os
 import re
 import secrets
 import signal
+import socket
 import socketserver
 import stat
 import subprocess
@@ -193,6 +194,12 @@ _READ_CHUNK = 64 * 1024
 _SOCKET_TIMEOUT_S = 30.0
 # How long the readers get to reach end of file once the run has ended.
 _DRAIN_GRACE_S = 2.0
+# The lingering close after a reply: how long, and how many request bytes
+# at most, the server keeps reading and discarding until the client closes,
+# so that request bytes still arriving (a body behind a refusal) do not make
+# the close an abort that destroys the reply (Windows: WSAECONNABORTED).
+_LINGER_S = 2.0
+_LINGER_BYTES = MAX_BODY_BYTES + _READ_CHUNK
 # How long server_close() waits for runs in progress to be killed.
 _CLOSE_WAIT_S = 10.0
 _POLL_S = 0.05
@@ -1199,6 +1206,25 @@ def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
     )
 
 
+def _linger(sock: socket.socket) -> None:
+    """Read and discard from `sock` until the peer closes, `_LINGER_S`
+    passes or `_LINGER_BYTES` were read, whichever comes first."""
+    deadline = time.monotonic() + _LINGER_S
+    seen = 0
+    try:
+        while seen <= _LINGER_BYTES:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            sock.settimeout(left)
+            chunk = sock.recv(_READ_CHUNK)
+            if not chunk:
+                return
+            seen += len(chunk)
+    except OSError:
+        return
+
+
 class UiServer(http.server.ThreadingHTTPServer):
     """The `wowlab ui` server. Built by `make_server`, bound and not yet
     serving."""
@@ -1256,6 +1282,23 @@ class UiServer(http.server.ThreadingHTTPServer):
         socketserver.TCPServer.server_bind(self)
         self.server_name = _LOOPBACK
         self.server_port = int(self.server_address[1])
+
+    @override
+    def shutdown_request(self, request: Any) -> None:
+        """End the connection with a lingering close: send FIN after the
+        reply, then read and discard what the client still sends until it
+        closes, bounded by `_LINGER_S` and `_LINGER_BYTES`, and only then
+        close. A refusal answers before the body is read; closing a socket
+        that still receives request bytes sends RST, and on Windows an RST
+        discards the reply the client has not read yet. What is drained is
+        never parsed or kept."""
+        try:
+            request.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        else:
+            _linger(request)
+        self.close_request(request)
 
     @override
     def handle_error(self, request: Any, client_address: Any) -> None:
