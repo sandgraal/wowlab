@@ -171,6 +171,9 @@ def test_constructed_the_pipeline_runs_on_a_small_tree(
     assert code == 0, out.err
     for command in perf_budget.COMMANDS:
         assert re.search(rf"^{command} +[0-9.]+ +[0-9.]+ +[0-9.]+ ", out.out, re.M), out.out
+    # The absolute check times the gate's call in its own child process.
+    assert re.search(r"^gate's whole-restore check at 40 files: [0-9.]+ s wall", out.out, re.M)
+    assert "(information only)" in out.out
     assert _tree_hash(perf_budget.FIXTURE) == before
     # The sandbox, user data included, was removed with its temporary folder.
     assert list(tmp_path.iterdir()) == []
@@ -179,7 +182,14 @@ def test_constructed_the_pipeline_runs_on_a_small_tree(
 def test_constructed_the_sandbox_redirects_home_and_user_data(tmp_path: Path) -> None:
     root, env = perf_budget.build_sandbox(tmp_path / "sb", 16)
     assert root.is_relative_to(tmp_path)
-    for key in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "WOWLAB_WOW_ROOT"):
+    for key in (
+        "HOME",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_STATE_HOME",
+        "WOWLAB_WOW_ROOT",
+    ):
         assert Path(env[key]).is_relative_to(tmp_path), key
     flavor = root / perf_budget.FLAVOR_FOLDER
     constructed = list(flavor.rglob("Constructed*.lua")) + list(flavor.rglob("f*.lua"))
