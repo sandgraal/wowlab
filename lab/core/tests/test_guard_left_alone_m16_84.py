@@ -553,27 +553,39 @@ def test_constructed_format_2_records_without_the_list_still_read(
 
 WORLD_OUTSIDE = "<world>/outside/x"  # replaced by the absolute path under `world`
 
-# (id, the `paths_left` value written into the record, the state it is given)
-HOSTILE_LISTS: tuple[tuple[str, object, str], ...] = (
-    ("traversal", ["../../etc"], "rollback_incomplete"),
-    ("traversal-into-data", ["../Data/data.001"], "rollback_incomplete"),
-    ("absolute-posix", ["/etc/passwd"], "rollback_incomplete"),
-    ("absolute-under-world-outside", [WORLD_OUTSIDE], "rollback_incomplete"),
-    ("unc", ["//constructed-server/share/x"], "rollback_incomplete"),
-    ("terminal-clear", ["WTF/Config.wtf\x1b[2J"], "rollback_incomplete"),
-    ("terminal-hyperlink", ["WTF/\x1b]8;;http://x\x07Config.wtf"], "rollback_incomplete"),
-    ("bidi-override", ["WTF/\u202eftw.gifnoC"], "rollback_incomplete"),
-    ("not-in-the-record-paths", ["WTF/Other.wtf"], "rollback_incomplete"),
-    ("duplicate", [CONFIG, CONFIG], "rollback_incomplete"),
-    ("on-a-committed-record", [CONFIG], "committed"),
-    ("not-a-string", [1], "rollback_incomplete"),
-    ("a-bare-string", CONFIG, "rollback_incomplete"),
+# (id, the `paths_left` value written into the record, the state it is given,
+# the note it is given: None keeps the gate's note, or clears it for a state
+# other than `rollback_incomplete`)
+HOSTILE_LISTS: tuple[tuple[str, object, str, str | None], ...] = (
+    ("traversal", ["../../etc"], "rollback_incomplete", None),
+    ("traversal-into-data", ["../Data/data.001"], "rollback_incomplete", None),
+    ("absolute-posix", ["/etc/passwd"], "rollback_incomplete", None),
+    ("absolute-under-world-outside", [WORLD_OUTSIDE], "rollback_incomplete", None),
+    ("unc", ["//constructed-server/share/x"], "rollback_incomplete", None),
+    ("terminal-clear", ["WTF/Config.wtf\x1b[2J"], "rollback_incomplete", None),
+    ("terminal-hyperlink", ["WTF/\x1b]8;;http://x\x07Config.wtf"], "rollback_incomplete", None),
+    ("bidi-override", ["WTF/\u202eftw.gifnoC"], "rollback_incomplete", None),
+    ("not-in-the-record-paths", ["WTF/Other.wtf"], "rollback_incomplete", None),
+    ("duplicate", [CONFIG, CONFIG], "rollback_incomplete", None),
+    ("on-a-committed-record", [CONFIG], "committed", None),
+    ("not-a-string", [1], "rollback_incomplete", None),
+    ("a-bare-string", CONFIG, "rollback_incomplete", None),
+    ("on-a-rolled-back-record", [CONFIG], "rolled_back", None),
+    ("on-an-open-record", [CONFIG], "open", None),
+    # The note names the path; only a key of its own may vouch for a path
+    # that `paths` does not name, never the note.
+    (
+        "not-in-paths-but-named-in-the-note",
+        ["WTF/Other.wtf"],
+        "rollback_incomplete",
+        "WTF/Other.wtf: refused",
+    ),
 )
 
 
 @pytest.mark.parametrize(
-    ("hostile", "state"),
-    [pytest.param(v, st, id=f"constructed-{n}") for n, v, st in HOSTILE_LISTS],
+    ("hostile", "state", "note"),
+    [pytest.param(v, st, nt, id=f"constructed-{n}") for n, v, st, nt in HOSTILE_LISTS],
 )
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
@@ -584,12 +596,13 @@ def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
     idle: None,
     hostile: object,
     state: str,
+    note: str | None,
 ) -> None:
     """A real `rollback_incomplete` record (another program changed
     Config.wtf; the icon was put back) is written by the gate with
     `paths_left: [Config.wtf]` in its journal file, and reads back with it:
     that is the positive control. Its list is then replaced on disk (and, for
-    one case, its state): `history()` raises `GuardError` and changes nothing
+    some cases, its state or its note): `history()` raises `GuardError` and changes nothing
     in the install or the store."""
     store = tmp_path / "store"
 
@@ -613,6 +626,47 @@ def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
     raw["state"] = state
     if state != "rollback_incomplete":
         raw["note"] = None
+    if note is not None:
+        raw["note"] = note
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
+    file.write_bytes(text.encode("ascii"))
+    install_before, store_before = G.content(world), G.content(store)
+
+    with pytest.raises(guard.GuardError):
+        guard.history(store=store)
+    assert G.content(world) == install_before, "reading a damaged record touched the install"
+    assert G.content(store) == store_before, "reading a damaged record touched the store"
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
+def test_constructed_a_refused_records_list_vouches_only_for_its_own_refused_path(
+    guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
+) -> None:
+    """The real record of a refused path that moved again (Config.wtf is
+    listed although `paths` does not have to name it) reads back with its
+    list: the positive control. Its on-disk list is then rewritten to a
+    plain, valid path that is neither journaled nor refused: `history()`
+    raises `GuardError` and changes nothing. Whatever lets the gate accept
+    Config.wtf there, it does not accept any other path."""
+    store = tmp_path / "store"
+    config = flavor.path / CONFIG
+    with (
+        pytest.raises(guard.GuardError),
+        guard.transaction(flavor, label="refused", store=store) as tx,
+    ):
+        tx.write(ICON, ICON_NEW)
+        config.write_bytes(EXTERNAL)
+        with refused(guard, "ChangedSinceSnapshotError", naming=CONFIG):
+            tx.write(CONFIG, NEW_CONFIG)
+        config.write_bytes(EXTERNAL_AGAIN)
+    record = record_for(guard, SnapshotStore(store), "refused")
+    assert record.state == "rollback_incomplete"
+    assert_left_alone(record, [CONFIG], flavor, refused=[CONFIG])
+    file = store / "journal" / f"{record.id}.json"
+    raw = json.loads(file.read_bytes().decode("ascii"))
+    assert raw.get(FIELD) == [CONFIG], f"the journal file carries {FIELD!r}: {sorted(raw)}"
+
+    raw[FIELD] = ["WTF/Other.wtf"]
     text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
     file.write_bytes(text.encode("ascii"))
     install_before, store_before = G.content(world), G.content(store)
