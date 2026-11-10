@@ -2392,7 +2392,7 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 
 `snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII: the same class of bug that M16-70 (#430, open) fixes for journal ids. Neither file is load-bearing (AGENTS.md, as narrowed on 2026-10-17), so this is one ticket: tests and fix together, the tests built like M16-70T's.
 
-**Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-78 — The user data directory's other folders are private
 **Size:** S · **Depends on:** nothing · **Sources:** the M16-66T security review (#424)
