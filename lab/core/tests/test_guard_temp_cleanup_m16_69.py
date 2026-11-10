@@ -14,7 +14,10 @@ M16-69 deletes; nothing else in this file is the implementer's to change.
 What changes, and what does not:
 
 - The new record's pre-write snapshot holds no leftover temp that the
-  cleanup removed, on both routes that clean (`transaction()` and `undo()`).
+  cleanup removed, on both routes that clean (`transaction()` and `undo()`),
+  and neither does any other manifest in the store (by path or by content):
+  a snapshot taken before the cleanup and then replaced would still be
+  restorable. Which order produces that is not pinned.
 - The removals are still journaled in the new record's `temps_removed`, and
   the files are gone from the install.
 - Snapshots stay lossless: a temp-like file no record names (the player's,
@@ -92,6 +95,36 @@ def _last_record(store: Path, guard: Any) -> Any:
     return guard.history(store=store)[-1]
 
 
+def assert_no_manifest_holds_the_leftovers(guard: Any, store: Path, lo: Any, record: Any) -> None:
+    """No manifest in the store, not only the one `record.snapshot_id` names,
+    holds a removed leftover by path or by content. A second snapshot taken
+    after the cleanup, with the record repointed at it, would leave the first
+    one in the store, and a whole restore of it would bring the leftovers
+    back (the M16-13 hazard). No internal order is pinned."""
+    manifests = {m.id: m for m in SnapshotStore(store).list()}
+    assert record.snapshot_id in manifests, "the cleaning record's snapshot is listed"
+    dead = record_for(guard, SnapshotStore(store), "child-died")
+    assert dead.snapshot_id in manifests, (
+        "positive control: the dead child's own pre-write snapshot is listed"
+    )
+    leftover_shas = {sha(lo.a_bytes), sha(lo.b_bytes)}
+    before = manifests[dead.snapshot_id]
+    assert before.entries, "positive control: the dead child's snapshot holds the install"
+    assert _entries_for(before, lo.a_rel) == [] and _entries_for(before, lo.b_rel) == [], (
+        "positive control: taken before the dead child made its temps"
+    )
+    assert not (leftover_shas & {e.sha256 for e in before.entries})
+    for manifest in manifests.values():
+        for rel in (lo.a_rel, lo.b_rel):
+            assert _entries_for(manifest, rel) == [], (
+                f"snapshot {manifest.id} holds the removed leftover {rel}"
+            )
+        held = {e.sha256 for e in manifest.entries}
+        assert not (leftover_shas & held), (
+            f"snapshot {manifest.id} holds a removed leftover's bytes under some name"
+        )
+
+
 def _enter(guard: Any, flavor: Flavor, store: Path, route: str) -> Any:
     """One enter of the flavor that cleans, by `route`; its journal record."""
     if route == "transaction":
@@ -163,6 +196,7 @@ def test_constructed_the_pre_write_snapshot_holds_no_removed_leftover(
     assert sha(lo.a_bytes) not in held and sha(lo.b_bytes) not in held, (
         "no entry under any name holds a removed leftover's bytes"
     )
+    assert_no_manifest_holds_the_leftovers(guard, store, lo, record)
     # Positive control: the snapshot is the one taken for this record, and it
     # is not empty — the install's other files are held as before.
     config = _entries_for(pre, CONFIG)
@@ -240,6 +274,7 @@ def test_constructed_a_whole_restore_of_the_cleaning_snapshot_brings_no_leftover
         tx.write(CONFIG, NEWER_CONFIG)
     cleaning = record_for(guard, SnapshotStore(store), "next")
     assert set(cleaning.temps_removed) == {lo.a_rel, lo.b_rel}
+    assert_no_manifest_holds_the_leftovers(guard, store, lo, cleaning)
 
     with guard.transaction(flavor, label="back", store=store) as tx:
         tx.restore(cleaning.snapshot_id)
