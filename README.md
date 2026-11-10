@@ -146,11 +146,11 @@ It runs every wowlab command except `ui` itself, `log tail --follow` and `looks 
 ```text
 $ wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua
 WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua (in flavor folder _classic_beta_)
-  what:         Account-wide addon data (`## SavedVariables:`)
-  written by:   Client on logout / `/reload`
+  what:         An addon's saved data for the whole account
+  written by:   The game, on logout or `/reload`
   edit:         yes, through wowlab's write gate only, with the client closed
-  tier:         A: ordinary addon-user behaviour
-  read by:      `luadata`
+  file-map row: account-savedvariables
+…
 
 $ wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua
 DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260

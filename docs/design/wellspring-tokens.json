@@ -187,7 +187,7 @@
           "warband": "#ff8c73",
           "bastion": "#a3290f"
         },
-        "usage": "Ruin (destruction): errors, refusals, findings; never a verdict badge. On grounds, surfaces and `ruin-bg`."
+        "usage": "Ruin (destruction): errors, refusals and findings; never a verdict badge. On grounds, surfaces and `ruin-bg`."
       },
       {
         "name": "ruin-bg",

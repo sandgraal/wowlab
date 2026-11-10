@@ -9,11 +9,13 @@ constructed strings (no filesystem), labelled `constructed`.
 
 from __future__ import annotations
 
+import pkgutil
 import re
 from pathlib import Path
 
 import pytest
 
+import wowlab_core
 from wowlab_core import filemap
 from wowlab_core.filemap import FileMap, load, parse, render_doc, render_section
 
@@ -221,18 +223,24 @@ def test_entries_expose_the_edit_column() -> None:
 
 # ─── player text and spec notes (M16-17) ─────────────────────────────────────
 
-# What a player must not read in a row's `what` or `written_by`
-# (`.claude/rules/player-copy.md`): ticket, decision and invariant ids, a
-# pointer into the docs, a pointer to the doc's own table ("the rows
-# above"), and the Battle.net app's old name.
-_NOT_FOR_PLAYERS = re.compile(
-    r"M1\d-\d+|ADR-\d+|\bL[1-8]\b|LAB_PLAN|LAB_FORMATS|GLOSSARY|docs/|§"
-    r"|\brows? (?:above|below)\b|\bAgent\b",
-)
-# wowlab's modules, which a player's text never names in backticks.
+# The spec's documents: every top-level doc but INSTALL.md, which is written
+# for players. A player's text names none of them.
+_SPEC_DOCS = sorted(p.stem for p in (REPO / "docs").glob("*.md") if p.stem != "INSTALL")
+# wowlab's modules and packages, which a player's text never names in
+# backticks.
 _MODULES = frozenset(
-    {"casc", "combatlog", "filemap", "guard", "install", "layout", "luadata", "process"}
-    | {"profiles", "snapshot", "svmerge", "toc", "verdict", "wtfconfig"}
+    m.name for m in pkgutil.iter_modules(wowlab_core.__path__) if not m.name.startswith("_")
+)
+# What a player must not read in a row's `what` or `written_by`
+# (`.claude/rules/player-copy.md`): ticket, decision ("ADR-0021", "ADR
+# 0021") and invariant ids, a pointer into the docs, a module in backticks,
+# a pointer to the doc's own table ("the rows above"), and the Battle.net
+# app's old name in any letter case ("Agent", "the agent").
+_NOT_FOR_PLAYERS = re.compile(
+    r"M1\d-\d+|\bADR[- ]?\d+|\bL[1-8]\b|docs/|§|\.md\b"
+    r"|\b(?:" + "|".join(re.escape(d) for d in _SPEC_DOCS) + r")\b"
+    r"|`(?:" + "|".join(re.escape(m) for m in sorted(_MODULES)) + r")`"
+    r"|\brows? (?:above|below)\b|(?i:\bagent\b)",
 )
 
 
@@ -244,7 +252,7 @@ def test_what_and_written_by_are_a_players_text(entry: filemap.FileMapEntry) -> 
     for field in ("what", "written_by"):
         text = getattr(entry, field)
         assert not _NOT_FOR_PLAYERS.search(text), (entry.id, field, text)
-        assert not _MODULES & set(re.findall(r"`([a-z_]+)`", text)), (entry.id, field, text)
+        assert not _MODULES & set(re.findall(r"`([a-z0-9_]+)`", text)), (entry.id, field, text)
     assert "[verify" not in entry.written_by, entry.id
     assert entry.what.count("[verify") <= 1, entry.id
 

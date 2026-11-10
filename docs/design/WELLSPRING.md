@@ -17,7 +17,7 @@ wowlab Wellspring dresses a careful local tool in the world it serves: a shatter
 |---|---|---|
 | The latent life-force at the core | wowlab itself: the thing that keeps the player's data alive | `wellspring`: primary actions, focus, selection, success, the glow rising from the page floor |
 | Titan architects and their safeguards | The write gate, snapshots, undo | `brass` structure, corner brackets on every panel, the Order verdict |
-| Destruction | Refusals and errors, and nothing else (M16-17, 2026-11-09) | `ruin` |
+| Destruction | Errors, refusals and findings, and never a verdict badge (M16-17, 2026-11-09) | `ruin` |
 | Eldritch incursion, the unknown | Files no map row describes | `void` |
 | Inert bedrock | Folders, things not used, files wowlab never changes | `stone` |
 | Dimensional elsewhere | Links that point outside | `astral`, dotted |
@@ -51,7 +51,7 @@ The fantasy lives in colour, type, ornament and structure. It never lives in the
 - `brass-deep` for ornament only: corner brackets, dotted guides, the banner rule.
 - `wellspring` for the one thing to do or the one place you are: primary buttons, focus, the selected row's bar, the active tab's underline, success. Text on a wellspring fill is `on-wellspring`.
 - `heraldry` only on large shapes: the banner's top band, the codex's top edge, the cover.
-- The six forces (`order`, `ruin`, `void`, `stone`, `astral`, `blight`) only for verdicts and errors: `ruin` for errors and refusals only, never a badge; the other five for verdicts. Each has `-bg` and `-border` partners.
+- The six forces (`order`, `ruin`, `void`, `stone`, `astral`, `blight`) only for verdicts and errors: `ruin` for errors, refusals and findings only, never a verdict badge; the other five for verdicts. Each has `-bg` and `-border` partners.
 
 **Type.** Three families, all OFL-licensed and shipped as files: no font is ever fetched.
 - `font-display`, Alegreya SC: the name (`display` 40px), titles (`title` 28px), panel headings (`heading` 20px), labels, tabs and buttons (`label` 15px), badges (`plaque` 13px). Lowercase text in this face sets as small capitals, so write labels in sentence case and let the face engrave them.
@@ -78,7 +78,7 @@ The fantasy lives in colour, type, ornament and structure. It never lives in the
 |---|---|---|---|
 | `badge-order` | wowlab can edit | ◆ | solid |
 | `badge-void` | unknown | ? | solid |
-| `badge-stone` | wowlab never changes it | ✕ | solid |
+| `.badge-no` (Stone) | wowlab never changes it | ✕ | solid |
 | `badge-stone` | folder, not used | ▪ | solid |
 | `badge-astral` | a link; wowlab won't follow it | ↗ | dotted |
 | `badge-blight` | server may overwrite | ≈ | dashed |
