@@ -183,6 +183,31 @@ _HOME_SHAPE_RE = re.compile(
 # What may not follow a known home folder for it to be that folder rather than
 # the start of a longer name (`/home/bob` is not the home of `/home/bobby`).
 _HOME_END = r"(?![\w.\-~])"
+# A path-shaped token (M16-44), where a login is replaced: text that holds a
+# path separator (`/` or `\`), or a `~name` home reference. It starts at the
+# last blank, quote or bracket before its first separator (a drive letter or a
+# `~` before it is part of it) and runs to the end of the line, a tab or a
+# quote (`"`, `'`, `<`, `>`, `|`), as `_HOME_SHAPE_RE` does: any folder name
+# may hold spaces, the last one too (`D:\Games\John Smith`), and brackets
+# (`D:\Games\Backup (jsmit)`). It ends before a blank followed by one of the
+# Lab's own glosses (`_PATH_GLOSSES`), so `Install: <path> (found by
+# $WOWLAB_WOW_ROOT)` keeps the variable's name. Words that follow a path on
+# its line are taken as path text; that over-replaces only the login, and
+# only there.
+# The lookbehind anchors each token at the start of its run, and a run of
+# blanks is taken possessively (`++`) before the gloss check, so the match is
+# linear in the text.
+_PATH_GLOSSES = ("(found by ",)
+_PATH_LEAD = r"[^\s\"'<>|()\[\]{},;=\\/]"
+_PATH_TOKEN_RE = re.compile(
+    r"(?<!" + _PATH_LEAD + r")"
+    r"(?:"
+    + _PATH_LEAD
+    + r"*[\\/](?:[^\s\"'<>|]|[^\S\r\n\t]++(?!"
+    + "|".join(re.escape(g) for g in _PATH_GLOSSES)
+    + r"))*"
+    r"|~" + _PATH_LEAD + r"+)"
+)
 # Shorter than this, a name is replaced only as a whole word: a two-letter
 # character name inside "Install" is not that character.
 EMBEDDED_MIN_CHARS = 5
@@ -215,10 +240,11 @@ class Redactor:
     In order: home folders (the known ones, then any by shape), email
     addresses, BattleTags, player, account, guild and community GUIDs, then
     the names given (account folders, characters, realms in every spelling
-    of `realm_forms`, any other name, the login user and the host name),
-    longest first, in any casing and either Unicode normal form. A name of
-    `EMBEDDED_MIN_CHARS` or more is
-    replaced inside longer words too; a shorter one only as a whole word.
+    of `realm_forms`, any other name and the host name), longest first, in
+    any casing and either Unicode normal form, then the login names, only
+    inside a path-shaped token (M16-44). A name of `EMBEDDED_MIN_CHARS` or
+    more is replaced inside longer words too; a shorter one only as a whole
+    word.
     Text already turned into a placeholder is never matched again.
     """
 
@@ -255,27 +281,43 @@ class Redactor:
             (CHARACTER, characters, _plain_forms),
             (REALM, realms, realm_forms),
             (NAME, names, _plain_forms),
-            (USER, users, _plain_forms),
             (HOST, hosts, _plain_forms),
         ):
             for value in _clean(values):
                 for form in forms_of(value):
                     forms.setdefault(form, placeholder)
         if forms:
-            longest_first = sorted(forms, key=len, reverse=True)
-            each = [(re.compile(re.escape(f), re.IGNORECASE), forms[f]) for f in longest_first]
-            pattern = re.compile("|".join(_name_pattern(f) for f in longest_first), re.IGNORECASE)
-
-            def kind(match: re.Match[str]) -> str:
-                found = match.group()
-                return next((p for form, p in each if form.fullmatch(found)), NAME)
-
-            self._passes.append(lambda part: pattern.sub(kind, part))
+            self._passes.append(_names_pass(forms))
+        # M16-44: a login is often a common word (`root`, `user`, `admin`,
+        # `game`), so it is replaced only inside a path-shaped token, where it
+        # names a folder; elsewhere it is left alone, `$WOWLAB_WOW_ROOT` too.
+        logins = {
+            form: USER
+            for value in _clean(users)
+            for form in _plain_forms(value)
+            if form.casefold() not in {f.casefold() for f in forms}
+        }
+        if logins:
+            in_paths = _names_pass(logins)
+            self._passes.append(lambda part: _PATH_TOKEN_RE.sub(lambda m: in_paths(m[0]), part))
 
     def __call__(self, text: str) -> str:
         for replace in self._passes:
             text = _outside_placeholders(text, replace)
         return text
+
+
+def _names_pass(forms: dict[str, str]) -> Callable[[str], str]:
+    """Replaces each form with its placeholder, longest first, by `_name_pattern`."""
+    longest_first = sorted(forms, key=len, reverse=True)
+    each = [(re.compile(re.escape(f), re.IGNORECASE), forms[f]) for f in longest_first]
+    pattern = re.compile("|".join(_name_pattern(f) for f in longest_first), re.IGNORECASE)
+
+    def kind(match: re.Match[str]) -> str:
+        found = match.group()
+        return next((p for form, p in each if form.fullmatch(found)), NAME)
+
+    return lambda part: pattern.sub(kind, part)
 
 
 def _plain_forms(name: str) -> list[str]:

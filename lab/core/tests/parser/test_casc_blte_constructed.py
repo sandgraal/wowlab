@@ -99,7 +99,7 @@ def test_an_e_block_is_refused_with_its_key_name_constructed() -> None:
     # The key name is stored little-endian; key lists print it as a number.
     assert caught.value.key_name == "50505078126ACB3E"
     assert (caught.value.block, caught.value.cipher) == (1, "S")
-    assert "ADR-0033" in str(caught.value)
+    assert "wowlab does not decrypt" in str(caught.value)
     assert isinstance(caught.value, casc.CascError)
 
 

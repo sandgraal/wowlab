@@ -425,7 +425,14 @@ def snapshot_facts(
         key=lambda m: (m.created_at, m.id),
     )
     newer_pre_write: SnapshotRef | None = None
-    kinds = {m.id: snapshot.kind_of(m, pre_write_ids) for m in covering}
+    # An imported snapshot is `imported`, whatever its manifest claims
+    # (M16-04): a forged `pre-write` is not set aside as one, and a forged
+    # `user` is reported as what it is.
+    try:
+        imported = store.imported_ids()
+    except snapshot.SnapshotError:
+        imported = frozenset()
+    kinds = {m.id: snapshot.kind_of(m, pre_write_ids, imported) for m in covering}
     chosen = [m for m in covering if kinds[m.id] != "pre-write"]
     if chosen:
         newer = covering[covering.index(chosen[-1]) + 1 :]  # pre-write copies, all

@@ -161,6 +161,7 @@ from wowlab_core import (
     pathfacts,
     process,
     profiles,
+    snaparchive,
     snapshot,
     svmerge,
     wtfconfig,
@@ -1301,6 +1302,7 @@ _HANDLED_ERRORS: tuple[type[Exception], ...] = (
     guard.GuardError,
     CliError,
     luadata.LuaDataError,
+    wtfconfig.WtfLimitError,
     install.InstallError,
     snapshot.SnapshotError,
     profiles.ProfileError,
@@ -1325,6 +1327,10 @@ def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
         return (
             f"refused: this file is beyond what the SavedVariables parser will hold "
             f"({limit}); nothing was printed"
+        ), EXIT_ERROR
+    if isinstance(exc, wtfconfig.WtfLimitError):
+        return (
+            f"refused: this file is beyond what wowlab will read of it ({exc}); nothing was printed"
         ), EXIT_ERROR
     if isinstance(exc, luadata.LuaDataError):
         if json_out:
@@ -1843,7 +1849,7 @@ def _doctor(
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
                 sync = _sync_cvars(lay)
-            except OSError as exc:
+            except (OSError, wtfconfig.WtfLimitError) as exc:
                 problems.append(f"{f.folder}: cannot read the config files: {exc}")
                 sync = []
             flavors.append(
@@ -7150,6 +7156,10 @@ _KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
         "taken automatically just before a change; restoring it puts the files back "
         "as they were just before that change"
     ),
+    "imported": (
+        "added from a file by snap import, so not one you took on this computer; "
+        "latest-user never names it"
+    ),
 }
 
 
@@ -7312,18 +7322,18 @@ def snap_show(
     JSON: the manifest (snapshot.Manifest), with its kind."""
     store = snapshot.SnapshotStore()
     manifest = store.show(_resolve_ref(store, snapshot_id))
-    if manifest.kind is None:
-        # Written before kinds existed: say what it is, as the journal tells.
-        manifest = manifest.model_copy(
-            update={"kind": snapshot.kind_of(manifest, _pre_write_ids(store))}
-        )
+    # The effective kind, in the text and the JSON alike: one written before
+    # kinds existed is what the journal tells, and an imported one is said
+    # to be so whatever kind its manifest claims (M16-04).
+    pre_write = _pre_write_ids(store) if manifest.kind is None else frozenset[str]()
+    kind = snapshot.kind_of(manifest, pre_write, store.imported_ids())
+    manifest = manifest.model_copy(update={"kind": kind})
     if json_out:
         _emit_manifest(manifest)
         return
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
-    if manifest.kind is not None:
-        _say(f"  kind:     {manifest.kind}, {_KIND_WORDS[manifest.kind]}")
+    _say(f"  kind:     {kind}, {_KIND_WORDS[kind]}")
     if manifest.label:
         _say(f"  label:    {manifest.label}")
     _say(f"  install:  {manifest.install_root}")
@@ -7615,6 +7625,79 @@ def snap_gc(
         )
     else:
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
+
+
+@snap_app.command("export", short_help="Write one snapshot to a file you can carry elsewhere.")
+@_handled
+def snap_export(
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
+    file: Annotated[
+        Path,
+        typer.Argument(
+            metavar="FILE",
+            help="The new file to write, outside any game install. An existing file is "
+            "never replaced.",
+        ),
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Write one snapshot, with every file it holds, into a single new FILE
+    that `wowlab snap import` reads on another computer. Reads the store
+    only and opens nothing in a game install; FILE inside an install is
+    refused.
+
+    \f
+    JSON: snaparchive.ExportReport."""
+    store = snapshot.SnapshotStore()
+    report = snaparchive.export_snapshot(store, _resolve_ref(store, snapshot_id), file)
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Exported snapshot {report.id} to {report.file}")
+    _say(
+        f"  {report.files} file(s), {_bytes(report.bytes)}; "
+        f"the archive is {_bytes(report.archive_bytes)}"
+    )
+
+
+@snap_app.command("import", short_help="Add a snapshot from a file snap export wrote.")
+@_handled
+def snap_import(
+    file: Annotated[
+        Path, typer.Argument(metavar="FILE", help="A file written by wowlab snap export.")
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Add the snapshot in FILE to this computer's store. Every file in it
+    is checked against its recorded size and content hash first; a damaged
+    or unexpected archive adds nothing. Changes nothing in a game install:
+    put the snapshot back with `wowlab snap restore`.
+
+    \f
+    JSON: snaparchive.ImportReport."""
+    store = snapshot.SnapshotStore()
+    with guard.store_lock(store.path, create=True):
+        report = snaparchive.import_snapshot(store, file)
+    if json_out:
+        _emit(report)
+        return
+    if report.added:
+        _say(f"Imported snapshot {report.id}")
+    else:
+        _say(f"Snapshot {report.id} is already in the store; nothing was added.")
+    _say(f"  taken:   {report.created_at}, on the computer it came from")
+    _say(
+        f"  of:      {report.flavor_folder} ({report.flavor_version or 'no version'}) "
+        f"in {report.install_root}"
+    )
+    if report.label:
+        _say(f"  label:   {report.label}")
+    _say(f"  files:   {report.files}")
+    _say(
+        f"To put it into an install on this computer: wowlab snap restore {report.id} "
+        "--into-root <install folder> (add --into-flavor <folder> if its folder has "
+        "another name there)."
+    )
 
 
 _RELOGIN = (
@@ -8359,7 +8442,8 @@ def snap_restore(
         typer.Option(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
-            "A path the snapshot covers but does not hold is deleted. A named path is "
+            "If the snapshot has no file at a path you name, inside a folder it saved, the "
+            "file on disk at that path is deleted. A named path is "
             "restored even when its file-map row says wowlab leaves it alone, except an "
             "executable, which never is. Nor is a screenshot: wowlab never writes "
             "Screenshots/.",
@@ -8669,13 +8753,19 @@ def undo(
     ] = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Undo the most recent change made through the write gate (a restore, or an
-    earlier undo), from the snapshot taken before it.
+    """Undo the most recent change wowlab made to your game files: a
+    `snap restore`, `profile apply`, `sv merge`, `addon install` or
+    `addon remove`, or an earlier undo. It shows the plan and asks first, then
+    puts your files back as they were before that change, from the snapshot
+    taken before it; files it added are deleted.
 
-    The journal is read again after you answer, and the undo is refused if
-    its most recent record changed meanwhile. The gate compares again under
-    its store lock, so a change journaled
-    after that re-read is refused too: only the record shown is undone.
+    Undo steps back one change only. An undo is itself a change, so running
+    `wowlab undo` a second time redoes what the first one undid. To go further
+    back, pick an older snapshot with `snap list` and put it back with
+    `snap restore`.
+
+    Only the change the plan shows is undone: if another change is recorded
+    after the plan was shown, nothing is undone.
 
     \f
     JSON: UndoReport."""

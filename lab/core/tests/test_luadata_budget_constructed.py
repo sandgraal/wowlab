@@ -182,14 +182,15 @@ POSITION_LIMIT = 64 * 1024 * 1024
 ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
 
 
-class ProbeReading(UserWarning):
-    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+# Readings are plain UserWarnings, shown in the warnings summary (not a
+# fault). A warning class defined in a test module cannot be unpickled by
+# an xdist controller, which cannot import the module by name (M16-61T).
 
 
 def _position_readings(parser: str = "luadata") -> tuple[int, int, int]:
     """The refusal's line and column, and the child's RSS growth in bytes.
 
-    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    Each reading is a "probe reading" `UserWarning`, so the warnings
     summary of the CI log shows it for a passing test too. A child that
     reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`)."""
     for _ in range(ZERO_GROWTH_TRIES):
@@ -201,7 +202,8 @@ def _position_readings(parser: str = "luadata") -> tuple[int, int, int]:
         ).stdout.split()
         line, column, grown = int(out[0]), int(out[1]), int(out[2])
         warnings.warn(
-            ProbeReading(f"{sys.platform} refusal {parser}: growth {grown / 2**20:.2f} MiB"),
+            f"probe reading, {sys.platform} refusal {parser}: growth {grown / 2**20:.2f} MiB",
+            UserWarning,
             stacklevel=2,
         )
         if grown > 0:

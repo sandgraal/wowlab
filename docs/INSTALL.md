@@ -344,7 +344,7 @@ What to look for:
   log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
   the result. Every command is offered except `ui` itself,
-  `log tail --follow` and `looks page --out`. The six that change game
+  `log tail --follow`, `looks page --out` and `snap export`. The six that change game
   files are `snap restore`, `undo`, `profile apply`, `sv merge`,
   `addon install` and `addon remove`: each shows its plan first, takes a
   snapshot before it writes, and `wowlab undo` reverses it.
@@ -393,7 +393,11 @@ stored files that no snapshot needs, after asking.
   into the new folder, and `wowlab profile apply <name> --into-flavor <new folder>`
   does the same for a profile. `--into-root <path>` restores into another
   install folder on this machine (a reinstall somewhere else, or a second
-  install); wowlab cannot yet carry a snapshot to another computer. The plan
+  install). To carry a snapshot to another computer,
+  `wowlab snap export <id> <file>` writes it into one file (outside any
+  install), and `wowlab snap import <file>` on the other computer adds it to
+  that computer's snapshots once every file in it has passed its check;
+  then restore it there with `--into-root`. The plan
   names both folders and which account folder under `WTF/Account/` goes
   where. When the snapshot and the target each have one account folder they
   are paired for you; otherwise say which goes where with

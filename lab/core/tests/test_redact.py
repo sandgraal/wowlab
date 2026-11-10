@@ -171,8 +171,9 @@ def test_constructed_an_apostrophe_in_a_home_folder_name_stays_inside_it() -> No
 
 def test_constructed_login_and_host_names_follow_the_whole_word_rule() -> None:
     replace = redact.Redactor(users=["jp", "jprdmr"], hosts=["stormwind-pc"])
-    assert replace("jp ran jprdmr on stormwind-pc; jpg xjprdmrx") == (
-        f"{USER} ran {USER} on {HOST}; jpg x{USER}x"
+    # M16-44: a login is replaced only inside a path-shaped token.
+    assert replace("/srv/jp/ran /srv/jprdmr on stormwind-pc; /jpg/ /xjprdmrx/") == (
+        f"/srv/{USER}/ran /srv/{USER} on {HOST}; /jpg/ /x{USER}x/"
     )
 
 
@@ -248,3 +249,82 @@ def test_the_scrub_tool_takes_its_identifier_patterns_from_the_package() -> None
         )  # imported, not redefined
     assert module._realm_forms("Area 52") == redact.realm_forms("Area 52")
     assert "def _realm_forms" not in source
+
+
+# ─── M16-44: a login only inside a path-shaped token (constructed) ───────────
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("(found by $WOWLAB_WOW_ROOT)", "(found by $WOWLAB_WOW_ROOT)"),
+        ("root user, admin root", "root user, admin root"),
+        ("/srv/root/wow", f"/srv/{USER}/wow"),
+        ("/srv/rootless/wow", "/srv/rootless/wow"),
+        (r"D:\root\Games\World of Warcraft", rf"D:\{USER}\Games\World of Warcraft"),
+        (r"D:\\root\\Games", rf"D:\\{USER}\\Games"),
+        (r"C:\Program Files\root things\x", rf"C:\Program Files\{USER} things\x"),
+        ("'/Volumes/root/WoW' and root", f"'/Volumes/{USER}/WoW' and root"),
+        ("~/root and root/", f"~/{USER} and {USER}/"),
+        ("(/opt/root)", f"(/opt/{USER})"),
+        # Round 1: the last folder name may hold spaces too, to the line's end
+        # or a quote; `~name` is a path; a blank then `(` ends the token.
+        (r"D:\Games\WoW root", rf"D:\Games\WoW {USER}"),
+        ("/srv/games/my root", f"/srv/games/my {USER}"),
+        ("~root", f"~{USER}"),
+        ("see ~root/wow", f"see ~{USER}/wow"),
+        (r"C:\Program Files (x86)\root\x", rf"C:\Program Files (x86)\{USER}\x"),
+        (
+            "Install: /x/root/World of Warcraft (found by $WOWLAB_WOW_ROOT)",
+            f"Install: /x/{USER}/World of Warcraft (found by $WOWLAB_WOW_ROOT)",
+        ),
+    ],
+)
+def test_constructed_a_login_is_replaced_only_inside_a_path(text: str, expected: str) -> None:
+    assert redact.Redactor(users=["root"])(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("login", "text", "expected"),
+    [
+        ("John Smith", r"D:\Games\John Smith", rf"D:\Games\{USER}"),
+        # As `repr()` (and so `str(OSError)`) writes a Windows path.
+        ("jsmit", r"'E:\\Games\\Copy of jsmit'", rf"'E:\\Games\\Copy of {USER}'"),
+        # Round 2: a bracket in a folder name is path text, not a gloss.
+        ("jsmit", r"D:\Games\Backup (jsmit)", rf"D:\Games\Backup ({USER})"),
+        ("jsmit", r"D:\Games\Backup (jsmit)\WoW", rf"D:\Games\Backup ({USER})\WoW"),
+        ("jsmit", "/srv/old (jsmit) files", f"/srv/old ({USER}) files"),
+        # The Lab's own gloss after a path ends the token; the variable keeps its name.
+        (
+            "jsmit",
+            r"Install: D:\jsmit (found by $WOWLAB_WOW_JSMIT)",
+            rf"Install: D:\{USER} (found by $WOWLAB_WOW_JSMIT)",
+        ),
+    ],
+)
+def test_constructed_a_login_in_the_last_folder_name_is_replaced(
+    login: str, text: str, expected: str
+) -> None:
+    assert redact.Redactor(users=[login])(text) == expected
+
+
+def test_constructed_a_login_that_is_also_a_name_still_goes_everywhere() -> None:
+    replace = redact.Redactor(users=["Thrallina"], characters=["Thrallina"])
+    assert replace("Thrallina at /srv/Thrallina") == f"{CHARACTER} at /srv/{CHARACTER}"
+
+
+def test_constructed_path_tokens_scale_linearly() -> None:
+    # Hostile shapes for the path-token pattern: separator runs, and a long
+    # run with no separator. Each is matched in one pass, not one per byte.
+    for text in (
+        "/" * 200_000,
+        "a/" * 100_000,
+        ("a" * 50 + " ") * 20_000,
+        "x/" + " " * 200_000,
+        "x/" + " " * 200_000 + "(",
+        "x/" + " (" * 100_000,
+        "x/" + " (found by" * 20_000,
+        "x/" + " " * 200_000 + "(found by ",
+        "~" * 200_000,
+    ):
+        redact._PATH_TOKEN_RE.sub("", text)

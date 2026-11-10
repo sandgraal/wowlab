@@ -2,8 +2,8 @@
 
 A real run moves each combat log's timestamps and file-name stamp by that
 log's own random, secret offset (`draw_time_shift`, docs/LAB_PLAN.md section
-8, amendment 2026-09-24). Under test, every draw returns DEFAULT_OFFSET, a
-fixed offset inside the real range, so every suite that captures a combat log
+8, amendment 2026-09-24). Under test, every draw returns DEFAULT_OFFSET
+(_lab_capture_offset.py), a fixed offset inside the real range, so every suite that captures a combat log
 exercises the shift. A test of the draw itself or of per-log independence
 replaces `draw_time_shift` again (test_lab_capture_followup5_round1.py).
 
@@ -17,9 +17,8 @@ test_constructed_capture_changes_only_timestamp_identity_and_guid_spans.
 from __future__ import annotations
 
 import pytest
+from _lab_capture_offset import DEFAULT_OFFSET
 from test_lab_capture import lab_capture
-
-DEFAULT_OFFSET = 123 * 86400 + 4567  # invented; inside SHIFT_MIN..SHIFT_MAX
 
 ZERO_OFFSET = {
     # Oracle: bytes outside the identity spans must equal the source, by offset.
