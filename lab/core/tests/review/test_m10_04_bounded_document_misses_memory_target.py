@@ -151,8 +151,9 @@ STAND_IN_ROUNDS = 3
 ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
 
 
-class ProbeReading(UserWarning):
-    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+# Readings are plain UserWarnings, shown in the warnings summary (not a
+# fault). A warning class defined in a test module cannot be unpickled by
+# an xdist controller, which cannot import the module by name (M16-61T).
 
 
 CHILD = r"""
@@ -207,7 +208,7 @@ def _readings(
 ) -> tuple[int, int, int]:
     """The child's peak RSS before and after the parse, and the slice size, in bytes.
 
-    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    Each reading is a "probe reading" `UserWarning`, so the warnings
     summary of the CI log shows it for a passing test too. A child that
     reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`).
     """
@@ -220,10 +221,10 @@ def _readings(
         ).stdout.split()
         before, after, size = int(out[0]), int(out[1]), int(out[2])
         warnings.warn(
-            ProbeReading(
-                f"{sys.platform} {shape} {parser} x{count}: before {before / MIB:.1f} MiB, "
-                f"after {after / MIB:.1f} MiB, growth {(after - before) / MIB:.2f} MiB"
-            ),
+            f"probe reading, {sys.platform} {shape} {parser} x{count}: "
+            f"before {before / MIB:.1f} MiB, after {after / MIB:.1f} MiB, "
+            f"growth {(after - before) / MIB:.2f} MiB",
+            UserWarning,
             stacklevel=2,
         )
         if after > before:
@@ -270,10 +271,10 @@ def _timed_child(shape: str, count: int, parser: str) -> tuple[int, int, int, in
     before, after, size = (int(field) for field in proc.stdout.split())
     footprint = int(found.group(1))
     warnings.warn(
-        ProbeReading(
-            f"darwin {shape} {parser} x{count}: ru_maxrss before {before / MIB:.1f} MiB, "
-            f"after {after / MIB:.1f} MiB; peak footprint {footprint / MIB:.1f} MiB"
-        ),
+        f"probe reading, darwin {shape} {parser} x{count}: "
+        f"ru_maxrss before {before / MIB:.1f} MiB, after {after / MIB:.1f} MiB; "
+        f"peak footprint {footprint / MIB:.1f} MiB",
+        UserWarning,
         stacklevel=2,
     )
     return before, after, size, footprint

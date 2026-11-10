@@ -1000,7 +1000,9 @@ def parse_index_file(data: bytes, bucket: int, version: int, name: str = "") -> 
         )
     if extra != 0:
         raise CascUnsupportedError(
-            f"{name}: extra byte {extra}; this reader knows 0 (its meaning is [verify])", path
+            f"{name}: extra byte {extra}; this reader knows only 0, and what another value "
+            "means is not known",
+            path,
         )
     if idx_bucket != bucket:
         raise CascMalformedError(
@@ -1383,7 +1385,7 @@ def _refuse_mode(block: memoryview, i: int, path: Path | None) -> NoReturn:
     cipher = mode_text(body[cipher_at])
     raise EncryptedContent(
         f"block {i} is encrypted with the key {key_name} (cipher {cipher!r}); wowlab does "
-        "not decrypt (ADR-0033)",
+        "not decrypt game files",
         key_name,
         i,
         cipher,

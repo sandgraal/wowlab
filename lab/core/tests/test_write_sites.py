@@ -92,7 +92,8 @@ _UI_RUN = (
     "`wowlab ui` (ADR-0029, M13-24): starts only the same `wowlab` (this interpreter by "
     "absolute path, `-P -m wowlab_core`) with an argv list and no shell, built from the "
     "Click leaf's declared parameters; every leaf that declares --yes, `ui`, `log tail "
-    "--follow` and `looks page --out` are refused, so the child writes only what the CLI "
+    "--follow`, `looks page --out` and `snap export` are refused, so the child writes "
+    "only what the CLI "
     "itself writes, never into an install outside the gate; the server writes no file"
 )
 _CLI = "lab/core/src/wowlab_core/cli.py"
@@ -107,7 +108,43 @@ _JOB = (
     "AssignProcessToJobObject, TerminateJobObject, CloseHandle; ntdll NtResumeProcess), "
     "all on handles the module created; it opens no other process and writes no file (L7)"
 )
+_SNAPARCHIVE = "lab/core/src/wowlab_core/snaparchive.py"
+_EXPORT_FILE = (
+    "`wowlab snap export` (M16-04): only the one new file the player named, created with "
+    "O_CREAT | O_EXCL | O_NOFOLLOW (an existing file or a link is never written through) "
+    "through a descriptor on its folder, held to be the folder guard's inside-any-install "
+    "rule and an inside-the-store check examined (POSIX); both checks run again once the "
+    "file exists, before a byte is written. Import reads an archive only and extracts "
+    "nothing to a path; what it adds goes through the store"
+)
+_EXPORT_CLEANUP = (
+    _EXPORT_FILE + "; after a failure, only while its name (in the held folder, POSIX; by "
+    "path elsewhere) still names the file this export created, by device and inode, and "
+    "is not a link: an install's file reached through a swapped folder is never removed"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_SNAPARCHIVE, "import zipfile"): _EXPORT_FILE,
+    (_SNAPARCHIVE, "fd = os.open(target.name, _CREATE_FLAGS, 0o666, dir_fd=dir_fd)"): (
+        _EXPORT_FILE
+    ),
+    (_SNAPARCHIVE, "fd = os.open(target, _CREATE_FLAGS, 0o666)"): _EXPORT_FILE
+    + "; where there are no folder descriptors (Windows)",
+    (_SNAPARCHIVE, 'with os.fdopen(fd, "wb") as out:'): _EXPORT_FILE,
+    (
+        _SNAPARCHIVE,
+        '_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and {os.open, os.stat, os.unlink} '
+        "<= os.supports_dir_fd",
+    ): _EXPORT_CLEANUP + "; this line only asks whether the platform can",
+    (_SNAPARCHIVE, "os.unlink(target.name, dir_fd=dir_fd)"): _EXPORT_CLEANUP,
+    (
+        _SNAPARCHIVE,
+        "dir_fd = os.open(resolved.parent, os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW)",
+    ): _EXPORT_FILE + "; this opens the export's folder read-only (O_RDONLY | O_DIRECTORY), "
+    "without following a link, and writes nothing",
+    (_SNAPARCHIVE, 'parent = os.open("..", _WALK_FLAGS, dir_fd=fd)'): _EXPORT_FILE
+    + "; this opens each folder above the export's read-only (O_PATH, or O_RDONLY, with "
+    "O_DIRECTORY) to examine it for install markers, and writes nothing",
+    (_SNAPARCHIVE, "target.unlink()"): _EXPORT_CLEANUP,
     (_UI, "import subprocess"): _UI_RUN,
     (_WINJOB, "import ctypes"): _JOB,
     (_WINJOB, "from ctypes import wintypes"): _JOB,
