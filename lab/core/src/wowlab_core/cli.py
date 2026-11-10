@@ -4210,6 +4210,12 @@ def _sv_file_and_root(path: str, root: Path | None, flavor: str | None) -> tuple
     except install.InstallError:
         return given, None
     holding = _install_holding(given, found.root)
+    if holding is not None and ".." in given.absolute().parts:
+        raise CliError(
+            f"refused: {given} has '..' in it, and wowlab reads a file in an install only "
+            "by a path without '..'",
+            EXIT_REFUSED,
+        )
     if holding is None and _really_inside(given, found.root):
         # Another spelling of the install (a link to it, the folder named in
         # another case, a working folder reached by its real path): the walk
@@ -4237,17 +4243,23 @@ def _install_holding(path: Path, root: Path) -> Path | None:
 
 
 def _really_inside(path: Path, root: Path) -> bool:
-    """Whether `path`, every link on the way resolved, is under `root`: some
-    folder above its real path is the root's folder by device and inode, so
-    a link to the root and the root named in another case (macOS, Windows)
-    count too. False when either cannot be resolved."""
+    """Whether `path` names something under `root` by another spelling of
+    it: some folder above the path, as spelled (`..` taken lexically), is the root's folder by
+    device and inode (each `stat`ed following links, so a link to the root
+    and the root named in another case on macOS or Windows count, and a
+    linked folder further down cannot hide it); or, as a second check, some
+    folder above its real path is. False when the root cannot be `stat`ed."""
     try:
-        real = Path(longpath.realpath(path))
         st = longpath.stat(root)
     except (OSError, ValueError):
         return False
     want = (st.st_dev, st.st_ino)
-    for folder in real.parents:
+    # `..` taken lexically first, as `_install_holding` takes it, so a folder
+    # a `..` steps back out of is not counted as holding the file.
+    folders = list(reversed(Path(os.path.normpath(path.absolute())).parents))
+    with contextlib.suppress(OSError, ValueError):
+        folders += list(Path(longpath.realpath(path)).parents)
+    for folder in folders:
         try:
             here = longpath.stat(folder)
         except OSError:
