@@ -51,7 +51,6 @@ UPLOAD = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 SETUP_UV = "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2"  # v10.3.3
-ACTIONLINT = "raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7"
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
 
@@ -61,8 +60,10 @@ ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504d
 # - setup-uv: `enable-cache` defaults to `auto` (on, on hosted runners).
 #   Re-read 2026-11-05 at v10.3.3 (dependabot #373): action.yml is byte-
 #   identical to v10.3.0's, so only the pin moved.
-# - actionlint: `cache` defaults to true and restores the actionlint binary
-#   with a nested actions/cache step.
+# - actionlint (raven-actions/actionlint, until M13-65): `cache` defaulted
+#   to true and restored the actionlint binary with a nested actions/cache
+#   step. ci.yml now downloads the binary itself at a pinned, checksummed
+#   release (tests/repo/test_ci_actionlint_pinned.py), so no action is used.
 # - trivy-action: `cache` defaults to true; it restores the trivy database
 #   with a nested actions/cache step and passes the input to its nested
 #   aquasecurity/setup-trivy@3fb12ec, which restores and saves the trivy
@@ -76,14 +77,13 @@ ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504d
 # whose action.yml has no cache input and no nested action: nothing.
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
-    ACTIONLINT: "cache",
     TRIVY: "cache",
 }
 
 # The actions each workflow may use, exactly: a missing entry fails, and so
 # does an entry the workflow no longer uses.
 ALLOWED: Mapping[str, frozenset[str]] = {
-    "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, ACTIONLINT, TRIVY}),
+    "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, TRIVY}),
     "latest-release.yml": frozenset({CHECKOUT, SETUP_UV}),
     "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST}),
     "windows.yml": frozenset({CHECKOUT, SETUP_UV}),
@@ -266,7 +266,7 @@ def test_a_cache_input_is_caught(uses: str, key: str, value: object) -> None:
     assert _kinds(_findings("release.yml", workflow, allowed)) == {"cache-input"}
 
 
-@pytest.mark.parametrize("uses", [ACTIONLINT, TRIVY])
+@pytest.mark.parametrize("uses", [TRIVY])
 def test_an_action_whose_cache_is_on_by_default_must_turn_it_off(uses: str) -> None:
     for value in ("<omitted>", True, "true"):
         workflow = _mutated("ci.yml")
