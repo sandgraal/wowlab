@@ -135,6 +135,7 @@ from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    addoncheck,
     addoninstall,
     bindscoach,
     combatlog,
@@ -2972,6 +2973,18 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
 
 
+def _addons_check_view(at: _At) -> list[_ViewSpec] | str:
+    """M16-34: a character's AddOns.txt is read by `addons check`, which
+    names the characters that list each installed addon."""
+    return [
+        (
+            ("addons", "check"),
+            _flavor(at),
+            "check each addon against this client, and which characters' AddOns.txt list it",
+        )
+    ]
+
+
 def _addon_executable(at: _At) -> list[_ViewSpec] | str:
     """An addon folder named like a bundle (`Interface/AddOns/Foo.app/`) is
     still an addon folder, and `addons list` lists it. Anything inside an
@@ -3037,6 +3050,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "account-bindings-cache": _account_binds,
     "account-macros-cache": _account_macros,
     "character-wtf-config": _character_wtf,
+    "character-addons-txt": _addons_check_view,
     "addons-folder": _addons_list,
     "addon": _addons_list,
     "addon-executable": _addon_executable,
@@ -3712,6 +3726,53 @@ class SvListReport(_Out):
     flavor_folder: str
     files: list[layout.SavedVariablesFile]
     notes: list[str]  # the caveats the text output prints
+    # M16-34: with --orphans, `files` holds only those no installed TOC declares.
+    orphans: bool = False
+
+
+OrphansOpt = Annotated[
+    bool,
+    typer.Option(
+        "--orphans",
+        help="Only the files that no installed addon declares (saved data an addon left "
+        "behind), with their size and the total.",
+    ),
+]
+_ORPHAN_REINSTALL = (
+    "If the addon is installed again it reads this file again, so deleting it loses those settings."
+)
+_ORPHAN_WHAT = (
+    "A file is listed when Interface/AddOns/ holds no folder of its name, or when that "
+    "folder's TOC declares no SavedVariables (account-wide file) or no "
+    "SavedVariablesPerCharacter (character file). Such a file is usually left by an addon "
+    "that was removed, renamed, or stopped saving at that scope. The client does not delete "
+    "it, and neither does wowlab. " + _ORPHAN_REINSTALL
+)
+_ORPHAN_BLIZZARD = (
+    "Blizzard's own files (SavedVariables.lua and Blizzard_*.lua) are never listed: the "
+    "client loads its own addons from game data, not from Interface/AddOns/ [verify]."
+)
+
+
+def _lab_records_caveat(n: int) -> str:
+    return (
+        f"Not listed: {_plural(n, 'WowLab.lua file')}, the lab-addon's records, which wowlab "
+        "reads whether or not the lab-addon is installed."
+    )
+
+
+def _no_toc_caveat(folders: Sequence[str]) -> str:
+    return (
+        f"Not listed: the saved data of {', '.join(folders)}, whose folder has no TOC named "
+        "after it (often an addon unzipped one folder too deep); `wowlab addons check` shows it."
+    )
+
+
+def _not_judged_caveat(folders: Sequence[str]) -> str:
+    return (
+        f"Not judged: the saved data of {', '.join(folders)}, whose TOC could not be read; "
+        "`wowlab addons check` says why."
+    )
 
 
 @sv_app.command("list", short_help="Every SavedVariables file, account-wide and per character.")
@@ -3719,11 +3780,15 @@ class SvListReport(_Out):
 def sv_list(
     account: AccountOpt = None,
     character: CharacterOpt = None,
+    orphans: OrphansOpt = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
-    """Every SavedVariables file, account-wide and per character.
+    """Every SavedVariables file, account-wide and per character. With
+    --orphans, only the files that no installed addon declares, with their
+    size and the total; its standing notes are behind --notes. Reads only.
 
     \f
     JSON: SvListReport."""
@@ -3746,6 +3811,9 @@ def sv_list(
         if account is None and character is None
         else []
     )
+    if orphans:
+        _sv_orphans(lay, chosen.folder, files, no_account, json_out, notes_out)
+        return
     report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING, *no_account])
     if json_out:
         _emit(report)
@@ -3753,13 +3821,62 @@ def sv_list(
     if not files:
         _say("No SavedVariables files.")
     for f in files:
-        who = "Blizzard UI" if f.blizzard else (f.addon or "?")
-        flags = " (previous write, .bak)" if f.backup else ""
-        _say(f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}")
+        _say(_sv_row(f))
     if files:
         _say(_SV_TIMING)
     for line in no_account:
         _say(line)
+
+
+def _sv_row(f: layout.SavedVariablesFile) -> str:
+    who = "Blizzard UI" if f.blizzard else (f.addon or "?")
+    flags = " (previous write, .bak)" if f.backup else ""
+    return f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}"
+
+
+def _sv_orphans(
+    lay: layout.Layout,
+    flavor_folder: str,
+    files: Sequence[layout.SavedVariablesFile],
+    no_account: Sequence[str],
+    json_out: bool,
+    notes_out: bool,
+) -> None:
+    """M16-34, `sv list --orphans`: the answer (a count, then the rows), at
+    most one caveat for this result, then the standing notes or a footer."""
+    found = addoncheck.orphan_saved_variables(files, lay.addons())
+    # What was left out, most telling first: the first is this result's one
+    # caveat, any other joins the standing notes ahead of them.
+    left_out = [
+        *([_lab_records_caveat(len(found.lab_addon_records))] if found.lab_addon_records else []),
+        *([_no_toc_caveat(found.no_toc)] if found.no_toc else []),
+        *([_not_judged_caveat(found.not_judged)] if found.not_judged else []),
+    ]
+    caveat = left_out[0] if left_out else None
+    standing = [*left_out[1:], _ORPHAN_WHAT, _ORPHAN_BLIZZARD, _SV_TIMING, *no_account]
+    report = SvListReport(
+        flavor_folder=flavor_folder,
+        files=list(found.files),
+        notes=[caveat, *standing] if caveat is not None else standing,
+        orphans=True,
+    )
+    if json_out:
+        _emit(report)
+        return
+    if not found.files:
+        _say("No SavedVariables file is left without an installed addon that declares it.")
+    else:
+        addons = {wtfconfig.fold_name(f.addon or "") for f in found.files}
+        total = sum(f.size for f in found.files)
+        verb = "is" if len(found.files) == 1 else "are"
+        _say_prose(
+            f"{_plural(len(found.files), 'SavedVariables file')} of "
+            f"{_plural(len(addons), 'addon')}, {_bytes(total)} in all, {verb} declared by no "
+            f"installed addon. {_ORPHAN_REINSTALL}"
+        )
+        for f in found.files:
+            _say(_sv_row(f))
+    _say_notes(standing, notes_out, caveat, keep=[*found.not_judged, *found.no_toc, *no_account])
 
 
 def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:
@@ -6332,6 +6449,195 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         _say("  ".join(bits))
+
+
+class AddonsCheckReport(_Out):
+    """`wowlab addons check --json`."""
+
+    flavor_folder: str
+    check: addoncheck.AddonsCheck
+    notes: list[str]  # the caveat, if any, then the standing notes
+
+
+_CHECK_OUT_OF_DATE = (
+    "An interface that differs from the client's makes the client list the addon as out of "
+    "date; it does not change what the addon can call. This client's interface is worked out "
+    "from its version: major x 10000 + minor x 100 + patch."
+)
+_CHECK_DEFAULT = (
+    "An addon that a character's AddOns.txt does not list is at the client's default for that "
+    "character, so a missing name does not mean disabled. When a character has two folders "
+    "that each hold an AddOns.txt, which one the client reads is not known [verify]."
+)
+_CHECK_BLIZZARD = (
+    "A Blizzard_ dependency is taken to be one of the client's own addons, which load from "
+    "game data, not from Interface/AddOns/ [verify]. wowlab cannot see which ones this client "
+    "ships, so it never counts one as missing."
+)
+_CHECK_DEPS = (
+    "Only RequiredDeps and Dependencies are checked; OptionalDeps and other Dep-prefixed "
+    "directives (which the client may also treat as required [verify]) are not."
+)
+
+
+def _check_caveat(check: addoncheck.AddonsCheck) -> str | None:
+    """The one caveat that applies to this result, if any."""
+    if check.client_interface is None:
+        return (
+            "wowlab cannot tell this client's interface: the flavor's version is not known, "
+            "so no addon's interface is judged."
+        )
+    unread = [t for t in check.addons_txt if t.error is not None]
+    if unread:
+        return (
+            f"{_plural(len(unread), 'AddOns.txt file')} could not be read, so the characters "
+            "shown may be incomplete: " + "; ".join(f"{t.path}: {t.error}" for t in unread)
+        )
+    return None
+
+
+_TocRole = Literal["only", "several", "another game type"]
+
+
+def _check_interface(toc: addoncheck.TocCheck, interface: int | None, role: _TocRole) -> str:
+    """`role`: the addon's one TOC; one of several; or one of several when
+    another one matches this client, so this one is for another game type."""
+    if toc.interface_status == "unread":
+        return f"not read: {toc.error}"
+    if toc.interface_status == "none":
+        return "no ## Interface: line"
+    if toc.interface_status == "matches":
+        return f"{toc.interface}: matches this client"
+    if toc.interface_status == "differs":
+        if role == "another game type":
+            # wowlab's own words, rendered for a player; the interface is the TOC's.
+            return f"{toc.interface}: " + _player_copy("taken to be for another game type [verify]")
+        if role == "several":
+            return f"{toc.interface}: not this client's {interface}"
+        return f"{toc.interface}: this client is {interface}, so it is out of date"
+    return f"{toc.interface}: this client's is not known"
+
+
+def _check_toc_lines(
+    toc: addoncheck.TocCheck, interface: int | None, indent: str, role: _TocRole
+) -> list[str]:
+    lines = [f"{indent}interface   {_check_interface(toc, interface, role)}"]
+    if toc.interface_status == "unread":
+        return lines
+    if toc.dependencies:
+        words = {
+            "installed": "installed",
+            "installed_no_toc": "installed, but has no TOC the client loads",
+            "missing": "not installed",
+            "blizzard": "the client's own",
+        }
+        deps = ", ".join(f"{d.name} ({words[d.status]})" for d in toc.dependencies)
+        lines.append(f"{indent}needs       {deps}")
+    else:
+        lines.append(f"{indent}needs       nothing")
+    lines.append(
+        f"{indent}loads       "
+        + (
+            "on demand: only when another addon or the client asks for it"
+            if toc.load_on_demand
+            else "at login, when enabled"
+        )
+    )
+    lines.append(f"{indent}version     {_ui_text(toc.version) if toc.version else 'not given'}")
+    return lines
+
+
+def _check_characters(addon: addoncheck.AddonCheck, files: int) -> str:
+    if files == 0:
+        return "no character folder holds an AddOns.txt"
+    if not addon.characters:
+        if files == 1:
+            return "not listed in the one AddOns.txt found"
+        return f"not listed in any of the {files} AddOns.txt files found"
+    groups: dict[str, list[str]] = {}
+    for c in addon.characters:
+        groups.setdefault(c.state, []).append(f"{c.realm_folder}/{c.character_folder}")
+    return "; ".join(f"{state} for {', '.join(names)}" for state, names in groups.items())
+
+
+@addons_app.command(
+    "check", short_help="Each addon against this client: interface, dependencies, characters."
+)
+@_handled
+def addons_check(
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """Check each folder under Interface/AddOns/: its TOC's interface against
+    this client's, a required dependency that is not installed, whether it
+    loads on demand, its version, and which characters' AddOns.txt list it.
+    Reads only; nothing is fetched.
+
+    \f
+    JSON: AddonsCheckReport."""
+    _, chosen, lay = _open(root, flavor)
+    check = addoncheck.check_addons(lay, chosen.version)
+    caveat = _check_caveat(check)
+    standing = [_CHECK_OUT_OF_DATE, _CHECK_DEFAULT, _CHECK_BLIZZARD, _CHECK_DEPS]
+    report = AddonsCheckReport(
+        flavor_folder=chosen.folder,
+        check=check,
+        notes=[caveat, *standing] if caveat is not None else standing,
+    )
+    if json_out:
+        _emit(report)
+        return
+    addons = check.addons
+    if not addons:
+        _say("No addon folders.")
+    else:
+        missing = sum(1 for a in addons if a.missing_dependencies)
+        differs = sum(1 for a in addons if a.out_of_date)
+        none_for_client = sum(1 for a in addons if a.no_toc_for_client)
+        unloaded = sum(1 for a in addons if a.selection == "no_toc")
+        unloadable = sum(1 for a in addons if a.unloadable_dependencies)
+        bits = [f"{missing} missing a required addon", f"{differs} out of date"]
+        if unloadable:
+            bits.append(f"{unloadable} needing an addon that has no TOC the client loads")
+        if none_for_client:
+            bits.append(f"{none_for_client} with several TOCs, none for this client's interface")
+        if unloaded:
+            bits.append(f"{unloaded} with no TOC the client loads")
+        interface = (
+            f"this client's interface is {check.client_interface}"
+            if check.client_interface is not None
+            else "this client's interface is not known"
+        )
+        _say(f"{_plural(len(addons), 'addon')}: {', '.join(bits)}; {interface}.")
+    files = len(check.addons_txt)
+    for a in addons:
+        _say()
+        head = [a.name]
+        titled = next((t.title for t in a.tocs if t.title), None)
+        if titled:
+            head.append(f'"{_ui_text(titled)}"')
+        if a.blizzard:
+            head.append("named like a Blizzard addon")
+        _say("  ".join(head))
+        if a.selection == "no_toc":
+            _say("  no TOC file named after the folder; the client does not load it")
+        elif len(a.tocs) == 1:
+            for line in _check_toc_lines(a.tocs[0], check.client_interface, "  ", "only"):
+                _say(line)
+        else:
+            _say(f"  {len(a.tocs)} TOC files; which one loads depends on the game type")
+            one_match = sum(1 for t in a.tocs if t.interface_status == "matches") == 1
+            for toc in a.tocs:
+                role: _TocRole = "another game type" if one_match else "several"
+                _say(f"  {toc.file}")
+                for line in _check_toc_lines(toc, check.client_interface, "    ", role):
+                    _say(line)
+        _say(f"  characters  {_check_characters(a, files)}")
+    if addons:
+        _say()
+    _say_notes(standing, notes_out, caveat, keep=[t.path for t in check.addons_txt])
 
 
 # ─── log ─────────────────────────────────────────────────────────────────────
