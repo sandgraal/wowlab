@@ -7522,17 +7522,17 @@ def _added_since(
     and `lstat` only, following no link; flavor-relative, sorted."""
     prefix = folder + "/"
     held = {e.path for e in manifest.entries}
-    ours = guard.allowlisted_trees(manifest.subtrees, folder)
+    ours = guard._allowlisted_trees(manifest.subtrees, folder)
     if not ours:
         return ()
-    excluded = guard.allowlisted_trees(manifest.excluded, folder)
+    excluded = guard._allowlisted_trees(manifest.excluded, folder)
     listed = store.list_tree(install_root, ours, exclude=excluded)
     return tuple(
         path.removeprefix(prefix)
         for path, kind in listed
         if kind == "file"
         and path.startswith(prefix)
-        and guard.in_allowlist_root(path.removeprefix(prefix))
+        and guard._in_allowlist_root(path.removeprefix(prefix))
         and path not in held
     )
 

@@ -215,9 +215,7 @@ __all__ = [
     "PathNotAllowedError",
     "PlanItem",
     "Target",
-    "allowlisted_trees",
     "history",
-    "in_allowlist_root",
     "store_lock",
     "transaction",
     "undo",
@@ -233,7 +231,7 @@ _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
 
 
-def allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
+def _allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
     """`paths` (install-relative, `/`-separated, as a manifest names its
     subtrees or excluded paths) held to the allowlist roots of the flavor
     `folder`: `folder` itself stands for each root, a path below a root is
@@ -245,12 +243,12 @@ def allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
     for path in paths:
         if path == folder:
             out.update(here + root for root in _ROOTS)
-        elif path.startswith(here) and in_allowlist_root(path.removeprefix(here)):
+        elif path.startswith(here) and _in_allowlist_root(path.removeprefix(here)):
             out.add(path)
     return tuple(sorted(out))
 
 
-def in_allowlist_root(rel: str) -> bool:
+def _in_allowlist_root(rel: str) -> bool:
     """Whether `rel` (flavor-relative, `/`-separated) lies under, or is, one
     of the allowlist roots, spelled as the client spells them."""
     return rel.split("/", 1)[0] in _ROOTS
@@ -2217,10 +2215,10 @@ class _Transaction:
 
         # Held to the allowlist roots: a whole restore never names a file
         # outside them, so none is listed as one --paths could delete.
-        subtrees = allowlisted_trees(
+        subtrees = _allowlisted_trees(
             (t for s in manifest.subtrees if (t := target(s)) is not None), place.folder
         )
-        excluded = allowlisted_trees(
+        excluded = _allowlisted_trees(
             (t for x in manifest.excluded if (t := target(x)) is not None), place.folder
         )
         if not subtrees:
@@ -2236,7 +2234,7 @@ class _Transaction:
             for path, kind in listed
             if kind == "file"
             and path.startswith(here)
-            and in_allowlist_root(path.removeprefix(here))
+            and _in_allowlist_root(path.removeprefix(here))
         }
         if self._dry_run:
             for rel, data in self._overlay.items():
