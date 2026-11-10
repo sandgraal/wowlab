@@ -22,28 +22,65 @@ reader the install root and opens from it one component at a time
 - a regular path still reads byte for byte (L4) and changes nothing (L1),
   also when an unrelated link sits elsewhere in the install, and also when
   the root itself is reached through a link (what is above the root is the
-  caller's choice; the walk starts there).
+  caller's choice; the walk starts there);
+- a `..` component anywhere below the root is refused, whether it climbs out
+  of the root lexically, stays under it lexically but resolves outside
+  through a link, or resolves back inside;
+- a path that is not lexically under the root is refused, never downgraded
+  to M16-26's final-component check; that includes a root that differs from
+  the path's prefix only in case (decision: refused, on every volume; the
+  prefix is compared by its components as `pathlib` spells them, not by
+  device and inode). A root given as `str` with a trailing separator or a
+  trailing `/.` is the same root and reads;
+- a parent directory swapped for a link while the read is under way (POSIX,
+  a race injected through `os.open` / `os.lstat` / `os.stat`) either makes
+  the read refuse or leaves it reading the original file; it never returns
+  the capture behind the link. Only opening each component relative to the
+  descriptor of the one before (`dir_fd`, `O_NOFOLLOW`) passes this; a
+  per-component `lstat` followed by an open of the whole path does not;
+- on Windows, a real NTFS junction at a parent level, out of the install or
+  inside it, is refused (`_winapi.CreateJunction`, as
+  `test_snapshot_junctions.py` makes them; runs on the `lab (windows)` job).
 
-The seam (M16-49's to fill): each reader takes the install root as a keyword
-argument `root`, and the path stays the full path to the file, inside that
-root: `luadata.read(path, root=root)`, `wtfconfig.read_config(path,
-root=root)`, `read_bindings`, `read_macros` likewise. Today that keyword does
-not exist, so every marked grader fails with `TypeError`; the marker names
-`raises=TypeError` so a partial implementation (the keyword accepted, the
-link still followed) shows as a failure, not an expected one.
+The seam (M16-49's to fill):
+
+- each reader takes the install root as a keyword argument `root`, and the
+  path stays the full path to the file, inside that root:
+  `luadata.read(path, root=root)`, `wtfconfig.read_config(path, root=root)`,
+  `read_bindings`, `read_macros` likewise;
+- a path-shape refusal (a `..` component, a path not under the root) raises
+  `snapshot.UnsafeReadError`, before anything is opened, so a caller catches
+  one type for every refusal; a link met on the walk raises
+  `UnsafeReadError` or the open's own `OSError` (`ELOOP`, `ENOTDIR`,
+  `EMLINK`);
+- the walk reads `snapshot._O_NOFOLLOW` at call time, and with it 0 (the
+  Windows case, exercised on POSIX by setting it to 0) uses no `dir_fd`: no
+  `os.open` call carries one. That path then checks each component with
+  `lstat` and opens by path, so a window remains between the check and the
+  open on Windows. These graders cannot close it; it belongs in M16-49's
+  report.
+
+Today the keyword does not exist, so every marked grader fails with
+`TypeError`; the marker names `raises=TypeError` so a partial implementation
+(the keyword accepted, the link still followed) shows as a failure, not an
+expected one.
 
 Callers with no install root (`sv dump <path>` outside any install) keep
 M16-26's final-component check; that is graded by M16-26T's file
-(`test_parser_reads_regular_file_m16_26.py`) and not repeated here.
+(`test_parser_reads_regular_file_m16_26.py`). The unmarked control here also
+calls each reader with no root through a parent link, which follows it, as
+M16-49 says such callers keep doing (and say so in their output).
 
 The bytes read are real captures (`fixtures/macos/forever/`, rows in
 `fixtures/README.md`, L8) copied into a synthetic install under `tmp_path`;
 the links and the trees they point at are constructed (ids say
 `constructed`). Every link's target holds a sound copy of the same capture,
 so a reader that follows the link parses it and returns, and the grader
-fails on that rather than on some unrelated error. Link cases are skipped on
-Windows, where making a symbolic link needs a privilege (the ticket allows a
-skip there). Nothing here touches a real install.
+fails on that rather than on some unrelated error. The race cases put a
+*different* real capture (a decoy) behind the swapped-in link, so following
+it is told apart from reading the original. Symbolic-link cases are skipped
+on Windows, where making one needs a privilege; the junction cases run only
+there. Nothing here touches a real install.
 """
 
 from __future__ import annotations
@@ -86,9 +123,14 @@ class Reader(NamedTuple):
     name: str
     rel: PurePosixPath
     """A real fixture, relative to the flavor folder."""
-    read: Callable[[Path | str, Path], Any]
+    read: Callable[[Path | str, Path | str], Any]
     """The reader, given the path and the install root."""
     to_bytes: Callable[[Any], bytes]
+    plain: Callable[[Path], Any]
+    """The reader with no root (M16-26's final-component check only)."""
+    decoy: PurePosixPath
+    """A different real capture, relative to the flavor folder, that this
+    reader also parses: what the race grader puts behind its link."""
 
 
 READERS = [
@@ -97,24 +139,32 @@ READERS = [
         PurePosixPath("WTF/Account/90000001#6/SavedVariables/Blizzard_AuctionHouseUI.lua"),
         lambda p, root: luadata.read(p, root=root),
         lambda doc: luadata.serialize(doc),
+        lambda p: luadata.read(p),
+        PurePosixPath("WTF/Account/90000001#6/SavedVariables/Syndicator.lua"),
     ),
     Reader(
         "wtfconfig.read_config",
         PurePosixPath("WTF/Config.wtf"),
         lambda p, root: wtfconfig.read_config(p, root=root),
         lambda doc: doc.to_bytes(),
+        lambda p: wtfconfig.read_config(p),
+        PurePosixPath("WTF/Account/90000001#6/config-cache.wtf"),
     ),
     Reader(
         "wtfconfig.read_bindings",
         PurePosixPath("WTF/Account/90000001#6/bindings-cache.wtf"),
         lambda p, root: wtfconfig.read_bindings(p, root=root),
         lambda doc: doc.to_bytes(),
+        lambda p: wtfconfig.read_bindings(p),
+        PurePosixPath("WTF/Account/90000001#6/1/Labcharb-Labrealmd/config-cache.wtf"),
     ),
     Reader(
         "wtfconfig.read_macros",
         PurePosixPath("WTF/Account/90000001#6/1/Labcharb-Labrealmd/macros-cache.txt"),
         lambda p, root: wtfconfig.read_macros(p, root=root),
         lambda doc: doc.to_bytes(),
+        lambda p: wtfconfig.read_macros(p),
+        PurePosixPath("WTF/Account/90000001#6/edit-mode-cache-account.txt"),
     ),
 ]
 SV = READERS[0]
@@ -193,14 +243,24 @@ class Linked(NamedTuple):
     data: bytes
 
 
+def _junction(link: Path, target: Path) -> None:
+    """A real NTFS junction, as `test_snapshot_junctions.py` makes one."""
+    import _winapi  # Windows only; the callers are skipped elsewhere
+
+    _winapi.CreateJunction(str(target), str(link))
+
+
 def _linked(root: Path, case: Case) -> Linked:
     """Make the directory at `case.level` a link to a directory holding the
     rest of the path, with a sound copy of the real capture at the end, so
-    that following the link reads and parses."""
+    that following the link reads and parses. `case.where` is
+    `out-relative`, `out-absolute` or `inside` (symbolic links), or
+    `junction-out` / `junction-inside` (NTFS junctions, Windows only)."""
     comps = _components(case.reader)
     link = root.joinpath(*comps[: case.level + 1])
     rest = comps[case.level + 1 :]
-    if case.where == "inside":
+    stays_inside = case.where.endswith("inside")
+    if stays_inside:
         target_dir = link.parent / f"{link.name}.inside"
     else:
         target_dir = root.parent / "Elsewhere" / link.name
@@ -210,18 +270,56 @@ def _linked(root: Path, case: Case) -> Linked:
     shutil.copyfile(CAPTURE.joinpath(*case.reader.rel.parts), target_file)
 
     link.parent.mkdir(parents=True, exist_ok=True)
-    if case.where == "out-absolute":
+    if case.where.startswith("junction"):
+        _junction(link, target_dir.resolve())
+    elif case.where == "out-absolute":
         link.symlink_to(target_dir.resolve(), target_is_directory=True)
     else:
         link.symlink_to(os.path.relpath(target_dir, link.parent), target_is_directory=True)
 
     path = root.joinpath(*comps)
     inside = target_dir.resolve().is_relative_to(root.resolve())
-    assert inside == (case.where == "inside"), (case.where, target_dir)
+    assert inside == stays_inside, (case.where, target_dir)
     if case.where == "out-relative":
         assert link.readlink().parts[0] == "..", link.readlink()
     assert path.read_bytes() == data, "the constructed path reaches the copy through the link"
     return Linked(path, link, target_file, data)
+
+
+def _final_linked(root: Path, reader: Reader, where: str) -> Path:
+    """Make the file itself a relative link, to a sound copy of the capture
+    out of the install (`out`) or beside it inside (`inside`)."""
+    path = root.joinpath(*_components(reader))
+    path.parent.mkdir(parents=True)
+    if where == "out":
+        target = root.parent / "Elsewhere" / path.name
+        target.parent.mkdir()
+    else:
+        target = path.parent / f"{path.name}.inside"
+    shutil.copyfile(CAPTURE.joinpath(*reader.rel.parts), target)
+    path.symlink_to(os.path.relpath(target, path.parent))
+    assert path.read_bytes() == _fixture_bytes(reader)
+    return path
+
+
+class OpenSpy:
+    """Records every `os.open` call: (path, flags, dir_fd)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[tuple[str, int, int | None]] = []
+        real = os.open
+
+        def spy(path: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+            self.calls.append((os.fspath(path), flags, dir_fd))
+            return real(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(os, "open", spy)
+
+    def assert_no_dir_fd(self) -> None:
+        with_dir_fd = [(p, d) for p, _, d in self.calls if d is not None]
+        assert not with_dir_fd, (
+            f"with snapshot._O_NOFOLLOW == 0 the walk uses no dir_fd; saw {with_dir_fd}"
+        )
 
 
 def _open_fds() -> set[int] | None:
@@ -275,10 +373,13 @@ def _assert_refused(exc: BaseException, reader: Reader) -> None:
 def test_constructed_tree_parses_through_the_link(case: Case, root: Path) -> None:
     """The control for every refusal below: the bytes behind each link are a
     real capture that parses, so a reader that follows the link returns a
-    document, and only a refusal makes the graders pass."""
+    document, and only a refusal makes the graders pass. The reader called
+    with no root (M16-26's final-component check, which M16-49 keeps for
+    callers outside any install) follows the parent link today and after."""
     linked = _linked(root, case)
     document = PARSE[case.reader.name](linked.path.read_bytes())
     assert case.reader.to_bytes(document) == linked.data
+    assert case.reader.to_bytes(case.reader.plain(linked.path)) == linked.data
 
 
 # ─── a regular path reads byte for byte, with the root given ────────────────
@@ -379,21 +480,70 @@ def test_a_parent_link_inside_the_install_is_refused(case: Case, root: Path, fds
     fds.assert_none_left()
 
 
+# ─── without O_NOFOLLOW (the Windows path, run on POSIX) ─────────────────────
+#
+# Seam: the walk reads `snapshot._O_NOFOLLOW` at call time, and with it 0
+# uses no `dir_fd` (Windows' `os.open` takes none): no `os.open` call carries
+# one. It then checks each component with `lstat` and opens by path, so a
+# window between check and open remains on Windows; these graders cannot
+# close it, and M16-49's report names it.
+
+
+def _no_o_nofollow_cases() -> list[Any]:
+    cases = _parent_cases(("out-relative", "out-absolute", "inside"))
+    for reader in READERS:
+        for where in ("out", "inside"):
+            cases.append(
+                pytest.param(
+                    (reader, where),
+                    id=f"constructed-final-link-{where}-{reader.name}",
+                )
+            )
+    return cases
+
+
 @needs_symlink
 @pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
-@pytest.mark.parametrize("case", _parent_cases(("out-relative",)))
-def test_without_o_nofollow_a_parent_link_is_refused(
-    case: Case, root: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("case", _no_o_nofollow_cases())
+def test_without_o_nofollow_a_link_is_refused_and_no_dir_fd_is_used(
+    case: Case | tuple[Reader, str], root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
 ) -> None:
     """The Windows path of the M11-11 helper (no `O_NOFOLLOW`), exercised on
-    POSIX: the parent link is refused there too."""
+    POSIX: a parent link (out by `..`, out absolute, or inside) and a final
+    link are refused there too, through no `dir_fd`, and no descriptor is
+    left open."""
     monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
-    linked = _linked(root, case)
+    if isinstance(case, Case):
+        reader, path = case.reader, _linked(root, case).path
+    else:
+        reader, where = case
+        path = _final_linked(root, reader, where)
+    spy = OpenSpy(monkeypatch)
 
     with pytest.raises(OSError) as caught:
-        case.reader.read(linked.path, root)
+        reader.read(path, root)
 
-    _assert_refused(caught.value, case.reader)
+    _assert_refused(caught.value, reader)
+    spy.assert_no_dir_fd()
+    fds.assert_none_left()
+
+
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("reader", READERS, ids=_ids("real-no-o-nofollow"))
+def test_without_o_nofollow_a_regular_path_reads_with_no_dir_fd(
+    reader: Reader, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
+) -> None:
+    """The positive control for the seam: the file is opened, and read byte
+    for byte, without any `os.open` that carries a `dir_fd`."""
+    monkeypatch.setattr(snapshot, "_O_NOFOLLOW", 0)
+    path, data = _copy_in(root, reader)
+    spy = OpenSpy(monkeypatch)
+
+    assert reader.to_bytes(reader.read(path, root)) == data
+
+    assert spy.calls, "the file was opened"
+    spy.assert_no_dir_fd()
+    fds.assert_none_left()
 
 
 # ─── a final-component link is still refused with the root given ─────────────
@@ -404,19 +554,9 @@ def test_without_o_nofollow_a_parent_link_is_refused(
 @pytest.mark.parametrize("where", ["out", "inside"])
 @pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-final-link"))
 def test_a_final_link_is_still_refused_from_the_root(
-    reader: Reader, where: str, root: Path, tmp_path: Path, fds: FdWatch
+    reader: Reader, where: str, root: Path, fds: FdWatch
 ) -> None:
-    comps = _components(reader)
-    path = root.joinpath(*comps)
-    path.parent.mkdir(parents=True)
-    if where == "out":
-        target = tmp_path / "Elsewhere" / path.name
-        target.parent.mkdir()
-    else:
-        target = path.parent / f"{path.name}.inside"
-    shutil.copyfile(CAPTURE.joinpath(*reader.rel.parts), target)
-    path.symlink_to(os.path.relpath(target, path.parent))
-    assert path.read_bytes() == _fixture_bytes(reader)
+    path = _final_linked(root, reader, where)
 
     with pytest.raises(OSError) as caught:
         reader.read(path, root)
@@ -424,3 +564,246 @@ def test_a_final_link_is_still_refused_from_the_root(
     _assert_refused(caught.value, reader)
     assert path.is_symlink(), "the link is left as it was"
     fds.assert_none_left()
+
+
+# ─── a `..` component is refused (constructed) ──────────────────────────────
+
+
+def _assert_shape_refused(exc: BaseException, reader: Reader, spy: OpenSpy) -> None:
+    """A path-shape refusal: `UnsafeReadError`, raised before any open."""
+    assert isinstance(exc, UnsafeReadError), (
+        f"{reader.name}: a path-shape refusal is UnsafeReadError, got {exc!r}"
+    )
+    assert spy.calls == [], f"{reader.name}: opened {spy.calls} before refusing the path"
+
+
+DOTDOT_SHAPES = [
+    pytest.param("climbs-out", id="climbs-out"),
+    pytest.param("under-root-resolves-out", id="under-root-resolves-out", marks=needs_symlink),
+    pytest.param("resolves-back-inside", id="resolves-back-inside"),
+]
+
+
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("shape", DOTDOT_SHAPES)
+@pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-dotdot"))
+def test_a_dotdot_component_is_refused(
+    reader: Reader, shape: str, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
+) -> None:
+    """`climbs-out`: `root/_flavor_/WTF/../../../Elsewhere/...` leaves the root
+    lexically. `under-root-resolves-out`: `root/_flavor_/Linked/../...` stays
+    under the root lexically, but `Linked` points out, so the kernel's `..`
+    lands outside, on a decoy capture (a lexical normalizer would read the
+    original inside instead; it is refused all the same).
+    `resolves-back-inside`: `root/_flavor_/WTF/../...` names the original
+    file, with no link anywhere. Every `..` below the root is refused with
+    `UnsafeReadError` before anything is opened."""
+    original, data = _copy_in(root, reader)
+    comps = _components(reader)
+    elsewhere = root.parent / "Elsewhere"
+    if shape == "climbs-out":
+        outside = elsewhere.joinpath(*comps)
+        outside.parent.mkdir(parents=True)
+        shutil.copyfile(original, outside)
+        path = root / FLAVOR / "WTF" / ".." / ".." / ".." / "Elsewhere"
+        path = path.joinpath(*comps)
+    elif shape == "under-root-resolves-out":
+        decoy = elsewhere.joinpath(*reader.rel.parts)
+        decoy.parent.mkdir(parents=True)
+        shutil.copyfile(CAPTURE.joinpath(*reader.decoy.parts), decoy)
+        (elsewhere / "deep").mkdir()
+        (root / FLAVOR / "Linked").symlink_to(elsewhere / "deep", target_is_directory=True)
+        path = (root / FLAVOR / "Linked" / "..").joinpath(*reader.rel.parts)
+        assert path.read_bytes() == decoy.read_bytes() != data, "the kernel's `..` lands outside"
+    else:
+        path = (root / FLAVOR / "WTF" / "..").joinpath(*reader.rel.parts)
+    assert ".." in path.parts
+    assert path.is_file(), "the path names a real file; only its shape is wrong"
+    spy = OpenSpy(monkeypatch)
+
+    with pytest.raises(OSError) as caught:
+        reader.read(path, root)
+
+    _assert_shape_refused(caught.value, reader, spy)
+    fds.assert_none_left()
+
+
+# ─── a path not under the root is refused (constructed) ─────────────────────
+
+
+NOT_UNDER = [
+    pytest.param("elsewhere", id="elsewhere"),
+    pytest.param(
+        "elsewhere-through-a-parent-link", id="elsewhere-parent-link", marks=needs_symlink
+    ),
+    pytest.param("root-in-another-case", id="root-in-another-case"),
+    pytest.param("root-a-string-prefix", id="root-a-string-prefix"),
+]
+
+
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("shape", NOT_UNDER)
+@pytest.mark.parametrize("reader", READERS, ids=_ids("constructed-not-under-root"))
+def test_a_path_not_under_the_root_is_refused(
+    reader: Reader, shape: str, root: Path, monkeypatch: pytest.MonkeyPatch, fds: FdWatch
+) -> None:
+    """With `root=` given, a path that is not under it is refused with
+    `UnsafeReadError` before anything is opened, never read with M16-26's
+    final-component check instead. `root-in-another-case` gives the root as
+    `install` for a path under `Install`: refused on every volume, also where
+    the two name one directory (decision: the prefix is compared by its
+    components, not proved the same by device and inode).
+    `root-a-string-prefix` gives `Inst` for a path under `Install`."""
+    original, _ = _copy_in(root, reader)
+    comps = _components(reader)
+    given_root = root
+    if shape.startswith("elsewhere"):
+        out = root.parent / "Out"
+        path = out.joinpath(*comps)
+        if shape == "elsewhere":
+            path.parent.mkdir(parents=True)
+            shutil.copyfile(original, path)
+        else:
+            target = root.parent / "Elsewhere" / "WTF"
+            target.joinpath(*reader.rel.parts[1:]).parent.mkdir(parents=True)
+            shutil.copyfile(original, target.joinpath(*reader.rel.parts[1:]))
+            (out / FLAVOR).mkdir(parents=True)
+            (out / FLAVOR / "WTF").symlink_to(target, target_is_directory=True)
+    elif shape == "root-in-another-case":
+        path = original
+        given_root = root.parent / root.name.lower()
+        assert given_root.name != root.name
+    else:
+        path = original
+        given_root = root.parent / root.name[:4]
+        assert str(path).startswith(str(given_root))
+    assert path.is_file(), "the path names a real file; only where it is is wrong"
+    spy = OpenSpy(monkeypatch)
+
+    with pytest.raises(OSError) as caught:
+        reader.read(path, given_root)
+
+    _assert_shape_refused(caught.value, reader, spy)
+    fds.assert_none_left()
+
+
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("spelling", ["trailing-separator", "trailing-dot"])
+@pytest.mark.parametrize("reader", READERS, ids=_ids("real-root-spelled"))
+def test_a_root_spelled_with_a_trailing_separator_or_dot_reads(
+    reader: Reader, spelling: str, root: Path
+) -> None:
+    """The positive control for the prefix rule: `Install/` and `Install/.`
+    given as `str` are the same root as `pathlib` spells it, and read."""
+    path, data = _copy_in(root, reader)
+    given = str(root) + os.sep if spelling == "trailing-separator" else str(root) + os.sep + "."
+    assert Path(given) == root
+
+    assert reader.to_bytes(reader.read(path, given)) == data
+
+
+# ─── a parent swapped for a link mid-read (POSIX race, constructed) ──────────
+
+
+def _race_cases() -> list[Any]:
+    """(reader, parent level to swap, call number at which to swap): the
+    flavor folder, `WTF` and the file's own folder, swapped before the
+    reader's 1st, 2nd, ... `os.open` / `os.lstat` / `os.stat` call, up to two
+    more calls than the path has components."""
+    cases = []
+    for reader in READERS:
+        comps = _components(reader)
+        for level in sorted({0, 1, len(comps) - 2}):
+            for when in range(1, len(comps) + 3):
+                below = "/".join(comps[: level + 1])
+                cases.append(
+                    pytest.param(
+                        reader,
+                        level,
+                        when,
+                        id=f"constructed-race-{reader.name}-{below}-call{when}",
+                    )
+                )
+    return cases
+
+
+@needs_symlink
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize(("reader", "level", "when"), _race_cases())
+def test_a_parent_swapped_for_a_link_mid_read_never_reads_outside(
+    reader: Reader, level: int, when: int, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Just before the reader's `when`-th `os.open`, `os.lstat` or `os.stat`
+    call, the parent folder at `level` is renamed away and a link to a
+    folder outside the install takes its place, holding a decoy (a different
+    real capture) at the same relative path. The read must refuse, or return
+    the original file's bytes; it must never return the decoy. A walk that
+    holds each folder's descriptor and opens the next by name with
+    `O_NOFOLLOW` passes; checking each folder and then opening the whole path
+    does not."""
+    original, data = _copy_in(root, reader)
+    comps = _components(reader)
+    swapped = root.joinpath(*comps[: level + 1])
+    target_dir = root.parent / "Elsewhere" / swapped.name
+    decoy_file = target_dir.joinpath(*comps[level + 1 :])
+    decoy_file.parent.mkdir(parents=True)
+    shutil.copyfile(CAPTURE.joinpath(*reader.decoy.parts), decoy_file)
+    decoy = decoy_file.read_bytes()
+    assert decoy != data, "the decoy is a different capture"
+
+    state = {"calls": 0, "armed": True, "swapped": False}
+
+    def swap() -> None:
+        swapped.rename(swapped.with_name(swapped.name + ".real"))
+        swapped.symlink_to(target_dir, target_is_directory=True)
+        state["swapped"] = True
+
+    def counted(real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if state["armed"] and not state["swapped"]:
+                state["calls"] += 1
+                if state["calls"] == when:
+                    swap()
+            return real(*args, **kwargs)
+
+        return call
+
+    for name in ("open", "lstat", "stat"):
+        monkeypatch.setattr(os, name, counted(getattr(os, name)))
+
+    try:
+        document = reader.read(original, root)
+    except OSError as exc:
+        state["armed"] = False
+        _assert_refused(exc, reader)
+        return
+    finally:
+        state["armed"] = False
+    got = reader.to_bytes(document)
+    assert got != decoy, (
+        f"{reader.name} returned the capture behind the swapped-in link (swap before call {when})"
+    )
+    assert got == data, "the read returned the original file's bytes"
+
+
+# ─── Windows: a real junction at a parent level is refused ──────────────────
+
+
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32", reason="NTFS junctions exist only on Windows"
+)
+
+
+@windows_only
+@pytest.mark.xfail(strict=True, raises=TypeError, reason=MARKER)
+@pytest.mark.parametrize("case", _parent_cases(("junction-out", "junction-inside")))
+def test_a_parent_junction_is_refused(case: Case, root: Path) -> None:
+    """A junction `lstat`s as a directory in CPython; the walk must still
+    refuse it, out of the install or inside it, as `tree` reports it."""
+    linked = _linked(root, case)
+
+    with pytest.raises(OSError) as caught:
+        case.reader.read(linked.path, root)
+
+    _assert_refused(caught.value, case.reader)
+    assert linked.link.is_junction(), "the junction is left as it was"
