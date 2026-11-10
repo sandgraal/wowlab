@@ -1188,7 +1188,7 @@ that kind, and `create` never writes it.
 
 (a) On POSIX, `snap export` creates FILE 0600, whatever the umask, and every member of the archive carries mode 0600 in its external attributes. A tool that reads the Unix bits, such as `unzip`, unpacks it owner-only. The export stays deterministic.
 
-(b) A snapshot id, a manifest file name and a manifest's `created_at` are ASCII digits only (`[0-9]`, never `\d`). A name spelled with other Unicode digits is neither listed, resolved nor offered.
+(b) A snapshot id, a manifest file name and a manifest's `created_at` are ASCII digits only (`[0-9]`, never `\d`). A name spelled with other Unicode digits is never loaded as a snapshot: `snap list` names it as damaged, as in (c), and no reference resolves to it.
 
 (c) A stored manifest's `created_at` must be the moment its id carries. `create` has always written both from one moment. A manifest that fails this is damaged, as any manifest that does not load is: `snap list` names it and exits 1, `latest`, `~N` and `latest-user` refuse, and `snap gc` will not run. An import is held to the same rule, and to its own check against future dates.
 
@@ -1434,15 +1434,13 @@ A mapping may name a target account folder that does not exist yet; the gate cre
 
 The target root must not overlap the snapshot store in either direction (L1). A client running from the target refuses the write, whatever the source install's state.
 
-*Amended 2026-11-10 (M16-13, M16-66, M16-70, M16-71; #416, #432, #430, #441):*
+*Amended 2026-11-10 (M16-13, M16-66, M16-70; #416, #432, #430):*
 
 (a) **Journal record names.** A record is `journal/<8 ASCII digits>-<8 lowercase hex>.json` and nothing else (`\A[0-9]{8}-[0-9a-f]{8}\.json\Z`). The loader ignores any other name in `journal/`, including one spelled with other Unicode digits. `doctor` and `undo` never offer it.
 
-(b) **Private store folders.** The gate creates the store root and `journal/` as 0700 in the `mkdir` itself, whatever the umask. M16-78 asks the owner whether the user data directory's other folders follow.
+(b) **Private store folders.** The gate creates the store root and `journal/` with mode 0700 in the `mkdir` itself, so they are never wider than 0700, whatever the umask. M16-78 asks the owner whether the user data directory's other folders follow.
 
-(c) **`doctor` and the journal.** `doctor` reports, with exit 1 and the exact `wowlab undo --expect <id>` line:
-- a most recent record still `open`, meaning an interrupted change;
-- a most recent record that is `rollback_incomplete` (M16-71, once merged).
+(c) **`doctor` and the journal.** When the most recent record is still `open`, meaning an interrupted change, `doctor` reports it with exit 1 and the exact `wowlab undo --expect <id>` line.
 
 A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FILE_MAP.md`).
 

@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84, M16-85
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2388,16 +2388,16 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 **Acceptance:** members carry 0600; a test reads the attributes back; import is unchanged; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-77 — Snapshot ids and manifest names are ASCII digits only
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-70T and M16-70 reviews (#423; #430, open)
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-70T and M16-70 reviews (#423; #430, merged 2026-11-10)
 
-`snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII: the same class of bug that M16-70 (#430, open) fixes for journal ids. Neither file is load-bearing (AGENTS.md, as narrowed on 2026-10-17), so this is one ticket: tests and fix together, the tests built like M16-70T's.
+`snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII: the same class of bug that M16-70 (#430, merged) fixed for journal ids. Neither file is load-bearing (AGENTS.md, as narrowed on 2026-10-17), so this is one ticket: tests and fix together, the tests built like M16-70T's.
 
 **Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-78 — The user data directory's other folders are private
 **Size:** S · **Depends on:** nothing · **Sources:** the M16-66T security review (#424)
 
-M16-66 (#432, open) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
+M16-66 (#432, merged) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
 
 **User-facing:** the modes of the folders wowlab creates under the user data directory.
 
@@ -2412,12 +2412,12 @@ Two install readers still check only the last part of the path: `pathfacts._comp
 
 # M16 follow-ups found in review (filed 2026-11-10, third batch)
 
-## [ ] M16-80 — The older link wordings say what the readers now say
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 domain review (#429)
+## [ ] M16-80 — The older link notes say what the readers now say
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 domain review (#429); the #443 review
 
-Three refusals outside M16-65's readers still use the link wording from before #429: `cli.py`, around lines 2616, 2748 and 8908 as of f7006a8. Give them the readers' sentences from `snapshot.linked_folder_words` and `labaddon.NOT_FOLLOWED` / `LINKED_FILE`, with "real folder" or "real file" chosen by kind.
+Three notes outside M16-65's readers still use the link wording from before #429. They are notes, not refusals: `tree`'s link note (`cli._link_note`, `cli.py` about line 2670 on main at 6c555bd) and the `snap restore` screenshot clause (about lines 2802 and 8973). `firstrun.py` about line 342 ("wowlab does not follow it") is in scope too. Reuse the readers' wording from `snapshot.linked_folder_words` and `labaddon.NOT_FOLLOWED` / `LINKED_FILE`, with "real folder" or "real file" chosen by kind. How `tree` and `doctor` display a link's target is the owner ticket M13-66 and stays out of scope; only the "not followed" sentence changes.
 
-**Acceptance:** the three sites print the readers' sentences. A test pins each sentence exactly. `test_cli_player_copy.py` passes. Reviewed by `code-reviewer` and `domain-reviewer`.
+**Acceptance:** the four sites use the readers' wording, and a test pins each sentence exactly. `test_cli_player_copy.py` passes. Reviewed by `code-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-81 — A flavor folder that becomes a link mid-read is named, not "."
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 security review (#429)
@@ -2426,26 +2426,42 @@ When the flavor folder itself becomes a link during a read, `_shown` names it re
 
 **Acceptance:** a constructed test swaps the flavor folder for a link mid-read and pins the sentence. Reviewed by `code-reviewer`.
 
-## [ ] M16-82 — Find why `guard.restore` times out in `os.listdir` on Windows
-**Size:** S · **Depends on:** nothing · **Sources:** `lab (windows)` after merge at a42d719 (2026-11-10)
+## [x] M16-82 — Find why `guard.restore` timed out in `os.listdir` on Windows
+**Size:** XS · **Depends on:** nothing · **Sources:** `lab (windows)` after merge at a42d719 (2026-11-10); the #443 review
 
-A Windows run timed out inside `guard.restore` → `os.listdir`. The run was at a42d719, before the listing memo (M16-23). Find the cause from the job log and a Windows reproduction. Fix it if it is a defect in the Lab. If it is the runner, report the evidence.
+Closed unbuilt on 2026-11-10: the job log already shows the cause.
+- **What timed out:** the Windows run at a42d719 (run 42828316091, job 129871354979) timed out in `test_guard_listing_memo.py::test_constructed_the_no_op_whole_restore_check_scales_linearly`, M16-23T's grader, which was still strict-xfail there.
+- **Why:** the stack (`restore` → `_restore_ops` → `_current` → `_look` → `_entry` → `longpath.iterdir`) is the parent listing repeated for every entry. That is the walk the listing memo (M16-23, c201241) removed.
+- **Since:** `lab (windows)` passed on main at 54ff9a4, 1878c4b and 10050d1. The a94611d failure was a different test, fixed by #435.
 
-**Acceptance:** a root cause with evidence, and either a fix with a test or a written finding that no Lab change is needed. Reviewed by `code-reviewer`.
+No Lab change is needed.
 
-## [ ] M16-83 — `docs/INSTALL.md` changes run the full CI
-**Size:** XS · **Depends on:** M16-20 · **Sources:** the M16-20 implementer report (#442)
+## [ ] M16-83 — A diff touching only a doc that a test reads runs the tests
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-20 implementer report (#442); the #443 review
 
-`ci.yml` treats a diff of only `docs/**/*.md` as docs-only and skips the test jobs. Since M16-20, `docs/INSTALL.md` is graded by `test_doc_examples.py`, so a change to it alone must run the tests. Exempt it from the docs-only filter. This is a conductor-lane change (workflow YAML).
+`ci.yml` (about lines 69 to 75) treats a diff of only `docs/**/*.md` as docs-only and skips the test jobs. Several tests read docs:
+- `lab/core/tests/test_disclosure.py` and `tests/scripts/test_change_sentence.py` read `docs/INSTALL.md`, and so does `test_doc_examples.py` once M16-20 merges;
+- `tests/addon/test_lab_addon.py` reads `docs/LAB_PLAN.md` and `docs/handoffs/M11-03.md`;
+- `lab/core/tests/test_filemap.py` reads `docs/LAB_FILE_MAP.md`;
+- `tests/scripts/test_readme.py` reads `docs/handoffs/M13-10-macos.md`.
 
-**Acceptance:** a diff touching only `docs/INSTALL.md` runs `Lint, typecheck, tests`. `make hooks-test` passes. Reviewed by `code-reviewer`.
+A PR that touches only those docs skips the tests that grade them. Exempt every doc a test reads from the docs-only filter, or have the filter derive the list. This is a conductor-lane change (workflow YAML).
 
-## [ ] M16-84 — `doctor` names the file a rollback left alone
-**Size:** S · **Depends on:** M16-71 · **Sources:** the M16-71 domain review (#441)
+**Acceptance:** a diff touching only one of those docs runs `Lint, typecheck, tests`. A repo test fails when a test starts reading a doc the filter still treats as docs-only. `make hooks-test` passes. Reviewed by `code-reviewer`.
 
-For a `rollback_incomplete` record, the gate writes the paths it could not put back in the record's note. `HistoryRecord` does not carry the note, so `doctor` can only say "some files". Expose the left-alone paths, flavor-relative, on the public record, and have `doctor` name them. This touches `guard.py`, which is load-bearing (ADR-0013), so the graders land first as M16-84T if `guard`'s behaviour changes. A field added to the public model alone is the implementer's to test.
+## [ ] M16-84T — [TEST] The public journal record names the paths a rollback left alone
+**Size:** S · **Depends on:** M16-71 · **Sources:** the M16-71 domain review (#441); the #443 review
 
-**Acceptance:** `doctor` names each left-alone file, relative to the flavor folder and redacted by `--redact`. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`.
+For a `rollback_incomplete` record, the gate writes the paths it could not put back only into the record's free-text note: `"; ".join(problems)`, each problem `f"{rel}: {exc}"`. `HistoryRecord` and `_public()` are in `guard.py`, which is load-bearing (ADR-0013). Exposing the paths therefore changes what that file returns, and the graders land first. Write graders for a list of left-alone paths, relative to the flavor folder, on the public record of a `rollback_incomplete` transaction, and an empty list otherwise. Cover a real rollback where another program changed one of two files, and a rollback the system refused.
+
+**Acceptance:** strict-xfail graders on main, activated by M16-84 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-84 — [IMPL] `doctor` names the file a rollback left alone
+**Size:** S · **Depends on:** M16-84T · **Sources:** as M16-84T
+
+Implement M16-84T in `guard.py`: record the left-alone paths structurally, not only in the note, and expose them on `HistoryRecord`. Then have `doctor`'s rollback problem (M16-71) name each one instead of "some files".
+
+**Acceptance:** M16-84T's graders pass, activated by marker deletion only. `doctor` names each file, relative to the flavor folder and redacted by `--redact`. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-85 — `doctor` says a journal state in words
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-71 domain review (#441)
