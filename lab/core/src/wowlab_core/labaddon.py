@@ -2435,8 +2435,8 @@ def identity_of(char: CharDB) -> CharIdentity:
     for every value."""
     if not isinstance(char, CharDBV4):
         return _all_absent(
-            "this record predates the identity section; reinstall the lab-addon (wowlab "
-            "addon install lab), then log in and out on this character"
+            "this record predates the identity section; log in and out on this character "
+            "with a current lab-addon (wowlab addon install lab updates it)"
         )
     section = char.identity
     if section is None:

@@ -42,6 +42,7 @@ Notes:
     known.
   - overall: on Retail, the best items owned, bags included (community
     documentation, not yet confirmed on Forever).
+  - Spec is the client's specialization, not the talent points spent.
   - To use your own slot names or quality words, put the values to change in
     ~/userconfig/wowlab/gear_slots.toml (create the folder if it is missing); a
     value there replaces the shipped one.

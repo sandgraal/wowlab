@@ -103,8 +103,8 @@ def test_real_capture_reports_identity_absent(name: str) -> None:
     got = labaddon.identity_of(char)
     # In player words, with no ticket id (M16-31 review).
     reason = (
-        "this record predates the identity section; reinstall the lab-addon (wowlab addon "
-        "install lab), then log in and out on this character"
+        "this record predates the identity section; log in and out on this character with "
+        "a current lab-addon (wowlab addon install lab updates it)"
     )
     for field in FIELDS:
         assert getattr(got, field) is None

@@ -10002,6 +10002,8 @@ _GEAR_OVERALL_NOTE = (
     "overall: on Retail, the best items owned, bags included (community documentation, "
     "[verify] on Forever)."
 )
+# Said by the page as the Spec row's title (M16-31); in the text, behind --notes.
+_GEAR_SPEC_NOTE = "Spec is the client's specialization, not the talent points spent."
 
 
 def _gear_table_note(source: gear.SlotTableSource) -> str:
@@ -10254,7 +10256,7 @@ def char_gear(
     standing = [
         # The marker stands for an adjective here; said in words (M16-15).
         note.replace("[verify] on Forever", "not yet confirmed on Forever")
-        for note in (_GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE)
+        for note in (_GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE, _GEAR_SPEC_NOTE)
     ]
     standing.append(
         f"To use your own slot names or quality words, put the values to change in "

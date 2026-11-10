@@ -30,4 +30,4 @@ Averages (GetAverageItemLevel, as the client returns them, not the mean of the l
 Item levels from C_Item.GetCurrentItemLevel.
 Slot names and quality words: the shipped default table, community documentation
   for Retail, not yet confirmed on Forever
-6 notes: --notes shows them
+7 notes: --notes shows them

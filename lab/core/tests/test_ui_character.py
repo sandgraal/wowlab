@@ -413,8 +413,8 @@ def test_the_header_carries_spec_averages_and_the_notes(
     assert facts["Level"] == str(report["level"]) == "13"
     # No ticket id and no doubled bracket: the reason in player words, once.
     assert facts["Class"] == (
-        "not recorded: this record predates the identity section; reinstall the lab-addon "
-        "(wowlab addon install lab), then log in and out on this character"
+        "not recorded: this record predates the identity section; log in and out on this "
+        "character with a current lab-addon (wowlab addon install lab updates it)"
     )
     assert facts["Race"] == "not recorded: as for Class"
     assert facts["Average item level, equipped"] == f"{report['average']['equipped']:.1f}"
