@@ -175,8 +175,16 @@ _GUID_RES = (GUID_RE, ACCOUNT_GUID_RE, GUILD_GUID_RE, CLUB_GUID_RE)
 # runs to the next separator, quote or line end: a home folder that ends a
 # sentence takes the rest of that line with it, which costs readability and
 # leaks nothing.
+# A drive letter counts only when no letter comes before it, so the `e:` of
+# `file:` is not one (M16-72): `file:///home/<name>` keeps its scheme and the
+# two slashes after it, and becomes `file://<HOME>`. Each match starts at the
+# start of its run of separators (or at a drive letter, or just after a
+# URL's `://`), and the run is taken possessively (`++`), so a long run of
+# separators is walked once, not once per byte: the match is linear in the
+# text (M16-72).
 _HOME_SHAPE_RE = re.compile(
-    r"(?:[A-Za-z]:)?[\\/]+(?:Users|home|Documents and Settings)[\\/]+"
+    r"(?:(?<![A-Za-z])[A-Za-z]:|(?<![\\/])(?!(?<=:)///)|(?<=://))"
+    r"[\\/]++(?:Users|home|Documents and Settings)[\\/]++"
     r"(?:[^\\/\r\n\t\"'<>|]|'(?=\w))+",
     re.IGNORECASE,
 )
