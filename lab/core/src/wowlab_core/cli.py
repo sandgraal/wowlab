@@ -2234,7 +2234,8 @@ class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
     entry_id: str
-    what: str
+    what: str  # the player's text (M16-17)
+    notes: str  # the spec's notes on the row (M16-17); "—" when it has none
     written_by: str
     edit: str
     tier: str
@@ -2295,6 +2296,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
+        notes=entry.notes,
         written_by=entry.written_by,
         edit=entry.edit,
         tier=entry.tier,
@@ -2615,7 +2617,7 @@ def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
         else:
             e = item.explained
             _say(f"      [{e.entry_id}] {_player_copy(_plain(e.what))}")
-            _say(f"      written by: {_plain(e.written_by)}")
+            _say(f"      written by: {_player_copy(_plain(e.written_by))}")
             _say(f"      edit: {e.verdict.words}")
 
 
@@ -3474,6 +3476,14 @@ def explain(
     ],
     root: RootOpt = None,
     flavor: FlavorOpt = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Also print the row's tier (how ordinary using this file is), "
+            "what in wowlab reads it, and the paths the row covers.",
+        ),
+    ] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """What a path in the install is, who writes it, whether wowlab may edit it.
@@ -3628,11 +3638,16 @@ def explain(
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
     _say(f"{result.path or '.'} ({base})")
     _say(f"  what:         {_player_copy(_plain(e.what))}")
-    _say(f"  written by:   {_plain(e.written_by)}")
+    _say(f"  written by:   {_player_copy(_plain(e.written_by))}")
     _say(f"  edit:         {report.verdict.words}")
-    _say(f"  tier:         {tier_words(e.tier)}")
-    _say(f"  read by:      {_reader_words(e.module)}")
-    _say(f"  file-map row: {e.id} ({e.doc_path})")
+    # M16-17: the tier, the reader and the row's own path pattern are the
+    # spec's words; they print only on request (`--json` always has them).
+    if verbose:
+        _say(f"  tier:         {tier_words(e.tier)}")
+        _say(f"  read by:      {_reader_words(e.module)}")
+        _say(f"  file-map row: {e.id} ({e.doc_path})")
+    else:
+        _say(f"  file-map row: {e.id}")
     if taken is not None:  # no install-root row matches below `_..._` today
         _say(f"  {taken.name}: {taken.note}")
     if nowhere:
@@ -8439,7 +8454,8 @@ def snap_restore(
         typer.Option(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
-            "A path the snapshot covers but does not hold is deleted. A named path is "
+            "If the snapshot has no file at a path you name, inside a folder it saved, the "
+            "file on disk at that path is deleted. A named path is "
             "restored even when its file-map row says wowlab leaves it alone, except an "
             "executable, which never is. Nor is a screenshot: wowlab never writes "
             "Screenshots/.",
@@ -8749,13 +8765,19 @@ def undo(
     ] = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Undo the most recent change made through the write gate (a restore, or an
-    earlier undo), from the snapshot taken before it.
+    """Undo the most recent change wowlab made to your game files: a
+    `snap restore`, `profile apply`, `sv merge`, `addon install` or
+    `addon remove`, or an earlier undo. It shows the plan and asks first, then
+    puts your files back as they were before that change, from the snapshot
+    taken before it; files it added are deleted.
 
-    The journal is read again after you answer, and the undo is refused if
-    its most recent record changed meanwhile. The gate compares again under
-    its store lock, so a change journaled
-    after that re-read is refused too: only the record shown is undone.
+    Undo steps back one change only. An undo is itself a change, so running
+    `wowlab undo` a second time redoes what the first one undid. To go further
+    back, pick an older snapshot with `snap list` and put it back with
+    `snap restore`.
+
+    Only the change the plan shows is undone: if another change is recorded
+    after the plan was shown, nothing is undone.
 
     \f
     JSON: UndoReport."""

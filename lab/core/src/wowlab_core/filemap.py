@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 DATA_FILE = "filemap.toml"
-DOC_COLUMNS = ("Path", "What", "Written by / when", "Edit", "Tier", "Module")
+DOC_COLUMNS = ("Path", "What", "Notes", "Written by / when", "Edit", "Tier", "Module")
 
 Base = Literal["root", "flavor", "any"]
 # What is being classified: a directory, a file, or unknown (a symlink, which
@@ -123,7 +123,13 @@ class Section(BaseModel):
 class FileMapEntry(BaseModel):
     """One row of the file map: what a path is, who writes it, whether the
     Lab may edit it, and which module reads it. The display fields are
-    Markdown exactly as rendered in the doc."""
+    Markdown exactly as rendered in the doc.
+
+    `what` is written for a player: `explain`, `tree --explain` and the
+    Explorer show it. `notes` is the spec's: the evidence, the dates, the
+    open questions and the pointers into the docs that `what` leaves out
+    (M16-17). It is rendered in the doc and carried in `--json`, never in
+    text output; "—" when there is nothing to add."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -132,6 +138,7 @@ class FileMapEntry(BaseModel):
     base: Base
     doc_path: str
     what: str
+    notes: str
     written_by: str
     # `gate` (through `guard` only, client closed), `no`, `n/a` or `—`,
     # sometimes with a note in parentheses; see the doc's Edit column key.
@@ -145,7 +152,7 @@ class FileMapEntry(BaseModel):
     # row matches (M13-22).
     catch_all: bool = False
 
-    @field_validator("doc_path", "what", "written_by", "edit", "tier", "module")
+    @field_validator("doc_path", "what", "notes", "written_by", "edit", "tier", "module")
     @classmethod
     def _one_table_cell(cls, value: str) -> str:
         if not value or "|" in value or "\n" in value or value != value.strip():
@@ -364,7 +371,7 @@ def render_section(section_id: str, filemap: FileMap | None = None) -> str:
     ]
     for e in fm.entries:
         if e.section == section_id:
-            cells = (e.doc_path, e.what, e.written_by, e.edit, e.tier, e.module)
+            cells = (e.doc_path, e.what, e.notes, e.written_by, e.edit, e.tier, e.module)
             lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 

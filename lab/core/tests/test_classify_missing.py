@@ -154,7 +154,7 @@ def test_a_missing_path_gets_its_row_or_not_found(
         else:
             assert isinstance(report.result, layout.Classified), typed
             assert report.result.entry.id == entry_id
-            assert f"  file-map row: {entry_id} " in text
+            assert f"  file-map row: {entry_id}" in text.splitlines()
             noun = "folder" if path.endswith("/") else "file"
             assert f"  on disk:      nothing at this path; this is what a {noun} here would be" in (
                 text

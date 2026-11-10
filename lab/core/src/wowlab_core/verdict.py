@@ -28,7 +28,7 @@ Level = Literal["gate", "no", "folder", "not_applicable", "unclassified"]
 
 LABELS: dict[str, str] = {
     "gate": "wowlab can edit",
-    "no": "wowlab won't touch",
+    "no": "wowlab never changes it",
     "folder": "folder",
     "not_applicable": "not used",
     "unclassified": "unknown",
