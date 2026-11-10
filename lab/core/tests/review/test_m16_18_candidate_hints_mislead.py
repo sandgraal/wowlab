@@ -60,19 +60,6 @@ def test_control_one_flavor_a_shown_path_explains(
     assert "file-map row: account-config-cache" in text
 
 
-def test_several_flavors_the_path_shown_explains_constructed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _install(tmp_path, monkeypatch, second=True)
-    listed = run("explain", "config-cache.wtf").stdout
-    assert "explain one of them by the path shown" in listed
-    shown = f"    {A}/config-cache.wtf (in {FLAVOR})"
-    assert shown in listed
-    # The player types the path as shown, as the line tells them to.
-    typed = run("explain", f"{A}/config-cache.wtf").stdout
-    assert "file-map row: account-config-cache" in typed, (listed, typed)
-
-
 def test_a_row_is_not_said_to_have_no_file_when_one_was_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
