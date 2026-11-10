@@ -1349,7 +1349,11 @@ class _ListingMemo:
     Someone else's change within one tick of a coarse directory clock keeps
     the key as it was; that residual risk is accepted (the M16-23T graders'
     docstring, 2026-10-22): it can let a case-variant sibling name through,
-    never a write outside the allowlist or past a link."""
+    never a write outside the allowlist or past a link (each directory on a
+    write's path is `lstat`ed and `_verify`ed, never taken from a kept
+    listing), and never a read past a link (`entries`, the walk of what a
+    whole restore leaves alone, holds each directory to one by its own
+    `lstat` before listing it)."""
 
     def __init__(self) -> None:
         self._held: dict[str, _Listing] = {}
@@ -1376,8 +1380,28 @@ class _ListingMemo:
         return listing
 
     def entries(self, directory: Path) -> list[os.DirEntry[str]]:
-        """`longpath.entries(directory)` through the memo (for `list_tree`)."""
-        return list(self.listing(directory).entries)
+        """`longpath.entries(directory)` through the memo (for `list_tree`).
+
+        `list_tree` descends by the entry type the parent's listing showed,
+        and that listing may be a kept one: a subdirectory swapped for a
+        link within one tick of the parent's clock still shows as a
+        directory there. So `directory` is held to a directory by its own
+        `lstat` first and is never listed through a link: a link gives no
+        entries (a fresh walk does not descend into one either), and
+        anything else that is not a directory, or that stops being one
+        while it is listed, raises `NotADirectoryError`, which `list_tree`
+        turns into `SnapshotError`."""
+        st = longpath.lstat(directory)
+        if _is_link(st):
+            return []
+        if not stat.S_ISDIR(st.st_mode):
+            raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(directory))
+        listing = self.listing(directory)
+        if listing.key is None or _listing_key(directory) is None:
+            raise NotADirectoryError(
+                errno.ENOTDIR, "stopped being a directory while it was listed", str(directory)
+            )
+        return list(listing.entries)
 
     def forget(self, place: _Place, parts: Sequence[str]) -> None:
         """Drop the listings of the flavor folder and of every directory
