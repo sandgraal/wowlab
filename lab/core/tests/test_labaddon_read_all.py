@@ -52,7 +52,12 @@ SECOND = "1/Labcharb-Labrealmf"
 NO_ADDON = "1/Labcharb-Labrealmd"  # a captured character folder without the lab-addon's file
 TWIN = "Labrealmb Partb Partc Partd/Labchard"  # the <Realm>/<First>/ twin: only AddOns.txt
 NOT_FOLLOWED = (
-    "a link; wowlab does not read through links, so it reads this only when the real one is there"
+    "a link, not followed; wowlab does not read through links, so it reads this only "
+    "when the real folder is there"
+)
+LINKED_FILE = (
+    "a link, not followed; wowlab does not read through links, so it reads this only "
+    "when the real file is there"
 )
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 
@@ -334,7 +339,7 @@ def test_constructed_linked_lab_file_is_named_and_not_followed(
     assert found.not_looked_at == []
     by = {e.character: e for e in found.characters}
     assert by[SECOND].record is None and by[SECOND].mtime_ns is None
-    assert by[SECOND].error == NOT_FOLLOWED and by[SECOND].place == "file"
+    assert by[SECOND].error == LINKED_FILE and by[SECOND].place == "file"
     assert by[SECOND].file == f"{ACCOUNT_DIR}/{SECOND}/SavedVariables/WowLab.lua"
     assert by[FIRST].record is not None
 

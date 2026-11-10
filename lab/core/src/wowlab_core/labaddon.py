@@ -129,6 +129,7 @@ __all__ = [
     "IDENTITY_FIELDS",
     "ID_MAX",
     "LAB_FILE_NAME",
+    "LINKED_FILE",
     "MAX_IMPORT_CHOICES",
     "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
@@ -1595,7 +1596,8 @@ _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # is refused on its own without charging this one.
 MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
-NOT_FOLLOWED = f"a link; {snapshot.not_read_through('one')}"
+NOT_FOLLOWED = f"a link, not followed; {snapshot.not_read_through('folder')}"
+LINKED_FILE = f"a link, not followed; {snapshot.not_read_through('file')}"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 A_FOLDER = "a folder, not a file"
 
@@ -1930,7 +1932,8 @@ class _Reader:
             data = snapshot.read_regular_file(path, limit=limit, expect=st, root=self.install_root)
         except snapshot.LinkedPathError as exc:
             # The walk found this file behind no link a moment ago.
-            return _Read(error=_os_error(exc.changed_while_read(), path))
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return _Read(error=str(changed))
         except snapshot.UnsafeReadError as exc:
             if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
                 return self._spent(account, who, grew=True)
@@ -2044,7 +2047,8 @@ class _Counter:
             )
         except snapshot.LinkedPathError as exc:
             # The walk listed this file behind no link a moment ago.
-            return None, f"{name} not read: {_os_error(exc.changed_while_read(), path)}"
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return None, f"{name} not read: {changed}"
         except OSError as exc:
             return None, f"{name} not read: {_os_error(exc, path)}"
         self.left -= len(data)
@@ -2300,7 +2304,12 @@ def survey(
         # account row (M13-69), yet a linked realm there can still hide a
         # character, and only following it would tell.
         shape = fm.classify(tuple(link.path.split("/")), "flavor", "any")
-        note(link.path, NOT_FOLLOWED, shape.id if shape else None, is_link=True)
+        entry_id = shape.id if shape else None
+        # Every place a link can hide a character's file is a folder, but
+        # for the file itself (M16-65: the words name which).
+        found = _place(link.path, entry_id, is_link=True)
+        reason = LINKED_FILE if found is not None and found[0] == "file" else NOT_FOLLOWED
+        note(link.path, reason, entry_id, is_link=True)
     for error in walk.errors:
         if error.path == "":  # the flavor folder itself could not be listed
             not_looked_at.append(NotLookedAt(path=lay.flavor_folder, reason=error.error))

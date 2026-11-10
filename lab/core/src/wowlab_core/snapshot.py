@@ -247,12 +247,21 @@ def not_read_through(what: str) -> str:
     )
 
 
-CHANGED_WHILE_READ = "it changed while wowlab read it; run the command again"
-"""Said after a link refusal of a file a listing had just found behind no
-link (M16-65)."""
+CHANGED_WHILE_READ = "became a link while wowlab read it; run the command again"
+"""Said of the folder (or file) a listing had just found behind no link and
+the read then met as one (M16-65)."""
 
 
-def linked_folder_words(subject: object, folder: Path) -> str:
+def _shown(path: Path, within: Path | None) -> str:
+    """`path` as the player reads it: relative to `within` (the flavor
+    folder) with `/` between parts when it lies under it, else in full."""
+    if within is not None:
+        with contextlib.suppress(ValueError):
+            return path.relative_to(within).as_posix()
+    return str(path)
+
+
+def linked_folder_words(subject: object, folder: object) -> str:
     """`subject` reached through the linked folder `folder`, in the one
     sentence the readers and `sv dump` use (M16-65)."""
     return f"{subject} is reached through a linked folder, {folder}; {not_read_through('folder')}"
@@ -266,25 +275,43 @@ class LinkedPathError(UnsafeReadError):
     found the file behind no link just before (`changed_while_read`,
     M16-65)."""
 
-    def __init__(self, path: Path, folder: Path, *, final: bool, changed: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path,
+        folder: Path,
+        *,
+        final: bool,
+        changed: bool = False,
+        within: Path | None = None,
+        subject: str | None = None,
+    ) -> None:
         self.path = path
         self.folder = folder
         self.final = final
         self.changed = changed
-        if final:
-            text = f"{path} is a link; {not_read_through('file')}"
+        name = subject if subject is not None else _shown(path, within)
+        where = _shown(folder, within)
+        if changed and final:
+            text = f"{name} {CHANGED_WHILE_READ}"
+        elif changed:
+            text = f"{name} is reached through a linked folder: {where} {CHANGED_WHILE_READ}"
+        elif final:
+            text = f"{name} is a link; {not_read_through('file')}"
         else:
-            text = linked_folder_words(path, folder)
-        if changed:
-            text += f"; {CHANGED_WHILE_READ}"
+            text = linked_folder_words(name, folder if within is None else where)
         super().__init__(text)
 
-    def changed_while_read(self) -> LinkedPathError:
-        """The same refusal, saying the file changed while it was read: for a
-        caller that had just listed it behind no link."""
-        if self.changed:
-            return self
-        return LinkedPathError(self.path, self.folder, final=self.final, changed=True)
+    def changed_while_read(
+        self, within: Path | None = None, *, subject: str | None = None
+    ) -> LinkedPathError:
+        """The refusal for a caller that had just listed the file behind no
+        link: the folder (or file) became a link while wowlab read it, so the
+        way on is to run the command again. Paths under `within` (the flavor
+        folder) are named relative to it; `subject`, when given, names the
+        file instead ("the file", where the line already names it)."""
+        return LinkedPathError(
+            self.path, self.folder, final=self.final, changed=True, within=within, subject=subject
+        )
 
 
 _OPEN_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd

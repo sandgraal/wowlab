@@ -69,7 +69,8 @@ ROW = re.compile(
 )
 RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE, Cf
 NOT_FOLLOWED = (
-    "a link; wowlab does not read through links, so it reads this only when the real one is there"
+    "a link, not followed; wowlab does not read through links, so it reads this only "
+    "when the real folder is there"
 )
 POSIX_PERMISSIONS = pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),

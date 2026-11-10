@@ -135,9 +135,10 @@ def test_constructed_char_show_names_the_linked_folder(
     monkeypatch.setattr(labaddon, "read_char", swapped)
     done = CliRunner().invoke(cli.app, ["char", "show", "--character", CHAR_A])
     assert done.exit_code not in (0, None), done.output
-    assert "linked folder" in done.stderr, done.stderr
-    assert str(_account(root)) in done.stderr, done.stderr
-    assert snapshot.CHANGED_WHILE_READ in done.stderr, done.stderr
+    assert done.stderr == (
+        f"wowlab: {CHAR_REL} is reached through a linked folder: {ACCT_REL} became a link "
+        "while wowlab read it; run the command again\n"
+    ), done.stderr
     assert done.stdout == ""
 
 
@@ -159,9 +160,10 @@ def test_constructed_char_list_row_names_the_linked_folder(
     errors = [e.error for e in entries if e.error is not None]
     assert errors, entries
     for error in errors:
-        assert "linked folder" in error, error
-        assert str(_account(root)) in error, error
-        assert error.endswith(snapshot.CHANGED_WHILE_READ), error
+        assert error == (
+            f"the file is reached through a linked folder: {ACCT_REL} became a link while "
+            "wowlab read it; run the command again"
+        ), error
 
 
 def test_constructed_char_list_counts_refuse_a_linked_folder(root: Path, tmp_path: Path) -> None:
@@ -183,8 +185,10 @@ def test_constructed_char_list_counts_refuse_a_linked_folder(root: Path, tmp_pat
     ]
     count, why = counter.count(found, "config-cache.wtf")
     assert count is None
-    assert why is not None and "linked folder" in why, why
-    assert str(_account(root)) in why, why
+    assert why == (
+        f"config-cache.wtf not read: the file is reached through a linked folder: {ACCT_REL} "
+        "became a link while wowlab read it; run the command again"
+    ), why
 
 
 def test_the_reader_still_refuses_a_file_replaced_after_its_lstat(root: Path) -> None:
@@ -229,8 +233,10 @@ def test_constructed_sv_merge_names_the_linked_folder(
     )
     assert done.exit_code not in (0, None), done.output
     assert "linked folder" in done.stderr, done.stderr
-    assert str(_account(root)) in done.stderr, done.stderr
-    assert snapshot.CHANGED_WHILE_READ in done.stderr, done.stderr
+    assert (
+        f" is reached through a linked folder: {ACCT_REL} became a link while wowlab read it; "
+        "run the command again\n"
+    ) in done.stderr, done.stderr
 
 
 # ─── the detail under a plan or an undo ─────────────────────────────────────
@@ -295,11 +301,24 @@ def test_a_link_refusal_ends_with_what_the_player_can_do(tmp_path: Path) -> None
         f"{path} is a link; wowlab does not read through links, so it reads this only when "
         "the real file is there"
     )
-    changed = through.changed_while_read()
-    assert str(changed) == f"{through}; it changed while wowlab read it; run the command again"
-    assert changed.folder == folder and not changed.final
-    assert changed.changed_while_read() is changed
-    assert f"a link; {snapshot.not_read_through('one')}" == labaddon.NOT_FOLLOWED
+    changed = through.changed_while_read(tmp_path)
+    assert str(changed) == (
+        "a/b.lua is reached through a linked folder: a became a link while wowlab read it; "
+        "run the command again"
+    )
+    assert changed.folder == folder and not changed.final and changed.changed
+    named = through.changed_while_read(tmp_path, subject="the file")
+    assert str(named) == (
+        "the file is reached through a linked folder: a became a link while wowlab read it; "
+        "run the command again"
+    )
+    became = final.changed_while_read(tmp_path)
+    assert str(became) == "a/b.lua became a link while wowlab read it; run the command again"
+    # Outside the flavor folder a path is named in full.
+    assert str(through.changed_while_read(tmp_path / "x")).startswith(f"{path} is reached")
+    # The listing says the same rule, with the kind it knows.
+    assert f"a link, not followed; {snapshot.not_read_through('folder')}" == (labaddon.NOT_FOLLOWED)
+    assert f"a link, not followed; {snapshot.not_read_through('file')}" == labaddon.LINKED_FILE
 
 
 # ─── sv dump through a shortcut into the install ────────────────────────────
@@ -360,8 +379,8 @@ def test_constructed_sv_dump_through_a_shortcut_with_a_folder_linked_out_is_refu
     done = CliRunner().invoke(cli.app, ["sv", "dump", str(file)])
     assert done.exit_code == cli.EXIT_REFUSED, done.output
     assert done.stderr.strip() == (
-        f"wowlab: refused: {file} leads into the install at {root} by a link, "
-        + snapshot.linked_folder_words("and it", link)
+        f"wowlab: refused: {file} is reached through a linked folder, {link}; wowlab does not "
+        "read through links, so it reads this only when the real folder is there"
     ), done.stderr
     assert done.stdout == ""
 

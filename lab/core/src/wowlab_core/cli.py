@@ -4579,8 +4579,7 @@ def _sv_file_and_root(
         # install that leads out again (M16-65): neither check above sees
         # the install, and checking the last part only would follow it.
         raise CliError(
-            f"refused: {target} leads into the install at {install_root} by a link, "
-            + snapshot.linked_folder_words("and it", linked),
+            f"refused: {snapshot.linked_folder_words(target, linked)}",
             EXIT_REFUSED,
         )
     return target, holding
@@ -5136,7 +5135,7 @@ def _listed[T](read: Callable[..., T], lay: layout.Layout, rel: str, **kwargs: A
     try:
         return read(lay.flavor_path / rel, root=lay.install_root, **kwargs)
     except snapshot.LinkedPathError as exc:
-        raise exc.changed_while_read() from exc
+        raise exc.changed_while_read(lay.flavor_path) from exc
 
 
 def _read_sv(lay: layout.Layout, rel: str) -> bytes:

@@ -181,7 +181,11 @@ def test_constructed_cvar_list_refuses_a_config_swapped_behind_a_linked_folder(
     assert done.exception is None or isinstance(done.exception, SystemExit), done.exception
     assert done.stdout == ""
     first = done.stderr.strip().splitlines()[0]
-    assert "linked folder" in first and str(wtf) in first, first
+    # Named relative to the flavor folder, and said to have changed (M16-65).
+    assert first.endswith(
+        " is reached through a linked folder: WTF became a link while wowlab read it; "
+        "run the command again"
+    ), first
 
 
 def test_constructed_linked_path_error_in_addons_check_words(tmp_path: Path) -> None:
