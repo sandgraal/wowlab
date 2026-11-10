@@ -21,8 +21,10 @@ on:
 # a model with a token whose cache mode is write; no workflow runs Claude
 # since the owner decision of that date.)
 # setup-uv runs with `enable-cache: false` (omitted means `auto`, which
-# caches), actionlint and trivy with `cache: false` (both default to true),
-# and tests/repo/test_workflows_use_no_cache.py holds every workflow to it.
+# caches), trivy with `cache: false` (it defaults to true), and actionlint
+# and gitleaks are downloaded fresh at a pinned release and checked against
+# a sha256 (M13-65); tests/repo/test_workflows_use_no_cache.py holds every
+# workflow to it.
 permissions:
   contents: read
 
@@ -222,12 +224,30 @@ jobs:
       - name: Agent, skill and rule frontmatter is well-formed
         if: matrix.python == '3.12'
         run: uv run --python 3.12 --isolated --no-project --with pyyaml -- python scripts/check_frontmatter.py
+      # actionlint at an exact release, checked against the sha256 that the
+      # release's actionlint_<version>_checksums.txt gives for the tarball
+      # before it is unpacked, as the gitleaks job does (M13-65). The same
+      # version as the pre-commit hook (tests/repo/test_ci_actionlint_pinned.py).
+      # Bumping it means a new version here and in .pre-commit-config.yaml and
+      # the new digest from that release's checksums file.
+      # Nothing else is installed: actionlint runs shellcheck on `run:`
+      # scripts from the runner image, and `-pyflakes=` turns pyflakes off
+      # (no step uses `shell: python`).
+      - name: Install actionlint
+        if: matrix.python == '3.12'
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl -sSfL -o /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install /tmp/actionlint /usr/local/bin/actionlint
+          actionlint -version
       - name: actionlint
         if: matrix.python == '3.12'
-        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
-        with:
-          # Its default restores the actionlint binary from the Actions cache.
-          cache: false
+        run: actionlint -color -pyflakes=
 
   gitleaks:
     name: Secret scan (gitleaks)
