@@ -1351,9 +1351,11 @@ class _ListingMemo:
     docstring, 2026-10-22): it can let a case-variant sibling name through,
     never a write outside the allowlist or past a link (each directory on a
     write's path is `lstat`ed and `_verify`ed, never taken from a kept
-    listing), and never a read past a link (`entries`, the walk of what a
-    whole restore leaves alone, holds each directory to one by its own
-    `lstat` before listing it)."""
+    listing). A stale entry never leads the walk of what a whole restore
+    leaves alone through a link (`entries` holds each directory to one by
+    its own `lstat`), and a single swap for a link is refused. A swap in and
+    back again within one scan can still return names from outside, as a
+    walk without the memo can; they are never written or listed."""
 
     def __init__(self) -> None:
         self._held: dict[str, _Listing] = {}
