@@ -150,7 +150,6 @@ def test_constructed_clash_refusal_says_what_to_do_and_paths_avoid_it(
         assert LEGACY in str(refused.value)
         if paths is None:
             assert "--paths" in str(refused.value), str(refused.value)
-            assert "rename or remove" in str(refused.value), str(refused.value)
         assert strict_state(world) == before
 
     # Naming files that do not lie below that folder restores them.
@@ -167,3 +166,39 @@ def test_constructed_clash_refusal_says_what_to_do_and_paths_avoid_it(
             == source_files(SRC_ACCOUNT)[f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf"]
         )
     assert {p: p.read_bytes() for p in legacy.rglob("*") if p.is_file()} == legacy_before
+
+
+@pytest.mark.parametrize(
+    "with_account", [True, False], ids=["constructed-mapped", "constructed-accountless"]
+)
+@pytest.mark.xfail(strict=True, reason="M16-62 not implemented")
+def test_constructed_clash_refusal_suggests_a_snapshot_before_a_hand_removal(
+    guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, with_account: bool
+) -> None:
+    """A folder removed by hand is outside wowlab's snapshot and journal, so
+    `wowlab undo` cannot bring it back: the refusal says to rename it, or to
+    run `wowlab snap create` and then remove it (M16-62T), never the bare
+    "rename or remove" it said before."""
+    target, snapshot_id, world = _clash(tmp_path, store, with_account=with_account)
+    accounts = {SRC_ACCOUNT: DST_ACCOUNT} if with_account else None
+    before = strict_state(world)
+
+    with (
+        guard.transaction(target, label="clash", store=store.path) as tx,
+        pytest.raises(guard.GuardError) as refused,
+    ):
+        tx.restore(snapshot_id, into=into(guard, target, accounts))
+    message = str(refused.value)
+
+    # Still true: the folder and the way around it are named, nothing moved.
+    assert LEGACY in message, message
+    assert "--paths" in message, message
+    assert strict_state(world) == before
+
+    # The new wording: rename it, or snapshot first and then remove it.
+    assert "rename or remove" not in message, message
+    assert "rename it, or run" in message, message
+    snap = message.find("wowlab snap create")
+    assert snap != -1, message
+    assert message.find("and then remove it", snap) != -1, message
+    assert message.find("rename it", 0, snap) != -1, message
