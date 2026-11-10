@@ -7919,6 +7919,14 @@ def _lua_diff(
         return None, None
     if change.before.sha256 is None or change.after.sha256 is None:
         return None, "one side is a link"
+    # The parser's own bound (M16-72): a side over it would be refused by
+    # `luadata.parse` anyway, so it is never inflated into memory first.
+    largest = max(change.before.size, change.after.size)
+    if largest > luadata.MAX_FILE_BYTES:
+        return None, (
+            f"not compared as data: one side holds {largest} bytes, "
+            f"more than the {luadata.MAX_FILE_BYTES} wowlab reads as data"
+        )
     try:
         # By content hash: the store checks the bytes against the name.
         before = _leaves(store.read_object(change.before.sha256, size=change.before.size))
