@@ -82,6 +82,11 @@ def test_an_unfinished_rollback_is_a_problem_with_the_exact_undo_line_constructe
     report = json.loads(data.stdout)
     assert report["store"]["last_transaction"]["state"] == "rollback_incomplete"
     assert [p for p in report["problems"] if line in p] == [cli._rollback_unfinished(record_id)]
+    # The command is last, with nothing after the id: a copied trailing
+    # character would make `--expect` refuse.
+    (problem,) = [p for p in report["problems"] if line in p]
+    assert problem.endswith(f": {line}")
+    assert text.stdout.split("Problems:\n", 1)[1].splitlines()[0].endswith(f": {line}")
 
 
 def test_the_printed_line_puts_back_what_was_there_before_the_change_constructed(

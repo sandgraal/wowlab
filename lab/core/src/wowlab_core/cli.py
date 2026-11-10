@@ -2005,9 +2005,9 @@ def _rollback_unfinished(record_id: str) -> str:
         "the last change wowlab made failed, and putting the files back did not finish "
         f"(record {record_id}): a file may have been changed by another program, such as "
         "the game, while wowlab was writing, or may still hold wowlab's change. To put back "
-        f"what was there before the change, run: wowlab undo --expect {record_id}. That "
-        "replaces what is in those files now; the undo keeps a copy, and running wowlab undo "
-        "again brings it back."
+        "what was there before the change, run this; it replaces what is in those files "
+        "now, but the undo keeps a copy and running wowlab undo again brings it back: "
+        f"wowlab undo --expect {record_id}"
     )
 
 
