@@ -164,7 +164,7 @@
     } catch (error) {
       return { error: "The request failed: " + error };
     }
-    if (!reply.ok) return { error: "Refused: " + (result.error || reply.status) };
+    if (!reply.ok) return { error: "The server refused this request: " + (result.error || reply.status) };
     if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit." };
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {

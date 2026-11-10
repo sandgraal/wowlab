@@ -296,7 +296,7 @@ def test_a_refused_explain_is_an_alert_then_a_status_again_constructed(
     out = _drive(tmp_path / "node", scenario)
     refused, answered = out["steps"]
     assert refused["explain"] == {
-        "text": "Refused: the server refused this run",
+        "text": "The server refused this request: the server refused this run",
         "role": "alert",
     }, refused
     assert answered["explain"]["role"] == "status", answered

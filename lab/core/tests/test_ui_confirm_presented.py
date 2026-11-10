@@ -577,6 +577,10 @@ def test_the_page_holds_none_of_the_servers_words() -> None:
     # stderr: the server's outcome, else only what is true of any such run.
     assert '(ended ? ": " + ended : " ended without a message.")' in script
     assert "did not finish" not in script
+    # A refused request is the server's refusal, never "Refused" (exit code
+    # 3): in the shared reader and on the Commands tab alike.
+    assert script.count('"The server refused this request: " + (result.error || reply.status)') == 2
+    assert '"Refused: "' not in script
     # Nothing in the script compares an exit code with 1, 2 or 3.
     assert not re.search(r"exit_code\s*[!=<>]=*\s*[123]\b", script)
 
