@@ -1130,6 +1130,25 @@ holds the store lock. An imported snapshot keeps the install root it was
 taken of, so it is restored with `--into-root` (and `--into-flavor` when
 the folder has another name there). `wowlab ui` refuses `snap export` whole
 (its FILE is required), for the reason it refuses `looks page --out`.
+*2026-11-10 (M16-04 review round 1):* (a) On POSIX the export file is
+created through a descriptor on its folder, held to be the folder that was
+checked; a failed export removes the file only while its name still names
+the file it created (device and inode, not a link), so an install's own
+file reached through a swapped folder is never removed. (b) An imported
+manifest is held to `snapshot.check_foreign_manifest`: `created_at` well
+formed, equal to the moment in its id, and no later than this computer's
+clock plus ten minutes; `flavor_folder` one folder name; every subtree and
+excluded path relative and that folder or under it; every entry under a
+subtree and under no excluded path. (c) The store records each imported id
+as an empty file `imported/<id>`, written before the manifest; the
+manifest's bytes and fingerprint are unchanged. `kind_of` reports such a
+snapshot as `imported` (a fifth `SnapshotKind`; a manifest still records
+only the four, `RecordedKind`), whatever its manifest claims, so
+`latest-user` never names it; `latest` and `~N` still go by date, which
+(b) holds to the past. `snap show` prints the kind. (d) Before `zipfile`
+reads the central directory, the end record (Zip64 included) is read where
+an exported archive has it, right before the comment, and the entry count
+(1,000,000), the directory size (256 MiB) and the comment are checked.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

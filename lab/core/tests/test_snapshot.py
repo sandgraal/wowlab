@@ -569,6 +569,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "list_tree",  # M11-08: reads listings and lstat only
         "put_object",  # M11-24: writes an object, never a manifest
         "add_snapshot",  # M16-04: writes a new manifest, never one already there
+        "imported_ids",  # M16-04: lists imported/ only
     }
 
 

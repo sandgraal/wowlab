@@ -37,8 +37,10 @@ import errno
 import os
 import re
 import stat
+import struct
 import zipfile
 import zlib
+from datetime import datetime
 from pathlib import Path
 from typing import IO
 
@@ -54,6 +56,7 @@ from wowlab_core.snapshot import (
 
 __all__ = [
     "ARCHIVE_COMMENT",
+    "MAX_DIRECTORY_BYTES",
     "MAX_ENTRIES",
     "MAX_MANIFEST_BYTES",
     "MAX_OBJECT_BYTES",
@@ -77,6 +80,8 @@ MAX_TOTAL_BYTES = 16 << 30
 """The most file content one import adds (16 GiB)."""
 MAX_ENTRIES = 1_000_000
 """The most entries an archive to import may hold."""
+MAX_DIRECTORY_BYTES = 256 << 20
+"""The largest zip central directory an import lets `zipfile` read (256 MiB)."""
 
 _CHUNK = 1 << 20
 _FIXED_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: the same snapshot, the same bytes
@@ -125,9 +130,9 @@ class ImportReport(_Frozen):
 # ─── export ──────────────────────────────────────────────────────────────────
 
 
-def _refuse_destination(store: SnapshotStore, dest: Path) -> Path:
-    """`dest` made absolute; refused inside any install (guard's rule, which
-    raises `GuardError`) and inside the store."""
+def _refuse_destination(store: SnapshotStore, dest: Path) -> tuple[Path, Path]:
+    """`dest` made absolute, and as resolved; refused inside any install
+    (guard's rule, which raises `GuardError`) and inside the store."""
     from wowlab_core import guard  # guard imports snapshot; imported at use
 
     absolute = Path(dest).absolute()
@@ -135,7 +140,68 @@ def _refuse_destination(store: SnapshotStore, dest: Path) -> Path:
     store_root = store.path.resolve()
     if resolved == store_root or store_root in resolved.parents:
         raise SnapshotError(f"{absolute} is inside the snapshot store; name a file outside it")
-    return absolute
+    return absolute, resolved
+
+
+_CREATE_FLAGS = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_EXCL
+    | _O_NOFOLLOW
+    | getattr(os, "O_BINARY", 0)
+    | getattr(os, "O_NOCTTY", 0)
+)
+_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and {os.open, os.stat, os.unlink} <= os.supports_dir_fd
+"""POSIX: the export file is created, checked and removed through a
+descriptor on the folder that was checked, never by its path again."""
+
+
+def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def _open_checked_folder(target: Path, resolved: Path) -> int | None:
+    """A descriptor on the folder the new file goes in (POSIX), held to be
+    the folder `_refuse_destination` examined (`resolved.parent`, by device
+    and inode), so a folder swapped in between is refused; None elsewhere."""
+    if not _BY_DIR_FD:
+        return None
+    try:
+        dir_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise SnapshotError(f"cannot open the folder of {target}: {exc.strerror or exc}") from exc
+    try:
+        checked = resolved.parent.stat()
+        if not _same_file(os.fstat(dir_fd), checked):
+            raise SnapshotError(
+                f"the folder of {target} changed as it was checked; nothing written"
+            )
+    except BaseException:
+        os.close(dir_fd)
+        raise
+    return dir_fd
+
+
+def _remove_own(target: Path, dir_fd: int | None, created: os.stat_result) -> None:
+    """Remove the file this export created, and nothing else: only when its
+    name (in the held folder, POSIX; by path elsewhere) still names that
+    very file by device and inode and is not a link. Anything else at the
+    name, such as an install's own file reached through a folder swapped
+    for a link, is left alone, and so is the export's file, then."""
+    try:
+        if dir_fd is not None:
+            now = os.stat(target.name, dir_fd=dir_fd, follow_symlinks=False)
+        else:
+            now = os.lstat(target)
+    except OSError:
+        return
+    if stat.S_ISLNK(now.st_mode) or not _same_file(now, created):
+        return
+    with contextlib.suppress(OSError):
+        if dir_fd is not None:
+            os.unlink(target.name, dir_fd=dir_fd)
+        else:
+            target.unlink()
 
 
 def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> ExportReport:
@@ -146,54 +212,58 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
     and recorded size first (`read_object`), so an archive never carries a
     damaged object. `dest` must not exist; it is created exclusively and
     without following a link at its last component, and removed again if
-    the export fails part way. Refused before anything is created: a
-    `dest` inside any install (`guard.GuardError`) or inside the store."""
+    the export fails part way, but only while its name still names the file
+    this export created (`_remove_own`). Refused before anything is
+    created: a `dest` inside any install (`guard.GuardError`) or inside the
+    store. On POSIX the file is created through a descriptor on its folder,
+    held to be the folder that was checked."""
     manifest = store.show(snapshot_id)
     data = snapshot.manifest_bytes(manifest)
     sizes: dict[str, int] = {}
     for entry in manifest.entries:
         if entry.kind == "file" and entry.sha256 is not None:
             sizes.setdefault(entry.sha256, entry.size)
-    target = _refuse_destination(store, dest)
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | _O_NOFOLLOW
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOCTTY", 0)
-    )
+    target, resolved = _refuse_destination(store, dest)
+    dir_fd = _open_checked_folder(target, resolved)
     try:
-        fd = os.open(target, flags, 0o666)
-    except FileExistsError:
-        raise SnapshotError(
-            f"{target} already exists; name a new file, or move that one aside"
-        ) from None
-    except OSError as exc:
-        raise SnapshotError(f"cannot create {target}: {exc.strerror or exc}") from exc
-    try:
-        with os.fdopen(fd, "wb") as out:
-            if not stat.S_ISREG(os.fstat(out.fileno()).st_mode):
-                raise SnapshotError(f"{target} is not a regular file")
-            # Asked again now that it exists: a folder on the way swapped for
-            # a link into an install after the first check refuses it here,
-            # before a byte is written, and the new empty file is removed.
-            _refuse_destination(store, target)
-            with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-                zf.comment = ARCHIVE_COMMENT
-                zf.writestr(_member(MANIFEST_NAME), data)
-                for digest in sorted(sizes):
-                    zf.writestr(
-                        _member(f"objects/{digest}"),
-                        store.read_object(digest, size=sizes[digest]),
-                    )
-            out.flush()
-            os.fsync(out.fileno())
-            archive_bytes = os.fstat(out.fileno()).st_size
-    except BaseException:
-        with contextlib.suppress(OSError):
-            target.unlink()
-        raise
+        try:
+            if dir_fd is not None:
+                fd = os.open(target.name, _CREATE_FLAGS, 0o666, dir_fd=dir_fd)
+            else:
+                fd = os.open(target, _CREATE_FLAGS, 0o666)
+        except FileExistsError:
+            raise SnapshotError(
+                f"{target} already exists; name a new file, or move that one aside"
+            ) from None
+        except OSError as exc:
+            raise SnapshotError(f"cannot create {target}: {exc.strerror or exc}") from exc
+        created = os.fstat(fd)
+        try:
+            with os.fdopen(fd, "wb") as out:
+                if not stat.S_ISREG(created.st_mode):
+                    raise SnapshotError(f"{target} is not a regular file")
+                # Asked again now that it exists: the name the player gave
+                # must still lead outside every install, or the export is
+                # refused before a byte is written. The cleanup below then
+                # removes only this export's own file (`_remove_own`).
+                _refuse_destination(store, target)
+                with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                    zf.comment = ARCHIVE_COMMENT
+                    zf.writestr(_member(MANIFEST_NAME), data)
+                    for digest in sorted(sizes):
+                        zf.writestr(
+                            _member(f"objects/{digest}"),
+                            store.read_object(digest, size=sizes[digest]),
+                        )
+                out.flush()
+                os.fsync(out.fileno())
+                archive_bytes = os.fstat(out.fileno()).st_size
+        except BaseException:
+            _remove_own(target, dir_fd, created)
+            raise
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
     return ExportReport(
         id=manifest.id,
         file=str(target),
@@ -284,6 +354,63 @@ def _read_manifest(zf: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> by
     return data
 
 
+_EOCD = struct.Struct("<4s4H2LH")  # signature, disks, counts, size, offset, comment length
+_EOCD_SIG = b"PK\x05\x06"
+_ZIP64_LOCATOR = struct.Struct("<4sLQL")
+_ZIP64_LOCATOR_SIG = b"PK\x06\x07"
+_ZIP64_EOCD = struct.Struct("<4sQ2H2L4Q")
+_ZIP64_EOCD_SIG = b"PK\x06\x06"
+
+
+def _read_at(handle: IO[bytes], offset: int, size: int) -> bytes:
+    handle.seek(offset)
+    return handle.read(size)
+
+
+def _check_end_record(
+    handle: IO[bytes], file_size: int, max_entries: int, max_directory_bytes: int
+) -> None:
+    """Read the end-of-central-directory record (and the Zip64 one it points
+    to, when its fields say so) before `zipfile` reads the directory, and
+    refuse an archive whose entry count or directory size is over the bounds
+    or whose comment is not `ARCHIVE_COMMENT`. An archive `export_snapshot`
+    writes ends in that record followed by exactly that comment, so the
+    record is looked for there and nowhere else."""
+    at = file_size - _EOCD.size - len(ARCHIVE_COMMENT)
+    if at < 0:
+        raise ArchiveError("the file is too short to be a snapshot archive")
+    raw = _read_at(handle, at, _EOCD.size + len(ARCHIVE_COMMENT))
+    sig, _disk, _cd_disk, _here, count, cd_size, cd_offset, comment_len = _EOCD.unpack(
+        raw[: _EOCD.size]
+    )
+    if (
+        sig != _EOCD_SIG
+        or comment_len != len(ARCHIVE_COMMENT)
+        or raw[_EOCD.size :] != ARCHIVE_COMMENT
+    ):
+        raise ArchiveError("the file is not a snapshot archive written by wowlab snap export")
+    if count == 0xFFFF or cd_size == 0xFFFFFFFF or cd_offset == 0xFFFFFFFF:
+        locator_at = at - _ZIP64_LOCATOR.size
+        if locator_at < 0:
+            raise ArchiveError("the archive's Zip64 record is missing")
+        lsig, _ldisk, zip64_at, _disks = _ZIP64_LOCATOR.unpack(
+            _read_at(handle, locator_at, _ZIP64_LOCATOR.size)
+        )
+        if lsig != _ZIP64_LOCATOR_SIG or zip64_at + _ZIP64_EOCD.size > locator_at:
+            raise ArchiveError("the archive's Zip64 record is missing or out of place")
+        fields = _ZIP64_EOCD.unpack(_read_at(handle, zip64_at, _ZIP64_EOCD.size))
+        if fields[0] != _ZIP64_EOCD_SIG:
+            raise ArchiveError("the archive's Zip64 record is damaged")
+        count, cd_size, cd_offset = fields[7], fields[8], fields[9]
+    if count > max_entries:
+        raise ArchiveError(f"the archive holds {count} entries, more than {max_entries}")
+    if cd_size > max_directory_bytes or cd_offset + cd_size > file_size:
+        raise ArchiveError(
+            f"the archive's directory is {cd_size} bytes, more than the file or the "
+            f"{max_directory_bytes} one import reads"
+        )
+
+
 def import_snapshot(
     store: SnapshotStore,
     path: Path,
@@ -292,6 +419,8 @@ def import_snapshot(
     max_total_bytes: int = MAX_TOTAL_BYTES,
     max_manifest_bytes: int = MAX_MANIFEST_BYTES,
     max_entries: int = MAX_ENTRIES,
+    max_directory_bytes: int = MAX_DIRECTORY_BYTES,
+    now: datetime | None = None,
 ) -> ImportReport:
     """Add the snapshot in the archive at `path` to `store`.
 
@@ -302,7 +431,13 @@ def import_snapshot(
     hashes every object before the manifest is added. A refusal is an
     `ArchiveError`, a `ManifestIntegrityError`, an `ObjectCorruptError` or a
     `SnapshotExistsError` (a different snapshot under the same id), and
-    adds nothing. Callers hold the store lock (`guard.store_lock`)."""
+    adds nothing. Callers hold the store lock (`guard.store_lock`).
+
+    The entry count, the size of the zip's central directory and its comment
+    are checked from the end record before `zipfile` reads the directory
+    (`_check_end_record`). The manifest is held to
+    `snapshot.check_foreign_manifest` (its date against `now`, default this
+    computer's clock), and the snapshot is recorded as imported."""
     source = Path(path)
     try:
         fd, _ = snapshot.open_regular_file(source)
@@ -318,6 +453,12 @@ def import_snapshot(
         os.close(fd)
         raise
     with handle:
+        try:
+            _check_end_record(
+                handle, os.fstat(handle.fileno()).st_size, max_entries, max_directory_bytes
+            )
+        except (OSError, struct.error) as exc:
+            raise ArchiveError(f"{source} is not a snapshot archive ({exc})") from exc
         try:
             zf = zipfile.ZipFile(handle)
         except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError) as exc:
@@ -376,7 +517,7 @@ def import_snapshot(
                     raise ObjectCorruptError(f"object {digest} does not read back: {exc}") from exc
                 return _MemberSource(stream, digest)
 
-            manifest, added = store.add_snapshot(data, open_object)
+            manifest, added = store.add_snapshot(data, open_object, now=now)
     return ImportReport(
         id=manifest.id,
         added=added,

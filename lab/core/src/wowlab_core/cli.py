@@ -6709,6 +6709,10 @@ _KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
         "taken automatically just before a change; restoring it puts the files back "
         "as they were just before that change"
     ),
+    "imported": (
+        "added from a file by snap import, so not one you took on this computer; "
+        "latest-user never names it"
+    ),
 }
 
 
@@ -6879,10 +6883,11 @@ def snap_show(
     if json_out:
         _emit_manifest(manifest)
         return
+    # An imported one is said to be so, whatever kind its manifest claims.
+    kind = snapshot.kind_of(manifest, (), store.imported_ids())
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
-    if manifest.kind is not None:
-        _say(f"  kind:     {manifest.kind}, {_KIND_WORDS[manifest.kind]}")
+    _say(f"  kind:     {kind}, {_KIND_WORDS[kind]}")
     if manifest.label:
         _say(f"  label:    {manifest.label}")
     _say(f"  install:  {manifest.install_root}")
@@ -7201,14 +7206,14 @@ def snap_import(
         _say(f"Imported snapshot {report.id}")
     else:
         _say(f"Snapshot {report.id} is already in the store; nothing was added.")
-    _say(f"  taken: {report.created_at}")
-    if report.label:
-        _say(f"  label: {report.label}")
+    _say(f"  taken:   {report.created_at}, on the computer it came from")
     _say(
-        f"  of {report.flavor_folder} ({report.flavor_version or 'no version'}) "
+        f"  of:      {report.flavor_folder} ({report.flavor_version or 'no version'}) "
         f"in {report.install_root}"
     )
-    _say(f"  {report.files} file(s)")
+    if report.label:
+        _say(f"  label:   {report.label}")
+    _say(f"  files:   {report.files}")
     _say(
         f"To put it into an install on this computer: wowlab snap restore {report.id} "
         "--into-root <install folder> (add --into-flavor <folder> if its folder has "

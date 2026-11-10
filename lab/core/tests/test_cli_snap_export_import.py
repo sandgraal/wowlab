@@ -97,6 +97,10 @@ def test_export_import_then_restore_on_another_computer_constructed(
     said = _plain(ok("snap", "import", str(stick / "carried.zip")).stdout)
     assert f"Imported snapshot {a.id}" in said
     assert "--into-root" in said
+    # It says where and when the snapshot was taken, on the other computer.
+    assert a.created_at in said and str(root) in said
+    shown = _plain(ok("snap", "show", a.id).stdout)
+    assert "kind:     imported" in shown, shown
     listed = json.loads(ok("snap", "list", "--json").stdout)
     assert [s["id"] for s in listed["snapshots"]] == [a.id]
     assert json.loads(ok("snap", "verify", "--json").stdout)["corrupt_objects"] == []

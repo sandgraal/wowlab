@@ -21,7 +21,9 @@ import stat
 import sys
 import zipfile
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -39,22 +41,25 @@ A = b"constructed: settings A\n"
 B = b"constructed: saved data B, a little longer than A\n" * 40
 SHA_A = hashlib.sha256(A).hexdigest()
 SHA_B = hashlib.sha256(B).hexdigest()
+FOLDER = "_flavor_"  # constructed: the flavor folder the snapshot is taken of (test data, L6)
 
 
 def _tree(tmp_path: Path) -> Path:
     """Constructed: a small tree with two contents, one stored twice."""
     root = tmp_path / "source"
-    (root / "WTF" / "Account").mkdir(parents=True)
-    (root / "WTF" / "Config.wtf").write_bytes(A)
-    (root / "WTF" / "Account" / "copy.wtf").write_bytes(A)
-    (root / "WTF" / "Account" / "data.lua").write_bytes(B)
+    (root / FOLDER / "WTF" / "Account").mkdir(parents=True)
+    (root / FOLDER / "WTF" / "Config.wtf").write_bytes(A)
+    (root / FOLDER / "WTF" / "Account" / "copy.wtf").write_bytes(A)
+    (root / FOLDER / "WTF" / "Account" / "data.lua").write_bytes(B)
     return root
 
 
 @pytest.fixture
 def source(tmp_path: Path) -> tuple[SnapshotStore, snapshot.Manifest]:
     store = SnapshotStore(tmp_path / "store-a")
-    manifest = store.create(_tree(tmp_path), ["WTF"], label="constructed")
+    manifest = store.create(
+        _tree(tmp_path), [f"{FOLDER}/WTF"], label="constructed", flavor_folder=FOLDER
+    )
     return store, manifest
 
 
@@ -153,7 +158,7 @@ def test_export_then_import_adds_the_same_snapshot_constructed(
     report = snaparchive.import_snapshot(store, archive)
     assert report.added and report.id == manifest.id and report.objects == 2
     assert store.show(manifest.id) == manifest
-    assert store.read_file(manifest.id, "WTF/Account/data.lua") == B
+    assert store.read_file(manifest.id, f"{FOLDER}/WTF/Account/data.lua") == B
     assert store.verify().ok
     assert not any((store.path / "tmp").iterdir())
 
@@ -461,3 +466,190 @@ def test_a_fifo_or_link_named_as_the_archive_is_refused_constructed(
     link = tmp_path / "link.zip"
     link.symlink_to(archive)
     _refused(tmp_path, link, ArchiveError)
+
+
+# ─── what an imported manifest may claim (review round 1) ────────────────────
+
+
+def _forge(manifest: snapshot.Manifest, stamp: str | None = None, **update: object) -> bytes:
+    """Constructed: `manifest` with `update` applied and its id remade (with
+    `stamp` as its time part, when given), so the fingerprint holds: what an
+    attacker who writes the archive can do."""
+    forged = manifest.model_copy(update=update)
+    fingerprint = snapshot.tree_fingerprint(forged.subtrees, forged.excluded, forged.entries)
+    when = stamp if stamp is not None else manifest.id.rsplit("-", 1)[0]
+    forged = forged.model_copy(update={"id": f"{when}-{fingerprint}"})
+    return snapshot.manifest_bytes(forged)
+
+
+def _forged_archive(
+    archive: Path, manifest: snapshot.Manifest, when: datetime | None = None, **update: object
+) -> Path:
+    stamp = None
+    if when is not None:
+        update["created_at"] = f"{when:%Y-%m-%dT%H:%M:%S}.{when.microsecond:06d}Z"
+        stamp = f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z"
+    return _replace_manifest(archive, _forge(manifest, stamp, **update))
+
+
+def test_a_snapshot_dated_in_the_future_is_refused_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], archive: Path
+) -> None:
+    _, manifest = source
+    future = _forged_archive(archive, manifest, datetime(2099, 1, 1, tzinfo=UTC))
+    _refused(tmp_path, future, ManifestIntegrityError, "from the future")
+    # Within the allowance for two computers' clocks: accepted.
+    soon = datetime.now(UTC) + snapshot.IMPORT_CLOCK_ALLOWANCE / 2
+    store = SnapshotStore(tmp_path / "store-c")
+    assert snaparchive.import_snapshot(store, _forged_archive(archive, manifest, soon)).added
+
+
+def test_a_date_that_is_not_the_ids_is_refused_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], archive: Path
+) -> None:
+    """`created_at` is outside the fingerprint, so it can be changed without
+    remaking the id; it must still be the moment the id carries."""
+    _, manifest = source
+    other = manifest.model_copy(update={"created_at": "2000-01-01T00:00:00.000000Z"})
+    _refused(
+        tmp_path,
+        _replace_manifest(archive, snapshot.manifest_bytes(other)),
+        ManifestIntegrityError,
+        "not the moment its id carries",
+    )
+    bad = manifest.model_copy(update={"created_at": "yesterday"})
+    _refused(
+        tmp_path,
+        _replace_manifest(archive, snapshot.manifest_bytes(bad)),
+        ManifestIntegrityError,
+        "malformed",
+    )
+
+
+def test_an_imported_user_snapshot_is_never_latest_user_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], archive: Path
+) -> None:
+    """The archive's manifest says `kind: user` and is newer than anything the
+    receiving player took; `latest-user` still names the player's own, and
+    `latest` names the newest by date, which is the imported one (its date is
+    real: no later than now)."""
+    _, manifest = source
+    assert manifest.kind == "user"
+    store = SnapshotStore(tmp_path / "store-b")
+    own = store.create(
+        _other_tree(tmp_path), ["x"], now=datetime(2020, 1, 1, tzinfo=UTC), label="mine"
+    )
+    snaparchive.import_snapshot(store, archive)
+    assert store.imported_ids() == {manifest.id}
+    assert snapshot.resolve_reference(store, "latest-user") == own.id
+    assert snapshot.resolve_reference(store, "latest") == manifest.id
+    assert snapshot.resolve_reference(store, "~1") == own.id
+    imported = store.imported_ids()
+    assert snapshot.kind_of(store.show(manifest.id), (), imported) == "imported"
+    assert snapshot.kind_of(store.show(own.id), (), imported) == "user"
+
+
+def test_the_import_record_is_written_before_the_manifest_constructed(
+    tmp_path: Path, archive: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure writing the manifest leaves at most a record and no
+    manifest: the store never holds an imported manifest unmarked."""
+    store = SnapshotStore(tmp_path / "store-b")
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("constructed: the disk filled")
+
+    monkeypatch.setattr(store, "_write_manifest", fail)
+    with pytest.raises(SnapshotError):
+        snaparchive.import_snapshot(store, archive)
+    assert store.list() == ()
+    assert len(store.imported_ids()) == 1
+
+
+BAD_PATHS: tuple[tuple[str, object], ...] = (
+    ("subtrees", ("../../../etc",)),
+    ("subtrees", (f"{FOLDER}/../../etc",)),
+    ("subtrees", ("Data",)),
+    ("subtrees", (".",)),
+    ("subtrees", ()),
+    ("excluded", ("../../../etc",)),
+    ("excluded", ("elsewhere/x",)),
+    ("flavor_folder", None),
+    ("flavor_folder", ".."),
+    ("flavor_folder", "a/b"),
+)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), BAD_PATHS, ids=[f"constructed-{i}" for i in range(len(BAD_PATHS))]
+)
+def test_subtrees_and_excluded_must_stay_in_the_flavor_folder_constructed(
+    tmp_path: Path,
+    source: tuple[SnapshotStore, snapshot.Manifest],
+    archive: Path,
+    field: str,
+    value: object,
+) -> None:
+    _, manifest = source
+    forged = _forged_archive(archive, manifest, **{field: value})
+    _refused(tmp_path, forged, ManifestIntegrityError)
+
+
+def test_an_entry_outside_what_was_captured_is_refused_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], archive: Path
+) -> None:
+    _, manifest = source
+    moved = tuple(
+        e.model_copy(update={"path": ".build.info"}) if e.path.endswith("Config.wtf") else e
+        for e in manifest.entries
+    )
+    forged = _forged_archive(archive, manifest, entries=tuple(sorted(moved, key=lambda e: e.path)))
+    _refused(tmp_path, forged, ManifestIntegrityError, "outside what it captured")
+
+
+# ─── the end record, read before zipfile (review round 1) ────────────────────
+
+
+class _Spy:
+    """Counts how often `zipfile.ZipFile` is built while it is installed."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls = 0
+        real = zipfile.ZipFile
+
+        def spy(*args: Any, **kwargs: Any) -> zipfile.ZipFile:
+            self.calls += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(snaparchive.zipfile, "ZipFile", spy)
+
+
+def test_an_over_count_archive_is_refused_before_zipfile_reads_it_constructed(
+    tmp_path: Path, archive: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = _Spy(monkeypatch)
+    _refused(tmp_path, archive, ArchiveError, "more than 2", max_entries=2)
+    _refused(tmp_path, archive, ArchiveError, "directory", max_directory_bytes=16)
+    assert spy.calls == 0
+
+
+def test_a_zip64_over_count_archive_is_refused_before_zipfile_reads_it_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Over 65535 entries the count lives in the Zip64 record only."""
+    big = tmp_path / "zip64.zip"
+    with zipfile.ZipFile(big, "w", zipfile.ZIP_STORED) as zf:
+        zf.comment = ARCHIVE_COMMENT
+        for i in range(0x10000):
+            zf.writestr(f"objects/{i:064x}", b"")
+    tail = big.read_bytes()[-200:]
+    assert b"PK\x06\x06" in tail and b"PK\x06\x07" in tail, "constructed: a Zip64 archive"
+    spy = _Spy(monkeypatch)
+    _refused(tmp_path, big, ArchiveError, f"holds {0x10000} entries", max_entries=0xFFFF)
+    assert spy.calls == 0
+
+
+def test_bytes_after_the_comment_are_refused_constructed(tmp_path: Path, archive: Path) -> None:
+    padded = tmp_path / "padded.zip"
+    padded.write_bytes(archive.read_bytes() + b"constructed: trailing")
+    _refused(tmp_path, padded, ArchiveError, "not a snapshot archive")
