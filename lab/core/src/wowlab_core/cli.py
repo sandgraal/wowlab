@@ -1657,6 +1657,8 @@ class StoreReport(_Out):
     transactions: int | None
     last_transaction: LastTransaction | None
     journal_error: str | None
+    # Who besides the player can open the store (M16-41); not checked on Windows.
+    exposure: snapshot.StoreExposure
 
 
 class DoctorReport(_Out):
@@ -1803,6 +1805,7 @@ def _store_report() -> StoreReport:
         transactions=transactions,
         last_transaction=last,
         journal_error=journal_error,
+        exposure=store.exposure(),
     )
 
 
@@ -1911,6 +1914,22 @@ _SYNC_NOTE = (
     "and settings, is not known."
 )
 _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
+_STORE_MODES_NOTE = (
+    "On Windows, wowlab does not check who else can read the snapshot store; the folder "
+    "takes its access from your user profile."
+)
+
+
+def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
+    """The warning when other accounts on this computer can open the store
+    (M16-41), or None."""
+    if not exposure.readable_by_others:
+        return None
+    return (
+        f"Other accounts on this computer can read the snapshot store "
+        f"({exposure.count} of its files and folders). wowlab makes it private the next time it "
+        "writes there, such as at the next snapshot."
+    )
 
 
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
@@ -1997,7 +2016,16 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         )
     else:
         _say("  no transactions in the journal")
-    notes.append(_STORE_VERIFY_NOTE)
+    exposed = _exposure_line(store.exposure)
+    if exposed is not None:
+        _say_prose(f"  {exposed}", hang="    ")
+    # On Windows the store's note says the modes are not checked as well;
+    # one note about the store, so the footer counts the same everywhere.
+    notes.append(
+        _STORE_VERIFY_NOTE
+        if store.exposure.checked
+        else f"{_STORE_VERIFY_NOTE} {_STORE_MODES_NOTE}"
+    )
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
@@ -2323,7 +2351,8 @@ class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
     entry_id: str
-    what: str
+    what: str  # the player's text (M16-17)
+    notes: str  # the spec's notes on the row (M16-17); "—" when it has none
     written_by: str
     edit: str
     tier: str
@@ -2384,6 +2413,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
+        notes=entry.notes,
         written_by=entry.written_by,
         edit=entry.edit,
         tier=entry.tier,
@@ -2704,7 +2734,7 @@ def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
         else:
             e = item.explained
             _say(f"      [{e.entry_id}] {_player_copy(_plain(e.what))}")
-            _say(f"      written by: {_plain(e.written_by)}")
+            _say(f"      written by: {_player_copy(_plain(e.written_by))}")
             _say(f"      edit: {e.verdict.words}")
 
 
@@ -3563,6 +3593,14 @@ def explain(
     ],
     root: RootOpt = None,
     flavor: FlavorOpt = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Also print the row's tier (how ordinary using this file is), "
+            "what in wowlab reads it, and the paths the row covers.",
+        ),
+    ] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """What a path in the install is, who writes it, whether wowlab may edit it.
@@ -3717,11 +3755,16 @@ def explain(
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
     _say(f"{result.path or '.'} ({base})")
     _say(f"  what:         {_player_copy(_plain(e.what))}")
-    _say(f"  written by:   {_plain(e.written_by)}")
+    _say(f"  written by:   {_player_copy(_plain(e.written_by))}")
     _say(f"  edit:         {report.verdict.words}")
-    _say(f"  tier:         {tier_words(e.tier)}")
-    _say(f"  read by:      {_reader_words(e.module)}")
-    _say(f"  file-map row: {e.id} ({e.doc_path})")
+    # M16-17: the tier, the reader and the row's own path pattern are the
+    # spec's words; they print only on request (`--json` always has them).
+    if verbose:
+        _say(f"  tier:         {tier_words(e.tier)}")
+        _say(f"  read by:      {_reader_words(e.module)}")
+        _say(f"  file-map row: {e.id} ({e.doc_path})")
+    else:
+        _say(f"  file-map row: {e.id}")
     if taken is not None:  # no install-root row matches below `_..._` today
         _say(f"  {taken.name}: {taken.note}")
     if nowhere:
@@ -7518,7 +7561,7 @@ def _diff_detail_lines(store: snapshot.SnapshotStore, cf: ChangedFile) -> list[s
 
 @snap_app.command("verify", short_help="Check every stored file and snapshot.")
 @_handled
-def snap_verify(json_out: JsonOpt = False) -> None:
+def snap_verify(json_out: JsonOpt = False, notes_out: NotesOpt = False) -> None:
     """Re-hash every stored object and check every manifest. Exits 1 on any
     problem.
 
@@ -7546,6 +7589,11 @@ def snap_verify(json_out: JsonOpt = False) -> None:
             _say(f"  damaged manifest {bad.name}: {bad.reason}")
         if report.ok:
             _say("  all sound")
+        exposed = _exposure_line(report.exposure)
+        if exposed is not None:
+            _say_prose(f"  {exposed}", hang="    ")
+        # A standing caveat on Windows, so behind --notes (M16-41, fix round 1).
+        _say_notes([] if report.exposure.checked else [_STORE_MODES_NOTE], notes_out)
     if not report.ok:
         raise typer.Exit(EXIT_ERROR)
 
@@ -8285,6 +8333,44 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
 _NOT_RESTORED_SHOWN = 10
 
 
+def _left_alone_lines(left_alone: Sequence[str]) -> list[str]:
+    """The text plan's "left alone" heading: the files added under the
+    snapshot's folders since it was taken, which a whole restore never
+    writes or deletes."""
+    if not left_alone:
+        return []
+    return [
+        f"  Left alone: {len(left_alone)} file(s) added since the snapshot was taken. "
+        "A whole restore never deletes them; name one with --paths to delete it:",
+        *(f"    {rel}" for rel in left_alone),
+    ]
+
+
+def _added_since(
+    store: snapshot.SnapshotStore, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[str, ...]:
+    """What a whole restore of `manifest` (spelled as this flavor spells it)
+    leaves alone, by the gate's rule: every regular file under its subtrees,
+    outside its excluded paths, that it does not hold, held to the gate's
+    allowlist roots as the gate holds its own list. Reads directory entries
+    and `lstat` only, following no link; flavor-relative, sorted."""
+    prefix = folder + "/"
+    held = {e.path for e in manifest.entries}
+    ours = guard._allowlisted_trees(manifest.subtrees, folder)
+    if not ours:
+        return ()
+    excluded = guard._allowlisted_trees(manifest.excluded, folder)
+    listed = store.list_tree(install_root, ours, exclude=excluded)
+    return tuple(
+        path.removeprefix(prefix)
+        for path, kind in listed
+        if kind == "file"
+        and path.startswith(prefix)
+        and guard._in_allowlist_root(path.removeprefix(prefix))
+        and path not in held
+    )
+
+
 def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
     shown = [a for a in aside if a.disk != "same"]
     if not shown:
@@ -8472,6 +8558,10 @@ def snap_restore(
     """Put back files from a snapshot, through the write gate: the client must be
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
+    Without --paths, files added under the snapshot's folders since it was
+    taken are never deleted: the plan lists the ones under WTF, Interface
+    and Fonts under "Left alone".
+
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
@@ -8534,6 +8624,7 @@ def snap_restore(
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
     executables: list[SkippedPath] = []
+    left_alone: tuple[str, ...] = ()  # a whole restore's added files, never touched
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
         if target is not None:
             # The gate maps the account folders, or refuses, before anything
@@ -8569,10 +8660,14 @@ def snap_restore(
             try:
                 if not aside and not executables:
                     tx.restore(manifest.id, into=target)
+                    left_alone = tx.left_alone
                 else:
                     if any(not e.path.startswith(folder + "/") for e in rest):
                         # refused: a path outside this flavor
                         tx.restore(manifest.id, into=target)
+                    # Restored by name, so the gate lists nothing it leaves
+                    # alone: the same list, by the same rule, read here.
+                    left_alone = _added_since(store, manifest, inst.root, folder)
                     names, left = _names_for_whole(rest, inst.root, folder)
                     tx.restore(manifest.id, by_name(names), into=target)
             except guard.PathNotAllowedError as exc:
@@ -8624,7 +8719,7 @@ def snap_restore(
 
     shots_differ = any(a.disk != "same" for a in aside)
     plan_lines: list[str] = []
-    if plan or skipped or aside:
+    if plan or skipped or aside or left_alone:
         plan_lines.append(
             f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)"
         )
@@ -8644,6 +8739,7 @@ def snap_restore(
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
+        plan_lines.extend(_left_alone_lines(left_alone))
         plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
     if not json_out or (prompting and plan):
         for line in plan_lines:

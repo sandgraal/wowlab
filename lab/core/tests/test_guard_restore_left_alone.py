@@ -285,7 +285,6 @@ def _no_reads_behind(
 # ─── the seam ────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.parametrize(
     "dry_run", [True, False], ids=["constructed-dry-run", "constructed-commit"]
 )
@@ -306,7 +305,6 @@ def test_constructed_left_alone_is_a_read_only_empty_tuple_without_a_whole_resto
 # ─── a whole restore lists the added files ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.parametrize(
     "dry_run", [True, False], ids=["constructed-dry-run", "constructed-commit"]
 )
@@ -324,7 +322,6 @@ def test_constructed_whole_restore_lists_every_added_file_and_the_plan_none(
     assert not set(left) & {item.path for item in plan}
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_dry_run_and_commit_list_the_same_tuple(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -338,7 +335,6 @@ def test_constructed_dry_run_and_commit_list_the_same_tuple(
     assert planned == committed
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.parametrize("rel", sorted(ADDED), ids=lambda rel: f"constructed-{rel}")
 def test_constructed_each_subtree_lists_a_single_added_file(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, rel: str
@@ -351,7 +347,6 @@ def test_constructed_each_subtree_lists_a_single_added_file(
     assert left == (rel,)
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_whole_restore_with_nothing_added_lists_nothing(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -363,7 +358,6 @@ def test_constructed_whole_restore_with_nothing_added_lists_nothing(
     assert changes(plan) == EXPECTED_CHANGES
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_files_outside_the_subtrees_and_files_the_snapshot_holds_are_not_listed(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -385,7 +379,6 @@ def test_constructed_files_outside_the_subtrees_and_files_the_snapshot_holds_are
         assert rel not in left, rel
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_files_under_an_excluded_path_are_not_listed(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -417,7 +410,6 @@ def test_constructed_files_under_an_excluded_path_are_not_listed(
 # ─── left alone means never written or deleted ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_left_alone_files_are_never_written_deleted_or_journaled(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -445,7 +437,6 @@ def test_constructed_left_alone_files_are_never_written_deleted_or_journaled(
     assert _state(flavor.path, sorted(ADDED)) == before
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_dry_run_whole_restore_leaves_the_install_untouched(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -459,7 +450,6 @@ def test_constructed_dry_run_whole_restore_leaves_the_install_untouched(
     assert G.strict_state(flavor.path) == before
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_added_executable_and_edit_no_files_are_listed_and_untouched(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -483,7 +473,6 @@ def test_constructed_added_executable_and_edit_no_files_are_listed_and_untouched
     assert changes(record_for(guard, store, "restore").paths) == EXPECTED_CHANGES
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.parametrize("op", ["write", "delete"], ids=lambda op: f"constructed-{op}")
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "commit"])
 def test_constructed_later_touch_of_a_left_alone_path_records_its_real_hash(
@@ -514,7 +503,6 @@ def test_constructed_later_touch_of_a_left_alone_path_records_its_real_hash(
 # ─── a restore by name lists none ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.parametrize(
     "dry_run", [True, False], ids=["constructed-dry-run", "constructed-commit"]
 )
@@ -534,7 +522,6 @@ def test_constructed_restore_by_paths_lists_nothing(
     assert _state(flavor.path, sorted(ADDED)) == before
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 def test_constructed_restore_naming_an_added_file_deletes_it_and_lists_nothing(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None
 ) -> None:
@@ -556,7 +543,6 @@ def test_constructed_restore_naming_an_added_file_deletes_it_and_lists_nothing(
 # ─── links and FIFOs: listed never, followed never, opened never ────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.skipif(os.name != "posix", reason="POSIX symlinks")
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "commit"])
 @pytest.mark.parametrize("base", LINK_BASES, ids=lambda b: b.split("/")[0])
@@ -613,7 +599,6 @@ def test_constructed_added_link_is_neither_listed_nor_followed(
     assert G.strict_state(outside) == outside_before
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 not implemented")
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX (os.mkfifo)")
 @pytest.mark.parametrize(
     "dry_run", [True, False], ids=["constructed-dry-run", "constructed-commit"]

@@ -38,7 +38,7 @@ from test_cli_player_copy import Install, hits, sandbox
 from typer.testing import CliRunner
 
 import wowlab_core
-from wowlab_core import bindscoach, cli, gear
+from wowlab_core import bindscoach, cli, gear, snapshot
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots" / "notes"
 UPDATE = os.environ.get("WOWLAB_UPDATE_SNAPSHOTS") == "1"
@@ -97,6 +97,15 @@ def make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Pat
         config = tmp_path / "userconfig" / "wowlab"
         monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        # Who else can open the store depends on the platform (modes are
+        # POSIX's; Windows adds a note) and the umask: one answer, so each
+        # snapshot is the same on every machine. That check's own tests are
+        # in test_snapshot_store_modes.py (M16-41).
+        monkeypatch.setattr(
+            snapshot.SnapshotStore,
+            "exposure",
+            lambda self: snapshot.StoreExposure(checked=True, count=0, entries=()),
+        )
         return root
 
     return build

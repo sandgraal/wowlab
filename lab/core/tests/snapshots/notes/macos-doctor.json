@@ -68,7 +68,12 @@
     "damaged": [],
     "transactions": 0,
     "last_transaction": null,
-    "journal_error": null
+    "journal_error": null,
+    "exposure": {
+      "checked": true,
+      "count": 0,
+      "entries": []
+    }
   },
   "problems": [],
   "first_run": null

@@ -85,14 +85,14 @@ def test_plain_text_drops_markdown_and_names_the_verify_mark() -> None:
         plain = cli._plain_text(entry)
         for text in (plain.what, plain.written_by):
             assert "`" not in text and "**" not in text and "[verify" not in text, entry.id
-    account = filemap.load().entry("account-folder")
-    assert "(not yet confirmed)" in cli._plain_text(account).what
+    numeric = filemap.load().entry("numeric-folder")
+    assert "(not yet confirmed)" in cli._plain_text(numeric).what
     assert cli._player_text("a **[verify purpose]** b") == "a (purpose not yet confirmed) b"
     assert cli._player_text("`## SavedVariables:` **x**") == "## SavedVariables: x"
 
 
 def test_explain_json_carries_plain_text(root: Path) -> None:
-    report = json.loads(_run("explain", "--root", str(root), "--json", "WTF/Account/90000001#6"))
+    report = json.loads(_run("explain", "--root", str(root), "--json", "WTF/Account/90000001#6/1"))
     assert "(not yet confirmed)" in report["plain"]["what"]
     assert "**" in report["result"]["entry"]["what"]  # the row itself is unchanged
     unknown = json.loads(_run("explain", "--root", str(root), "--json", "WTF/zzz-constructed"))
