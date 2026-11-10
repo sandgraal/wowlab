@@ -4324,13 +4324,13 @@ def _sv_file(
     given = Path(_plain_arg(path))
     if given.is_absolute() or longpath.lexists(given):
         if account is not None or character is not None:
-            _note(f"--account and --character choose among names only; {path} was read as typed")
+            _note("--account and --character choose among names only; {} was read as typed", path)
         return given
     _, chosen, lay = _open(root, flavor)
     direct = lay.flavor_path / given
     if longpath.lexists(direct):
         if account is not None or character is not None:
-            _note(f"--account and --character choose among names only; {path} was read as typed")
+            _note("--account and --character choose among names only; {} was read as typed", path)
         return direct
     return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
