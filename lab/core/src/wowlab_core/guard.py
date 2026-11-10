@@ -611,7 +611,7 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     text = json.dumps(record.model_dump(), ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         tmp = directory / f".{record.id}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, 0o600)
@@ -961,7 +961,7 @@ class _Locks:
         _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
-                resolved.mkdir(parents=True, exist_ok=True)
+                resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
             _refuse_inside_any_install(store_path, "the store")
