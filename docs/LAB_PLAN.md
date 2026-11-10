@@ -1609,6 +1609,48 @@ renders it. Before this, the whole record printed on one line with `\x0a`
 escapes. A record that cannot be formatted prints one escaped line naming it
 instead of logging's own error report, which prints the record raw.
 
+### 6.12 Command-level performance budget (M16-27)
+
+*Added 2026-11-10 (M16-27, §18.1 item 6).* Five commands have a cost
+target, checked every night by `.github/workflows/perf-nightly.yml` on
+GitHub's `ubuntu-latest` (the reference runner) and never on the PR path.
+The job runs `scripts/perf_budget.py`; it makes no live call (ADR-0012) and
+touches no real install or snapshot store.
+
+- **The sandbox.** The captured `macos/` fixture tree, copied into a
+  temporary folder under a flavor folder whose name means nothing
+  (discovery reads `.flavor.info`, L6), grown with 20,000 constructed files
+  shaped like the M16-23T grader's tree: one in eight a SavedVariables file
+  in the account folder, the rest addon files in folders of 40. The home and
+  user data directories point into the sandbox, and each command gets
+  `--root`.
+- **The measure.** Each command runs as its own `python -m wowlab_core`
+  process, five times (the whole restore three), and the least child CPU
+  time (user plus system) is kept: load only adds time. It is divided by
+  the least CPU time of a fixed pure-Python calibration loop measured in
+  the same job (dict, string and integer work), so a faster or slower
+  runner moves both sides together.
+- **The verdict.** A command fails when its ratio is over 1.5 times its
+  baseline below.
+- **The absolute check (§18.1 item 6).** The whole-restore check of the
+  20,000-file tree with nothing to change (`snap restore ID --dry-run`, the
+  snapshot taken of the same tree) takes at most 5 s of wall-clock time,
+  best of its runs. It is the command a player waits for: discovery,
+  reading the manifest, the check and the printed plan, which is stricter
+  than the library call M16-23 timed.
+
+| Command | What is run | Baseline ratio |
+|---|---|---|
+BASELINE_ROWS
+
+How the baselines were set: PLACEHOLDER_HOW
+
+To re-set a baseline after an intended change, run the workflow by hand,
+read the ratios its log prints (`python scripts/perf_budget.py --record`
+prints them and checks nothing), and change this table and
+`BASELINE` in the script together; `tests/scripts/test_perf_budget.py`
+keeps them equal.
+
 ## 7. Repository layout
 
 ```
