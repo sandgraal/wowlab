@@ -89,7 +89,7 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_constructed_long_separator_runs_scan_in_linear_time",
         "tests/scripts/test_lab_capture_round2.py"
         "::test_constructed_one_megabyte_run_scrubs_in_bounded_time",
-        # CPU-time ratio of guard's no-op whole restore at 8,000 and 2,000 files.
+        # CPU-time growth of guard's no-op whole restore from 1,000 to 8,000 files.
         "lab/core/tests/test_guard_listing_memo.py"
         "::test_constructed_the_no_op_whole_restore_check_scales_linearly",
         # Wall clock against a bare walk of the same tree.

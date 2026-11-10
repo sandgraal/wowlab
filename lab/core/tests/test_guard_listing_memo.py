@@ -83,20 +83,37 @@ lets a case-variant sibling through, never a write outside the allowlist.
 The timing grader
 -----------------
 CPU time (`time.process_time()`) of `tx.restore(snapshot_id)` alone, in a dry
-run (no pre-write snapshot to time), on two constructed trees of the same
-shape. The container and CI runners are shared, so each size is measured
-several times and the minimum is kept: load can only add time, so the
-minimum is the best estimate of the work. The 2,000-file tree is measured
-first; the 8,000-file tree passes as soon as one of its runs is within the
-ratio, so a loaded machine costs extra runs, and fails only when every
-run is slow. Each 8,000-file run is stopped by a CPU-time alarm
-(`ITIMER_PROF`) once it has used 5 times the 2,000-file minimum: a run past
-that point has already failed, and today's quadratic walk would otherwise
-take minutes per run. The grader is listed in `conftest.py` SERIAL_TESTS.
+run (no pre-write snapshot to time), on constructed trees of the same shape
+at four sizes (1,000, 2,000, 4,000 and 8,000 files). The container and CI
+runners are shared, so each size is measured several times and the minimum
+is kept: load can only add time, so the minimum is the best estimate of the
+work. The minima are fitted against the size on log-log axes, and the slope
+(the exponent k in t ~ n**k) must be at most 1.4: a linear walk is about 1,
+a quadratic one about 2. Each run above the smallest size is stopped by a
+CPU-time alarm (`ITIMER_PROF`) once it has used 1.5 times what an exponent
+of 1.4 predicts from the smallest size's minimum: a run past that point has
+already failed, and a quadratic walk would otherwise take minutes per run.
+A size whose every run is stopped fails the grader without a fit. One tree
+is grown to each size in turn, so the files are made once. The grader is
+listed in `conftest.py` SERIAL_TESTS.
 Measured 2026-10-22 in a container with a load average of 45 on 4 cores:
-today the 2,000-file check takes about 2.5 s CPU and the 8,000-file one
-about 24 s (9.5 times); with a stand-in memo (listings cached by
-(dev, ino, mtime_ns)) 0.45 s and 1.7 s (3.8 times).
+the walk before M16-23 took about 2.5 s CPU at 2,000 files and 24 s at 8,000
+(9.5 times); with a stand-in memo (listings cached by (dev, ino, mtime_ns))
+0.45 s and 1.7 s (3.8 times).
+M16-74T (2026-11-10) replaced a single 8,000-against-2,000 ratio held under
+5 times: main's `lab (macos)` job measured 0.369 s and 1.844 s (5.0 times,
+an exponent of 1.16) although every syscall and call count rises exactly 4
+times; costlier per-file `lstat` on APFS as directories grow is the likely
+reason (inferred, not measured). On Linux main measures 4.1 to 4.2 times
+(an exponent of about 1.03). The limit of 1.4 leaves macOS room (a pairwise
+ratio of up to 7 times for 4 times the files) and fails the pre-memo walk
+(an exponent of about 1.55 on the 2026-10-22 numbers; 1.57 measured on
+2026-11-10, Linux, with main's `_entry` made to list its directory on every
+lookup as it did before M16-23) and a pure quadratic one;
+`test_constructed_the_exponent_fit_tells_linear_from_quadratic` holds the
+fit to that on constructed timings. A walk whose square term is still small
+at 8,000 files can pass the fit (the memo made to keep nothing measured
+1.15); the listing counts in section 1 are what catch that one.
 
 Everything here is constructed (L8 allows it: guard's inputs are our own
 layout, not a client format): the install is the M10-11T synthetic tree
@@ -423,11 +440,15 @@ def test_constructed_lookups_that_write_nothing_list_their_directory_once(
 
 # ─── 2. the walk scales linearly (serial) ────────────────────────────────────
 
-SMALL = 2_000
-LARGE = 8_000
-RATIO = 5.0
-SMALL_RUNS = 3
-LARGE_RUNS = 3
+# Four sizes, each twice the last (M16-74T). The CPU time is fitted against
+# the size on log-log axes and the slope (the exponent k in t ~ n**k) is held
+# under EXPONENT_LIMIT. See "The timing grader" in the module docstring.
+SIZES = (1_000, 2_000, 4_000, 8_000)
+RUNS = 3
+EXPONENT_LIMIT = 1.4
+# A timed run is interrupted once it has used this many times what
+# EXPONENT_LIMIT predicts from the smallest size's minimum.
+BUDGET_HEADROOM = 1.5
 
 
 class _OverBudget(BaseException):
@@ -463,12 +484,14 @@ def _cpu_deadline(seconds: float) -> Iterator[None]:
         signal.signal(prof, previous)
 
 
-def _grow(flavor: Flavor, files: int) -> None:
+def _grow(flavor: Flavor, files: int, start: int = 0) -> None:
     """A constructed tree shaped like a player's: one file in eight is a
     SavedVariables file in one account folder, the rest are addon files in
     folders of 40 inside one `Interface/AddOns`. Both big directories grow
-    with the tree. The timings on this shape are in the module docstring."""
-    for i in range(files):
+    with the tree. Files `start` to `files - 1` are added, so a tree grown
+    to `files` in steps has the same shape as one grown at once. The
+    timings on this shape are in the module docstring."""
+    for i in range(start, files):
         if i % 8 == 0:
             rel = f"{SV}/Constructed{i:05d}.lua"
         else:
@@ -479,7 +502,8 @@ def _grow(flavor: Flavor, files: int) -> None:
 
 
 def _flavor_of(tmp_path: Path, name: str, files: int) -> Flavor:
-    """A fresh copy of the M10-11T install under `tmp_path/name`, grown."""
+    """A fresh copy of the M10-11T install under `tmp_path/name`, grown to
+    `files` constructed files."""
     root = tmp_path / name / "World of Warcraft"
     G._put(root, G.ROOT_FILES)
     G._put(root / G.FLAVOR_FOLDER, G.FLAVOR_ONLY_FILES)
@@ -518,39 +542,91 @@ def _no_op_restore_seconds(
     return seconds
 
 
+def _exponent(sizes: tuple[int, ...], seconds: list[float]) -> float:
+    """The least-squares slope of log(seconds) against log(size): k in
+    t ~ c * n**k. About 1 for a linear walk, about 2 for a quadratic one."""
+    xs = [math.log(n) for n in sizes]
+    ys = [math.log(t) for t in seconds]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
+    return sxy / sxx
+
+
+@pytest.mark.parametrize(
+    ("shape", "seconds", "linear"),
+    [
+        # Linux on main (M16-74T): 4.1 to 4.2 times for 4 times the files.
+        pytest.param("linux-main", [0.09, 0.185, 0.38, 0.78], True, id="constructed-linux-main"),
+        # macOS on main at 54ff9a4: 0.369 s at 2,000 and 1.844 s at 8,000
+        # (5.0 times), the 1,000 and 4,000 points on the same exponent.
+        pytest.param("macos-main", [0.165, 0.369, 0.825, 1.844], True, id="constructed-macos-main"),
+        # A linear walk with a fixed cost on top (the exponent falls below 1).
+        pytest.param("linear-plus-fixed", [0.6, 0.7, 0.9, 1.3], True, id="constructed-fixed"),
+        # Pure quadratic.
+        pytest.param("quadratic", [0.1, 0.4, 1.6, 6.4], False, id="constructed-quadratic"),
+        # The walk before M16-23, measured 2026-10-22: 2.5 s at 2,000 and
+        # 24 s at 8,000 (9.5 times), as a*n + b*n**2 through those two points.
+        pytest.param(
+            "pre-memo-walk",
+            [a * n + b * n * n for n in SIZES for a, b in [(2.5 / 3750, 3.5 / 12e6)]],
+            False,
+            id="constructed-pre-memo-walk",
+        ),
+    ],
+)
+def test_constructed_the_exponent_fit_tells_linear_from_quadratic(
+    shape: str, seconds: list[float], linear: bool
+) -> None:
+    """The verdict of the timing grader below on constructed timings: the
+    walks measured on main pass with room, a quadratic walk fails (M16-74T)."""
+    k = _exponent(SIZES, seconds)
+    assert (k <= EXPONENT_LIMIT) is linear, f"{shape}: exponent {k:.2f}"
+
+
 def test_constructed_the_no_op_whole_restore_check_scales_linearly(
     guard: Any, tmp_path: Path, idle: None
 ) -> None:
-    """§18.1 item 6, the PR-path half: 4 times the files costs at most 5
-    times the CPU time (linear plus noise; today's walk is quadratic in the
-    size of a directory). Minimum of several runs per size; see the module
-    docstring."""
-    small = _flavor_of(tmp_path, "small", SMALL)
-    large = _flavor_of(tmp_path, "large", LARGE)
-    small_store, large_store = tmp_path / "small-store", tmp_path / "large-store"
-    small_id = _seed_snapshot(guard, small, small_store)
-    large_id = _seed_snapshot(guard, large, large_store)
-
+    """§18.1 item 6, the PR-path half: the CPU time of a no-op whole restore,
+    fitted against the size of the tree over SIZES, grows with an exponent
+    of at most EXPONENT_LIMIT (linear is 1; the walk before the memo was
+    quadratic in the size of a directory). Minimum of several runs per size;
+    see the module docstring."""
+    # One tree, grown to each size in turn and snapshotted there, so that
+    # the largest size's files are made once and the store shares objects.
+    tree = _flavor_of(tmp_path, "grown", 0)
+    store = tmp_path / "store"
     clock = time.process_time
-    small_best = min(
-        _no_op_restore_seconds(guard, small, small_store, small_id, clock)
-        for _ in range(SMALL_RUNS)
-    )
-    assert small_best > 0, "the process clock did not advance over a 2,000-file restore"
-    budget = RATIO * small_best
-    large_runs: list[float] = []
-    for _ in range(LARGE_RUNS):
-        large_runs.append(
-            _no_op_restore_seconds(guard, large, large_store, large_id, clock, budget)
-        )
-        if min(large_runs) <= budget:
+    best: list[float] = []
+    grown = 0
+    for n in SIZES:
+        _grow(tree, n, start=grown)
+        grown = n
+        snapshot_id = _seed_snapshot(guard, tree, store)
+        # A run well past the limit's own prediction from the smallest size
+        # has already failed; it is interrupted rather than finished.
+        budget = None if not best else BUDGET_HEADROOM * best[0] * (n / SIZES[0]) ** EXPONENT_LIMIT
+        runs = [
+            _no_op_restore_seconds(guard, tree, store, snapshot_id, clock, budget)
+            for _ in range(RUNS)
+        ]
+        best.append(min(runs))
+        if not math.isfinite(best[-1]):
             break
-    best = min(large_runs)
-    shown = f"{best:.3f} s" if math.isfinite(best) else f"over {budget:.3f} s (interrupted)"
-    assert best <= budget, (
-        f"the no-op whole-restore check took {shown} CPU at {LARGE} files against "
-        f"{small_best:.3f} s at {SMALL} (best of {len(large_runs)} and {SMALL_RUNS} runs): "
-        f"more than {RATIO:g} times; the walk is not linear"
+    assert best[0] > 0, f"the process clock did not advance over a {SIZES[0]:,}-file restore"
+    shown = ", ".join(
+        f"{n:,}: {t:.3f} s" if math.isfinite(t) else f"{n:,}: interrupted"
+        for n, t in zip(SIZES, best, strict=False)
+    )
+    assert len(best) == len(SIZES) and all(math.isfinite(t) for t in best), (
+        f"the no-op whole-restore check went over {BUDGET_HEADROOM:g} times the time an "
+        f"exponent of {EXPONENT_LIMIT:g} allows (CPU, best of {RUNS} runs: {shown}); the walk is not linear"
+    )
+    k = _exponent(SIZES, best)
+    assert k <= EXPONENT_LIMIT, (
+        f"the no-op whole-restore check grows with the size to the power {k:.2f} "
+        f"(CPU, best of {RUNS} runs: {shown}), more than {EXPONENT_LIMIT:g}; "
+        f"the walk is not linear"
     )
 
 
