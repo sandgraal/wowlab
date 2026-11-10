@@ -413,7 +413,11 @@ def test_install_show_not_found_names_what_could_not_be_checked(
     result = run("install", "show")
     assert result.exit_code == 1
     assert f"could not check: {a_file} (not a directory)" in result.stderr
-    assert "searched: nothing; could not check" in result.stderr
+    assert (
+        f"no WoW install found where the game installs by default (could not check: {a_file}"
+        in (result.stderr)
+    )
+    assert "--root" in result.stderr and "WOWLAB_WOW_ROOT" in result.stderr
 
 
 def test_several_flavors_without_flavor_is_a_usage_error_constructed(
