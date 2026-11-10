@@ -88,8 +88,9 @@ STAND_IN_ROUNDS = 3
 ZERO_GROWTH_TRIES = 5 if sys.platform == "darwin" else 1
 
 
-class ProbeReading(UserWarning):
-    """A child's raw RSS reading, shown in the warnings summary (not a fault)."""
+# Readings are plain UserWarnings, shown in the warnings summary (not a
+# fault). A warning class defined in a test module cannot be unpickled by
+# an xdist controller, which cannot import the module by name (M16-61T).
 
 
 CHILD = r"""
@@ -133,7 +134,7 @@ print(before, after)
 def _readings(item: bytes, parser: str = "luadata") -> tuple[int, int]:
     """The child's peak RSS before and after the parse, in bytes.
 
-    Each reading is emitted as a `ProbeReading` warning, so the warnings
+    Each reading is a "probe reading" `UserWarning`, so the warnings
     summary of the CI log shows it for a passing test too. A child that
     reads no growth is retried on macOS only (`ZERO_GROWTH_TRIES`).
     """
@@ -146,11 +147,10 @@ def _readings(item: bytes, parser: str = "luadata") -> tuple[int, int]:
         ).stdout.split()
         before, after = int(out[0]), int(out[1])
         warnings.warn(
-            ProbeReading(
-                f"{sys.platform} {item!r} {parser} at {SCALE_MIB} MiB: "
-                f"before {before / MIB:.1f} MiB, after {after / MIB:.1f} MiB, "
-                f"growth {(after - before) / MIB:.2f} MiB"
-            ),
+            f"probe reading, {sys.platform} {item!r} {parser} at {SCALE_MIB} MiB: "
+            f"before {before / MIB:.1f} MiB, after {after / MIB:.1f} MiB, "
+            f"growth {(after - before) / MIB:.2f} MiB",
+            UserWarning,
             stacklevel=2,
         )
         if after > before:
