@@ -6,7 +6,9 @@ characters, 70009), `macos-70058/`, `macos-70425/` and `macos-70450/` (two
 characters, schema 4), whose rows say their files are classified inside the
 install root borrowed from `macos/` (its `.build.info` and `.flavor.info`).
 The two `macos-70450` text snapshots were written by `main`'s code before
-M15-02 changed `char gear`, so they prove its text is byte for byte as it was. The text and `--json` of each character
+M15-02 changed `char gear`, so they prove its text is byte for byte as it was,
+apart from the Level, Class, Race and Spec lines M16-31 rewrote (the
+Character header's words). The text and `--json` of each character
 are compared with snapshot files under `tests/snapshots/char_gear/`; the
 file times are set to one fixed instant, and the text's local time and the
 two slot-table paths are put back as placeholders before the comparison.
@@ -167,8 +169,8 @@ def test_char_gear_json_matches_its_snapshot_and_validates(
 def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§16.2's `CharGearReport` field list, in that order, with `identity`
     after `spec` since M15-01 (§13.1's schema-4 amendment), `dressing`
-    last since M15-02 (§16.3's amendment of 2026-10-19), and `level` and
-    `names` after `identity` since M16-31 (the Character header)."""
+    last since M15-02 (§16.3's amendment of 2026-10-19), and `level`,
+    `level_absent` and `names` after `identity` since M16-31 (the Character header)."""
     _install("macos-70425", tmp_path, monkeypatch)
     data = json.loads(ok("char", "gear", "--json").stdout)
     assert list(data) == [
@@ -178,6 +180,7 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "spec",
         "identity",
         "level",
+        "level_absent",
         "names",
         "average",
         "slots",

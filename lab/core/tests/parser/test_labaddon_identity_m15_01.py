@@ -101,10 +101,10 @@ def test_real_capture_reports_identity_absent(name: str) -> None:
     assert not isinstance(char, labaddon.CharDBV4)
     assert "identity" not in char.model_dump(by_alias=True)
     got = labaddon.identity_of(char)
+    # In player words, with no ticket id (M16-31 review).
     reason = (
-        f"the record is schema {raw['schema']}; identity is recorded from schema 4 (the "
-        "lab-addon from M15-01: install it with wowlab addon install lab, then log in and out "
-        "on this character)"
+        "this record predates the identity section; reinstall the lab-addon (wowlab addon "
+        "install lab), then log in and out on this character"
     )
     for field in FIELDS:
         assert getattr(got, field) is None
@@ -120,7 +120,7 @@ def test_constructed_schema_2_reports_identity_absent() -> None:
     got = labaddon.identity_of(char)
     assert got.race_id is None
     assert got.race_id_absent is not None and got.race_id_absent.startswith(
-        "the record is schema 2; identity is recorded from schema 4"
+        "this record predates the identity section"
     )
     assert not any(line.startswith("Identity:") for line in labaddon.describe(char))
 

@@ -1313,21 +1313,27 @@
   // An average item level to one decimal, the client's exact figure as the title.
   function averageFact(list, label, value) {
     if (typeof value === "number" && Number.isFinite(value)) {
-      charFact(list, label, value.toFixed(1), String(value));
+      charFact(list, label, value.toFixed(1), "rounded to one decimal; exact: " + String(value));
     } else {
       charFact(list, label, numberWords(value));
     }
   }
 
+  // A value the record does not hold, with the record's reason when it
+  // gives one, as `char gear` prints it.
+  function notRecorded(absent) {
+    return typeof absent === "string" && absent ? "not recorded: " + visible(absent) : "not recorded";
+  }
+
   // A class, race or spec: its name from the game tables wowlab already
-  // downloaded for this client (`names`), with the id as the title; else
-  // the id; with no id, the record's reason.
-  function namedFact(list, label, name, id, absent) {
+  // downloaded for this client (`names`), with the id as the title (and
+  // `more` after it); else the id; with no id, the record's reason.
+  function namedFact(list, label, name, id, absent, more) {
     const idWords = typeof id === "number" ? label.toLowerCase() + " id " + id : "";
-    if (idWords && typeof name === "string" && name) charFact(list, label, visible(name), idWords);
-    else if (idWords) charFact(list, label, idWords);
-    else if (typeof absent === "string" && absent) charFact(list, label, "not recorded (" + visible(absent) + ")");
-    else charFact(list, label, "not recorded");
+    const title = idWords && more ? idWords + "; " + more : idWords;
+    if (idWords && typeof name === "string" && name) charFact(list, label, visible(name), title);
+    else if (idWords) charFact(list, label, idWords, more || "");
+    else charFact(list, label, notRecorded(absent));
   }
 
   function drawCharHeader(entry, report) {
@@ -1339,12 +1345,19 @@
     const identity = obj(report.identity);
     const names = obj(report.names);
     const spec = obj(report.spec);
-    charFact(facts, "Level", typeof report.level === "number" ? String(report.level) : "not recorded");
+    charFact(facts, "Level", typeof report.level === "number" ? String(report.level) : notRecorded(report.level_absent));
     // Without a cached name, the class's file name as the client gave it ("MAGE").
     const classWords = typeof names.class_name === "string" && names.class_name ? names.class_name : identity.class_file;
     namedFact(facts, "Class", classWords, identity.class_id, identity.class_id_absent);
-    namedFact(facts, "Race", names.race, identity.race_id, identity.race_id_absent);
-    namedFact(facts, "Spec", names.spec, spec.id, spec.absent);
+    // One reason said once: a race missing for the class's reason says so.
+    const raceAbsent =
+      typeof identity.class_id !== "number" && typeof identity.race_id_absent === "string" &&
+      identity.race_id_absent === identity.class_id_absent
+        ? "as for Class"
+        : identity.race_id_absent;
+    namedFact(facts, "Race", names.race, identity.race_id, raceAbsent);
+    // What the client calls the specialization, whatever its name reads.
+    namedFact(facts, "Spec", names.spec, spec.id, spec.absent, "the client's specialization, not the talent points spent");
     const average = obj(report.average);
     if (typeof average.absent === "string") {
       charFact(facts, "Average item level", "absent (" + visible(average.absent) + ")");

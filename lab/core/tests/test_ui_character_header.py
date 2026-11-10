@@ -111,7 +111,7 @@ def test_gear_json_without_cached_tables_names_nothing_constructed(
     ("character", "level", "spec", "race", "klass"),
     [(MAGE, 10, "Mage", "Orc", "Mage"), (WARLOCK, 15, "Warlock", "Undead", "Warlock")],
 )
-def test_gear_json_names_from_the_cached_tables(
+def test_gear_json_names_from_the_cached_tables_constructed(
     server: Any, install70450: Path, character: str, level: int, spec: str, race: str, klass: str
 ) -> None:
     build = _gear(server, character)["names"]["build"]
@@ -175,7 +175,7 @@ def _header(server: Any, tmp_path: Path, mutate: Any = None) -> dict[str, Any]:
     return view
 
 
-def test_the_header_names_class_race_and_spec_from_the_cache(
+def test_the_header_names_class_race_and_spec_from_the_cache_constructed(
     server: Any, install70450: Path, tmp_path: Path
 ) -> None:
     _cache_tables(_gear(server, MAGE)["names"]["build"])
@@ -192,10 +192,14 @@ def test_the_header_names_class_race_and_spec_from_the_cache(
     titles = dict(zip(view["headerFacts"][::2], view["headerTitles"], strict=True))
     assert titles["Class"] == "class id 8"
     assert titles["Race"] == "race id 2"
-    assert titles["Spec"] == "spec id 1482"
+    # Forever has one specialization per class, so the names match; the
+    # title says what the row is.
+    assert (
+        titles["Spec"] == "spec id 1482; the client's specialization, not the talent points spent"
+    )
     # The exact figure the client returned, behind the rounded one.
-    assert titles["Average item level, equipped"] == "2.375"
-    assert titles["Average item level, overall"] == "2.375"
+    assert titles["Average item level, equipped"] == "rounded to one decimal; exact: 2.375"
+    assert titles["Average item level, overall"] == "rounded to one decimal; exact: 2.375"
     assert titles["Level"] == ""
 
 
@@ -213,6 +217,7 @@ def test_without_the_cache_the_header_shows_the_ids_constructed(
 def test_absent_values_say_why_constructed(server: Any, install70450: Path, tmp_path: Path) -> None:
     def strip(report: dict[str, Any]) -> None:
         report["level"] = None
+        report["level_absent"] = "the talent record is absent (switched off by the owner)"
         report["identity"] = dict(
             report["identity"],
             race_id=None,
@@ -224,10 +229,11 @@ def test_absent_values_say_why_constructed(server: Any, install70450: Path, tmp_
         report["average"] = dict(report["average"], equipped=9, overall="x")
 
     facts = _facts(_header(server, tmp_path, strip))
-    assert facts["Level"] == "not recorded"
-    assert facts["Class"] == "not recorded (identity switched off)"
-    assert facts["Race"] == "not recorded (identity switched off)"
-    assert facts["Spec"] == "not recorded (not in the file)"
+    assert facts["Level"] == "not recorded: the talent record is absent (switched off by the owner)"
+    assert facts["Class"] == "not recorded: identity switched off"
+    # The same reason is said once.
+    assert facts["Race"] == "not recorded: as for Class"
+    assert facts["Spec"] == "not recorded: not in the file"
     assert facts["Average item level, equipped"] == "9.0"
     assert facts["Average item level, overall"] == "not returned"
 
@@ -286,3 +292,45 @@ def test_cached_rows_reads_only_what_is_cached_constructed(tmp_path: Path) -> No
     assert rows is not None
     assert [r["Name_lang"] for r in rows if r["ID"] in ("8", "9")] == ["Mage", "Warlock"]
     assert sorted(p.name for p in folder.iterdir()) == ["ChrClasses.csv"]
+
+
+def test_char_gear_text_has_the_headers_lines_constructed(
+    server: Any, install70450: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`char gear`'s text says what the page's header says, with the same
+    fallbacks: names once the tables are cached, ids before."""
+    from typer.testing import CliRunner
+
+    runner = CliRunner()
+    args = ["char", "gear", "--character", MAGE, "--account", ACCOUNT, "--flavor", FLAVOR]
+    before = runner.invoke(cli.app, args)
+    assert before.exit_code == 0, before.output
+    lines = before.stdout.splitlines()
+    assert "Level: 10" in lines
+    assert "Class: MAGE (class id 8)" in lines
+    assert "Race: race id 2" in lines
+    assert any(line.startswith("Spec: spec id 1482 (index ") for line in lines)
+    _cache_tables(_gear(server, MAGE)["names"]["build"])
+    after = runner.invoke(cli.app, args).stdout.splitlines()
+    assert "Class: Mage (class id 8)" in after
+    assert "Race: Orc (race id 2)" in after
+    assert any(line.startswith("Spec: Mage (spec id 1482, index ") for line in after)
+
+
+def test_level_absent_says_why_constructed() -> None:
+    """`level_absent_of` on a real schema-4 record with its level taken out."""
+    path = (
+        FIXTURES / "macos-70450" / "forever" / "WTF" / "Account" / ACCOUNT / MAGE
+        / "SavedVariables" / "WowLab.lua"
+    )  # fmt: skip
+    record = labaddon.read_char(path)
+    assert labaddon.level_absent_of(record) is None
+    no_talents = record.model_copy(update={"talents": None})
+    assert labaddon.level_absent_of(no_talents) == f"the talent record is {labaddon.NOT_IN_FILE}"
+    assert record.talents is not None
+    no_legacy = record.model_copy(
+        update={"talents": record.talents.model_copy(update={"legacy": None})}
+    )
+    assert labaddon.level_absent_of(no_legacy) == (
+        f"the legacy talent record is {labaddon.NOT_IN_FILE}"
+    )

@@ -189,6 +189,7 @@ __all__ = [
     "identity_of",
     "is_lab_file_name",
     "legacy_headline",
+    "level_absent_of",
     "load_account",
     "load_char",
     "parse_account",
@@ -2412,15 +2413,30 @@ def _identity_reason(record: Identity, name: str) -> str:
     return f"the record holds neither {name} nor {name}_absent"
 
 
+def level_absent_of(char: CharDB) -> str | None:
+    """Why the record holds no level (`talents.legacy.player_level`, the
+    level the reports read), or None when it holds one (M16-31)."""
+    talents = char.talents
+    if talents is None:
+        return f"the talent record is {NOT_IN_FILE}"
+    legacy = talents.legacy
+    if legacy is None:
+        return f"the legacy talent record is {NOT_IN_FILE}"
+    if isinstance(legacy, AbsentSection):
+        return f"the legacy talent record is {_absent(legacy, events_shown=False)}"
+    if legacy.player_level is None:
+        return "the legacy talent record holds no level"
+    return None
+
+
 def identity_of(char: CharDB) -> CharIdentity:
     """The character's identity from its record (M15-01); never raises for a
     record the models read. A record of schema 1 to 3 has none, and says so
     for every value."""
     if not isinstance(char, CharDBV4):
         return _all_absent(
-            f"the record is schema {char.schema_}; identity is recorded from schema 4 "
-            "(the lab-addon from M15-01: install it with wowlab addon install lab, then log "
-            "in and out on this character)"
+            "this record predates the identity section; reinstall the lab-addon (wowlab "
+            "addon install lab), then log in and out on this character"
         )
     section = char.identity
     if section is None:

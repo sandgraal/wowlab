@@ -1,7 +1,10 @@
 Character: 1/Sangraal-Sett in account 90000001#6
 File: WTF/Account/90000001#6/1/Sangraal-Sett/SavedVariables/WowLab.lua
 Written: <local time> (the file's modification time: the character as of that save)
-Spec: id 1490 (index 1, from C_SpecializationInfo)
+Level: 15
+Class: WARLOCK (class id 9)
+Race: race id 5
+Spec: spec id 1490 (index 1, from C_SpecializationInfo)
 Gear (slots 1 to 19 as the client numbers them, 11 filled):
   slot  1 Head       empty
   slot  2 Neck       empty

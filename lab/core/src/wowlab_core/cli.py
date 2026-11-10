@@ -9975,6 +9975,7 @@ class CharGearReport(_Out):
     # The character's level as the record holds it (the talent block's
     # `player_level`, read at the save), or None (M16-31).
     level: int | None
+    level_absent: str | None  # why there is no level; None when there is one
     names: CharNames
     average: gear.GearAverage
     slots: list[gear.GearSlot]
@@ -10056,6 +10057,48 @@ def _char_names(
     return CharNames(
         build=version, spec=found["spec"], race=found["race"], class_name=found["class_name"]
     )
+
+
+def _named(label: str, name: str | None, row_id: int | None, absent: str | None) -> str:
+    """One header line as the UI's Character tab draws it (M16-31): the name
+    with its id, else the id, else why there is none."""
+    if row_id is not None:
+        ident = f"{label.lower()} id {row_id}"
+        return f"{label}: {name} ({ident})" if name else f"{label}: {ident}"
+    return f"{label}: not recorded: {absent or 'not returned'}"
+
+
+def _header_lines(report: CharGearReport) -> list[str]:
+    """Level, class, race and spec, with the page's fallbacks."""
+    ident = report.identity
+    names = report.names
+    level = (
+        f"Level: {report.level}"
+        if report.level is not None
+        else f"Level: not recorded: {report.level_absent or 'not returned'}"
+    )
+    # One reason said once: a race missing for the class's reason says so.
+    race_absent = ident.race_id_absent
+    if ident.class_id is None and race_absent is not None and race_absent == ident.class_id_absent:
+        race_absent = "as for Class"
+    spec = report.spec
+    spec_line = _named("Spec", None, spec.id, spec.absent)
+    if spec.id is not None:
+        index = "index not returned" if spec.index is None else f"index {spec.index}"
+        where = f"{index}, from {spec.api}"
+        spec_line = (
+            f"Spec: {names.spec} (spec id {spec.id}, {where})"
+            if names.spec
+            else f"Spec: spec id {spec.id} ({where})"
+        )
+    return [
+        level,
+        _named(
+            "Class", names.class_name or ident.class_file, ident.class_id, ident.class_id_absent
+        ),
+        _named("Race", names.race, ident.race_id, race_absent),
+        spec_line,
+    ]
 
 
 def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
@@ -10154,6 +10197,7 @@ def char_gear(
         spec=spec,
         identity=identity,
         level=level,
+        level_absent=labaddon.level_absent_of(record) if level is None else None,
         names=_char_names(chosen.version, spec, identity),
         average=gear.average_of(section),
         slots=filled,
@@ -10171,13 +10215,8 @@ def char_gear(
     )
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
-    spec = report.spec
-    if spec.absent is not None:
-        _say(f"Spec: {spec.absent}")
-    else:
-        ident = "id not returned" if spec.id is None else f"id {spec.id}"
-        index = "index not returned" if spec.index is None else f"index {spec.index}"
-        _say(f"Spec: {ident} ({index}, from {spec.api})")
+    for line in _header_lines(report):
+        _say(line)
     _say(
         f"Gear (slots {section.first_slot} to {section.last_slot} as the client numbers them, "
         f"{len(filled)} filled):"

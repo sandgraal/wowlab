@@ -411,8 +411,12 @@ def test_the_header_carries_spec_averages_and_the_notes(
     # header is graded in `test_ui_character_header.py`).
     assert facts["Spec"] == f"spec id {report['spec']['id']}"
     assert facts["Level"] == str(report["level"]) == "13"
-    assert facts["Class"].startswith("not recorded")
-    assert facts["Race"].startswith("not recorded")
+    # No ticket id and no doubled bracket: the reason in player words, once.
+    assert facts["Class"] == (
+        "not recorded: this record predates the identity section; reinstall the lab-addon "
+        "(wowlab addon install lab), then log in and out on this character"
+    )
+    assert facts["Race"] == "not recorded: as for Class"
     assert facts["Average item level, equipped"] == f"{report['average']['equipped']:.1f}"
     assert facts["Average item level, overall"] == f"{report['average']['overall']:.1f}"
     assert facts["File"] == report["file"]

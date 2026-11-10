@@ -94,10 +94,10 @@ file as schema 3, and `probe.loads` keeps rising across that write.
 
 Schema 4 (M15-01) is schema 3 with one new section, `identity`; nothing
 else changed. The Lab reads schema 1, 2 and 3 files exactly as before and
-reports every `identity` value as absent with the reason "the record is
-schema n; identity is recorded from schema 4 (the lab-addon from M15-01:
-install it with wowlab addon install lab, then log in and out on this
-character)", and refuses a schema it does not know. The first
+reports every `identity` value as absent with the reason "this record
+predates the identity section; reinstall the lab-addon (wowlab addon
+install lab), then log in and out on this character" (worded so since
+M16-31), and refuses a schema it does not know. The first
 logout with the M15-01 addon rewrites the file as schema 4, and
 `probe.loads` keeps rising across that write.
 
