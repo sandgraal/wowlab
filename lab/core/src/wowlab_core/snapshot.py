@@ -2531,6 +2531,9 @@ class SnapshotStore:
             raise ManifestIntegrityError("label write would change another field")
         data = manifest_bytes(updated)
         self._check_publishable(updated, data)
+        # L1 (M16-75): no write into a store inside any install, even
+        # when called directly rather than under `guard.store_lock`.
+        self._refuse_inside_any_install()
         with self._store_dir(("manifests",), create=False) as manifests:
             if manifests is None:
                 raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
@@ -2595,6 +2598,8 @@ class SnapshotStore:
                 )
         name = manifest.id + _MANIFEST_SUFFIX
         staged: dict[str, str] = {}  # sha256 -> staged name under tmp/
+        # L1 (M16-75): refused before anything is created, as `put_object`.
+        self._refuse_inside_any_install()
         with self._holding_dirs():
             self._refuse_linked_store_dirs()
             try:
