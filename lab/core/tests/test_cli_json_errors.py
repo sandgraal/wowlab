@@ -264,3 +264,16 @@ def test_a_partial_report_is_not_replaced(root: Path) -> None:
     assert result.exit_code == cli.EXIT_ERROR
     report = cli.ExplainReport.model_validate_json(result.stdout)
     assert report.result is not None
+
+
+def test_a_follow_runs_error_report_is_one_line(no_install: Path) -> None:
+    """`log tail --follow --json` prints one JSON value per line: its error
+    report is one line too, and the run is otherwise as without `--follow`."""
+    follow = run("log", "tail", "--follow", "--json")
+    once = run("log", "tail", "--json")
+    assert follow.exit_code == once.exit_code == cli.EXIT_ERROR
+    assert follow.stdout.count("\n") == 1, follow.stdout
+    assert cli.ErrorReport.model_validate_json(follow.stdout) == (
+        cli.ErrorReport.model_validate_json(once.stdout)
+    )
+    assert _error_line(follow.stderr) == _error_line(once.stderr)

@@ -2180,7 +2180,9 @@
         say("Refused: " + (result.error || reply.status), true);
         return;
       }
-      showResult(result.stdout);
+      // A failed run's error report repeats the error line shown below it,
+      // and names a class: it is not drawn.
+      showResult(errorReport(result) ? null : result.stdout);
       byId("stderr").textContent = result.stderr;
       const notes = [];
       if (result.timed_out) notes.push("stopped at its time limit");
@@ -2384,6 +2386,21 @@
       }
     });
     return node;
+  }
+
+  // Whether a failed run printed only its error report on stdout: an object
+  // with exactly `kind`, `message` and `exit_code`, the run's own exit code.
+  function errorReport(result) {
+    if (result.exit_code === 0 || typeof result.stdout !== "string") return false;
+    let value;
+    try {
+      value = JSON.parse(result.stdout);
+    } catch (_) {
+      return false;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const keys = Object.keys(value).sort().join(",");
+    return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
   }
 
   // Shows one run's stdout: a tree when it is one JSON document, else the

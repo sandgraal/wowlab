@@ -636,11 +636,14 @@ class _Report:
     """One run: whether "(not yet confirmed)" was printed yet, and whether
     it is a `--json` run, whose stderr is left as the library wrote it;
     and whether it has printed JSON on stdout yet (`printed`), after which
-    an error prints no `ErrorReport` there (one JSON document per run)."""
+    an error prints no `ErrorReport` there (one JSON document per run);
+    and whether its stdout is one JSON value per line (`lines`, set by
+    `log tail --follow --json`), where an `ErrorReport` is one line too."""
 
     confirmed_shown = False
     json = False
     printed = False
+    lines = False
 
 
 def _new_report(json_out: bool = False) -> None:
@@ -648,6 +651,7 @@ def _new_report(json_out: bool = False) -> None:
     _Report.confirmed_shown = False
     _Report.json = json_out
     _Report.printed = False
+    _Report.lines = False
 
 
 def _later_marker(match: re.Match[str]) -> str:
@@ -1152,6 +1156,14 @@ def _emit(model: BaseModel) -> None:
     typer.echo(_dumps(model.model_dump(mode="json")))
 
 
+def _emit_line(model: BaseModel) -> None:
+    """The model as one line of JSON on stdout, for a line-delimited run."""
+    _Report.printed = True
+    typer.echo(
+        json.dumps(_map_strings(model.model_dump(mode="json"), _json_text), ensure_ascii=True)
+    )
+
+
 def _emit_manifest(manifest: snapshot.Manifest) -> None:
     """A manifest in its one canonical encoding (`snapshot.manifest_bytes`)."""
     _Report.printed = True
@@ -1379,7 +1391,11 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         except _HANDLED_ERRORS as exc:
             message, code = _error_words(exc, json_out)
             if json_out and not _Report.printed:
-                _emit(ErrorReport(kind=_error_kind(exc), message=message, exit_code=code))
+                report = ErrorReport(kind=_error_kind(exc), message=message, exit_code=code)
+                if _Report.lines:
+                    _emit_line(report)
+                else:
+                    _emit(report)
             _fail(message, code, exc)
 
     return wrapper
@@ -1393,7 +1409,10 @@ class ErrorReport(_Out):
     """A `--json` run that ended in an error (M16-22): the error's class
     (`kind`), the line printed on stderr after `wowlab: ` (`message`), and
     the exit code. Printed on stdout only when the run printed no other JSON
-    there; the stderr line and the exit code are as without `--json`."""
+    there (as one line in a line-delimited run, `log tail --follow`); the
+    stderr line and the exit code are as without `--json`. `kind` is the
+    bare class name (`_error_kind`), not a stable enum: it changes if a class
+    is renamed, and a new error class adds a value."""
 
     kind: str
     message: str
@@ -7302,6 +7321,8 @@ def log_tail(
 
     \f
     JSON: LogTailReport; with --follow, one LogTailLine per line of output."""
+    # Line-delimited before anything can fail: an error is one line too.
+    _Report.lines = follow and json_out
     _, _, lay = _open(root, flavor)
     logs = _logs_dir(lay)
     newest = combatlog.newest_log(logs) if logs is not None else None
