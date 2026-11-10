@@ -31,6 +31,7 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import sys
 import uuid
@@ -70,6 +71,7 @@ __all__ = [
     "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
+    "StoreFullError",
     "StoreLocationError",
     "VerifyReport",
     "default_store_path",
@@ -89,6 +91,10 @@ _CHUNK = 1 << 20
 _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+# A full disk, and (where the platform has it) a full quota.
+_FULL_ERRNOS = frozenset(
+    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+)
 _MANIFEST_SUFFIX = ".json"
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
@@ -98,6 +104,11 @@ _REPARSE_NAME_SURROGATE = 0x20000000
 
 class SnapshotError(Exception):
     """Base class for every error this module raises."""
+
+
+class StoreFullError(SnapshotError):
+    """The disk (or the quota) that holds the store has no room for what
+    `create` was writing: the store is full, not the install unreadable."""
 
 
 class StoreLocationError(SnapshotError):
@@ -1217,27 +1228,57 @@ class SnapshotStore:
             return digest, size
 
         stream.seek(0)
-        # `manifests/` exists before any object does, so a store holding
-        # objects without it is broken, and `gc` refuses it (M11-15).
-        with self._store_dir(("manifests",), create=True):
-            pass
-        hasher = hashlib.sha256()
-        size = 0
-        compressor = zlib.compressobj(6)
-        with self._staged("obj") as staged:
-            while chunk := stream.read(_CHUNK):
-                hasher.update(chunk)
-                size += len(chunk)
-                staged.out.write(compressor.compress(chunk))
-            staged.out.write(compressor.flush())
-            digest = hasher.hexdigest()
-            # The file may have changed between the passes, so ask again.
-            if not self._reusable(digest, verified):
-                with self._store_dir(("objects", digest[:2]), create=True) as shard:
-                    assert shard is not None
-                    self._publish(staged, shard, digest[2:])  # new, or healing a damaged one
-                verified.add(digest)
+        # Pass two reads the install file and writes the store in turn. An
+        # error reading is the caller's ("cannot read" that file); a full
+        # disk while writing is the store's, and is said as such (M16-19).
+        # Any other store error is raised as it was.
+        read_error: OSError | None = None
+        try:
+            # `manifests/` exists before any object does, so a store holding
+            # objects without it is broken, and `gc` refuses it (M11-15).
+            with self._store_dir(("manifests",), create=True):
+                pass
+            hasher = hashlib.sha256()
+            size = 0
+            compressor = zlib.compressobj(6)
+            with self._staged("obj") as staged:
+                while True:
+                    try:
+                        chunk = stream.read(_CHUNK)
+                    except OSError as exc:
+                        read_error = exc
+                        raise
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    size += len(chunk)
+                    staged.out.write(compressor.compress(chunk))
+                staged.out.write(compressor.flush())
+                digest = hasher.hexdigest()
+                # The file may have changed between the passes, so ask again.
+                if not self._reusable(digest, verified):
+                    with self._store_dir(("objects", digest[:2]), create=True) as shard:
+                        assert shard is not None
+                        self._publish(staged, shard, digest[2:])  # new, or healing a damaged one
+                    verified.add(digest)
+        except OSError as exc:
+            if exc is read_error or exc.errno not in _FULL_ERRNOS:
+                raise
+            raise self._store_full_error(exc) from exc
         return digest, size
+
+    def _store_full_error(self, exc: OSError) -> StoreFullError:
+        """A full disk or quota under the store, in words (M16-19): the
+        store and the room left on its disk, when that can be read."""
+        why = exc.strerror or str(exc)
+        try:
+            free = f"{shutil.disk_usage(self.path).free:,} bytes free"
+        except OSError:
+            free = "its free space could not be read"
+        return StoreFullError(
+            f"the snapshot store at {self.path} is full ({free}): {why}; "
+            "free some space on that disk and try again"
+        )
 
     def _reusable(self, digest: str, verified: set[str]) -> bool:
         """True when a sound object for `digest` is already in the store.
@@ -1326,9 +1367,14 @@ class SnapshotStore:
     def _write_manifest(self, manifests: _StoreDir, name: str, data: bytes) -> None:
         """Write `data` as the manifest file `name` in the checked `manifests/`:
         staged under `tmp/` and moved into place in one rename (M11-18)."""
-        with self._staged("manifest") as staged:
-            staged.out.write(data)
-            self._publish(staged, manifests, name)
+        try:
+            with self._staged("manifest") as staged:
+                staged.out.write(data)
+                self._publish(staged, manifests, name)
+        except OSError as exc:
+            if exc.errno not in _FULL_ERRNOS:
+                raise
+            raise self._store_full_error(exc) from exc
 
     # -- writing into the store's own directories (M11-18) ------------------
     #
@@ -1567,6 +1613,8 @@ class SnapshotStore:
             try:
                 fd = os.open(tmp.at(name), flags, 0o666, dir_fd=tmp.fd)
             except OSError as exc:
+                if exc.errno in _FULL_ERRNOS:
+                    raise self._store_full_error(exc) from exc
                 raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
             try:
                 out = os.fdopen(fd, "wb")

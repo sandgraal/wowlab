@@ -1222,6 +1222,112 @@ def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
     return f"not SavedVariables data wowlab can read: {why}"
 
 
+# What every "no install" error ends with (M16-19): how to name the install.
+_NAME_THE_INSTALL = (
+    f"name the install folder (the one that holds {install.BUILD_INFO}) with --root, "
+    f"or set {install.ENV_ROOT} to it; wowlab doctor says how"
+)
+
+
+def _install_words(exc: install.InstallError) -> str:
+    """Why there is no install to read, then how to name one: every such
+    error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
+    if isinstance(exc, install.InstallNotFoundError):
+        looked = []
+        if exc.searched:
+            looked.append("searched: " + ", ".join(str(p) for p in exc.searched))
+        if exc.unchecked:
+            looked.append(
+                "could not check: "
+                + ", ".join(
+                    f"{p} ({why})" if why else str(p)
+                    for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True)
+                )
+            )
+        if looked:
+            found = f"no WoW install found where the game installs by default ({'; '.join(looked)})"
+        else:
+            found = "no WoW install found: wowlab knows no default install location on this system"
+        return f"{found}; {_NAME_THE_INSTALL}"
+    return f"{exc}; {_NAME_THE_INSTALL}"
+
+
+# The command that lists what a command of each group names (M16-19): a
+# file, snapshot or profile it could not find is answered with it.
+_LISTERS = {
+    "sv": "wowlab sv list",
+    "snap": "wowlab snap list",
+    "profile": "wowlab profile list",
+}
+
+
+def _lister() -> str | None:
+    """The lister of the command running now (`_LISTERS`), if it has one."""
+    ctx = get_current_context(silent=True)
+    if ctx is None:
+        return None
+    words = ctx.command_path.split()
+    return _LISTERS.get(words[1]) if len(words) > 1 else None
+
+
+def _os_error_words(exc: OSError) -> str:
+    """An operating-system error in words, with no `[Errno N]` in them: a
+    missing file names the lister of the command (`_lister`), and any other
+    error says what the system said about which path (M16-19)."""
+    path = exc.filename
+    if isinstance(exc, FileNotFoundError):
+        where = f"no file or folder at {os.fsdecode(path)}" if path is not None else str(exc)
+        lister = _lister()
+        return f"{where}; {lister} lists what there is" if lister else where
+    if path is None or not exc.strerror:
+        return str(exc)
+    why = exc.strerror[:1].lower() + exc.strerror[1:]
+    if exc.filename2 is not None:
+        return f"{why}: {os.fsdecode(path)} -> {os.fsdecode(exc.filename2)}"
+    return f"{why}: {os.fsdecode(path)}"
+
+
+# Every error `_handled` turns into words (`_error_words`), and nothing else.
+_HANDLED_ERRORS: tuple[type[Exception], ...] = (
+    guard.GuardError,
+    CliError,
+    luadata.LuaDataError,
+    install.InstallError,
+    snapshot.SnapshotError,
+    profiles.ProfileError,
+    addoninstall.AddonError,
+    labaddon.LabAddonError,
+    gamedata.GameDataError,
+    lookstore.LookStoreError,
+    OSError,
+)
+
+
+def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
+    """The one line a handled error is reported as, and its exit code: the
+    single place an error becomes words (M16-19), which `--json` error
+    output builds on."""
+    if isinstance(exc, guard.GuardError):
+        return f"refused by the write gate: {exc}", EXIT_REFUSED
+    if isinstance(exc, CliError):
+        return str(exc), exc.code
+    if isinstance(exc, luadata.LuaLimitError):
+        limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
+        return (
+            f"refused: this file is beyond what the SavedVariables parser will hold "
+            f"({limit}); nothing was printed"
+        ), EXIT_ERROR
+    if isinstance(exc, luadata.LuaDataError):
+        if json_out:
+            return f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR
+        return _lua_refusal_words(exc), EXIT_ERROR
+    if isinstance(exc, install.InstallError):
+        return _install_words(exc), EXIT_ERROR
+    if isinstance(exc, OSError):
+        return _os_error_words(exc), EXIT_ERROR
+    return str(exc), EXIT_ERROR
+
+
 def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Turn the library's typed errors into one line on stderr and an exit code."""
 
@@ -1231,33 +1337,9 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         _new_report(json_out)
         try:
             return fn(*args, **kwargs)
-        except guard.GuardError as exc:
-            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED, exc)
-        except CliError as exc:
-            _fail(str(exc), exc.code, exc)
-        except luadata.LuaLimitError as exc:
-            limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
-            _fail(
-                f"refused: this file is beyond what the SavedVariables parser will hold "
-                f"({limit}); nothing was printed",
-                EXIT_ERROR,
-                exc,
-            )
-        except luadata.LuaDataError as exc:
-            if json_out:
-                _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
-            _fail(_lua_refusal_words(exc), EXIT_ERROR, exc)
-        except (
-            install.InstallError,
-            snapshot.SnapshotError,
-            profiles.ProfileError,
-            addoninstall.AddonError,
-            labaddon.LabAddonError,
-            gamedata.GameDataError,
-            lookstore.LookStoreError,
-            OSError,
-        ) as exc:
-            _fail(str(exc), EXIT_ERROR, exc)
+        except _HANDLED_ERRORS as exc:
+            message, code = _error_words(exc, json_out)
+            _fail(message, code, exc)
 
     return wrapper
 
@@ -4188,6 +4270,15 @@ def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
     return lay.flavor_path / given
 
 
+def _sv_not_found(target: Path) -> CliError:
+    """`sv dump` of a file that is not there (M16-19): the lister that names
+    every SavedVariables file by the path `sv dump` takes."""
+    return CliError(
+        f"no SavedVariables file at {target}; wowlab sv list lists them, each with the "
+        "path to give sv dump (relative to the flavor folder)"
+    )
+
+
 def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
@@ -4211,7 +4302,7 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
             )
         target = _sv_file(file, root, flavor)
     except install.InstallError as exc:
-        raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
+        raise CliError(f"refused: {_install_words(exc)}", EXIT_REFUSED) from exc
     try:
         real = Path(longpath.realpath(target))
         inside = real.is_relative_to(home)
@@ -4262,10 +4353,12 @@ def sv_dump(
         # Read the path that was checked; opening it without following a
         # link on the way is EV-24's.
         target, real = _sv_inside_install(file, root, flavor)
-        doc = luadata.read(real)
     else:
-        target = _sv_file(file, root, flavor)
-        doc = luadata.read(target)
+        target = real = _sv_file(file, root, flavor)
+    try:
+        doc = luadata.read(real)
+    except FileNotFoundError as exc:
+        raise _sv_not_found(target) from exc
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
@@ -10853,7 +10946,10 @@ def _looks_build(
                 "customization tables are cached (--build chooses another)."
             ]
         have = f" (cached: {', '.join(cached)})" if cached else ""
-        raise CliError(f"{exc}; pass --build with a full version string{have}") from exc
+        raise CliError(
+            f"{_install_words(exc)}. Without an install, pass --build with a full "
+            f"version string{have}"
+        ) from exc
 
 
 def _load_model(data: gamedata.GameData, build: str) -> looks.Customizations:
