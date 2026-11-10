@@ -21,7 +21,8 @@ searched: a NUL or a stray byte elsewhere in a file cannot hide a control,
 it fails the file. Every tracked file name is checked too.
 
 Nothing is skipped for its content or its size: pre-commit keeps every
-tracked file outside the fixtures under 512 KB, so each is read whole. Under
+tracked file outside the fixtures under 512 KB (cli.py under 1 MB), so each is
+read whole. Under
 lab/core/tests/fixtures/ only the real captures are left out, by type
 (`CAPTURE_SUFFIXES`): they are the client's bytes, and a capture may hold a
 control, or a byte that is not UTF-8, legitimately. Anything else there is
