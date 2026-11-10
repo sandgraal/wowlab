@@ -230,6 +230,30 @@ _log = logging.getLogger(__name__)
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
 
+
+def _allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
+    """`paths` (install-relative, `/`-separated, as a manifest names its
+    subtrees or excluded paths) held to the allowlist roots of the flavor
+    `folder`: `folder` itself stands for each root, a path below a root is
+    kept, and every other path is dropped. Sorted, once each. The rule a
+    whole restore's left-alone list is walked by, shared with the CLI so its
+    own list matches the gate's."""
+    here = folder + "/"
+    out: set[str] = set()
+    for path in paths:
+        if path == folder:
+            out.update(here + root for root in _ROOTS)
+        elif path.startswith(here) and _in_allowlist_root(path.removeprefix(here)):
+            out.add(path)
+    return tuple(sorted(out))
+
+
+def _in_allowlist_root(rel: str) -> bool:
+    """Whether `rel` (flavor-relative, `/`-separated) lies under, or is, one
+    of the allowlist roots, spelled as the client spells them."""
+    return rel.split("/", 1)[0] in _ROOTS
+
+
 # Account folders under `WTF/Account/`, for a restore into another target
 # (§6.10 as amended 2026-10-22). The rule is `layout`'s (M13-50): a folder
 # is an account folder when its name has the `<digits>#<n>` shape, or when
@@ -1570,6 +1594,7 @@ class _Transaction:
         "_journal",
         "_label",
         "_last",
+        "_left_alone",
         "_order",
         "_overlay",
         "_own_locks",
@@ -1628,6 +1653,8 @@ class _Transaction:
         self._created: list[str] = []
         self._planned_dirs: list[str] = []
         self._plan: dict[str, PlanItem] = {}
+        # What the last whole restore leaves alone (M16-11); never in the plan.
+        self._left_alone: tuple[str, ...] = ()
         self._overlay: dict[str, bytes | None] = {}
         self._broken: str | None = None
         self._temps: list[str] = []
@@ -1642,6 +1669,18 @@ class _Transaction:
         """Every path changed so far (in a dry run: that would be changed),
         once each, with its first `before` and its last `after`."""
         return tuple(self._plan.values())
+
+    @property
+    def left_alone(self) -> tuple[str, ...]:
+        """The files a whole restore leaves alone: every regular file now
+        under one of the snapshot's subtrees, outside its excluded paths, that
+        the snapshot does not hold (added since it was taken). Flavor-relative,
+        `/`-separated, sorted, once each. A whole restore never writes or
+        deletes them, and they are not in `plan`. Empty until a whole restore
+        fills it; a restore by name, a write or a delete leaves it as it is.
+        The listing reads directory entries and `lstat` only: it opens no
+        file and follows no link, and a FIFO is never listed."""
+        return self._left_alone
 
     def write(self, rel_path: str, data: bytes) -> None:
         """Replace or create the file at `rel_path` (relative to the flavor
@@ -1731,7 +1770,14 @@ class _Transaction:
                     raise GuardError(f"{rel!r} is not in snapshot {manifest.id}")
                 wanted.append((_mapped(rel, mapping), named))
         ops = self._restore_ops(store, manifest, wanted, named=paths is not None)
+        left_alone = (
+            None
+            if paths is not None
+            else self._added_since(store, manifest, prefix, mapping, {rel for rel, _ in wanted})
+        )
         self._run_all(store, ops)
+        if left_alone is not None:
+            self._left_alone = left_alone
         return tuple(sorted(mapping.items()))
 
     # -- context manager ---------------------------------------------------
@@ -2137,6 +2183,70 @@ class _Transaction:
                 )
             )
         return ops
+
+    def _added_since(
+        self,
+        store: SnapshotStore,
+        manifest: Manifest,
+        prefix: str,
+        mapping: dict[str, str],
+        held: set[str],
+    ) -> tuple[str, ...]:
+        """For a whole restore: the regular files under the snapshot's
+        subtrees (mapped into this flavor), outside its excluded paths, that
+        it does not hold (`held`, flavor-relative). Walked with `lstat` only
+        (`SnapshotStore.list_tree`): no file is opened, no link is followed,
+        and a FIFO is reported as `other` and dropped. In a dry run the
+        planned changes count as made, so a dry run lists what a commit
+        lists."""
+        assert self._place is not None
+        place = self._place
+        here = place.folder + "/"
+
+        def target(path: str) -> str | None:
+            # A snapshot path as this flavor spells it; an account folder
+            # named as a subtree is mapped as the files below it are.
+            if path + "/" == prefix:
+                return place.folder
+            if not path.startswith(prefix):
+                return None  # not this flavor's: the whole restore refused it
+            rel = _mapped(path.removeprefix(prefix) + "/-", mapping).removesuffix("/-")
+            return here + rel
+
+        # Held to the allowlist roots: a whole restore never names a file
+        # outside them, so none is listed as one --paths could delete.
+        subtrees = _allowlisted_trees(
+            (t for s in manifest.subtrees if (t := target(s)) is not None), place.folder
+        )
+        excluded = _allowlisted_trees(
+            (t for x in manifest.excluded if (t := target(x)) is not None), place.folder
+        )
+        if not subtrees:
+            return ()
+        try:
+            listed = store.list_tree(place.install_root, subtrees, exclude=excluded)
+        except (SnapshotError, ValueError) as exc:
+            raise GuardError(
+                f"cannot list what the restore of snapshot {manifest.id} leaves alone: {exc}"
+            ) from exc
+        found = {
+            path.removeprefix(here)
+            for path, kind in listed
+            if kind == "file"
+            and path.startswith(here)
+            and _in_allowlist_root(path.removeprefix(here))
+        }
+        if self._dry_run:
+            for rel, data in self._overlay.items():
+                if data is None:
+                    found.discard(rel)
+                    continue
+                full = here + rel
+                if any(full.startswith(s + "/") for s in subtrees) and not any(
+                    full == x or full.startswith(x + "/") for x in excluded
+                ):
+                    found.add(rel)
+        return tuple(sorted(found - held))
 
     def _unchanged_executable(self, rel: str, entry: Entry) -> bool:
         """True when `rel` is refused only as an executable, and a walk that
