@@ -14,7 +14,10 @@ Export reads the store only. It writes one new file, created exclusively
 (an existing file is never replaced) and never through a link at its last
 component, and it refuses a path inside any install before anything is
 created there (L1; the rule is `guard`'s, called rather than copied). It
-opens nothing in an install.
+opens nothing in an install. The archive holds what the store holds, so on
+POSIX it is private as the store's own files are (M16-41): created 0600 and
+set to exactly 0600 whatever the umask (M16-67). On Windows it keeps the
+access its folder gives it.
 
 An archive to import is untrusted input: it may come from anyone. Nothing
 in it is ever extracted to a path. Every entry name must be exactly
@@ -159,6 +162,9 @@ _CREATE_FLAGS = (
     | getattr(os, "O_BINARY", 0)
     | getattr(os, "O_NOCTTY", 0)
 )
+_ARCHIVE_MODE = snapshot._PRIVATE_FILE_MODE if snapshot._PRIVATE_MODES else 0o666
+"""The mode the archive is created with: 0600 on POSIX, as a store file
+(M16-67). Elsewhere the default, so the file keeps its folder's access."""
 _BY_DIR_FD = hasattr(os, "O_DIRECTORY") and {os.open, os.stat, os.unlink} <= os.supports_dir_fd
 """POSIX: the export file is created, checked and removed through a
 descriptor on the folder that was checked, never by its path again."""
@@ -282,7 +288,8 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
     this export created (`_remove_own`). Refused before anything is
     created: a `dest` inside any install (`guard.GuardError`) or inside the
     store. On POSIX the file is created through a descriptor on its folder,
-    held to be the folder that was checked."""
+    held to be the folder that was checked. On POSIX the archive is 0600
+    whatever the umask, as the store's own files are (M16-67)."""
     manifest = store.show(snapshot_id)
     data = snapshot.manifest_bytes(manifest)
     sizes: dict[str, int] = {}
@@ -294,9 +301,9 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
     try:
         try:
             if dir_fd is not None:
-                fd = os.open(target.name, _CREATE_FLAGS, 0o666, dir_fd=dir_fd)
+                fd = os.open(target.name, _CREATE_FLAGS, _ARCHIVE_MODE, dir_fd=dir_fd)
             else:
-                fd = os.open(target, _CREATE_FLAGS, 0o666)
+                fd = os.open(target, _CREATE_FLAGS, _ARCHIVE_MODE)
         except FileExistsError:
             raise SnapshotError(
                 f"{target} already exists; name a new file, or move that one aside"
@@ -308,6 +315,8 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
             with os.fdopen(fd, "wb") as out:
                 if not stat.S_ISREG(created.st_mode):
                     raise SnapshotError(f"{target} is not a regular file")
+                with contextlib.suppress(OSError):  # best effort, as the store's files
+                    snapshot._set_private(fd, created, exact=True)  # 0600 whatever the umask
                 # Asked again now that it exists: the name the player gave
                 # must still lead outside every install, or the export is
                 # refused before a byte is written. The cleanup below then
