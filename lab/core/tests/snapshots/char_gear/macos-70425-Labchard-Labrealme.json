@@ -20,6 +20,13 @@
     "class_file": null,
     "class_file_absent": "the record is schema 3; identity is recorded from schema 4 (the lab-addon from M15-01: install it with wowlab addon install lab, then log in and out on this character)"
   },
+  "level": 15,
+  "names": {
+    "build": "1.60.1.69913",
+    "spec": null,
+    "race": null,
+    "class_name": null
+  },
   "average": {
     "equipped": 9.5,
     "overall": 9.5,

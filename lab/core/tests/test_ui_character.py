@@ -90,6 +90,7 @@ function charView() {
     pickerDisabled: picker.disabled,
     header: ids["char-header"].textContent,
     headerFacts: ids["char-header"].all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e.textContent),
+    headerTitles: ids["char-header"].all().filter((e) => e.tagName === "dd").map((e) => e.title),
     notes: ids["char-header"].all().filter((e) => e.tagName === "li").map((e) => e.textContent),
     gearText: gearBox.textContent,
     errors: gearBox.all().filter((e) => has(e, "char-error")).map((e) => e.textContent),
@@ -405,9 +406,15 @@ def test_the_header_carries_spec_averages_and_the_notes(
     report = _report(scenario, NEWER)
     facts = dict(zip(view["headerFacts"][::2], view["headerFacts"][1::2], strict=True))
     assert facts["Character folder"] == report["character"] == NEWER
-    assert facts["Spec id"] == str(report["spec"]["id"])
-    assert facts["Average item level, equipped"] == str(report["average"]["equipped"])
-    assert facts["Average item level, overall"] == str(report["average"]["overall"])
+    # A schema-1 record and no cached game tables: the level from its talent
+    # block, the spec by its id, and no class or race (M16-31; the named
+    # header is graded in `test_ui_character_header.py`).
+    assert facts["Spec"] == f"spec id {report['spec']['id']}"
+    assert facts["Level"] == str(report["level"]) == "13"
+    assert facts["Class"].startswith("not recorded")
+    assert facts["Race"].startswith("not recorded")
+    assert facts["Average item level, equipped"] == f"{report['average']['equipped']:.1f}"
+    assert facts["Average item level, overall"] == f"{report['average']['overall']:.1f}"
     assert facts["File"] == report["file"]
     assert facts["Written"] == f"{_local(NEWER_NS)} (the file's modification time)"
     # The two notes `char show` prints about what the file is, and the rest.

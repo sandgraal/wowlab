@@ -20,6 +20,13 @@
     "class_file": "WARLOCK",
     "class_file_absent": null
   },
+  "level": 15,
+  "names": {
+    "build": "1.60.1.69913",
+    "spec": null,
+    "race": null,
+    "class_name": null
+  },
   "average": {
     "equipped": 9.5,
     "overall": 9.5,

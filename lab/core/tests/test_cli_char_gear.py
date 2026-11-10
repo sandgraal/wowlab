@@ -166,8 +166,9 @@ def test_char_gear_json_matches_its_snapshot_and_validates(
 
 def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§16.2's `CharGearReport` field list, in that order, with `identity`
-    after `spec` since M15-01 (§13.1's schema-4 amendment) and `dressing`
-    last since M15-02 (§16.3's amendment of 2026-10-19)."""
+    after `spec` since M15-01 (§13.1's schema-4 amendment), `dressing`
+    last since M15-02 (§16.3's amendment of 2026-10-19), and `level` and
+    `names` after `identity` since M16-31 (the Character header)."""
     _install("macos-70425", tmp_path, monkeypatch)
     data = json.loads(ok("char", "gear", "--json").stdout)
     assert list(data) == [
@@ -176,6 +177,8 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "mtime_ns",
         "spec",
         "identity",
+        "level",
+        "names",
         "average",
         "slots",
         "empty_slots",

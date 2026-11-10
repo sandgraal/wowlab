@@ -1670,6 +1670,9 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
+    # The record's schema, set with `summary` (kept with --brief too): the
+    # UI's picker breaks a file-time tie by the newest schema (M16-31).
+    record_schema: int | None = None
     record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
     error: str | None = None
     same_as: FsText | None = None
@@ -1702,6 +1705,8 @@ class CharacterFile(BaseModel):
             raise ValueError("a CharacterFile with an error holds no record")
         if self.same_as is not None and self.error is None:
             raise ValueError("a CharacterFile that is the same file as another holds an error")
+        if self.record_schema is not None and self.summary is None:
+            raise ValueError("a CharacterFile holds a record schema only beside its summary")
         return self
 
     @property
@@ -1792,6 +1797,7 @@ class _Read(NamedTuple):
 
     record: CharDB | None = None  # None unless the reader keeps records
     summary: str | None = None  # set when the file was read and parsed
+    record_schema: int | None = None  # set with `summary`
     error: str | None = None
     same_as: str | None = None  # a hard link to the file read on this character's row
 
@@ -1907,7 +1913,11 @@ class _Reader:
         # file systems report it for every file) says nothing, so it is never kept.
         if st.st_ino:
             self.seen[key] = (account, who)
-        return _Read(record=record if self.keep_records else None, summary=summary(record))
+        return _Read(
+            record=record if self.keep_records else None,
+            summary=summary(record),
+            record_schema=record.schema_,
+        )
 
 
 def _grew_past(path: Path, limit: int) -> bool:
@@ -2039,6 +2049,7 @@ class _Folder:
         place: Place = "file",
         record: CharDB | None = None,
         summary: str | None = None,
+        record_schema: int | None = None,
         error: str | None = None,
         same_as: str | None = None,
         no_lab_record: FolderFacts | None = None,
@@ -2052,6 +2063,7 @@ class _Folder:
             place=place,
             mtime_ns=mtime_ns,
             summary=summary,
+            record_schema=record_schema,
             record=record,
             error=error,
             same_as=same_as,
@@ -2106,6 +2118,7 @@ class _Folder:
             found.mtime_ns,
             record=got.record,
             summary=got.summary,
+            record_schema=got.record_schema,
             error=got.error,
             same_as=got.same_as,
         )
