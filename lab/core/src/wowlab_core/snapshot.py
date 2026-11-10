@@ -1160,6 +1160,9 @@ class SnapshotStore:
         """Directory descriptors held during one `create` (`_holding_dirs`)."""
         self._root_private = False
         """True once `_private_root` has run within the current `_holding_dirs`."""
+        self._root_pinned = False
+        """True while `put_object` writes into the root it checked (M16-68):
+        a held root its path no longer names is refused, not reopened."""
 
     # -- layout ------------------------------------------------------------
 
@@ -1817,6 +1820,12 @@ class SnapshotStore:
                 self._private_root(key, fd, create=create)
                 return fd
             os.close(fd)  # gone or replaced: open afresh, which refuses a link
+            if not key and self._root_pinned:
+                raise StoreLocationError(
+                    f"the store {self.path} no longer names the folder that was checked "
+                    "(a folder on its path was replaced after the check); "
+                    "nothing was written, and nothing was removed"
+                )
         if parent_fd is None:
             fresh = self._open_root(create=create)
         else:
@@ -2188,7 +2197,13 @@ class SnapshotStore:
         first byte is written, as `guard`'s `take_store` does after its
         mkdir (§6.10, defence in depth): a parent swapped for a link into an
         install in between is refused too. That refusal removes nothing,
-        and names the folder it may have created."""
+        and names the folder it may have created. From then on the write is
+        pinned to the root that was checked (fix round 2): where directory
+        descriptors are held (POSIX), a store path that no longer names that
+        held root is refused with `StoreLocationError` rather than opened
+        afresh. Where they are not (Windows), the store is walked by path,
+        and a same-user swap after the second check is the window §6.10
+        (amended 2026-09-28) leaves out of scope."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
         self._refuse_inside_any_install()
@@ -2198,7 +2213,11 @@ class SnapshotStore:
                 with self._store_dir((), create=True):
                     pass  # the root, made and (with descriptors) held
                 self._recheck_inside_any_install()
-                digest, _ = self._store_stream(io.BytesIO(data), set())
+                self._root_pinned = True
+                try:
+                    digest, _ = self._store_stream(io.BytesIO(data), set())
+                finally:
+                    self._root_pinned = False
         except OSError as exc:
             planned = hashlib.sha256(data).hexdigest()
             raise SnapshotError(self._cannot_store(planned, exc)) from exc

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from wowlab_core import guard
+from wowlab_core import guard, snapshot
 from wowlab_core.snapshot import SnapshotStore, StoreLocationError
 
 DATA = b"constructed: bytes put_object is asked to store\n"
@@ -166,3 +166,42 @@ def test_put_object_rechecks_after_opening_the_store_constructed(
     assert files == [marker], "no object, staged file or other byte written in the install"
     assert not (install / "store" / "objects").exists()
     assert not (install / "store" / "tmp").exists()
+
+
+@pytest.mark.skipif(
+    not snapshot._WRITE_BY_DIR_FD,
+    reason="the root is pinned by a held descriptor; without one (Windows) §6.10 covers it",
+)
+@pytest.mark.parametrize("marker", MARKERS)
+def test_put_object_writes_only_into_the_root_it_checked_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str
+) -> None:
+    """Fix round 2 (security re-check): the store's parent is moved aside and
+    replaced by a link into an install after the second check has passed and
+    before the first byte is written, through a monkeypatched hook. The held
+    root no longer matches the path, and is refused rather than reopened."""
+    install = _install(tmp_path, marker)
+    parent = tmp_path / "ud"
+    parent.mkdir()
+    store = SnapshotStore(parent / "store")
+    real = SnapshotStore._recheck_inside_any_install
+    swapped: list[bool] = []
+
+    def check_then_swap(self: SnapshotStore) -> None:
+        real(self)
+        parent.rename(tmp_path / "ud-moved-aside")
+        parent.symlink_to(install, target_is_directory=True)
+        swapped.append(True)
+
+    monkeypatch.setattr(SnapshotStore, "_recheck_inside_any_install", check_then_swap)
+    with pytest.raises(StoreLocationError, match="no longer names the folder"):
+        store.put_object(DATA)
+    assert swapped == [True]
+    assert sorted(p.relative_to(install).as_posix() for p in install.rglob("*")) == [marker]
+    assert not store._root_pinned, "the pin is scoped to the call"
+    # The pin does not outlive the refusal: the same store object works again.
+    parent.unlink()
+    (tmp_path / "ud-moved-aside").rename(parent)
+    monkeypatch.setattr(SnapshotStore, "_recheck_inside_any_install", real)
+    digest = store.put_object(DATA)
+    assert store.object_path(digest).is_file()
