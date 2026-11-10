@@ -101,6 +101,9 @@ def test_export_import_then_restore_on_another_computer_constructed(
     assert a.created_at in said and str(root) in said
     shown = _plain(ok("snap", "show", a.id).stdout)
     assert "kind:     imported" in shown, shown
+    # The JSON reports the effective kind too (review round 2).
+    shown_json = json.loads(ok("snap", "show", a.id, "--json").stdout)
+    assert shown_json["kind"] == "imported" and a.kind == "user"
     listed = json.loads(ok("snap", "list", "--json").stdout)
     assert [s["id"] for s in listed["snapshots"]] == [a.id]
     assert json.loads(ok("snap", "verify", "--json").stdout)["corrupt_objects"] == []

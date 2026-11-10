@@ -1120,7 +1120,7 @@ refuses the archive), the manifest must load as a store manifest does and be
 in the canonical encoding (`snapshot.parse_manifest`), the archive must
 hold exactly the objects the manifest names at the sizes it records, and
 the sizes are bounded (1 GiB an object, 16 GiB in all, 64 MiB of
-manifest, a million entries). `SnapshotStore.add_snapshot` then streams
+manifest, 250,000 entries; amended below). `SnapshotStore.add_snapshot` then streams
 each object, at most one byte past its recorded size, into a staged file
 under `tmp/` while hashing it; only when every object has verified are they
 moved into their shards and the manifest written last, so a corrupt
@@ -1147,8 +1147,23 @@ only the four, `RecordedKind`), whatever its manifest claims, so
 `latest-user` never names it; `latest` and `~N` still go by date, which
 (b) holds to the past. `snap show` prints the kind. (d) Before `zipfile`
 reads the central directory, the end record (Zip64 included) is read where
-an exported archive has it, right before the comment, and the entry count
-(1,000,000), the directory size (256 MiB) and the comment are checked.
+an exported archive has it, right before the comment, and the entry count,
+the directory size and the comment are checked.
+*2026-11-10 (M16-04 review round 2):* (a) Whenever a Zip64 locator sits
+before the end record, both Zip64 records `zipfile` could use (at the
+locator's offset, and just before the locator) are read and bounded, as
+the classic record is, whatever its fields say. The bounds are now 250,000
+entries and a central directory of 250,000 x 210 bytes (about 35 MiB, room
+for that many entries as an export writes them); the directory size is the
+bound that holds, since `zipfile` reads entries until it runs out (at most
+about 793,000 of the shortest). (b) On POSIX the export's folder is opened
+as resolved, without following a link, and it and every folder above it
+are examined for install markers through descriptors (`..`), so a folder
+swapped before or after the open cannot put the file in an install; on
+Windows the path checks before and after creation narrow that window
+without closing it. (c) `explain`'s snapshot facts and `snap show --json`
+report an imported snapshot's kind as `imported`; a `Manifest` accepts
+that kind, and `create` never writes it.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

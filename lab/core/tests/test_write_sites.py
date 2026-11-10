@@ -136,6 +136,14 @@ ALLOWED: dict[tuple[str, str], str] = {
         "<= os.supports_dir_fd",
     ): _EXPORT_CLEANUP + "; this line only asks whether the platform can",
     (_SNAPARCHIVE, "os.unlink(target.name, dir_fd=dir_fd)"): _EXPORT_CLEANUP,
+    (
+        _SNAPARCHIVE,
+        "dir_fd = os.open(resolved.parent, os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW)",
+    ): _EXPORT_FILE + "; this opens the export's folder read-only (O_RDONLY | O_DIRECTORY), "
+    "without following a link, and writes nothing",
+    (_SNAPARCHIVE, 'parent = os.open("..", _WALK_FLAGS, dir_fd=fd)'): _EXPORT_FILE
+    + "; this opens each folder above the export's read-only (O_PATH, or O_RDONLY, with "
+    "O_DIRECTORY) to examine it for install markers, and writes nothing",
     (_SNAPARCHIVE, "target.unlink()"): _EXPORT_CLEANUP,
     (_UI, "import subprocess"): _UI_RUN,
     (_WINJOB, "import ctypes"): _JOB,

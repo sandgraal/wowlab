@@ -78,10 +78,18 @@ MAX_OBJECT_BYTES = 1 << 30
 """The largest single file an import accepts (1 GiB)."""
 MAX_TOTAL_BYTES = 16 << 30
 """The most file content one import adds (16 GiB)."""
-MAX_ENTRIES = 1_000_000
-"""The most entries an archive to import may hold."""
-MAX_DIRECTORY_BYTES = 256 << 20
-"""The largest zip central directory an import lets `zipfile` read (256 MiB)."""
+MAX_ENTRIES = 250_000
+"""The most entries an archive to import may hold: one per distinct file
+content, far more than a WTF and AddOns folder hold."""
+_LARGEST_DIRECTORY_ENTRY = 46 + len("objects/") + 64 + 28
+"""A central-directory entry of an exported archive: 46 fixed bytes, the
+longest name, and a Zip64 extra field at most."""
+MAX_DIRECTORY_BYTES = MAX_ENTRIES * _LARGEST_DIRECTORY_ENTRY
+"""The largest zip central directory an import lets `zipfile` read (about
+35 MiB): room for `MAX_ENTRIES` entries as an export writes them. This is
+the bound that holds, since `zipfile` reads entries until the directory
+runs out: a hostile directory of the shortest possible entries (46 bytes)
+still makes at most `MAX_DIRECTORY_BYTES // 46` (about 793,000) of them."""
 
 _CHUNK = 1 << 20
 _FIXED_TIME = (1980, 1, 1, 0, 0, 0)  # every entry's timestamp: the same snapshot, the same bytes
@@ -160,22 +168,80 @@ def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
     return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
 
+_WALK_FLAGS = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_DIRECTORY", 0)
+"""How each folder above the export's is opened for the walk: `O_PATH` where
+there is one (Linux), so a folder that can be passed through but not listed
+is still examined."""
+
+
+def _refuse_install_above(dir_fd: int, target: Path) -> None:
+    """Refuse when the folder `dir_fd` holds, or any folder above it, is an
+    install by the rule `guard` applies to a path (an entry named one of
+    `guard._INSTALL_MARKERS`, of any kind; a folder that cannot be examined
+    counts as one). Walked through descriptors, from the held folder up by
+    `..`, so it examines the folders the file will really be created in,
+    whatever any path names by now."""
+    from wowlab_core import guard  # guard imports snapshot; imported at use
+
+    fd = os.dup(dir_fd)
+    try:
+        while True:
+            for marker in guard._INSTALL_MARKERS:
+                try:
+                    os.stat(marker, dir_fd=fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise guard.GuardError(
+                        f"the export file {target}: a folder above it cannot be examined "
+                        f"({exc.strerror or exc}); it counts as an install"
+                    ) from exc
+                raise guard.GuardError(
+                    f"the export file {target} would be inside an install (a folder above it "
+                    f"holds {marker}); name a file outside every install"
+                )
+            try:
+                parent = os.open("..", _WALK_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                raise guard.GuardError(
+                    f"the export file {target}: a folder above it cannot be examined "
+                    f"({exc.strerror or exc}); it counts as an install"
+                ) from exc
+            if _same_file(os.fstat(parent), os.fstat(fd)):
+                os.close(parent)
+                return  # the root of the file system
+            os.close(fd)
+            fd = parent
+    finally:
+        os.close(fd)
+
+
 def _open_checked_folder(target: Path, resolved: Path) -> int | None:
-    """A descriptor on the folder the new file goes in (POSIX), held to be
-    the folder `_refuse_destination` examined (`resolved.parent`, by device
-    and inode), so a folder swapped in between is refused; None elsewhere."""
+    """A descriptor on the folder the new file goes in (POSIX); None
+    elsewhere.
+
+    It is opened as `resolved.parent`, the folder `_refuse_destination`
+    found by resolving the path, with `O_NOFOLLOW`, so a folder swapped for
+    a link since that check is refused (`ELOOP`). Then the folder it holds
+    and every folder above it are examined through descriptors
+    (`_refuse_install_above`), so a swap anywhere on the way, before or
+    after the open, cannot put the file inside an install: on POSIX the
+    window is closed, not narrowed. (A folder renamed into an install later
+    still moves the file with it; one writer per folder is assumed.)
+    Without descriptors (Windows) only the path checks run, before the file
+    is created and again after: there the window is narrowed, not closed."""
     if not _BY_DIR_FD:
         return None
     try:
-        dir_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        dir_fd = os.open(resolved.parent, os.O_RDONLY | os.O_DIRECTORY | _O_NOFOLLOW)
     except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise SnapshotError(
+                f"the folder of {target} changed as it was checked; nothing was written"
+            ) from exc
         raise SnapshotError(f"cannot open the folder of {target}: {exc.strerror or exc}") from exc
     try:
-        checked = resolved.parent.stat()
-        if not _same_file(os.fstat(dir_fd), checked):
-            raise SnapshotError(
-                f"the folder of {target} changed as it was checked; nothing written"
-            )
+        _refuse_install_above(dir_fd, target)
     except BaseException:
         os.close(dir_fd)
         raise
@@ -367,20 +433,45 @@ def _read_at(handle: IO[bytes], offset: int, size: int) -> bytes:
     return handle.read(size)
 
 
+def _bound(
+    count: int, cd_size: int, cd_offset: int, file_size: int, limits: tuple[int, int]
+) -> None:
+    max_entries, max_directory_bytes = limits
+    if count > max_entries:
+        raise ArchiveError(f"the archive holds {count} entries, more than {max_entries}")
+    if cd_size > max_directory_bytes or cd_offset + cd_size > file_size:
+        raise ArchiveError(
+            f"the archive's directory is {cd_size} bytes, more than the file or the "
+            f"{max_directory_bytes} one import reads"
+        )
+
+
 def _check_end_record(
     handle: IO[bytes], file_size: int, max_entries: int, max_directory_bytes: int
 ) -> None:
-    """Read the end-of-central-directory record (and the Zip64 one it points
-    to, when its fields say so) before `zipfile` reads the directory, and
-    refuse an archive whose entry count or directory size is over the bounds
-    or whose comment is not `ARCHIVE_COMMENT`. An archive `export_snapshot`
-    writes ends in that record followed by exactly that comment, so the
-    record is looked for there and nowhere else."""
+    """Read the end-of-central-directory record, and every Zip64 record
+    `zipfile` could take in its place, before `zipfile` reads the directory,
+    and refuse an archive any of whose counts or directory sizes is over the
+    bounds, or whose comment is not `ARCHIVE_COMMENT`.
+
+    An archive `export_snapshot` writes ends in that record followed by
+    exactly that comment, so the record is looked for there and nowhere
+    else. CPython's `zipfile` follows a Zip64 locator whenever its signature
+    sits just before that record, whatever the record's own fields say, and
+    then reads the Zip64 record at the locator's offset or, failing that,
+    the one just before the locator. So whenever the locator is there, both
+    places are read, and every record found at either is held to the bounds
+    as the classic record is; a locator with neither is refused.
+
+    The directory size is the bound that holds: `zipfile` parses entries
+    until the directory's bytes run out, whatever count a record claims, so
+    `MAX_DIRECTORY_BYTES` is sized to `MAX_ENTRIES` (see there) and the
+    count is checked as well, not instead."""
     at = file_size - _EOCD.size - len(ARCHIVE_COMMENT)
     if at < 0:
         raise ArchiveError("the file is too short to be a snapshot archive")
     raw = _read_at(handle, at, _EOCD.size + len(ARCHIVE_COMMENT))
-    sig, _disk, _cd_disk, _here, count, cd_size, cd_offset, comment_len = _EOCD.unpack(
+    sig, _disk, _cd_disk, here, count, cd_size, cd_offset, comment_len = _EOCD.unpack(
         raw[: _EOCD.size]
     )
     if (
@@ -389,26 +480,27 @@ def _check_end_record(
         or raw[_EOCD.size :] != ARCHIVE_COMMENT
     ):
         raise ArchiveError("the file is not a snapshot archive written by wowlab snap export")
-    if count == 0xFFFF or cd_size == 0xFFFFFFFF or cd_offset == 0xFFFFFFFF:
-        locator_at = at - _ZIP64_LOCATOR.size
-        if locator_at < 0:
-            raise ArchiveError("the archive's Zip64 record is missing")
-        lsig, _ldisk, zip64_at, _disks = _ZIP64_LOCATOR.unpack(
-            _read_at(handle, locator_at, _ZIP64_LOCATOR.size)
-        )
-        if lsig != _ZIP64_LOCATOR_SIG or zip64_at + _ZIP64_EOCD.size > locator_at:
-            raise ArchiveError("the archive's Zip64 record is missing or out of place")
-        fields = _ZIP64_EOCD.unpack(_read_at(handle, zip64_at, _ZIP64_EOCD.size))
+    limits = (max_entries, max_directory_bytes)
+    _bound(max(here, count), cd_size, cd_offset, file_size, limits)
+    locator_at = at - _ZIP64_LOCATOR.size
+    if locator_at < 0:
+        return
+    lsig, _ldisk, zip64_at, _disks = _ZIP64_LOCATOR.unpack(
+        _read_at(handle, locator_at, _ZIP64_LOCATOR.size)
+    )
+    if lsig != _ZIP64_LOCATOR_SIG:
+        return
+    found = 0
+    for place in {zip64_at, locator_at - _ZIP64_EOCD.size}:
+        if place < 0 or place + _ZIP64_EOCD.size > locator_at:
+            continue
+        fields = _ZIP64_EOCD.unpack(_read_at(handle, place, _ZIP64_EOCD.size))
         if fields[0] != _ZIP64_EOCD_SIG:
-            raise ArchiveError("the archive's Zip64 record is damaged")
-        count, cd_size, cd_offset = fields[7], fields[8], fields[9]
-    if count > max_entries:
-        raise ArchiveError(f"the archive holds {count} entries, more than {max_entries}")
-    if cd_size > max_directory_bytes or cd_offset + cd_size > file_size:
-        raise ArchiveError(
-            f"the archive's directory is {cd_size} bytes, more than the file or the "
-            f"{max_directory_bytes} one import reads"
-        )
+            continue
+        found += 1
+        _bound(max(fields[6], fields[7]), fields[8], fields[9], file_size, limits)
+    if not found:
+        raise ArchiveError("the archive's Zip64 record is missing or out of place")
 
 
 def import_snapshot(

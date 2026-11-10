@@ -18,6 +18,7 @@ import hashlib
 import io
 import os
 import stat
+import struct
 import sys
 import zipfile
 from collections.abc import Callable
@@ -27,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from wowlab_core import guard, snaparchive, snapshot
+from wowlab_core import guard, pathfacts, snaparchive, snapshot
 from wowlab_core.snaparchive import ARCHIVE_COMMENT, ArchiveError
 from wowlab_core.snapshot import (
     ManifestIntegrityError,
@@ -653,3 +654,82 @@ def test_bytes_after_the_comment_are_refused_constructed(tmp_path: Path, archive
     padded = tmp_path / "padded.zip"
     padded.write_bytes(archive.read_bytes() + b"constructed: trailing")
     _refused(tmp_path, padded, ArchiveError, "not a snapshot archive")
+
+
+def _decoy(tmp_path: Path, entries: int, *, locator_points_home: bool) -> Path:
+    """Constructed (review round 2): a zip of `entries` tiny entries whose
+    classic end record claims one entry and a 46-byte directory, with no
+    Zip64 marker, while a Zip64 locator and record just before it carry the
+    true count and size, which `zipfile` follows. With `locator_points_home`
+    false, eight junk bytes sit between the directory and the Zip64 record
+    and the locator names the junk, so `zipfile` falls back to the record
+    just before the locator (it then reads the directory eight bytes late,
+    so only the first form also parses)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for i in range(entries):
+            zf.writestr(f"objects/{i:064x}", b"")
+    raw = buf.getvalue()
+    eocd = struct.Struct("<4s4H2LH")
+    _, _, _, _, count, cd_size, cd_offset, _ = eocd.unpack(raw[-eocd.size :])
+    body = raw[: cd_offset + cd_size]
+    zip64 = struct.pack(
+        "<4sQ2H2L4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, count, count, cd_size, cd_offset
+    )
+    junk = b"" if locator_points_home else b"JUNKJUNK"
+    pointed = len(body)
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, pointed, 1)
+    end = eocd.pack(b"PK\x05\x06", 0, 0, 1, 1, 46, cd_offset, len(ARCHIVE_COMMENT))
+    path = tmp_path / f"decoy-{locator_points_home}.zip"
+    path.write_bytes(body + junk + zip64 + locator + end + ARCHIVE_COMMENT)
+    return path
+
+
+@pytest.mark.parametrize("home", [True, False], ids=["constructed-at-offset", "constructed-before"])
+def test_a_zip64_decoy_behind_an_unmarked_end_record_is_refused_before_zipfile_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: bool
+) -> None:
+    path = _decoy(tmp_path, 300, locator_points_home=home)
+    if home:
+        with zipfile.ZipFile(path) as zf:  # the decoy works on zipfile as described
+            assert len(zf.infolist()) == 300
+    spy = _Spy(monkeypatch)
+    _refused(tmp_path, path, ArchiveError, "300 entries, more than 100", max_entries=100)
+    _refused(tmp_path, path, ArchiveError, "directory", max_directory_bytes=1000)
+    assert spy.calls == 0
+
+
+def test_the_directory_bound_is_sized_to_the_entry_cap_constructed() -> None:
+    """The directory size is the bound that holds (zipfile reads entries
+    until it runs out): it has room for the entry cap as an export writes
+    entries, and no more than a few times that in the shortest entries."""
+    longest = 46 + len("objects/") + 64 + 28
+    assert snaparchive.MAX_ENTRIES * longest == snaparchive.MAX_DIRECTORY_BYTES
+    assert snaparchive.MAX_DIRECTORY_BYTES // 46 < 4 * snaparchive.MAX_ENTRIES
+
+
+@pytest.mark.parametrize("claimed", ["user", "pre-write"], ids=lambda c: f"constructed-{c}")
+def test_explains_baseline_reports_an_imported_snapshot_as_imported_constructed(
+    tmp_path: Path, archive: Path, source: tuple[SnapshotStore, snapshot.Manifest], claimed: str
+) -> None:
+    """`explain`'s snapshot facts (review round 2): an imported snapshot of
+    this very install, past-dated and newer than the player's own, claiming
+    `user` or `pre-write`, is reported as `imported`, never as its claim."""
+    _, manifest = source
+    root = tmp_path / "source"  # the constructed tree `source` captured
+    store = SnapshotStore(tmp_path / "store-b")
+    own = store.create(
+        root,
+        [f"{FOLDER}/WTF"],
+        flavor_folder=FOLDER,
+        now=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    when = datetime(2021, 1, 1, tzinfo=UTC)  # in the past, and newer than `own`
+    forged = _forged_archive(
+        archive, manifest, when, kind=claimed, install_root=str(root.absolute())
+    )
+    report = snaparchive.import_snapshot(store, forged)
+    facts = pathfacts.snapshot_facts(store, root, FOLDER, "WTF/Config.wtf", ["WTF"])
+    assert facts.snapshot_id == report.id != own.id
+    assert facts.kind == "imported"
+    assert facts.newer_pre_write is None

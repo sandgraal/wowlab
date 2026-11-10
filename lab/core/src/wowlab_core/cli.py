@@ -6875,16 +6875,15 @@ def snap_show(
     JSON: the manifest (snapshot.Manifest), with its kind."""
     store = snapshot.SnapshotStore()
     manifest = store.show(_resolve_ref(store, snapshot_id))
-    if manifest.kind is None:
-        # Written before kinds existed: say what it is, as the journal tells.
-        manifest = manifest.model_copy(
-            update={"kind": snapshot.kind_of(manifest, _pre_write_ids(store))}
-        )
+    # The effective kind, in the text and the JSON alike: one written before
+    # kinds existed is what the journal tells, and an imported one is said
+    # to be so whatever kind its manifest claims (M16-04).
+    pre_write = _pre_write_ids(store) if manifest.kind is None else frozenset[str]()
+    kind = snapshot.kind_of(manifest, pre_write, store.imported_ids())
+    manifest = manifest.model_copy(update={"kind": kind})
     if json_out:
         _emit_manifest(manifest)
         return
-    # An imported one is said to be so, whatever kind its manifest claims.
-    kind = snapshot.kind_of(manifest, (), store.imported_ids())
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
     _say(f"  kind:     {kind}, {_KIND_WORDS[kind]}")

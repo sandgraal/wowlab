@@ -503,10 +503,13 @@ change)."""
 
 SnapshotKind = Literal["user", "first-run", "profile", "pre-write", "imported"]
 """What a snapshot is to this store (`kind_of`): a `RecordedKind`, or
-`imported` for one `add_snapshot` added from elsewhere (M16-04). That one is
-never in a manifest's own bytes: the store records it beside the manifest
+`imported` for one `add_snapshot` added from elsewhere (M16-04). `create`
+never writes that one: the store records an import beside its manifest
 (`SnapshotStore.imported_ids`), so whatever kind an imported manifest
-claims, it is never taken for one this computer's player took."""
+claims, it is never taken for one this computer's player took. A
+`Manifest` accepts it so `snap show --json` can report the effective kind
+(and a manifest that claims it is only ever taken at its word for being
+imported)."""
 
 
 # The `Manifest.__dict__` key of its path index (`Manifest.entry`).
@@ -535,7 +538,7 @@ class Manifest(_Frozen):
     file, so a manifest without a purpose is byte-for-byte what it was
     before the field existed. Like the label, it is not in the fingerprint."""
     entries: tuple[Entry, ...]
-    kind: RecordedKind | None = None
+    kind: SnapshotKind | None = None
     """Who took the snapshot (M16-09). Every manifest `create` writes carries
     it; one written before M16-09 has none (`None`, left out of the file so
     a label rewrite keeps it byte for byte as it was). Read it through
