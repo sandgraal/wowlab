@@ -196,11 +196,12 @@ def test_constructed_linked_path_error_in_addons_check_words(tmp_path: Path) -> 
     assert str(tmp_path) not in addoncheck._unsafe_words(through)
 
 
-def test_read_regular_file_refuses_root_with_expect_or_dir_fd(tmp_path: Path) -> None:
+def test_read_regular_file_refuses_root_with_dir_fd(tmp_path: Path) -> None:
+    """`root` with `expect` is allowed since M16-65 (the `char list` reader
+    passes both); `test_readers_from_root_m16_65.py` grades it."""
     path = tmp_path / "f"
     path.write_bytes(b"x")
-    with pytest.raises(ValueError):
-        snapshot.read_regular_file(path, root=tmp_path, expect=path.stat())
+    assert snapshot.read_regular_file(path, root=tmp_path, expect=path.stat()) == b"x"
     with pytest.raises(ValueError):
         snapshot.read_regular_file(path, root=tmp_path, dir_fd=0)
     assert snapshot.read_regular_file(path, root=tmp_path) == b"x"

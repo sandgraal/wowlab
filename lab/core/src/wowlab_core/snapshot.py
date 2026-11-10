@@ -411,7 +411,9 @@ def read_regular_file(
     """The bytes of `path`, opened as `open_regular_file` opens it (relative
     to `dir_fd` when one is given), or from the install root `root` one
     component at a time when one is given (`open_regular_file_from_root`;
-    not with `expect` or `dir_fd`).
+    not with `dir_fd`). `expect`, an earlier `lstat` of the path, holds with
+    either: the file opened must be that same file by device and inode, else
+    `UnsafeReadError` (with `root` since M16-65).
 
     With a `limit`, a file whose `fstat` size is over it is refused before
     any read, and at most `limit + 1` bytes are read, so one that grows past
@@ -419,11 +421,20 @@ def read_regular_file(
     closed on every path.
     """
     if root is not None:
-        if expect is not None or dir_fd is not None:
-            raise ValueError("root is not combined with expect or dir_fd")
+        if dir_fd is not None:
+            raise ValueError("root is not combined with dir_fd")
         fd, st = open_regular_file_from_root(path, root)
+        if expect is not None and _file_identity(st) != _file_identity(expect):
+            os.close(fd)
+            raise UnsafeReadError(f"{path} was replaced before it was opened")
     else:
         fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
+    return _read_opened(fd, st, path, limit)
+
+
+def _read_opened(fd: int, st: os.stat_result, path: Path, limit: int | None) -> bytes:
+    """Read the open descriptor `fd` (`st` its `fstat`) within `limit`, and
+    close it on every path."""
     try:
         if limit is not None and st.st_size > limit:
             raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")

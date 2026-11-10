@@ -4546,30 +4546,16 @@ def _sv_file_and_root(
     of the install it lies in (M16-49): the install `--root` or discovery
     names, when FILE is under it as spelled; otherwise None, and the file is
     read with only its last part checked for a link. A path in the install
-    spelled with `..`, or through another spelling of the install, is
-    refused (exit 3)."""
-    given = Path(_plain_arg(path))
-    if given.is_absolute() or longpath.lexists(given):
-        if account is not None or character is not None:
-            _note("--account and --character choose among names only; {} was read as typed", path)
-        try:
-            found, _ = _discover(root)
-        except install.InstallError:
-            return given, None
-        target, install_root = given, found.root
-    else:
-        _, chosen, lay = _open(root, flavor)
-        direct = lay.flavor_path / given
-        if longpath.lexists(direct):
-            if account is not None or character is not None:
-                _note(
-                    "--account and --character choose among names only; {} was read as typed",
-                    path,
-                )
-            target = direct
-        else:
-            target = lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
-        install_root = lay.install_root
+    spelled with `..`, or through another spelling of the install (a link
+    into one of its folders among them, M16-65), is refused (exit 3)."""
+    target = _sv_file(path, root, flavor, account, character)
+    try:
+        # A FILE `_sv_file` looked up under the flavor folder has had the
+        # install found already; one given as a path may lie outside any.
+        found, _ = _discover(root)
+    except install.InstallError:
+        return target, None
+    install_root = found.root
     holding = _install_holding(target, install_root)
     if holding is not None and ".." in target.absolute().parts:
         raise CliError(
@@ -4609,7 +4595,10 @@ def _really_inside(path: Path, root: Path) -> bool:
     device and inode (each `stat`ed following links, so a link to the root
     and the root named in another case on macOS or Windows count, and a
     linked folder further down cannot hide it); or, as a second check, some
-    folder above its real path is. False when the root cannot be `stat`ed."""
+    folder above its real path is; or, as a third (M16-65), some folder the
+    open passes through, its links resolved one at a time, is (a shortcut
+    into a folder of the install whose target leads out again by a linked
+    folder). False when the root cannot be `stat`ed."""
     try:
         st = longpath.stat(root)
     except (OSError, ValueError):
@@ -4620,6 +4609,7 @@ def _really_inside(path: Path, root: Path) -> bool:
     folders = list(reversed(Path(os.path.normpath(path.absolute())).parents))
     with contextlib.suppress(OSError, ValueError):
         folders += list(Path(longpath.realpath(path)).parents)
+    folders += _folders_passed_through(path)
     for folder in folders:
         try:
             here = longpath.stat(folder)
@@ -4628,6 +4618,58 @@ def _really_inside(path: Path, root: Path) -> bool:
         if (here.st_dev, here.st_ino) == want:
             return True
     return False
+
+
+_MAX_LINK_HOPS = 40  # links resolved on one path before the walk gives up (as POSIX's ELOOP)
+
+
+def _folders_passed_through(path: Path) -> list[Path]:
+    """Every folder an open of `path` passes through, from the top of its
+    drive down, each link met on the way resolved where it is met (its
+    target read, never followed blindly), so the folders inside a link's
+    target are listed too, not only the ones its real path ends in
+    (M16-65). The `..` of the path as spelled are taken lexically first, as
+    `_install_holding` takes them, so a folder they step back out of is not
+    passed through; a `..` in a link's target is taken where it is met. The
+    walk stops at the first part that is missing, is not a folder, or cannot
+    be read, and after `_MAX_LINK_HOPS` links. Nothing is opened; each part
+    is `lstat`ed."""
+    full = Path(os.path.normpath(path.absolute()))
+    current = Path(full.anchor)
+    pending = list(full.parts[1:-1])  # the folders; the file itself is not one
+    seen = [current]
+    hops = 0
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            current = current.parent
+            seen.append(current)
+            continue
+        step = current / name
+        try:
+            st = longpath.lstat(step)
+            linked = stat.S_ISLNK(st.st_mode) or longpath.is_junction(step)
+            target = longpath.readlink(step) if linked else None
+        except (OSError, ValueError):
+            break
+        if target is not None:
+            hops += 1
+            if hops > _MAX_LINK_HOPS:
+                break
+            if target.is_absolute():
+                current = Path(target.anchor)
+                seen.append(current)
+                pending[:0] = target.parts[1:]
+            else:
+                pending[:0] = target.parts
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            break
+        current = step
+        seen.append(current)
+    return seen
 
 
 _SV_LAST_PART_ONLY = (
@@ -5057,10 +5099,14 @@ def _merge_target(
     return target
 
 
-def _read_sv(path: Path) -> bytes:
-    """A SavedVariables file's bytes, read without following a link and
-    without blocking on anything but a regular file (L1)."""
-    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+def _read_sv(lay: layout.Layout, rel: str) -> bytes:
+    """A SavedVariables file's bytes, `rel` under the flavor folder, opened
+    from the install root one folder at a time (M16-65), so a link anywhere
+    on the way is refused with the folder named, and without blocking on
+    anything but a regular file (L1)."""
+    return snapshot.read_regular_file(
+        lay.flavor_path / rel, limit=luadata.MAX_FILE_BYTES, root=lay.install_root
+    )
 
 
 def _snapshot_sv(store: snapshot.SnapshotStore, snapshot_id: str, rel: str, folder: str) -> bytes:
@@ -5184,7 +5230,7 @@ def _loader_check(
             "lab-addon installed (`wowlab addon install lab`), one login and logout writes it."
         ]
     rel = found.path
-    disk = _read_sv(lay.flavor_path / rel)
+    disk = _read_sv(lay, rel)
     try:
         probe = svmerge.read_probe(luadata.parse(disk))
     except luadata.LuaDataError as exc:
@@ -5570,7 +5616,7 @@ def sv_merge(
             raise CliError("--base goes with --from SNAPSHOT, not a character", EXIT_USAGE)
     base_id = store.resolve_id(base) if base is not None else None
     target_path = lay.flavor_path / target.path
-    ours_bytes = _read_sv(target_path)
+    ours_bytes = _read_sv(lay, target.path)
     expected = hashlib.sha256(ours_bytes).hexdigest()
     if expect_target is not None and expect_target != expected:
         # Final already: this run would merge into other bytes than the plan
@@ -5586,7 +5632,7 @@ def sv_merge(
         found = _character_sv(files, acct, source_char, _sv_name(target))
         if found is None:
             raise CliError(f"{source_char.path}/SavedVariables/ has no {_sv_name(target)}")
-        theirs_bytes = _read_sv(lay.flavor_path / found.path)
+        theirs_bytes = _read_sv(lay, found.path)
         source = f"character {source_char.realm_folder}/{source_char.folder}"
     elif source_snap is not None:
         theirs_bytes = _snapshot_sv(store, source_snap, target.path, chosen.folder)
@@ -8202,7 +8248,12 @@ _VALUE_WIDTH = 60
 
 class _Unread:
     """A side that holds bytes wowlab could not read back (missing from the
-    store, changed on disk since the plan's hash, or over the size limit)."""
+    store, changed on disk since the plan's hash, or over the size limit).
+    `why`, when set, is said in place of the general words: a file on disk
+    reached through a linked folder, the folder named (M16-65)."""
+
+    def __init__(self, why: str | None = None) -> None:
+        self.why = why
 
 
 _UNREAD = _Unread()
@@ -8339,7 +8390,11 @@ def _detail_lines(path: str, before: _Side, after: _Side, *, limit: int | None) 
     if kind is None and not _is_saved_variables(path):
         return []
     if isinstance(before, _Unread) or isinstance(after, _Unread):
-        return [f"{_DETAIL_INDENT}(not compared: wowlab could not read both versions back)"]
+        why = next(
+            (s.why for s in (before, after) if isinstance(s, _Unread) and s.why is not None),
+            "wowlab could not read both versions back",
+        )
+        return [f"{_DETAIL_INDENT}(not compared: {why})"]
     if kind is not None:
         return _wtf_lines(kind, before, after, limit)
     return _sv_lines(before, after)
@@ -8370,25 +8425,44 @@ _CHANGED_SINCE = (
 )
 
 
+def _read_detail(flavor_path: Path, rel: str) -> bytes:
+    """The install's file at `rel` for a detail line, read-only through the
+    guarded opener, from the install root (the flavor folder's parent, as
+    `layout` takes it) one folder at a time (M16-65): a link anywhere on the
+    way is refused, `snapshot.LinkedPathError` naming it."""
+    return snapshot.read_regular_file(
+        flavor_path / rel, limit=_DETAIL_READ_LIMIT, root=flavor_path.parent
+    )
+
+
 def _disk_now(flavor_path: Path, rel: str) -> _Side:
     """What the install holds at `rel` now, read-only through the guarded
     opener: None when nothing is there, `_UNREAD` when it cannot be read as
-    a regular file under the detail limit (a link, a FIFO, too large)."""
+    a regular file under the detail limit (a link, a FIFO, too large); one
+    reached through a linked folder says so, the folder named (M16-65)."""
     try:
-        return snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+        return _read_detail(flavor_path, rel)
     except FileNotFoundError:
         return None
+    except snapshot.LinkedPathError as exc:
+        return _Unread(str(exc)) if not exc.final else _UNREAD
     except OSError:
         return _UNREAD
 
 
 def _on_disk(store: snapshot.SnapshotStore, flavor_path: Path, rel: str, sha: str | None) -> _Side:
     """The bytes the install holds at `rel` when they still hash to `sha`
-    (read-only, through the guarded opener), else the store's copy."""
+    (read-only, through the guarded opener), else the store's copy. A file
+    reached through a linked folder is not read, and not stood in for by the
+    store's copy: the detail says so, the folder named (M16-65)."""
     if sha is None:
         return None
     try:
-        data = snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+        data = _read_detail(flavor_path, rel)
+    except snapshot.LinkedPathError as exc:
+        if not exc.final:
+            return _Unread(str(exc))
+        data = None
     except OSError:
         data = None
     if data is not None and hashlib.sha256(data).hexdigest() == sha:
