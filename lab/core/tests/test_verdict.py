@@ -496,7 +496,7 @@ def test_a_gate_row_under_a_placeholder_says_no_and_keeps_its_suffixes() -> None
 
 _OWNER_LABELS = {
     "gate": "wowlab can edit",
-    "no": "wowlab won't touch",
+    "no": "wowlab never changes it",
     "folder": "folder",
     "not_applicable": "not used",
     "unclassified": "unknown",
@@ -614,7 +614,7 @@ def test_the_label_is_additive_and_keeps_the_words() -> None:
 @pytest.mark.parametrize(
     "fields",
     [
-        {"level": "gate", "label": "wowlab won't touch"},
+        {"level": "gate", "label": "wowlab never changes it"},
         {"level": "no", "label": "wowlab can edit"},
         {"level": "gate", "server_may_replace": False, "server_label": "server may overwrite"},
         {"level": "gate", "server_may_replace": True, "server_label": None},
@@ -634,7 +634,7 @@ def test_a_label_that_disagrees_is_refused_constructed(fields: dict[str, object]
 
 def test_every_gate_row_under_a_placeholder_gets_the_no_label() -> None:
     """The badge never promises an edit the gate refuses: under a reparse
-    point that is not a link, every gate row reads "wowlab won't touch",
+    point that is not a link, every gate row reads "wowlab never changes it",
     while `level` stays the row's."""
     rows = [e for e in filemap.load().entries if e.edit.startswith("gate")]
     assert rows
@@ -642,7 +642,7 @@ def test_every_gate_row_under_a_placeholder_gets_the_no_label() -> None:
         for folder in (False, True):
             v = verdict_of(entry, entry.base, "WTF/x", folder=folder, placeholder=True)
             assert v.level == "gate", entry.id
-            assert (v.label, v.placeholder, v.link) == ("wowlab won't touch", True, False)
+            assert (v.label, v.placeholder, v.link) == ("wowlab never changes it", True, False)
             expected = "server may overwrite" if v.server_may_replace else None
             assert v.server_label == expected, entry.id
     plain = verdict_of(rows[0], rows[0].base, "WTF/x")
@@ -653,12 +653,12 @@ def test_a_placeholder_with_the_gate_label_is_refused_constructed() -> None:
     """Constructed: a verdict that claims a placeholder and the gate's label."""
     data = verdict_of(_entry("account-config-cache"), "flavor", "WTF/x", placeholder=True)
     fields = data.model_dump()
-    assert fields["label"] == "wowlab won't touch"
+    assert fields["label"] == "wowlab never changes it"
     fields["label"] = "wowlab can edit"
     with pytest.raises(ValueError):
         Verdict.model_validate(fields)
     fields.pop("label")
-    assert Verdict.model_validate(fields).label == "wowlab won't touch"
+    assert Verdict.model_validate(fields).label == "wowlab never changes it"
 
 
 def test_a_link_under_a_placeholder_keeps_the_link_label() -> None:

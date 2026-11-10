@@ -62,7 +62,7 @@ wowlab ui
 
 It picks a free port on this machine only, opens your browser on a link that works once, and runs until Ctrl-C. If no browser opens, paste the link it prints. `wowlab ui` takes no `--root`: when your install is not in a default place, set `WOWLAB_WOW_ROOT` first (see [`docs/INSTALL.md`](docs/INSTALL.md)).
 
-- 🗂️ **Explorer.** Your install as a tree, one folder at a time. Most files carry a badge such as *wowlab can edit*, *wowlab won't touch* or *unknown*; a link, a file the server may overwrite, and the one folder wowlab never uses get their own. Click a file for what it is, who writes it, its file-map row, and whether the copy on disk still matches your latest snapshot. Below that, the commands that act on the file, written for your shell; **Copy** gives the exact line. For a file wowlab has a read command for (settings, binds, macros, saved data, the addon list, the install, the combat log), **Preview** runs it and shows the result as a tree.
+- 🗂️ **Explorer.** Your install as a tree, one folder at a time. Most files carry a badge such as *wowlab can edit*, *wowlab never changes it* or *unknown*; a link, a file the server may overwrite, and the one folder wowlab never uses get their own. Click a file for what it is, who writes it, its file-map row, and whether the copy on disk still matches your latest snapshot. Below that, the commands that act on the file, written for your shell; **Copy** gives the exact line. For a file wowlab has a read command for (settings, binds, macros, saved data, the addon list, the install, the combat log), **Preview** runs it and shows the result as a tree.
 - 🕳️ **Gaps.** The files the file map does not know yet, grouped by folder, the same list as `wowlab filemap gaps`.
 - ⌨️ **Commands.** Runs this wowlab's commands with `--json` and shows the result. A command that asks before changing anything runs first as a plan that changes nothing, and runs for real only when you press **Confirm** under it; the result names the change's journal record, which `wowlab undo` reverses. Only two of them refuse when something changed after the plan: `undo`, when a newer change has been journaled, and `sv merge`, when its target file changed or what it merges from did. The others apply what is there when you confirm, after the snapshot that `wowlab undo` restores from.
 
@@ -146,11 +146,11 @@ Features marked 🆕 are on `main` and arrive with the next release.
 ```text
 $ wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua
 WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua (in flavor folder _classic_beta_)
-  what:         Account-wide addon data (`## SavedVariables:`)
-  written by:   Client on logout / `/reload`
+  what:         An addon's saved data for the whole account
+  written by:   The game, on logout or `/reload`
   edit:         yes, through wowlab's write gate only, with the client closed
-  tier:         A: ordinary addon-user behaviour
-  read by:      `luadata`
+  file-map row: account-savedvariables
+…
 
 $ wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua
 DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260

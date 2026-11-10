@@ -481,7 +481,9 @@ def test_explain_returns_the_file_map_entry(root: Path, path: str, entry_id: str
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == entry_id
     text = ok("explain", path).stdout
-    assert f"file-map row: {entry_id} " in text
+    assert f"  file-map row: {entry_id}" in text.splitlines()
+    verbose = ok("explain", path, "--verbose").stdout
+    assert f"file-map row: {entry_id} (" in verbose
 
 
 def test_explain_an_absolute_path_and_one_relative_to_the_current_folder(
@@ -1770,7 +1772,7 @@ _NEW_EXPLAIN_LINES = (
 
 
 def test_explain_words_for_edit_and_tier(root: Path) -> None:
-    bak = ok("explain", BAK).stdout
+    bak = ok("explain", BAK, "--verbose").stdout
     assert (
         "edit:         no; wowlab leaves it alone (a restore writes it only if you name it "
         "with --paths)"
@@ -1789,11 +1791,43 @@ def test_explain_words_for_edit_and_tier(root: Path) -> None:
         "edit:         yes, through wowlab's write gate only, with the client closed; the server "
         "may replace it at login (sync settings: wowlab doctor)"
     ) in cache
-    fonts = ok("explain", f"{FLAVOR}/Fonts/FRIZQT__.TTF").stdout
+    fonts = ok("explain", f"{FLAVOR}/Fonts/FRIZQT__.TTF", "--verbose").stdout
     assert "; unsupported by Blizzard, a patch can reset it" in fonts
     assert "tier:         B: works, but Blizzard does not support it" in fonts
     folder = ok("explain", "WTF/").stdout
     assert "edit:         —; a folder, see the files in it" in folder
+
+
+def test_explain_prints_tier_and_reader_only_when_verbose(root: Path) -> None:
+    """M16-17: by default `explain` answers what the file is, who writes it
+    and whether wowlab may edit it, and names its file-map row; the tier,
+    the reader and the row's path pattern are `--verbose`'s. `--json`
+    carries them either way, and the row's spec notes."""
+    path = f"WTF/Account/{ACCOUNT}/config-cache.wtf"
+    plain = ok("explain", path).stdout.splitlines()
+    assert not any(line.startswith(("  tier:", "  read by:")) for line in plain)
+    assert "  file-map row: account-config-cache" in plain
+    verbose = ok("explain", path, "--verbose").stdout.splitlines()
+    assert "  tier:         A: ordinary addon-user behaviour" in verbose
+    assert "  read by:      the WTF settings reader" in verbose
+    row = next(line for line in verbose if line.startswith("  file-map row: "))
+    assert row.startswith("  file-map row: account-config-cache (`WTF/Account/")
+    # every other line is the same, in the same order
+    assert [x for x in verbose if not x.startswith(("  tier:", "  read by:"))] == [
+        row if x.startswith("  file-map row: ") else x for x in plain
+    ]
+    report = _json(cli.ExplainReport, "explain", path)
+    entry = filemap.load().entry("account-config-cache")
+    assert isinstance(report.result, cli.layout.Classified)
+    assert report.result.entry.notes == entry.notes != ""
+    assert report.result.entry.tier == entry.tier
+
+
+def test_explain_says_battle_net_app(root: Path) -> None:
+    """M16-17: the game's word for the Battle.net app, never "Agent"."""
+    out = ok("explain", ".build.info").stdout
+    assert "  written by:   Battle.net app, on install and patch" in out
+    assert "agent" not in out.lower()
 
 
 def test_notes_carry_the_caveats_in_json(root: Path) -> None:
