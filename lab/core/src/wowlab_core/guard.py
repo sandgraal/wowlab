@@ -2549,8 +2549,9 @@ def _refuse_others_on_target_accounts(
                 f"no account (an old-style folder with no character folder in it), and "
                 f"{place.flavor_dir} has the account folder {hit!r}; restoring it under its "
                 "own name would write into that account, so nothing is restored. Restore "
-                "without it by naming the files you want with --paths, or rename or remove "
-                f"{hit!r} in the target first"
+                f"without it by naming the files you want with --paths, or clear {hit!r} "
+                "from the target first: rename it, or run `wowlab snap create` and then "
+                "remove it"
             )
 
 

@@ -171,7 +171,6 @@ def test_constructed_clash_refusal_says_what_to_do_and_paths_avoid_it(
 @pytest.mark.parametrize(
     "with_account", [True, False], ids=["constructed-mapped", "constructed-accountless"]
 )
-@pytest.mark.xfail(strict=True, reason="M16-62 not implemented")
 def test_constructed_clash_refusal_suggests_a_snapshot_before_a_hand_removal(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None, with_account: bool
 ) -> None:
