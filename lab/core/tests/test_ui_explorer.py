@@ -1317,7 +1317,11 @@ def test_the_pane_says_why_a_path_gone_since_the_tree_is_unknown_constructed(
     (install / FLAVOR / rel).write_bytes(b"constructed\n")
     steps: list[dict[str, Any]] = [{"open_all": True}, {"click": rel}]
     scenario, first = _scenario(server, [], steps)
-    target = first["install_root"] + os.sep + first["flavor_folder"] + "/" + rel
+    # Spelled as the page spells it (page.js `select`): the install root,
+    # then every part joined with the platform's separator, so the recorded
+    # run below matches the page's request exactly on Windows too.
+    parts = [first["flavor_folder"], *rel.split("/")]
+    target = first["install_root"] + "".join(os.sep + part for part in parts)
     (install / FLAVOR / rel).unlink()
     params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
     result = _run(server, ["explain"], params).json()
@@ -1328,6 +1332,8 @@ def test_the_pane_says_why_a_path_gone_since_the_tree_is_unknown_constructed(
         {"command": ["explain"], "params": params, "stdout": result["stdout"], "exit_code": 1}
     ]
     out = _drive(tmp_path / "node", scenario)
+    # The page asked for exactly the recorded run, so the stub answered it.
+    assert _asked(out, ["explain"]) == [params], (_asked(out, ["explain"]), params)
     pane = out["steps"][1]
     assert "missing" not in pane, pane
     assert "Why it is unknown" in pane["facts"], pane
