@@ -36,9 +36,9 @@ import sys
 import uuid
 import zlib
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePath, PurePosixPath
-from typing import Any, BinaryIO, Literal, NamedTuple
+from typing import Any, BinaryIO, Literal, NamedTuple, Protocol
 
 import platformdirs
 from pydantic import (
@@ -53,6 +53,7 @@ from pydantic import (
 from wowlab_core import longpath
 
 __all__ = [
+    "IMPORT_CLOCK_ALLOWANCE",
     "MANIFEST_FORMAT",
     "OBJECTS_DIR_ENTRY",
     "Change",
@@ -63,6 +64,8 @@ __all__ = [
     "ManifestIntegrityError",
     "MissingObject",
     "ObjectCorruptError",
+    "ObjectSource",
+    "RecordedKind",
     "SnapshotDiff",
     "SnapshotError",
     "SnapshotExistsError",
@@ -72,9 +75,11 @@ __all__ = [
     "SnapshotStore",
     "StoreLocationError",
     "VerifyReport",
+    "check_foreign_manifest",
     "default_store_path",
     "kind_of",
     "manifest_bytes",
+    "parse_manifest",
     "resolve_reference",
     "tree_fingerprint",
 ]
@@ -90,6 +95,7 @@ _ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _MANIFEST_SUFFIX = ".json"
+_IMPORTED_DIR = "imported"
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
 """The bit in a Windows reparse tag that says "this names another path"
@@ -331,6 +337,17 @@ a link and checked against its `lstat` (M11-18): POSIX. `os.replace` is
 `lstat` just before it is used, and one that is a link is refused."""
 
 
+_STAGE_FLAGS = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_EXCL
+    | _O_NOFOLLOW
+    | getattr(os, "O_BINARY", 0)
+    | getattr(os, "O_NOCTTY", 0)
+)
+"""How a staged file under `tmp/` is created: new, exclusively, never through a link."""
+
+
 class _StoreDir(NamedTuple):
     """A directory of the store that `create` writes into (M11-18), checked
     not to be a link (a symlink, or on Windows a junction or other
@@ -477,11 +494,22 @@ class Entry(_Frozen):
         return value
 
 
-SnapshotKind = Literal["user", "first-run", "profile", "pre-write"]
-"""Who took a snapshot and why (M16-09, `docs/LAB_PLAN.md` §18.1 item 3):
-`user` (`snap create`, or a library caller that does not say), `first-run`
-(doctor's first run), `profile` (`profiles.save`) or `pre-write` (the copy
-the write gate takes before every change)."""
+RecordedKind = Literal["user", "first-run", "profile", "pre-write"]
+"""Who took a snapshot and why, as its manifest records it (M16-09,
+`docs/LAB_PLAN.md` §18.1 item 3): `user` (`snap create`, or a library caller
+that does not say), `first-run` (doctor's first run), `profile`
+(`profiles.save`) or `pre-write` (the copy the write gate takes before every
+change)."""
+
+SnapshotKind = Literal["user", "first-run", "profile", "pre-write", "imported"]
+"""What a snapshot is to this store (`kind_of`): a `RecordedKind`, or
+`imported` for one `add_snapshot` added from elsewhere (M16-04). `create`
+never writes that one: the store records an import beside its manifest
+(`SnapshotStore.imported_ids`), so whatever kind an imported manifest
+claims, it is never taken for one this computer's player took. A
+`Manifest` accepts it so `snap show --json` can report the effective kind
+(and a manifest that claims it is only ever taken at its word for being
+imported)."""
 
 
 # The `Manifest.__dict__` key of its path index (`Manifest.entry`).
@@ -636,12 +664,18 @@ def default_store_path() -> Path:
     return platformdirs.user_data_path("wowlab") / "store"
 
 
-def kind_of(manifest: Manifest, pre_write_ids: Collection[str] = ()) -> SnapshotKind:
-    """What `manifest` is (M16-09): the kind it records, else, for one
+def kind_of(
+    manifest: Manifest, pre_write_ids: Collection[str] = (), imported_ids: Collection[str] = ()
+) -> SnapshotKind:
+    """What `manifest` is (M16-09): `imported` when its id is one the store
+    records as added from elsewhere (`imported_ids`, M16-04), whatever the
+    manifest itself claims; else the kind it records, else, for one
     written before kinds existed, `pre-write` when its id is the snapshot a
     journal record names (`pre_write_ids`), `profile` when it carries
     `purpose="profile"`, and `user` otherwise. A label that merely reads like
     the write gate's own says nothing: only the journal does."""
+    if manifest.id in imported_ids:
+        return "imported"
     if manifest.kind is not None:
         return manifest.kind
     if manifest.id in pre_write_ids:
@@ -669,6 +703,110 @@ def manifest_bytes(manifest: Manifest) -> bytes:
         ensure_ascii=True,
     )
     return text.encode("ascii") + b"\n"
+
+
+def parse_manifest(data: bytes) -> Manifest:
+    """Manifest file bytes from anywhere (an archive, say: M16-04), held to
+    everything a manifest in the store is held to: it loads, its id is a
+    snapshot id, its fingerprint matches its entries, and its format is
+    this one. It must also be in the one canonical encoding
+    (`manifest_bytes`), so storing it writes what `create` would have.
+    Raises `ManifestIntegrityError`."""
+    try:
+        claimed = json.loads(data)
+    except (ValueError, RecursionError) as exc:
+        raise ManifestIntegrityError(f"the manifest does not load: {exc}") from exc
+    snapshot_id = claimed.get("id") if isinstance(claimed, dict) else None
+    if not isinstance(snapshot_id, str) or not _ID_RE.match(snapshot_id):
+        raise ManifestIntegrityError("the manifest carries no snapshot id")
+    manifest = SnapshotStore._parse(snapshot_id, data)
+    if manifest_bytes(manifest) != data:
+        raise ManifestIntegrityError(
+            f"manifest {snapshot_id} is not in the store's canonical encoding"
+        )
+    return manifest
+
+
+IMPORT_CLOCK_ALLOWANCE = timedelta(minutes=10)
+"""How far past this computer's clock an imported snapshot's date may be
+(two computers' clocks differ a little); a later one is refused (M16-04)."""
+
+_CREATED_AT_RE = re.compile(r"\A(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z\Z")
+
+
+def _one_component(value: str) -> bool:
+    return value not in ("", ".", "..") and "/" not in value and "\x00" not in value
+
+
+def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -> None:
+    """Hold a manifest from elsewhere (`add_snapshot`, M16-04) to what
+    `create` always writes, beyond what `parse_manifest` checks:
+
+    - `created_at` is well formed, is the moment the id carries, and is no
+      later than `now` (default: this computer's clock) plus
+      `IMPORT_CLOCK_ALLOWANCE`, so a snapshot dated in the future cannot
+      stay the newest (`latest`, `~N`) for ever;
+    - `flavor_folder` is one folder name, and every subtree and every
+      excluded path keeps the `Entry.path` rule and is that folder or under
+      it, so a manifest cannot name `../../../etc` or the install's own
+      files;
+    - every entry is under a subtree and under no excluded path, as `create`
+      walks them.
+
+    Raises `ManifestIntegrityError`."""
+    sid = manifest.id
+    match = _CREATED_AT_RE.match(manifest.created_at)
+    try:
+        if match is None:
+            when = None
+        else:
+            year, month, day, hour, minute, second, micro = (int(g) for g in match.groups())
+            when = datetime(year, month, day, hour, minute, second, micro, tzinfo=UTC)
+    except ValueError:
+        when = None
+    if when is None:
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at!r} is malformed"
+        )
+    if sid[: len("YYYYmmddTHHMMSS.ffffffZ")] != f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z":
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at} is not the moment its id carries"
+        )
+    clock = datetime.now(UTC) if now is None else now.astimezone(UTC)
+    if when > clock + IMPORT_CLOCK_ALLOWANCE:
+        raise ManifestIntegrityError(
+            f"manifest {sid}: it is dated {manifest.created_at}, later than this computer's "
+            "clock; a snapshot from the future is refused"
+        )
+    folder = manifest.flavor_folder
+    if folder is None or not _one_component(folder):
+        raise ManifestIntegrityError(f"manifest {sid}: it names no single flavor folder")
+    for what, paths in (("subtree", manifest.subtrees), ("excluded path", manifest.excluded)):
+        for path in paths:
+            parts = path.split("/")
+            if "\x00" in path or any(part in ("", ".", "..") for part in parts):
+                raise ManifestIntegrityError(f"manifest {sid}: the {what} {path!r} is not relative")
+            if parts[0] != folder:
+                raise ManifestIntegrityError(
+                    f"manifest {sid}: the {what} {path!r} is outside its flavor folder"
+                )
+    if not manifest.subtrees:
+        raise ManifestIntegrityError(f"manifest {sid}: it names no subtree")
+    for entry in manifest.entries:
+        if not any(_is_under(entry.path, s) for s in manifest.subtrees) or any(
+            _is_under(entry.path, x) for x in manifest.excluded
+        ):
+            raise ManifestIntegrityError(
+                f"manifest {sid}: the entry {entry.path!r} is outside what it captured"
+            )
+
+
+class ObjectSource(Protocol):
+    """What `SnapshotStore.add_snapshot` reads one object's bytes from."""
+
+    def read(self, size: int, /) -> bytes: ...
+
+    def close(self) -> None: ...
 
 
 def tree_fingerprint(
@@ -858,7 +996,7 @@ class SnapshotStore:
         flavor_version: str | None = None,
         client_running: bool | None = None,
         purpose: Literal["profile"] | None = None,
-        kind: SnapshotKind | None = None,
+        kind: RecordedKind | None = None,
         now: datetime | None = None,
     ) -> Manifest:
         """Capture `subtrees` of `root` and return the new manifest.
@@ -1903,6 +2041,217 @@ class SnapshotStore:
             self._write_manifest(manifests, path.name, data)
         return updated
 
+    # -- adding a snapshot from elsewhere (M16-04) ----------------------------
+
+    def add_snapshot(
+        self,
+        data: bytes,
+        open_object: Callable[[str], ObjectSource],
+        *,
+        now: datetime | None = None,
+    ) -> tuple[Manifest, bool]:
+        """Add the snapshot whose manifest file is `data`, reading each
+        object it needs through `open_object(sha256)`; return the manifest
+        and whether anything was added.
+
+        `data` is held to everything a manifest in the store is held to
+        (`parse_manifest`): it loads, its fingerprint matches its entries,
+        and it is in the one canonical encoding, so the file written is
+        byte for byte what `create` would have written. Every file entry
+        names an object by SHA-256; two entries naming the same object must
+        agree on its size. A manifest not already in the store is also held
+        to `check_foreign_manifest` (its date against `now`, its folders),
+        and is recorded as imported (`imported_ids`) before its manifest is
+        written.
+
+        Nothing is added until every object has been read and checked:
+        each is streamed, at most its recorded size plus one byte, into a
+        staged file under `tmp/` while it is hashed and compressed. A
+        stream longer or shorter than the recorded size, or one that does
+        not hash to its name, raises `ObjectCorruptError`, and every staged
+        file is removed: the store is as it was. Only then is each object
+        moved into its shard (one already in the store and sound is kept,
+        and its staged copy dropped) and the manifest written last, as
+        `create` writes it, never through a link (M11-18).
+
+        An id already in the store with these exact bytes adds nothing and
+        returns `(manifest, False)`; with other bytes (a relabelled copy,
+        say) it raises `SnapshotExistsError` before any object is read.
+        Callers that may race with `gc` hold the store lock, as `wowlab
+        snap import` does.
+        """
+        manifest = parse_manifest(data)
+        wanted: dict[str, int] = {}
+        for entry in manifest.entries:
+            if entry.kind != "file":
+                continue
+            if entry.sha256 is None or not _SHA_RE.match(entry.sha256):
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: the file entry {entry.path!r} names no object"
+                )
+            if entry.size < 0:
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: the file entry {entry.path!r} has a negative size"
+                )
+            if wanted.setdefault(entry.sha256, entry.size) != entry.size:
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: object {entry.sha256} is given two sizes"
+                )
+        name = manifest.id + _MANIFEST_SUFFIX
+        staged: dict[str, str] = {}  # sha256 -> staged name under tmp/
+        with self._holding_dirs():
+            self._refuse_linked_store_dirs()
+            try:
+                if self._existing_manifest(name, data, manifest.id):
+                    return manifest, False  # already here, as these very bytes
+                check_foreign_manifest(manifest, now=now)
+                # `manifests/` exists before any object does (M11-15).
+                with self._store_dir(("manifests",), create=True):
+                    pass
+                for digest in sorted(wanted):
+                    staged[digest] = self._stage_verified(
+                        open_object(digest), digest, wanted[digest]
+                    )
+                verified: set[str] = set()
+                for digest in sorted(staged):
+                    if self._reusable(digest, verified):
+                        continue  # sound already; the staged copy is dropped below
+                    with (
+                        self._store_dir(("tmp",), create=True) as tmp,
+                        self._store_dir(("objects", digest[:2]), create=True) as shard,
+                    ):
+                        assert tmp is not None and shard is not None
+                        for where in (tmp, shard):
+                            if not where.still_checked():
+                                raise _linked_store_dir(where.path)
+                        os.replace(
+                            tmp.at(staged[digest]),
+                            shard.at(digest[2:]),
+                            src_dir_fd=tmp.fd,
+                            dst_dir_fd=shard.fd,
+                        )
+                    del staged[digest]
+                    verified.add(digest)
+                # Recorded as imported before its manifest exists, so the
+                # store never holds it unmarked (`imported_ids`).
+                with (
+                    self._store_dir((_IMPORTED_DIR,), create=True) as imported,
+                    self._staged("imported") as marker,
+                ):
+                    assert imported is not None
+                    self._publish(marker, imported, manifest.id)
+                with self._store_dir(("manifests",), create=True) as manifests:
+                    assert manifests is not None
+                    if self._existing_manifest(name, data, manifest.id):
+                        return manifest, False
+                    self._write_manifest(manifests, name, data)
+            except OSError as exc:
+                raise SnapshotError(f"cannot add snapshot {manifest.id}: {exc}") from exc
+            finally:
+                self._drop_staged(staged.values())
+        return manifest, True
+
+    def imported_ids(self) -> frozenset[str]:
+        """The ids `add_snapshot` added from elsewhere (M16-04): the names
+        of the empty files under `imported/`, each written before its
+        manifest. Listed by `lstat`; a link or anything not a regular file
+        is not a record. Reads only; no store, no records."""
+        folder = self.path / _IMPORTED_DIR
+        try:
+            listing = list(os.scandir(folder))
+        except (FileNotFoundError, NotADirectoryError):
+            return frozenset()
+        except OSError as exc:
+            raise SnapshotError(f"cannot list {folder}: {exc}") from exc
+        return frozenset(
+            item.name
+            for item in listing
+            if _ID_RE.match(item.name) and item.is_file(follow_symlinks=False)
+        )
+
+    def _existing_manifest(self, name: str, data: bytes, snapshot_id: str) -> bool:
+        """True when `manifests/<name>` holds exactly `data`; False when there
+        is none; `SnapshotExistsError` when it holds anything else. Read as
+        `create` reads the manifest already at an id (M11-11, M11-18)."""
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                return False
+            try:
+                existing = read_regular_file(
+                    manifests.at(name), limit=len(data), dir_fd=manifests.fd
+                )
+            except FileNotFoundError:
+                return False
+            except OSError as exc:
+                raise SnapshotExistsError(
+                    f"a different snapshot {snapshot_id} is already in the store ({exc}); "
+                    "nothing was added"
+                ) from exc
+        if existing != data:
+            raise SnapshotExistsError(
+                f"a different snapshot {snapshot_id} is already in the store (its label or "
+                "contents differ); nothing was added"
+            )
+        return True
+
+    def _stage_verified(self, source: ObjectSource, digest: str, size: int) -> str:
+        """Stream `source` into a new compressed file under `tmp/`, reading at
+        most `size + 1` bytes, and return its name once it is exactly `size`
+        bytes hashing to `digest`; else `ObjectCorruptError`, with the staged
+        file removed. `source` is closed on every path."""
+        hasher = hashlib.sha256()
+        compressor = zlib.compressobj(6)
+        total = 0
+        try:
+            with self._store_dir(("tmp",), create=True) as tmp:
+                assert tmp is not None
+                name = f"import-{uuid.uuid4().hex}"
+                try:
+                    fd = os.open(tmp.at(name), _STAGE_FLAGS, 0o666, dir_fd=tmp.fd)
+                except OSError as exc:
+                    raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
+                try:
+                    with os.fdopen(fd, "wb") as out:
+                        while total <= size:
+                            chunk = source.read(min(_CHUNK, size + 1 - total))
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > size:
+                                raise ObjectCorruptError(
+                                    f"object {digest} holds more than its recorded {size} bytes"
+                                )
+                            hasher.update(chunk)
+                            out.write(compressor.compress(chunk))
+                        if total != size:
+                            raise ObjectCorruptError(
+                                f"object {digest} holds {total} bytes, not its recorded {size}"
+                            )
+                        if hasher.hexdigest() != digest:
+                            raise ObjectCorruptError(f"object {digest} does not hash to its name")
+                        out.write(compressor.flush())
+                        out.flush()
+                        os.fsync(out.fileno())
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp.at(name), dir_fd=tmp.fd)
+                    raise
+        finally:
+            source.close()
+        return name
+
+    def _drop_staged(self, names: Iterable[str]) -> None:
+        """Remove staged files under `tmp/` by name, never through a link."""
+        names = list(names)
+        if not names:
+            return
+        with self._store_dir(("tmp",), create=False) as tmp:
+            if tmp is None:
+                return
+            for name in names:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp.at(name), dir_fd=tmp.fd)
+
     # -- health ------------------------------------------------------------
 
     def _object_files(self) -> Iterator[_ObjectFile]:
@@ -2297,7 +2646,8 @@ def resolve_reference(
     if reference in ("latest", "latest-user") or reference.startswith("~"):
         ordered = sorted(store.list(), key=lambda m: (m.created_at, m.id))
         if reference == "latest-user":
-            ordered = [m for m in ordered if kind_of(m, pre_write_ids) == "user"]
+            imported = store.imported_ids()
+            ordered = [m for m in ordered if kind_of(m, pre_write_ids, imported) == "user"]
             if not ordered:
                 raise SnapshotNotFoundError("no snapshot you took yourself is in the store")
             return ordered[-1].id

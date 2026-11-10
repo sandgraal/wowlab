@@ -1081,6 +1081,9 @@ class _Listed:
     def list_lenient(self) -> snapshot.SnapshotListing:
         return snapshot.SnapshotListing(manifests=self.manifests, invalid=())
 
+    def imported_ids(self) -> frozenset[str]:
+        return frozenset()  # M16-04: none imported
+
 
 def test_an_older_snapshot_named_for_an_unconfirmed_match_says_so(tmp_path: Path) -> None:
     """M13-32 item 3. Constructed: an older snapshot holds `ABC.lua`, the
