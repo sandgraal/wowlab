@@ -403,6 +403,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
             for i, c in enumerate(chars)
         ],
         ["snap", "diff", "{A}", "{B}"],
+        # M16-04: the archive is written outside the install, then read back
+        # (the store already holds it, so the import adds nothing).
+        ["snap", "export", "{A}", str(tmp_path / "carried.zip")],
+        ["snap", "import", str(tmp_path / "carried.zip")],
     ]
     return cmds
 

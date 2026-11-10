@@ -1120,6 +1120,71 @@ include `labaddon`'s `WowLab.lua` reads (`char list`, `char show`, the
 survey) and `tree PATH` / `tree --install PATH`, which take a `\\?\`
 argument with a plain spelling by that spelling.
 
+*Amended 2026-11-09 (M16-04, §18.1 item 1):* a snapshot travels between
+computers as one zip archive, `wowlab_core.snaparchive`. It holds
+`manifest.json` (the manifest file byte for byte), one `objects/<sha256>`
+entry per distinct content (the file's bytes, deflated by the zip), and the
+zip comment `wowlab snapshot archive 1`; every entry is dated 1980-01-01,
+so one snapshot always exports to the same bytes. `snap export <id> FILE`
+reads the store only, checks every object against its name and size as it
+reads it, and creates FILE exclusively (`O_EXCL | O_NOFOLLOW`: an existing
+file or a link there is refused, never replaced or followed). FILE inside
+any install is refused by guard's inside-any-install rule, before FILE is
+created and again once it exists, before a byte is written; FILE inside the
+store is refused too. `snap import FILE` treats the archive as hostile: it
+is opened as a store file is (no link, no FIFO), nothing is extracted to a
+path, every entry name must be exactly `manifest.json` or `objects/` and
+64 lowercase hex digits, once each (anything else, including `..`, an
+absolute path, a directory, a link, encryption or an unknown compression,
+refuses the archive), the manifest must load as a store manifest does and be
+in the canonical encoding (`snapshot.parse_manifest`), the archive must
+hold exactly the objects the manifest names at the sizes it records, and
+the sizes are bounded (1 GiB an object, 16 GiB in all, 64 MiB of
+manifest, 250,000 entries; amended below). `SnapshotStore.add_snapshot` then streams
+each object, at most one byte past its recorded size, into a staged file
+under `tmp/` while hashing it; only when every object has verified are they
+moved into their shards and the manifest written last, so a corrupt
+archive adds nothing. An id already in the store with the same bytes adds
+nothing; with other bytes (a relabelled copy) it is refused. The import
+holds the store lock. An imported snapshot keeps the install root it was
+taken of, so it is restored with `--into-root` (and `--into-flavor` when
+the folder has another name there). `wowlab ui` refuses `snap export` whole
+(its FILE is required), for the reason it refuses `looks page --out`.
+*2026-11-10 (M16-04 review round 1):* (a) On POSIX the export file is
+created through a descriptor on its folder, held to be the folder that was
+checked; a failed export removes the file only while its name still names
+the file it created (device and inode, not a link), so an install's own
+file reached through a swapped folder is never removed. (b) An imported
+manifest is held to `snapshot.check_foreign_manifest`: `created_at` well
+formed, equal to the moment in its id, and no later than this computer's
+clock plus ten minutes; `flavor_folder` one folder name; every subtree and
+excluded path relative and that folder or under it; every entry under a
+subtree and under no excluded path. (c) The store records each imported id
+as an empty file `imported/<id>`, written before the manifest; the
+manifest's bytes and fingerprint are unchanged. `kind_of` reports such a
+snapshot as `imported` (a fifth `SnapshotKind`; a manifest still records
+only the four, `RecordedKind`), whatever its manifest claims, so
+`latest-user` never names it; `latest` and `~N` still go by date, which
+(b) holds to the past. `snap show` prints the kind. (d) Before `zipfile`
+reads the central directory, the end record (Zip64 included) is read where
+an exported archive has it, right before the comment, and the entry count,
+the directory size and the comment are checked.
+*2026-11-10 (M16-04 review round 2):* (a) Whenever a Zip64 locator sits
+before the end record, both Zip64 records `zipfile` could use (at the
+locator's offset, and just before the locator) are read and bounded, as
+the classic record is, whatever its fields say. The bounds are now 250,000
+entries and a central directory of 250,000 x 210 bytes (about 35 MiB, room
+for that many entries as an export writes them); the directory size is the
+bound that holds, since `zipfile` reads entries until it runs out (at most
+about 793,000 of the shortest). (b) On POSIX the export's folder is opened
+as resolved, without following a link, and it and every folder above it
+are examined for install markers through descriptors (`..`), so a folder
+swapped before or after the open cannot put the file in an install; on
+Windows the path checks before and after creation narrow that window
+without closing it. (c) `explain`'s snapshot facts and `snap show --json`
+report an imported snapshot's kind as `imported`; a `Manifest` accepts
+that kind, and `create` never writes it.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
