@@ -4753,14 +4753,16 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      fills it; without a version no interface is judged, and the one
      caveat says so. With several TOCs the client loads one by game type:
      an addon is out of date only when its one TOC differs; with several,
-     the TOCs that match the client are the ones counted (their
-     dependencies alone), and when none matches the addon is reported as
+     the TOCs that match the client are taken to be the ones it loads
+     **[verify]** and are the ones counted (their dependencies alone), and when none matches the addon is reported as
      "with several TOCs, none for this client's interface". A dependency is
      `RequiredDeps` or `Dependencies` (not `OptionalDeps` or other `Dep*`
      directives, which the client may also treat as required **[verify]**);
      it is installed when `Interface/AddOns/` holds a folder of its name
      (ASCII case folded), "installed, but has no TOC the client loads" when
-     that folder has none, and a `Blizzard_*` one is taken to be the
+     that folder has none (such an addon is counted in the summary as
+     "needing an addon that has no TOC the client loads", JSON
+     `unloadable_dependencies`), and a `Blizzard_*` one is taken to be the
      client's own **[verify]** and never counted missing. The characters are those whose `AddOns.txt` (read by
      `wtfconfig.parse_addons`, LAB_FORMATS amendment of 2026-11-09) lists
      the addon, with the state word as written; an unlisted addon is at the

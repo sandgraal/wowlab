@@ -23,7 +23,8 @@ version"); nothing about a flavor is known here (L6).
   `Interface/AddOns/` **[verify]**, so their absence there says nothing),
   `missing` otherwise;
 - with several TOCs the client loads one, by game type: the TOCs whose
-  interface matches the client's are the ones counted (their dependencies
+  interface matches the client's are taken to be the ones it loads
+  **[verify]** and are the ones counted (their dependencies
   alone make `missing_dependencies`); when none matches, all are counted and
   the addon is `no_toc_for_client` rather than `out_of_date`, which is for
   an addon whose one TOC differs (domain review of M16-34, round 1);
@@ -124,6 +125,9 @@ class AddonCheck(_Model):
     out_of_date: bool
     no_toc_for_client: bool
     missing_dependencies: tuple[FsText, ...]  # over `counted_tocs`, in order, once each
+    # Over `counted_tocs` too: installed, but with no TOC the client loads
+    # (`installed_no_toc`), so the client does not load them either.
+    unloadable_dependencies: tuple[FsText, ...]
     characters: tuple[CharacterState, ...]  # the AddOns.txt files that list it
 
 
@@ -289,6 +293,11 @@ def check_addons(lay: layout.Layout, version: str | None) -> AddonsCheck:
         missing = tuple(
             dict.fromkeys(d.name for t in counted for d in t.dependencies if d.status == "missing")
         )
+        unloadable = tuple(
+            dict.fromkeys(
+                d.name for t in counted for d in t.dependencies if d.status == "installed_no_toc"
+            )
+        )
         characters: list[CharacterState] = []
         for meta, doc in lists:
             found = None if doc is None else doc.state_of(addon.name)
@@ -315,6 +324,7 @@ def check_addons(lay: layout.Layout, version: str | None) -> AddonsCheck:
                 and not matching
                 and any(t.interface_status == "differs" for t in tocs),
                 missing_dependencies=missing,
+                unloadable_dependencies=unloadable,
                 characters=tuple(characters),
             )
         )

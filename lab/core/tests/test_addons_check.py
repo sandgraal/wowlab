@@ -341,7 +341,8 @@ def test_several_tocs_one_matching_is_not_out_of_date_constructed(flavor: Path) 
     assert twin.missing_dependencies == (), "the other game type's dependency does not count"
     out = ok("addons", "check")
     assert out.startswith("3 addons: 2 missing a required addon, 2 out of date;")
-    assert "    interface   120100: for another game type\n" in out
+    assert "    interface   120100: taken to be for another game type" in out
+    assert "(not yet confirmed)" in out
     assert "    interface   16001: matches this client\n" in out
     # Only the two single-TOC DBM addons are out of date, not Twin.
     assert sum(1 for a in _check().check.addons if a.out_of_date) == 2
@@ -378,7 +379,17 @@ def test_a_dependency_with_no_loadable_toc_constructed(flavor: Path) -> None:
     (core / "DBM-Core" / "DBM-Core.toc").write_bytes(b"## Interface: 16001\n")
     brawlers = {a.name: a for a in _check().check.addons}["DBM-Brawlers"]
     assert [d.status for d in brawlers.tocs[0].dependencies] == ["installed_no_toc"]
-    assert "DBM-Core (installed, but has no TOC the client loads)" in ok("addons", "check")
+    assert (brawlers.missing_dependencies, brawlers.unloadable_dependencies) == (
+        (),
+        ("DBM-Core",),
+    )
+    out = ok("addons", "check")
+    assert "DBM-Core (installed, but has no TOC the client loads)" in out
+    # Both DBM addons need it, and the client would not load it: the summary counts them.
+    assert out.startswith(
+        "3 addons: 0 missing a required addon, 2 out of date, 2 needing an addon that has no "
+        "TOC the client loads, 1 with no TOC the client loads;"
+    )
 
 
 def test_saved_data_of_a_folder_with_no_toc_is_not_an_orphan_constructed(flavor: Path) -> None:

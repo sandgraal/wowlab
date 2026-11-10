@@ -6380,7 +6380,8 @@ def _check_interface(toc: addoncheck.TocCheck, interface: int | None, role: _Toc
         return f"{toc.interface}: matches this client"
     if toc.interface_status == "differs":
         if role == "another game type":
-            return f"{toc.interface}: for another game type"
+            # wowlab's own words, rendered for a player; the interface is the TOC's.
+            return f"{toc.interface}: " + _player_copy("taken to be for another game type [verify]")
         if role == "several":
             return f"{toc.interface}: not this client's {interface}"
         return f"{toc.interface}: this client is {interface}, so it is out of date"
@@ -6466,7 +6467,10 @@ def addons_check(
         differs = sum(1 for a in addons if a.out_of_date)
         none_for_client = sum(1 for a in addons if a.no_toc_for_client)
         unloaded = sum(1 for a in addons if a.selection == "no_toc")
+        unloadable = sum(1 for a in addons if a.unloadable_dependencies)
         bits = [f"{missing} missing a required addon", f"{differs} out of date"]
+        if unloadable:
+            bits.append(f"{unloadable} needing an addon that has no TOC the client loads")
         if none_for_client:
             bits.append(f"{none_for_client} with several TOCs, none for this client's interface")
         if unloaded:
