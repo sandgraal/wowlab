@@ -348,7 +348,10 @@ def test_a_refused_run_is_an_alert_and_a_clean_run_a_status_constructed(
     ]
     out = _drive(tmp_path / "node", scenario)
     no, yes = out["steps"]
-    assert no["status"] == {"text": "Refused: not offered", "role": "alert"}, no
+    assert no["status"] == {
+        "text": "The server refused this request: not offered",
+        "role": "alert",
+    }, no
     assert yes["status"] == {"text": "Done (exit code 0).", "role": "status"}, yes
 
 

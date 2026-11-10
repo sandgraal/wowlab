@@ -170,7 +170,7 @@
     if (result.exit_code !== 0) {
       const text = String(result.stderr || "").trim();
       const ended = result.outcome && typeof result.outcome.text === "string" ? result.outcome.text : "";
-      const error = text || "wowlab " + command.join(" ") + ": " + (ended || "it did not finish.");
+      const error = text || "wowlab " + command.join(" ") + (ended ? ": " + ended : " ended without a message.");
       if (partial) {
         try {
           const data = JSON.parse(result.stdout);
@@ -2252,7 +2252,7 @@
       if (empty !== null) {
         for (const { box } of inputs) box.classList.remove("needed");
         empty.box.classList.add("needed");
-        say("Fill in " + empty.param.label + " first: it is required.", true);
+        say(empty.param.label + " is required: fill it in first.", true);
         empty.input.focus();
         return;
       }
@@ -2277,7 +2277,7 @@
       const result = await reply.json();
       if (seq !== runSeq) return;
       if (!reply.ok) {
-        say("Refused: " + (result.error || reply.status), true);
+        say("The server refused this request: " + (result.error || reply.status), true);
         return;
       }
       // A failed run's error report repeats the error line shown below it,

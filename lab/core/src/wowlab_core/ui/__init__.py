@@ -121,7 +121,9 @@ text plan line by line (the report's own, or for `sv merge` what it printed
 before it asked), and `label`, Confirm's text and accessible name, which
 names the action. Every run's response carries `outcome`: one sentence and
 whether it is an alert. Only a plan run that ended with its marker is called
-a plan; every other run is named by its exit code in words.
+a plan; a run the server stopped is named by that stop; every other run is
+named by its exit code in words. The plan lines count against the output
+cap with the rest of the body, and are left out when they would pass it.
 
 At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
@@ -1005,23 +1007,44 @@ class _Offer:
     plan_lines: tuple[str, ...] = ()
 
 
-def _offer(leaf: _Leaf, run: _Run) -> _Offer:
+def _offer(leaf: _Leaf, run: _Run, cap: int) -> _Offer:
     """The plan run's outcome by its shape's marker (§16.1), with the plan's
-    lines when it has them (`_plan_lines`). Anything that is not the marker
+    lines when it has them (`_plan_lines`) and they fit: the lines repeat
+    text the body already holds, so they count against the same output cap
+    (`cap`) as stdout and stderr together, encoded as they are sent, and
+    when they would pass it none is sent. Anything that is not the marker
     offers nothing."""
     found = _marked_offer(leaf, run)
     if not found.marked:
         return found
     lines = _plan_lines(leaf, run)
+    used = sum(len(piece) for piece in (*run.stdout, *run.stderr))
+    if lines and used + len(_encoded(list(lines))) > cap:
+        lines = ()
     note = found.note
-    if not lines and note is None:
+    if leaf.confirm == _SHAPE_DECLINED and note is not None:
+        lead = _DECLINED_LEAD if lines else _DECLINED_LEAD_BELOW
+        note = f"{lead} {note}"
+    elif not lines and note is None:
         note = _DETAILS_NOTE
     return dataclasses.replace(found, note=note, plan_lines=lines)
 
 
+def _encoded(value: object) -> bytes:
+    """`value` as the response carries it (`_Run.response`)."""
+    return json.dumps(value, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES).encode("ascii")
+
+
 # The note beside a marked plan that has no lines of its own and no other
 # note: what Confirm would change is only in the report (M16-21).
-_DETAILS_NOTE = "What Confirm would change is listed under Details, below."
+_DETAILS_NOTE = "Open Details, below, to see what Confirm would change."
+# The first sentence of a declined plan's note, with its lines above Confirm,
+# or, when they did not fit, with the plan only in the command's own text
+# below.
+_DECLINED_LEAD = "The plan above is what the command shows before it asks you to say yes."
+_DECLINED_LEAD_BELOW = (
+    "The plan is the text below, which the command shows before it asks you to say yes."
+)
 
 # The prompt `_confirm` prints before the declined line, without a line end.
 _PROMPT = re.compile(r".*\[y/N\]:\s*")
@@ -1102,8 +1125,7 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     )
     return _Offer(
         True,
-        "The plan is what the command printed before it asked. Confirm runs it "
-        f"with --yes and --expect {pin}: {check}.",
+        f"Confirm runs it with --yes and --expect {pin}: {check}.",
         pin=pin,
     )
 
@@ -1187,7 +1209,7 @@ def _exit_words() -> Mapping[int, str]:
 
     return {
         cli.EXIT_OK: "Done",
-        cli.EXIT_ERROR: "Could not",
+        cli.EXIT_ERROR: "Failed",
         cli.EXIT_USAGE: "Missing or invalid input",
         cli.EXIT_REFUSED: "Refused",
     }
@@ -1198,29 +1220,32 @@ def _outcome(run: _Run, stage: str | None, marked: bool = False) -> dict[str, ob
     and whether it is an alert (§18.1 item 7, M16-21). Only a plan run that
     ended with its shape's marker is called a plan, and it is never an
     alert (the declined shape's marker is exit 1); every other run is named
-    by its exit code in words, a confirmed one after "Confirmed:". A run
-    stopped at its time limit or cut at its output cap says so."""
-    if stage == "plan" and marked:
-        text, alert = "Plan, nothing was changed", False
+    by its exit code in words, a confirmed one after "After Confirm:". A
+    run the server stopped (its time limit, or its output reaching the size
+    limit) is named by that stop and never by its exit code, which is the
+    kill's and not the CLI's; it is an alert."""
+    if run.timed_out:
+        text, alert = "Stopped at its time limit before it finished.", True
+    elif run.truncated:
+        text, alert = "Stopped when its output reached the size limit, before it finished.", True
+    elif stage == "plan" and marked:
+        text, alert = "Plan only: nothing was changed.", False
     else:
         word = _exit_words().get(run.exit_code)
         if word is None:
-            text = f"Ended with exit code {run.exit_code}"
+            text = f"Ended with exit code {run.exit_code}."
         else:
-            text = f"{word} (exit code {run.exit_code})"
-        if stage == "confirmed":
-            text = f"Confirmed: {text}"
+            text = f"{word} (exit code {run.exit_code})."
         alert = run.exit_code != 0
-    if run.timed_out:
-        text += ", stopped at its time limit"
-    if run.truncated:
-        text += ", output cut at its size limit"
-    return {"text": text + ".", "alert": alert or run.timed_out or run.truncated}
+    if stage == "confirmed":
+        text = f"After Confirm: {text}"
+    return {"text": text, "alert": alert}
 
 
 def _confirm_label(leaf: _Leaf) -> str:
-    """Confirm's text, which is its accessible name: the action it takes."""
-    return "Confirm: run wowlab " + " ".join(leaf.path)
+    """Confirm's text, which is its accessible name: the action it takes,
+    as the status line names it while it runs (`--yes`)."""
+    return "Confirm: run wowlab " + " ".join(leaf.path) + " --yes"
 
 
 _KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
@@ -1494,7 +1519,7 @@ class UiServer(http.server.ThreadingHTTPServer):
             if leaf.confirm is None:
                 run.outcome = _outcome(run, None)
                 return run
-            offer = _offer(leaf, run)
+            offer = _offer(leaf, run, self.output_cap_bytes)
             # The confirmed argv is made here, from the plan's own report
             # (its pin), never from the request that confirms it.
             minted = self._mint(plan, built.confirmed(offer.pin)) if offer.marked else None

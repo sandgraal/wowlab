@@ -836,11 +836,11 @@ def test_the_page_offers_confirm_only_with_a_token_and_sends_it_with_the_plans_p
     out = _drive(tmp_path, replies, steps)
     picked, planned, confirmed, again = out["steps"]
     assert picked["run"] == "Show the plan" and picked["boxHidden"] and picked["confirmHidden"]
-    assert planned["status"] == "Plan, nothing was changed."
+    assert planned["status"] == "Plan only: nothing was changed."
     assert planned["note"] == "Nothing to remove. Confirm runs it anyway."
     assert not planned["boxHidden"] and not planned["confirmHidden"]
     assert not planned["confirmDisabled"]
-    assert confirmed["status"] == "Confirmed: Done (exit code 0)."
+    assert confirmed["status"] == "After Confirm: Done (exit code 0)."
     assert confirmed["confirmHidden"] and confirmed["boxHidden"]
     assert again == confirmed  # one click, one confirmed run
     bodies = [r["body"] for r in out["requests"]]
@@ -892,4 +892,4 @@ def test_the_page_sends_the_plans_params_and_drops_confirm_when_a_field_changes(
         {"command": ["doctor"], "params": {"flavor": "_x_"}},
         {"command": ["doctor"], "params": {"flavor": "_x_"}, "confirm": "tok-2"},
     ]
-    assert out["steps"][-1]["status"].startswith("Confirmed")
+    assert out["steps"][-1]["status"] == "After Confirm: Done (exit code 0)."

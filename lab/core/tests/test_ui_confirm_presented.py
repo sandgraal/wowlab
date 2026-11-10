@@ -24,6 +24,7 @@ copied into `tmp_path`; and the page under Node in the stand-in DOM of
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import subprocess
@@ -52,13 +53,16 @@ from test_ui_confirm_writes import (
     INSTALL,
     KEY_COPY,
     MERGE,
+    MERGED,
     PINS,
     RESTORE,
+    SHA,
     SYNDICATOR,
     UNDO,
     Real,
     _declined,
     _edit,
+    _serving,
     real,
     recorder,
     server,
@@ -81,8 +85,8 @@ def test_a_marked_plan_carries_its_reports_lines_and_confirms_name(
     offer = plan["confirm"]
     assert offer["token"], offer
     assert offer["plan_lines"] == lines
-    assert offer["label"] == "Confirm: run wowlab addon install"
-    assert plan["outcome"] == {"text": "Plan, nothing was changed.", "alert": False}
+    assert offer["label"] == "Confirm: run wowlab addon install --yes"
+    assert plan["outcome"] == {"text": "Plan only: nothing was changed.", "alert": False}
 
 
 def test_a_marked_plan_without_lines_points_at_details_constructed(
@@ -92,7 +96,7 @@ def test_a_marked_plan_without_lines_points_at_details_constructed(
     offer = _plan(server, INSTALL, {"name": "lab"})["confirm"]
     assert offer["token"] and offer["plan_lines"] == []
     assert offer["note"] == ui._DETAILS_NOTE
-    assert "Details" in offer["note"]
+    assert offer["note"] == "Open Details, below, to see what Confirm would change."
 
 
 @pytest.mark.parametrize("eol", ["\n", "\r\n"], ids=["lf", "crlf"])
@@ -112,8 +116,13 @@ def test_a_declined_plan_without_lines_shows_what_it_printed_before_it_asked_con
     offer = plan["confirm"]
     assert offer["token"], offer
     assert offer["plan_lines"] == ["Merge into x.lua", f"  replace  {DBM}"]
-    assert offer["label"] == "Confirm: run wowlab sv merge"
-    assert plan["outcome"] == {"text": "Plan, nothing was changed.", "alert": False}
+    assert offer["label"] == "Confirm: run wowlab sv merge --yes"
+    assert plan["outcome"] == {"text": "Plan only: nothing was changed.", "alert": False}
+    check = ui._PIN_CHECKS[("target_sha256", "merged_sha256")]
+    assert offer["note"] == (
+        "The plan above is what the command shows before it asks you to say yes. "
+        f"Confirm runs it with --yes and --expect {SHA}:{MERGED}: {check}."
+    )
 
 
 def test_a_declined_plan_with_its_own_lines_uses_them(
@@ -132,7 +141,7 @@ def test_a_declined_plan_with_its_own_lines_uses_them(
         (INSTALL, {"dry_run": False}, 0, "", "Done (exit code 0)."),
         (INSTALL, "not json", 0, "", "Done (exit code 0)."),
         (INSTALL, {"dry_run": True}, 2, "", "Missing or invalid input (exit code 2)."),
-        (UNDO, {"undone": "20261019-0123abcd"}, 1, "no line\n", "Could not (exit code 1)."),
+        (UNDO, {"undone": "20261019-0123abcd"}, 1, "no line\n", "Failed (exit code 1)."),
         (INSTALL, {"dry_run": True}, 7, "", "Ended with exit code 7."),
     ],
     ids=["refused", "not-a-dry-run", "not-json", "usage", "declined-without-line", "other"],
@@ -163,7 +172,7 @@ def test_a_confirmed_run_and_a_plain_run_say_how_they_ended_in_words(
     assert token is not None
     status, done = _confirm(server, INSTALL, token, {"name": "lab"})
     assert status == 200
-    assert done["outcome"] == {"text": "Confirmed: Refused (exit code 3).", "alert": True}
+    assert done["outcome"] == {"text": "After Confirm: Refused (exit code 3).", "alert": True}
     # A leaf outside the step: its outcome too, and no `confirm`.
     recorder.reply({"x": 1}, 0)
     status, plain = _post_plain(server, ["install", "show"])
@@ -177,17 +186,93 @@ def _post_plain(server: ui.UiServer, command: list[str]) -> tuple[int, dict[str,
     return _post(server, {"command": command, "params": {}})
 
 
-def test_the_outcome_names_a_stopped_run() -> None:
-    run = ui._Run(-9, [], [], True, False)
-    assert ui._outcome(run, None) == {
-        "text": "Ended with exit code -9, stopped at its time limit.",
+@pytest.mark.parametrize("code", [-9, 1, 0], ids=["posix-kill", "windows-kill", "zero"])
+def test_a_stopped_run_is_named_by_its_stop_never_by_its_exit_code(code: int) -> None:
+    """The exit code of a run the server killed is the kill's, not the
+    CLI's: no exit-code words, whatever it is."""
+    timed = ui._Run(code, [], [], True, False)
+    assert ui._outcome(timed, None) == {
+        "text": "Stopped at its time limit before it finished.",
         "alert": True,
     }
-    cut = ui._Run(0, [], [], False, True)
+    assert ui._outcome(timed, "plan", True)["text"] == (
+        "Stopped at its time limit before it finished."
+    )
+    cut = ui._Run(code, [], [], False, True)
     assert ui._outcome(cut, "confirmed") == {
-        "text": "Confirmed: Done (exit code 0), output cut at its size limit.",
+        "text": "After Confirm: Stopped when its output reached the size limit, before it finished.",
         "alert": True,
     }
+    for run in (timed, cut):
+        text = str(ui._outcome(run, "confirmed")["text"])
+        assert "exit code" not in text and "Done" not in text and "Failed" not in text
+
+
+# ─── the plan lines count against the output cap (constructed) ───────────────
+
+_CAP = 200_000
+# Room for the response's own keys, the outcome and the offer's fields.
+_FRAME = 4_096
+# Non-ASCII plan text: printed raw, 2 bytes a character in stdout and
+# stderr; 6 (`é`) in the plan lines as they are sent.
+_WIDE = ["é" * 1_000 + f" {n}" for n in range(40)]
+
+
+def _raw(server: ui.UiServer, body: object) -> bytes:
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=120)
+    try:
+        conn.request(
+            "POST",
+            f"/api/run?token={server.token}",
+            body=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        reply = conn.getresponse()
+        assert reply.status == 200
+        return reply.read()
+    finally:
+        conn.close()
+
+
+def test_plan_lines_that_would_pass_the_cap_are_not_sent_constructed(recorder: Recorder) -> None:
+    report = json.dumps({"dry_run": True, "plan_lines": _WIDE}, ensure_ascii=False)
+    recorder.reply(report)
+    with _serving(wowlab_argv=recorder.argv, output_cap_bytes=_CAP) as served:
+        body = _raw(served, {"command": list(INSTALL), "params": {"name": "lab"}})
+    payload = json.loads(body)
+    assert not payload["truncated"] and payload["stdout"] == report
+    assert len(body) <= _CAP + _FRAME, len(body)
+    offer = payload["confirm"]
+    assert offer["token"] and offer["plan_lines"] == []
+    assert offer["note"] == "Open Details, below, to see what Confirm would change."
+
+
+def test_a_declined_plan_too_big_to_repeat_points_at_its_text_below_constructed(
+    recorder: Recorder,
+) -> None:
+    stderr = "\n".join([*_WIDE, "Write the merge? [y/N]:", f"{cli.CONFIRM_DECLINED}", ""])
+    recorder.reply(PINS, 1, stderr=stderr)
+    with _serving(wowlab_argv=recorder.argv, output_cap_bytes=_CAP) as served:
+        body = _raw(served, {"command": list(MERGE), "params": {"file": "x.lua", "into": CHAR_A}})
+    payload = json.loads(body)
+    assert not payload["truncated"] and payload["stderr"] == stderr
+    assert len(body) <= _CAP + _FRAME, len(body)
+    offer = payload["confirm"]
+    assert offer["token"] and offer["plan_lines"] == []
+    assert offer["note"].startswith(
+        "The plan is the text below, which the command shows before it asks you to say yes. "
+        "Confirm runs it with --yes and --expect "
+    )
+
+
+def test_plan_lines_within_the_cap_are_sent_constructed(recorder: Recorder) -> None:
+    report = json.dumps({"dry_run": True, "plan_lines": _WIDE}, ensure_ascii=False)
+    recorder.reply(report)
+    with _serving(wowlab_argv=recorder.argv, output_cap_bytes=4 * _CAP) as served:
+        body = _raw(served, {"command": list(INSTALL), "params": {"name": "lab"}})
+    payload = json.loads(body)
+    assert payload["confirm"]["plan_lines"] == _WIDE
+    assert len(body) <= 4 * _CAP + _FRAME
 
 
 # ─── the server over the real CLI ────────────────────────────────────────────
@@ -205,8 +290,8 @@ def test_snap_restore_plan_lines_reach_the_page_as_the_cli_wrote_them(real: Real
     assert report["plan_lines"], report
     assert offer["plan_lines"] == report["plan_lines"]
     assert any(SYNDICATOR in line for line in offer["plan_lines"])
-    assert offer["label"] == "Confirm: run wowlab snap restore"
-    assert plan["outcome"]["text"] == "Plan, nothing was changed."
+    assert offer["label"] == "Confirm: run wowlab snap restore --yes"
+    assert plan["outcome"]["text"] == "Plan only: nothing was changed."
 
 
 def test_sv_merge_plan_lines_are_its_text_plan_without_the_prompt(real: Real) -> None:
@@ -225,7 +310,7 @@ def test_sv_merge_plan_lines_are_its_text_plan_without_the_prompt(real: Real) ->
     assert not any("[y/N]" in line or line == cli.CONFIRM_DECLINED for line in lines), lines
     printed = plan["stderr"].replace("\r\n", "\n").split("\n")
     assert printed[: len(lines)] == lines
-    assert plan["outcome"] == {"text": "Plan, nothing was changed.", "alert": False}
+    assert plan["outcome"] == {"text": "Plan only: nothing was changed.", "alert": False}
 
 
 # ─── `snap gc`: dry_run says whether it was one ──────────────────────────────
@@ -389,7 +474,7 @@ def test_the_page_shows_the_plan_above_a_named_confirm_and_moves_focus_construct
     tmp_path: Path,
 ) -> None:
     lines = ["Install the lab-addon: 1 change(s)", "  add  a" + chr(0x202E) + "b"]
-    label = "Confirm: run wowlab addon install"
+    label = "Confirm: run wowlab addon install --yes"
     offer = {
         "stage": "plan",
         "token": "tok-21",
@@ -418,13 +503,15 @@ def test_the_page_shows_the_plan_above_a_named_confirm_and_moves_focus_construct
     assert planned["planLines"] == "Install the lab-addon: 1 change(s)\n  add  a⟨U+202E⟩b"
     assert planned["confirmText"] == label and not planned["confirmHidden"]
     assert planned["headingFocus"] == 1, "focus goes to the plan's heading"
-    assert planned["status"] == "Plan, nothing was changed." and planned["statusRole"] == "status"
+    assert (
+        planned["status"] == "Plan only: nothing was changed." and planned["statusRole"] == "status"
+    )
     # The report is there, behind a closed "Details".
     assert not planned["detailsHidden"] and planned["detailsOpen"] is False
     # After Confirm: the plan and Confirm are gone, focus is on the sentence
     # that says how it ended.
     assert done["planBoxHidden"] and done["confirmHidden"] and done["confirmText"] == "Confirm"
-    assert done["status"] == "Confirmed: Done (exit code 0)."
+    assert done["status"] == "After Confirm: Done (exit code 0)."
     assert done["statusFocus"] == 1 and done["headingFocus"] == 1
     assert done["detailsOpen"] is False
 
@@ -461,7 +548,7 @@ def test_a_required_field_is_marked_and_checked_before_run_constructed(tmp_path:
     assert picked["required"] == ["param-file"]
     # Run with the required field empty: nothing is sent, the field is
     # marked and focused, and the status line says which, as an alert.
-    assert empty["status"] == "Fill in file first: it is required."
+    assert empty["status"] == "file is required: fill it in first."
     assert empty["statusRole"] == "alert"
     assert empty["needed"] == 1 and empty["fieldFocus"] == ["param-file"]
     # Filled, it runs; a plain run's report is shown open.
@@ -483,9 +570,13 @@ def test_the_page_holds_none_of_the_servers_words() -> None:
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
     for word in ui._exit_words().values():
         assert f'"{word}"' not in script and f'"{word} (' not in script, word
-    for text in ("Plan, nothing", "Exit code", 'exit code "', "Confirm: run", "[y/N]"):
+    for text in ('"Plan only', '"After Confirm', '"Stopped', "Exit code", "Confirm: run", "[y/N]"):
         assert text not in script, text
     assert ui._DETAILS_NOTE not in script
+    # The shared reader's error line for a failed run that printed nothing on
+    # stderr: the server's outcome, else only what is true of any such run.
+    assert '(ended ? ": " + ended : " ended without a message.")' in script
+    assert "did not finish" not in script
     # Nothing in the script compares an exit code with 1, 2 or 3.
     assert not re.search(r"exit_code\s*[!=<>]=*\s*[123]\b", script)
 
@@ -493,7 +584,7 @@ def test_the_page_holds_none_of_the_servers_words() -> None:
 def test_the_cli_exit_codes_are_the_ones_named() -> None:
     assert ui._exit_words() == {
         cli.EXIT_OK: "Done",
-        cli.EXIT_ERROR: "Could not",
+        cli.EXIT_ERROR: "Failed",
         cli.EXIT_USAGE: "Missing or invalid input",
         cli.EXIT_REFUSED: "Refused",
     }

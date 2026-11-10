@@ -349,7 +349,7 @@ def test_the_confirmed_result_names_the_journal_record_and_the_undo_hint(
         "plan_lines": [],
         "label": None,
     }
-    assert done["outcome"] == {"text": "Confirmed: Done (exit code 0).", "alert": False}
+    assert done["outcome"] == {"text": "After Confirm: Done (exit code 0).", "alert": False}
 
 
 @pytest.mark.parametrize(
@@ -432,7 +432,7 @@ def test_the_page_shows_the_confirmed_note_and_no_confirm(tmp_path: Path) -> Non
     out = _drive(tmp_path, replies, [{"pick": "snap gc"}, {"click": "run"}, {"click": "confirm"}])
     _, planned, confirmed = out["steps"]
     assert not planned["confirmHidden"]
-    assert confirmed["status"] == "Confirmed: Done (exit code 0)."
+    assert confirmed["status"] == "After Confirm: Done (exit code 0)."
     assert confirmed["note"] == note and not confirmed["boxHidden"]
     assert confirmed["confirmHidden"]
 

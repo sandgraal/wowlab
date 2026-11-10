@@ -80,7 +80,7 @@ def test_a_failed_runs_error_report_is_not_drawn(
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]
     # The exit code in words (M16-21), as the server says it.
-    assert view["status"] == reply["outcome"]["text"] == "Could not (exit code 1).", view
+    assert view["status"] == reply["outcome"]["text"] == "Failed (exit code 1).", view
     assert view["stdout"] == "" and view["treeHidden"] and view["rawHidden"], view
     assert report.kind not in json.dumps(view), view
     assert f"wowlab: {report.message}" in view["stderr"], view
