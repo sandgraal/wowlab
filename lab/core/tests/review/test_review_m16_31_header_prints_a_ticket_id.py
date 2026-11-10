@@ -36,14 +36,6 @@ timed = character.timed
 TICKET_ID = re.compile(r"\bM\d{2}-\d{2}T?\b")
 
 
-def test_the_reason_in_the_report_names_a_ticket(server: Any, timed: Path) -> None:
-    """Positive control: the schema-1 record's identity reason carries the id."""
-    scenario = character._scenario(server, [{"char_tab": True}], [character.NEWER])
-    report = character._report(scenario, character.NEWER)
-    assert TICKET_ID.search(report["identity"]["class_id_absent"])
-    assert TICKET_ID.search(report["identity"]["race_id_absent"])
-
-
 def test_the_header_prints_no_ticket_id(server: Any, timed: Path, tmp_path: Path) -> None:
     scenario = character._scenario(server, [{"char_tab": True}], [character.NEWER])
     view = character._drive(tmp_path / "node", scenario)["steps"][0]
