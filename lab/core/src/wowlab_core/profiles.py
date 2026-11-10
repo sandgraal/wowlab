@@ -52,6 +52,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wowlab_core import guard, layout, longpath
+from wowlab_core.errors import WowlabError
 from wowlab_core.snapshot import Entry, InvalidManifest, Manifest, SnapshotStore
 
 __all__ = [
@@ -168,7 +169,7 @@ LINKED_ROOT_NOTE = "{path} is a link; this profile holds the link, not what is b
 """`str.format` with `path`, a subtree as the manifest records it (install-relative)."""
 
 
-class ProfileError(Exception):
+class ProfileError(WowlabError):
     """Base class for every error this module raises (the CLI's exit 1)."""
 
 

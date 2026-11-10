@@ -73,6 +73,7 @@ import platformdirs
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from wowlab_core import __version__
+from wowlab_core.errors import WowlabError
 
 __all__ = [
     "DOWNLOAD_DEADLINE_SECONDS",
@@ -130,7 +131,7 @@ _CHUNK = 1 << 16
 # ─── errors ──────────────────────────────────────────────────────────────────
 
 
-class GameDataError(Exception):
+class GameDataError(WowlabError):
     """Base class for everything this module raises on purpose."""
 
 

@@ -116,6 +116,7 @@ from pydantic import (
 )
 
 from wowlab_core import filemap, layout, longpath, luadata, snapshot, wtfconfig
+from wowlab_core.errors import WowlabError
 from wowlab_core.layout import FsText
 
 __all__ = [
@@ -242,7 +243,7 @@ PAID_CHANGE_NOTE = (
 )
 
 
-class LabAddonError(ValueError):
+class LabAddonError(WowlabError, ValueError):
     """A `WowLab.lua` this reader refuses: not the addon's variable, a schema
     it does not know, or a value that does not fit the schema's model."""
 

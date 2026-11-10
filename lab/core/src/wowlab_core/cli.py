@@ -168,6 +168,7 @@ from wowlab_core import (
     wtfconfig,
     wtfdiff,
 )
+from wowlab_core.errors import WowlabError
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
     WOWLAB_TEMP_ROW,
@@ -547,12 +548,17 @@ CharacterOpt = Annotated[
 # ─── output ──────────────────────────────────────────────────────────────────
 
 
-class CliError(Exception):
+class CliError(WowlabError):
     """An error the command reports as one line, with its exit code."""
 
     def __init__(self, message: str, code: int = EXIT_ERROR) -> None:
         super().__init__(message)
-        self.code = code
+        self.exit_code = code
+
+    @property
+    def code(self) -> int:
+        """The exit code (`exit_code`), by the name this module first gave it."""
+        return self.exit_code
 
 
 # What `_safe` escapes: every C0 control (tab and line feed included), DEL,
@@ -628,16 +634,24 @@ _SPEC_POINTER = re.compile(
 
 class _Report:
     """One run: whether "(not yet confirmed)" was printed yet, and whether
-    it is a `--json` run, whose stderr is left as the library wrote it."""
+    it is a `--json` run, whose stderr is left as the library wrote it;
+    and whether it has printed JSON on stdout yet (`printed`), after which
+    an error prints no `ErrorReport` there (one JSON document per run);
+    and whether its stdout is one JSON value per line (`lines`, set by
+    `log tail --follow --json`), where an `ErrorReport` is one line too."""
 
     confirmed_shown = False
     json = False
+    printed = False
+    lines = False
 
 
 def _new_report(json_out: bool = False) -> None:
     """A new run: its first `[verify]` will read "(not yet confirmed)"."""
     _Report.confirmed_shown = False
     _Report.json = json_out
+    _Report.printed = False
+    _Report.lines = False
 
 
 def _later_marker(match: re.Match[str]) -> str:
@@ -1138,11 +1152,21 @@ def _dumps(payload: Any) -> str:
 
 def _emit(model: BaseModel) -> None:
     """The model as JSON on stdout; `type(model).model_validate_json` reads it back."""
+    _Report.printed = True
     typer.echo(_dumps(model.model_dump(mode="json")))
+
+
+def _emit_line(model: BaseModel) -> None:
+    """The model as one line of JSON on stdout, for a line-delimited run."""
+    _Report.printed = True
+    typer.echo(
+        json.dumps(_map_strings(model.model_dump(mode="json"), _json_text), ensure_ascii=True)
+    )
 
 
 def _emit_manifest(manifest: snapshot.Manifest) -> None:
     """A manifest in its one canonical encoding (`snapshot.manifest_bytes`)."""
+    _Report.printed = True
     typer.echo(snapshot.manifest_bytes(manifest).decode("ascii"), nl=False)
 
 
@@ -1299,19 +1323,15 @@ def _os_error_words(exc: OSError) -> str:
     return f"{why}: {os.fsdecode(path)}"
 
 
-# Every error `_handled` turns into words (`_error_words`), and nothing else.
+# Every error `_handled` turns into words (`_error_words`), and nothing else:
+# wowlab's own errors by their one base (M16-22: `CliError` and the errors of
+# install, snapshot, profiles, addoninstall, labaddon, gamedata, lookstore and
+# wtfconfig), the write gate's and the SavedVariables parser's errors, which
+# keep their own bases, and the operating system's.
 _HANDLED_ERRORS: tuple[type[Exception], ...] = (
+    WowlabError,
     guard.GuardError,
-    CliError,
     luadata.LuaDataError,
-    wtfconfig.WtfLimitError,
-    install.InstallError,
-    snapshot.SnapshotError,
-    profiles.ProfileError,
-    addoninstall.AddonError,
-    labaddon.LabAddonError,
-    gamedata.GameDataError,
-    lookstore.LookStoreError,
     OSError,
 )
 
@@ -1323,7 +1343,7 @@ def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
     if isinstance(exc, guard.GuardError):
         return f"refused by the write gate: {exc}", EXIT_REFUSED
     if isinstance(exc, CliError):
-        return str(exc), exc.code
+        return str(exc), exc.exit_code
     if isinstance(exc, luadata.LuaLimitError):
         limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
         return (
@@ -1342,11 +1362,25 @@ def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
         return _install_words(exc), EXIT_ERROR
     if isinstance(exc, OSError):
         return _os_error_words(exc), EXIT_ERROR
+    if isinstance(exc, WowlabError):
+        return str(exc), exc.exit_code
     return str(exc), EXIT_ERROR
 
 
+def _error_kind(exc: Exception) -> str:
+    """`ErrorReport.kind`: the name of the error's class, or of the first
+    public class it derives from (`FileNotFoundError`, `ClientRunningError`,
+    `InstallNotFoundError`, `CliError`)."""
+    for cls in type(exc).__mro__:
+        if not cls.__name__.startswith("_"):
+            return cls.__name__
+    return "Exception"  # pragma: no cover - `Exception` is public
+
+
 def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
-    """Turn the library's typed errors into one line on stderr and an exit code."""
+    """Turn the library's typed errors into one line on stderr and an exit
+    code; in a `--json` run that has printed no JSON yet, an `ErrorReport`
+    on stdout too (M16-22)."""
 
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -1356,6 +1390,12 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             return fn(*args, **kwargs)
         except _HANDLED_ERRORS as exc:
             message, code = _error_words(exc, json_out)
+            if json_out and not _Report.printed:
+                report = ErrorReport(kind=_error_kind(exc), message=message, exit_code=code)
+                if _Report.lines:
+                    _emit_line(report)
+                else:
+                    _emit(report)
             _fail(message, code, exc)
 
     return wrapper
@@ -1363,6 +1403,20 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
 
 class _Out(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ErrorReport(_Out):
+    """A `--json` run that ended in an error (M16-22): the error's class
+    (`kind`), the line printed on stderr after `wowlab: ` (`message`), and
+    the exit code. Printed on stdout only when the run printed no other JSON
+    there (as one line in a line-delimited run, `log tail --follow`); the
+    stderr line and the exit code are as without `--json`. `kind` is the
+    bare class name (`_error_kind`), not a stable enum: it changes if a class
+    is renamed, and a new error class adds a value."""
+
+    kind: str
+    message: str
+    exit_code: int
 
 
 # ─── install, flavor, account, character ────────────────────────────────────
@@ -4421,6 +4475,7 @@ def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) ->
     encoder = json.JSONEncoder(ensure_ascii=True, separators=(",", ":"))
     out = typer.get_text_stream("stdout")
     head = {"file": _json_text(file), "path": None if path is None else _json_text(path)}
+    _Report.printed = True
     out.write(encoder.encode(head)[:-1] + ',"values":[')
     for n, row in enumerate(rows):
         if n:
@@ -7306,6 +7361,7 @@ _FOLLOWING_WORDS = {
 def _print_log_entry(entry: combatlog.Entry | LogFollowing, json_out: bool) -> None:
     if json_out:
         line = LogTailLine(entry).model_dump(mode="json")
+        _Report.printed = True
         typer.echo(json.dumps(_map_strings(line, _json_text), ensure_ascii=True))
     elif isinstance(entry, LogFollowing):
         _say(f"==> {entry.file}{_FOLLOWING_WORDS[entry.reason]} <==")
@@ -7390,6 +7446,8 @@ def log_tail(
 
     \f
     JSON: LogTailReport; with --follow, one LogTailLine per line of output."""
+    # Line-delimited before anything can fail: an error is one line too.
+    _Report.lines = follow and json_out
     _, _, lay = _open(root, flavor)
     logs = _logs_dir(lay)
     newest = combatlog.newest_log(logs) if logs is not None else None
