@@ -566,7 +566,7 @@ notes = "On the Forever beta a copy sits in the `<Realm>/<First>/` folder, which
 written_by = "The game"
 edit = "gate"
 tier = "A"
-module = "`layout` (lines)"
+module = "`layout`, `wtfconfig`"
 match = ["WTF/Account/*/*/*/AddOns.txt"]
 
 [[entry]]

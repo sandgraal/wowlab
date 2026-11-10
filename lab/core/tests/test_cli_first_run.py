@@ -131,9 +131,10 @@ def test_a_first_run_on_the_fixture_install_ends_with_a_verified_snapshot_and_th
     assert "wago.tools, a community-run public site of game data" in trust
     assert "takes a snapshot before it writes, so `wowlab undo` can put things back" in trust
     assert "never runs code from your files" in trust
-    assert "Nothing is uploaded." in trust
-    assert "downloads wago.tools' public list of game versions" in trust
-    assert "--offline to skip that" in trust
+    assert "Nothing is uploaded:" in trust
+    assert "downloads the public list of game versions from wago.tools" in trust
+    assert "Without `--check-builds`, `doctor` makes no network request." in trust
+    assert "--offline" not in out
     assert f"Snapshots are kept in wowlab's own store, {SnapshotStore().path}" in trust
 
     # The size and estimate come before the snapshot.
@@ -336,11 +337,34 @@ def test_yes_does_not_ask(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(_manifests()) == 1
 
 
-def test_offline_says_so_and_makes_no_request(root: Path, replayed: list[httpx.Request]) -> None:
-    out = ok("doctor", "--offline", "--yes").stdout
-    assert "With --offline, as now, this check sends no request at all." in out
+def test_a_first_run_makes_no_request_without_check_builds(
+    root: Path, replayed: list[httpx.Request]
+) -> None:
+    """Offline by default (M16-07): the first run, snapshot included, asks
+    wago.tools nothing; the intro's block says what --check-builds would."""
+    out = ok("doctor", "--yes").stdout
+    assert "Without `--check-builds`, `doctor` makes no network request." in out
     assert replayed == []
     assert len(_manifests()) == 1
+
+
+def test_a_first_run_with_check_builds_asks_after_the_intro(
+    root: Path, replayed: list[httpx.Request], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --check-builds the one request (the version list) comes after the
+    intro has been printed."""
+    printed: list[str] = []
+    real = cli._say
+
+    def say(text: str = "") -> None:
+        printed.append(f"{len(replayed)}:{text}")
+        real(text)
+
+    monkeypatch.setattr(cli, "_say", say)
+    ok("doctor", "--check-builds")
+    assert [r.url.path for r in replayed] == ["/api/builds"]
+    intro = [line for line in printed if "What leaves your machine." in line]
+    assert intro and intro[0].startswith("0:")
 
 
 def test_a_later_run_is_not_a_first_run(root: Path) -> None:

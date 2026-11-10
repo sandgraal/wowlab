@@ -24,14 +24,14 @@ The first run prints this too, before it does anything else (ADR-0031):
 - **Its own files stay in its own folder.** Snapshots, the record of every
   change and downloaded game tables live in wowlab's data folder, never in
   your install. `wowlab doctor` prints where that is.
-- **Nothing is uploaded.** The only network traffic is to
-  [wago.tools](https://wago.tools), a community-run public site of game
-  data. `wowlab doctor` downloads its public list of game versions and
-  looks for your installed versions in it; nothing from your install is
-  sent. Run `wowlab doctor --offline` to skip that. `wowlab db2` and
-  `wowlab looks` download public game tables from the same site, and to
-  ask for the right ones they send your installed game version string
-  (such as `1.60.1.69913`) in the request.
+
+<!-- network:begin -->
+**What leaves your machine. Nothing is uploaded: these three are wowlab's only network traffic, and no other command makes a request.**
+
+- `wowlab doctor --check-builds` downloads the public list of game versions from wago.tools, a community-run public site of game data, and looks for your installed versions in it; nothing from your install is sent. Without `--check-builds`, `doctor` makes no network request.
+- `wowlab db2` and `wowlab looks` download public game data from wago.tools: its list of game versions, and tables for one version at a time. A table request names that version: your installed one, or the one you give with `--build`.
+- A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
+<!-- network:end -->
 
 ## Platforms
 
@@ -165,9 +165,10 @@ Run `wowlab doctor`. A run is a first run while wowlab's store holds no
 snapshot of this install. It goes like this:
 
 1. **What wowlab will and will not do**, as above, before anything else.
-2. **The usual report**: the install, each flavor and its version, whether
-   wago.tools lists that version, your server-sync settings, whether the
-   game is running, and the state of the snapshot store.
+2. **The usual report**: the install, each flavor and its version, your
+   server-sync settings, whether the game is running, and the state of the
+   snapshot store. Whether wago.tools lists each version is checked only
+   with `--check-builds`.
 3. **What a first snapshot would hold**, for each flavor: the `WTF`,
    `Interface` and `Fonts` folders (the same ones `wowlab snap create`
    takes), how many files, how big, and an estimated time. The estimate is
@@ -211,7 +212,7 @@ Options for the first run:
 |---|---|
 | `--yes` | Take the snapshot without asking. With several flavors, add `--flavor`. |
 | `--flavor <folder>` | The flavor to snapshot, as `wowlab doctor` lists it. |
-| `--offline` | Do not contact wago.tools. |
+| `--check-builds` | Ask wago.tools whether it lists each installed version. Without it, `doctor` makes no network request. (`--offline` is still accepted, does nothing, and says so.) |
 | `--json` | Print the report as JSON (the `DoctorReport` model; its `first_run` field holds the first-run part). Never asks: without `--yes` no snapshot is taken. |
 
 When input is not a terminal (a script, a pipe) and `--yes` is not given,
