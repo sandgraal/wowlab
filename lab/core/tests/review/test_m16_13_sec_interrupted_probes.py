@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_cli import (
@@ -49,6 +51,9 @@ def test_an_id_with_control_text_never_reaches_the_undo_line(flavor: Path) -> No
     assert "journal of the write gate cannot be read" in text.stdout
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows forbids control characters 0-31 in file names"
+)
 def test_a_file_name_with_control_text_never_loads(flavor: Path) -> None:
     ok("addon", "install", "lab", "--yes")
     path, record = _last_path()
