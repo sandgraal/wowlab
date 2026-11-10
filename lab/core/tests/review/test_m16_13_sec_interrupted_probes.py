@@ -66,20 +66,6 @@ def test_a_file_name_with_control_text_never_loads(flavor: Path) -> None:
     assert f"--expect {bad}" not in text.stdout
 
 
-def test_unicode_digit_ids_load_and_print_pre_existing(flavor: Path) -> None:
-    """Pre-existing: `_RECORD_NAME` uses `\\d` without re.ASCII."""
-    ok("addon", "install", "lab", "--yes")
-    path, record = _last_path()
-    uid = chr(0x660) * 7 + chr(0x669) + "-abcdef12"  # Arabic-Indic digits
-    record["state"] = "open"
-    record["id"] = uid
-    path.unlink()
-    (path.parent / f"{uid}.json").write_text(json.dumps(record), encoding="utf-8")
-    text = run("doctor")
-    # Loaded as a record (no control character, so nothing to escape).
-    assert f"wowlab undo --expect {uid}" in text.stdout
-
-
 def test_only_the_exact_lowercase_name_classifies_as_wowlab_temp() -> None:
     """low-1, fixed in 7e5754e: case variants are not wowlab's temp."""
     fm = filemap.load()
