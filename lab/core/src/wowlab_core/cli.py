@@ -96,6 +96,7 @@ import base64
 import contextlib
 import csv
 import datetime
+import errno
 import functools
 import hashlib
 import io
@@ -105,6 +106,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import stat
 import sys
 import textwrap
@@ -178,6 +180,114 @@ EXIT_USAGE = 2
 EXIT_REFUSED = 3
 
 
+def _closed_pipe(exc: BaseException, *, windows: bool | None = None) -> bool:
+    """Whether `exc`, raised by a write to stdout, means the reader went away.
+
+    Everywhere that is `BrokenPipeError` (EPIPE). On Windows a write to a
+    pipe whose reader closed can also fail with EINVAL instead: the C
+    runtime maps the system's "the pipe is being closed" error to it, so
+    there EINVAL from stdout counts too. `windows` is for tests; None reads
+    the platform."""
+    if isinstance(exc, BrokenPipeError):
+        return True
+    if windows is None:
+        windows = sys.platform == "win32"
+    return windows and isinstance(exc, OSError) and exc.errno == errno.EINVAL
+
+
+class _PipeState:
+    """Whether the reader of stdout has gone, shared by the text stream and
+    its `buffer`."""
+
+    def __init__(self) -> None:
+        self.gone = False
+
+
+class _PipeSafeStream:
+    """stdout for the `wowlab` command (`_WowlabApp`): when the reader of a
+    pipe goes away (`wowlab tree | head -1`), the rest of the output is
+    dropped and the command goes on to the end, so a restore or any other
+    write never stops half way because nobody reads its report. The command
+    then exits as it would have: 0 when its work completed, with no errno
+    line on stderr.
+
+    On the first failed write the stream's file descriptor is pointed at the
+    null device, so the bytes still in Python's own buffer, which it flushes
+    as the process ends, go there instead of failing again. Every other
+    attribute is the wrapped stream's, and `buffer` is guarded the same way
+    for a write of bytes."""
+
+    def __init__(self, stream: Any, state: _PipeState | None = None) -> None:
+        self._stream = stream
+        self._state = state if state is not None else _PipeState()
+        self._buffer: _PipeSafeStream | None = None
+
+    @property
+    def buffer(self) -> Any:
+        if self._buffer is None:
+            self._buffer = _PipeSafeStream(self._stream.buffer, self._state)
+        return self._buffer
+
+    def write(self, data: Any) -> int:
+        if self._state.gone:
+            return len(data)
+        try:
+            written: int = self._stream.write(data)
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+            return len(data)
+        return written
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        if self._state.gone:
+            return
+        try:
+            self._stream.flush()
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+
+    def _reader_gone(self) -> None:
+        self._state.gone = True
+        try:
+            fd = self._stream.fileno()
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, fd)
+            finally:
+                os.close(devnull)
+        except (OSError, ValueError, AttributeError):
+            # Not a real file descriptor (a test's stream): nothing to point.
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _ignore_sigpipe() -> None:
+    """SIGPIPE ignored, so a write to a closed pipe raises an error that
+    `_PipeSafeStream` handles instead of killing the process mid-write.
+    Python ignores it at startup already; this keeps it so when a parent
+    process or an embedding changed that. Windows has no SIGPIPE, and a
+    thread other than the main one cannot set a handler: both are left
+    as they are."""
+    sigpipe = getattr(signal, "SIGPIPE", None)
+    if sigpipe is None:
+        return
+    # Not `contextlib.suppress`: one call fewer where Ctrl-C can land.
+    try:  # noqa: SIM105
+        signal.signal(sigpipe, signal.SIG_IGN)
+    except ValueError:
+        pass
+
+
 class _WowlabApp(typer.Typer):
     """The `wowlab` app: run as the console script (`wowlab_core.cli:app`),
     an exception nothing caught is printed by `_excepthook`, escaped.
@@ -193,10 +303,19 @@ class _WowlabApp(typer.Typer):
     exit 1, as Python would make it; Ctrl-C while that line is escaped is
     swallowed, and `_excepthook` is in place first in case it is not. The
     test runner calls the root command's `main`, not this, and so gets the
-    exception itself."""
+    exception itself.
+
+    A closed pipe on stdout is handled here too, once for every command:
+    stdout is a `_PipeSafeStream` while the app runs and SIGPIPE stays
+    ignored (`_ignore_sigpipe`)."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         hook = sys.excepthook
+        _ignore_sigpipe()
+        stdout = sys.stdout
+        guarded = stdout is not None and not isinstance(stdout, _PipeSafeStream)
+        if guarded:
+            sys.stdout = _PipeSafeStream(stdout)
         try:
             return super().__call__(*args, **kwargs)
         except SystemExit as exc:
@@ -216,6 +335,16 @@ class _WowlabApp(typer.Typer):
             raise
         finally:
             sys.excepthook = hook
+            if guarded:
+                current = sys.stdout
+                # Output still buffered goes out (or, with the reader gone,
+                # nowhere) before stdout is put back as it was.
+                try:  # noqa: SIM105
+                    current.flush()
+                except (OSError, ValueError):
+                    pass
+                if isinstance(current, _PipeSafeStream):
+                    sys.stdout = stdout
 
 
 class _WowlabContext(Context):
