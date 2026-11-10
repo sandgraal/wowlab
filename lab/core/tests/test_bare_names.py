@@ -137,7 +137,7 @@ def test_a_row_that_names_it_with_no_file_is_listed_and_explained(root: Path) ->
     ]
     text = run("explain", "bindings-cache.wtf", code=0).stdout
     assert "file-map rows for a file by this name (1):" in text
-    assert "(file-map row character-wtf-config; nothing by this name was found)" in text
+    assert "(file-map row character-wtf-config; no file for this row was found)" in text
 
 
 def test_a_name_that_matches_nothing_exits_1_constructed(root: Path) -> None:
@@ -174,6 +174,19 @@ def test_an_existing_file_is_unchanged(root: Path) -> None:
     report = json.loads(run("explain", "WTF/Config.wtf", "--json", code=0).stdout)
     assert report["result"]["entry"]["id"] == "config-wtf"
     assert "candidates" not in report
+
+
+def test_with_several_flavors_a_listed_path_explains_as_typed_constructed(root: Path) -> None:
+    # A second flavor folder, a copy of the capture (constructed).
+    shutil.copytree(CAPTURE / "forever", root / "_constructed_")
+    text = run("explain", "config-cache.wtf", code=0).stdout
+    assert "on disk by this name (4):" in text
+    shown = [line.strip() for line in text.splitlines() if line.startswith("    ") and "/" in line]
+    assert f"{FLAVOR}/{A}/config-cache.wtf" in shown
+    assert f"_constructed_/{A}/config-cache.wtf" in shown
+    for path in shown:
+        typed = run("explain", path, "--json", code=0).stdout
+        assert json.loads(typed)["result"]["status"] == "classified", path
 
 
 # ─── the library parts ──────────────────────────────────────────────────────
@@ -249,6 +262,16 @@ def test_sv_dump_with_account_alone_takes_the_account_wide_file(root: Path) -> N
     by_account = run("sv", "dump", "WowLab", "--account", ACCOUNT, code=0).stdout
     direct = run("sv", "dump", f"{A}/SavedVariables/WowLab.lua", code=0).stdout
     assert by_account == direct
+
+
+def test_sv_dump_says_when_account_and_character_are_not_used(root: Path) -> None:
+    result = run(
+        "sv", "dump", f"{A}/SavedVariables/WowLab.lua", "--character", "Labcharb-Labrealmf", code=0
+    )
+    assert "choose among names only" in result.stderr
+    plain = run("sv", "dump", f"{A}/SavedVariables/WowLab.lua", code=0)
+    assert "choose among names only" not in plain.stderr
+    assert result.stdout == plain.stdout
 
 
 def test_sv_dump_of_a_name_nothing_has_exits_1_constructed(root: Path) -> None:

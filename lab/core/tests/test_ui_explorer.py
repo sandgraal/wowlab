@@ -785,8 +785,12 @@ const fetchStub = async (url, opts) => {
   const key = body.command.join(" ");
   const params = body.params || {};
   let stdout = null;
+  let code = 0;
   for (const run of scenario.runs || []) {
-    if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) stdout = run.stdout;
+    if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) {
+      stdout = run.stdout;
+      code = run.exit_code || 0;
+    }
   }
   if (stdout !== null) { /* an exact run the scenario holds */ }
   else if (key === "install show") stdout = scenario.install_show;
@@ -797,7 +801,7 @@ const fetchStub = async (url, opts) => {
   if (typeof stdout !== "string") {
     return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
   }
-  return answer({ exit_code: 0, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
+  return answer({ exit_code: code, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
@@ -1299,6 +1303,36 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
     assert [r["path"] for r in out["steps"][1]["rows"]] == first_paths
     found = check(out["steps"][2], lambda i: "config.wtf" in i["path"].lower())
     assert "WTF/Config.wtf" in found
+
+
+def test_the_pane_says_why_a_path_gone_since_the_tree_is_unknown_constructed(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """M16-18: `explain` exits 1 for a path that matches nothing, with its
+    report on stdout. A file the tree listed and that is gone when it is
+    clicked (constructed: deleted after the tree was read) gets that
+    report, and the pane shows why it is unknown rather than only an exit
+    code. The file has no row once gone, as its own name is unknown."""
+    rel = "WTF/zz-gone-constructed.txt"
+    (install / FLAVOR / rel).write_bytes(b"constructed\n")
+    steps: list[dict[str, Any]] = [{"open_all": True}, {"click": rel}]
+    scenario, first = _scenario(server, [], steps)
+    target = first["install_root"] + os.sep + first["flavor_folder"] + "/" + rel
+    (install / FLAVOR / rel).unlink()
+    params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
+    result = _run(server, ["explain"], params).json()
+    assert result["exit_code"] == 1, result
+    report = json.loads(result["stdout"])
+    assert report["absent"] is True
+    scenario["runs"] = [
+        {"command": ["explain"], "params": params, "stdout": result["stdout"], "exit_code": 1}
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    pane = out["steps"][1]
+    assert "missing" not in pane, pane
+    assert "Why it is unknown" in pane["facts"], pane
+    assert report["result"]["reason"] in pane["facts"], pane
+    assert "exit code" not in pane["status"], pane
 
 
 def test_the_detail_pane_shows_what_who_and_the_verdict(

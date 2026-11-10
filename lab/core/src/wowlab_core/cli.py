@@ -3733,7 +3733,13 @@ def _say_candidates(
     if paths:
         _say(f"  on disk by this name ({len(paths)}):")
         for c in paths[:_CANDIDATES_SHOWN]:
-            _say(f"    {c.path} (in {c.flavor_folder})")
+            # Each spelled so that `explain` takes it as typed: from the
+            # flavor folder with one flavor, from the install root with
+            # several (a flavor-relative path then needs --flavor).
+            if len(inst.flavors) == 1:
+                _say(f"    {c.path} (in {c.flavor_folder})")
+            else:
+                _say(f"    {c.flavor_folder}/{c.path}")
         if len(paths) > _CANDIDATES_SHOWN:
             _say(f"    … and {len(paths) - _CANDIDATES_SHOWN} more (--json lists them all)")
     if rows:
@@ -3753,7 +3759,7 @@ def _say_candidates(
             explain(path=f"{c.flavor_folder}/{c.path}", root=root, flavor=None, json_out=False)
         elif c.entry_id is not None:
             e = fm.entry(c.entry_id)
-            _say(f"{c.doc_path} (file-map row {e.id}; nothing by this name was found)")
+            _say(f"{c.doc_path} (file-map row {e.id}; no file for this row was found)")
             _say(f"  what:         {_player_copy(_plain(e.what))}")
             _say(f"  written by:   {_plain(e.written_by)}")
 
@@ -4317,10 +4323,14 @@ def _sv_file(
     flavor folder, is a name `sv list` lists (M16-18): `_sv_named`."""
     given = Path(_plain_arg(path))
     if given.is_absolute() or longpath.lexists(given):
+        if account is not None or character is not None:
+            _note(f"--account and --character choose among names only; {path} was read as typed")
         return given
     _, chosen, lay = _open(root, flavor)
     direct = lay.flavor_path / given
     if longpath.lexists(direct):
+        if account is not None or character is not None:
+            _note(f"--account and --character choose among names only; {path} was read as typed")
         return direct
     return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
