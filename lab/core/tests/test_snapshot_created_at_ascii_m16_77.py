@@ -93,7 +93,8 @@ def test_check_foreign_manifest_refuses_a_non_ascii_digit_date(
     _, manifest = source
     spelled = _spell(zero)
     assert not spelled.isascii()
-    forged = snapshot.parse_manifest(_dated(manifest, spelled))
+    # Loaded without `parse_manifest`, which now refuses it first (M16-77).
+    forged = snapshot.Manifest.model_validate_json(_dated(manifest, spelled))
     with pytest.raises(ManifestIntegrityError, match="malformed"):
         snapshot.check_foreign_manifest(forged)
 
@@ -129,3 +130,78 @@ def test_a_non_ascii_digit_date_never_becomes_latest(
     assert [m.id for m in store.list()] == [own.id]
     assert snapshot.resolve_reference(store, "latest") == own.id
     assert snapshot.resolve_reference(store, "~0") == own.id
+
+
+# ─── a manifest already in the store is held to its id's moment too ─────────
+
+# What a planted manifest (or one written before M16-77) may claim: a date
+# that is not its id's, so it would sort newest while its id says 2020.
+PLANTED_DATES = [
+    pytest.param("2099-01-01T00:00:00.000000Z", id="constructed-ascii-future-date"),
+    pytest.param(_spell(0x0660), id="constructed-arabic-indic-date"),
+    pytest.param(_spell(0x06F0), id="constructed-extended-arabic-indic-date"),
+    pytest.param(_spell(0x0966), id="constructed-devanagari-date"),
+    pytest.param(_spell(0xFF10), id="constructed-fullwidth-date"),
+    pytest.param(_spell(None), id="constructed-one-arabic-indic-digit-among-ascii-date"),
+]
+
+
+def _plant(store: SnapshotStore, manifest: snapshot.Manifest, created_at: str) -> str:
+    """Write `manifest`, re-dated, straight into `store`'s `manifests/`: no
+    import, no check. The bytes are canonical and the fingerprint holds."""
+    data = _dated(manifest, created_at)
+    planted = snapshot.Manifest.model_validate_json(data)
+    (store.manifests_dir / f"{planted.id}.json").write_bytes(data)
+    return planted.id
+
+
+def test_a_planted_manifest_dated_as_its_id_loads_ascii_control(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest]
+) -> None:
+    """Dated 2020 as its id says, it loads and sorts before the player's own."""
+    store, manifest = source
+    planted = _plant(store, manifest, CREATED_AT)
+    own = store.create(_other_tree(tmp_path), ["x"], label="mine")
+    assert planted in {m.id for m in store.list()}
+    for ref in ("latest", "~0", "latest-user"):
+        assert snapshot.resolve_reference(store, ref) == own.id, ref
+
+
+@pytest.mark.parametrize("created_at", PLANTED_DATES)
+def test_a_planted_manifest_whose_date_is_not_its_ids_does_not_load(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], created_at: str
+) -> None:
+    """It is a damaged manifest: named in the lenient listing, never loaded,
+    and never `latest`, `~0` or `latest-user`."""
+    store, manifest = source
+    planted = _plant(store, manifest, created_at)
+    own = store.create(_other_tree(tmp_path), ["x"], label="mine")
+    listing = store.list_lenient()
+    assert planted not in {m.id for m in listing.manifests}
+    assert own.id in {m.id for m in listing.manifests}
+    assert [bad.name for bad in listing.invalid] == [f"{planted}.json"]
+    with pytest.raises(ManifestIntegrityError):
+        store.show(planted)
+    for ref in ("latest", "~0", "latest-user"):
+        try:
+            named = snapshot.resolve_reference(store, ref)
+        except snapshot.SnapshotError:
+            named = None
+        assert named != planted, ref
+
+
+def test_every_snapshot_create_writes_is_dated_as_its_id(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest]
+) -> None:
+    """No store `create` wrote breaks: its own manifests load, at any moment,
+    the microsecond included."""
+    store, manifest = source
+    for when in (
+        datetime(2020, 1, 1, tzinfo=UTC),
+        datetime(2026, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
+        datetime(2099, 1, 1, 0, 0, 0, 1, tzinfo=UTC),
+    ):
+        store.create(_other_tree(tmp_path), ["x"], now=when)
+    loaded = store.list()
+    assert len(loaded) == 4 and manifest.id in {m.id for m in loaded}
+    assert not store.list_lenient().invalid

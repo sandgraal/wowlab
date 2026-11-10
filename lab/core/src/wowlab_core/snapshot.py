@@ -1113,22 +1113,13 @@ def _one_component(value: str) -> bool:
     return value not in ("", ".", "..") and "/" not in value and "\x00" not in value
 
 
-def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -> None:
-    """Hold a manifest from elsewhere (`add_snapshot`, M16-04) to what
-    `create` always writes, beyond what `parse_manifest` checks:
-
-    - `created_at` is well formed, is the moment the id carries, and is no
-      later than `now` (default: this computer's clock) plus
-      `IMPORT_CLOCK_ALLOWANCE`, so a snapshot dated in the future cannot
-      stay the newest (`latest`, `~N`) for ever;
-    - `flavor_folder` is one folder name, and every subtree and every
-      excluded path keeps the `Entry.path` rule and is that folder or under
-      it, so a manifest cannot name `../../../etc` or the install's own
-      files;
-    - every entry is under a subtree and under no excluded path, as `create`
-      walks them.
-
-    Raises `ManifestIntegrityError`."""
+def _dated_as_its_id(manifest: Manifest) -> datetime:
+    """The moment `manifest.created_at` names, held to its id: well formed
+    (ASCII digits only) and the moment the id carries, as `create` writes
+    it. `created_at` is outside the fingerprint, and `latest`, `~N` and
+    `explain` order snapshots by it, so a manifest whose date is not its
+    id's could sort newest for ever (M16-77). Raises
+    `ManifestIntegrityError`."""
     sid = manifest.id
     match = _CREATED_AT_RE.match(manifest.created_at)
     try:
@@ -1147,6 +1138,27 @@ def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -
         raise ManifestIntegrityError(
             f"manifest {sid}: its date {manifest.created_at} is not the moment its id carries"
         )
+    return when
+
+
+def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -> None:
+    """Hold a manifest from elsewhere (`add_snapshot`, M16-04) to what
+    `create` always writes, beyond what `parse_manifest` checks:
+
+    - `created_at` is well formed, is the moment the id carries, and is no
+      later than `now` (default: this computer's clock) plus
+      `IMPORT_CLOCK_ALLOWANCE`, so a snapshot dated in the future cannot
+      stay the newest (`latest`, `~N`) for ever;
+    - `flavor_folder` is one folder name, and every subtree and every
+      excluded path keeps the `Entry.path` rule and is that folder or under
+      it, so a manifest cannot name `../../../etc` or the install's own
+      files;
+    - every entry is under a subtree and under no excluded path, as `create`
+      walks them.
+
+    Raises `ManifestIntegrityError`."""
+    sid = manifest.id
+    when = _dated_as_its_id(manifest)
     clock = datetime.now(UTC) if now is None else now.astimezone(UTC)
     if when > clock + IMPORT_CLOCK_ALLOWANCE:
         raise ManifestIntegrityError(
@@ -2258,6 +2270,7 @@ class SnapshotStore:
             )
         if manifest.id != name or not _ID_RE.match(manifest.id):
             raise ManifestIntegrityError(f"manifest {path.name} carries id {manifest.id!r}")
+        _dated_as_its_id(manifest)  # its date is its id's moment (M16-77)
         actual = tree_fingerprint(manifest.subtrees, manifest.excluded, manifest.entries)
         if actual != manifest.fingerprint:
             raise ManifestIntegrityError(

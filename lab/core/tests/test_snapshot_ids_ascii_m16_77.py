@@ -76,9 +76,12 @@ def _real_snapshot() -> snapshot.Manifest:
 
 
 def _plant_bytes(real: snapshot.Manifest, uid: str) -> bytes:
-    """`real` identified as `uid`, in the store's canonical encoding (the id
-    is not in the fingerprint, so the copy is otherwise intact)."""
-    return snapshot.manifest_bytes(real.model_copy(update={"id": uid}))
+    """`real` identified as `uid` and dated as `uid`'s moment (in the same
+    digits), in the store's canonical encoding. Neither is in the
+    fingerprint, so the copy is otherwise intact."""
+    m = uid[:MOMENT]
+    created_at = f"{m[0:4]}-{m[4:6]}-{m[6:8]}T{m[9:11]}:{m[11:13]}:{m[13:15]}.{m[16:22]}Z"
+    return snapshot.manifest_bytes(real.model_copy(update={"id": uid, "created_at": created_at}))
 
 
 def _plant(real: snapshot.Manifest, uid: str) -> str:
@@ -101,7 +104,7 @@ def _listed(result: Any) -> list[str]:
 
 def test_an_ascii_named_copy_is_listed_resolved_and_offered_ascii_control(root: Path) -> None:
     """The planting mechanics on an ASCII name: the copy is listed, `show`
-    resolves it, and `latest` offers the later id of the two (same `created_at`)."""
+    resolves it, and `latest` offers the later of the two."""
     real = _real_snapshot()
     later = real.id[: MOMENT - 2] + str((int(real.id[MOMENT - 2]) + 1) % 10) + "Z"
     uid = _plant(real, later + real.id[MOMENT:])

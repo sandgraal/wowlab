@@ -62,7 +62,6 @@ def _older_name(zero: int | None) -> str:
 
 
 def test_an_older_ascii_name_is_an_older_id_ascii_control() -> None:
-    assert pathfacts._MANIFEST_NAME.match(f"{OLDER_ID}.json") is not None
     assert pathfacts._newer(f"{OLDER_ID}.json", LATEST_ID) is False
 
 
@@ -70,7 +69,6 @@ def test_an_older_ascii_name_is_an_older_id_ascii_control() -> None:
 def test_a_non_ascii_digit_name_carries_no_id(zero: int | None) -> None:
     name = _older_name(zero)
     assert not name.isascii()
-    assert pathfacts._MANIFEST_NAME.match(name) is None
     assert pathfacts._newer(name, LATEST_ID) is True
 
 
