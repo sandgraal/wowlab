@@ -74,6 +74,11 @@ def test_control_a_linked_saved_variables_file_says_real_file_constructed(
     assert _notes(root)[SYNDICATOR].endswith(FILE_END)
 
 
-def test_a_linked_font_file_says_real_file_constructed(root: Path, tmp_path: Path) -> None:
+def test_a_linked_font_file_never_says_real_folder_constructed(root: Path, tmp_path: Path) -> None:
+    # Conductor ruling (fix round 1, both reviews): the link is never followed
+    # and the `fonts` row takes files and folders alike, so the note says "one";
+    # what this probe guards against is "real folder" for a file.
     _link_to_a_file(root / FLAVOR / "Fonts" / "FRIZQT__.TTF", tmp_path, "FRIZQT__.TTF")
-    assert _notes(root)["Fonts/FRIZQT__.TTF"].endswith(FILE_END)
+    note = _notes(root)["Fonts/FRIZQT__.TTF"]
+    assert note.endswith("so it reads this only when the real one is there"), note
+    assert "real folder" not in note, note
