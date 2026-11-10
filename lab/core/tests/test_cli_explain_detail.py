@@ -30,6 +30,7 @@ import platformdirs
 import psutil
 import pytest
 import typer.main
+from _explain_exit import expected_exit
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap, install, pathfacts, snapshot
@@ -76,7 +77,9 @@ def flavor(root: Path) -> Path:
 
 def ok(*args: str) -> Any:
     result = runner.invoke(cli.app, list(args))
-    assert result.exit_code == 0, (args, result.stdout, result.stderr, result.exception)
+    # M16-18: a path that matches nothing exits 1.
+    code = expected_exit(args, result.stdout)
+    assert result.exit_code == code, (args, result.stdout, result.stderr, result.exception)
     return result
 
 

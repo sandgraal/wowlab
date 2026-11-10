@@ -108,24 +108,31 @@ def _one_line(text: str) -> str:
 
 @pytest.mark.parametrize(
     "given",
-    ["nope.lua", "DBM-StatusBarTimers.lua", f"{ACCOUNT_SV}/Nope.lua"],
-    ids=["unknown-name", "bare-name", "full-path"],
+    ["nope.lua", f"{ACCOUNT_SV}/Nope.lua"],
+    ids=["unknown-name", "path-in-the-flavor-folder"],
 )
-def test_sv_dump_of_a_missing_file_names_sv_list(root: Path, given: str) -> None:
-    result = run("sv", "dump", given)
+@pytest.mark.parametrize("install_only", [False, True], ids=["plain", "install-only"])
+def test_sv_dump_of_a_missing_relative_name_names_sv_list(
+    root: Path, given: str, install_only: bool
+) -> None:
+    # A relative FILE not on disk is looked up by name (M16-18), and its
+    # not-found line is the lookup's: it names the lister too.
+    args = ["sv", "dump", *(["--install-only"] if install_only else []), given]
+    result = run(*args)
     assert result.exit_code == cli.EXIT_ERROR
     line = _one_line(result.stderr)
-    assert line == (
-        f"wowlab: no SavedVariables file at {root / FLAVOR / given}; wowlab sv list lists "
-        "them, each with the path to give sv dump (relative to the flavor folder)"
-    )
+    assert "`wowlab sv list`" in line, line
     assert "Errno" not in result.stderr
 
 
-def test_sv_dump_install_only_of_a_missing_file_names_sv_list(root: Path) -> None:
-    result = run("sv", "dump", "--install-only", "nope.lua")
+def test_sv_dump_of_a_missing_absolute_path_names_sv_list(root: Path, tmp_path: Path) -> None:
+    gone = tmp_path / "elsewhere" / "Nope.lua"
+    result = run("sv", "dump", str(gone))
     assert result.exit_code == cli.EXIT_ERROR
-    assert "wowlab sv list lists them" in _one_line(result.stderr)
+    assert _one_line(result.stderr) == (
+        f"wowlab: no SavedVariables file at {gone}; wowlab sv list lists them, each with "
+        "the path to give sv dump (relative to the flavor folder)"
+    )
     assert "Errno" not in result.stderr
 
 

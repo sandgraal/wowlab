@@ -184,6 +184,8 @@ class NotAnInstallError(InstallError):
     `reason` is `missing`, `not_regular` (a directory, FIFO, device, ...) or
     `unreadable` (the operating system refused; `strerror` says why). A root
     that does not exist at all is `missing` with `root_exists=False`.
+    `hint` is the pointer appended to the message ("" for none): the root
+    looks like a flavor folder, or its parent is an install.
     """
 
     def __init__(
@@ -201,6 +203,7 @@ class NotAnInstallError(InstallError):
         self.reason = reason
         self.strerror = strerror
         self.root_exists = root_exists
+        self.hint = hint
         if not root_exists:
             super().__init__(f"{root} (from {source}) does not exist")
             return

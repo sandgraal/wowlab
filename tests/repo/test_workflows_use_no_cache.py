@@ -30,12 +30,23 @@ caches in one of four ways, and each is rejected:
 
 The mutation tests apply each form to the real workflows in memory and show
 the check catches it; no workflow file is edited.
+
+A Dependabot bump moves a reviewed action to a new commit in the workflows
+and not here, and used to fail 23 tests here, none naming the cause
+(M16-56). `test_no_reviewed_action_moved_to_another_pin` now fails alone and
+says which action moved, from which pin to which, and what to do; every
+other test that reads the real workflows is skipped while it fails, by the
+same function on the same data, so a skip never comes without that failure.
 """
 
 from __future__ import annotations
 
 import copy
 import functools
+import os
+import shutil
+import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -153,7 +164,65 @@ def _kinds(found: list[Finding]) -> set[str]:
     return {kind for kind, _ in found}
 
 
+def _repo(uses: str) -> str:
+    # Owner and repository names are case-insensitive to the runner.
+    return uses.partition("@")[0].lower()
+
+
+def _moved_pins(workflows: Mapping[str, dict[str, Any]]) -> list[str]:
+    """One message per reviewed action the workflows use at another ref.
+
+    A step whose action is one reviewed here, at anything but the reviewed
+    commit, is a moved pin; a Dependabot bump moves every use at once. Pins
+    are per workflow, from that workflow's own ALLOWED entry; a workflow not
+    listed has none, so the unknown-workflow finding is not skipped.
+    """
+    moved: dict[tuple[str, str], set[str]] = {}
+    for name, workflow in workflows.items():
+        pins = {_repo(pin): pin for pin in ALLOWED.get(name, frozenset())}
+        for _, step in _steps(workflow):
+            if "uses" not in step:
+                continue
+            uses = str(step["uses"]).strip()
+            pin = pins.get(_repo(uses))
+            if pin is not None and uses != pin:
+                moved.setdefault((pin, uses), set()).add(name)
+    messages = []
+    for (pin, uses), names in sorted(moved.items()):
+        repo, _, old = pin.partition("@")
+        new = uses.partition("@")[2]
+        messages.append(
+            f"{repo} moved from {old} to {new} in {', '.join(sorted(names))}. "
+            f"Re-read {repo}'s action.yml at {new}, and every action it nests, "
+            "for cache inputs and caches on by default; only then update the pin "
+            "(and CACHE_OFF and the note above it) in "
+            "tests/repo/test_workflows_use_no_cache.py."
+        )
+    return messages
+
+
+@pytest.fixture(autouse=True)
+def _one_failure_for_a_moved_pin(request: pytest.FixtureRequest) -> None:
+    # Skips the cascade: each skipped test would fail only because a pin
+    # moved, which the one test below already says. The skip and that
+    # failure come from the same call on the same data. Function objects,
+    # not names, so a rename cannot exempt a test silently.
+    if request.function in (
+        test_no_reviewed_action_moved_to_another_pin,
+        test_every_workflow_is_listed_and_every_listed_one_exists,
+        test_every_allowed_action_is_pinned_to_a_full_commit,
+    ):
+        return
+    if _moved_pins(_workflows()):
+        pytest.skip("a reviewed action moved: see test_no_reviewed_action_moved_to_another_pin")
+
+
 # ─── static: the real workflows ─────────────────────────────────────────────
+
+
+def test_no_reviewed_action_moved_to_another_pin() -> None:
+    moved = _moved_pins(_workflows())
+    assert not moved, "\n".join(moved)
 
 
 def test_every_workflow_is_listed_and_every_listed_one_exists() -> None:
@@ -314,3 +383,74 @@ def test_a_reusable_workflow_job_and_an_unknown_workflow_are_caught() -> None:
         "unknown-workflow",
         "allowlist",
     }
+
+
+# ─── a moved pin: one failure that names it (M16-56) ────────────────────────
+
+
+def test_a_moved_pin_names_the_action_both_refs_and_every_workflow() -> None:
+    new = "1" * 40
+    workflows = {name: _mutated(name) for name in ALLOWED}
+    for workflow in workflows.values():
+        for _, step in _steps(workflow):
+            if step.get("uses") == SETUP_UV:
+                step["uses"] = f"astral-sh/setup-uv@{new}"
+    assert _moved_pins(workflows) == [
+        f"astral-sh/setup-uv moved from {SETUP_UV.partition('@')[2]} to {new} in "
+        "ci.yml, latest-release.yml, release.yml, windows.yml. Re-read "
+        f"astral-sh/setup-uv's action.yml at {new}, and every action it nests, "
+        "for cache inputs and caches on by default; only then update the pin "
+        "(and CACHE_OFF and the note above it) in tests/repo/test_workflows_use_no_cache.py."
+    ]
+    # A tag, and the repository written in another case, are moves too.
+    workflow = _mutated("windows.yml")
+    _first_step(workflow, CHECKOUT)["uses"] = "Actions/Checkout@v7"
+    (message,) = _moved_pins({"windows.yml": workflow})
+    old = CHECKOUT.partition("@")[2]
+    assert message.startswith(f"actions/checkout moved from {old} to v7 in windows.yml. ")
+    # Pins are per workflow: an action reviewed only for another workflow,
+    # or any action in an unlisted workflow, is no move (the allowlist and
+    # unknown-workflow findings report those, and nothing is skipped).
+    workflow = _mutated("windows.yml")
+    workflow["jobs"]["lab-windows"]["steps"].insert(0, {"uses": "aquasecurity/trivy-action@v1"})
+    assert _moved_pins({"windows.yml": workflow}) == []
+    assert _moved_pins({"new.yml": workflows["ci.yml"]}) == []
+
+
+def test_a_dependabot_bump_fails_once_and_says_which_pin_to_update(tmp_path: Path) -> None:
+    # Constructed: this file and the real workflows copied into a scratch
+    # tree, with setup-uv's pin moved in every workflow as Dependabot does.
+    # Before M16-56 this run had 23 failures, none naming the bump.
+    (tmp_path / "tests" / "repo").mkdir(parents=True)
+    copy_of_this = tmp_path / "tests" / "repo" / Path(__file__).name
+    shutil.copyfile(__file__, copy_of_this)
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    old, new = SETUP_UV.partition("@")[2], "2" * 40
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        assert old in text, path.name
+        target = tmp_path / ".github" / "workflows" / path.name
+        target.write_text(text.replace(old, new), encoding="utf-8")
+    # `-o addopts=` clears only the ini value; the environment can add
+    # options and plugins too, and xdist would change the summary line.
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTEST_ADDOPTS", "PYTEST_PLUGINS"}}
+    args = ["-q", "-rfs", "-p", "no:cacheprovider", "-p", "no:xdist", "-o", "addopts="]
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", str(copy_of_this), *args, "--rootdir", str(tmp_path)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    out = run.stdout
+    assert run.returncode == 1, out
+    summary = out.strip().splitlines()[-1]
+    assert summary.startswith("1 failed, 2 passed, "), out
+    assert " skipped" in summary, out
+    failed = [line for line in out.splitlines() if line.startswith("FAILED ")]
+    assert len(failed) == 1, out
+    assert "::test_no_reviewed_action_moved_to_another_pin" in failed[0], out
+    assert f"astral-sh/setup-uv moved from {old} to {new} in" in out, out
+    assert f"Re-read astral-sh/setup-uv's action.yml at {new}" in out, out

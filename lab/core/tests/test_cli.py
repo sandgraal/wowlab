@@ -1399,7 +1399,8 @@ def test_whole_restore_skips_files_the_client_manages(root: Path, flavor: Path) 
     text = ok("snap", "restore", a.id, "--dry-run").stdout
     assert (
         '  Skipped 2 file(s) wowlab leaves alone (file-map Edit "no": client-written backups, '
-        "Blizzard_* folders, file-browser metadata; name one with --paths to restore it):"
+        "wowlab's leftover temp files, Blizzard_* folders, file-browser metadata; name one "
+        "with --paths to restore it):"
     ) in text
     assert "name one with --paths to restore it" in text
 

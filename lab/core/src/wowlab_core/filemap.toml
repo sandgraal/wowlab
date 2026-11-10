@@ -36,6 +36,10 @@
 #              suffixes, or a versioned shared library (`libfoo.so.1`).
 #              `filemap.py` holds a copy of `guard`'s rule; a test fails when
 #              the two drift (M13-28)
+#   <wowlab-temp>  a segment that is exactly a name the write gate gives
+#              its temp files, `.wowlab-<32 lowercase hex>.tmp`, compared in
+#              letter case too. `filemap.py` holds a copy of `guard`'s rule;
+#              a test fails when the two drift (M16-13)
 #   .          the base folder itself (only as the whole pattern)
 # A match pattern ending in `/` matches directories only; one ending in `**`
 # matches anything; any other matches files only. `exclude` patterns match
@@ -178,6 +182,21 @@ edit = "no"
 tier = "—"
 module = "`process` (name only)"
 match = ["*.exe", "*.app/", "*.app/**"]
+
+# Before the `WTF/`, `Interface/` and `Fonts/` rows, which would match it
+# first otherwise: the write gate leaves it beside the file it was replacing.
+[[entry]]
+id = "wowlab-temp"
+section = "flavor"
+base = "flavor"
+doc_path = "`.wowlab-<32 hex>.tmp` (in any folder under `WTF/`, `Interface/` or `Fonts/`)"
+what = "Left by a wowlab change that was interrupted (the computer stopped, or wowlab was closed mid-write). The file beside it is either as it was or fully changed, never half-written. The next change wowlab makes to this game version, or `wowlab undo`, removes it"
+notes = "The write gate's temp file (§6.10): bytes written and fsynced beside the target, then renamed over it. A write's temp holds the new bytes; a rollback writes the before bytes back through a temp of its own, so a process killed mid-rollback leaves one holding the old bytes, which the snapshot and the journal's `before` also hold. Its name is journaled before it exists; on entering, the next transaction on this flavor (an undo included) removes the temps the journal names. Only the exact lowercase name matches this row, as only it is ever made or removed; a temp the journal does not name (another store) is left in place. A whole `snap restore` or `profile apply` skips one a snapshot holds, as for any Edit no row (qa:F3, 2026-11-10)"
+written_by = "wowlab, while it writes a change"
+edit = "no"
+tier = "—"
+module = "`guard` (creates and removes it)"
+match = ["WTF/**/<wowlab-temp>", "Interface/**/<wowlab-temp>", "Fonts/**/<wowlab-temp>"]
 
 [[entry]]
 id = "wtf-folder"
