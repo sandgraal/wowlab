@@ -52,6 +52,7 @@ from pydantic import (
 )
 
 from wowlab_core import longpath
+from wowlab_core.errors import WowlabError
 
 __all__ = [
     "IMPORT_CLOCK_ALLOWANCE",
@@ -109,7 +110,7 @@ _REPARSE_NAME_SURROGATE = 0x20000000
 (symlink, junction, WCI link, ...); cloud placeholders and dedup lack it."""
 
 
-class SnapshotError(Exception):
+class SnapshotError(WowlabError):
     """Base class for every error this module raises."""
 
 

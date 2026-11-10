@@ -37,6 +37,7 @@ from typing import Annotated, Literal
 import platformdirs
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
+from wowlab_core.errors import WowlabError
 from wowlab_core.install import BUILD_INFO, FLAVOR_INFO
 from wowlab_core.looks import Look
 
@@ -82,7 +83,7 @@ VersionText = Annotated[
 ]
 
 
-class LookStoreError(Exception):
+class LookStoreError(WowlabError):
     """A saved look cannot be read or written."""
 
 

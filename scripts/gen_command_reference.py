@@ -411,7 +411,10 @@ def render(root: Any | None = None) -> str:
         "the command shows its plan and waits for an answer. What it changes differs by "
         "command, and its help says which: an install, through the write gate, or the "
         "Lab's own snapshot store. **`--json` output** names the model the command's "
-        "`--json` output validates against.",
+        "`--json` output validates against. A `--json` run that ends in an error prints "
+        "an `ErrorReport` (`kind`, `message`, `exit_code`) on stdout instead, unless it "
+        "already printed its own report; the error line on stderr and the exit code are "
+        "the same as without `--json`.",
         "",
     ]
     for group_path, group in iter_groups(root):

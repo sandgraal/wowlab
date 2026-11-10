@@ -92,6 +92,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wowlab_core import snapshot
+from wowlab_core.errors import WowlabError
 
 __all__ = [
     "BINDINGS_BUDGET",
@@ -219,7 +220,7 @@ BINDINGS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
 MACROS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
 
 
-class WtfLimitError(ValueError):
+class WtfLimitError(WowlabError, ValueError):
     """A WTF file over its type's byte or line budget, refused before any
     line model is built.
 

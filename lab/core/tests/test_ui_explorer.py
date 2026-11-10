@@ -97,7 +97,7 @@ import pytest
 import typer
 from test_ui_fonts import without_font_faces
 
-from wowlab_core import filemap, lookspage, ui
+from wowlab_core import cli, filemap, lookspage, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -786,10 +786,12 @@ const fetchStub = async (url, opts) => {
   const params = body.params || {};
   let stdout = null;
   let code = 0;
+  let stderr = "";
   for (const run of scenario.runs || []) {
     if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) {
       stdout = run.stdout;
       code = run.exit_code || 0;
+      stderr = run.stderr || "";
     }
   }
   if (stdout !== null) { /* an exact run the scenario holds */ }
@@ -801,7 +803,7 @@ const fetchStub = async (url, opts) => {
   if (typeof stdout !== "string") {
     return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
   }
-  return answer({ exit_code: code, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
+  return answer({ exit_code: code, timed_out: false, truncated: false, stdout: stdout, stderr: stderr });
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
@@ -1339,6 +1341,45 @@ def test_the_pane_says_why_a_path_gone_since_the_tree_is_unknown_constructed(
     assert "Why it is unknown" in pane["facts"], pane
     assert report["result"]["reason"] in pane["facts"], pane
     assert "exit code" not in pane["status"], pane
+
+
+def test_the_pane_shows_the_error_when_explain_prints_an_error_report_constructed(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """M16-22: an `explain --json` that fails prints an `ErrorReport` on
+    stdout, which has no `result`. The pane shows the error line, as it did
+    before there was a report, and draws no facts from it. Constructed: the
+    install's `.build.info` is removed after the tree was read, so the
+    install the page names is no install any more."""
+    rel = "WTF/Config.wtf"
+    steps: list[dict[str, Any]] = [{"open_all": True}, {"click": rel}]
+    scenario, first = _scenario(server, [], steps)
+    parts = [first["flavor_folder"], *rel.split("/")]
+    target = first["install_root"] + "".join(os.sep + part for part in parts)
+    (install / ".build.info").unlink()
+    params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
+    result = _run(server, ["explain"], params).json()
+    assert result["exit_code"] == 1, result
+    report = cli.ErrorReport.model_validate_json(result["stdout"])
+    assert f"wowlab: {report.message}" in result["stderr"].splitlines()
+    scenario["runs"] = [
+        {
+            "command": ["explain"],
+            "params": params,
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "exit_code": 1,
+        }
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    assert _asked(out, ["explain"]) == [params], (_asked(out, ["explain"]), params)
+    pane = out["steps"][1]
+    assert "missing" not in pane, pane
+    assert "Why it is unknown" not in pane["facts"], pane
+    # The error line, as the page shows text (the home folder as "~").
+    assert pane["status"].startswith("wowlab: "), pane
+    assert "WOWLAB_WOW_ROOT" in pane["status"], pane
+    assert pane["facts"] == "", pane
 
 
 def test_the_detail_pane_shows_what_who_and_the_verdict(

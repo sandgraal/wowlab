@@ -70,6 +70,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import guard, longpath
+from wowlab_core.errors import WowlabError
 from wowlab_core.toc import parse_toc
 
 __all__ = [
@@ -177,7 +178,7 @@ PATCH_NOTE = (
 """`str.format` with `interface`, `version` and `folder`."""
 
 
-class AddonError(Exception):
+class AddonError(WowlabError):
     """Base class for every error this module raises (the CLI's exit 1)."""
 
 

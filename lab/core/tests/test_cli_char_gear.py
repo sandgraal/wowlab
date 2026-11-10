@@ -242,7 +242,11 @@ def test_constructed_a_record_without_gear_exits_1_with_the_reason(
     for extra in ([], ["--json"]):
         result = run("char", "gear", "--character", "1/Labchard-Labrealmg", *extra)
         assert result.exit_code == 1, (result.stdout, result.stderr)
-        assert result.stdout == ""
+        if extra:  # under --json, the error alone as a report (M16-22)
+            report = cli.ErrorReport.model_validate_json(result.stdout)
+            assert f"wowlab: {report.message}" in result.stderr
+        else:
+            assert result.stdout == ""
         assert reason in " ".join(result.stderr.split())
 
 

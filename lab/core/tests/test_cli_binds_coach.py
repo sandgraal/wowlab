@@ -674,7 +674,8 @@ def test_a_bad_players_table_is_an_error_naming_the_file_constructed(
     path.write_text(text, encoding="utf-8")
     result = run("binds", "coach", "--character", CHARACTER, "--json")
     assert result.exit_code == 1
-    assert result.stdout == ""
+    # Under --json, the error alone as a report (M16-22).
+    assert f"wowlab: {cli.ErrorReport.model_validate_json(result.stdout).message}" in result.stderr
     assert f"the key-cost table cannot be used: {path}: " in result.stderr
     assert words in result.stderr
 

@@ -719,10 +719,11 @@
     const params = { path: target, root: report.install_root };
     if (node.flavor) params.flavor = node.flavor;
     // Partial: `explain` exits 1 for a path that matches nothing (M16-18),
-    // and its report still says why.
+    // and its report still says why. Any other error prints an error report
+    // (no `result`) in place of it: the pane shows the error then.
     const reply = await runJson(["explain"], params, true);
     if (seq !== explorer.explainSeq) return;
-    if (reply.error && !reply.data) {
+    if (reply.error && !(reply.data && reply.data.result)) {
       explainSay(shown(reply.error), true);
       return;
     }
