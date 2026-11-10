@@ -11,9 +11,14 @@ message.
 Behavioural: the step's `run:` text is read from the real `ci.yml` and run
 under `bash -e` (GitHub's default shell for a `run:` step on Linux) in a
 throwaway repository built in `tmp_path`. The scripts in that repository are
-constructed stand-ins that only print which copy ran. The mutation test puts
-the old fallback back into the step text in memory and shows the behavioural
-check catches it; no workflow file is edited.
+constructed stand-ins that only print which copy ran. The refusal
+assertions live in one helper, `_assert_refuses`; the mutation test runs that
+same helper against the old fallback, held in memory, and shows it fails
+there. No workflow file is edited.
+
+Static, from the M16-59 security review: the job has no `if:` or `needs:`
+that could skip it, the workflow's triggers carry no `paths:` filter that
+could keep it from running, and the base copy runs under `python3 -I`.
 """
 
 from __future__ import annotations
@@ -51,9 +56,15 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash
 
 
 @functools.cache
+def _workflow() -> dict[Any, Any]:
+    data = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
+@functools.cache
 def _step_run() -> str:
-    data: dict[str, Any] = yaml.safe_load(CI.read_text(encoding="utf-8"))
-    steps = data["jobs"]["grader-diff"]["steps"]
+    steps = _workflow()["jobs"]["grader-diff"]["steps"]
     found = [s for s in steps if s.get("name") == STEP]
     assert len(found) == 1, STEP
     run = found[0]["run"]
@@ -106,13 +117,18 @@ def _run_step(run: str, repo: Path, tmp_path: Path) -> subprocess.CompletedProce
     )
 
 
-def test_base_without_script_refuses_and_never_runs_the_head_copy(tmp_path: Path) -> None:
+def _assert_refuses(run: str, tmp_path: Path) -> None:
+    """`run`, on a base without the script, refuses and never runs the head copy."""
     repo = _repo(tmp_path, base=None, head=HEAD_COPY)
-    out = _run_step(_step_run(), repo, tmp_path)
+    out = _run_step(run, repo, tmp_path)
     assert out.returncode != 0, out.stdout + out.stderr
     assert "constructed-head-copy-ran" not in out.stdout + out.stderr
     assert out.stdout.startswith("::error::"), out.stdout
     assert SCRIPT in out.stdout and "base revision" in out.stdout
+
+
+def test_base_without_script_refuses_and_never_runs_the_head_copy(tmp_path: Path) -> None:
+    _assert_refuses(_step_run(), tmp_path)
 
 
 def test_base_with_script_runs_the_base_copy_not_the_head_copy(tmp_path: Path) -> None:
@@ -145,9 +161,26 @@ def test_step_never_reads_the_working_tree_copy() -> None:
 
 
 def test_mutation_old_fallback_is_caught(tmp_path: Path) -> None:
-    # The pre-M16-59 step runs the head copy when the base lacks the script;
-    # the behavioural check above would see it.
-    repo = _repo(tmp_path, base=None, head=HEAD_COPY)
-    out = _run_step(OLD_FALLBACK, repo, tmp_path)
-    assert out.returncode == 0
-    assert "constructed-head-copy-ran" in out.stdout
+    # The pre-M16-59 step copies and runs the head's script when the base
+    # lacks it; the same refusal assertions the real step passes fail here.
+    with pytest.raises(AssertionError):
+        _assert_refuses(OLD_FALLBACK, tmp_path)
+
+
+def test_job_cannot_be_skipped() -> None:
+    data = _workflow()
+    job = data["jobs"]["grader-diff"]
+    assert "if" not in job, job.get("if")
+    assert "needs" not in job, job.get("needs")
+    # PyYAML reads the bare key `on` as the boolean True.
+    triggers = data.get("on", data.get(True))
+    assert isinstance(triggers, dict), triggers
+    for event, spec in triggers.items():
+        if isinstance(spec, dict):
+            assert "paths" not in spec and "paths-ignore" not in spec, event
+
+
+def test_base_copy_runs_isolated() -> None:
+    runs = [line.split() for line in _step_run().splitlines() if "python" in line]
+    assert len(runs) == 1, runs
+    assert runs[0][:2] == ["python3", "-I"], runs[0]
