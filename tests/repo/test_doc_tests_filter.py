@@ -8,11 +8,18 @@ run the tests, so ci.yml lists them in a second filter, `doc_tests`, and
 `docs_only` requires both filters to be false.
 
 Static: the Python under the test and script folders is scanned for the
-ways this repository names a document in code: a quoted `docs/<path>.md`, a
-`"docs" / ... / "<name>.md"` path, or a quoted root document name. Every
-named document that exists and that the docs-only filter would skip must
-appear in `doc_tests`. A docstring that mentions a document in backticks is
-not a read, and is not matched.
+ways this repository names a document in code:
+- a quoted `docs/<path>.md`;
+- a `"docs" / ... / "<name>.md"` or `.joinpath("docs", ..., "<name>.md")`
+  path;
+- a quoted root document name.
+
+Every named document that exists and that the docs-only filter would skip
+must appear in `doc_tests`, unless `NAMED_NOT_READ` records why that file
+names it without reading the repository's copy. Two forms cannot be resolved
+to one document: a glob over `docs`, and `"docs/" + ...`. A file using either
+must be listed in `DYNAMIC` with the reason it is safe. A docstring that
+mentions a document in backticks is not a read, and is not matched.
 """
 
 from __future__ import annotations
@@ -27,10 +34,38 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 SCANNED = [ROOT / "tests", ROOT / "scripts", *sorted((ROOT / "lab").glob("*/tests"))]
 ROOT_DOCS = ("CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md")
 
+# (document, file that names it) -> why that file never reads the repository's
+# copy. Each entry must still be found by the scan, so a stale one fails.
+NAMED_NOT_READ: dict[tuple[str, str], str] = {
+    ("docs/BACKLOG.md", "tests/harness/test_hooks.py"): (
+        "the hook tests build a temporary repo with its own docs/BACKLOG.md and "
+        "pass the path to the hooks as input; the hooks match paths only"
+    ),
+    ("docs/DECISIONS.md", "tests/harness/test_hooks.py"): (
+        "the path is hook input: protect_paths and guard_bash match it as a "
+        "string and never open the repository's copy"
+    ),
+}
+
+# file -> why its glob over docs/ (or computed docs path) is safe to skip on a
+# docs-only PR. Each entry must still use such a form, so a stale one fails.
+DYNAMIC: dict[str, str] = {
+    "lab/core/tests/test_filemap.py": (
+        "_SPEC_DOCS reads only the file names of docs/*.md, for the player-text "
+        "lint; editing a doc changes no name, and adding or renaming one is "
+        "rare enough to be caught by the next code PR"
+    ),
+    "lab/core/tests/review/test_review_m16_17_player_text_lint_misses_modules_and_docs_constructed.py": (
+        "the same name-only glob as test_filemap.py's _SPEC_DOCS"
+    ),
+}
+
 _QUOTED = re.compile(r"""["']docs/([\w./-]+?\.md)\b""")
 _JOINED = re.compile(r'"docs"((?:\s*/\s*"[\w.-]+")+)')
+_JOINPATH = re.compile(r'joinpath\(\s*"docs"((?:\s*,\s*"[\w.-]+")+)\s*\)')
 _PART = re.compile(r'"([\w.-]+)"')
 _ROOT = re.compile(r"""["'](CONTRIBUTING|SECURITY|CODE_OF_CONDUCT)\.md["']""")
+_DYNAMIC = re.compile(r'"docs"\s*\)\s*\.\s*r?glob\(|["\']docs/["\']\s*\+')
 
 
 def _filter_step() -> dict:
@@ -53,7 +88,7 @@ def _docs_only_skips(path: str) -> bool:
 
 def named_docs(text: str) -> set[str]:
     found = {"docs/" + m for m in _QUOTED.findall(text)}
-    for chain in _JOINED.findall(text):
+    for chain in [*_JOINED.findall(text), *_JOINPATH.findall(text)]:
         parts = _PART.findall(chain)
         if parts and parts[-1].endswith(".md"):
             found.add("/".join(["docs", *parts]))
@@ -61,15 +96,29 @@ def named_docs(text: str) -> set[str]:
     return found
 
 
-def _read_by_tests() -> dict[str, list[str]]:
-    readers: dict[str, list[str]] = {}
+def is_dynamic(text: str) -> bool:
+    return bool(_DYNAMIC.search(text))
+
+
+def _sources() -> list[tuple[str, str]]:
+    out = []
     for folder in SCANNED:
         for source in sorted(folder.rglob("*.py")):
             if source == Path(__file__).resolve():
                 continue
-            for doc in named_docs(source.read_text(encoding="utf-8")):
-                if _docs_only_skips(doc) and (ROOT / doc).is_file():
-                    readers.setdefault(doc, []).append(str(source.relative_to(ROOT)))
+            out.append((str(source.relative_to(ROOT)), source.read_text(encoding="utf-8")))
+    return out
+
+
+def _read_by_tests() -> dict[str, list[str]]:
+    readers: dict[str, list[str]] = {}
+    for rel, text in _sources():
+        for doc in named_docs(text):
+            if not (_docs_only_skips(doc) and (ROOT / doc).is_file()):
+                continue
+            if (doc, rel) in NAMED_NOT_READ:
+                continue
+            readers.setdefault(doc, []).append(rel)
     return readers
 
 
@@ -82,10 +131,29 @@ def test_every_doc_a_test_reads_runs_the_tests() -> None:
     )
 
 
-def test_every_listed_doc_exists_and_would_otherwise_be_skipped() -> None:
+def test_every_listed_doc_is_read_exists_and_would_otherwise_be_skipped() -> None:
+    read = _read_by_tests()
     for doc in _filters()["doc_tests"]:
         assert (ROOT / doc).is_file(), doc
         assert _docs_only_skips(doc), f"{doc} is not docs-only, so listing it does nothing"
+        assert doc in read, f"no test reads {doc}; listing it only costs CI time"
+
+
+def test_every_computed_docs_path_is_accounted_for() -> None:
+    dynamic = {rel for rel, text in _sources() if is_dynamic(text)}
+    unexplained = dynamic - set(DYNAMIC)
+    assert not unexplained, (
+        "these files glob docs/ or build a docs path at run time; list the "
+        f"documents they read in doc_tests, or add them to DYNAMIC with why: {unexplained}"
+    )
+    stale = set(DYNAMIC) - dynamic
+    assert not stale, f"DYNAMIC entries no longer computing a docs path: {stale}"
+
+
+def test_every_named_not_read_entry_is_still_found() -> None:
+    texts = dict(_sources())
+    for doc, rel in NAMED_NOT_READ:
+        assert rel in texts and doc in named_docs(texts[rel]), (doc, rel)
 
 
 def test_docs_only_needs_both_filters_false() -> None:
@@ -103,9 +171,15 @@ def test_the_scanner_finds_each_form_constructed() -> None:
         'C = ROOT / "SECURITY.md"\n'
         "D = '`docs/LAB_PLAN.md` in a docstring'\n"
         'E = "docs/x.txt"\n'
+        'F = ROOT.joinpath("docs", "GLOSSARY.md")\n'
     )
     assert named_docs(text) == {
         "docs/INSTALL.md",
         "docs/handoffs/M11-03.md",
         "SECURITY.md",
+        "docs/GLOSSARY.md",
     }
+    assert is_dynamic('x = (ROOT / "docs").glob("*.md")')
+    assert is_dynamic('x = (ROOT / "docs").rglob("*.md")')
+    assert is_dynamic('x = ROOT / ("docs/" + name)')
+    assert not is_dynamic('x = ROOT / "docs" / "INSTALL.md"')

@@ -79,8 +79,6 @@ jobs:
             doc_tests:
               - 'CONTRIBUTING.md'
               - 'SECURITY.md'
-              - 'docs/BACKLOG.md'
-              - 'docs/DECISIONS.md'
               - 'docs/INSTALL.md'
               - 'docs/LAB_FILE_MAP.md'
               - 'docs/LAB_FORMATS.md'
