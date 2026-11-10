@@ -1703,7 +1703,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-20 — README and INSTALL examples run as tests
+## [x] M16-20 — README and INSTALL examples run as tests
 **Size:** S · **Depends on:** M16-18 · **Sources:** writer:F3, newcomer:F4 (EV-19)
 
 Every fenced `wowlab` command in README and INSTALL runs against the fixture sandbox in CI. A non-zero exit fails the test, and so does output that no longer matches the shown lines. Output that the docs trim is marked `…`. A block marked `<!-- not-run: <reason> -->` is skipped, and the test lists the skips: installs (`uv tool install`, `uvx`), anything that needs the network (ADR-0012: `doctor --check-builds`, `db2`, `looks` downloads, `gh attestation verify`), and commands that do not exit (`wowlab ui`, `log tail --follow`). A skip without a reason fails.
@@ -1712,7 +1712,7 @@ Every fenced `wowlab` command in README and INSTALL runs against the fixture san
 
 ---
 
-## [ ] M16-21 — The confirm flow, presented
+## [x] M16-21 — The confirm flow, presented
 **Size:** M · **Depends on:** M16-10 · **Sources:** designer:F2, F3, F4, a11y:F4, F7 (EV-20)
 
 §18.1 item 7.
@@ -1798,7 +1798,7 @@ Written by `test-writer`, and reviewed by `code-reviewer` and `security-reviewer
 
 ---
 
-## [ ] M16-27 — Command-level performance budget, nightly
+## [x] M16-27 — Command-level performance budget, nightly
 **Size:** S · **Depends on:** M16-23, M16-24 · **Sources:** architect:F9, addon-author:F12, qa:F9 (EV-25)
 
 - A §6.12 table of command-level targets (whole restore, `sv dump --json`, `sv merge`, `addons list`, `wowlab --version`), each given as a ratio to a calibration loop.
@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2314,7 +2314,7 @@ The archive holds the same settings and saved data as the store, but is created 
 
 **Acceptance:** constructed tests; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-69T — [TEST] Leftover temp files are cleaned before the pre-write snapshot
+## [x] M16-69T — [TEST] Leftover temp files are cleaned before the pre-write snapshot
 **Size:** S · **Depends on:** M16-13 · **Sources:** the M16-13 security review (2026-11-10)
 
 `_open_record` takes the pre-write snapshot before it removes leftover `.wowlab-*.tmp` files, so the snapshot holds them, and a later whole restore that is not filtered by the file map could bring one back at a path no journal names as a temp. The reviewer recommends cleaning up first, keeping snapshots lossless, rather than excluding temp names from snapshots. Graders, strict xfail: after an interrupted change, the next change's pre-write snapshot holds no journaled leftover temp, and the removals are still journaled.
@@ -2323,6 +2323,8 @@ The archive holds the same settings and saved data as the store, but is created 
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
 **Size:** S · **Depends on:** M16-69T · **Sources:** as M16-69T
+
+**Owner question (2026-11-10), open:** the order M16-69T requires (journal each removal and fsync it before the unlink, then take the snapshot) means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
 **Acceptance:** M16-69T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -2338,7 +2340,7 @@ The archive holds the same settings and saved data as the store, but is created 
 
 **Acceptance:** M16-70T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-71 — `doctor` reports a change whose rollback did not finish
+## [x] M16-71 — `doctor` reports a change whose rollback did not finish
 **Size:** XS · **Depends on:** M16-13 · **Sources:** the M16-13 code review (2026-11-10)
 
 M16-13 flags the most recent `open` record. A most recent record in `rollback_incomplete` also left files part-changed and is not reported. Report it the same way, with the line that puts things back.
@@ -2364,7 +2366,7 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 
 # M16 follow-ups found in review (filed 2026-11-10, second batch)
 
-## [ ] M16-74T — [TEST] The listing-memo scaling grader holds on macOS
+## [x] M16-74T — [TEST] The listing-memo scaling grader holds on macOS
 **Size:** XS · **Depends on:** nothing · **Sources:** main's `lab (macos)` job at 54ff9a4 (2026-11-10); the M16-23 implementer's diagnosis
 
 `test_guard_listing_memo.py::test_constructed_the_no_op_whole_restore_check_scales_linearly` failed on macOS at 5.0× (1.844 s at 8,000 files against 0.369 s at 2,000; the limit is 5×). Counting calls shows the check does exactly 4× the work at 4× the files: every syscall and Python call count rises 4.00×, and Linux measures 4.1–4.2×. No superlinear path was found. The miss is the 25% margin being used up by costlier per-`lstat` work on APFS (inferred; not measured on macOS). That file imports `guard`, so it is a grader of a load-bearing file (ADR-0013): a test-writer changes it.
@@ -2403,7 +2405,7 @@ M16-66 (#432, merged) creates the store root and `journal/` 0700. The parents ma
 
 **Acceptance:** the owner's answer is recorded here. If yes: every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, with a test per creating module. If no: the ticket is closed unbuilt, with the answer recorded.
 
-## [ ] M16-79 — `pathfacts._compare` and the CASC reads open from the root
+## [x] M16-79 — `pathfacts._compare` and the CASC reads open from the root
 **Size:** S · **Depends on:** M16-65 · **Sources:** the M16-65 security review (#429)
 
 Two install readers still check only the last part of the path: `pathfacts._compare` (`<install>/<flavor>/<rel>`) and `casc._read` with the CASC record open (under `Data/`). Give them M16-49's walk from the install root.
@@ -2415,7 +2417,7 @@ Two install readers still check only the last part of the path: `pathfacts._comp
 ## [ ] M16-80 — The older link notes say what the readers now say
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 domain review (#429); the #443 review
 
-Three notes outside M16-65's readers still use the link wording from before #429. They are notes, not refusals: `tree`'s link note (`cli._link_note`, `cli.py` about line 2670 on main at 6c555bd), `tree`'s note for a linked flavor folder (about line 2802), and the `snap restore` screenshot clause (`_not_restored_lines`, about line 8973). `firstrun.py` about line 342 ("wowlab does not follow it") is in scope too. Reuse the readers' wording from `snapshot.linked_folder_words` and `labaddon.NOT_FOLLOWED` / `LINKED_FILE`, with "real folder" or "real file" chosen by kind. How `tree` and `doctor` display a link's target is the owner ticket M13-66 and stays out of scope; only the "not followed" sentence changes.
+Four notes outside M16-65's readers still use the link wording from before #429. They are notes, not refusals: `tree`'s link note (`cli._link_note`, `cli.py` about line 2670 on main at 6c555bd), `tree`'s note for a linked flavor folder (about line 2802), and the `snap restore` screenshot clause (`_not_restored_lines`, about line 8973). `firstrun.py` about line 342 ("wowlab does not follow it") is in scope too. Reuse the readers' wording from `snapshot.linked_folder_words` and `labaddon.NOT_FOLLOWED` / `LINKED_FILE`, with "real folder" or "real file" chosen by kind. How `tree` and `doctor` display a link's target is the owner ticket M13-66 and stays out of scope; only the "not followed" sentence changes.
 
 **Acceptance:** the four sites use the readers' wording, and a test pins each sentence exactly. `test_cli_player_copy.py` passes. Reviewed by `code-reviewer` and `domain-reviewer`.
 
@@ -2469,3 +2471,45 @@ Implement M16-84T in `guard.py`: record the left-alone paths structurally, not o
 The store line prints the raw journal state (`open`, `rollback_incomplete`) in text output, which LAB_PLAN §16's player-copy rules forbid. Print words instead, such as "did not finish" and "could not be fully put back". `--json` keeps the state names.
 
 **Acceptance:** the text output names no state constant, and a test pins the words. `--json` is unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-10, fourth batch)
+
+## [ ] M16-86 — `undo`'s plan for an unfinished rollback says what it will do
+**Size:** S · **Depends on:** nothing · **Sources:** the M16-71 code review (#441); the M16-85 implementer report
+
+For a `rollback_incomplete` record, `undo --expect <id>`'s plan has two problems:
+- It lists a delete for a file the rollback already removed. `_undo` skips that file, so the step is a no-op.
+- It says a path another program changed during the transaction was changed "probably by the client at logout".
+
+Its header also prints the raw journal state: `cli._undo_lines`, `Undo <id> ("<label>", <state>, <created_at>)`. List only the steps `_undo` will take, give the right reason for a path changed mid-transaction, and reuse `cli._journal_state_words` (M16-85) for the header.
+
+**Acceptance:** a constructed test on a real `rollback_incomplete` record pins the plan lines and the header. No state constant appears in text output. `--json` is unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-87T — [TEST] A whole restore never brings back a temp the journal left behind
+**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3)
+
+A leftover `.wowlab-*.tmp` whose unlink failed stays on disk, in `temps_left`, and in that change's pre-write snapshot. Losslessness requires this (M16-69T grader 2). Suppose a later change removes it, and the player then restores the earlier snapshot whole. The file comes back, and no later cleanup considers it again. A whole restore should leave out any entry whose path an earlier record of the flavor lists in `temps` or `temps_left`, judged by the journal and not by the name. Or the restoring record lists such paths in its own `temps_left`. This touches `guard.py`, so the graders land first.
+
+**Acceptance:** strict-xfail graders on main for the scenario above, activated by M16-87 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-87 — [IMPL] A whole restore never brings back a temp the journal left behind
+**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T
+
+**Acceptance:** M16-87T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-88 — Re-record the performance baselines from `ubuntu-latest`
+**Size:** XS · **Depends on:** M16-27 · **Sources:** the M16-27 reviews (#447); LAB_PLAN §6.12
+
+The §6.12 baselines were recorded in the dev container and are marked provisional. The first run on `main` (run 42904800039, 2026-11-10) measured these ratios, each 15 to 26 % below the provisional baseline:
+
+| Row | Ratio | Baseline |
+|---|---|---|
+| whole-restore | 12.55 | 15.6 |
+| sv-dump-json | 1.85 | 2.5 |
+| sv-merge | 6.16 | 7.8 |
+| addons-list | 1.87 | 2.5 |
+| version | 1.77 | 2.4 |
+
+The gate's check took 2.764 s. After at least three nightly runs, set each baseline to the highest ratio recorded on `ubuntu-latest`, in one change to `BASELINE` and the §6.12 table. Drop the "provisional" note.
+
+**Acceptance:** `BASELINE` and §6.12 agree, and cite the runs used. `test_perf_budget.py` passes. Reviewed by `code-reviewer`.
