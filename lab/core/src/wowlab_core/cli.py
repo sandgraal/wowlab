@@ -169,6 +169,7 @@ from wowlab_core import (
 )
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
+    WOWLAB_TEMP_ROW,
     Verdict,
     gate_names_but_for_executable,
     gate_refuses_stat,
@@ -1588,9 +1589,10 @@ class DoctorReport(_Out):
     # `Install.not_taken`: each name of `other_dirs` with why it was not
     # taken (M13-45). Left out of the JSON when empty, as there.
     not_taken: list[install.NotTaken] = Field(default_factory=list, exclude_if=lambda v: not v)
-    # The folder given exists and holds no .build.info, and nothing says it
-    # is a flavor folder or inside an install: the text names the Battle.net
-    # app's Scan and Repair (M16-13). Left out of the JSON when false.
+    # The root given is a folder that holds no .build.info, is not a flavor
+    # folder, and has no install above it (`_could_be_an_install`): the text
+    # names the Battle.net app's Scan and Repair (M16-13). Left out of the
+    # JSON when false.
     build_info_missing: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
@@ -1759,6 +1761,7 @@ def _doctor(
             and exc.reason == "missing"
             and exc.root_exists
             and not exc.hint
+            and _could_be_an_install(exc.root)
         )
     if on_found is not None:
         on_found(inst)
@@ -1813,6 +1816,18 @@ def _doctor(
         not_taken=list(inst.not_taken) if inst is not None else [],
         build_info_missing=build_info_missing,
     )
+
+
+def _could_be_an_install(root: Path) -> bool:
+    """Whether `root`, which holds no .build.info, could be an install that
+    lost it (M16-13): a folder, and inside no install (no folder above it
+    holds a regular .build.info). Reads only; any error is a no."""
+    try:
+        if not longpath.is_dir(root):
+            return False
+        return not any(longpath.is_file(p / install.BUILD_INFO) for p in root.parents)
+    except OSError:
+        return False
 
 
 def _interrupted(record_id: str) -> str:
@@ -3206,15 +3221,17 @@ def _hints(
     views: Sequence[ExplainView],
     *,
     absent: bool = False,
+    snapshot_hints: bool = True,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
     that the latest snapshot holds, when the file on disk differs from that
     copy or is gone. A first-snapshot hint for such a file when no snapshot
-    covers it or none ever held it, and no manifest was unreadable."""
+    covers it or none ever held it, and no manifest was unreadable. Neither
+    without `snapshot_hints` (wowlab's own leftover temp file, M16-13)."""
     hints: list[ExplainHint] = []
     with_root = ["--root", root] if root is not None else []
-    if verdict.restorable is True and facts is not None and facts.error is None:
+    if snapshot_hints and verdict.restorable is True and facts is not None and facts.error is None:
         latest = facts.snapshot_id
         if (
             latest is not None
@@ -3799,7 +3816,16 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
+    leftover = isinstance(judged, layout.Classified) and judged.entry.id == WOWLAB_TEMP_ROW
+    hints = _hints(
+        verdict,
+        facts,
+        judged.flavor_folder,
+        given_root,
+        views,
+        absent=absent,
+        snapshot_hints=not leftover,
+    )
     return stat_, facts, views, note, hints
 
 
@@ -8218,8 +8244,8 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
     if others:
         lines.append(
             f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-            "with --paths to restore it):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata; name one with --paths to restore it):"
         )
         lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
     if executables:
@@ -9125,8 +9151,8 @@ def _apply_plan_lines(
     if plan.skipped:
         lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata, "
-            "addon executables):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata, addon executables):"
         )
         for sk in plan.skipped:
             undone = f"  ({extra}; not deleted)"

@@ -60,6 +60,7 @@ Kind = Literal["file", "dir", "any"]
 _DIGITS = "<digits>"
 _NAME = "<name>"
 _EXECUTABLE = "<executable>"
+_WOWLAB_TEMP = "<wowlab-temp>"
 _ANY_DEPTH = "**"
 _SELF = "."
 _BEGIN = "<!-- filemap:begin {} -->"
@@ -69,6 +70,11 @@ _BLOCK = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+# A copy of `guard._TEMP_NAME`, compared with the name exactly as it is (in
+# letter case too), so the `<wowlab-temp>` segment matches only the names the
+# write gate makes and its cleanup removes (M16-13). A test fails when the
+# two drift.
+_TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
 
 # ─── the write gate's executable rule, copied ────────────────────────────────
 # A copy of `guard._is_executable`, so the `<executable>` segment matches
@@ -285,6 +291,8 @@ def _segment(pattern: str, name: str) -> bool:
         return name.isascii() and name.isdigit()
     if pattern == _NAME:
         return not (name.isascii() and name.isdigit())
+    if pattern == _WOWLAB_TEMP:
+        return _TEMP_NAME.fullmatch(name) is not None
     if pattern == _EXECUTABLE:
         return _is_executable(name)
     return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())
