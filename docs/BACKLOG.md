@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2414,14 +2414,14 @@ Two install readers still check only the last part of the path: `pathfacts._comp
 
 # M16 follow-ups found in review (filed 2026-11-10, third batch)
 
-## [ ] M16-80 — The older link notes say what the readers now say
+## [x] M16-80 — The older link notes say what the readers now say
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 domain review (#429); the #443 review
 
 Four notes outside M16-65's readers still use the link wording from before #429. They are notes, not refusals: `tree`'s link note (`cli._link_note`, `cli.py` about line 2670 on main at 6c555bd), `tree`'s note for a linked flavor folder (about line 2802), and the `snap restore` screenshot clause (`_not_restored_lines`, about line 8973). `firstrun.py` about line 342 ("wowlab does not follow it") is in scope too. Reuse the readers' wording from `snapshot.linked_folder_words` and `labaddon.NOT_FOLLOWED` / `LINKED_FILE`, with "real folder" or "real file" chosen by kind. How `tree` and `doctor` display a link's target is the owner ticket M13-66 and stays out of scope; only the "not followed" sentence changes.
 
 **Acceptance:** the four sites use the readers' wording, and a test pins each sentence exactly. `test_cli_player_copy.py` passes. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-81 — A flavor folder that becomes a link mid-read is named, not "."
+## [x] M16-81 — A flavor folder that becomes a link mid-read is named, not "."
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-65 security review (#429)
 
 When the flavor folder itself becomes a link during a read, `_shown` names it relative to itself, so the message reads "…reached through a linked folder: . became a link while wowlab read it". Name the flavor folder by its own name in that case.
@@ -2438,7 +2438,7 @@ Closed unbuilt on 2026-11-10: the job log already shows the cause.
 
 No Lab change is needed.
 
-## [ ] M16-83 — A diff touching only a doc that a test reads runs the tests
+## [x] M16-83 — A diff touching only a doc that a test reads runs the tests
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-20 implementer report (#442); the #443 review
 
 `ci.yml` (about lines 69 to 75) treats a diff of only `docs/**/*.md` as docs-only and skips the test jobs. Several tests read docs:
@@ -2451,7 +2451,7 @@ A PR that touches only those docs skips the tests that grade them. Exempt every 
 
 **Acceptance:** a diff touching only one of those docs runs `Lint, typecheck, tests`. A repo test fails when a test starts reading a doc the filter still treats as docs-only. `make hooks-test` passes. Reviewed by `code-reviewer`.
 
-## [ ] M16-84T — [TEST] The public journal record names the paths a rollback left alone
+## [x] M16-84T — [TEST] The public journal record names the paths a rollback left alone
 **Size:** S · **Depends on:** M16-71 · **Sources:** the M16-71 domain review (#441); the #443 review
 
 For a `rollback_incomplete` record, the gate writes the paths it could not put back only into the record's free-text note: `"; ".join(problems)`, each problem `f"{rel}: {exc}"`. `HistoryRecord` and `_public()` are in `guard.py`, which is load-bearing (ADR-0013). Exposing the paths therefore changes what that file returns, and the graders land first. Write graders for a list of left-alone paths, relative to the flavor folder, on the public record of a `rollback_incomplete` transaction, and an empty list otherwise. Cover a real rollback where another program changed one of two files, and a rollback the system refused.
@@ -2465,7 +2465,7 @@ Implement M16-84T in `guard.py`: record the left-alone paths structurally, not o
 
 **Acceptance:** M16-84T's graders pass, activated by marker deletion only. `doctor` names each file, relative to the flavor folder and redacted by `--redact`. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`.
 
-## [ ] M16-85 — `doctor` says a journal state in words
+## [x] M16-85 — `doctor` says a journal state in words
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-71 domain review (#441)
 
 The store line prints the raw journal state (`open`, `rollback_incomplete`) in text output, which LAB_PLAN §16's player-copy rules forbid. Print words instead, such as "did not finish" and "could not be fully put back". `--json` keeps the state names.
@@ -2520,3 +2520,35 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 `tests/repo/test_bidi_controls.py` reads every tracked file through `git ls-files`, docs included. A docs-only PR skips it with the rest of the suite, so a doc can gain a bidi control that only the next code PR catches. Add a cheap bidi step that always runs in the docs-only branch of the `quality` job, or rule that docs are out of the bidi check's scope. This is a conductor-lane change (workflow YAML).
 
 **Acceptance:** a docs-only PR adding a bidi control to a doc fails CI, or a dated ruling records that docs are out of scope. `make hooks-test` passes. Reviewed by `code-reviewer` and `security-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-10, fifth batch)
+
+## [ ] M16-90T — [TEST] `history()` refuses a journal record whose paths are not plain flavor-relative names
+**Size:** S · **Depends on:** nothing · **Sources:** the M16-84T security review (#453)
+
+A probe showed that main's `guard.history()` returns whatever strings a record on disk holds in `paths[].path`, `temps_left` and `created_dirs`, for example `../../etc/passwd` followed by an ESC sequence. `_JournalRecord` checks only the hashes and the format, and `_load_journal` runs no `_check_rel` on any path field. `undo()` checks paths later; `history()` never does, so `doctor` and `undo`'s plan can show a planted path. This is `guard.py`, which is load-bearing (ADR-0013), so the graders land first. They cover a record whose path fields hold traversal, absolute, UNC, control-character and bidi values, and expect `history()` to raise `GuardError` ("a damaged record is an error, never skipped") with the install and the store unchanged.
+
+**Acceptance:** strict-xfail graders on main, activated by M16-90 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names
+**Size:** S · **Depends on:** M16-90T · **Sources:** as M16-90T
+
+**Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-91 — `tree` link notes: a combat log is a file, and "real one" reads plainly
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-80 domain re-check (#452)
+
+Two polish items:
+- `Logs/WoWCombatLog.txt` gets two different rows: `combat-log` as a file and `logs-other` as a folder. Under M16-80's rule it now reads "real one", where it read "real file" before. When the folder row is only the area's general row (`heads_a_subtree` at an ancestor, not at this place), say "file".
+- "the real one is there" can read as "the real link". Consider "the real file or folder is there".
+
+Also update the stale docstring of `review/test_m16_80_linked_font_file_says_real_folder.py`.
+
+**Acceptance:** pinned tests for the combat log and the chosen wording. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-92 — `undo`'s plan warns that undo replaces newer changes, in every state
+**Size:** XS · **Depends on:** M16-86 · **Sources:** the M16-86 domain review (#454)
+
+M16-86 says, for an unfinished rollback, that undo replaces another program's changes, keeps a copy, and that a second undo brings them back. Other states keep `_CHANGED_SINCE` ("changed since that transaction, probably by the client at logout"), which does not say what undo does to those changes. Give them the same consequence.
+
+**Acceptance:** a pinned test per state. Reviewed by `code-reviewer` and `domain-reviewer`.
