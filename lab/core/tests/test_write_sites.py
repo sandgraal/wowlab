@@ -112,6 +112,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     (_WINJOB, "import ctypes"): _JOB,
     (_WINJOB, "from ctypes import wintypes"): _JOB,
     (_CLI, "opened = bool(webbrowser.open(server.url))"): _BROWSER,
+    (_CLI, "devnull = os.open(os.devnull, os.O_WRONLY)"): (
+        "a closed pipe on stdout (M16-14): the null device, opened to stand in for "
+        "stdout once its reader has gone; it is a device, never a file in an install"
+    ),
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
     (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,
     (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,

@@ -96,6 +96,7 @@ import base64
 import contextlib
 import csv
 import datetime
+import errno
 import functools
 import hashlib
 import io
@@ -105,6 +106,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import stat
 import sys
 import textwrap
@@ -178,6 +180,114 @@ EXIT_USAGE = 2
 EXIT_REFUSED = 3
 
 
+def _closed_pipe(exc: BaseException, *, windows: bool | None = None) -> bool:
+    """Whether `exc`, raised by a write to stdout, means the reader went away.
+
+    Everywhere that is `BrokenPipeError` (EPIPE). On Windows a write to a
+    pipe whose reader closed can also fail with EINVAL instead: the C
+    runtime maps the system's "the pipe is being closed" error to it, so
+    there EINVAL from stdout counts too. `windows` is for tests; None reads
+    the platform."""
+    if isinstance(exc, BrokenPipeError):
+        return True
+    if windows is None:
+        windows = sys.platform == "win32"
+    return windows and isinstance(exc, OSError) and exc.errno == errno.EINVAL
+
+
+class _PipeState:
+    """Whether the reader of stdout has gone, shared by the text stream and
+    its `buffer`."""
+
+    def __init__(self) -> None:
+        self.gone = False
+
+
+class _PipeSafeStream:
+    """stdout for the `wowlab` command (`_WowlabApp`): when the reader of a
+    pipe goes away (`wowlab tree | head -1`), the rest of the output is
+    dropped and the command goes on to the end, so a restore or any other
+    write never stops half way because nobody reads its report. The command
+    then exits as it would have: 0 when its work completed, with no errno
+    line on stderr.
+
+    On the first failed write the stream's file descriptor is pointed at the
+    null device, so the bytes still in Python's own buffer, which it flushes
+    as the process ends, go there instead of failing again. Every other
+    attribute is the wrapped stream's, and `buffer` is guarded the same way
+    for a write of bytes."""
+
+    def __init__(self, stream: Any, state: _PipeState | None = None) -> None:
+        self._stream = stream
+        self._state = state if state is not None else _PipeState()
+        self._buffer: _PipeSafeStream | None = None
+
+    @property
+    def buffer(self) -> Any:
+        if self._buffer is None:
+            self._buffer = _PipeSafeStream(self._stream.buffer, self._state)
+        return self._buffer
+
+    def write(self, data: Any) -> int:
+        if self._state.gone:
+            return len(data)
+        try:
+            written: int = self._stream.write(data)
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+            return len(data)
+        return written
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        if self._state.gone:
+            return
+        try:
+            self._stream.flush()
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+
+    def _reader_gone(self) -> None:
+        self._state.gone = True
+        try:
+            fd = self._stream.fileno()
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, fd)
+            finally:
+                os.close(devnull)
+        except (OSError, ValueError, AttributeError):
+            # Not a real file descriptor (a test's stream): nothing to point.
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _ignore_sigpipe() -> None:
+    """SIGPIPE ignored, so a write to a closed pipe raises an error that
+    `_PipeSafeStream` handles instead of killing the process mid-write.
+    Python ignores it at startup already; this keeps it so when a parent
+    process or an embedding changed that. Windows has no SIGPIPE, and a
+    thread other than the main one cannot set a handler: both are left
+    as they are."""
+    sigpipe = getattr(signal, "SIGPIPE", None)
+    if sigpipe is None:
+        return
+    # Not `contextlib.suppress`: one call fewer where Ctrl-C can land.
+    try:  # noqa: SIM105
+        signal.signal(sigpipe, signal.SIG_IGN)
+    except ValueError:
+        pass
+
+
 class _WowlabApp(typer.Typer):
     """The `wowlab` app: run as the console script (`wowlab_core.cli:app`),
     an exception nothing caught is printed by `_excepthook`, escaped.
@@ -193,10 +303,19 @@ class _WowlabApp(typer.Typer):
     exit 1, as Python would make it; Ctrl-C while that line is escaped is
     swallowed, and `_excepthook` is in place first in case it is not. The
     test runner calls the root command's `main`, not this, and so gets the
-    exception itself."""
+    exception itself.
+
+    A closed pipe on stdout is handled here too, once for every command:
+    stdout is a `_PipeSafeStream` while the app runs and SIGPIPE stays
+    ignored (`_ignore_sigpipe`)."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         hook = sys.excepthook
+        _ignore_sigpipe()
+        stdout = sys.stdout
+        guarded = stdout is not None and not isinstance(stdout, _PipeSafeStream)
+        if guarded:
+            sys.stdout = _PipeSafeStream(stdout)
         try:
             return super().__call__(*args, **kwargs)
         except SystemExit as exc:
@@ -216,6 +335,16 @@ class _WowlabApp(typer.Typer):
             raise
         finally:
             sys.excepthook = hook
+            if guarded:
+                current = sys.stdout
+                # Output still buffered goes out (or, with the reader gone,
+                # nowhere) before stdout is put back as it was.
+                try:  # noqa: SIM105
+                    current.flush()
+                except (OSError, ValueError):
+                    pass
+                if isinstance(current, _PipeSafeStream):
+                    sys.stdout = stdout
 
 
 class _WowlabContext(Context):
@@ -3816,7 +3945,9 @@ def _rows(tops: Sequence[tuple[str, str, luadata.LuaValue]]) -> Iterator[dict[st
 def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) -> None:
     """Write `SvDumpReport` JSON to stdout row by row: only one row is held
     at a time, and nothing is indented (a deep file would otherwise print a
-    wall of spaces on every line)."""
+    wall of spaces on every line). Each row is one `encode` call, which takes
+    the C encoder; `iterencode` would take the pure-Python one (M16-24). A row
+    is at most three levels deep, so the C encoder's recursion is bounded."""
     encoder = json.JSONEncoder(ensure_ascii=True, separators=(",", ":"))
     out = typer.get_text_stream("stdout")
     head = {"file": _json_text(file), "path": None if path is None else _json_text(path)}
@@ -3824,8 +3955,7 @@ def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) ->
     for n, row in enumerate(rows):
         if n:
             out.write(",")
-        for chunk in encoder.iterencode(_map_strings(row, _json_text)):
-            out.write(chunk)
+        out.write(encoder.encode(_map_strings(row, _json_text)))
     out.write("]}\n")
     out.flush()
 
@@ -10877,6 +11007,19 @@ _NO_CLASS_REMARK = (
     "The record holds no class: class-restricted choices are noted, not refused; --class "
     "checks them."
 )
+_RECORDED_NO_CLASS_REMARK = (
+    "The record holds no class: {reason}. Class-restricted choices are noted, not refused; "
+    "--class checks them."
+)
+_RECORDED_CLASS_REMARK = "The class is the one the lab-addon recorded for this character: {cls}."
+_CLASS_DISAGREES_REMARK = (
+    "--class gives {given}, but the lab-addon recorded {cls} for this character; --class is used."
+)
+_RACES_DIFFER_REMARK = (
+    "The record's identity (race {identity}) and its customization (race {customization}) were "
+    "recorded in different sessions; the class is the identity's, which may not be the class "
+    "of the character that made this look."
+)
 
 
 class LooksImportReport(_Out):
@@ -10893,6 +11036,19 @@ class LooksImportReport(_Out):
     as_of_words: str  # how the record's moment is said: never the character's appearance now
     saved: bool
     look: LookReport
+    # Where `look.class_id` came from: the --class option, the record's
+    # `identity` (schema 4), or nowhere (None: no class in the look).
+    class_from: Literal["--class", "record"] | None = None
+    # The class the record holds (schema 4's `identity`), each beside the
+    # reason it holds no class id; exactly one of the id and the reason is
+    # set (the class file is beside the id when the record has both).
+    recorded_class_id: int | None = None
+    recorded_class_file: str | None = None
+    recorded_class_absent: str | None = None
+    # The race the record's `identity` holds (None when it holds none). It
+    # can differ from `record.race_id`: the identity is gathered at each
+    # login, the customization record is carried from an earlier session.
+    recorded_race_id: int | None = None
 
 
 def _loads_ago_text(ago: int | None) -> str:
@@ -10904,7 +11060,7 @@ def _loads_ago_text(ago: int | None) -> str:
 
 
 def _import_remarks(
-    model: looks.Customizations, got: labaddon.CustomizationImport, class_id: int | None
+    model: looks.Customizations, got: labaddon.CustomizationImport, class_remarks: list[str]
 ) -> list[str]:
     at = got.recorded_at if got.recorded_at is not None else "not recorded"
     remarks = [
@@ -10947,8 +11103,7 @@ def _import_remarks(
             f"The barber shop was showing model {got.chr_model_id}; build {model.build}'s "
             f"tables give race {got.race_id} body type {got.body_type} model {expected}."
         )
-    if class_id is None:
-        remarks.append(_NO_CLASS_REMARK)
+    remarks.extend(class_remarks)
     if got.client_build is not None and got.client_build != model.build:
         remarks.append(
             f"Recorded by client build {got.client_build}; checked against build "
@@ -10956,6 +11111,52 @@ def _import_remarks(
             "come from a hotfix."
         )
     return remarks
+
+
+def _import_class(
+    model: looks.Customizations,
+    record: labaddon.CharDB,
+    got: labaddon.CustomizationImport,
+    given: str | None,
+) -> tuple[int | None, Literal["--class", "record"] | None, labaddon.CharIdentity, list[str]]:
+    """The look's class, where it came from, the record's identity and the
+    remarks that say so. --class wins over the record (said in one line when
+    they differ); a record of schema 1 to 3 holds no class and keeps the
+    remark it always had. The record's class id is checked by the look, as a
+    typed --class id is. A class taken from an identity whose race is not the
+    customization record's is said to come from another session."""
+    identity = labaddon.identity_of(record)
+    recorded = identity.class_id
+    class_id = _resolve_class(model, given)
+    if class_id is not None:
+        remarks: list[str] = []
+        if recorded is not None and recorded != class_id:
+            remarks.append(
+                _CLASS_DISAGREES_REMARK.format(
+                    given=_class_words(model, class_id), cls=_class_words(model, recorded)
+                )
+            )
+        return class_id, "--class", identity, remarks
+    if recorded is not None:
+        remarks = [_RECORDED_CLASS_REMARK.format(cls=_class_words(model, recorded))]
+        if identity.race_id is not None and identity.race_id != got.race_id:
+            remarks.append(
+                _RACES_DIFFER_REMARK.format(identity=identity.race_id, customization=got.race_id)
+            )
+        return recorded, "record", identity, remarks
+    if not isinstance(record, labaddon.CharDBV4):
+        return None, None, identity, [_NO_CLASS_REMARK]
+    return (
+        None,
+        None,
+        identity,
+        [_RECORDED_NO_CLASS_REMARK.format(reason=(identity.class_id_absent or "").rstrip("."))],
+    )
+
+
+def _class_words(model: looks.Customizations, class_id: int) -> str:
+    known = model.classes.get(class_id)
+    return f"{known.name} ({class_id})" if known is not None else f"{class_id}"
 
 
 @looks_app.command("import-char", short_help="Save a character's recorded customization as a look.")
@@ -10979,7 +11180,9 @@ def looks_import_char(
     only); without --character, the one written last. A character with no
     recorded visit gets the addon's reason (exit 1). The look is checked like
     `looks save`: one the tables refuse is not saved (exit 1); an id the
-    tables lack is noted "(possibly a hotfix)".
+    tables lack is noted "(possibly a hotfix)". Without --class, the class is
+    the one the lab-addon recorded for the character, when its record holds
+    one; --class wins over it.
 
     \f
     JSON: LooksImportReport."""
@@ -11002,7 +11205,7 @@ def looks_import_char(
     with _open_gamedata() as data:
         version, build_remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    class_id = _resolve_class(model, class_)
+    class_id, class_from, identity, class_remarks = _import_class(model, record, got, class_)
     look = looks.Look(
         name=name,
         race_id=got.race_id,
@@ -11016,7 +11219,7 @@ def looks_import_char(
         recorded_client_build=got.client_build,
         look=look,
     )
-    remarks = [*_import_remarks(model, got, class_id), *build_remarks]
+    remarks = [*_import_remarks(model, got, class_remarks), *build_remarks]
     report = _look_report(model, saved, None, remarks, imported_remark=False)
     path: Path | None = None
     if not report.refused:
@@ -11033,6 +11236,11 @@ def looks_import_char(
         as_of_words=_AS_OF_WORDS[got.recorded_at],
         saved=path is not None,
         look=report,
+        class_from=class_from,
+        recorded_class_id=identity.class_id,
+        recorded_class_file=identity.class_file,
+        recorded_class_absent=identity.class_id_absent,
+        recorded_race_id=identity.race_id,
     )
     if json_out:
         _emit(out)
