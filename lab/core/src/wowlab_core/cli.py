@@ -2011,6 +2011,24 @@ def _rollback_unfinished(record_id: str) -> str:
     )
 
 
+# A journal record's state as `doctor`'s text output says it (M16-85): the
+# player-copy rules forbid printing the state names, which `--json` keeps.
+# Every state the write gate journals is here; the words for the two that
+# are problems match `_interrupted` and `_rollback_unfinished`.
+_JOURNAL_STATE_WORDS: dict[str, str] = {
+    "committed": "finished",
+    "open": "did not finish",
+    "rolled_back": "failed, and its files were put back",
+    "rollback_incomplete": "failed, and putting the files back did not finish",
+}
+
+
+def _journal_state_words(state: str) -> str:
+    """The words for a journal record's state; a state this version does not
+    know (a journal written by a later one) is said as such, not by name."""
+    return _JOURNAL_STATE_WORDS.get(state, "in a state this version of wowlab does not know")
+
+
 # Where the Battle.net app repairs an install, a missing .build.info included.
 _SCAN_AND_REPAIR = (
     "  If this is the game's folder and its .build.info went missing, the Battle.net app "
@@ -2139,7 +2157,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         t = store.last_transaction
         _say(
             f"  {store.transactions} transaction(s) in the journal; most recent: {t.id} "
-            f'({t.state}, {t.paths} file(s)) "{t.label}"'
+            f'({_journal_state_words(t.state)}; {t.paths} file(s)) "{t.label}"'
         )
     else:
         _say("  no transactions in the journal")
