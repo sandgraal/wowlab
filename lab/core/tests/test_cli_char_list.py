@@ -68,7 +68,10 @@ ROW = re.compile(
     r"  (?P<what>.+)$"
 )
 RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE, Cf
-NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_FOLLOWED = (
+    "a link, not followed; wowlab does not read through links, so it reads this only "
+    "when the real folder is there"
+)
 POSIX_PERMISSIONS = pytest.mark.skipif(
     sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
     reason="POSIX permissions, and not as root",
@@ -760,7 +763,7 @@ def test_constructed_a_mistyped_account_opens_no_file(
     hidden = run("char", "list", "--account", "LinkedAcct")
     assert hidden.exit_code == 1
     assert not isinstance(hidden.exception, AssertionError), hidden.exception
-    assert "not followed" in hidden.stderr
+    assert NOT_FOLLOWED in hidden.stderr
 
 
 def test_constructed_hard_linked_copy_has_its_own_row_and_line(flavor: Path) -> None:

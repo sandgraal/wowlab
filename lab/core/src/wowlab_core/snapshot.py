@@ -239,24 +239,80 @@ def open_regular_file(
     return fd, st
 
 
+def not_read_through(what: str) -> str:
+    """The words every refusal of a link ends with (M16-65): the rule, then
+    what the player can do. `what` is what the link stands in place of
+    ("folder", "file", "one")."""
+    return (
+        f"wowlab does not read through links, so it reads this only when the real {what} is there"
+    )
+
+
+CHANGED_WHILE_READ = "became a link while wowlab read it; run the command again"
+"""Said of the folder (or file) a listing had just found behind no link and
+the read then met as one (M16-65)."""
+
+
+def _shown(path: Path, within: Path | None) -> str:
+    """`path` as the player reads it: relative to `within` (the flavor
+    folder) with `/` between parts when it lies under it, else in full."""
+    if within is not None:
+        with contextlib.suppress(ValueError):
+            return path.relative_to(within).as_posix()
+    return str(path)
+
+
+def linked_folder_words(subject: object, folder: object) -> str:
+    """`subject` reached through the linked folder `folder`, in the one
+    sentence the readers and `sv dump` use (M16-65)."""
+    return f"{subject} is reached through a linked folder, {folder}; {not_read_through('folder')}"
+
+
 class LinkedPathError(UnsafeReadError):
     """A file asked for under an install root is reached through a link: a
     folder on the way that is a link (`folder` names it, `final` is False),
     or the file itself (`folder` is the file, `final` is True). Nothing
-    behind the link was read (M16-49)."""
+    behind the link was read (M16-49). `changed` is set when a listing had
+    found the file behind no link just before (`changed_while_read`,
+    M16-65)."""
 
-    def __init__(self, path: Path, folder: Path, *, final: bool) -> None:
+    def __init__(
+        self,
+        path: Path,
+        folder: Path,
+        *,
+        final: bool,
+        changed: bool = False,
+        within: Path | None = None,
+        subject: str | None = None,
+    ) -> None:
         self.path = path
         self.folder = folder
         self.final = final
-        if final:
-            text = f"{path} is a link, and wowlab does not read through one"
+        self.changed = changed
+        name = subject if subject is not None else _shown(path, within)
+        where = _shown(folder, within)
+        if changed and final:
+            text = f"{name} {CHANGED_WHILE_READ}"
+        elif changed:
+            text = f"{name} is reached through a linked folder: {where} {CHANGED_WHILE_READ}"
+        elif final:
+            text = f"{name} is a link; {not_read_through('file')}"
         else:
-            text = (
-                f"{path} is reached through a linked folder, {folder}, "
-                "and wowlab does not read through one"
-            )
+            text = linked_folder_words(name, folder if within is None else where)
         super().__init__(text)
+
+    def changed_while_read(
+        self, within: Path | None = None, *, subject: str | None = None
+    ) -> LinkedPathError:
+        """The refusal for a caller that had just listed the file behind no
+        link: the folder (or file) became a link while wowlab read it, so the
+        way on is to run the command again. Paths under `within` (the flavor
+        folder) are named relative to it; `subject`, when given, names the
+        file instead ("the file", where the line already names it)."""
+        return LinkedPathError(
+            self.path, self.folder, final=self.final, changed=True, within=within, subject=subject
+        )
 
 
 _OPEN_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
@@ -412,7 +468,9 @@ def read_regular_file(
     """The bytes of `path`, opened as `open_regular_file` opens it (relative
     to `dir_fd` when one is given), or from the install root `root` one
     component at a time when one is given (`open_regular_file_from_root`;
-    not with `expect` or `dir_fd`).
+    not with `dir_fd`). `expect`, an earlier `lstat` of the path, holds with
+    either: the file opened must be that same file by device and inode, else
+    `UnsafeReadError` (with `root` since M16-65).
 
     With a `limit`, a file whose `fstat` size is over it is refused before
     any read, and at most `limit + 1` bytes are read, so one that grows past
@@ -420,11 +478,20 @@ def read_regular_file(
     closed on every path.
     """
     if root is not None:
-        if expect is not None or dir_fd is not None:
-            raise ValueError("root is not combined with expect or dir_fd")
+        if dir_fd is not None:
+            raise ValueError("root is not combined with dir_fd")
         fd, st = open_regular_file_from_root(path, root)
+        if expect is not None and _file_identity(st) != _file_identity(expect):
+            os.close(fd)
+            raise UnsafeReadError(f"{path} was replaced before it was opened")
     else:
         fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
+    return _read_opened(fd, st, path, limit)
+
+
+def _read_opened(fd: int, st: os.stat_result, path: Path, limit: int | None) -> bytes:
+    """Read the open descriptor `fd` (`st` its `fstat`) within `limit`, and
+    close it on every path."""
     try:
         if limit is not None and st.st_size > limit:
             raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")

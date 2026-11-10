@@ -1766,7 +1766,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
         is_account = f.scope == "account" and name == "config-cache.wtf"
         if not (is_machine or is_account):
             continue
-        doc = wtfconfig.read_config(lay.flavor_path / f.path, root=lay.install_root)
+        doc = _listed(wtfconfig.read_config, lay, f.path)
         for cvar in _SYNC_CVARS:
             found = doc.get(cvar)
             out.append(
@@ -4601,30 +4601,16 @@ def _sv_file_and_root(
     of the install it lies in (M16-49): the install `--root` or discovery
     names, when FILE is under it as spelled; otherwise None, and the file is
     read with only its last part checked for a link. A path in the install
-    spelled with `..`, or through another spelling of the install, is
-    refused (exit 3)."""
-    given = Path(_plain_arg(path))
-    if given.is_absolute() or longpath.lexists(given):
-        if account is not None or character is not None:
-            _note("--account and --character choose among names only; {} was read as typed", path)
-        try:
-            found, _ = _discover(root)
-        except install.InstallError:
-            return given, None
-        target, install_root = given, found.root
-    else:
-        _, chosen, lay = _open(root, flavor)
-        direct = lay.flavor_path / given
-        if longpath.lexists(direct):
-            if account is not None or character is not None:
-                _note(
-                    "--account and --character choose among names only; {} was read as typed",
-                    path,
-                )
-            target = direct
-        else:
-            target = lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
-        install_root = lay.install_root
+    spelled with `..`, or through another spelling of the install (a link
+    into one of its folders among them, M16-65), is refused (exit 3)."""
+    target = _sv_file(path, root, flavor, account, character)
+    try:
+        # A FILE `_sv_file` looked up under the flavor folder has had the
+        # install found already; one given as a path may lie outside any.
+        found, _ = _discover(root)
+    except install.InstallError:
+        return target, None
+    install_root = found.root
     holding = _install_holding(target, install_root)
     if holding is not None and ".." in target.absolute().parts:
         raise CliError(
@@ -4640,6 +4626,15 @@ def _sv_file_and_root(
         raise CliError(
             f"refused: {target} is in the install at {install_root}, but not spelled under "
             "that folder; give the path as it sits under that folder",
+            EXIT_REFUSED,
+        )
+    linked = _link_out_of_install(target, install_root) if holding is None else None
+    if linked is not None:
+        # A link into a folder of the install, and a linked folder in the
+        # install that leads out again (M16-65): neither check above sees
+        # the install, and checking the last part only would follow it.
+        raise CliError(
+            f"refused: {snapshot.linked_folder_words(target, linked)}",
             EXIT_REFUSED,
         )
     return target, holding
@@ -4664,7 +4659,9 @@ def _really_inside(path: Path, root: Path) -> bool:
     device and inode (each `stat`ed following links, so a link to the root
     and the root named in another case on macOS or Windows count, and a
     linked folder further down cannot hide it); or, as a second check, some
-    folder above its real path is. False when the root cannot be `stat`ed."""
+    folder above its real path is. False when the root cannot be `stat`ed.
+    A path that enters the install by a link and leaves it again by a linked
+    folder is `_link_out_of_install`'s."""
     try:
         st = longpath.stat(root)
     except (OSError, ValueError):
@@ -4683,6 +4680,79 @@ def _really_inside(path: Path, root: Path) -> bool:
         if (here.st_dev, here.st_ino) == want:
             return True
     return False
+
+
+_MAX_LINK_HOPS = 40  # links resolved on one path before the walk gives up (as POSIX's ELOOP)
+
+
+def _links_met(path: Path) -> list[tuple[Path, list[Path]]]:
+    """Each link an open of `path` meets on the way to its folder, with the
+    folders that hold it at that moment (from the top of the drive down to
+    the folder the link is in), each link resolved where it is met, its
+    target read, never followed blindly (M16-65). On POSIX the parts are
+    taken as typed and each `..` steps out of the folder actually reached,
+    as the system's open takes it (after a link, into the link's target's
+    parent); on Windows, which takes `..` as text, they are taken lexically
+    first. The walk stops at the first part that is missing, is not a
+    folder, or cannot be read, and after `_MAX_LINK_HOPS` links. Nothing is
+    opened; each part is `lstat`ed."""
+    full = path.absolute()
+    if longpath.ON_WINDOWS:
+        full = Path(os.path.normpath(full))
+    chain = [Path(full.anchor)]  # the folders reached, the last one the current
+    pending = list(full.parts[1:-1])  # the folders; the file itself is not one
+    met: list[tuple[Path, list[Path]]] = []
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            if len(chain) > 1:
+                chain.pop()  # every folder in `chain` is a real one, no link
+            continue
+        step = chain[-1] / name
+        try:
+            st = longpath.lstat(step)
+            linked = stat.S_ISLNK(st.st_mode) or longpath.is_junction(step)
+            target = longpath.readlink(step) if linked else None
+        except (OSError, ValueError):
+            break
+        if target is not None:
+            met.append((step, list(chain)))
+            if len(met) > _MAX_LINK_HOPS:
+                break
+            if target.is_absolute():
+                chain = [Path(target.anchor)]
+                pending[:0] = target.parts[1:]
+            else:
+                pending[:0] = target.parts
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            break
+        chain.append(step)
+    return met
+
+
+def _link_out_of_install(path: Path, root: Path) -> Path | None:
+    """The first link an open of `path` meets inside the install at `root`
+    (a folder holding it is the root's folder by device and inode), as the
+    open reaches it: a shortcut into a folder of the install whose way on
+    leaves it by a linked folder (M16-65). None when there is none, or the
+    root cannot be `stat`ed."""
+    try:
+        st = longpath.stat(root)
+    except (OSError, ValueError):
+        return None
+    want = (st.st_dev, st.st_ino)
+    for link, holders in _links_met(path):
+        for folder in holders:
+            try:
+                here = longpath.stat(folder)
+            except OSError:
+                continue
+            if (here.st_dev, here.st_ino) == want:
+                return link
+    return None
 
 
 _SV_LAST_PART_ONLY = (
@@ -5112,10 +5182,23 @@ def _merge_target(
     return target
 
 
-def _read_sv(path: Path) -> bytes:
-    """A SavedVariables file's bytes, read without following a link and
-    without blocking on anything but a regular file (L1)."""
-    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+def _listed[T](read: Callable[..., T], lay: layout.Layout, rel: str, **kwargs: Any) -> T:
+    """`read(<flavor folder>/rel, root=<install root>, **kwargs)`: a file a
+    listing of the install just found, read from the install root one folder
+    at a time (M16-49, M16-65). The listing follows no link, so a link met
+    now changed while wowlab read it, and the refusal says so."""
+    try:
+        return read(lay.flavor_path / rel, root=lay.install_root, **kwargs)
+    except snapshot.LinkedPathError as exc:
+        raise exc.changed_while_read(lay.flavor_path) from exc
+
+
+def _read_sv(lay: layout.Layout, rel: str) -> bytes:
+    """A SavedVariables file's bytes, `rel` under the flavor folder, opened
+    from the install root one folder at a time (M16-65), so a link anywhere
+    on the way is refused with the folder named, and without blocking on
+    anything but a regular file (L1)."""
+    return _listed(snapshot.read_regular_file, lay, rel, limit=luadata.MAX_FILE_BYTES)
 
 
 def _snapshot_sv(store: snapshot.SnapshotStore, snapshot_id: str, rel: str, folder: str) -> bytes:
@@ -5239,7 +5322,7 @@ def _loader_check(
             "lab-addon installed (`wowlab addon install lab`), one login and logout writes it."
         ]
     rel = found.path
-    disk = _read_sv(lay.flavor_path / rel)
+    disk = _read_sv(lay, rel)
     try:
         probe = svmerge.read_probe(luadata.parse(disk))
     except luadata.LuaDataError as exc:
@@ -5625,7 +5708,7 @@ def sv_merge(
             raise CliError("--base goes with --from SNAPSHOT, not a character", EXIT_USAGE)
     base_id = store.resolve_id(base) if base is not None else None
     target_path = lay.flavor_path / target.path
-    ours_bytes = _read_sv(target_path)
+    ours_bytes = _read_sv(lay, target.path)
     expected = hashlib.sha256(ours_bytes).hexdigest()
     if expect_target is not None and expect_target != expected:
         # Final already: this run would merge into other bytes than the plan
@@ -5641,7 +5724,7 @@ def sv_merge(
         found = _character_sv(files, acct, source_char, _sv_name(target))
         if found is None:
             raise CliError(f"{source_char.path}/SavedVariables/ has no {_sv_name(target)}")
-        theirs_bytes = _read_sv(lay.flavor_path / found.path)
+        theirs_bytes = _read_sv(lay, found.path)
         source = f"character {source_char.realm_folder}/{source_char.folder}"
     elif source_snap is not None:
         theirs_bytes = _snapshot_sv(store, source_snap, target.path, chosen.folder)
@@ -5886,7 +5969,7 @@ def _read_config(
     return (
         target,
         found.path,
-        wtfconfig.read_config(lay.flavor_path / found.path, root=lay.install_root),
+        _listed(wtfconfig.read_config, lay, found.path),
     )
 
 
@@ -6039,11 +6122,7 @@ def binds_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "bindings-cache.wtf", scope, account, character)
-    doc = (
-        wtfconfig.read_bindings(lay.flavor_path / found.path, root=lay.install_root)
-        if found
-        else None
-    )
+    doc = _listed(wtfconfig.read_bindings, lay, found.path) if found else None
     report = BindsReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6177,7 +6256,7 @@ def _coach_record(
             raise
         return None, None, None, str(exc)
     try:
-        return target, how, labaddon.read_char(lay.flavor_path / target.path), None
+        return target, how, _listed(labaddon.read_char, lay, target.path), None
     except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
         return target, how, None, str(exc)
 
@@ -6248,7 +6327,7 @@ def _coach_default_record(
             ranked.append((-1, newest, folder, None, None, str(exc)))
             continue
         try:
-            record = labaddon.read_char(lay.flavor_path / target.path)
+            record = _listed(labaddon.read_char, lay, target.path)
         except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
             ranked.append((-1, newest, folder, target, None, str(exc)))
             continue
@@ -6786,11 +6865,7 @@ def macros_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "macros-cache.txt", scope, account, character)
-    doc = (
-        wtfconfig.read_macros(lay.flavor_path / found.path, root=lay.install_root)
-        if found
-        else None
-    )
+    doc = _listed(wtfconfig.read_macros, lay, found.path) if found else None
     report = MacrosReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6910,7 +6985,7 @@ def _check_record(
     except CliError as exc:  # several files and no single choice (case variants)
         return None, None, str(exc)
     try:
-        return target.path, labaddon.read_char(lay.flavor_path / target.path), None
+        return target.path, _listed(labaddon.read_char, lay, target.path), None
     except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
         return target.path, None, str(exc)
 
@@ -6948,9 +7023,7 @@ def macros_check(
         if found is None:
             files.append(MacrosFile(scope=scope, file=None, macros=0, unknown_lines=0))
             continue
-        data = snapshot.read_regular_file(
-            lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
-        )
+        data = _listed(snapshot.read_regular_file, lay, found.path, limit=_MACROS_LIMIT)
         doc = wtfconfig.parse_macros(data)
         files.append(
             MacrosFile(
@@ -8268,7 +8341,12 @@ _VALUE_WIDTH = 60
 
 class _Unread:
     """A side that holds bytes wowlab could not read back (missing from the
-    store, changed on disk since the plan's hash, or over the size limit)."""
+    store, changed on disk since the plan's hash, or over the size limit).
+    `why`, when set, is said in place of the general words: a file on disk
+    reached through a linked folder, the folder named (M16-65)."""
+
+    def __init__(self, why: str | None = None) -> None:
+        self.why = why
 
 
 _UNREAD = _Unread()
@@ -8405,7 +8483,11 @@ def _detail_lines(path: str, before: _Side, after: _Side, *, limit: int | None) 
     if kind is None and not _is_saved_variables(path):
         return []
     if isinstance(before, _Unread) or isinstance(after, _Unread):
-        return [f"{_DETAIL_INDENT}(not compared: wowlab could not read both versions back)"]
+        why = next(
+            (s.why for s in (before, after) if isinstance(s, _Unread) and s.why is not None),
+            "wowlab could not read both versions back",
+        )
+        return [f"{_DETAIL_INDENT}(not compared: {why})"]
     if kind is not None:
         return _wtf_lines(kind, before, after, limit)
     return _sv_lines(before, after)
@@ -8436,25 +8518,50 @@ _CHANGED_SINCE = (
 )
 
 
+def _read_detail(flavor_path: Path, rel: str) -> bytes:
+    """The install's file at `rel` for a detail line, read-only through the
+    guarded opener, from the install root (the flavor folder's parent, as
+    `layout` takes it) one folder at a time (M16-65): a link anywhere on the
+    way is refused, `snapshot.LinkedPathError` naming it."""
+    return snapshot.read_regular_file(
+        flavor_path / rel, limit=_DETAIL_READ_LIMIT, root=flavor_path.parent
+    )
+
+
+def _linked_side(exc: snapshot.LinkedPathError) -> _Unread:
+    """The install's side of a detail, refused as a link: why, in the
+    detail line's words (the file is named on the line above it)."""
+    if exc.final:
+        return _Unread("the install's copy is a link")
+    return _Unread(f"the install's copy is reached through a linked folder, {exc.folder}")
+
+
 def _disk_now(flavor_path: Path, rel: str) -> _Side:
     """What the install holds at `rel` now, read-only through the guarded
     opener: None when nothing is there, `_UNREAD` when it cannot be read as
-    a regular file under the detail limit (a link, a FIFO, too large)."""
+    a regular file under the detail limit (a FIFO, too large); a link, or a
+    file reached through a linked folder, says so (M16-65)."""
     try:
-        return snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+        return _read_detail(flavor_path, rel)
     except FileNotFoundError:
         return None
+    except snapshot.LinkedPathError as exc:
+        return _linked_side(exc)
     except OSError:
         return _UNREAD
 
 
 def _on_disk(store: snapshot.SnapshotStore, flavor_path: Path, rel: str, sha: str | None) -> _Side:
     """The bytes the install holds at `rel` when they still hash to `sha`
-    (read-only, through the guarded opener), else the store's copy."""
+    (read-only, through the guarded opener), else the store's copy. A link,
+    or a file reached through a linked folder, is not read and not stood in
+    for by the store's copy: the detail says so (M16-65)."""
     if sha is None:
         return None
     try:
-        data = snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+        data = _read_detail(flavor_path, rel)
+    except snapshot.LinkedPathError as exc:
+        return _linked_side(exc)
     except OSError:
         data = None
     if data is not None and hashlib.sha256(data).hexdigest() == sha:
@@ -10174,11 +10281,11 @@ def char_show(
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     account_files = [f for f in files if f.scope == "account"]
     account_file = account_files[0] if account_files else None
     account_record = (
-        labaddon.read_account(lay.flavor_path / account_file.path) if account_file else None
+        _listed(labaddon.read_account, lay, account_file.path) if account_file else None
     )
     known, ignored = labaddon.skip_known(record)
     report = CharShowReport(
@@ -10783,7 +10890,7 @@ def char_gear(
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     missing = _no_gear(record, target.path)
     if missing is not None:
         raise CliError(missing)
@@ -10940,11 +11047,7 @@ def _char_binds_file(
         ]
         scope = "character"
     target = found[0] if found else None
-    doc = (
-        wtfconfig.read_bindings(lay.flavor_path / target.path, root=lay.install_root)
-        if target
-        else None
-    )
+    doc = _listed(wtfconfig.read_bindings, lay, target.path) if target else None
     note = _ACCOUNT_BINDINGS if scope == "account" else _NO_CHARACTER_BINDINGS
     if scope == "character" and doc is not None:
         note = _bindings_note("character", True)
@@ -11269,9 +11372,7 @@ def _char_macros_file(
     _, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, who)
     if found is None:
         return CharMacrosFile(scope=scope, path=None, mtime_ns=None, macros=0, unknown_lines=0), []
-    data = snapshot.read_regular_file(
-        lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
-    )
+    data = _listed(snapshot.read_regular_file, lay, found.path, limit=_MACROS_LIMIT)
     doc = wtfconfig.parse_macros(data)
     return (
         CharMacrosFile(
@@ -12729,7 +12830,7 @@ def looks_import_char(
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
     who = f"{target.realm_folder}/{target.character_folder}"
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     try:
         got = labaddon.customization_import(record)
     except labaddon.NoCustomizationError as exc:

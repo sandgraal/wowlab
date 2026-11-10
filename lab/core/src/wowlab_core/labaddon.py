@@ -84,8 +84,9 @@ available"; an empty list reads "none recorded"; a trait config's `type` is
 the raw client enum number; professions are named by skill line.
 
 Reads never write (L1): `read_char` and `read_account` open one file with
-`snapshot.read_regular_file` (read-only, no final link followed, no blocking
-on a FIFO, bounded by `luadata.MAX_FILE_BYTES`) and write nothing anywhere;
+`snapshot.read_regular_file` (read-only, from the install root one folder at
+a time so no link on the way is followed, no blocking on a FIFO, bounded by
+`luadata.MAX_FILE_BYTES`) and write nothing anywhere;
 `survey` lists folders through `layout` and reads each file the same way,
 within `MAX_SURVEY_BYTES` for all of them together.
 Nothing here names a flavor, a product or a build (L6).
@@ -129,6 +130,7 @@ __all__ = [
     "IDENTITY_FIELDS",
     "ID_MAX",
     "LAB_FILE_NAME",
+    "LINKED_FILE",
     "MAX_IMPORT_CHOICES",
     "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
@@ -1530,18 +1532,50 @@ def parse_account(data: bytes) -> AccountDB:
     return load_account(_variable(data, ACCOUNT_VARIABLE))
 
 
-def _read(path: Path) -> bytes:
-    return snapshot.read_regular_file(Path(path), limit=luadata.MAX_FILE_BYTES)
+def _install_root_of(path: Path) -> Path | None:
+    """The install root a file in a flavor's `WTF/Account/` tree lies under,
+    as `path` spells it: the folder above the flavor folder that holds the
+    first `WTF/Account` pair of folders in it (compared without case), so no
+    folder name below the account (a realm folder named `WTF`, say) can move
+    it. None when `path` has no such pair with a flavor folder and a root
+    above it. Nothing is opened; the names come from the path, never a
+    flavor (L6). For a library caller that gives no root; the CLI gives the
+    install's."""
+    parts = Path(path).absolute().parts
+    for i in range(2, len(parts) - 1):
+        if (
+            parts[i].casefold() == _WTF.casefold()
+            and parts[i + 1].casefold() == _ACCOUNT.casefold()
+        ):
+            return Path(*parts[: i - 1])
+    return None
 
 
-def read_char(path: Path) -> CharDB:
-    """Read a character's `WowLab.lua` (read-only; writes nothing, L1)."""
-    return parse_char(_read(path))
+def _read(path: Path, root: Path | None = None) -> bytes:
+    """The file's bytes within `luadata.MAX_FILE_BYTES`, opened from the
+    install root one folder at a time (M16-65): `root` when given, else the
+    root `_install_root_of` reads from the path, so a folder on the way that
+    is a link (an account folder swapped for one, say) is refused with the
+    folder named. A path with no install root in it has only its last part
+    checked."""
+    path = Path(path)
+    home = root if root is not None else _install_root_of(path)
+    if home is None:
+        return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES, root=Path(home))
 
 
-def read_account(path: Path) -> AccountDB:
-    """Read the account's `WowLab.lua` (read-only; writes nothing, L1)."""
-    return parse_account(_read(path))
+def read_char(path: Path, *, root: Path | None = None) -> CharDB:
+    """Read a character's `WowLab.lua` (read-only; writes nothing, L1), from
+    the install root (`root`, else the one the path spells) one folder at a
+    time, so a linked folder on the way is refused (M16-65)."""
+    return parse_char(_read(path, root))
+
+
+def read_account(path: Path, *, root: Path | None = None) -> AccountDB:
+    """Read the account's `WowLab.lua` (read-only; writes nothing, L1), from
+    the install root as `read_char` reads one (M16-65)."""
+    return parse_account(_read(path, root))
 
 
 # ─── every character (§14.4, M12-09) ─────────────────────────────────────────
@@ -1564,7 +1598,8 @@ _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # is refused on its own without charging this one.
 MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
-NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_FOLLOWED = f"a link, not followed; {snapshot.not_read_through('folder')}"
+LINKED_FILE = f"a link, not followed; {snapshot.not_read_through('file')}"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 A_FOLDER = "a folder, not a file"
 
@@ -1809,9 +1844,16 @@ class _Reader:
     all of them together, and each (device, inode) once."""
 
     def __init__(
-        self, flavor_path: Path, budget: int, keep_records: bool, root: str | None
+        self,
+        flavor_path: Path,
+        budget: int,
+        keep_records: bool,
+        root: str | None,
+        install_root: Path | None = None,
     ) -> None:
         self.flavor_path = flavor_path
+        # Where each read starts, one folder at a time (M16-65).
+        self.install_root = install_root if install_root is not None else flavor_path.parent
         # The start of the `char show` command a refused row suggests: the
         # caller's --root (only when one was given), then the flavor folder.
         self.show = ["wowlab", "char", "show"]
@@ -1827,7 +1869,7 @@ class _Reader:
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
         # The counts of folders without a WowLab.lua (M16-35), on their own bounds.
-        self.counter = _Counter(flavor_path)
+        self.counter = _Counter(flavor_path, self.install_root)
 
     def _on_its_own(self, account: str, who: str) -> str:
         """The advice ending a refused row: a `char show` command for this
@@ -1895,7 +1937,11 @@ class _Reader:
             return self._spent(account, who)
         limit = min(luadata.MAX_FILE_BYTES, self.left)
         try:
-            data = snapshot.read_regular_file(path, limit=limit, expect=st)
+            data = snapshot.read_regular_file(path, limit=limit, expect=st, root=self.install_root)
+        except snapshot.LinkedPathError as exc:
+            # The walk found this file behind no link a moment ago.
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return _Read(error=str(changed))
         except snapshot.UnsafeReadError as exc:
             if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
                 return self._spent(account, who, grew=True)
@@ -1980,8 +2026,9 @@ class _Counter:
     (`wtfconfig.count_cvar_names`, `count_macro_records`) and build no
     document, so the cost stays in proportion to the bytes read."""
 
-    def __init__(self, flavor_path: Path) -> None:
+    def __init__(self, flavor_path: Path, install_root: Path | None = None) -> None:
         self.flavor_path = flavor_path
+        self.install_root = install_root if install_root is not None else flavor_path.parent
         self.total = MAX_COUNTED_TOTAL_BYTES
         self.left = self.total
         self.full = False
@@ -2007,7 +2054,13 @@ class _Counter:
             )
         path = self.flavor_path / first.path
         try:
-            data = snapshot.read_regular_file(path, limit=min(MAX_COUNTED_FILE_BYTES, self.left))
+            data = snapshot.read_regular_file(
+                path, limit=min(MAX_COUNTED_FILE_BYTES, self.left), root=self.install_root
+            )
+        except snapshot.LinkedPathError as exc:
+            # The walk listed this file behind no link a moment ago.
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return None, f"{name} not read: {changed}"
         except OSError as exc:
             return None, f"{name} not read: {_os_error(exc, path)}"
         self.left -= len(data)
@@ -2266,7 +2319,12 @@ def survey(
         # account row (M13-69), yet a linked realm there can still hide a
         # character, and only following it would tell.
         shape = fm.classify(tuple(link.path.split("/")), "flavor", "any")
-        note(link.path, NOT_FOLLOWED, shape.id if shape else None, is_link=True)
+        entry_id = shape.id if shape else None
+        # Every place a link can hide a character's file is a folder, but
+        # for the file itself (M16-65: the words name which).
+        found = _place(link.path, entry_id, is_link=True)
+        reason = LINKED_FILE if found is not None and found[0] == "file" else NOT_FOLLOWED
+        note(link.path, reason, entry_id, is_link=True)
     for error in walk.errors:
         if error.path == "":  # the flavor folder itself could not be listed
             not_looked_at.append(NotLookedAt(path=lay.flavor_folder, reason=error.error))
@@ -2306,7 +2364,7 @@ def survey(
                 ),
             )
         )
-    reader = _Reader(lay.flavor_path, budget, keep_records, root)
+    reader = _Reader(lay.flavor_path, budget, keep_records, root, lay.install_root)
     entries = []
     for folder in sorted(folders.values(), key=_Folder.key):
         if account is not None and folder.account != account:
