@@ -52,7 +52,7 @@ wowlab snap create   # snapshot your setup before you experiment
 ```
 
 > [!NOTE]
-> This page describes `main`. The v0.1.0 release has the explorer and the read commands. The things marked 🆕 below (the confirm step in the browser view, the Character tab, `char gear`, `char binds`, `char macros`) are on `main` and arrive with the next release. To try them now, [run from source](#-running-it-from-source).
+> This page describes `main`. The v0.1.0 release has the explorer and the read commands. The things marked 🆕 below (the confirm step in the browser view, the Character tab, `char gear`, `char binds`, `char macros`, and `doctor` naming a change that was cut off) are on `main` and arrive with the next release. To try them now, [run from source](#-running-it-from-source).
 
 **🖥️ Using the explorer** (`wowlab ui`):
 
@@ -114,7 +114,7 @@ Features marked 🆕 are on `main` and arrive with the next release.
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
 | 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install with whether each is safe to touch. It also runs wowlab's commands, and a command that changes files gets a plan-then-Confirm step 🆕. Exactly which commands, and how that step works, is spelled out under **Using the explorer**, near the top of this page. | `wowlab ui` |
-| 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
+| 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. If a change wowlab made was cut off before it finished, it says so and prints the exact `wowlab undo` line that reverses it 🆕. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
