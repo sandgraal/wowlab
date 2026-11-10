@@ -234,6 +234,33 @@ class FileMap(BaseModel):
         found = self.matches(parts, base, kind)
         return found[0] if found else None
 
+    def named(self, parts: Sequence[str]) -> tuple[FileMapEntry, ...]:
+        """Every entry, in file order, with a file pattern that ends in the
+        name `parts` ends in, spelled out (M16-18): `parts` are the last
+        segments of a path, and each matches the pattern's segment in the
+        same place from the end. A pattern whose last segment is a wildcard
+        (`*.lua`, `**`, `<digits>`) names no file, so a bare name never
+        matches it; nor does a pattern with `**` among the segments `parts`
+        would be compared with, or one shorter than `parts`. Excludes are
+        not applied: what is not on disk has no full path to test them on."""
+        tail = tuple(parts)
+        if not tail:
+            return ()
+        found: list[FileMapEntry] = []
+        for e in self.entries:
+            for pattern in e.match:
+                if pattern == _SELF or pattern.endswith("/"):
+                    continue
+                segments = _segments(pattern)
+                if len(segments) < len(tail) or not _literal(segments[-1]):
+                    continue
+                end = segments[-len(tail) :]
+                if _ANY_DEPTH in end or not _match(end, tail):
+                    continue
+                found.append(e)
+                break
+        return tuple(found)
+
     def covers(self, parts: Sequence[str], base: Literal["root", "flavor"]) -> bool:
         """Whether every path strictly below the folder `parts` has a row,
         whatever its name, depth or kind, so a walk looking for paths with
@@ -265,6 +292,11 @@ def _segments(pattern: str) -> tuple[str, ...]:
     if pattern == _SELF:
         return ()
     return tuple(pattern.removesuffix("/").split("/"))
+
+
+def _literal(segment: str) -> bool:
+    """Whether a pattern segment names one name (no wildcard, no token)."""
+    return not any(c in segment for c in "*?[") and segment not in (_DIGITS, _NAME, _EXECUTABLE)
 
 
 def _matches_pattern(pattern: str, parts: Sequence[str], kind: Kind) -> bool:

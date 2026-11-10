@@ -65,9 +65,9 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def run(*args: str) -> Any:
+def run(*args: str, code: int = 0) -> Any:
     result = runner.invoke(cli.app, list(args))
-    assert result.exit_code == 0, (args, result.stdout, result.stderr, result.exception)
+    assert result.exit_code == code, (args, result.stdout, result.stderr, result.exception)
     return result
 
 
@@ -79,7 +79,8 @@ def test_control_two_flavors_are_discovered(root: Path) -> None:
 
 
 def test_control_a_path_missing_everywhere_is_not_found_constructed(root: Path) -> None:
-    text = run("explain", "WTF/zz-missing-constructed.txt").stdout
+    # M16-18: a path that matches nothing exits 1.
+    text = run("explain", "WTF/zz-missing-constructed.txt", code=1).stdout
     assert NOT_FOUND in text
 
 
