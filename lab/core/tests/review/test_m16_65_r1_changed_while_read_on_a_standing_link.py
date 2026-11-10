@@ -70,4 +70,6 @@ def test_constructed_standing_link_is_not_called_a_change(
     CliRunner().invoke(cli.app, command)
     again = CliRunner().invoke(cli.app, command)
     said = again.stderr + again.stdout
-    assert "changed while wowlab read it" not in said, (again.exit_code, said)
+    # f8665aa reworded the race sentence to "<folder> became a link while
+    # wowlab read it"; match the part both wordings share.
+    assert "while wowlab read it" not in said, (again.exit_code, said)
