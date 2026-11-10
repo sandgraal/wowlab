@@ -25,8 +25,12 @@ real `addon install` is copied or moved to a name whose digits are not
 ASCII. The install is the captured tree copied into `tmp_path` by
 `test_cli.py`'s fixtures, the user data directory is redirected and the
 process table is a fake one with no client. Nothing reads or writes a real
-install. The `ascii-control` cases carry no marker: they pass today and
-prove the planting itself works, so each xfail fails for the right reason.
+install. The `ascii-control` test carries no marker: it passes today and
+proves the planting itself works, so each xfail fails for the right reason.
+The hex-part tests carry no marker either: a name whose 8-hex part holds a
+non-ASCII digit, a fullwidth letter or an uppercase letter is not a record
+today, and they keep it so through any rewrite of the name check (security
+review of M16-70T, 2026-11-10).
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
@@ -62,6 +66,21 @@ NON_ASCII_ZEROS = [
 ]
 PLANTED_SEQUENCE = 9
 
+# An 8-hex part that is not lowercase ASCII hex, after an ASCII sequence.
+BAD_HEX_PARTS = [
+    pytest.param("abcdef" + chr(0x0661) + chr(0x0662), id="constructed-arabic-indic-in-hex"),
+    pytest.param("abcdef" + chr(0xFF11) + chr(0xFF12), id="constructed-fullwidth-digits-in-hex"),
+    pytest.param("abcdef" + chr(0xFF41) + chr(0xFF42), id="constructed-fullwidth-letters-in-hex"),
+    pytest.param("ABCDEF12", id="constructed-uppercase-hex"),
+]
+
+DOCTOR_FLAGS = [
+    pytest.param((), id="text"),
+    pytest.param(("--json",), id="json"),
+    pytest.param(("--redact",), id="redact"),
+    pytest.param(("--redact", "--json"), id="redact-json"),
+]
+
 
 def _digits(zero: int | None) -> str:
     """`00000009` spelled in the digit set whose zero is `zero`; None keeps
@@ -84,10 +103,12 @@ def _real_record() -> tuple[Path, dict[str, Any]]:
     return path, json.loads(path.read_text(encoding="ascii"))
 
 
-def _plant(record: dict[str, Any], digits: str, *, state: str | None = None) -> str:
-    """A copy of `record` named and identified `<digits>-<8 hex>`; its id.
+def _plant(
+    record: dict[str, Any], digits: str, *, state: str | None = None, hexpart: str = "abcdef12"
+) -> str:
+    """A copy of `record` named and identified `<digits>-<hexpart>`; its id.
     `json.dumps` escapes non-ASCII, so the body stays ASCII as the journal's are."""
-    uid = f"{digits}-abcdef12"
+    uid = f"{digits}-{hexpart}"
     body = dict(record, id=uid)
     if state is not None:
         body["state"] = state
@@ -121,6 +142,38 @@ def test_an_ascii_named_copy_loads_as_the_newest_record_ascii_control(root: Path
     plan = run("undo", "--json", input="")
     assert json.loads(plan.stdout.lstrip())["undone"] == uid, _out(plan)
     assert f"undo --expect {uid}" in run("doctor").stdout
+
+
+# ─── regression controls: the hex part is lowercase ASCII hex only ──────────
+
+
+@pytest.mark.parametrize("hexpart", BAD_HEX_PARTS)
+def test_a_hex_part_that_is_not_lowercase_ascii_hex_is_not_listed(root: Path, hexpart: str) -> None:
+    _path, record = _real_record()
+    uid = _plant(record, f"{PLANTED_SEQUENCE:08d}", hexpart=hexpart, state="open")
+    ids = [r.id for r in guard.history()]
+    assert uid not in ids
+    assert ids == [record["id"]]
+
+
+@pytest.mark.parametrize("hexpart", BAD_HEX_PARTS)
+def test_a_hex_part_that_is_not_lowercase_ascii_hex_is_not_undoable(
+    root: Path, hexpart: str
+) -> None:
+    """Neither `guard.undo(expected_id=...)` nor `undo --expect` takes it;
+    nothing in the install or the journal changes."""
+    _path, record = _real_record()
+    uid = _plant(record, f"{PLANTED_SEQUENCE:08d}", hexpart=hexpart, state="open")
+    state = _state(root)
+    names = sorted(p.name for p in _journal().iterdir())
+    with pytest.raises(guard.GuardError):
+        guard.undo(expected_id=uid)
+    for args in (["--yes"], ["--yes", "--json"]):
+        result = run("undo", "--expect", uid, *args)
+        assert result.exit_code == 3, _out(result)
+        assert "nothing was undone" in result.stderr, _out(result)
+    assert _state(root) == state
+    assert sorted(p.name for p in _journal().iterdir()) == names
 
 
 # ─── guard.history: not listed ──────────────────────────────────────────────
@@ -165,6 +218,20 @@ def test_a_non_ascii_digit_name_does_not_count_toward_the_next_sequence(
     sequence = int(record["id"].split("-")[0])
     assert name.startswith(f"{sequence + 1:08d}-"), name
     assert [r.id for r in guard.history()][-1] == name.removesuffix(".json")
+
+
+@XFAIL
+def test_a_planted_top_sequence_does_not_hide_later_records(root: Path) -> None:
+    """Constructed: `99999999` in Arabic-Indic digits. Counted, it would
+    push the next id to nine digits, a name no record has, so every later
+    change would be invisible to `history()` and `undo`."""
+    _path, record = _real_record()
+    _plant(record, chr(0x0669) * 8)
+    ok("addon", "remove", "lab", "--yes")
+    ids = [r.id for r in guard.history()]
+    assert len(ids) == 2, ids
+    assert ids[0] == record["id"]
+    assert ids[1].isascii() and ids[1].startswith("00000002-"), ids
 
 
 # ─── guard.undo(expected_id=...): not the most recent record ────────────────
@@ -266,20 +333,19 @@ def test_undo_expect_accepts_the_ascii_record_beside_a_planted_name(
 @XFAIL
 @pytest.mark.parametrize("zero", NON_ASCII_ZEROS)
 @pytest.mark.parametrize("keep_real", [True, False], ids=["beside-a-record", "alone"])
+@pytest.mark.parametrize("flags", DOCTOR_FLAGS)
 def test_doctor_never_prints_a_non_ascii_digit_id(
-    root: Path, zero: int | None, keep_real: bool
+    root: Path, zero: int | None, keep_real: bool, flags: tuple[str, ...]
 ) -> None:
     """An interrupted (`open`) record under the planted name: `doctor`
-    neither offers `undo --expect` for it nor names it, as text or JSON."""
+    neither offers `undo --expect` for it nor names it, as text or JSON,
+    redacted or not."""
     path, record = _real_record()
     uid = _plant(record, _digits(zero), state="open")
     if not keep_real:
         path.unlink()
-    text = run("doctor")
-    assert text.exception is None or isinstance(text.exception, SystemExit), _out(text)
-    assert uid not in text.stdout
-    assert "undo --expect" not in text.stdout
-    as_json = run("doctor", "--json")
-    assert as_json.exception is None or isinstance(as_json.exception, SystemExit), _out(as_json)
-    assert uid not in as_json.stdout
-    assert json.dumps(uid) not in as_json.stdout
+    result = run("doctor", *flags)
+    assert result.exception is None or isinstance(result.exception, SystemExit), _out(result)
+    assert uid not in result.stdout
+    assert json.dumps(uid).strip('"') not in result.stdout
+    assert "undo --expect" not in result.stdout
