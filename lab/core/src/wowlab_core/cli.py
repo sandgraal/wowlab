@@ -1712,7 +1712,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
         is_account = f.scope == "account" and name == "config-cache.wtf"
         if not (is_machine or is_account):
             continue
-        doc = wtfconfig.read_config(lay.flavor_path / f.path)
+        doc = wtfconfig.read_config(lay.flavor_path / f.path, root=lay.install_root)
         for cvar in _SYNC_CVARS:
             found = doc.get(cvar)
             out.append(
@@ -4534,6 +4534,108 @@ def _sv_file(
     return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
 
+def _sv_file_and_root(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path | None]:
+    """FILE as `_sv_file` finds it (a relative FILE not on disk is looked up
+    under the flavor folder, then by name, `_sv_named`, M16-18), and the root
+    of the install it lies in (M16-49): the install `--root` or discovery
+    names, when FILE is under it as spelled; otherwise None, and the file is
+    read with only its last part checked for a link. A path in the install
+    spelled with `..`, or through another spelling of the install, is
+    refused (exit 3)."""
+    given = Path(_plain_arg(path))
+    if given.is_absolute() or longpath.lexists(given):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
+        try:
+            found, _ = _discover(root)
+        except install.InstallError:
+            return given, None
+        target, install_root = given, found.root
+    else:
+        _, chosen, lay = _open(root, flavor)
+        direct = lay.flavor_path / given
+        if longpath.lexists(direct):
+            if account is not None or character is not None:
+                _note(
+                    "--account and --character choose among names only; {} was read as typed",
+                    path,
+                )
+            target = direct
+        else:
+            target = lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
+        install_root = lay.install_root
+    holding = _install_holding(target, install_root)
+    if holding is not None and ".." in target.absolute().parts:
+        raise CliError(
+            f"refused: {target} has '..' in it, and wowlab reads a file in an install only "
+            "by a path without '..'",
+            EXIT_REFUSED,
+        )
+    if holding is None and _really_inside(target, install_root):
+        # Another spelling of the install (a link to it, the folder named in
+        # another case, a working folder reached by its real path): the walk
+        # cannot start from a root the path is not spelled under, and
+        # checking the last part only would follow a linked folder in it.
+        raise CliError(
+            f"refused: {target} is in the install at {install_root}, but not spelled under "
+            "that folder; give the path as it sits under that folder",
+            EXIT_REFUSED,
+        )
+    return target, holding
+
+
+def _install_holding(path: Path, root: Path) -> Path | None:
+    """`root`, absolute, when `path` names something inside it once its
+    `..` are taken lexically (no link resolved); otherwise None. The path
+    itself is not changed: one spelled with `..` inside the install is then
+    refused by the read, never read with only its last part checked."""
+    base = Path(root).absolute()
+    norm = Path(os.path.normpath(path.absolute()))
+    n = len(base.parts)
+    if len(norm.parts) <= n or type(base)(*norm.parts[:n]) != base:
+        return None
+    return base
+
+
+def _really_inside(path: Path, root: Path) -> bool:
+    """Whether `path` names something under `root` by another spelling of
+    it: some folder above the path, as spelled (`..` taken lexically), is the root's folder by
+    device and inode (each `stat`ed following links, so a link to the root
+    and the root named in another case on macOS or Windows count, and a
+    linked folder further down cannot hide it); or, as a second check, some
+    folder above its real path is. False when the root cannot be `stat`ed."""
+    try:
+        st = longpath.stat(root)
+    except (OSError, ValueError):
+        return False
+    want = (st.st_dev, st.st_ino)
+    # `..` taken lexically first, as `_install_holding` takes it, so a folder
+    # a `..` steps back out of is not counted as holding the file.
+    folders = list(reversed(Path(os.path.normpath(path.absolute())).parents))
+    with contextlib.suppress(OSError, ValueError):
+        folders += list(Path(longpath.realpath(path)).parents)
+    for folder in folders:
+        try:
+            here = longpath.stat(folder)
+        except OSError:
+            continue
+        if (here.st_dev, here.st_ino) == want:
+            return True
+    return False
+
+
+_SV_LAST_PART_ONLY = (
+    "This file is not in an install wowlab found, so only the file itself was checked for a "
+    "link: a linked folder on the way to it was not looked for."
+)
+
+
 def _sv_not_found(target: Path) -> CliError:
     """`sv dump` of a file that is not there (M16-19): the lister that names
     every SavedVariables file by the path `sv dump` takes."""
@@ -4606,7 +4708,7 @@ def _sv_inside_install(
     flavor: str | None,
     account: str | None = None,
     character: str | None = None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
     the real path of the install wowlab finds by itself, without `--root`
@@ -4615,7 +4717,8 @@ def _sv_inside_install(
     arguments cannot plant an install around the file. Nothing of the file is
     read first, so a refusal quotes none of it; the caller reads the real path
     that was checked, not the spelling given (returns both: the spelling for
-    the report). No install found is refused (exit 3) as well. Where
+    the report), with the real path of the install, which the read starts
+    from. No install found is refused (exit 3) as well. Where
     `realpath` keeps the case a name was given in (macOS, Linux), a file of
     the install named in another case is refused: the check errs towards
     refusing; where it gives the stored case (Windows), it is allowed."""
@@ -4642,7 +4745,7 @@ def _sv_inside_install(
         inside = False
     if not inside:
         raise CliError(f"refused: {target} is not in the install at {found.root}", EXIT_REFUSED)
-    return target, real
+    return target, real, Path(home)
 
 
 @sv_app.command("dump", short_help="One SavedVariables file as data, value by value.")
@@ -4698,14 +4801,20 @@ def sv_dump(
 
     \f
     JSON: SvDumpReport."""
+    last_part_only = False
     if install_only:
-        # Read the path that was checked; opening it without following a
-        # link on the way is EV-24's.
-        target, real = _sv_inside_install(file, root, flavor, account, character)
+        # Read the real path that was checked, opened from the real path of
+        # the install one folder at a time (M16-49), so a folder swapped for
+        # a link after the check is refused, not followed.
+        target, real, home = _sv_inside_install(file, root, flavor, account, character)
+        read_root: Path | None = home
     else:
-        target = real = _sv_file(file, root, flavor, account, character)
+        target, read_root = _sv_file_and_root(file, root, flavor, account, character)
+        real = target
+        # Outside any install wowlab found: only the file itself is checked.
+        last_part_only = read_root is None
     try:
-        doc = luadata.read(real)
+        doc = luadata.read(real, root=read_root)
     except FileNotFoundError as exc:
         raise _sv_not_found(target) from exc
     if path is not None:
@@ -4722,6 +4831,8 @@ def sv_dump(
         for a in doc.assignments:
             for p, v in _flatten(a.name, a.value):
                 _say(f"{p} = {v}")
+    if last_part_only:
+        _note(_SV_LAST_PART_ONLY)
     _note(_SV_TIMING)
 
 
@@ -5717,7 +5828,11 @@ def _read_config(
     target, found = _wtf_file(lay, name, scope, account, character)
     if found is None:
         return target, None, None
-    return target, found.path, wtfconfig.read_config(lay.flavor_path / found.path)
+    return (
+        target,
+        found.path,
+        wtfconfig.read_config(lay.flavor_path / found.path, root=lay.install_root),
+    )
 
 
 def _no_file(what: str, target: _Target) -> str:
@@ -5869,7 +5984,11 @@ def binds_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "bindings-cache.wtf", scope, account, character)
-    doc = wtfconfig.read_bindings(lay.flavor_path / found.path) if found else None
+    doc = (
+        wtfconfig.read_bindings(lay.flavor_path / found.path, root=lay.install_root)
+        if found
+        else None
+    )
     report = BindsReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6612,7 +6731,11 @@ def macros_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "macros-cache.txt", scope, account, character)
-    doc = wtfconfig.read_macros(lay.flavor_path / found.path) if found else None
+    doc = (
+        wtfconfig.read_macros(lay.flavor_path / found.path, root=lay.install_root)
+        if found
+        else None
+    )
     report = MacrosReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -6770,7 +6893,9 @@ def macros_check(
         if found is None:
             files.append(MacrosFile(scope=scope, file=None, macros=0, unknown_lines=0))
             continue
-        data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+        data = snapshot.read_regular_file(
+            lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
+        )
         doc = wtfconfig.parse_macros(data)
         files.append(
             MacrosFile(
@@ -10644,7 +10769,11 @@ def _char_binds_file(
         ]
         scope = "character"
     target = found[0] if found else None
-    doc = wtfconfig.read_bindings(lay.flavor_path / target.path) if target else None
+    doc = (
+        wtfconfig.read_bindings(lay.flavor_path / target.path, root=lay.install_root)
+        if target
+        else None
+    )
     note = _ACCOUNT_BINDINGS if scope == "account" else _NO_CHARACTER_BINDINGS
     if scope == "character" and doc is not None:
         note = _bindings_note("character", True)
@@ -10969,7 +11098,9 @@ def _char_macros_file(
     _, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, who)
     if found is None:
         return CharMacrosFile(scope=scope, path=None, mtime_ns=None, macros=0, unknown_lines=0), []
-    data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+    data = snapshot.read_regular_file(
+        lay.flavor_path / found.path, limit=_MACROS_LIMIT, root=lay.install_root
+    )
     doc = wtfconfig.parse_macros(data)
     return (
         CharMacrosFile(
