@@ -60,6 +60,7 @@ Kind = Literal["file", "dir", "any"]
 _DIGITS = "<digits>"
 _NAME = "<name>"
 _EXECUTABLE = "<executable>"
+_WOWLAB_TEMP = "<wowlab-temp>"
 _ANY_DEPTH = "**"
 _SELF = "."
 _BEGIN = "<!-- filemap:begin {} -->"
@@ -69,6 +70,11 @@ _BLOCK = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+# A copy of `guard._TEMP_NAME`, compared with the name exactly as it is (in
+# letter case too), so the `<wowlab-temp>` segment matches only the names the
+# write gate makes and its cleanup removes (M16-13). A test fails when the
+# two drift.
+_TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
 
 # ─── the write gate's executable rule, copied ────────────────────────────────
 # A copy of `guard._is_executable`, so the `<executable>` segment matches
@@ -234,6 +240,33 @@ class FileMap(BaseModel):
         found = self.matches(parts, base, kind)
         return found[0] if found else None
 
+    def named(self, parts: Sequence[str]) -> tuple[FileMapEntry, ...]:
+        """Every entry, in file order, with a file pattern that ends in the
+        name `parts` ends in, spelled out (M16-18): `parts` are the last
+        segments of a path, and each matches the pattern's segment in the
+        same place from the end. A pattern whose last segment is a wildcard
+        (`*.lua`, `**`, `<digits>`) names no file, so a bare name never
+        matches it; nor does a pattern with `**` among the segments `parts`
+        would be compared with, or one shorter than `parts`. Excludes are
+        not applied: what is not on disk has no full path to test them on."""
+        tail = tuple(parts)
+        if not tail:
+            return ()
+        found: list[FileMapEntry] = []
+        for e in self.entries:
+            for pattern in e.match:
+                if pattern == _SELF or pattern.endswith("/"):
+                    continue
+                segments = _segments(pattern)
+                if len(segments) < len(tail) or not _literal(segments[-1]):
+                    continue
+                end = segments[-len(tail) :]
+                if _ANY_DEPTH in end or not _match(end, tail):
+                    continue
+                found.append(e)
+                break
+        return tuple(found)
+
     def covers(self, parts: Sequence[str], base: Literal["root", "flavor"]) -> bool:
         """Whether every path strictly below the folder `parts` has a row,
         whatever its name, depth or kind, so a walk looking for paths with
@@ -267,6 +300,11 @@ def _segments(pattern: str) -> tuple[str, ...]:
     return tuple(pattern.removesuffix("/").split("/"))
 
 
+def _literal(segment: str) -> bool:
+    """Whether a pattern segment names one name (no wildcard, no token)."""
+    return not any(c in segment for c in "*?[") and segment not in (_DIGITS, _NAME, _EXECUTABLE)
+
+
 def _matches_pattern(pattern: str, parts: Sequence[str], kind: Kind) -> bool:
     segments = _segments(pattern)
     if pattern == _SELF or pattern.endswith("/"):
@@ -285,6 +323,8 @@ def _segment(pattern: str, name: str) -> bool:
         return name.isascii() and name.isdigit()
     if pattern == _NAME:
         return not (name.isascii() and name.isdigit())
+    if pattern == _WOWLAB_TEMP:
+        return _TEMP_NAME.fullmatch(name) is not None
     if pattern == _EXECUTABLE:
         return _is_executable(name)
     return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())

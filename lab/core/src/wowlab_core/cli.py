@@ -116,7 +116,7 @@ import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
 
@@ -141,6 +141,7 @@ from wowlab_core import (
     combatlog,
     doctorredact,
     dressing,
+    filemap,
     firstrun,
     gamedata,
     gaps,
@@ -169,6 +170,7 @@ from wowlab_core import (
 )
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
+    WOWLAB_TEMP_ROW,
     Verdict,
     gate_names_but_for_executable,
     gate_refuses_stat,
@@ -1568,6 +1570,8 @@ class StoreReport(_Out):
     transactions: int | None
     last_transaction: LastTransaction | None
     journal_error: str | None
+    # Who besides the player can open the store (M16-41); not checked on Windows.
+    exposure: snapshot.StoreExposure
 
 
 class DoctorReport(_Out):
@@ -1588,6 +1592,11 @@ class DoctorReport(_Out):
     # `Install.not_taken`: each name of `other_dirs` with why it was not
     # taken (M13-45). Left out of the JSON when empty, as there.
     not_taken: list[install.NotTaken] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # The root given is a folder that holds no .build.info, is not a flavor
+    # folder, and has no install above it (`_could_be_an_install`): the text
+    # names the Battle.net app's Scan and Repair (M16-13). Left out of the
+    # JSON when false.
+    build_info_missing: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1714,6 +1723,7 @@ def _store_report() -> StoreReport:
         transactions=transactions,
         last_transaction=last,
         journal_error=journal_error,
+        exposure=store.exposure(),
     )
 
 
@@ -1729,6 +1739,7 @@ def _doctor(
     inst: install.Install | None = None
     found_by: str | None = None
     install_error: str | None = None
+    build_info_missing = False
     locations: Locations | None = None
     try:
         inst, found_by = _discover(root)
@@ -1749,6 +1760,13 @@ def _doctor(
     except install.InstallError as exc:
         install_error = str(exc)
         problems.append(install_error)
+        build_info_missing = (
+            isinstance(exc, install.NotAnInstallError)
+            and exc.reason == "missing"
+            and exc.root_exists
+            and not exc.hint
+            and _could_be_an_install(exc.root)
+        )
     if on_found is not None:
         on_found(inst)
 
@@ -1787,6 +1805,8 @@ def _doctor(
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     if store.journal_error:
         problems.append("the journal of the write gate cannot be read")
+    elif store.last_transaction is not None and store.last_transaction.state == "open":
+        problems.append(_interrupted(store.last_transaction.id))
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1798,7 +1818,39 @@ def _doctor(
         store=store,
         problems=problems,
         not_taken=list(inst.not_taken) if inst is not None else [],
+        build_info_missing=build_info_missing,
     )
+
+
+def _could_be_an_install(root: Path) -> bool:
+    """Whether `root`, which holds no .build.info, could be an install that
+    lost it (M16-13): a folder, and inside no install (no folder above it
+    holds a regular .build.info). Reads only; any error is a no."""
+    try:
+        if not longpath.is_dir(root):
+            return False
+        return not any(longpath.is_file(p / install.BUILD_INFO) for p in root.parents)
+    except OSError:
+        return False
+
+
+def _interrupted(record_id: str) -> str:
+    """The `doctor` problem for a most recent journal record still `open`
+    (M16-13): a change that was killed, or is running now, so some files
+    may hold its new bytes and others not. `undo --expect` names exactly
+    that record, and refuses if another change is journaled first."""
+    return (
+        f"the last change wowlab made did not finish (record {record_id}): some files may "
+        "be changed and others not. To put back what was there before it, run: "
+        f"wowlab undo --expect {record_id}"
+    )
+
+
+# Where the Battle.net app repairs an install, a missing .build.info included.
+_SCAN_AND_REPAIR = (
+    "  If this is the game's folder and its .build.info went missing, the Battle.net app "
+    "puts it back: choose the game, then the gear beside Play, then Scan and Repair."
+)
 
 
 def _print_game_data(g: GameDataReport) -> str:
@@ -1822,6 +1874,22 @@ _SYNC_NOTE = (
     "and settings, is not known."
 )
 _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
+_STORE_MODES_NOTE = (
+    "On Windows, wowlab does not check who else can read the snapshot store; the folder "
+    "takes its access from your user profile."
+)
+
+
+def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
+    """The warning when other accounts on this computer can open the store
+    (M16-41), or None."""
+    if not exposure.readable_by_others:
+        return None
+    return (
+        f"Other accounts on this computer can read the snapshot store "
+        f"({exposure.count} of its files and folders). wowlab makes it private the next time it "
+        "writes there, such as at the next snapshot."
+    )
 
 
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
@@ -1833,6 +1901,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"Install: {report.install_root} (found by {report.found_by})")
     else:
         _say(f"Install: {report.install_error}")
+        if report.build_info_missing:
+            _say_prose(_SCAN_AND_REPAIR, hang="  ", keep=["Battle.net app", "Scan and Repair"])
         if report.locations is not None:
             for loc in report.locations.searched:
                 _say(f"  searched, no install there: {loc}")
@@ -1908,7 +1978,16 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         )
     else:
         _say("  no transactions in the journal")
-    notes.append(_STORE_VERIFY_NOTE)
+    exposed = _exposure_line(store.exposure)
+    if exposed is not None:
+        _say_prose(f"  {exposed}", hang="    ")
+    # On Windows the store's note says the modes are not checked as well;
+    # one note about the store, so the footer counts the same everywhere.
+    notes.append(
+        _STORE_VERIFY_NOTE
+        if store.exposure.checked
+        else f"{_STORE_VERIFY_NOTE} {_STORE_MODES_NOTE}"
+    )
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
@@ -2135,7 +2214,9 @@ def doctor(
         if inst is not None and flavor is not None:
             _select_flavor(inst, flavor)  # a bad --flavor fails before any request
         first = firstrun.is_first_run(store, inst)
-        if first and not json_out:
+        # With no install, the verdict on the folder comes first (M16-13):
+        # the intro follows the report instead (no request is made then).
+        if first and not json_out and inst is not None:
             for line in firstrun.intro_lines(store_path=store.path):
                 say(line)
             say("")
@@ -2143,6 +2224,10 @@ def doctor(
     report = _doctor(root, check_builds, on_found)
     if not json_out:
         _print_doctor(report, notes)
+        if first and found[0] is None:
+            say("")  # the first run's section adds the blank line after it
+            for line in firstrun.intro_lines(store_path=store.path):
+                say(line)
     if first:
         result = _first_run(found[0], store, flavor, yes, json_out, say)
         problems = list(report.problems)
@@ -2929,6 +3014,24 @@ _SHELL_LABELS = {
 }
 
 
+class ExplainCandidate(_Out):
+    """M16-18: one path, or one file-map row, a name `explain` did not find
+    as typed may mean."""
+
+    # A file or folder on disk, relative to its flavor folder; None for a
+    # row that names the name but matches no path found.
+    path: str | None
+    flavor_folder: str | None
+    entry_id: str | None  # the row the path has, or the row itself
+    doc_path: str | None  # that row's path pattern, as the file map writes it
+
+
+# The most candidates `explain` prints; `--json` has them all.
+_CANDIDATES_SHOWN = 20
+# At most this many candidates are each explained in full (M16-18).
+_CANDIDATES_EXPLAINED = 3
+
+
 class ExplainReport(_Out):
     """`wowlab explain --json`."""
 
@@ -2954,6 +3057,11 @@ class ExplainReport(_Out):
     # did not take as a flavor (`Install.not_taken`), with why. Left out of
     # the JSON when None, so every other path prints as before.
     not_taken: install.NotTaken | None = Field(default=None, exclude_if=lambda v: v is None)
+    # M16-18: for a relative path with nothing on disk and no row, what its
+    # last part names: the files by that name in the flavor folders read,
+    # then the rows that name it and match none of them. Left out of the
+    # JSON when empty, so every other path prints as before.
+    candidates: list[ExplainCandidate] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -3165,15 +3273,17 @@ def _hints(
     views: Sequence[ExplainView],
     *,
     absent: bool = False,
+    snapshot_hints: bool = True,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
     that the latest snapshot holds, when the file on disk differs from that
     copy or is gone. A first-snapshot hint for such a file when no snapshot
-    covers it or none ever held it, and no manifest was unreadable."""
+    covers it or none ever held it, and no manifest was unreadable. Neither
+    without `snapshot_hints` (wowlab's own leftover temp file, M16-13)."""
     hints: list[ExplainHint] = []
     with_root = ["--root", root] if root is not None else []
-    if verdict.restorable is True and facts is not None and facts.error is None:
+    if snapshot_hints and verdict.restorable is True and facts is not None and facts.error is None:
         latest = facts.snapshot_id
         if (
             latest is not None
@@ -3592,6 +3702,19 @@ def explain(
         # M13-27: the line the text output prints, carried in the JSON so
         # `wowlab ui` shows Python's words and words nothing itself.
         facts = facts.model_copy(update={"words": _snapshot_line(facts, captured)})
+    # M16-18: a relative path not on disk, with no row: what its last part
+    # names, in the flavor folder it is read in (every one, with several and
+    # none chosen).
+    candidates: list[ExplainCandidate] = []
+    if (
+        relative
+        and nowhere
+        and isinstance(result, layout.Unclassified)
+        and result.base is not None
+        and _not_taken_at(inst, judged) is None
+    ):
+        folders = [chosen_folder] if chosen_folder else [f.folder for f in inst.flavors]
+        candidates = _explain_candidates(inst, path, folders)
     report = ExplainReport(
         query=path,
         result=result,
@@ -3604,9 +3727,19 @@ def explain(
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
         absent=nowhere,
         not_taken=_not_taken_at(inst, judged),
+        candidates=candidates,
+    )
+    # M16-18: a path that matches nothing (outside the install, or nothing
+    # on disk under any reading, no row, and nothing by its name) exits 1.
+    matched = not (
+        isinstance(result, layout.Unclassified)
+        and (result.base is None or nowhere)
+        and not candidates
     )
     if json_out:
         _emit(report)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     taken = report.not_taken
     if isinstance(result, layout.Unclassified):
@@ -3633,6 +3766,10 @@ def explain(
         ):
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
+        if candidates:
+            _say_candidates(inst, candidates, root)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
@@ -3653,6 +3790,79 @@ def explain(
     if nowhere:
         _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)
+
+
+def _explain_candidates(
+    inst: install.Install, path: str, folders: Sequence[str]
+) -> list[ExplainCandidate]:
+    """M16-18: the paths in `folders` (flavor folders) whose last parts are
+    `path`'s, with their rows; then the rows that name it and that none of
+    those paths has. Empty for a path with `.` or `..` in it."""
+    parts = list(PurePath(path).parts)
+    if not parts or any(p in (".", "..") for p in parts):
+        return []
+    found: list[ExplainCandidate] = []
+    for folder in folders:
+        base = Path(inst.root) / folder
+        for rel in layout.named_paths(base, parts):
+            got = layout.classify(base / rel, inst)
+            entry = got.entry if isinstance(got, layout.Classified) else None
+            found.append(
+                ExplainCandidate(
+                    path=rel,
+                    flavor_folder=folder,
+                    entry_id=entry.id if entry else None,
+                    doc_path=_plain(entry.doc_path) if entry else None,
+                )
+            )
+    seen = {c.entry_id for c in found}
+    rows = [
+        ExplainCandidate(path=None, flavor_folder=None, entry_id=e.id, doc_path=_plain(e.doc_path))
+        for e in filemap.load().named(parts)
+        if e.id not in seen
+    ]
+    return found + rows
+
+
+def _say_candidates(
+    inst: install.Install, candidates: Sequence[ExplainCandidate], root: Path | None
+) -> None:
+    """M16-18: what a name not found as typed may mean, listed, and each
+    explained when there are `_CANDIDATES_EXPLAINED` or fewer."""
+    paths = [c for c in candidates if c.path is not None]
+    rows = [c for c in candidates if c.path is None]
+    if paths:
+        _say(f"  on disk by this name ({len(paths)}):")
+        for c in paths[:_CANDIDATES_SHOWN]:
+            # Each spelled so that `explain` takes it as typed: from the
+            # flavor folder with one flavor, from the install root with
+            # several (a flavor-relative path then needs --flavor).
+            if len(inst.flavors) == 1:
+                _say(f"    {c.path} (in {c.flavor_folder})")
+            else:
+                _say(f"    {c.flavor_folder}/{c.path}")
+        if len(paths) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(paths) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if rows:
+        _say(f"  file-map rows for a file by this name ({len(rows)}):")
+        for c in rows[:_CANDIDATES_SHOWN]:
+            _say(f"    {c.entry_id}: {c.doc_path}")
+        if len(rows) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(rows) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if len(candidates) > _CANDIDATES_EXPLAINED:
+        _say("  explain one of them by the path shown")
+        return
+    fm = filemap.load()
+    for c in candidates:
+        _say("")
+        if c.path is not None:
+            # Named from the install root, so it is read where it was found.
+            explain(path=f"{c.flavor_folder}/{c.path}", root=root, flavor=None, json_out=False)
+        elif c.entry_id is not None:
+            e = fm.entry(c.entry_id)
+            _say(f"{c.doc_path} (file-map row {e.id}; no file for this row was found)")
+            _say(f"  what:         {_player_copy(_plain(e.what))}")
+            _say(f"  written by:   {_plain(e.written_by)}")
 
 
 def _say_detail(report: ExplainReport, captured: str) -> None:
@@ -3758,7 +3968,16 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
+    leftover = isinstance(judged, layout.Classified) and judged.entry.id == WOWLAB_TEMP_ROW
+    hints = _hints(
+        verdict,
+        facts,
+        judged.flavor_folder,
+        given_root,
+        views,
+        absent=absent,
+        snapshot_hints=not leftover,
+    )
     return stat_, facts, views, note, hints
 
 
@@ -4201,47 +4420,85 @@ def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
     return value
 
 
-def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
+def _sv_file(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> Path:
     """FILE as `sv dump` takes it, plain (a `\\\\?\\` spelling named by its plain
-    one, so no output shows it), looked up past the plain limit too (M13-44)."""
+    one, so no output shows it), looked up past the plain limit too (M13-44).
+    A relative FILE that is not there, under the current folder or the
+    flavor folder, is a name `sv list` lists (M16-18): `_sv_named`."""
     given = Path(_plain_arg(path))
     if given.is_absolute() or longpath.lexists(given):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
         return given
-    _, _, lay = _open(root, flavor)
-    return lay.flavor_path / given
+    _, chosen, lay = _open(root, flavor)
+    direct = lay.flavor_path / given
+    if longpath.lexists(direct):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
+        return direct
+    return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
 
-def _sv_file_and_root(path: str, root: Path | None, flavor: str | None) -> tuple[Path, Path | None]:
-    """FILE as `_sv_file` finds it, and the root of the install it lies in
-    (M16-49): the install `--root` or discovery names, when FILE is under it
-    as spelled; otherwise None, and the file is read with only its last part
-    checked for a link."""
+def _sv_file_and_root(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path | None]:
+    """FILE as `_sv_file` finds it (a relative FILE not on disk is looked up
+    under the flavor folder, then by name, `_sv_named`, M16-18), and the root
+    of the install it lies in (M16-49): the install `--root` or discovery
+    names, when FILE is under it as spelled; otherwise None, and the file is
+    read with only its last part checked for a link. A path in the install
+    spelled with `..`, or through another spelling of the install, is
+    refused (exit 3)."""
     given = Path(_plain_arg(path))
-    if not (given.is_absolute() or longpath.lexists(given)):
-        _, _, lay = _open(root, flavor)
-        return lay.flavor_path / given, lay.install_root
-    try:
-        found, _ = _discover(root)
-    except install.InstallError:
-        return given, None
-    holding = _install_holding(given, found.root)
-    if holding is not None and ".." in given.absolute().parts:
+    if given.is_absolute() or longpath.lexists(given):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
+        try:
+            found, _ = _discover(root)
+        except install.InstallError:
+            return given, None
+        target, install_root = given, found.root
+    else:
+        _, chosen, lay = _open(root, flavor)
+        direct = lay.flavor_path / given
+        if longpath.lexists(direct):
+            if account is not None or character is not None:
+                _note(
+                    "--account and --character choose among names only; {} was read as typed",
+                    path,
+                )
+            target = direct
+        else:
+            target = lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
+        install_root = lay.install_root
+    holding = _install_holding(target, install_root)
+    if holding is not None and ".." in target.absolute().parts:
         raise CliError(
-            f"refused: {given} has '..' in it, and wowlab reads a file in an install only "
+            f"refused: {target} has '..' in it, and wowlab reads a file in an install only "
             "by a path without '..'",
             EXIT_REFUSED,
         )
-    if holding is None and _really_inside(given, found.root):
+    if holding is None and _really_inside(target, install_root):
         # Another spelling of the install (a link to it, the folder named in
         # another case, a working folder reached by its real path): the walk
         # cannot start from a root the path is not spelled under, and
         # checking the last part only would follow a linked folder in it.
         raise CliError(
-            f"refused: {given} is in the install at {found.root}, but not spelled under "
+            f"refused: {target} is in the install at {install_root}, but not spelled under "
             "that folder; give the path as it sits under that folder",
             EXIT_REFUSED,
         )
-    return given, holding
+    return target, holding
 
 
 def _install_holding(path: Path, root: Path) -> Path | None:
@@ -4290,7 +4547,70 @@ _SV_LAST_PART_ONLY = (
 )
 
 
-def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path, Path]:
+def _sv_named(
+    lay: layout.Layout,
+    folder: str,
+    given: Path,
+    account: str | None,
+    character: str | None,
+) -> layout.SavedVariablesFile:
+    """M16-18: the one SavedVariables file `sv list` lists that `given`
+    names: by its path relative to its account folder
+    (`SavedVariables/<Addon>.lua`, `<Realm>/<Character>/SavedVariables/…`),
+    by its file name, or by its addon name (a `.bak` only by its name or
+    path), case-insensitively, among the files of `--account` and
+    `--character` when given; `--account` alone prefers its account-wide
+    file. None is exit 1 and several exit 2, each with the paths that would
+    do."""
+    files = list(lay.wtf_walk().saved_variables)
+    if account is not None or character is not None:
+        acct = _select_account(lay, account)
+        files = [f for f in files if f.account == acct.folder]
+        if character is not None:
+            char = _select_character(acct, character)
+            files = [
+                f
+                for f in files
+                if f.realm_folder == char.realm_folder and f.character_folder == char.folder
+            ]
+    text = "/".join(given.parts)
+    key = text.casefold()
+
+    def in_account(f: layout.SavedVariablesFile) -> str:
+        return f.path.split("/", 3)[3] if f.path.count("/") >= 3 else f.path
+
+    found = [
+        f
+        for f in files
+        if key in (in_account(f).casefold(), _sv_name(f).casefold())
+        or (not f.backup and f.addon is not None and f.addon.casefold() == key)
+    ]
+    if account is not None and character is None and len(found) > 1:
+        # `--account` alone names the account-wide file among several.
+        found = [f for f in found if f.scope == "account"] or found
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise CliError(
+            f"no SavedVariables file {text!r}: nothing at that path in the flavor folder "
+            f"{folder}, and no file `wowlab sv list` lists has that name, addon or path "
+            "in its account folder"
+        )
+    listing = "; ".join(f.path for f in found)
+    raise CliError(
+        f"{text!r} names {len(found)} SavedVariables files ({listing}); pick one with "
+        "--account or --character, or name it by its path in the account folder",
+        EXIT_USAGE,
+    )
+
+
+def _sv_inside_install(
+    file: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
     the real path of the install wowlab finds by itself, without `--root`
@@ -4312,7 +4632,7 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
                 f"refused: --root {root} is not the install wowlab finds, {found.root}",
                 EXIT_REFUSED,
             )
-        target = _sv_file(file, root, flavor)
+        target = _sv_file(file, root, flavor, account, character)
     except install.InstallError as exc:
         raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
     try:
@@ -4332,7 +4652,8 @@ def sv_dump(
         str,
         typer.Argument(
             help="A SavedVariables file: absolute, relative to the current folder, "
-            "or relative to the flavor folder."
+            "or relative to the flavor folder; else as `sv list` lists it: an addon "
+            "name, a file name, or a path relative to its account folder."
         ),
     ],
     path: Annotated[
@@ -4352,6 +4673,22 @@ def sv_dump(
             "The browser view always passes this.",
         ),
     ] = False,
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            help="When FILE is a name several files have: the account folder's "
+            "(its account-wide file, unless --character names one of its characters).",
+        ),
+    ] = None,
+    character: Annotated[
+        str | None,
+        typer.Option(
+            "--character",
+            help="When FILE is a name several files have: this character folder's, "
+            "as <Character> or <Realm folder>/<Character>.",
+        ),
+    ] = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -4366,10 +4703,10 @@ def sv_dump(
         # Read the real path that was checked, opened from the real path of
         # the install one folder at a time (M16-49), so a folder swapped for
         # a link after the check is refused, not followed.
-        target, real, home = _sv_inside_install(file, root, flavor)
+        target, real, home = _sv_inside_install(file, root, flavor, account, character)
         doc = luadata.read(real, root=home)
     else:
-        target, install_root = _sv_file_and_root(file, root, flavor)
+        target, install_root = _sv_file_and_root(file, root, flavor, account, character)
         if install_root is not None:
             doc = luadata.read(target, root=install_root)
         else:
@@ -7530,7 +7867,7 @@ def _diff_detail_lines(store: snapshot.SnapshotStore, cf: ChangedFile) -> list[s
 
 @snap_app.command("verify", short_help="Check every stored file and snapshot.")
 @_handled
-def snap_verify(json_out: JsonOpt = False) -> None:
+def snap_verify(json_out: JsonOpt = False, notes_out: NotesOpt = False) -> None:
     """Re-hash every stored object and check every manifest. Exits 1 on any
     problem.
 
@@ -7558,6 +7895,11 @@ def snap_verify(json_out: JsonOpt = False) -> None:
             _say(f"  damaged manifest {bad.name}: {bad.reason}")
         if report.ok:
             _say("  all sound")
+        exposed = _exposure_line(report.exposure)
+        if exposed is not None:
+            _say_prose(f"  {exposed}", hang="    ")
+        # A standing caveat on Windows, so behind --notes (M16-41, fix round 1).
+        _say_notes([] if report.exposure.checked else [_STORE_MODES_NOTE], notes_out)
     if not report.ok:
         raise typer.Exit(EXIT_ERROR)
 
@@ -8279,8 +8621,8 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
     if others:
         lines.append(
             f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-            "with --paths to restore it):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata; name one with --paths to restore it):"
         )
         lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
     if executables:
@@ -8295,6 +8637,44 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
 
 # How many changed screenshots the text plan names; --json lists every one.
 _NOT_RESTORED_SHOWN = 10
+
+
+def _left_alone_lines(left_alone: Sequence[str]) -> list[str]:
+    """The text plan's "left alone" heading: the files added under the
+    snapshot's folders since it was taken, which a whole restore never
+    writes or deletes."""
+    if not left_alone:
+        return []
+    return [
+        f"  Left alone: {len(left_alone)} file(s) added since the snapshot was taken. "
+        "A whole restore never deletes them; name one with --paths to delete it:",
+        *(f"    {rel}" for rel in left_alone),
+    ]
+
+
+def _added_since(
+    store: snapshot.SnapshotStore, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[str, ...]:
+    """What a whole restore of `manifest` (spelled as this flavor spells it)
+    leaves alone, by the gate's rule: every regular file under its subtrees,
+    outside its excluded paths, that it does not hold, held to the gate's
+    allowlist roots as the gate holds its own list. Reads directory entries
+    and `lstat` only, following no link; flavor-relative, sorted."""
+    prefix = folder + "/"
+    held = {e.path for e in manifest.entries}
+    ours = guard._allowlisted_trees(manifest.subtrees, folder)
+    if not ours:
+        return ()
+    excluded = guard._allowlisted_trees(manifest.excluded, folder)
+    listed = store.list_tree(install_root, ours, exclude=excluded)
+    return tuple(
+        path.removeprefix(prefix)
+        for path, kind in listed
+        if kind == "file"
+        and path.startswith(prefix)
+        and guard._in_allowlist_root(path.removeprefix(prefix))
+        and path not in held
+    )
 
 
 def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
@@ -8484,6 +8864,10 @@ def snap_restore(
     """Put back files from a snapshot, through the write gate: the client must be
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
+    Without --paths, files added under the snapshot's folders since it was
+    taken are never deleted: the plan lists the ones under WTF, Interface
+    and Fonts under "Left alone".
+
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
     file-browser metadata) are left alone and counted in the plan; name one
@@ -8546,6 +8930,7 @@ def snap_restore(
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
     executables: list[SkippedPath] = []
+    left_alone: tuple[str, ...] = ()  # a whole restore's added files, never touched
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
         if target is not None:
             # The gate maps the account folders, or refuses, before anything
@@ -8581,10 +8966,14 @@ def snap_restore(
             try:
                 if not aside and not executables:
                     tx.restore(manifest.id, into=target)
+                    left_alone = tx.left_alone
                 else:
                     if any(not e.path.startswith(folder + "/") for e in rest):
                         # refused: a path outside this flavor
                         tx.restore(manifest.id, into=target)
+                    # Restored by name, so the gate lists nothing it leaves
+                    # alone: the same list, by the same rule, read here.
+                    left_alone = _added_since(store, manifest, inst.root, folder)
                     names, left = _names_for_whole(rest, inst.root, folder)
                     tx.restore(manifest.id, by_name(names), into=target)
             except guard.PathNotAllowedError as exc:
@@ -8636,7 +9025,7 @@ def snap_restore(
 
     shots_differ = any(a.disk != "same" for a in aside)
     plan_lines: list[str] = []
-    if plan or skipped or aside:
+    if plan or skipped or aside or left_alone:
         plan_lines.append(
             f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)"
         )
@@ -8656,6 +9045,7 @@ def snap_restore(
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
+        plan_lines.extend(_left_alone_lines(left_alone))
         plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
     if not json_out or (prompting and plan):
         for line in plan_lines:
@@ -9138,8 +9528,8 @@ def _apply_plan_lines(
     if plan.skipped:
         lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata, "
-            "addon executables):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata, addon executables):"
         )
         for sk in plan.skipped:
             undone = f"  ({extra}; not deleted)"

@@ -73,6 +73,7 @@ __all__ = [
     "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
+    "StoreExposure",
     "StoreLocationError",
     "VerifyReport",
     "check_foreign_manifest",
@@ -518,6 +519,172 @@ _STAGE_FLAGS = (
 """How a staged file under `tmp/` is created: new, exclusively, never through a link."""
 
 
+# -- the store at rest (M16-41) ----------------------------------------------
+#
+# The store holds copies of the player's settings, macros and saved data, so
+# no other account on the machine should be able to read it. Every directory
+# the store makes is 0700 and every file 0600, whatever the umask: each is
+# created with that mode and then set to it exactly with `fchmod`, since a
+# umask can only take bits away. A store made by an older version (0755 and
+# 0644 under the usual umask 0022) is fixed on its next write: whenever a
+# write opens the store root, the root is set private, the store's own
+# entries directly below it (guard's `lock` and `journal/` included) lose
+# their group and other bits, and every directory that had any of those bits
+# is walked the same way, through descriptors that never follow a link. A
+# store already private costs one `fstat` and one listing of the root per
+# write.
+#
+# Modes are a POSIX matter. On Windows, a folder under the user's profile is
+# private through its inherited access list, and none of this applies: the
+# store makes no change and `exposure` reports that it did not check.
+
+_PRIVATE_DIR_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+_OTHERS_BITS = 0o077
+_PRIVATE_MODES = os.name == "posix" and hasattr(os, "fchmod")
+"""True where the store sets and checks modes: POSIX."""
+
+_STORE_DIRS = frozenset({"objects", "manifests", "tmp", _IMPORTED_DIR, "journal"})
+"""The directories directly below the store root that the store and guard
+make (`journal/` is guard's). Only these are walked to fix or judge modes."""
+
+_STORE_FILES = frozenset({"lock"})
+"""The files directly below the store root that guard makes (its store
+lock). With `_STORE_DIRS`, the only entries there whose modes a write fixes."""
+
+_MKDIR_MODE = _PRIVATE_DIR_MODE if _PRIVATE_MODES else 0o777
+"""The mode a store directory is made with: 0700 on POSIX. Elsewhere the
+default, so that on Windows the folder keeps the access it inherits (from
+CPython 3.12.4, a mode of 0700 there sets a protected access list)."""
+
+_EXPOSED_SHOWN = 10
+"""How many exposed entries `exposure` names; it counts them all."""
+
+_CLASS_BITS = (
+    (stat.S_IRGRP | stat.S_IWGRP, stat.S_IXGRP),
+    (stat.S_IROTH | stat.S_IWOTH, stat.S_IXOTH),
+)
+"""(read or write bits, search bit) for the group and for everyone else."""
+
+
+def _set_private(fd: int, st: os.stat_result | None = None, *, exact: bool) -> bool:
+    """Give the file or directory open on `fd` no group or other bits; with
+    `exact`, set it to 0700 (a directory) or 0600 (anything else) outright,
+    as for something the store has just made. True when the mode had group
+    or other bits before. A no-op off POSIX."""
+    if not _PRIVATE_MODES:
+        return False
+    st = os.fstat(fd) if st is None else st
+    mode = stat.S_IMODE(st.st_mode)
+    if exact:
+        want = _PRIVATE_DIR_MODE if stat.S_ISDIR(st.st_mode) else _PRIVATE_FILE_MODE
+    else:
+        want = mode & ~_OTHERS_BITS
+    if mode != want:
+        os.fchmod(fd, want)
+    return bool(mode & _OTHERS_BITS)
+
+
+def _privatize_below(root_fd: int) -> None:
+    """Take the group and other bits off the store's own entries directly
+    below the store root open on `root_fd` (`_STORE_DIRS` and `_STORE_FILES`;
+    anything else the caller keeps beside them is left alone), then off
+    everything below each of those directories that had any, and so on down
+    (an older version's store: every directory 0755).
+
+    Depth first, one descriptor per level: a directory is opened when the
+    walk reaches it, and its children are walked before its next sibling is
+    opened, so an older store's 256 object shards never hold 256
+    descriptors at once (fix round 1: macOS's default soft limit is 256).
+
+    Links are never followed nor changed, and a regular file with more than
+    one link is left alone: it may be a hard link to a file outside the
+    store, such as an install's, whose mode is not the store's to change
+    (fix round 1). An entry that cannot be opened, or that changes between
+    its `lstat` and its open, is left as it is; `exposure` still reports
+    it. Raises nothing: an `OSError` never fails the write that triggered it."""
+    try:
+        first = os.dup(root_fd)
+    except OSError:
+        return
+    # Each frame: a directory's descriptor and the names below it still to walk.
+    frames: list[tuple[int, Iterator[str]]] = []
+    try:
+        try:
+            names = os.listdir(first)  # noqa: PTH208 - by descriptor
+        except OSError:
+            names = []
+        frames.append((first, iter(n for n in names if n in _STORE_DIRS or n in _STORE_FILES)))
+        while frames:
+            dir_fd, pending = frames[-1]
+            name = next(pending, None)
+            if name is None:
+                frames.pop()
+                os.close(dir_fd)
+                continue
+            child = _private_child(dir_fd, name)
+            if child is None:
+                continue
+            try:
+                below = os.listdir(child)  # noqa: PTH208 - by descriptor
+            except OSError:
+                below = []
+            frames.append((child, iter(below)))
+    finally:
+        for dir_fd, _ in frames:
+            with contextlib.suppress(OSError):
+                os.close(dir_fd)
+
+
+def _private_child(dir_fd: int, name: str) -> int | None:
+    """`_privatize_below` for one entry: fix its mode, and return a
+    descriptor on it to walk when it is a directory that was not private."""
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    is_dir = stat.S_ISDIR(st.st_mode)
+    if not (is_dir or stat.S_ISREG(st.st_mode)) or not st.st_mode & _OTHERS_BITS:
+        return None  # a link, a FIFO, a device, ...; or private already
+    if not is_dir and st.st_nlink > 1:
+        return None  # a hard link may be a file outside the store
+    flags = os.O_RDONLY | _O_NOFOLLOW | getattr(os, "O_NOCTTY", 0)
+    flags |= os.O_DIRECTORY if is_dir else getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        now = os.fstat(fd)
+        if (
+            _file_identity(now) != _file_identity(st)
+            or stat.S_IFMT(now.st_mode) != stat.S_IFMT(st.st_mode)
+            or (not is_dir and now.st_nlink > 1)  # judged again on what was opened
+        ):
+            os.close(fd)
+            return None
+        _set_private(fd, now, exact=False)
+    except OSError:
+        os.close(fd)
+        return None
+    if is_dir:
+        return fd
+    os.close(fd)
+    return None
+
+
+def _make_store_private(root_fd: int) -> None:
+    """On every write that opens the store root (M16-41): the root set to
+    0700, then `_privatize_below`. Best effort, so a store on a filesystem
+    that keeps no modes still takes the write; `exposure` reports what is
+    left. A no-op off POSIX."""
+    if not _PRIVATE_MODES:
+        return
+    with contextlib.suppress(OSError):
+        _set_private(root_fd, exact=True)
+    _privatize_below(root_fd)
+
+
 class _StoreDir(NamedTuple):
     """A directory of the store that `create` writes into (M11-18), checked
     not to be a link (a symlink, or on Windows a junction or other
@@ -793,6 +960,25 @@ class SnapshotListing(_Frozen):
         return not self.invalid
 
 
+class StoreExposure(_Frozen):
+    """Who besides its owner can open the store (M16-41): `SnapshotStore.exposure`."""
+
+    checked: bool
+    """False where modes are not checked (Windows); then nothing is listed."""
+    count: int
+    """How many entries another account on the machine can read or change:
+    entries granting the group or everyone else read or write, reached
+    through directories that let that same class search them. The store
+    root counts as reached; the folders above it are not judged."""
+    entries: tuple[str, ...]
+    """The first `_EXPOSED_SHOWN` of them, as store-relative POSIX paths in
+    walk order (`.` is the store itself)."""
+
+    @property
+    def readable_by_others(self) -> bool:
+        return self.count > 0
+
+
 class VerifyReport(_Frozen):
     objects_checked: int
     manifests_checked: int
@@ -802,6 +988,9 @@ class VerifyReport(_Frozen):
     nothing under it was checked (M11-18; it was `"."` before)."""
     missing_objects: tuple[MissingObject, ...]
     invalid_manifests: tuple[InvalidManifest, ...]
+    exposure: StoreExposure
+    """Who else can open the store (M16-41). A warning, not a failure: it
+    does not change `ok`."""
 
     @property
     def ok(self) -> bool:
@@ -1128,6 +1317,8 @@ class SnapshotStore:
         self.path: Path = Path(path) if path is not None else default_store_path()
         self._held: dict[tuple[str, ...], tuple[int, os.stat_result]] | None = None
         """Directory descriptors held during one `create` (`_holding_dirs`)."""
+        self._root_private = False
+        """True once `_private_root` has run within the current `_holding_dirs`."""
 
     # -- layout ------------------------------------------------------------
 
@@ -1731,6 +1922,7 @@ class SnapshotStore:
             fd, st = held.pop(key)
             if self._still_there(key, parent_fd, st):
                 held[key] = (fd, st)
+                self._private_root(key, fd, create=create)
                 return fd
             os.close(fd)  # gone or replaced: open afresh, which refuses a link
         if parent_fd is None:
@@ -1743,7 +1935,18 @@ class SnapshotStore:
             held[key] = (fresh, os.fstat(fresh))
         else:
             opened.append(fresh)
+        self._private_root(key, fresh, create=create)
         return fresh
+
+    def _private_root(self, key: tuple[str, ...], fd: int, *, create: bool) -> None:
+        """`_make_store_private` on the root for a write (`create`): once per
+        `_holding_dirs`, else on every open (M16-41). The root may have been
+        opened, and held, by a check that writes nothing before the write."""
+        if key or not create or self._root_private:
+            return
+        _make_store_private(fd)
+        if self._held is not None:
+            self._root_private = True
 
     def _still_there(self, key: tuple[str, ...], parent_fd: int | None, st: os.stat_result) -> bool:
         """The held directory `st` is still what its path names: for the root,
@@ -1766,14 +1969,15 @@ class SnapshotStore:
         """A descriptor on the store root, opened as named (see above)."""
         try:
             if create:
-                self.path.mkdir(parents=True, exist_ok=True)
-            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+                self.path.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             if create:
                 raise SnapshotError(f"the store {self.path} vanished as it was created") from None
             return None
         except OSError as exc:
             raise SnapshotError(f"cannot open the store {self.path}: {exc}") from exc
+        return fd
 
     @contextlib.contextmanager
     def _holding_dirs(self) -> Iterator[None]:
@@ -1789,9 +1993,11 @@ class SnapshotStore:
             yield
             return
         self._held = {}
+        self._root_private = False
         try:
             yield
         finally:
+            self._root_private = False
             held, self._held = self._held, None
             for fd, _ in held.values():
                 with contextlib.suppress(OSError):
@@ -1805,7 +2011,7 @@ class SnapshotStore:
         try:
             if create:
                 with contextlib.suppress(FileExistsError):
-                    os.mkdir(name, dir_fd=parent_fd)  # never follows a link at `name`
+                    os.mkdir(name, _MKDIR_MODE, dir_fd=parent_fd)  # never follows a link
             st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             if create:
@@ -1826,6 +2032,9 @@ class SnapshotStore:
         if _file_identity(os.fstat(fd)) != _file_identity(st):
             os.close(fd)
             raise _linked_store_dir(path)
+        if create:
+            with contextlib.suppress(OSError):  # best effort, as `_make_store_private`
+                _set_private(fd, exact=True)  # 0700 whatever the umask (M16-41)
         return fd
 
     def _checked_dir_path(self, parts: Sequence[str], *, create: bool) -> _StoreDir | None:
@@ -1873,10 +2082,12 @@ class SnapshotStore:
                 | getattr(os, "O_NOCTTY", 0)
             )
             try:
-                fd = os.open(tmp.at(name), flags, 0o666, dir_fd=tmp.fd)
+                fd = os.open(tmp.at(name), flags, _PRIVATE_FILE_MODE, dir_fd=tmp.fd)
             except OSError as exc:
                 raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
             try:
+                with contextlib.suppress(OSError):  # best effort, as `_make_store_private`
+                    _set_private(fd, exact=True)  # 0600 whatever the umask (M16-41)
                 out = os.fdopen(fd, "wb")
             except BaseException:
                 os.close(fd)
@@ -2377,11 +2588,13 @@ class SnapshotStore:
                 assert tmp is not None
                 name = f"import-{uuid.uuid4().hex}"
                 try:
-                    fd = os.open(tmp.at(name), _STAGE_FLAGS, 0o666, dir_fd=tmp.fd)
+                    fd = os.open(tmp.at(name), _STAGE_FLAGS, _PRIVATE_FILE_MODE, dir_fd=tmp.fd)
                 except OSError as exc:
                     raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
                 try:
                     with os.fdopen(fd, "wb") as out:
+                        with contextlib.suppress(OSError):  # best effort
+                            _set_private(out.fileno(), exact=True)  # 0600 whatever the umask
                         while total <= size:
                             chunk = source.read(min(_CHUNK, size + 1 - total))
                             if not chunk:
@@ -2525,7 +2738,56 @@ class SnapshotStore:
             corrupt_objects=tuple(sorted(corrupt)),
             missing_objects=tuple(missing),
             invalid_manifests=tuple(invalid),
+            exposure=self.exposure(),
         )
+
+    def exposure(self) -> StoreExposure:
+        """Which entries of the store another account on this machine can
+        read or change (M16-41), judged by `lstat`; nothing is followed or
+        changed. An entry counts when it grants the group, or everyone else,
+        read or write, and every directory from the store root down to it
+        lets that same class search it. A link is not judged (its target is
+        not the store's). A store that does not exist exposes nothing. Off
+        POSIX nothing is checked (`checked` is False)."""
+        if not _PRIVATE_MODES:
+            return StoreExposure(checked=False, count=0, entries=())
+        shown: list[str] = []
+        count = 0
+        # (path, store-relative name, the classes that can reach it, walk below it)
+        stack: list[tuple[Path, str, tuple[int, ...], bool]] = [
+            (self.path, ".", tuple(range(len(_CLASS_BITS))), True)
+        ]
+        while stack:
+            path, rel, reach, walk = stack.pop()
+            try:
+                # The root as named, as a write opens it; below it, nothing is followed.
+                st = path.stat() if rel == "." else path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            mode = stat.S_IMODE(st.st_mode)
+            if any(mode & _CLASS_BITS[c][0] for c in reach):
+                count += 1
+                if len(shown) < _EXPOSED_SHOWN:
+                    shown.append(rel)
+            if not walk or not stat.S_ISDIR(st.st_mode):
+                continue
+            inner = tuple(c for c in reach if mode & _CLASS_BITS[c][1])
+            if not inner:
+                continue  # no one else can reach anything below it
+            try:
+                names = sorted((p.name for p in path.iterdir()), reverse=True)
+            except OSError:
+                continue
+            for name in names:
+                if rel == ".":
+                    # Below the root only the store's own directories are
+                    # walked; anything else there is judged, not walked.
+                    stack.append((path / name, name, inner, name in _STORE_DIRS))
+                else:
+                    stack.append((path / name, f"{rel}/{name}", inner, True))
+        return StoreExposure(checked=True, count=count, entries=tuple(shown))
 
     def gc(
         self, *, dry_run: bool = True, grace_seconds: float = 0.0, keep: Iterable[str] = ()
@@ -2592,6 +2854,7 @@ class SnapshotStore:
         removed: list[str] = []
         removed_bytes = 0
         if not dry_run:
+            self._privatize_existing()  # a write, so the store is fixed (M16-41)
             for name, obj in candidates:
                 if self._remove_object(obj):
                     removed.append(name)
@@ -2606,6 +2869,21 @@ class SnapshotStore:
             removed_bytes=removed_bytes,
             skipped=tuple(sorted(skipped)),
         )
+
+    def _privatize_existing(self) -> None:
+        """`_make_store_private` on the store root, opened as named, when it
+        exists (M16-41); for a write that makes no directory, such as `gc`.
+        Best effort, and a no-op off POSIX."""
+        if not _PRIVATE_MODES:
+            return
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            return
+        try:
+            _make_store_private(fd)
+        finally:
+            os.close(fd)
 
     def _remove_object(self, obj: _ObjectFile) -> bool:
         """Delete one listed object without following any link on the way;
@@ -2733,7 +3011,7 @@ class SnapshotStore:
         """The store's `tmp/`, created if needed, when it is a directory and
         not a link; else None."""
         try:
-            self.tmp_dir.mkdir(parents=True, exist_ok=True)
+            self.tmp_dir.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
             st = os.lstat(self.tmp_dir)
         except OSError:
             return None

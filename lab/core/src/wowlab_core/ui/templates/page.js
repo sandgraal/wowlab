@@ -718,9 +718,11 @@
     const target = node.path ? report.install_root + sep + node.path.split("/").join(sep) : report.install_root;
     const params = { path: target, root: report.install_root };
     if (node.flavor) params.flavor = node.flavor;
-    const reply = await runJson(["explain"], params);
+    // Partial: `explain` exits 1 for a path that matches nothing (M16-18),
+    // and its report still says why.
+    const reply = await runJson(["explain"], params, true);
     if (seq !== explorer.explainSeq) return;
-    if (reply.error) {
+    if (reply.error && !reply.data) {
       explainSay(shown(reply.error), true);
       return;
     }

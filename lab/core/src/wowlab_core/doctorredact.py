@@ -322,6 +322,8 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     # message, restored paths): it can hold any name, a guild's included.
     "store.last_transaction.label": redact.LABEL,
     "store.last_transaction.state": REDACT,
+    # Store-relative paths: object names and snapshot ids (M16-41).
+    "store.exposure.entries": REDACT,
     "problems": REDACT,
     # The first run (M13-04) is skipped under --redact (conductor decision,
     # M13-09): no scan, no question, no snapshot. Dropped here as well, so
