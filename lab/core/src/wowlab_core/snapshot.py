@@ -2166,9 +2166,13 @@ class SnapshotStore:
 
         Any `OSError` on the way (M11-31), such as a directory planted at the
         object's path, is raised as `SnapshotError` naming that path; the
-        staged copy is removed and nothing is written in its place."""
+        staged copy is removed and nothing is written in its place.
+
+        A store inside any install is refused (`StoreLocationError`) before
+        anything is created, by `create`'s rule (L1; M16-68)."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
+        self._refuse_inside_any_install()
         try:
             with self._holding_dirs():
                 self._refuse_linked_store_dirs()
@@ -2710,6 +2714,10 @@ class SnapshotStore:
         link (on Windows also a junction) or not a directory, or is missing
         while `objects/` holds anything: a dangling link or an unmounted
         volume would otherwise make every object look unreferenced.
+
+        Unless `dry_run`, a store inside any install is refused
+        (`StoreLocationError`) before anything is listed or removed, by
+        `create`'s rule (L1; M16-68). A dry run only reads, and is allowed.
         """
         if isinstance(keep, str | bytes):
             raise SnapshotError("keep is an iterable of SHA-256 digests, not a single string")
@@ -2718,6 +2726,8 @@ class SnapshotStore:
             if not isinstance(digest, str) or not _SHA_RE.match(digest):
                 raise SnapshotError(f"not a SHA-256 hex digest: {digest!r}")
             referenced.add(digest)
+        if not dry_run:
+            self._refuse_inside_any_install()
         self._refuse_gc_without_manifests()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
