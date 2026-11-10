@@ -18,8 +18,10 @@ What is replaced, and where the names come from:
 - each name given with `--redact-name`, as `<NAME>`: a guild name, or a
   player's own name in a folder outside their home, which nothing in the
   install names as such;
-- the login names the process runs as and this machine's network name, as
-  `<USER>` and `<HOST>`;
+- the login names the process runs as, as `<USER>`, only inside a
+  path-shaped token (M16-44: a login such as `root` or `user` is a common
+  word, and `$WOWLAB_WOW_ROOT` is not a name), and this machine's network
+  name, as `<HOST>`, anywhere;
 - the same account, realm and character folders named by the entries of
   every snapshot in the store that loads, so names from another install, a
   deleted character or an earlier state are known too;
@@ -220,7 +222,8 @@ def _names(values: Iterable[str]) -> Iterator[str]:
 def machine_names() -> tuple[list[str], list[str]]:
     """The login names the process runs as, and this machine's network name
     (whole and up to its first dot). Each is matched by the same rule as any
-    other name: whole words only when shorter than `EMBEDDED_MIN_CHARS`."""
+    other name: whole words only when shorter than `EMBEDDED_MIN_CHARS`; a
+    login only inside a path-shaped token (`redact.Redactor`, M16-44)."""
     users: list[str] = []
     with suppress(Exception):  # getuser raises when no name can be found
         users.append(getpass.getuser())
