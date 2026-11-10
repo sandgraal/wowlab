@@ -1102,7 +1102,11 @@ IMPORT_CLOCK_ALLOWANCE = timedelta(minutes=10)
 """How far past this computer's clock an imported snapshot's date may be
 (two computers' clocks differ a little); a later one is refused (M16-04)."""
 
-_CREATED_AT_RE = re.compile(r"\A(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z\Z")
+# ASCII digits only (M16-77): `int()` reads any Unicode digit, and a date in
+# other digits would sort after every real one.
+_CREATED_AT_RE = re.compile(
+    r"\A([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{6})Z\Z"
+)
 
 
 def _one_component(value: str) -> bool:
