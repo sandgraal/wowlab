@@ -538,6 +538,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
     store.refuse_holding(source)  # M10-19
     store.list_tree(source, SUBTREES)  # M11-08
     store.put_object(b"an object no manifest names\n")  # M11-24
+    store.exposure()  # M16-41
 
     # M16-04: the same manifest again adds nothing, reads no object and
     # rewrites nothing.
@@ -570,6 +571,7 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "put_object",  # M11-24: writes an object, never a manifest
         "add_snapshot",  # M16-04: writes a new manifest, never one already there
         "imported_ids",  # M16-04: lists imported/ only
+        "exposure",  # M16-41: lstat and listings only
     }
 
 

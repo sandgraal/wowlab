@@ -1568,6 +1568,8 @@ class StoreReport(_Out):
     transactions: int | None
     last_transaction: LastTransaction | None
     journal_error: str | None
+    # Who besides the player can open the store (M16-41); not checked on Windows.
+    exposure: snapshot.StoreExposure
 
 
 class DoctorReport(_Out):
@@ -1714,6 +1716,7 @@ def _store_report() -> StoreReport:
         transactions=transactions,
         last_transaction=last,
         journal_error=journal_error,
+        exposure=store.exposure(),
     )
 
 
@@ -1822,6 +1825,22 @@ _SYNC_NOTE = (
     "and settings, is not known."
 )
 _STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
+_STORE_MODES_NOTE = (
+    "On Windows, wowlab does not check who else can read the snapshot store; the folder "
+    "takes its access from your user profile."
+)
+
+
+def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
+    """The warning when other accounts on this computer can open the store
+    (M16-41), or None."""
+    if not exposure.readable_by_others:
+        return None
+    return (
+        f"Other accounts on this computer can read the snapshot store "
+        f"({exposure.count} of its files and folders). wowlab makes it private the next time it "
+        "writes there, such as at the next snapshot."
+    )
 
 
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
@@ -1908,7 +1927,16 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         )
     else:
         _say("  no transactions in the journal")
-    notes.append(_STORE_VERIFY_NOTE)
+    exposed = _exposure_line(store.exposure)
+    if exposed is not None:
+        _say_prose(f"  {exposed}", hang="    ")
+    # On Windows the store's note says the modes are not checked as well;
+    # one note about the store, so the footer counts the same everywhere.
+    notes.append(
+        _STORE_VERIFY_NOTE
+        if store.exposure.checked
+        else f"{_STORE_VERIFY_NOTE} {_STORE_MODES_NOTE}"
+    )
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
@@ -7441,6 +7469,11 @@ def snap_verify(json_out: JsonOpt = False) -> None:
             _say(f"  damaged manifest {bad.name}: {bad.reason}")
         if report.ok:
             _say("  all sound")
+        exposed = _exposure_line(report.exposure)
+        if exposed is not None:
+            _say_prose(f"  {exposed}", hang="    ")
+        elif not report.exposure.checked:
+            _say_prose(f"  {_STORE_MODES_NOTE}", hang="    ")
     if not report.ok:
         raise typer.Exit(EXIT_ERROR)
 
