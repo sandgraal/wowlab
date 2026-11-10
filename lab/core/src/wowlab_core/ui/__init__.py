@@ -51,8 +51,8 @@ arguments after `--`, flags given or not, never through a shell. Refused
 (403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): a leaf
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
-`follow` (a run must end), and `looks page` with `out` and `snap export`
-with `file` (each can create a file anywhere outside an install). `sv dump` always runs with `--install-only`
+`follow` (a run must end), `looks page` with `out` (it can create a file
+anywhere outside an install) and `snap export` (it creates one). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -201,6 +201,14 @@ _POLL_S = 0.05
 # until it declares what a plan of it is (none does on 2026-10-19).
 _EXCLUDED_YES = "--yes with no plan run the UI can confirm"
 _EXCLUDED_UI = "the UI itself"
+# Leaves refused whole for a reason of their own, by leaf path. `snap export`
+# (M16-04) always writes the file it is named, so the reason of the owner's
+# 2026-10-15 ruling on `looks page --out` refuses all of it: its FILE is
+# required, so refusing only that parameter would leave a leaf no run reaches.
+_EXCLUDED_LEAVES: dict[tuple[str, ...], str] = {
+    ("ui",): _EXCLUDED_UI,
+    ("snap", "export"): "it creates a file anywhere outside an install",
+}
 
 _JSON = "--json"
 _YES = "--yes"
@@ -238,8 +246,6 @@ MAX_PENDING_CONFIRMS: int = 32
 _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
-    # M16-04: the same reason as `looks page --out`, so the same refusal.
-    ("snap", "export"): {"file": (False, "it can create a file anywhere outside an install")},
 }
 # Flags the server gives a leaf on every run, as it gives `--json`, and never
 # the page, by leaf path (M16-42). `sv dump` reads any file it is named, so
@@ -644,8 +650,8 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     pin = _cli_contract()[1][path]
                 for param in own:
                     params.pop(str(param.name), None)
-        if path == ("ui",):
-            excluded = _EXCLUDED_UI
+        if path in _EXCLUDED_LEAVES:
+            excluded = _EXCLUDED_LEAVES[path]
         if excluded is not None:
             confirm = None
             pin = None

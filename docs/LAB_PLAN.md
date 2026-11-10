@@ -1128,8 +1128,8 @@ archive adds nothing. An id already in the store with the same bytes adds
 nothing; with other bytes (a relabelled copy) it is refused. The import
 holds the store lock. An imported snapshot keeps the install root it was
 taken of, so it is restored with `--into-root` (and `--into-flavor` when
-the folder has another name there). `wowlab ui` refuses `snap export`'s
-FILE, as it refuses `looks page --out`.
+the folder has another name there). `wowlab ui` refuses `snap export` whole
+(its FILE is required), for the reason it refuses `looks page --out`.
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

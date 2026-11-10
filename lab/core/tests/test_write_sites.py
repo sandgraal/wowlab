@@ -92,7 +92,7 @@ _UI_RUN = (
     "`wowlab ui` (ADR-0029, M13-24): starts only the same `wowlab` (this interpreter by "
     "absolute path, `-P -m wowlab_core`) with an argv list and no shell, built from the "
     "Click leaf's declared parameters; every leaf that declares --yes, `ui`, `log tail "
-    "--follow`, `looks page --out` and `snap export FILE` are refused, so the child writes "
+    "--follow`, `looks page --out` and `snap export` are refused, so the child writes "
     "only what the CLI "
     "itself writes, never into an install outside the gate; the server writes no file"
 )
