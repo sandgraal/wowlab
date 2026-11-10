@@ -383,7 +383,6 @@ def _put_back_mtime(directory: Path, mtime_ns: int) -> None:
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_a_no_op_whole_restore_lists_each_directory_once(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -408,7 +407,6 @@ def test_constructed_a_no_op_whole_restore_lists_each_directory_once(
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_lookups_that_write_nothing_list_their_directory_once(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -520,7 +518,6 @@ def _no_op_restore_seconds(
     return seconds
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_the_no_op_whole_restore_check_scales_linearly(
     guard: Any, tmp_path: Path, idle: None
 ) -> None:
@@ -567,7 +564,6 @@ OWN_CHANGES = ("own-write", "own-directory", "own-delete")
     "change", [pytest.param(c, id=f"constructed-{c}") for c in EXTERNAL_CHANGES]
 )
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_someone_elses_change_of_identity_is_seen_by_the_next_lookup(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, change: str, dry_run: bool
 ) -> None:
@@ -604,7 +600,6 @@ def test_constructed_someone_elses_change_of_identity_is_seen_by_the_next_lookup
 
 
 @pytest.mark.parametrize("change", [pytest.param(c, id=f"constructed-{c}") for c in OWN_CHANGES])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_the_transactions_own_writes_invalidate_the_memo(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, change: str
 ) -> None:
@@ -650,7 +645,6 @@ def test_constructed_the_transactions_own_writes_invalidate_the_memo(
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_a_change_right_after_the_listing_is_not_stored_under_the_new_key(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -692,7 +686,6 @@ def test_constructed_a_change_right_after_the_listing_is_not_stored_under_the_ne
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_the_memo_lasts_one_transaction(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -736,7 +729,6 @@ RECHECK_CASES = [
 
 
 @pytest.mark.parametrize(("op", "when", "swap"), RECHECK_CASES)
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_the_commit_time_recheck_still_refuses_a_changed_path(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, op: str, when: str, swap: str
 ) -> None:
@@ -787,7 +779,6 @@ def test_constructed_the_commit_time_recheck_still_refuses_a_changed_path(
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-23 not implemented")
 def test_constructed_an_injected_listing_error_is_not_cached(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:

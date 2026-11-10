@@ -79,7 +79,15 @@ Each operation then checks the path lexically (the allowlist, executables,
 Windows spellings), walks it on disk without following any link, junction or
 other reparse point, refuses a name that differs only in case or Unicode form
 from one on disk, and refuses a name the file system resolves to something it
-does not list (an 8.3 short name). A path whose disk state differs from what
+does not list (an 8.3 short name). The directory listings that walk reads
+come from a per-transaction memo (§18.1 item 6, M16-23): a listing is kept
+under the directory's (dev, ino, mtime_ns), read before the listing and again
+after it, used only while a fresh `lstat` still shows that key, forgotten
+for every directory on the path of the transaction's own write, delete or
+directory removal, and never kept when the listing failed; the target itself
+is `lstat`ed on every lookup, and the re-checks below never use the memo, so
+a whole restore lists each directory once instead of once per file in it. A
+path whose disk state differs from what
 guard expects there is refused with `ChangedSinceSnapshotError` (item 3): at
 its first touch the pre-write snapshot's entry (content hash and kind, or
 absent against present), later guard's own record of the path (the hash of
@@ -1290,17 +1298,121 @@ def _verify_after(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
         raise _ChangedUnderneathError(f"{exc}; the change may have landed elsewhere") from exc
 
 
-def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
+_ListingKey = tuple[int, int, int]
+
+
+def _listing_key(directory: Path) -> _ListingKey | None:
+    """What a memoized listing of `directory` is held to: its (dev, ino,
+    mtime_ns) by `lstat`. None for a link or anything not a directory, whose
+    listing is never kept. An `OSError` from the `lstat` propagates."""
+    st = longpath.lstat(directory)
+    if _is_link(st) or not stat.S_ISDIR(st.st_mode):
+        return None
+    return (st.st_dev, st.st_ino, st.st_mtime_ns)
+
+
+@dataclass
+class _Listing:
+    """One directory listing, as `longpath.entries` returned it."""
+
+    key: _ListingKey | None
+    entries: tuple[os.DirEntry[str], ...]
+    names: frozenset[str]
+    folded: dict[str, list[str]] | None = None
+
+    def clashes(self, name: str) -> list[str]:
+        """The listed names that differ from `name` only by case or Unicode
+        form, sorted; folded once per listing, not once per lookup."""
+        if self.folded is None:
+            folded: dict[str, list[str]] = {}
+            for listed in sorted(self.names):
+                folded.setdefault(_fold(listed), []).append(listed)
+            self.folded = folded
+        return [n for n in self.folded.get(_fold(name), ()) if n != name]
+
+
+class _ListingMemo:
+    """§18.1 item 6 (M16-23): one transaction's directory listings.
+
+    A listing is kept under the key (`_listing_key`) read before it was
+    listed, and only when the key read again after the listing agrees, so a
+    change that lands while or right after a directory is listed is never
+    kept under the new key. Every lookup reads the key again and lists again
+    when it differs: someone else's file added or removed moves the
+    directory's mtime, and a directory replaced by another has another
+    inode. The transaction's own writes, directory creations, deletes and
+    removals forget every directory on their path (`forget`), whatever the
+    clock did. A listing that fails is never kept: the error propagates and
+    the next lookup lists again. The memo answers only which names a
+    directory lists; every target is still `lstat`ed per lookup, and the
+    commit-time re-check (`_recheck`, `_verify`) never reads the memo.
+    Someone else's change within one tick of a coarse directory clock keeps
+    the key as it was; that residual risk is accepted (the M16-23T graders'
+    docstring, 2026-10-22): it can let a case-variant sibling name through,
+    never a write outside the allowlist or past a link."""
+
+    def __init__(self) -> None:
+        self._held: dict[str, _Listing] = {}
+
+    def listing(self, directory: Path) -> _Listing:
+        """`directory`'s listing: the kept one when its key still holds,
+        else a new one. An `OSError` (the `lstat` or the listing) propagates
+        and nothing is kept."""
+        where = str(directory)
+        key = _listing_key(directory)
+        held = self._held.get(where)
+        if held is not None and key is not None and held.key == key:
+            return held
+        self._held.pop(where, None)
+        entries = tuple(longpath.entries(directory))
+        listing = _Listing(key=key, entries=entries, names=frozenset(e.name for e in entries))
+        if key is not None:
+            try:
+                after = _listing_key(directory)
+            except OSError:
+                after = None
+            if after == key:
+                self._held[where] = listing
+        return listing
+
+    def entries(self, directory: Path) -> list[os.DirEntry[str]]:
+        """`longpath.entries(directory)` through the memo (for `list_tree`)."""
+        return list(self.listing(directory).entries)
+
+    def forget(self, place: _Place, parts: Sequence[str]) -> None:
+        """Drop the listings of the flavor folder and of every directory
+        below it on the way to `parts` (`parts` itself included)."""
+        current = place.flavor_dir
+        self._held.pop(str(current), None)
+        for name in parts:
+            current = current / name
+            self._held.pop(str(current), None)
+
+
+def _entry(
+    directory: Path, name: str, rel: str, memo: _ListingMemo | None = None
+) -> os.stat_result | None:
     """`lstat` of `directory/name`, or None when absent. Refuses a link, a
     name that only matches an existing one by case or Unicode form, and a
-    name the file system resolves although the directory does not list it."""
+    name the file system resolves although the directory does not list it.
+    With `memo`, the directory's listing comes from it (§18.1 item 6); the
+    `lstat` of the target is made every time."""
+    listing: _Listing | None = None
     try:
-        names = {p.name for p in longpath.iterdir(directory)}
+        if memo is None:
+            names = frozenset(p.name for p in longpath.iterdir(directory))
+        else:
+            listing = memo.listing(directory)
+            names = listing.names
     except OSError as exc:
         raise GuardError(f"{rel}: cannot list {directory}: {exc}") from exc
     path = directory / name
     if name not in names:
-        clash = sorted(n for n in names if _fold(n) == _fold(name))
+        clash = (
+            sorted(n for n in names if _fold(n) == _fold(name))
+            if listing is None
+            else listing.clashes(name)
+        )
         if clash:
             raise PathNotAllowedError(
                 f"{rel}: {name!r} collides with {clash[0]!r} already in {directory}"
@@ -1323,8 +1435,15 @@ def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
     return st
 
 
-def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Found:
-    """Walk `parts` below the flavor folder, following nothing."""
+def _look(
+    place: _Place,
+    parts: Sequence[str],
+    *,
+    want_dir: bool = False,
+    memo: _ListingMemo | None = None,
+) -> _Found:
+    """Walk `parts` below the flavor folder, following nothing. With `memo`,
+    directory listings come from the transaction's memo."""
     rel = "/".join(parts)
     chain: list[tuple[Path, _Identity]] = [
         (place.install_root, place.root_id),
@@ -1338,7 +1457,7 @@ def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Fo
         if missing:
             missing.append("/".join(parts[:depth]))
             continue
-        st = _entry(current.parent, name, rel)
+        st = _entry(current.parent, name, rel, memo)
         if st is None:
             missing.append("/".join(parts[:depth]))
         elif stat.S_ISDIR(st.st_mode):
@@ -1346,7 +1465,7 @@ def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Fo
         else:
             raise PathNotAllowedError(f"{rel}: {'/'.join(parts[:depth])} is not a directory")
     target = current / parts[-1]
-    st = None if missing else _entry(current, parts[-1], rel)
+    st = None if missing else _entry(current, parts[-1], rel, memo)
     if st is not None:
         if want_dir and not stat.S_ISDIR(st.st_mode):
             raise PathNotAllowedError(f"{rel} is not a directory")
@@ -1519,15 +1638,47 @@ def _mutate(
     *,
     expect_hash: str | None,
     tmp_name: str | None,
+    memo: _ListingMemo | None = None,
 ) -> None:
     """Put `data` at `parts` (None deletes), after walking the path again and
     checking the target is still what `expect` found and still hashes to
     `expect_hash`. A write goes through the temp file `tmp_name`, which the
     caller has already journaled. Directories made on the way are appended
-    to `created` as they are made."""
+    to `created` as they are made. Whatever happens, `memo` forgets every
+    directory on the path afterwards (the transaction's own write)."""
     if _check_rel("/".join(parts)) != tuple(parts):
         raise PathNotAllowedError(f"{'/'.join(parts)!r} is not a path the gate writes")
-    found = _look(place, parts)
+    try:
+        _mutate_walked(
+            place,
+            parts,
+            data,
+            rule,
+            expect,
+            created,
+            expect_hash=expect_hash,
+            tmp_name=tmp_name,
+            memo=memo,
+        )
+    finally:
+        if memo is not None:
+            memo.forget(place, parts[:-1])
+
+
+def _mutate_walked(
+    place: _Place,
+    parts: Sequence[str],
+    data: bytes | None,
+    rule: _ModeRule,
+    expect: _Found,
+    created: list[str],
+    *,
+    expect_hash: str | None,
+    tmp_name: str | None,
+    memo: _ListingMemo | None,
+) -> None:
+    """`_mutate` after its lexical check; see there."""
+    found = _look(place, parts, memo=memo)
     rel = found.rel
     if not _same_state(found.st, expect.st):
         raise _changed(rel, "changed between guard's read and its write")
@@ -1562,19 +1713,24 @@ def _mutate(
     _replace(found, chain, data, rule, tmp_name, expect_hash)
 
 
-def _remove_dir(place: _Place, rel_dir: str) -> None:
+def _remove_dir(place: _Place, rel_dir: str, memo: _ListingMemo | None = None) -> None:
     """Remove a directory this gate created, if it is still there. Only an
-    empty directory is removed; anything else raises GuardError."""
+    empty directory is removed; anything else raises GuardError. `memo`
+    forgets every directory on the path afterwards, the removed one too."""
     parts = _check_rel(rel_dir, directory=True)
-    found = _look(place, parts, want_dir=True)
-    if found.st is None:
-        return
-    _verify(found.chain, rel_dir)
     try:
-        with longpath.plain_errors():
-            longpath.xpath(found.path).rmdir()
-    except OSError as exc:
-        raise GuardError(f"cannot remove {rel_dir}: {exc}") from exc
+        found = _look(place, parts, want_dir=True, memo=memo)
+        if found.st is None:
+            return
+        _verify(found.chain, rel_dir)
+        try:
+            with longpath.plain_errors():
+                longpath.xpath(found.path).rmdir()
+        except OSError as exc:
+            raise GuardError(f"cannot remove {rel_dir}: {exc}") from exc
+    finally:
+        if memo is not None:
+            memo.forget(place, parts)
 
 
 # ─── the transaction ─────────────────────────────────────────────────────────
@@ -1595,6 +1751,7 @@ class _Transaction:
         "_label",
         "_last",
         "_left_alone",
+        "_listings",
         "_order",
         "_overlay",
         "_own_locks",
@@ -1656,6 +1813,8 @@ class _Transaction:
         # What the last whole restore leaves alone (M16-11); never in the plan.
         self._left_alone: tuple[str, ...] = ()
         self._overlay: dict[str, bytes | None] = {}
+        # Directory listings, this transaction's only (§18.1 item 6, M16-23).
+        self._listings = _ListingMemo()
         self._broken: str | None = None
         self._temps: list[str] = []
         self._temps_removed: list[str] = []
@@ -2050,7 +2209,7 @@ class _Transaction:
         if self._dry_run and rel in self._overlay:
             return self._overlay[rel]
         assert self._place is not None
-        return _read(_look(self._place, parts))
+        return _read(_look(self._place, parts, memo=self._listings))
 
     def _note_plan(
         self, rel: str, before: str | None, after: str | None, data: bytes | None
@@ -2072,7 +2231,7 @@ class _Transaction:
             self._note_plan(rel, None if current is None else _sha(current), after, data)
             self._overlay[rel] = data
             return
-        found = _look(self._place, parts)
+        found = _look(self._place, parts, memo=self._listings)
         current = _read(found)
         mode = 0 if found.st is None else stat.S_IMODE(found.st.st_mode)
         before = None if current is None else _sha(current)
@@ -2111,6 +2270,7 @@ class _Transaction:
                 self._created,
                 expect_hash=before,
                 tmp_name=tmp_name,
+                memo=self._listings,
             )
         except _ChangedUnderneathError as exc:
             # The change happened, but maybe not where it was meant to: the
@@ -2224,7 +2384,9 @@ class _Transaction:
         if not subtrees:
             return ()
         try:
-            listed = store.list_tree(place.install_root, subtrees, exclude=excluded)
+            listed = store.list_tree(
+                place.install_root, subtrees, exclude=excluded, entries=self._listings.entries
+            )
         except (SnapshotError, ValueError) as exc:
             raise GuardError(
                 f"cannot list what the restore of snapshot {manifest.id} leaves alone: {exc}"
@@ -2257,7 +2419,7 @@ class _Transaction:
             return False
         try:
             parts = _check_rel(rel, allow_executable=True)
-            found = _look(self._place, parts)
+            found = _look(self._place, parts, memo=self._listings)
             if found.st is None or stat.S_IMODE(found.st.st_mode) != entry.mode:
                 return False
             current = _read(found)
@@ -2272,7 +2434,11 @@ class _Transaction:
         assert self._place is not None
         if entry.target is None:
             return False
-        found = _look(self._place, parts[:-1], want_dir=True) if len(parts) > 1 else None
+        found = (
+            _look(self._place, parts[:-1], want_dir=True, memo=self._listings)
+            if len(parts) > 1
+            else None
+        )
         if found is not None and found.st is None:
             return False
         path = self._place.flavor_dir.joinpath(*parts)
@@ -2309,7 +2475,7 @@ class _Transaction:
             before, mode, size = self._before[rel]
             parts = tuple(rel.split("/"))
             try:
-                found = _look(self._place, parts)
+                found = _look(self._place, parts, memo=self._listings)
                 current = _read(found)
                 now = None if current is None else _sha(current)
                 if now == before:
@@ -2334,6 +2500,7 @@ class _Transaction:
                     [],
                     expect_hash=now,
                     tmp_name=tmp_name,
+                    memo=self._listings,
                 )
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
@@ -2341,7 +2508,7 @@ class _Transaction:
             # Refused before anything landed: kept as it is, but a disk that
             # moved since guard read it is not "rolled back".
             try:
-                current = _read(_look(self._place, tuple(rel.split("/"))))
+                current = _read(_look(self._place, tuple(rel.split("/")), memo=self._listings))
                 if (None if current is None else _sha(current)) != read:
                     problems.append(
                         f"{rel}: changed by something else while this transaction ran; "
@@ -2351,7 +2518,7 @@ class _Transaction:
                 problems.append(f"{rel}: {exc}")
         for rel_dir in reversed(self._created):
             try:
-                _remove_dir(self._place, rel_dir)
+                _remove_dir(self._place, rel_dir, self._listings)
             except Exception as exc:
                 problems.append(f"{rel_dir}/: {exc}")
         return problems
@@ -2366,7 +2533,7 @@ class _Transaction:
         assert self._place is not None
         for rel_dir in reversed(created_dirs):
             with contextlib.suppress(GuardError):
-                _remove_dir(self._place, rel_dir)  # only if empty: best effort
+                _remove_dir(self._place, rel_dir, self._listings)  # only if empty: best effort
 
 
 def _record_is_of(record: _JournalRecord, place: _Place) -> bool:

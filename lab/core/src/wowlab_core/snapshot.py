@@ -1244,9 +1244,15 @@ class SnapshotStore:
                 )
 
     def _walk(
-        self, root: Path, subtree: str, excluded: Sequence[str]
+        self,
+        root: Path,
+        subtree: str,
+        excluded: Sequence[str],
+        entries: Callable[[Path], Sequence[os.DirEntry[str]]] = longpath.entries,
     ) -> Iterator[tuple[str, Path]]:
-        """Yield `(relative posix path, absolute path)` for every non-directory."""
+        """Yield `(relative posix path, absolute path)` for every non-directory.
+        `entries` lists one directory (`longpath.entries` unless a caller that
+        already holds the listing passes its own)."""
         if any(_is_under(subtree, x) for x in excluded):
             return
         self._refuse_symlinked_parent(root, subtree)
@@ -1265,7 +1271,7 @@ class SnapshotStore:
         while stack:
             rel_dir, abs_dir = stack.pop()
             try:
-                children = sorted(longpath.entries(abs_dir), key=lambda d: d.name)
+                children = sorted(entries(abs_dir), key=lambda d: d.name)
             except FileNotFoundError:
                 _confirm_gone(abs_dir)
                 continue  # removed while we walked
@@ -1977,6 +1983,7 @@ class SnapshotStore:
         subtrees: Iterable[str | PurePath],
         *,
         exclude: Iterable[str | PurePath] = (),
+        entries: Callable[[Path], Sequence[os.DirEntry[str]]] | None = None,
     ) -> tuple[tuple[str, Literal["file", "symlink", "other"]], ...]:
         """Every path `create` would walk under `subtrees` of `root`, less
         `exclude`, sorted, each with its kind by `lstat`: a regular `file`, a
@@ -1989,13 +1996,20 @@ class SnapshotStore:
         a link below the root is refused as `create` refuses it. Added
         2026-09-28 (M11-08) so `profiles` can find the files added under a
         profile's subtrees since it was saved without taking a snapshot.
+
+        `entries` lists one directory, as `longpath.entries` does (the
+        default); `guard` passes its per-transaction listing memo (M16-23)
+        so a whole restore lists each directory once. An `OSError` it raises
+        is handled as one from `longpath.entries` is.
         """
         root = _plain_root(root)
         wanted = sorted({_normalize_rel(s, "subtree") for s in subtrees})
         excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
         found: dict[str, Literal["file", "symlink", "other"]] = {}
         for subtree in wanted:
-            for rel, abs_path in self._walk(root, subtree, excluded):
+            for rel, abs_path in self._walk(
+                root, subtree, excluded, longpath.entries if entries is None else entries
+            ):
                 if rel in found:
                     continue
                 try:
