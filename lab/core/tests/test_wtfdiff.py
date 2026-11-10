@@ -130,8 +130,11 @@ def test_macro_added_from_the_empty_account_file() -> None:
             name="PolyArc",
             before=None,
             after="/castsequence Arcane Intellect, Polymorph",
+            occurrence=1,
+            position=1,
         ),
     )
+    assert not diff.repeated_names
     back = wtfdiff.compare("macros", CHARACTER_MACROS, None)
     assert [(c.name, c.before is not None, c.after) for c in back.changes] == [
         ("PolyArc", True, None)
@@ -153,9 +156,26 @@ def test_macros_of_one_name_are_compared_in_turn_constructed() -> None:
         b"Polymorph", b"Frostbolt"
     )
     diff = wtfdiff.compare("macros", record, record + second)
-    assert [(c.name, c.before, c.after is not None) for c in diff.changes] == [
-        ("PolyArc (2)", None, True)
+    assert [
+        (c.name, c.occurrence, c.position, c.before, c.after is not None) for c in diff.changes
+    ] == [("PolyArc", 2, 2, None, True)]
+    assert diff.repeated_names
+    # Removing the first of the two shifts the second into its place.
+    shifted = wtfdiff.compare("macros", record + second, second)
+    assert [(c.name, c.occurrence, c.parts, c.after is None) for c in shifted.changes] == [
+        ("PolyArc", 1, ("text",), False),
+        ("PolyArc", 2, (), True),
     ]
+    assert shifted.repeated_names
+
+
+def test_a_blank_macro_name_keeps_its_place_constructed() -> None:
+    """A later real run's macro names were all a single space (the
+    `macos-70425` provenance row); this edit of the capture stands for it."""
+    blank = CHARACTER_MACROS.replace(b'"PolyArc"', b'" "')
+    diff = wtfdiff.compare("macros", CHARACTER_MACROS, CHARACTER_MACROS + blank)
+    (added,) = diff.changes
+    assert (added.name, added.occurrence, added.position) == (" ", 1, 2)
 
 
 def test_macro_id_change_alone_is_no_change_by_name_constructed() -> None:

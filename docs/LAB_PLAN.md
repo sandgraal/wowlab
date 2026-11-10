@@ -4692,23 +4692,37 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      *Amended 2026-11-09 (M16-10):* under each changed `bindings-cache.wtf`,
      `macros-cache.txt`, `config-cache.wtf` or `Config.wtf` (by file name,
      in any folder) the lines are `key K: old -> new`, `macro "N": added`,
-     `removed` or `text`/`icon changed`, and `CVar N: "old" -> "new"`, with
-     `(not in the file)` for an absent side. They come from the `wtfconfig`
-     parsers (module `wtfdiff`): CVars by the last line setting the name,
-     compared without ASCII case; keys by the last `bind` line; macros by
-     name, two of one name compared in turn (`N (2)`); a macro's id is not
-     compared. When lines the parsers leave `Unknown` differ, one line says
-     so; when nothing differs by name, one line says only order, endings or
-     ids did. Under a SavedVariables file, one summary line: `values: R
-     removed, A added, C changed; size X -> Y` (`snap diff` then lists each
-     value as before). A plan names at most 20 per file and counts the
-     rest; `snap diff` lists all. Plan sides are read read-only: the disk
-     when it still hashes to the plan's `before`, else the snapshot store;
-     a side over 64 MiB or not readable back gets a "not compared" line.
-     `RestoreReport`, `ProfileApplyReport`, `UndoReport` and `DiffReport`
-     gain `plan_lines`: the text plan (for `snap diff`, its text output),
-     line by line as the terminal shows it (escaped), for the UI's confirm
-     step (EV-20). Additive only.
+     `removed` or `text`/`icon changed`, and `CVar N: "old" -> "new"`. An
+     absent side is `(no line: the client's default binding)` for a key and
+     `(no line: set elsewhere or the client default)` for a CVar (`null` in
+     `--json`). They come from the `wtfconfig` parsers (module `wtfdiff`):
+     CVars by the last line setting the name, compared without ASCII case;
+     keys by the last `bind` line (that the client applies the last line is
+     believed, not observed **[verify]**). Every `SET` line is shown as a
+     CVar whatever it holds, `SET CACHE-…` lines included. Macros are
+     matched by name, two of one name compared in file order (`"N" (2)`,
+     and one line under the file says an inserted or removed one shifts the
+     rest); a blank or whitespace-only name is shown by its place, `macro
+     (blank name, 17th)`; a macro's id is not compared. When lines the
+     parsers leave `Unknown` differ, one line says so; when nothing differs
+     by name, one line says what can still differ (for macros: order or
+     ids, so a button that holds a macro may run a different one). Under a
+     SavedVariables file, one summary line: `values: R removed, A added, C
+     changed; size X -> Y` (`snap diff` then lists each value as before). A
+     plan names at most 20 per file and counts the rest; `snap diff` lists
+     all. Plan sides are read read-only: the disk when it still hashes to
+     the plan's `before`, else the snapshot store; a side over 64 MiB (a
+     stored one by its recorded size, before any read) or not readable back
+     gets a "not compared" line. `undo` compares what the disk holds now
+     with what it puts back, and when that is not what the transaction
+     wrote (the client rewrites these files at logout), a line says the
+     comparison includes those later changes. A plan with any such line
+     adds one line saying each file is one scope (machine, account or
+     character), and `snap restore` and `undo` add the login caveat before
+     the prompt. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
+     text output), line by line as the terminal shows it (escaped), for the
+     UI's confirm step (EV-20). Additive only.
    - A whole restore lists what it leaves alone.
    - `sv merge` lists every key it removes. Its rulings change: an array
      part is merged as one value, and `--key X` merges inside `X`, with the

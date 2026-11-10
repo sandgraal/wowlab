@@ -36,11 +36,22 @@ _KINDS: dict[str, Kind] = {
 
 
 class NamedChange(BaseModel):
-    """One key, macro or CVar that differs. ``before``/``after`` are ``None``
-    when the file has no such key, macro or CVar on that side. For a key they
-    are the bound command, for a CVar its value, for a macro its text (body
-    lines joined by LF). ``parts`` names what changed in a macro present on
-    both sides (``text``, ``icon``); it is empty for keys and CVars."""
+    """One key, macro or CVar that differs. For a key ``before``/``after`` are
+    the bound command, for a CVar its value, for a macro its text (body lines
+    joined by LF).
+
+    ``None`` means the file has no line for it on that side. That is not
+    "unbound" or "empty": a key with no line keeps the client's default
+    binding, and a CVar with no line takes its value from another scope's
+    file (machine, account or character) or the client's default. A macro
+    with no record is absent from this file.
+
+    ``parts`` names what changed in a macro present on both sides (``text``,
+    ``icon``); it is empty for keys and CVars. For a macro, ``occurrence``
+    counts the macros of the same name in file order from 1, and
+    ``position`` is the record's place among the file's macros, from 1 (on
+    the ``after`` side, or the ``before`` side when it was removed); both
+    are 0 for keys and CVars."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -49,19 +60,26 @@ class NamedChange(BaseModel):
     before: str | None
     after: str | None
     parts: tuple[str, ...] = ()
+    occurrence: int = 0
+    position: int = 0
 
 
 class WtfDiff(BaseModel):
     """What differs by name, and whether lines the parser does not type
     (``Unknown``) differ too. With no change and no such line, the two
     files differ only in order, line endings or record details the names
-    do not carry (a macro's id or version)."""
+    do not carry (a macro's id or version).
+
+    ``repeated_names`` is true when either side of a macros file holds two
+    macros of one name: those are compared in file order, so an inserted or
+    removed one shifts the rest."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Kind
     changes: tuple[NamedChange, ...]
     other_lines_differ: bool
+    repeated_names: bool = False
 
 
 def kind_of(path: str) -> Kind | None:
@@ -95,6 +113,8 @@ def _bindings(data: bytes | None) -> tuple[dict[str, str], Counter[bytes]]:
         return {}, Counter()
     doc = wtfconfig.parse_bindings(data)
     # A key bound on two lines: the last line is the one kept, as for CVars.
+    # That the client applies the last line is believed, not observed
+    # **[verify]** (as `wtfconfig.DuplicateCVar` says for CVars).
     return {b.key: b.action for b in doc.bindings}, _unknown(doc.unknown_lines())
 
 
@@ -109,35 +129,41 @@ def _cvars(data: bytes | None) -> tuple[dict[str, tuple[str, str]], Counter[byte
     )
 
 
-_Record = tuple[str, str]  # (text, icon)
+_Record = tuple[str, str, int]  # (text, icon, position in the file from 1)
 
 
-def _macros(data: bytes | None) -> tuple[dict[tuple[str, int], _Record], Counter[bytes]]:
-    """(name, n) -> (text, icon), where n counts macros of the same name in
-    file order from 1, so two macros named alike are compared in turn."""
+def _macros(
+    data: bytes | None,
+) -> tuple[dict[tuple[str, int], _Record], Counter[bytes], bool]:
+    """(name, n) -> (text, icon, position), where n counts macros of the same
+    name in file order from 1, so two macros named alike are compared in
+    turn; and whether a name repeats."""
     if data is None:
-        return {}, Counter()
+        return {}, Counter(), False
     doc = wtfconfig.parse_macros(data)
     seen: Counter[str] = Counter()
     out: dict[tuple[str, int], _Record] = {}
-    for m in doc.macros:
+    for position, m in enumerate(doc.macros, start=1):
         seen[m.name] += 1
-        out[(m.name, seen[m.name])] = ("\n".join(m.body_lines), m.icon)
-    return out, _unknown(doc.unknown_lines())
+        out[(m.name, seen[m.name])] = ("\n".join(m.body_lines), m.icon, position)
+    repeated = any(n > 1 for n in seen.values())
+    return out, _unknown(doc.unknown_lines()), repeated
 
 
 def _macro_changes(
     before: dict[tuple[str, int], _Record], after: dict[tuple[str, int], _Record]
 ) -> list[NamedChange]:
-    def label(key: tuple[str, int]) -> str:
+    def change(key: tuple[str, int], **fields: object) -> NamedChange:
         name, n = key
-        return name if n == 1 else f"{name} ({n})"
+        return NamedChange.model_validate(
+            {"what": "macro", "name": name, "occurrence": n, **fields}
+        )
 
     out: list[NamedChange] = []
-    for key, (text, icon) in after.items():
+    for key, (text, icon, position) in after.items():
         old = before.get(key)
         if old is None:
-            out.append(NamedChange(what="macro", name=label(key), before=None, after=text))
+            out.append(change(key, before=None, after=text, position=position))
             continue
         parts = tuple(
             part
@@ -145,12 +171,10 @@ def _macro_changes(
             if differs
         )
         if parts:
-            out.append(
-                NamedChange(what="macro", name=label(key), before=old[0], after=text, parts=parts)
-            )
+            out.append(change(key, before=old[0], after=text, parts=parts, position=position))
     out.extend(
-        NamedChange(what="macro", name=label(key), before=text, after=None)
-        for key, (text, _icon) in before.items()
+        change(key, before=text, after=None, position=position)
+        for key, (text, _icon, position) in before.items()
         if key not in after
     )
     return out
@@ -159,10 +183,13 @@ def _macro_changes(
 def compare(kind: Kind, before: bytes | None, after: bytes | None) -> WtfDiff:
     """What differs by name from ``before`` to ``after`` (``None``: the file
     is absent on that side). Keys and CVars are listed in the order of the
-    ``after`` file, then those only ``before`` has; CVar names compare
+    ``after`` file, then those only ``before`` has. A key or CVar set on
+    two lines is compared by its last line (that the client applies the
+    last line is believed, not observed **[verify]**). CVar names compare
     without ASCII case, as the client reads them, and are shown as the
     ``after`` side spells them."""
     changes: list[NamedChange]
+    repeated = False
     if kind == "bindings":
         b_keys, b_other = _bindings(before)
         a_keys, a_other = _bindings(after)
@@ -180,7 +207,13 @@ def compare(kind: Kind, before: bytes | None, after: bytes | None) -> WtfDiff:
             )
         ]
     else:
-        b_macros, b_other = _macros(before)
-        a_macros, a_other = _macros(after)
+        b_macros, b_other, b_repeated = _macros(before)
+        a_macros, a_other, a_repeated = _macros(after)
         changes = _macro_changes(b_macros, a_macros)
-    return WtfDiff(kind=kind, changes=tuple(changes), other_lines_differ=b_other != a_other)
+        repeated = b_repeated or a_repeated
+    return WtfDiff(
+        kind=kind,
+        changes=tuple(changes),
+        other_lines_differ=b_other != a_other,
+        repeated_names=repeated,
+    )

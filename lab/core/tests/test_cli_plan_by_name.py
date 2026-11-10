@@ -48,11 +48,22 @@ SV_EARLY = FIXTURES / "macos-70425/forever/WTF/Account/90000001#6/1/Labchard-Lab
 SV_LATER = FIXTURES / "macos-70450/forever/WTF/Account/90000001#6/1/Sangraal-Sett"
 
 KEY_Q = "      key Q: MULTIACTIONBAR1BUTTON1 -> ACTIONBUTTON1"
-KEY_F = "      key F: (not in the file) -> INTERACTTARGET"
-KEY_E = "      key E: MULTIACTIONBAR1BUTTON3 -> (not in the file)"
+NO_KEY = "(no line: the client's default binding)"
+NO_CVAR = "(no line: set elsewhere or the client default)"
+KEY_F = f"      key F: {NO_KEY} -> INTERACTTARGET"
+KEY_E = f"      key E: MULTIACTIONBAR1BUTTON3 -> {NO_KEY}"
 MACRO_ADDED = '      macro "PolyArc": added'
-CVAR_VIEW = '      CVar cameraView: "5" -> (not in the file)'
-CVAR_CLUB = '      CVar lastSelectedClubId: (not in the file) -> ""'
+CVAR_VIEW = f'      CVar cameraView: "5" -> {NO_CVAR}'
+CVAR_CLUB = f'      CVar lastSelectedClubId: {NO_CVAR} -> ""'
+SCOPE = (
+    "  Each file is one scope (machine, account or character); the game uses the "
+    "account or character copy depending on its settings."
+)
+CHANGED_SINCE = (
+    "      (changed since that transaction, probably by the client at logout: the lines "
+    "below compare what is on disk now with what undo puts back, and include those later "
+    "changes)"
+)
 GLOBAL_CVAR = '      CVar useTargetFPS: "0" -> "1"'
 
 
@@ -147,8 +158,8 @@ def test_restore_plan_then_undo_plan_name_the_changes_constructed(root: Path, fl
     # Back to the snapshot: the other way round from the diff.
     assert _under(out, BINDINGS) == [
         "      key Q: ACTIONBUTTON1 -> MULTIACTIONBAR1BUTTON1",
-        "      key E: (not in the file) -> MULTIACTIONBAR1BUTTON3",
-        "      key F: INTERACTTARGET -> (not in the file)",
+        f"      key E: {NO_KEY} -> MULTIACTIONBAR1BUTTON3",
+        f"      key F: INTERACTTARGET -> {NO_KEY}",
     ]
     assert _under(out, MACROS) == ['      macro "PolyArc": removed']
     assert _under(out, GLOBAL) == ['      CVar useTargetFPS: "1" -> "0"']
@@ -156,6 +167,10 @@ def test_restore_plan_then_undo_plan_name_the_changes_constructed(root: Path, fl
     # A plan names 20 per file, then a count.
     assert len(cvars) == 21
     assert cvars[-1] == "      ... and 31 more (snap diff lists them all)"
+
+    # Once per plan, before the prompt: the scope line and the login caveat.
+    assert out[-3:-1] == [SCOPE, cli._RELOGIN]
+    assert out.count(SCOPE) == 1
 
     plan = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
     assert plan.plan_lines == out[:-1]
@@ -169,6 +184,8 @@ def test_restore_plan_then_undo_plan_name_the_changes_constructed(root: Path, fl
     assert _under(lines, BINDINGS) == [KEY_Q, KEY_F, KEY_E]
     assert _under(lines, MACROS) == [MACRO_ADDED]
     assert _under(lines, GLOBAL) == [GLOBAL_CVAR]
+    assert CHANGED_SINCE not in lines  # the disk holds what the restore wrote
+    assert lines[-3:-1] == [SCOPE, cli._RELOGIN]  # then the echoed answer
     report = cli.UndoReport.model_validate_json(ok("undo", "--json", "--yes").stdout)
     assert report.applied
     assert report.plan_lines == lines[: len(report.plan_lines)]
@@ -182,7 +199,8 @@ def test_profile_apply_plan_names_the_keys_constructed(root: Path, flavor: Path)
     b.write_bytes(b.read_bytes().replace(b"bind Q MULTIACTIONBAR1BUTTON1\r\n", b""))
 
     out = _plain(ok("profile", "apply", "keys", "--dry-run").stdout).splitlines()
-    assert _under(out, BINDINGS) == ["      key Q: (not in the file) -> MULTIACTIONBAR1BUTTON1"]
+    assert _under(out, BINDINGS) == [f"      key Q: {NO_KEY} -> MULTIACTIONBAR1BUTTON1"]
+    assert out.count(SCOPE) == 1
     report = _json(cli.ProfileApplyReport, "profile", "apply", "keys", "--dry-run")
     assert report.plan_lines == out[:-1]
 
@@ -195,7 +213,8 @@ def test_order_only_change_says_nothing_changes_by_name_constructed(
     b.write_bytes(b.read_bytes().replace(b"\r\n", b"\n"))
     out = _plain(ok("snap", "restore", a.id, "--dry-run").stdout).splitlines()
     assert _under(out, BINDINGS) == [
-        "      nothing changes by name (only the order, line endings or macro ids differ)"
+        "      nothing changes by name (the order, line endings, spelling or a line an "
+        "earlier one overrides differ)"
     ]
 
 
@@ -205,3 +224,68 @@ def test_a_file_that_is_not_a_wtf_text_file_gets_no_detail(root: Path, flavor: P
     other.write_bytes(other.read_bytes() + b"constructed\n")
     out = _plain(ok("snap", "restore", a.id, "--dry-run").stdout).splitlines()
     assert _under(out, f"{CHAR}/chat-cache.txt") == []
+    assert SCOPE not in out and cli._RELOGIN not in out
+
+
+def test_undo_compares_the_disk_now_after_the_client_changed_it_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """After the restore, the client rewrote bindings-cache.wtf at logout (a
+    byte edit stands for it): undo replaces that file, so its plan compares
+    what is on disk now, the later key included, with what it puts back."""
+    a = _snapshot()
+    _change_wtf(flavor)
+    ok("snap", "restore", a.id, "--yes")
+    b = flavor / BINDINGS
+    b.write_bytes(b.read_bytes() + b"bind G TOGGLEAUTORUN\r\n")
+
+    declined = run("undo", input="n\n")
+    assert declined.exit_code == 1, (declined.stdout, declined.stderr)
+    lines = _plain(declined.stdout).splitlines()
+    assert _under(lines, BINDINGS) == [
+        CHANGED_SINCE,
+        KEY_Q,
+        KEY_F,
+        KEY_E,
+        f"      key G: TOGGLEAUTORUN -> {NO_KEY}",
+    ]
+    # A file the client did not touch has no such line.
+    assert _under(lines, GLOBAL) == [GLOBAL_CVAR]
+    report = cli.UndoReport.model_validate_json(ok("undo", "--json", "--yes").stdout)
+    assert report.applied
+    assert _under(report.plan_lines, BINDINGS)[0] == CHANGED_SINCE
+
+
+def test_macros_order_repeated_and_blank_names_constructed(root: Path, flavor: Path) -> None:
+    """Edits of the character's one-macro capture: a second record of the
+    same name, then a record whose name is a single space (as a later real
+    run's were, `macos-70425` row), then the records reordered."""
+    m = flavor / CHAR / "macros-cache.txt"
+    one = m.read_bytes()
+    two = one.replace(b"0100000000000001", b"0100000000000002").replace(b"Polymorph", b"Frostbolt")
+    blank = one.replace(b"0100000000000001", b"0100000000000003").replace(b'"PolyArc"', b'" "')
+    a = _snapshot()
+    m.write_bytes(one + two + blank)
+    out = _plain(ok("snap", "restore", a.id, "--dry-run").stdout).splitlines()
+    assert _under(out, f"{CHAR}/macros-cache.txt") == [
+        '      macro "PolyArc" (2): removed',
+        "      macro (blank name, 3rd): removed",
+        "      macros with the same name are compared in file order; an inserted or "
+        "removed one shifts the rest",
+    ]
+
+    b = _snapshot()
+    m.write_bytes(blank + one)  # the same records, another order and place
+    out = _plain(
+        ok("snap", "restore", b.id, "--paths", f"{CHAR}/macros-cache.txt", "--dry-run").stdout
+    ).splitlines()
+    assert _under(out, f"{CHAR}/macros-cache.txt")[0] == '      macro "PolyArc" (2): added'
+
+    m.write_bytes(one)
+    c = _snapshot()
+    m.write_bytes(one.replace(b"0100000000000001", b"0100000000000009"))
+    out = _plain(ok("snap", "restore", c.id, "--dry-run").stdout).splitlines()
+    assert _under(out, f"{CHAR}/macros-cache.txt") == [
+        "      nothing changes by name; the macros' order or ids differ, and a button that "
+        "holds a macro may then run a different one"
+    ]

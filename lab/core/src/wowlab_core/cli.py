@@ -7096,12 +7096,36 @@ _UNREAD = _Unread()
 type _Side = bytes | _Unread | None
 
 
-def _value_text(value: str | None, *, quoted: bool) -> str:
+_NO_KEY_LINE = "(no line: the client's default binding)"
+_NO_CVAR_LINE = "(no line: set elsewhere or the client default)"
+_SCOPE_LINE = (
+    "  Each file is one scope (machine, account or character); the game uses the "
+    "account or character copy depending on its settings."
+)
+
+
+def _value_text(value: str | None, *, cvar: bool) -> str:
     if value is None:
-        return "(not in the file)"
+        return _NO_CVAR_LINE if cvar else _NO_KEY_LINE
     if len(value) > _VALUE_WIDTH:
         value = value[: _VALUE_WIDTH - 3] + "..."
-    return f'"{value}"' if quoted else value
+    return f'"{value}"' if cvar else value
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _macro_label(change: wtfdiff.NamedChange) -> str:
+    """A macro's name as printed: quoted, `(2)` for the second of a name; a
+    blank or whitespace-only name by its place among the file's macros."""
+    if not change.name.strip():
+        return f"(blank name, {_ordinal(change.position)})"
+    label = f'"{change.name}"'
+    return label if change.occurrence <= 1 else f"{label} ({change.occurrence})"
 
 
 def _named_line(change: wtfdiff.NamedChange) -> str:
@@ -7112,12 +7136,12 @@ def _named_line(change: wtfdiff.NamedChange) -> str:
             how = "removed"
         else:
             how = " and ".join(change.parts) + " changed"
-        return f'{_DETAIL_INDENT}macro "{change.name}": {how}'
+        return f"{_DETAIL_INDENT}macro {_macro_label(change)}: {how}"
     label = "key" if change.what == "key" else "CVar"
-    quoted = change.what == "cvar"
+    cvar = change.what == "cvar"
     return (
-        f"{_DETAIL_INDENT}{label} {change.name}: {_value_text(change.before, quoted=quoted)}"
-        f" -> {_value_text(change.after, quoted=quoted)}"
+        f"{_DETAIL_INDENT}{label} {change.name}: {_value_text(change.before, cvar=cvar)}"
+        f" -> {_value_text(change.after, cvar=cvar)}"
     )
 
 
@@ -7132,13 +7156,27 @@ def _wtf_lines(
     if limit is not None and len(lines) > limit:
         more = len(lines) - limit
         lines = [*lines[:limit], f"{_DETAIL_INDENT}... and {more} more (snap diff lists them all)"]
-    if diff.other_lines_differ:
-        lines.append(f"{_DETAIL_INDENT}other lines wowlab does not read by name differ too")
-    elif not diff.changes and before is not None and after is not None:
+    if diff.repeated_names:
         lines.append(
-            f"{_DETAIL_INDENT}nothing changes by name (only the order, line endings or "
-            "macro ids differ)"
+            f"{_DETAIL_INDENT}macros with the same name are compared in file order; an "
+            "inserted or removed one shifts the rest"
         )
+    if diff.other_lines_differ:
+        lines.append(
+            f"{_DETAIL_INDENT}other lines differ too (for example a binding mode or modifier "
+            "line), which wowlab does not read by name"
+        )
+    elif not diff.changes and before is not None and after is not None:
+        if kind == "macros":
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name; the macros' order or ids differ, "
+                "and a button that holds a macro may then run a different one"
+            )
+        else:
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name (the order, line endings, spelling "
+                "or a line an earlier one overrides differ)"
+            )
     return lines
 
 
@@ -7187,12 +7225,35 @@ def _wants_detail(path: str) -> bool:
 
 
 def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = None) -> _Side:
-    """An object's bytes from the store, checked against its hash."""
+    """An object's bytes from the store, checked against its hash. One whose
+    recorded `size` is over the detail limit is not read; with no recorded
+    size, one that inflates past the limit is refused."""
     if sha is None:
         return None
+    if size is not None and size > _DETAIL_READ_LIMIT:
+        return _UNREAD
     try:
         return store.read_object(sha, size=_DETAIL_READ_LIMIT if size is None else size)
     except (snapshot.SnapshotError, OSError):
+        return _UNREAD
+
+
+_CHANGED_SINCE = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the client at logout: "
+    "the lines below compare what is on disk now with what undo puts back, and include "
+    "those later changes)"
+)
+
+
+def _disk_now(flavor_path: Path, rel: str) -> _Side:
+    """What the install holds at `rel` now, read-only through the guarded
+    opener: None when nothing is there, `_UNREAD` when it cannot be read as
+    a regular file under the detail limit (a link, a FIFO, too large)."""
+    try:
+        return snapshot.read_regular_file(flavor_path / rel, limit=_DETAIL_READ_LIMIT)
+    except FileNotFoundError:
+        return None
+    except OSError:
         return _UNREAD
 
 
@@ -7907,12 +7968,17 @@ def snap_restore(
                 f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
                 f"now on {_version(chosen.version)}."
             )
+        detailed = False
         for item in plan:
             plan_lines.append(_plan_line(item))
-            plan_lines.extend(_plan_item_lines(store, chosen.path, item))
+            detail = _plan_item_lines(store, chosen.path, item)
+            plan_lines.extend(detail)
+            detailed = detailed or bool(detail)
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
+        if detailed:
+            plan_lines.extend([_SCOPE_LINE, _RELOGIN])
     if not json_out or (prompting and plan):
         for line in plan_lines:
             show(line)
@@ -7967,14 +8033,19 @@ def snap_restore(
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     """`undo`'s text plan. Under each file, what the undo changes by name:
-    from what that transaction wrote (on disk now) back to what was there
-    before it (in its pre-write snapshot)."""
+    from what the install holds at that path now (read read-only through
+    the guarded opener, whatever it holds) to what was there before that
+    transaction (in its pre-write snapshot), since the undo replaces the
+    file whatever is on disk. When the disk no longer holds what that
+    transaction wrote (the client rewrites these files at logout), a line
+    says the comparison includes those later changes."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
     lines = [
         f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})',
         f"  in {last.flavor_path}:",
     ]
+    detailed = False
     for p in last.paths:
         if p.before is None:
             lines.append(f"  delete     {p.path}  (created by that transaction)")
@@ -7983,12 +8054,20 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         else:
             lines.append(f"  put back   {p.path}  (as it was before that transaction)")
         if _wants_detail(p.path):
-            now = _on_disk(store, flavor_path, p.path, p.after)
+            now = _disk_now(flavor_path, p.path)
             back = _stored(store, p.before)
-            lines.extend(_detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT))
+            detail = _detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT)
+            if detail and not isinstance(now, _Unread):
+                now_sha = None if now is None else hashlib.sha256(now).hexdigest()
+                if now_sha != p.after:
+                    lines.append(_CHANGED_SINCE)
+            lines.extend(detail)
+            detailed = detailed or bool(detail)
     lines.extend(
         f"  remove folder {d}  (created by that transaction, if empty)" for d in last.created_dirs
     )
+    if detailed:
+        lines.extend([_SCOPE_LINE, _RELOGIN])
     return lines
 
 
@@ -8359,12 +8438,17 @@ def _apply_plan_lines(
         else "in the target folder, not in the profile"
     )
     lines: list[str] = []
+    detailed = False
     for item in plan.plan:
         line = _plan_line(item)
         if item.after is None:
             line += f"  ({extra})"
         lines.append(line)
-        lines.extend(_plan_item_lines(store, flavor_path, item))
+        detail = _plan_item_lines(store, flavor_path, item)
+        lines.extend(detail)
+        detailed = detailed or bool(detail)
+    if detailed:
+        lines.append(_SCOPE_LINE)
     if plan.skipped:
         lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '

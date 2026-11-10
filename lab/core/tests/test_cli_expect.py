@@ -90,9 +90,10 @@ def test_expect_fields_name_fields_of_the_reports() -> None:
     assert {"target_sha256", "merged_sha256"} <= set(cli.SvMergeReport.model_fields)
 
 
-def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_none_on_undo() -> None:
+def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on_undo() -> None:
     """The models as on `main` before M14-03, field by field (ADR-0031):
-    M14-03 added `target_sha256`, M13-74 `merged_sha256`."""
+    M14-03 added `target_sha256`, M13-74 `merged_sha256`, and M16-10 the
+    text plan `plan_lines` on undo (no pin field there)."""
     undo_before = [
         "undone",
         "label",
