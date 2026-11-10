@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77T, M16-77, M16-78, M16-79
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2383,26 +2383,25 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 
 `snaparchive._member` stamps every entry `external_attr = 0o644`. wowlab never extracts to a path, but a player who unpacks the archive by hand gets world-readable snapshot files (ADR-0036: they may hold other players' names).
 
+**User-facing:** the modes of the files a player unpacks from a `snap export` archive by hand.
+
 **Acceptance:** members carry 0600; a test reads the attributes back; import is unchanged; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-77T — [TEST] Snapshot ids and manifest names are ASCII digits only
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-70T and M16-70 reviews (#423, #430)
+## [ ] M16-77 — Snapshot ids and manifest names are ASCII digits only
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-70T and M16-70 reviews (#423; #430, open)
 
-`snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII, the same class of bug M16-70 fixed for journal ids. Strict-xfail graders, built like M16-70T's: a manifest whose id is spelled in non-ASCII digits is not listed, resolved or offered.
+`snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII: the same class of bug that M16-70 (#430, open) fixes for journal ids. Neither file is load-bearing (AGENTS.md, as narrowed on 2026-10-17), so this is one ticket: tests and fix together, the tests built like M16-70T's.
 
-**Acceptance:** each grader fails today on its assertion and passes under a correct fix; reviewed by `code-reviewer` and `security-reviewer`.
-
-## [ ] M16-77 — [IMPL] Snapshot ids and manifest names are ASCII digits only
-**Size:** XS · **Depends on:** M16-77T
-
-**Acceptance:** M16-77T's graders activated by marker deletion only; reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-78 — The user data directory's other folders are private
 **Size:** S · **Depends on:** nothing · **Sources:** the M16-66T security review (#424)
 
-The store root and `journal/` are created 0700 (M16-66). The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
+M16-66 (#432, open) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
 
-**Acceptance:** the owner's answer is recorded. If yes: every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, with a test per creating module.
+**User-facing:** the modes of the folders wowlab creates under the user data directory.
+
+**Acceptance:** the owner's answer is recorded here. If yes: every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, with a test per creating module. If no: the ticket is closed unbuilt, with the answer recorded.
 
 ## [ ] M16-79 — `pathfacts._compare` and the CASC reads open from the root
 **Size:** S · **Depends on:** M16-65 · **Sources:** the M16-65 security review (#429)
