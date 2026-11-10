@@ -2699,6 +2699,15 @@ def _link_note(target: str | None, inside: bool | None, stands_for: str = "folde
     return f"link{to} ({where}), not followed; {snapshot.not_read_through(stands_for)}"
 
 
+_FLAVOR_LINK_NOTE = (
+    "{} is a link; wowlab does not read through links, so it reads this only when the "
+    "real folder is there. Nothing in it is listed."
+)
+"""`tree`'s stderr line for a flavor folder that is a link (M13-35), in the
+readers' words for a linked folder (M16-80: `snapshot.not_read_through`).
+A literal, as every `_note` message is; a test holds it to those words."""
+
+
 def _link_stands_for(
     as_file: layout.Classified | layout.Unclassified,
     as_folder: layout.Classified | layout.Unclassified,
@@ -2844,11 +2853,7 @@ def tree(
         return
     _say(f"{chosen.folder} in {inst.root}")
     if flavor_link:
-        # M16-80: the readers' words for a linked folder.
-        _note(
-            "{} is a link; " + snapshot.not_read_through("folder") + ". Nothing in it is listed.",
-            chosen.folder,
-        )
+        _note(_FLAVOR_LINK_NOTE, chosen.folder)
     for item in items:
         _say_tree_item(item.path, item, explain)
     if truncated:

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from wowlab_core import cli, firstrun, labaddon, layout
+from wowlab_core import cli, firstrun, labaddon, layout, snapshot
 
 FOLDER_WORDS = (
     "wowlab does not read through links, so it reads this only when the real folder is there"
@@ -31,6 +31,14 @@ FILE_WORDS = "wowlab does not read through links, so it reads this only when the
 def test_the_words_are_the_readers_constructed() -> None:
     assert f"a link, not followed; {FOLDER_WORDS}" == labaddon.NOT_FOLLOWED
     assert f"a link, not followed; {FILE_WORDS}" == labaddon.LINKED_FILE
+
+
+def test_tree_linked_flavor_folder_line_constructed() -> None:
+    """A `_note` message is a literal; it is held to the readers' words here."""
+    assert f"{{}} is a link; {FOLDER_WORDS}. Nothing in it is listed." == cli._FLAVOR_LINK_NOTE
+    assert (
+        "{} is a link; " + snapshot.not_read_through("folder") + ". Nothing in it is listed."
+    ) == cli._FLAVOR_LINK_NOTE
 
 
 @pytest.mark.parametrize(
