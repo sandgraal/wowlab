@@ -77,6 +77,7 @@ checked:
    file has to print `OK`. Then, for a release after v0.1.0, check where the
    wheel was built (next paragraph):
 
+   <!-- not-run: needs the network -->
    ```bash
    gh attestation verify wowlab_core-<version>-py3-none-any.whl \
      --repo sandgraal/wowlab \
@@ -86,6 +87,7 @@ checked:
 
 3. Install the file you checked, not the address:
 
+   <!-- not-run: an install -->
    ```bash
    uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl
    ```
@@ -107,6 +109,7 @@ added, so it has none: for it, `SHA256SUMS` is the check.
 
 **From source**, if you want the development version:
 
+<!-- not-run: a source checkout, from the network -->
 ```bash
 git clone https://github.com/sandgraal/wowlab
 cd wowlab
@@ -155,6 +158,7 @@ folder that holds `.build.info`:
 
 To search your home folder for it:
 
+<!-- not-run: searches your own folders, not a wowlab command -->
 ```bash
 find ~ -name .build.info -path '*World of Warcraft*' 2>/dev/null
 ```
@@ -169,11 +173,13 @@ wowlab doctor --root "/path/to/World of Warcraft"
 
 or for every command with `WOWLAB_WOW_ROOT`:
 
+<!-- not-run: sets a variable in your own shell -->
 ```bash
 # macOS or Linux (add it to your shell's profile to keep it)
 export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"
 ```
 
+<!-- not-run: sets a variable in your own shell -->
 ```powershell
 # Windows PowerShell, this window only
 $env:WOWLAB_WOW_ROOT = "D:\Games\World of Warcraft"
@@ -297,6 +303,7 @@ would.
 `wowlab ui` opens a local page that shows your install the way `wowlab
 tree` and `wowlab explain` do, one folder at a time:
 
+<!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab ui
 ```

@@ -37,6 +37,7 @@
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
+<!-- not-run: an install, from the network -->
 ```bash
 uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256=a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639
 ```
@@ -45,6 +46,7 @@ The `#sha256=` part is the wheel's hash, the same as its line in the release's `
 
 **⚔️ The first three commands:**
 
+<!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
 wowlab ui            # the explorer in your browser: every file in your install, and whether it is safe to touch
@@ -56,6 +58,7 @@ wowlab snap create   # snapshot your setup before you experiment
 
 **🖥️ Using the explorer** (`wowlab ui`):
 
+<!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab ui
 ```
@@ -141,7 +144,7 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page (inside the browser view too 🆕). Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 <details>
-<summary><b>See it in action</b> (output from a test copy of a Forever install)</summary>
+<summary><b>See it in action</b> (output from a test copy of a Forever install; `…` marks lines left out)</summary>
 
 ```text
 $ wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua
@@ -153,18 +156,19 @@ WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua (in flavor folder _cl
 …
 
 $ wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua
-DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260
-DBT_AllPersistentOptions["Default"]["DBM"]["TimerPoint"] = "TOPRIGHT"
+DBT_AllPersistentOptions["Default"]["DBM"]["HugeBorderColorG"] = 0
 DBT_AllPersistentOptions["Default"]["DBM"]["HugeBarsEnabled"] = true
+DBT_AllPersistentOptions["Default"]["DBM"]["TimerY"] = -260
 …
 
 $ wowlab doctor
-Install: /Applications/World of Warcraft (found by a default location)
+…
+Install: /path/to/World of Warcraft (found by $WOWLAB_WOW_ROOT)
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
   Game data: not checked (--check-builds asks wago.tools)
 …
 Client: not running
-Snapshot store: ~/Library/Application Support/wowlab/store (not created yet)
+Snapshot store: … (not created yet)
 …
 ```
 
@@ -325,6 +329,7 @@ Here is what wowlab could become as the ideas on [the menu](docs/LAB_IDEAS.md) a
 
 You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12). A game install is not needed to run the tests.
 
+<!-- not-run: a source checkout, from the network -->
 ```bash
 git clone https://github.com/sandgraal/wowlab && cd wowlab
 make setup
