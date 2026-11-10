@@ -1620,7 +1620,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-13 — An interrupted change is visible, and its debris named
+## [x] M16-13 — An interrupted change is visible, and its debris named
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F3, F12 (EV-12)
 
 - An `open` journal record is a `doctor` problem (non-zero exit) that prints the exact `wowlab undo` line.
@@ -1679,7 +1679,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-18 — Bare names in `explain` and `sv dump`; `explain` exits 1 on not-found
+## [x] M16-18 — Bare names in `explain` and `sv dump`; `explain` exits 1 on not-found
 **Size:** S · **Depends on:** nothing · **Sources:** newcomer:F1, F4, F9, writer:F3, qa:F17 (EV-17; owner Q7)
 
 - A name that is not on disk is resolved by basename, among file-map rows and the real files under the flavor. Candidates are listed, and when there are three or fewer each is explained.
@@ -1691,7 +1691,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the `sv merge` o
 
 ---
 
-## [ ] M16-19 — Errors in words
+## [x] M16-19 — Errors in words
 **Size:** S · **Depends on:** nothing · **Sources:** qa:F4, F17, writer:F14, designer:F4, newcomer:F14 (EV-18)
 
 - A `FileNotFoundError` becomes a `CliError` that names the matching lister.
@@ -1727,7 +1727,7 @@ Every fenced `wowlab` command in README and INSTALL runs against the fixture san
 
 ---
 
-## [ ] M16-22 — `--json` errors, and one error base
+## [x] M16-22 — `--json` errors, and one error base
 **Size:** S · **Depends on:** nothing · **Sources:** architect:F5, a11y:F15 (EV-21)
 
 - A `WowlabError` base with `exit_code`. Module errors subclass it, and `_handled` catches the base.
@@ -1754,7 +1754,7 @@ Inputs are constructed and labelled.
 
 ---
 
-## [ ] M16-23 — [IMPL] The listing memo in `guard`
+## [x] M16-23 — [IMPL] The listing memo in `guard`
 **Size:** S · **Depends on:** M16-23T · **Sources:** architect:F1 (EV-05)
 
 **Acceptance:** the graders are activated by marker deletion only, and the full suite is green. The report gives unloaded timings at 2k, 8k and 20k files. §13.3's 2,000-delete cap is restated or raised, with the numbers. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: faster writes.
@@ -1851,7 +1851,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-31 — The Character header in player terms
+## [x] M16-31 — The Character header in player terms
 **Size:** S · **Depends on:** nothing · **Sources:** designer:F7, F8, raider:F6 (EV-29)
 
 - The header shows level and class from the identity record, and spec and race names from cached build tables when present (otherwise the id). Names come from data, never from constants (L6).
@@ -2063,7 +2063,7 @@ They are skipped on Windows, or graded there through the junction monkeypatch of
 
 ---
 
-## [ ] M16-49 — [IMPL] The readers open from the install root, one component at a time
+## [x] M16-49 — [IMPL] The readers open from the install root, one component at a time
 **Size:** M · **Depends on:** M16-49T · **Sources:** the M16-26T security review (2026-10-22)
 
 The readers' callers already know the install. Each reader takes the install root and opens component by component with `dir_fd` and `O_NOFOLLOW`; the M11-11 helper already accepts `dir_fd`. Callers without an install root (`sv dump` of a path outside any install) keep today's final-component check, and say so in their output.
@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2201,7 +2201,7 @@ as tickets and built in this wave. Each one cites the review that found it.
 
 **Acceptance:** constructed tests for the debug-session count and the singular; schema 3 and 4 outputs unchanged; reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `char show` wording.
 
-## [ ] M16-56 — A Dependabot action bump says which pin to update
+## [x] M16-56 — A Dependabot action bump says which pin to update
 **Size:** XS · **Depends on:** nothing · **Sources:** #376, #371 (2026-11-05)
 
 Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no_cache.py` (the reviewed-action pins) with 20-odd failures that do not name the cause. Make the first failure say which action moved from which pin to which, and that its `action.yml` must be re-read for cache inputs before the pin in that file is updated; collapse the cascade into that one failure. Do not loosen the check.
@@ -2222,7 +2222,7 @@ Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no
 
 **Acceptance:** the mutation above fails the suite; every current addon test passes; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-59 — The grader-diff job fails when the base copy of its script is missing
+## [x] M16-59 — The grader-diff job fails when the base copy of its script is missing
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-40 security review (2026-11-04)
 
 When the base revision has no `scripts/check_grader_diff.py`, the job falls back to the PR's own copy, so a PR could weaken the check it is judged by. Now that the script is on `main`, make that case a hard failure with a message.
@@ -2250,7 +2250,7 @@ The refusal ends "rename or remove '<folder>' in the target first". A folder rem
 
 **Acceptance:** the graders are strict xfail on `main`'s `guard.py` and pass with the new message (shown with `--runxfail` on a scratch edit); reviewed by `code-reviewer`.
 
-## [ ] M16-62 — [IMPL] The account-clash refusal suggests a snapshot before a hand removal
+## [x] M16-62 — [IMPL] The account-clash refusal suggests a snapshot before a hand removal
 **Size:** XS · **Depends on:** M16-62T · **Sources:** as M16-62T
 
 Change the message in `guard._refuse_others_on_target_accounts` to M16-62T's wording.
@@ -2288,7 +2288,7 @@ M16-49 converted `sv dump`, `cvar`, `binds`, `macros`, `char binds`, `char macro
 
 **Acceptance:** each reader above refuses a linked folder with the folder named; the probes pass; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the same refusal on `sv merge`, `char show` and its siblings, and `explain` detail.
 
-## [ ] M16-66T — [TEST] `guard` creates the store root and `journal/` private
+## [x] M16-66T — [TEST] `guard` creates the store root and `journal/` private
 **Size:** XS · **Depends on:** M16-41 · **Sources:** the M16-41 reviews (2026-11-10)
 
 `guard` makes the store root and `journal/` with its default mode (0755 under umask 0022); M16-41 makes them private only at the next store write. Graders, strict xfail: under umask 0022 the first guard write leaves the root and `journal/` at 0700 before anything is written into them.
@@ -2300,14 +2300,14 @@ M16-49 converted `sv dump`, `cvar`, `binds`, `macros`, `char binds`, `char macro
 
 **Acceptance:** M16-66T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-67 — `snap export` writes its archive 0600
+## [x] M16-67 — `snap export` writes its archive 0600
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-41 security review (2026-11-10)
 
 The archive holds the same settings and saved data as the store, but is created 0666 less the umask at the path the player names. Create it 0600 (POSIX; a note on Windows).
 
 **Acceptance:** a test under umask 0022; reviewed by `code-reviewer` and `security-reviewer`. User-facing: the archive's mode.
 
-## [ ] M16-68 — `SnapshotStore.put_object` and `gc` refuse a store inside an install
+## [x] M16-68 — `SnapshotStore.put_object` and `gc` refuse a store inside an install
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-41 code review (2026-11-10)
 
 `create` refuses a store inside an install (`_refuse_inside_any_install`); `put_object` and `gc(dry_run=False)` do not, so a library caller can write or delete objects there. The CLI is covered by `guard.store_lock`. Add the same check.
@@ -2326,7 +2326,7 @@ The archive holds the same settings and saved data as the store, but is created 
 
 **Acceptance:** M16-69T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-70T — [TEST] Journal record ids are ASCII digits only
+## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
 
 `guard._RECORD_NAME` uses `\d` without `re.ASCII`, so a record named with Arabic-Indic digits loads (and `doctor` now prints its id). Graders, strict xfail: such a file is not loaded as a record.
@@ -2355,9 +2355,57 @@ Each item is small and independent; split if one grows:
 
 **Acceptance:** one test per item; reviewed by `code-reviewer` (and `security-reviewer` for `redact`).
 
-## [ ] M16-73T — [TEST] The M16-49T junction graders check descriptors on Windows
+## [x] M16-73T — [TEST] The M16-49T junction graders check descriptors on Windows
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-49T review (2026-11-09)
 
 The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_from_root_m16_49.py`'s junction cases is a no-op, so a leaked handle on Windows is not caught. That file imports `luadata`, so it is a grader of a load-bearing file (ADR-0013): a test-writer makes the check real (or states why Windows cannot be checked) without weakening any assertion.
 
 **Acceptance:** the check fails on a constructed leak on the `lab (windows)` job and passes on `main`'s readers; reviewed by `code-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-10, second batch)
+
+## [ ] M16-74T — [TEST] The listing-memo scaling grader holds on macOS
+**Size:** XS · **Depends on:** nothing · **Sources:** main's `lab (macos)` job at 54ff9a4 (2026-11-10); the M16-23 implementer's diagnosis
+
+`test_guard_listing_memo.py::test_constructed_the_no_op_whole_restore_check_scales_linearly` failed on macOS at 5.0× (1.844 s at 8,000 files against 0.369 s at 2,000; the limit is 5×). Counting calls shows the check does exactly 4× the work at 4× the files: every syscall and Python call count rises 4.00×, and Linux measures 4.1–4.2×. No superlinear path was found. The miss is the 25% margin being used up by costlier per-`lstat` work on APFS (inferred; not measured on macOS). That file imports `guard`, so it is a grader of a load-bearing file (ADR-0013): a test-writer changes it.
+
+**Acceptance:** the grader still fails on a quadratic walk (shown with a constructed quadratic stand-in) and passes on `main`'s linear walk on macOS. Either a size-against-time fit over three or more sizes, or a ratio with a stated per-platform margin; no skip. Reviewed by `code-reviewer`.
+
+## [ ] M16-75 — `add_snapshot` and `set_label` refuse a store inside an install
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-68 reviews (#425)
+
+`put_object` and `gc` now call `_refuse_inside_any_install`; `add_snapshot` (snap import) and `set_label` (profile delete) still write into a store inside an install when the library is called directly. Every CLI caller holds `guard.store_lock`, which refuses first, so this is defence in depth (L1).
+
+**Acceptance:** both call the existing check before creating anything; constructed tests like `test_snapshot_store_inside_install.py`; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-76 — `snap export` archive members are 0600
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-67 security review (#422)
+
+`snaparchive._member` stamps every entry `external_attr = 0o644`. wowlab never extracts to a path, but a player who unpacks the archive by hand gets world-readable snapshot files (ADR-0036: they may hold other players' names).
+
+**User-facing:** the modes of the files a player unpacks from a `snap export` archive by hand.
+
+**Acceptance:** members carry 0600; a test reads the attributes back; import is unchanged; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-77 — Snapshot ids and manifest names are ASCII digits only
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-70T and M16-70 reviews (#423; #430, open)
+
+`snapshot._ID_RE` (snapshot.py:97) and `pathfacts._MANIFEST_NAME` (pathfacts.py:42) use `\d` without ASCII: the same class of bug that M16-70 (#430, open) fixes for journal ids. Neither file is load-bearing (AGENTS.md, as narrowed on 2026-10-17), so this is one ticket: tests and fix together, the tests built like M16-70T's.
+
+**Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-78 — The user data directory's other folders are private
+**Size:** S · **Depends on:** nothing · **Sources:** the M16-66T security review (#424)
+
+M16-66 (#432, open) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
+
+**User-facing:** the modes of the folders wowlab creates under the user data directory.
+
+**Acceptance:** the owner's answer is recorded here. If yes: every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, with a test per creating module. If no: the ticket is closed unbuilt, with the answer recorded.
+
+## [ ] M16-79 — `pathfacts._compare` and the CASC reads open from the root
+**Size:** S · **Depends on:** M16-65 · **Sources:** the M16-65 security review (#429)
+
+Two install readers still check only the last part of the path: `pathfacts._compare` (`<install>/<flavor>/<rel>`) and `casc._read` with the CASC record open (under `Data/`). Give them M16-49's walk from the install root.
+
+**Acceptance:** each refuses a linked folder, with constructed tests; reviewed by `code-reviewer` and `security-reviewer`.
