@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import os
 import shutil
 import subprocess
 import sys
@@ -172,11 +173,13 @@ def _moved_pins(workflows: Mapping[str, dict[str, Any]]) -> list[str]:
     """One message per reviewed action the workflows use at another ref.
 
     A step whose action is one reviewed here, at anything but the reviewed
-    commit, is a moved pin; a Dependabot bump moves every use at once.
+    commit, is a moved pin; a Dependabot bump moves every use at once. Pins
+    are per workflow, from that workflow's own ALLOWED entry; a workflow not
+    listed has none, so the unknown-workflow finding is not skipped.
     """
-    pins = {_repo(pin): pin for pin in set().union(*ALLOWED.values())}
     moved: dict[tuple[str, str], set[str]] = {}
     for name, workflow in workflows.items():
+        pins = {_repo(pin): pin for pin in ALLOWED.get(name, frozenset())}
         for _, step in _steps(workflow):
             if "uses" not in step:
                 continue
@@ -405,6 +408,13 @@ def test_a_moved_pin_names_the_action_both_refs_and_every_workflow() -> None:
     (message,) = _moved_pins({"windows.yml": workflow})
     old = CHECKOUT.partition("@")[2]
     assert message.startswith(f"actions/checkout moved from {old} to v7 in windows.yml. ")
+    # Pins are per workflow: an action reviewed only for another workflow,
+    # or any action in an unlisted workflow, is no move (the allowlist and
+    # unknown-workflow findings report those, and nothing is skipped).
+    workflow = _mutated("windows.yml")
+    workflow["jobs"]["lab-windows"]["steps"].insert(0, {"uses": "aquasecurity/trivy-action@v1"})
+    assert _moved_pins({"windows.yml": workflow}) == []
+    assert _moved_pins({"new.yml": workflows["ci.yml"]}) == []
 
 
 def test_a_dependabot_bump_fails_once_and_says_which_pin_to_update(tmp_path: Path) -> None:
@@ -421,10 +431,14 @@ def test_a_dependabot_bump_fails_once_and_says_which_pin_to_update(tmp_path: Pat
         assert old in text, path.name
         target = tmp_path / ".github" / "workflows" / path.name
         target.write_text(text.replace(old, new), encoding="utf-8")
-    args = ["-q", "-rfs", "-p", "no:cacheprovider", "-o", "addopts=", "--rootdir", str(tmp_path)]
+    # `-o addopts=` clears only the ini value; the environment can add
+    # options and plugins too, and xdist would change the summary line.
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTEST_ADDOPTS", "PYTEST_PLUGINS"}}
+    args = ["-q", "-rfs", "-p", "no:cacheprovider", "-p", "no:xdist", "-o", "addopts="]
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", str(copy_of_this), *args],
+        [sys.executable, "-m", "pytest", str(copy_of_this), *args, "--rootdir", str(tmp_path)],
         cwd=tmp_path,
+        env=env,
         capture_output=True,
         text=True,
         timeout=120,
