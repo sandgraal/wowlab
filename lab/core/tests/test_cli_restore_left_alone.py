@@ -158,7 +158,9 @@ def test_restored_by_name_around_screenshots_lists_the_same_and_commits_construc
     root: Path, flavor: Path
 ) -> None:
     """Screenshots set aside: the command restores the rest by name and
-    lists the added files itself; the commit plan equals the dry-run plan."""
+    lists the added files itself; the commit plan equals the dry-run plan.
+    A screenshot added since is outside the gate's folders: it is left as it
+    is but not listed, since --paths could not delete it."""
     _add(flavor, {SHOT: b"\xff\xd8constructed jpeg"})
     a = _snapshot("--screenshots")
     saved = (flavor / SYNDICATOR).read_bytes()
@@ -170,10 +172,10 @@ def test_restored_by_name_around_screenshots_lists_the_same_and_commits_construc
     plan = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
     assert [n.path for n in plan.not_restored] == [SHOT]
     text = ok("snap", "restore", a.id, "--dry-run").stdout
-    assert _left_alone(text) == sorted(added)
+    assert _left_alone(text) == sorted(ADDED)
 
     done = ok("snap", "restore", a.id, "--yes")
-    assert _left_alone(done.stdout) == sorted(added)
+    assert _left_alone(done.stdout) == sorted(ADDED)
     assert (flavor / SYNDICATOR).read_bytes() == saved
     assert _files(flavor, added) == before
     (record,) = guard.history()

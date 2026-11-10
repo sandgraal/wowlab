@@ -7387,18 +7387,23 @@ def _added_since(
 ) -> tuple[str, ...]:
     """What a whole restore of `manifest` (spelled as this flavor spells it)
     leaves alone, by the gate's rule: every regular file under its subtrees,
-    outside its excluded paths, that it does not hold. Reads directory
-    entries and `lstat` only, following no link; flavor-relative, sorted."""
+    outside its excluded paths, that it does not hold, held to the gate's
+    allowlist roots as the gate holds its own list. Reads directory entries
+    and `lstat` only, following no link; flavor-relative, sorted."""
     prefix = folder + "/"
     held = {e.path for e in manifest.entries}
-    ours = [s for s in manifest.subtrees if s == folder or s.startswith(prefix)]
+    ours = guard.allowlisted_trees(manifest.subtrees, folder)
     if not ours:
         return ()
-    listed = store.list_tree(install_root, ours, exclude=manifest.excluded)
+    excluded = guard.allowlisted_trees(manifest.excluded, folder)
+    listed = store.list_tree(install_root, ours, exclude=excluded)
     return tuple(
         path.removeprefix(prefix)
         for path, kind in listed
-        if kind == "file" and path.startswith(prefix) and path not in held
+        if kind == "file"
+        and path.startswith(prefix)
+        and guard.in_allowlist_root(path.removeprefix(prefix))
+        and path not in held
     )
 
 
@@ -7589,7 +7594,8 @@ def snap_restore(
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
 
     Without --paths, files added under the snapshot's folders since it was
-    taken are never deleted: the plan lists them under "Left alone".
+    taken are never deleted: the plan lists the ones under WTF, Interface
+    and Fonts under "Left alone".
 
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,

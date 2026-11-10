@@ -215,7 +215,9 @@ __all__ = [
     "PathNotAllowedError",
     "PlanItem",
     "Target",
+    "allowlisted_trees",
     "history",
+    "in_allowlist_root",
     "store_lock",
     "transaction",
     "undo",
@@ -229,6 +231,30 @@ _log = logging.getLogger(__name__)
 # (ADR-0023). Spelled as the client spells them; a respelling is refused.
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
+
+
+def allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
+    """`paths` (install-relative, `/`-separated, as a manifest names its
+    subtrees or excluded paths) held to the allowlist roots of the flavor
+    `folder`: `folder` itself stands for each root, a path below a root is
+    kept, and every other path is dropped. Sorted, once each. The rule a
+    whole restore's left-alone list is walked by, shared with the CLI so its
+    own list matches the gate's."""
+    here = folder + "/"
+    out: set[str] = set()
+    for path in paths:
+        if path == folder:
+            out.update(here + root for root in _ROOTS)
+        elif path.startswith(here) and in_allowlist_root(path.removeprefix(here)):
+            out.add(path)
+    return tuple(sorted(out))
+
+
+def in_allowlist_root(rel: str) -> bool:
+    """Whether `rel` (flavor-relative, `/`-separated) lies under, or is, one
+    of the allowlist roots, spelled as the client spells them."""
+    return rel.split("/", 1)[0] in _ROOTS
+
 
 # Account folders under `WTF/Account/`, for a restore into another target
 # (§6.10 as amended 2026-10-22). The rule is `layout`'s (M13-50): a folder
@@ -2189,8 +2215,14 @@ class _Transaction:
             rel = _mapped(path.removeprefix(prefix) + "/-", mapping).removesuffix("/-")
             return here + rel
 
-        subtrees = sorted({t for s in manifest.subtrees if (t := target(s)) is not None})
-        excluded = sorted({t for x in manifest.excluded if (t := target(x)) is not None})
+        # Held to the allowlist roots: a whole restore never names a file
+        # outside them, so none is listed as one --paths could delete.
+        subtrees = allowlisted_trees(
+            (t for s in manifest.subtrees if (t := target(s)) is not None), place.folder
+        )
+        excluded = allowlisted_trees(
+            (t for x in manifest.excluded if (t := target(x)) is not None), place.folder
+        )
         if not subtrees:
             return ()
         try:
@@ -2202,7 +2234,9 @@ class _Transaction:
         found = {
             path.removeprefix(here)
             for path, kind in listed
-            if kind == "file" and path.startswith(here)
+            if kind == "file"
+            and path.startswith(here)
+            and in_allowlist_root(path.removeprefix(here))
         }
         if self._dry_run:
             for rel, data in self._overlay.items():

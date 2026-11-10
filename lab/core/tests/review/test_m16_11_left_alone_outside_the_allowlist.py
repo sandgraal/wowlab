@@ -138,7 +138,6 @@ def test_positive_control_an_added_file_under_an_allowlist_root_is_listed_constr
     assert ALLOWED_ADDED in _cli_helper(root, manifest)
 
 
-@pytest.mark.xfail(strict=True, reason="M16-11 review: left-alone outside the allowlist")
 @pytest.mark.parametrize("make", SCENARIOS.values(), ids=SCENARIOS.keys())
 def test_left_alone_lists_nothing_outside_the_allowlist_roots_constructed(
     root: Path, flavor: Path, make: object
