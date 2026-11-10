@@ -1,5 +1,5 @@
 # Probe from review of m16/84-left-alone-paths-tests; reproduces RefuseAt not intercepting the create rename guard uses on Windows, so the recreate-deleted grader's positive control cannot fire there.
-"""guard.py `_replace_through_temp` creates a missing target with
+"""guard.py `_replace` (line 1641) creates a missing target with
 `Path.rename` (`os.rename`) when `os.name == "nt"`, and `os.replace`
 elsewhere. The rollback of a delete recreates the file, so on Windows it
 goes through `os.rename`. `RefuseAt` in test_guard_left_alone_m16_84.py
