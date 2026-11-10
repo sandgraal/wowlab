@@ -18,7 +18,9 @@ install.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 from pathlib import Path
 
 import platformdirs
@@ -122,6 +124,19 @@ def test_export_text_names_the_file_and_the_size_constructed(root: Path, tmp_pat
     said = _plain(ok("snap", "export", "latest", str(tmp_path / "out.zip")).stdout)
     assert f"Exported snapshot {a.id} to {tmp_path / 'out.zip'}" in said
     assert "file(s)" in said
+
+
+@pytest.mark.skipif(os.name != "posix", reason="file modes are a POSIX matter")
+def test_export_archive_is_0600_under_umask_0022_constructed(root: Path, tmp_path: Path) -> None:
+    """M16-67: `snap export` leaves its archive readable by its owner only."""
+    _snapshot()
+    out = tmp_path / "out.zip"
+    old = os.umask(0o022)
+    try:
+        ok("snap", "export", "latest", str(out))
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
 
 
 def _other_install(tmp_path: Path) -> Path:

@@ -188,6 +188,61 @@ def test_import_reuses_objects_already_in_the_store_constructed(
 # ─── export refusals ─────────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(os.name != "posix", reason="file modes are a POSIX matter")
+@pytest.mark.parametrize(
+    "mask", [0o022, 0o000, 0o002], ids=["umask-0022", "umask-0000", "umask-0002"]
+)
+def test_export_writes_the_archive_0600_whatever_the_umask_constructed(
+    tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest], mask: int
+) -> None:
+    """M16-67: the archive holds what the store holds, so it is private as
+    the store's files are (M16-41), not 0666 less the umask."""
+    store, manifest = source
+    out = tmp_path / "carry.zip"
+    old = os.umask(mask)
+    try:
+        snaparchive.export_snapshot(store, manifest.id, out)
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    with zipfile.ZipFile(out) as zf:
+        assert zf.comment == ARCHIVE_COMMENT
+
+
+@pytest.mark.skipif(os.name != "posix", reason="file modes are a POSIX matter")
+def test_export_is_created_0600_before_any_byte_is_written_constructed(
+    tmp_path: Path,
+    source: tuple[SnapshotStore, snapshot.Manifest],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M16-67: the file is created 0600, not widened and narrowed after, so
+    there is no moment another account could open it. Shown by the mode
+    `os.open` is asked for, and by the export still being 0600 when the
+    exact `fchmod` is refused (best effort, as for the store's files)."""
+    store, manifest = source
+    asked: list[int] = []
+    real_open = os.open
+
+    def spy_open(path: Any, flags: int, mode: int = 0o777, **kw: Any) -> int:
+        if flags & os.O_CREAT:
+            asked.append(mode)
+        return real_open(path, flags, mode, **kw)
+
+    def no_fchmod(fd: int, mode: int) -> None:
+        raise PermissionError("constructed: fchmod refused")
+
+    monkeypatch.setattr(snaparchive.os, "open", spy_open)
+    monkeypatch.setattr(snapshot.os, "fchmod", no_fchmod)
+    out = tmp_path / "carry.zip"
+    old = os.umask(0o022)
+    try:
+        snaparchive.export_snapshot(store, manifest.id, out)
+    finally:
+        os.umask(old)
+    assert asked == [0o600]
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+
+
 def test_export_refuses_an_existing_file_constructed(
     tmp_path: Path, source: tuple[SnapshotStore, snapshot.Manifest]
 ) -> None:

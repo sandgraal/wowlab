@@ -124,10 +124,10 @@ _EXPORT_CLEANUP = (
 )
 ALLOWED: dict[tuple[str, str], str] = {
     (_SNAPARCHIVE, "import zipfile"): _EXPORT_FILE,
-    (_SNAPARCHIVE, "fd = os.open(target.name, _CREATE_FLAGS, 0o666, dir_fd=dir_fd)"): (
+    (_SNAPARCHIVE, "fd = os.open(target.name, _CREATE_FLAGS, _ARCHIVE_MODE, dir_fd=dir_fd)"): (
         _EXPORT_FILE
     ),
-    (_SNAPARCHIVE, "fd = os.open(target, _CREATE_FLAGS, 0o666)"): _EXPORT_FILE
+    (_SNAPARCHIVE, "fd = os.open(target, _CREATE_FLAGS, _ARCHIVE_MODE)"): _EXPORT_FILE
     + "; where there are no folder descriptors (Windows)",
     (_SNAPARCHIVE, 'with os.fdopen(fd, "wb") as out:'): _EXPORT_FILE,
     (
