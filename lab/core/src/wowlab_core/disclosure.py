@@ -16,7 +16,7 @@ version (L6).
 
 from __future__ import annotations
 
-__all__ = ["BEGIN", "END", "HEAD", "ROWS", "lines", "render_doc", "render_markdown"]
+__all__ = ["BEGIN", "END", "HEAD", "ROWS", "has_block", "lines", "render_doc", "render_markdown"]
 
 BEGIN = "<!-- network:begin -->"
 END = "<!-- network:end -->"
@@ -31,9 +31,9 @@ ROWS: tuple[str, ...] = (
     "wago.tools, a community-run public site of game data, and looks for your installed "
     "versions in it; nothing from your install is sent. Without `--check-builds`, "
     "`doctor` makes no network request.",
-    "`wowlab db2` and `wowlab looks` download public game tables from wago.tools by "
-    "version: to ask for the right ones, they send your installed game version in the "
-    "request.",
+    "`wowlab db2` and `wowlab looks` download public game data from wago.tools: its list "
+    "of game versions, and tables for one version at a time. A table request names that "
+    "version: your installed one, or the one you give with `--build`.",
     "A dressing-room link opens in your own browser, and only when you click it, "
     "carrying your character's race, body type, class, level and equipped item and "
     "bonus ids to that site: public game ids only, never a name. wowlab itself makes no "
@@ -52,6 +52,13 @@ def render_markdown() -> str:
     """The block as Markdown, markers included, ending in a newline."""
     body = [BEGIN, f"**{HEAD}**", "", *(f"- {row}" for row in ROWS), END]
     return "\n".join(body) + "\n"
+
+
+def has_block(text: str) -> bool:
+    """Whether `text` holds exactly one `BEGIN` line and one `END` line
+    after it: a document meant to carry the block that has lost it is
+    stale, not up to date."""
+    return text.count(BEGIN) == 1 and text.count(END) == 1 and text.index(BEGIN) < text.index(END)
 
 
 def render_doc(text: str) -> str:

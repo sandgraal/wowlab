@@ -44,7 +44,7 @@ def test_the_first_run_intro_prints_the_block() -> None:
 def test_the_block_has_the_three_rows() -> None:
     doctor, tables, link = disclosure.ROWS
     assert doctor.startswith("`wowlab doctor --check-builds` downloads")
-    assert "`wowlab db2` and `wowlab looks` download" in tables and "version" in tables
+    assert "`wowlab db2` and `wowlab looks` download" in tables and "`--build`" in tables
     assert "dressing-room link" in link and "public game ids only" in link
     assert "Nothing is uploaded" in disclosure.HEAD
 
@@ -97,3 +97,15 @@ def test_a_hand_edited_copy_is_rewritten_constructed() -> None:
 def test_an_unpaired_marker_is_refused(text: str) -> None:
     with pytest.raises(ValueError):
         disclosure.render_doc(text)
+
+
+@pytest.mark.parametrize("mode", ["--check", "--write"])
+def test_the_generator_fails_on_a_document_without_its_markers_constructed(
+    tmp_path: Path, mode: str
+) -> None:
+    doc = tmp_path / "README.md"
+    doc.write_text("top\nno block here\n", encoding="utf-8")
+    gen = _gen()
+    gen.DOCS = (doc,)  # type: ignore[attr-defined]
+    assert gen.main([mode]) == 1  # type: ignore[attr-defined]
+    assert doc.read_text(encoding="utf-8") == "top\nno block here\n"

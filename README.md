@@ -31,7 +31,7 @@
 **What leaves your machine. Nothing is uploaded: these three are wowlab's only network traffic, and no other command makes a request.**
 
 - `wowlab doctor --check-builds` downloads the public list of game versions from wago.tools, a community-run public site of game data, and looks for your installed versions in it; nothing from your install is sent. Without `--check-builds`, `doctor` makes no network request.
-- `wowlab db2` and `wowlab looks` download public game tables from wago.tools by version: to ask for the right ones, they send your installed game version in the request.
+- `wowlab db2` and `wowlab looks` download public game data from wago.tools: its list of game versions, and tables for one version at a time. A table request names that version: your installed one, or the one you give with `--build`.
 - A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
 <!-- network:end -->
 
