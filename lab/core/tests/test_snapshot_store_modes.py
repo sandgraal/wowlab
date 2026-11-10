@@ -193,7 +193,7 @@ def test_the_fix_follows_no_link_and_walks_nothing_but_the_store_constructed(
     (store.path / "objects" / "zz").mkdir()
     (store.path / "objects" / "zz" / "link").symlink_to(outside)
     (store.path / "tmp" / "dirlink").symlink_to(elsewhere, target_is_directory=True)
-    # Something else the caller keeps beside the store: judged, never walked.
+    # Something else the caller keeps beside the store: judged, never changed.
     other = store.path / "notes"
     (other / "deep").mkdir(parents=True)
     (other / "deep" / "file").write_bytes(b"constructed\n")
@@ -202,10 +202,12 @@ def test_the_fix_follows_no_link_and_walks_nothing_but_the_store_constructed(
     store.put_object(b"constructed: bytes new to the store\n")
     assert stat.S_IMODE(outside.stat().st_mode) == 0o644
     assert stat.S_IMODE(elsewhere.stat().st_mode) == 0o755
-    assert stat.S_IMODE(other.stat().st_mode) == 0o700  # an entry right below the root
-    assert stat.S_IMODE((other / "deep").stat().st_mode) == 0o755  # not walked
+    # Not the store's: left alone, at the root and below (fix round 1).
+    assert stat.S_IMODE(other.stat().st_mode) == 0o755
+    assert stat.S_IMODE((other / "deep").stat().st_mode) == 0o755
     assert stat.S_IMODE((other / "deep" / "file").stat().st_mode) == 0o644
-    assert not store.exposure().readable_by_others  # unreachable below notes/
+    assert stat.S_IMODE((store.path / "lock").stat().st_mode) == 0o600  # guard's: fixed
+    assert not store.exposure().readable_by_others  # nothing is reachable under a 0700 root
 
 
 # -- what exposure reports ------------------------------------------------------
@@ -297,7 +299,11 @@ def test_on_windows_snap_verify_and_doctor_say_the_check_is_not_made(
 ) -> None:
     monkeypatch.setattr(snapshot, "_PRIVATE_MODES", False)
     ok("snap", "create", "-m", "first")
-    assert "does not check who else can read the snapshot store" in ok("snap", "verify").stdout
+    verify = ok("snap", "verify").stdout
+    assert "does not check who else can read the snapshot store" not in verify
+    assert "1 note: --notes shows it" in verify  # a standing caveat (fix round 1)
+    notes = ok("snap", "verify", "--notes").stdout
+    assert "does not check who else can read the snapshot store" in notes
     doctor = run("doctor", "--notes").stdout
     assert "does not check who else can read the snapshot store" in doctor
     assert _WARNING not in doctor
@@ -321,3 +327,26 @@ def test_a_guard_write_leaves_nothing_others_can_reach_and_the_next_one_fixes_th
     assert not store.exposure().readable_by_others
     ok("undo", "--yes")
     _assert_private(store.path)
+
+
+@posix_only
+def test_the_fix_leaves_a_hard_linked_file_alone_constructed(tmp_path: Path, umask: None) -> None:
+    """Constructed: a file in the store with a second link elsewhere may be
+    a file outside the store; its mode is not the store's to change."""
+    store = SnapshotStore(tmp_path / "store")
+    store.create(_tree(tmp_path), ["WTF"], label="old")
+    outside = tmp_path / "outside.wtf"
+    outside.write_bytes(b"constructed\n")
+    os.link(outside, store.path / "tmp" / "linked")
+    _make_old(store.path)
+    outside.chmod(0o644)
+    store.put_object(b"constructed: bytes new to the store\n")
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+    # tmp/ itself is fixed, so nothing below it is reachable any more.
+    assert not store.exposure().readable_by_others
+
+
+@posix_only
+def test_snap_verify_on_posix_has_no_notes_footer(root: Path, user_data: Path, umask: None) -> None:
+    ok("snap", "create", "-m", "first")
+    assert "--notes" not in ok("snap", "verify").stdout

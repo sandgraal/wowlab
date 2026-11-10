@@ -7441,7 +7441,7 @@ def _diff_detail_lines(store: snapshot.SnapshotStore, cf: ChangedFile) -> list[s
 
 @snap_app.command("verify", short_help="Check every stored file and snapshot.")
 @_handled
-def snap_verify(json_out: JsonOpt = False) -> None:
+def snap_verify(json_out: JsonOpt = False, notes_out: NotesOpt = False) -> None:
     """Re-hash every stored object and check every manifest. Exits 1 on any
     problem.
 
@@ -7472,8 +7472,8 @@ def snap_verify(json_out: JsonOpt = False) -> None:
         exposed = _exposure_line(report.exposure)
         if exposed is not None:
             _say_prose(f"  {exposed}", hang="    ")
-        elif not report.exposure.checked:
-            _say_prose(f"  {_STORE_MODES_NOTE}", hang="    ")
+        # A standing caveat on Windows, so behind --notes (M16-41, fix round 1).
+        _say_notes([] if report.exposure.checked else [_STORE_MODES_NOTE], notes_out)
     if not report.ok:
         raise typer.Exit(EXIT_ERROR)
 

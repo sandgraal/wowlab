@@ -357,11 +357,12 @@ _STAGE_FLAGS = (
 # created with that mode and then set to it exactly with `fchmod`, since a
 # umask can only take bits away. A store made by an older version (0755 and
 # 0644 under the usual umask 0022) is fixed on its next write: whenever a
-# write opens the store root, the root is set private, each entry directly
-# below it (guard's `lock` and `journal/` included) loses its group and other
-# bits, and every directory that had any of those bits is walked the same
-# way, through descriptors that never follow a link. A store already private
-# costs one `fstat` and one listing of the root per write.
+# write opens the store root, the root is set private, the store's own
+# entries directly below it (guard's `lock` and `journal/` included) lose
+# their group and other bits, and every directory that had any of those bits
+# is walked the same way, through descriptors that never follow a link. A
+# store already private costs one `fstat` and one listing of the root per
+# write.
 #
 # Modes are a POSIX matter. On Windows, a folder under the user's profile is
 # private through its inherited access list, and none of this applies: the
@@ -376,6 +377,15 @@ _PRIVATE_MODES = os.name == "posix" and hasattr(os, "fchmod")
 _STORE_DIRS = frozenset({"objects", "manifests", "tmp", _IMPORTED_DIR, "journal"})
 """The directories directly below the store root that the store and guard
 make (`journal/` is guard's). Only these are walked to fix or judge modes."""
+
+_STORE_FILES = frozenset({"lock"})
+"""The files directly below the store root that guard makes (its store
+lock). With `_STORE_DIRS`, the only entries there whose modes a write fixes."""
+
+_MKDIR_MODE = _PRIVATE_DIR_MODE if _PRIVATE_MODES else 0o777
+"""The mode a store directory is made with: 0700 on POSIX. Elsewhere the
+default, so that on Windows the folder keeps the access it inherits (from
+CPython 3.12.4, a mode of 0700 there sets a protected access list)."""
 
 _EXPOSED_SHOWN = 10
 """How many exposed entries `exposure` names; it counts them all."""
@@ -406,35 +416,54 @@ def _set_private(fd: int, st: os.stat_result | None = None, *, exact: bool) -> b
 
 
 def _privatize_below(root_fd: int) -> None:
-    """Take the group and other bits off every entry directly below the
-    store root open on `root_fd`, then off everything below each of the
-    store's own directories (`_STORE_DIRS`) that had any, and so on down
-    (an older version's store: every directory 0755). Nothing else below
-    the root is walked: the store's path is the caller's to choose. Links
-    are never followed nor changed; an entry that cannot be opened, or that
-    changes between its `lstat` and its open, is left as it is, and
-    `exposure` still reports it. Raises nothing: an `OSError` never fails
-    the write that triggered it."""
-    stack: list[tuple[int, bool]] = []
-    with contextlib.suppress(OSError):
-        stack.append((os.dup(root_fd), True))
-    while stack:
-        dir_fd, at_root = stack.pop()
+    """Take the group and other bits off the store's own entries directly
+    below the store root open on `root_fd` (`_STORE_DIRS` and `_STORE_FILES`;
+    anything else the caller keeps beside them is left alone), then off
+    everything below each of those directories that had any, and so on down
+    (an older version's store: every directory 0755).
+
+    Depth first, one descriptor per level: a directory is opened when the
+    walk reaches it, and its children are walked before its next sibling is
+    opened, so an older store's 256 object shards never hold 256
+    descriptors at once (fix round 1: macOS's default soft limit is 256).
+
+    Links are never followed nor changed, and a regular file with more than
+    one link is left alone: it may be a hard link to a file outside the
+    store, such as an install's, whose mode is not the store's to change
+    (fix round 1). An entry that cannot be opened, or that changes between
+    its `lstat` and its open, is left as it is; `exposure` still reports
+    it. Raises nothing: an `OSError` never fails the write that triggered it."""
+    try:
+        first = os.dup(root_fd)
+    except OSError:
+        return
+    # Each frame: a directory's descriptor and the names below it still to walk.
+    frames: list[tuple[int, Iterator[str]]] = []
+    try:
         try:
-            try:
-                names = os.listdir(dir_fd)  # noqa: PTH208 - by descriptor
-            except OSError:
+            names = os.listdir(first)  # noqa: PTH208 - by descriptor
+        except OSError:
+            names = []
+        frames.append((first, iter(n for n in names if n in _STORE_DIRS or n in _STORE_FILES)))
+        while frames:
+            dir_fd, pending = frames[-1]
+            name = next(pending, None)
+            if name is None:
+                frames.pop()
+                os.close(dir_fd)
                 continue
-            for name in names:
-                child = _private_child(dir_fd, name)
-                if child is None:
-                    continue
-                if at_root and name not in _STORE_DIRS:
-                    os.close(child)
-                    continue
-                stack.append((child, False))
-        finally:
-            os.close(dir_fd)
+            child = _private_child(dir_fd, name)
+            if child is None:
+                continue
+            try:
+                below = os.listdir(child)  # noqa: PTH208 - by descriptor
+            except OSError:
+                below = []
+            frames.append((child, iter(below)))
+    finally:
+        for dir_fd, _ in frames:
+            with contextlib.suppress(OSError):
+                os.close(dir_fd)
 
 
 def _private_child(dir_fd: int, name: str) -> int | None:
@@ -447,6 +476,8 @@ def _private_child(dir_fd: int, name: str) -> int | None:
     is_dir = stat.S_ISDIR(st.st_mode)
     if not (is_dir or stat.S_ISREG(st.st_mode)) or not st.st_mode & _OTHERS_BITS:
         return None  # a link, a FIFO, a device, ...; or private already
+    if not is_dir and st.st_nlink > 1:
+        return None  # a hard link may be a file outside the store
     flags = os.O_RDONLY | _O_NOFOLLOW | getattr(os, "O_NOCTTY", 0)
     flags |= os.O_DIRECTORY if is_dir else getattr(os, "O_NONBLOCK", 0)
     try:
@@ -455,8 +486,10 @@ def _private_child(dir_fd: int, name: str) -> int | None:
         return None
     try:
         now = os.fstat(fd)
-        if _file_identity(now) != _file_identity(st) or stat.S_IFMT(now.st_mode) != stat.S_IFMT(
-            st.st_mode
+        if (
+            _file_identity(now) != _file_identity(st)
+            or stat.S_IFMT(now.st_mode) != stat.S_IFMT(st.st_mode)
+            or (not is_dir and now.st_nlink > 1)  # judged again on what was opened
         ):
             os.close(fd)
             return None
@@ -1766,7 +1799,7 @@ class SnapshotStore:
         """A descriptor on the store root, opened as named (see above)."""
         try:
             if create:
-                self.path.mkdir(_PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+                self.path.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
             fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             if create:
@@ -1808,7 +1841,7 @@ class SnapshotStore:
         try:
             if create:
                 with contextlib.suppress(FileExistsError):
-                    os.mkdir(name, _PRIVATE_DIR_MODE, dir_fd=parent_fd)  # never follows a link
+                    os.mkdir(name, _MKDIR_MODE, dir_fd=parent_fd)  # never follows a link
             st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             if create:
@@ -2808,7 +2841,7 @@ class SnapshotStore:
         """The store's `tmp/`, created if needed, when it is a directory and
         not a link; else None."""
         try:
-            self.tmp_dir.mkdir(_PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+            self.tmp_dir.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
             st = os.lstat(self.tmp_dir)
         except OSError:
             return None
