@@ -4739,10 +4739,14 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      gets a "not compared" line. `undo` compares what the disk holds now
      with what it puts back, and when that is not what the transaction
      wrote (the client rewrites these files at logout), a line says the
-     comparison includes those later changes. A plan with any such line
-     adds one line saying each file is one scope (machine, account or
-     character), and `snap restore` and `undo` add the login caveat before
-     the prompt. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     comparison includes those later changes. A plan that names a change
+     in a bindings, macros or CVar file (a SavedVariables summary alone
+     does not count) adds one line saying each file is one scope (machine,
+     account or character): bindings come from the account or the character
+     file as "Character Specific Key Bindings" sets, account and character
+     macros are two sets, and each CVar is read from the file of its own
+     scope. `snap restore` and `undo` then add the login caveat before the
+     prompt and do not repeat it after the write. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
      `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
      text output), line by line as the terminal shows it (escaped), for the
      UI's confirm step (EV-20). Additive only.

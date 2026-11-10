@@ -7229,9 +7229,21 @@ type _Side = bytes | _Unread | None
 _NO_KEY_LINE = "(no line: the client's default binding)"
 _NO_CVAR_LINE = "(no line: set elsewhere or the client default)"
 _SCOPE_LINE = (
-    "  Each file is one scope (machine, account or character); the game uses the "
-    "account or character copy depending on its settings."
+    "  Each file is one scope (machine, account or character): key bindings come from "
+    'the account or the character file, as "Character Specific Key Bindings" sets; '
+    "account and character macros are two separate sets; each CVar is read from the "
+    "file of its own scope."
 )
+
+
+def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
+    """The lines a plan ends with before the prompt when it named a key,
+    macro or CVar change (`named`: a bindings, macros or CVar file got
+    detail lines): the scope line, and the login caveat when a path in it
+    is one the caveat is about. A SavedVariables-only plan gets neither."""
+    if not named:
+        return []
+    return [_SCOPE_LINE, *_relogin_notes(paths)]
 
 
 def _value_text(value: str | None, *, cvar: bool) -> str:
@@ -8103,12 +8115,11 @@ def snap_restore(
             plan_lines.append(_plan_line(item))
             detail = _plan_item_lines(store, chosen.path, item)
             plan_lines.extend(detail)
-            detailed = detailed or bool(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
-        if detailed:
-            plan_lines.extend([_SCOPE_LINE, _RELOGIN])
+        plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
     if not json_out or (prompting and plan):
         for line in plan_lines:
             show(line)
@@ -8158,7 +8169,8 @@ def snap_restore(
         return
     say(f"Restored {len(plan)} file(s). `wowlab undo` puts back what was there before.")
     for n in done.notes:
-        say(n)
+        if n not in plan_lines:  # the plan above already said it
+            say(n)
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
@@ -8192,12 +8204,11 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
                 if now_sha != p.after:
                     lines.append(_CHANGED_SINCE)
             lines.extend(detail)
-            detailed = detailed or bool(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
     lines.extend(
         f"  remove folder {d}  (created by that transaction, if empty)" for d in last.created_dirs
     )
-    if detailed:
-        lines.extend([_SCOPE_LINE, _RELOGIN])
+    lines.extend(_plan_footer(detailed, [p.path for p in last.paths]))
     return lines
 
 
@@ -8292,7 +8303,8 @@ def undo(
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
     for n in done.notes:
-        _say(n)
+        if n not in plan_lines:  # the plan above already said it
+            _say(n)
 
 
 # ─── profile ─────────────────────────────────────────────────────────────────
@@ -8576,8 +8588,9 @@ def _apply_plan_lines(
         lines.append(line)
         detail = _plan_item_lines(store, flavor_path, item)
         lines.extend(detail)
-        detailed = detailed or bool(detail)
+        detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
     if detailed:
+        # The login caveat is the command's own LOGIN_NOTE, shown after the plan.
         lines.append(_SCOPE_LINE)
     if plan.skipped:
         lines.append(

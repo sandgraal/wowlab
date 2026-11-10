@@ -56,8 +56,10 @@ MACRO_ADDED = '      macro "PolyArc": added'
 CVAR_VIEW = f'      CVar cameraView: "5" -> {NO_CVAR}'
 CVAR_CLUB = f'      CVar lastSelectedClubId: {NO_CVAR} -> ""'
 SCOPE = (
-    "  Each file is one scope (machine, account or character); the game uses the "
-    "account or character copy depending on its settings."
+    "  Each file is one scope (machine, account or character): key bindings come from "
+    'the account or the character file, as "Character Specific Key Bindings" sets; '
+    "account and character macros are two separate sets; each CVar is read from the "
+    "file of its own scope."
 )
 CHANGED_SINCE = (
     "      (changed since that transaction, probably by the client at logout: the lines "
@@ -289,3 +291,27 @@ def test_macros_order_repeated_and_blank_names_constructed(root: Path, flavor: P
         "      nothing changes by name; the macros' order or ids differ, and a button that "
         "holds a macro may then run a different one"
     ]
+
+
+def test_undo_yes_says_the_login_caveat_once_constructed(root: Path, flavor: Path) -> None:
+    a = _snapshot()
+    _change_wtf(flavor)
+    ok("snap", "restore", a.id, "--yes")
+    out = _plain(ok("undo", "--yes").stdout)
+    assert out.count(cli._RELOGIN) == 1, out
+    assert out.count(SCOPE) == 1, out
+
+
+def test_a_saved_variables_only_undo_plan_has_no_scope_or_sync_line(
+    root: Path, flavor: Path
+) -> None:
+    sv = flavor / LAB_SV
+    sv.parent.mkdir()
+    shutil.copyfile(SV_EARLY / "SavedVariables/WowLab.lua", sv)
+    a = _snapshot()
+    shutil.copyfile(SV_LATER / "SavedVariables/WowLab.lua", sv)
+    ok("snap", "restore", a.id, "--yes")
+    declined = run("undo", input="n\n")
+    lines = _plain(declined.stdout).splitlines()
+    assert _under(lines, LAB_SV)[0].startswith("      values: ")
+    assert SCOPE not in lines and cli._RELOGIN not in lines
