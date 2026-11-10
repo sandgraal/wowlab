@@ -615,6 +615,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, int]]]:
     assert not still_open, f"descriptors left open: {still_open}"
 
 
+_FOLDER = getattr(os, "O_DIRECTORY", 0)  # 0 on Windows: no folder is opened there
 _WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
 
@@ -645,7 +646,8 @@ def test_open_storage_reads_only_what_it_needs_and_writes_nothing_constructed(
     storage = casc.open_storage(install, FLAVOR)
 
     assert tree_state(root) == before
-    names = sorted(Path(p).name for p, _ in opened)
+    # The folders on the way are opened too, from the root (M16-79).
+    names = sorted(Path(p).name for p, f in opened if not f & _FOLDER)
     assert names == sorted([storage.config.key, *indexes])
     assert older not in names
     assert all(flags & _WRITING == 0 for _, flags in opened)

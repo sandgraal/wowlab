@@ -600,6 +600,16 @@ def test_explain_hashes_only_the_named_path_and_writes_nothing(
         return real(path, **kw)
 
     monkeypatch.setattr(snapshot, "open_regular_file", spy)
+    # The hash opens the path from the install root (M16-79); the walk's own
+    # last open is by name in a folder's descriptor, so it is recorded here
+    # by its full path.
+    real_from_root = snapshot.open_regular_file_from_root
+
+    def spy_from_root(path: Path, root_: Path) -> Any:
+        opened.append(Path(path))
+        return real_from_root(path, root_)
+
+    monkeypatch.setattr(snapshot, "open_regular_file_from_root", spy_from_root)
     before = _state(root)
     explained(SYNDICATOR)
     ok("explain", SYNDICATOR)

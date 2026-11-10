@@ -80,15 +80,18 @@ product in the install; only the build config is per product.
    about 560 MB, most of it the encoding file decoded beside its record
    (`casc-files.json`).
 
-Reads only (L1, ADR-0033): every file is opened read-only without following
-a final link (`snapshot.open_regular_file`, the open under
-`snapshot.read_regular_file`), read into memory with a size bound (an index
-file or the build config whole; an archive only the one record's range,
-`read_record`), and closed before the next is opened, so no handle or
-mapping outlives the call (no `mmap` anywhere); nothing is created, locked
-or written anywhere, and `shmem` and `index.lock.0` are never opened. A
-folder on the way (`Data`, `Data/data`, `Data/config` and the key's two
-levels) that is a link is refused rather than followed. Whether a handle
+Reads only (L1, ADR-0033): every file is opened read-only from the install
+root one folder at a time, no link followed on the way or at the end
+(`snapshot.open_regular_file_from_root`, M16-79; the open under
+`snapshot.read_regular_file` with `root`), read into memory with a size
+bound (an index file or the build config whole; an archive only the one
+record's range, `read_record`), and closed before the next is opened, so no
+handle or mapping outlives the call (no `mmap` anywhere); nothing is
+created, locked or written anywhere, and `shmem` and `index.lock.0` are
+never opened. A folder on the way (`Data`, `Data/data`, `Data/config` and
+the key's two levels) that is a link is refused rather than followed: by an
+`lstat` before the read (`_check_dir`), and by the walk itself when one is
+swapped in after that check (`_linked`). Whether a handle
 held for one read can still block the agent or the client on Windows is a
 §17.7 **[verify]**.
 
@@ -818,12 +821,25 @@ def _check_dir(path: Path) -> None:
         raise CascUnreadableError(f"{path} is not a folder", path)
 
 
-def _read(path: Path, limit: int) -> bytes:
-    """The bytes of `path`, read-only, whole, bounded, the handle closed."""
+def _linked(exc: snapshot.LinkedPathError, path: Path) -> CascUnreadableError:
+    """The refusal of a link the walk from the install root met (M16-79), in
+    M16-65's words. Every folder between the root and a CASC file was
+    `lstat`-ed by `_check_dir` just before the read and was no link, so a
+    linked folder met now became one while wowlab read it; a file that is
+    itself a link is said as any reader says it."""
+    said = exc if exc.final else exc.changed_while_read()
+    return CascUnreadableError(str(said), path)
+
+
+def _read(path: Path, limit: int, root: Path) -> bytes:
+    """The bytes of `path`, read-only, whole, bounded, the handle closed;
+    opened from the install `root` one folder at a time (M16-79)."""
     try:
-        return snapshot.read_regular_file(path, limit=limit)
+        return snapshot.read_regular_file(path, limit=limit, root=root)
     except FileNotFoundError:
         raise CascMissingError(f"{path} is not there", path) from None
+    except snapshot.LinkedPathError as exc:
+        raise _linked(exc, path) from exc
     except snapshot.UnsafeReadError as exc:
         raise CascUnreadableError(f"cannot read {path} ({exc})", path) from exc
     except OSError as exc:  # refused, or a link (ELOOP)
@@ -949,7 +965,7 @@ def read_build_config(root: Path, build_key: str) -> BuildConfig:
     path = build_config_path(root, key)
     for folder in (root / _DATA, root / _DATA / _CONFIG, path.parent.parent, path.parent):
         _check_dir(folder)
-    return parse_build_config(_read(path, _CONFIG_LIMIT), key, path)
+    return parse_build_config(_read(path, _CONFIG_LIMIT, root), key, path)
 
 
 def bucket_of(key: bytes) -> int:
@@ -1129,7 +1145,7 @@ def load_index(root: Path) -> tuple[CascIndex, tuple[BucketVersion, ...]]:
         version = max(found[bucket])
         name = f"{bucket:02x}{version:08x}.idx"
         path = data_dir / name
-        files.append(parse_index_file(_read(path, _INDEX_LIMIT), bucket, version, name))
+        files.append(parse_index_file(_read(path, _INDEX_LIMIT, root), bucket, version, name))
         taken_names.append(name)
     _check_entries(files, taken_names, data_dir)
     versions = tuple(
@@ -1546,8 +1562,9 @@ def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> 
     install `root`.
 
     A ranged read, as bounded as `snapshot.read_regular_file`: the archive
-    is opened with `snapshot.open_regular_file` (read-only, a final link
-    refused, a regular file only), the record's range is checked against
+    is opened from `root` one folder at a time with
+    `snapshot.open_regular_file_from_root` (read-only, a link on the way or
+    at the end refused, a regular file only; M16-79), the record's range is checked against
     the file's size, the range alone is read (never more than `entry.size`
     bytes, itself held to `limit` plus the header before the open), and the
     descriptor is closed on every path. No `mmap`; no handle outlives the
@@ -1569,9 +1586,11 @@ def read_record(root: Path, entry: IndexEntry, *, limit: int = DECODE_LIMIT) -> 
             path,
         )
     try:
-        fd, st = snapshot.open_regular_file(path)
+        fd, st = snapshot.open_regular_file_from_root(path, root)
     except FileNotFoundError:
         raise CascMissingError(f"{path} is not there", path) from None
+    except snapshot.LinkedPathError as exc:
+        raise _linked(exc, path) from exc
     except snapshot.UnsafeReadError as exc:
         raise CascUnreadableError(f"cannot read {path} ({exc})", path) from exc
     except OSError as exc:  # refused, or a link (ELOOP)
