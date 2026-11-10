@@ -329,10 +329,12 @@ jobs:
   # what counts as a grader are in scripts/check_grader_diff.py. HEAD^1..HEAD
   # is the pull request's merge commit against its base (on a push to main,
   # the squash-merged commit), so a depth of 2 is all the history it reads.
-  # The script runs from the base revision when the base has it: an edit to
-  # the script alone cannot loosen the check, and an edit to this job shows
-  # here in ci.yml. It is stdlib-only and runs on the runner's python3 with
-  # -I, so nothing is installed or fetched.
+  # The script runs only from the base revision: an edit to the script
+  # cannot loosen the check that judges it, and an edit to this job shows
+  # here in ci.yml. A base without the script fails the step; the PR's own
+  # copy is never run (M16-59, tests/repo/test_grader_diff_base_copy.py).
+  # It is stdlib-only and runs on the runner's python3 with -I, so nothing
+  # is installed or fetched.
   # Not yet a required check: adding it means changing
   # .github/rulesets/main.json and re-applying it after this job is on main.
   grader-diff:
@@ -349,9 +351,9 @@ jobs:
       - name: Check grader diffs
         run: |
           script="$RUNNER_TEMP/check_grader_diff.py"
-          if git cat-file -e HEAD^1:scripts/check_grader_diff.py 2>/dev/null; then
-            git show HEAD^1:scripts/check_grader_diff.py > "$script"
-          else
-            cp scripts/check_grader_diff.py "$script"
+          if ! git cat-file -e HEAD^1:scripts/check_grader_diff.py 2>/dev/null; then
+            echo "::error::scripts/check_grader_diff.py is missing from the base revision (HEAD^1). The grader check runs only from the base copy, so a pull request cannot change the script that judges it; refusing to fall back to this branch's copy."
+            exit 1
           fi
+          git show HEAD^1:scripts/check_grader_diff.py > "$script"
           python3 -I "$script" --repo . --base HEAD^1 --head HEAD
