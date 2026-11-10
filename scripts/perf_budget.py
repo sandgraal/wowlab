@@ -99,11 +99,11 @@ COMMANDS: dict[str, tuple[tuple[str, ...], frozenset[int]]] = {
 # these were set is in docs/LAB_PLAN.md §6.12; the table there and this one
 # are kept equal by tests/scripts/test_perf_budget.py.
 BASELINE: dict[str, float] = {
-    "whole-restore": 0.0,
-    "sv-dump-json": 0.0,
-    "sv-merge": 0.0,
-    "addons-list": 0.0,
-    "version": 0.0,
+    "whole-restore": 19.5,
+    "sv-dump-json": 3.1,
+    "sv-merge": 9.6,
+    "addons-list": 3.1,
+    "version": 3.0,
 }
 
 

@@ -1641,9 +1641,30 @@ touches no real install or snapshot store.
 
 | Command | What is run | Baseline ratio |
 |---|---|---|
-BASELINE_ROWS
+| `whole-restore` | `snap restore ID --dry-run --json`, the 20,000-file tree, nothing to change | 19.5 |
+| `sv-dump-json` | `sv dump --json` of a captured character `WowLab.lua` (23 KB) | 3.1 |
+| `sv-merge` | `sv merge WowLab.lua --into` one captured character `--from` the other `--json` (conflicts listed, nothing written, exit 1) | 9.6 |
+| `addons-list` | `addons list --json` | 3.1 |
+| `version` | `wowlab --version` | 3.0 |
 
-How the baselines were set: PLACEHOLDER_HOW
+How the baselines were set: three `--record` runs on the development
+container on 2026-11-10 (4 cores, load average 13 to 19 from other
+sessions). The calibration loop took 0.25 to 0.27 s CPU. The ratios
+measured were 14.0 to 15.6 (whole restore; 3.7 to 4.0 s CPU), 2.0 to 2.4
+(`sv dump --json`), 6.9 to 7.7 (`sv merge`), 2.4 (`addons list`) and 2.1 to
+2.4 (`--version`); most of each short command is the interpreter start and
+the imports, about 0.55 s CPU. Each baseline is the highest ratio of the
+three runs plus 25 %, rounded up to one decimal, so a run fails only at
+about 1.9 times the cost measured. The margin is for the reference runner,
+whose mix of CPU, memory and file-system speed differs from the
+container's, and the ratio moves with that mix; CPU time rather than
+wall-clock time, and the least of several runs, keep load on a shared
+machine from moving it much. The whole restore took 6.8 to 8.6 s of
+wall-clock time on that loaded container (about twice its CPU time, as
+every command's wall-clock time was), and 4.9 s in a fourth, checking run
+at a load average of about 10, which passed every row. The 5 s target is
+for the quieter reference runner, and the margin under it is small: the
+first run on `main` is the measurement of it.
 
 To re-set a baseline after an intended change, run the workflow by hand,
 read the ratios its log prints (`python scripts/perf_budget.py --record`
