@@ -1142,7 +1142,7 @@ Noted by the M15-01 implementer, 2026-10-19. `looks import-char` prints `_NO_CLA
 
 ---
 
-## [ ] M13-81 — A lighter local test run: `make test-fast`, a hang guard, and temp-dir cleanup
+## [x] M13-81 — A lighter local test run: `make test-fast`, a hang guard, and temp-dir cleanup
 **Size:** S · **Depends on:** nothing
 
 Filed by the conductor on 2026-10-19 at the owner's request: pytest "keeps getting stuck, takes up too much space on my local drive and is generally a long running nuisance". What the repository and the machine show:
@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2352,6 +2352,12 @@ Each item is small and independent; split if one grows:
 - `snap diff`'s `_lua_diff` reads SavedVariables with no size cap; give it the `luadata` budget.
 - `redact` is quadratic on long runs of `/`; make it linear (a constructed timing test).
 - `file:///home/<login>` redacts to `fil<HOME>`; keep the scheme.
-- The Windows descriptor check in the M16-49T junction graders is a no-op; report it to a test-writer if it is a grader of a load-bearing file.
 
 **Acceptance:** one test per item; reviewed by `code-reviewer` (and `security-reviewer` for `redact`).
+
+## [ ] M16-73T — [TEST] The M16-49T junction graders check descriptors on Windows
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-49T review (2026-11-09)
+
+The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_from_root_m16_49.py`'s junction cases is a no-op, so a leaked handle on Windows is not caught. That file imports `luadata`, so it is a grader of a load-bearing file (ADR-0013): a test-writer makes the check real (or states why Windows cannot be checked) without weakening any assertion.
+
+**Acceptance:** the check fails on a constructed leak on the `lab (windows)` job and passes on `main`'s readers; reviewed by `code-reviewer`.
