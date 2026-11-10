@@ -95,7 +95,7 @@ OBJECTS_DIR_ENTRY = "objects/"
 link (M11-18). No object name or stray path under `objects/` ends in `/`."""
 
 _CHUNK = 1 << 20
-_ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
+_ID_RE = re.compile(r"\A[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8}\Z")  # ASCII digits only (M16-77)
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 # A full disk, and (where the platform has it) a full quota.
