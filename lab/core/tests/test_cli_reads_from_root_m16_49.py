@@ -204,3 +204,55 @@ def test_read_regular_file_refuses_root_with_expect_or_dir_fd(tmp_path: Path) ->
     with pytest.raises(ValueError):
         snapshot.read_regular_file(path, root=tmp_path, dir_fd=0)
     assert snapshot.read_regular_file(path, root=tmp_path) == b"x"
+
+
+def test_constructed_sv_dump_of_an_install_file_spelled_with_dotdot_is_refused(
+    root: Path,
+) -> None:
+    """A path inside the found install, spelled with `..`, is refused by the
+    read from the root, never read with only its last part checked."""
+    done = _dump(str(root / FLAVOR / "WTF" / ".." / SV_REL))
+    assert done.exit_code not in (0, None), done.output
+    assert done.stdout == ""
+    assert "'..'" in done.stderr, done.stderr
+    assert "only the file itself was checked" not in done.stderr
+
+
+def test_constructed_sv_dump_climbing_out_of_the_install_reads_with_the_note(
+    root: Path, tmp_path: Path
+) -> None:
+    """`<install>/../Loose/...` is outside the install once `..` is taken:
+    read as a loose file, with the note."""
+    outside = tmp_path / "Loose-constructed" / "Blizzard_AuctionHouseUI.lua"
+    outside.parent.mkdir()
+    shutil.copy2(root / FLAVOR / SV_REL, outside)
+    done = _dump(str(root / ".." / "Loose-constructed" / outside.name))
+    assert done.exit_code == 0, done.output
+    assert "only the file itself was checked for a link" in done.stderr, done.stderr
+
+
+@needs_symlink
+def test_constructed_sv_dump_through_a_link_to_the_install_is_refused_not_downgraded(
+    root: Path, tmp_path: Path
+) -> None:
+    """The install named through a link to it is another spelling of the
+    same install: refused, never read with only the last part checked."""
+    alias = tmp_path / "Games-constructed"
+    alias.symlink_to(root, target_is_directory=True)
+    done = _dump(str(alias / FLAVOR / SV_REL))
+    assert done.exit_code == cli.EXIT_REFUSED, done.output
+    assert done.stdout == ""
+    assert "not spelled under" in done.stderr, done.stderr
+    assert "only the file itself was checked" not in done.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="case folding is graded on POSIX here")
+def test_constructed_sv_dump_of_the_install_in_another_case_is_never_downgraded(
+    root: Path,
+) -> None:
+    """On a case-insensitive volume (macOS) the swapped-case spelling names
+    the install and is refused; on a case-sensitive one it names nothing."""
+    variant = root.parent / root.name.swapcase()
+    done = _dump(str(variant / FLAVOR / SV_REL))
+    assert done.exit_code not in (0, None), done.output
+    assert "only the file itself was checked" not in done.stderr

@@ -4209,17 +4209,52 @@ def _sv_file_and_root(path: str, root: Path | None, flavor: str | None) -> tuple
         found, _ = _discover(root)
     except install.InstallError:
         return given, None
-    return given, _lexically_under(given, found.root)
+    holding = _install_holding(given, found.root)
+    if holding is None and _really_inside(given, found.root):
+        # Another spelling of the install (a link to it, the folder named in
+        # another case, a working folder reached by its real path): the walk
+        # cannot start from a root the path is not spelled under, and
+        # checking the last part only would follow a linked folder in it.
+        raise CliError(
+            f"refused: {given} is in the install at {found.root}, but not spelled under "
+            "that folder; give the path as it sits under that folder",
+            EXIT_REFUSED,
+        )
+    return given, holding
 
 
-def _lexically_under(path: Path, root: Path) -> Path | None:
-    """`root`, absolute, when `path` is under it as spelled (no `..` below
-    it, no link resolved); otherwise None."""
-    full, base = path.absolute(), Path(root).absolute()
+def _install_holding(path: Path, root: Path) -> Path | None:
+    """`root`, absolute, when `path` names something inside it once its
+    `..` are taken lexically (no link resolved); otherwise None. The path
+    itself is not changed: one spelled with `..` inside the install is then
+    refused by the read, never read with only its last part checked."""
+    base = Path(root).absolute()
+    norm = Path(os.path.normpath(path.absolute()))
     n = len(base.parts)
-    if len(full.parts) <= n or type(base)(*full.parts[:n]) != base or ".." in full.parts[n:]:
+    if len(norm.parts) <= n or type(base)(*norm.parts[:n]) != base:
         return None
     return base
+
+
+def _really_inside(path: Path, root: Path) -> bool:
+    """Whether `path`, every link on the way resolved, is under `root`: some
+    folder above its real path is the root's folder by device and inode, so
+    a link to the root and the root named in another case (macOS, Windows)
+    count too. False when either cannot be resolved."""
+    try:
+        real = Path(longpath.realpath(path))
+        st = longpath.stat(root)
+    except (OSError, ValueError):
+        return False
+    want = (st.st_dev, st.st_ino)
+    for folder in real.parents:
+        try:
+            here = longpath.stat(folder)
+        except OSError:
+            continue
+        if (here.st_dev, here.st_ino) == want:
+            return True
+    return False
 
 
 _SV_LAST_PART_ONLY = (

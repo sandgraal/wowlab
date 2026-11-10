@@ -267,7 +267,10 @@ def _components_under(path: Path, root: Path) -> tuple[str, ...]:
         raise UnsafeReadError(f"{path} is not inside {root}")
     rest = full.parts[n:]
     if ".." in rest:
-        raise UnsafeReadError(f"{path} climbs out of a folder with '..', so it is not read")
+        raise UnsafeReadError(
+            f"{path} has '..' in it, and wowlab reads a file in an install only by a path "
+            "without '..'"
+        )
     return rest
 
 
