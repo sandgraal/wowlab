@@ -1025,21 +1025,26 @@ class _Merger:
             written[0] = written[0]._replace(lead=entries[first].lead)
         out = list(before)
         out += written
-        joined = False
+        # `carry`: the comment owed to the front of the slot after the run of
+        # removed entries being skipped. For the first run it is `lead_in`;
+        # for a later one, the trailing comment of the kept entry before it,
+        # which the parser kept in the removed entry's lead (M16-54).
+        carry = lead_in
         for i, entry in enumerate(entries):
-            if i <= first or o.ids[i] in listed:
+            if i <= first:
+                continue
+            if o.ids[i] in listed:
+                if o.ids[i - 1] not in listed:
+                    carry = entries[i - 1].comment
                 continue
             if o.ids[i - 1] in listed:
                 lead = _unprefixed(entry.lead, entries[i - 1].comment)
-                if not joined:
-                    lead = _prefixed(lead, lead_in)
-                    joined = True
-                entry = entry._replace(lead=lead)
+                entry = entry._replace(lead=_prefixed(lead, carry))
+                carry = None
             out.append(entry)
         if o.ids[-1] in listed:  # a list entry ended the table: its comment is in close
             close = _unprefixed(close, entries[-1].comment)
-            if not joined:
-                close = _prefixed(close, lead_in)
+            close = _prefixed(close, carry)
         return out, [], close
 
     def written(

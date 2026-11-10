@@ -145,6 +145,11 @@ quote is not expected **[verify]**. `Config.wtf` lives at `WTF/Config.wtf`
 Lines that do not match are kept as `Unknown`. Names are case-insensitive to
 the client.
 
+*Amended 2026-11-09 (M16-25; applies to §5–§7):* no capture of these files
+starts with a UTF-8 BOM, so whether the client writes one is **[verify]**.
+The parsers keep a leading BOM as its own prefix token, never part of line 1
+(`docs/LAB_PLAN.md` §6.5).
+
 Identity-bearing CVars the scrubber blanks: `accountName`, `accountList`,
 `lastCharacterGuid`. The list is confirmed and extended from the first
 capture **[verify]**; the deny-list lives in `wowlab_core.redact`

@@ -79,6 +79,10 @@ _KNOWN_YES = {
 EXCLUDED: Mapping[tuple[str, ...], str] = {
     # The server must not start another server, or itself.
     ("ui",): "the UI itself",
+    # M16-04: it always writes the file it is named (the reason of the
+    # owner's 2026-10-15 ruling on `looks page --out`), and that FILE is
+    # required, so the whole leaf is refused.
+    ("snap", "export"): "it creates a file anywhere outside an install",
 }
 """Leaves excluded for a reason other than `--yes`. A new entry needs its
 reason written here and in the server, and nothing else."""
@@ -627,7 +631,7 @@ def test_every_refused_param_is_declared_and_offered_with_the_servers_reason(
 def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     """ADR-0029 "Parity" (M14-02, M14-03): every `--yes` leaf of the real
     tree, read from the tree, goes through the confirm step with the shape
-    its declarations give it; none is excluded, and `ui` alone is."""
+    its declarations give it; none is excluded, and only `EXCLUDED` is."""
     tree = _real_tree()
     yes = {path for path, cmd in _leaves(tree) if _declares_yes(cmd)}
     assert yes >= _KNOWN_YES
@@ -641,7 +645,7 @@ def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     }
     assert _confirm_problems(tree, real, CONFIRM_STEP) == []
     listed = real.commands()
-    assert {path for path, item in listed.items() if item["excluded"] is not None} == {("ui",)}
+    assert {path for path, item in listed.items() if item["excluded"] is not None} == set(EXCLUDED)
     assert not any(item["excluded"] == NO_CONFIRM_SHAPE for item in listed.values())
     assert {path for path, item in listed.items() if item["confirm"]} == set(CONFIRM_STEP)
     for path in sorted(CONFIRM_STEP):
