@@ -24,7 +24,9 @@ What is replaced, and where the names come from:
   name, as `<HOST>`, anywhere;
 - the same account, realm and character folders named by the entries of
   every snapshot in the store that loads, so names from another install, a
-  deleted character or an earlier state are known too;
+  deleted character or an earlier state are known too, and by the paths of
+  every write-gate journal record (those it changed and those its rollback
+  left as they are, M16-84), when the journal loads;
 - the journal label whole, as `<LABEL>`: it is free text a player or a
   command wrote (a profile name, a snapshot message), so it can hold any
   name, a guild's included;
@@ -113,6 +115,7 @@ def identities(root: Path | None) -> Identities:
     loads."""
     found = Identities()
     _store_names(found)
+    _journal_names(found)
     try:
         inst = install.discover(root)
     except install.InstallError:
@@ -167,6 +170,29 @@ def _store_names(found: Identities) -> None:
                 continue
             seen.add(folders)
             _account_names(folders, named)
+    found.accounts.update(_names(named.accounts))
+    found.realms.update(_names(named.realms))
+    found.characters.update(_names(named.characters))
+
+
+def _journal_names(found: Identities) -> None:
+    """The account, realm and character folders the write gate's journal
+    names: the paths each record changed and the paths its rollback left as
+    they are (M16-84), which `doctor` prints. A file the transaction created
+    is in no snapshot, and its folder may be gone from the install since. A
+    journal that cannot be read gives none (`doctor` prints no path then)."""
+    try:
+        records = guard.history()
+    except guard.GuardError:
+        return
+    seen: set[tuple[str, ...]] = set()
+    named = Identities()
+    for record in records:
+        for path in (*(p.path for p in record.paths), *record.paths_left):
+            folders = tuple(path.split("/")[:-1])
+            if folders not in seen:
+                seen.add(folders)
+                _account_names(folders, named)
     found.accounts.update(_names(named.accounts))
     found.realms.update(_names(named.realms))
     found.characters.update(_names(named.characters))
@@ -323,6 +349,9 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "store.last_transaction.label": redact.LABEL,
     # A closed literal (the write gate's states): it names nobody (M16-85).
     "store.last_transaction.state": AS_IS,
+    # Flavor-relative file paths the rollback left as they are (M16-84): an
+    # account, realm or character folder in them is a name.
+    "store.last_transaction.paths_left": REDACT,
     # Store-relative paths: object names and snapshot ids (M16-41).
     "store.exposure.entries": REDACT,
     "problems": REDACT,

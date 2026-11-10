@@ -1705,6 +1705,10 @@ class LastTransaction(_Out):
     # as-is: a state names nobody (M16-85).
     state: guard._State
     paths: int
+    # The files the rollback of a `rollback_incomplete` record left as they
+    # are, relative to the flavor folder (M16-84); empty otherwise, and for a
+    # record written before the journal listed them.
+    paths_left: list[str]
 
 
 class StoreReport(_Out):
@@ -1858,7 +1862,12 @@ def _store_report() -> StoreReport:
         if records:
             r = records[-1]
             last = LastTransaction(
-                id=r.id, created_at=r.created_at, label=r.label, state=r.state, paths=len(r.paths)
+                id=r.id,
+                created_at=r.created_at,
+                label=r.label,
+                state=r.state,
+                paths=len(r.paths),
+                paths_left=sorted(r.paths_left),
             )
     return StoreReport(
         path=str(store.path),
@@ -1955,7 +1964,9 @@ def _doctor(
     elif (
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
-        problems.append(_rollback_unfinished(store.last_transaction.id))
+        problems.append(
+            _rollback_unfinished(store.last_transaction.id, store.last_transaction.paths_left)
+        )
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1995,14 +2006,35 @@ def _interrupted(record_id: str) -> str:
     )
 
 
-def _rollback_unfinished(record_id: str) -> str:
+def _rollback_unfinished(record_id: str, paths_left: Sequence[str] = ()) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
     could not put every file back. Usually another program (the game)
     changed a file mid-change, and the gate left that program's bytes in
     place; a file may also still hold the change. The undo replaces those
     newer bytes, but takes a snapshot of the files first, so a second undo
-    (which undoes the undo) brings them back."""
+    (which undoes the undo) brings them back.
+
+    `paths_left` names each file left as it is (M16-84), relative to the
+    flavor folder, escaped by `_safe` in `--json` too (a real file name may
+    hold a bidi mark). A record that lists none (written before the journal
+    listed them, or only a folder was left) gets the sentence without
+    names. The command stays last (M16-71)."""
+    if paths_left:
+        names = [_safe(p) for p in paths_left]
+        one = len(names) == 1
+        listed = names[0] if one else f"{', '.join(names[:-1])} and {names[-1]}"
+        return (
+            "the last change wowlab made failed, and putting the files back did not finish "
+            f"(record {record_id}): wowlab left {listed} as "
+            + ("it was. It" if one else "they were. Each")
+            + " may have been changed by another program, such as the game, while wowlab "
+            "was writing, or may still hold wowlab's change. To put back what was there "
+            "before the change, run this; it replaces what is in "
+            + ("that file" if one else "those files")
+            + " now, but the undo keeps a copy and running wowlab undo again brings it back: "
+            f"wowlab undo --expect {record_id}"
+        )
     return (
         "the last change wowlab made failed, and putting the files back did not finish "
         f"(record {record_id}): a file may have been changed by another program, such as "

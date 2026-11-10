@@ -1459,6 +1459,16 @@ The target root must not overlap the snapshot store in either direction (L1). A 
 
 A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FILE_MAP.md`).
 
+*Amended 2026-11-10 (M16-84T, M16-84; #453):* **The files a rollback left alone.**
+
+(a) **On the record.** `HistoryRecord.paths_left: tuple[str, ...]` lists the files the rollback of a `rollback_incomplete` record left as they are (item 3 as clarified 2026-09-22): a path changed by another program, a path the system refused to put back, and a refused path whose disk moved since guard read it. Each is relative to the flavor folder and spelled as `paths[].path` spells it, once; order is not part of the contract. A directory the rollback could not remove is not listed (it stays in the note). The list is empty for every other state, and for a record written before M16-84: the note is never parsed.
+
+(b) **In the journal.** The record file carries the list under `paths_left`, and the paths whose only operation was refused (which `paths` does not name) under `paths_refused`. On read, each entry of either must pass the allowlist's lexical check, appear once, and, for `paths_left`, be one of the record's `paths` or `paths_refused`, on a `rollback_incomplete` record only. Anything else is a damaged record: `history()` raises `GuardError`.
+
+(c) **The format stays 2.** Both keys are written only when they are not empty, so a record with nothing left alone or refused is what the M16-71 gate wrote. A gate from before M16-84 forbids unknown keys, so it refuses a record that carries either key as damaged rather than reading it without the list. A format-1 record carries neither.
+
+(d) **`doctor`.** The `rollback_incomplete` problem (M16-71) names each file in `paths_left`, sorted, relative to the flavor folder, with control, format and separator characters escaped as `\xNN` (a real file name may hold a bidi mark), in the text and in `--json`; `wowlab undo --expect <id>` stays last. `--json` also gains `store.last_transaction.paths_left`. Under `--redact`, account, realm and character folders in those paths are replaced like any other; the names come from the install, the snapshots, and the paths of every journal record, since a folder the transaction created is in no snapshot. A record that lists no file keeps the M16-71 sentence.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
