@@ -35,6 +35,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+import platformdirs
 import pytest
 import test_ui_explorer as first_stage
 from test_ui_explorer import (
@@ -51,6 +52,7 @@ from test_ui_explorer import (
     _send,
     _stdout,
 )
+from typer.testing import CliRunner
 
 from wowlab_core import cli, gear, ui
 
@@ -398,9 +400,19 @@ def test_the_gear_rows_match_char_gear_for_the_picked_one(
 
 
 def test_the_header_carries_spec_averages_and_the_notes(
-    server: Any, timed: Path, tmp_path: Path
+    server: Any, timed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scenario = _scenario(server, [{"char_tab": True}], [NEWER])
+    # The header's names depend on the game-data cache in the user data
+    # directory. The server's child would read the real one (on Windows
+    # platformdirs does not follow the environment), so the report drawn is
+    # `char gear --json` run here, with an empty one in `tmp_path` (M16-31).
+    data = tmp_path / "userdata" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: data)
+    args = ["char", "gear", "--character", NEWER, "--account", ACCOUNT, "--flavor", FLAVOR]
+    done = CliRunner().invoke(cli.app, [*args, "--json"])
+    assert done.exit_code == 0, done.output
+    _set_report(scenario, NEWER, json.loads(done.stdout))
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][0]
     report = _report(scenario, NEWER)

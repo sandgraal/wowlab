@@ -14,7 +14,12 @@ cache are the recorded wago.tools exports under `fixtures/wago/` (their
 provenance rows), copied under the installed version's name: a test-made
 cache, since no table was recorded for this capture's build (labelled
 `constructed` where it matters). Nothing is fetched: no source exists in
-these runs. The picker's tie-break by schema adds a real schema-1 record
+these runs. Every test gets its own user data directory in `tmp_path`
+(`data_dir`, autouse), and every `char gear` whose names a test reads runs
+in this process, where that redirect holds: the server's child processes
+would read the real user data directory, which on Windows platformdirs
+finds through the known-folder API, not the environment. No test reads or
+writes the real one. The picker's tie-break by schema adds a real schema-1 record
 from `macos/` beside the two schema-4 ones (`constructed`: the three files
 never shared an account).
 """
@@ -30,8 +35,9 @@ from typing import Any
 import platformdirs
 import pytest
 import test_ui_explorer as first_stage
-from test_ui_character import ACCOUNT, _drive, _report, _scenario, _set_report
-from test_ui_explorer import FLAVOR, _stdout
+from test_ui_character import ACCOUNT, _drive, _scenario, _set_report
+from test_ui_explorer import FLAVOR
+from typer.testing import CliRunner
 
 from wowlab_core import cli, gamedata, gear, install, labaddon
 
@@ -49,6 +55,15 @@ TABLES = {
 
 home = first_stage.home
 server = first_stage.server
+runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """wowlab's user data directory for this test only, in `tmp_path`."""
+    folder = tmp_path / "userdata" / "wowlab"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: folder)
+    return folder
 
 
 def _lab_file(root: Path, character: str) -> Path:
@@ -69,9 +84,11 @@ def install70450(home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def _cache_tables(build: str) -> Path:
-    """The recorded exports, placed in the cache under `build` (constructed)."""
-    folder = platformdirs.user_data_path("wowlab") / "gamedata" / "tables" / build
+def _cache_tables(data: Path, build: str) -> Path:
+    """The recorded exports, placed in the cache of the user data directory
+    `data` under `build` (constructed)."""
+    folder = data / "gamedata" / "tables" / build
+    assert gamedata.default_cache_dir() == data / "gamedata"  # the redirect holds
     folder.mkdir(parents=True)
     for name, fixture in TABLES.items():
         shutil.copy2(WAGO / fixture, folder / f"{name}.csv")
@@ -83,20 +100,27 @@ def _facts(view: dict[str, Any]) -> dict[str, str]:
     return dict(zip(facts[::2], facts[1::2], strict=True))
 
 
-def _gear(server: Any, character: str) -> dict[str, Any]:
-    params = {"character": character, "account": ACCOUNT, "flavor": FLAVOR}
-    return cli.CharGearReport.model_validate_json(
-        _stdout(server, ["char", "gear"], params)
-    ).model_dump(mode="json")
+def _gear_args(character: str) -> list[str]:
+    return ["char", "gear", "--character", character, "--account", ACCOUNT, "--flavor", FLAVOR]
+
+
+def _gear_stdout(character: str) -> str:
+    """`char gear --json`, run in this process (the `data_dir` redirect holds),
+    with the parameters the page sends."""
+    done = runner.invoke(cli.app, [*_gear_args(character), "--json"])
+    assert done.exit_code == 0, done.output
+    return done.stdout
+
+
+def _gear(character: str) -> dict[str, Any]:
+    return cli.CharGearReport.model_validate_json(_gear_stdout(character)).model_dump(mode="json")
 
 
 # ─── the report ──────────────────────────────────────────────────────────────
 
 
-def test_gear_json_without_cached_tables_names_nothing_constructed(
-    server: Any, install70450: Path
-) -> None:
-    report = _gear(server, MAGE)
+def test_gear_json_without_cached_tables_names_nothing_constructed(install70450: Path) -> None:
+    report = _gear(MAGE)
     assert report["level"] == 10
     assert report["identity"]["class_id"] == 8 and report["identity"]["race_id"] == 2
     assert isinstance(report["names"]["build"], str)
@@ -112,27 +136,33 @@ def test_gear_json_without_cached_tables_names_nothing_constructed(
     [(MAGE, 10, "Mage", "Orc", "Mage"), (WARLOCK, 15, "Warlock", "Undead", "Warlock")],
 )
 def test_gear_json_names_from_the_cached_tables_constructed(
-    server: Any, install70450: Path, character: str, level: int, spec: str, race: str, klass: str
+    install70450: Path,
+    character: str,
+    level: int,
+    spec: str,
+    race: str,
+    klass: str,
+    data_dir: Path,
 ) -> None:
-    build = _gear(server, character)["names"]["build"]
-    _cache_tables(build)
-    report = _gear(server, character)
+    build = _gear(character)["names"]["build"]
+    _cache_tables(data_dir, build)
+    report = _gear(character)
     assert report["level"] == level
     assert report["names"] == {"build": build, "spec": spec, "race": race, "class_name": klass}
 
 
 def test_a_table_without_the_row_or_unreadable_falls_back_constructed(
-    server: Any, install70450: Path
+    install70450: Path, data_dir: Path
 ) -> None:
-    build = _gear(server, MAGE)["names"]["build"]
-    folder = _cache_tables(build)
+    build = _gear(MAGE)["names"]["build"]
+    folder = _cache_tables(data_dir, build)
     # The spec subset holds 1482 and 1490; take the mage's row out.
     spec = folder / "ChrSpecialization.csv"
     lines = spec.read_text(encoding="utf-8").splitlines(keepends=True)
     spec.write_text("".join(line for line in lines if ",1482," not in line), encoding="utf-8")
     # A race table that is not UTF-8.
     (folder / "ChrRaces.csv").write_bytes(b"ID,Name_lang\n2,\xff\xfe\n")
-    names = _gear(server, MAGE)["names"]
+    names = _gear(MAGE)["names"]
     assert names == {"build": build, "spec": None, "race": None, "class_name": "Mage"}
 
 
@@ -145,10 +175,9 @@ def test_names_read_no_table_for_a_malformed_version_constructed(tmp_path: Path)
 
 
 def test_the_female_name_when_the_table_has_one_else_the_name_constructed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path,
 ) -> None:
-    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: tmp_path / "wowlab")
-    folder = _cache_tables("1.60.1.1")
+    folder = _cache_tables(data_dir, "1.60.1.1")
     (folder / "ChrRaces.csv").write_text(
         "ID,Name_lang,Name_female_lang\n2,Orc,Orcess\n", encoding="utf-8"
     )
@@ -167,18 +196,18 @@ def test_the_female_name_when_the_table_has_one_else_the_name_constructed(
 
 def _header(server: Any, tmp_path: Path, mutate: Any = None) -> dict[str, Any]:
     scenario = _scenario(server, [{"char_tab": True}], [MAGE])
+    report = json.loads(_gear_stdout(MAGE))
     if mutate is not None:
-        report = _report(scenario, MAGE)
         mutate(report)
-        _set_report(scenario, MAGE, report)
+    _set_report(scenario, MAGE, report)
     view: dict[str, Any] = _drive(tmp_path / "node", scenario)["steps"][0]
     return view
 
 
 def test_the_header_names_class_race_and_spec_from_the_cache_constructed(
-    server: Any, install70450: Path, tmp_path: Path
+    server: Any, install70450: Path, tmp_path: Path, data_dir: Path
 ) -> None:
-    _cache_tables(_gear(server, MAGE)["names"]["build"])
+    _cache_tables(data_dir, _gear(MAGE)["names"]["build"])
     view = _header(server, tmp_path)
     assert view["headerFacts"][:14] == [
         "Level", "10",
@@ -295,14 +324,11 @@ def test_cached_rows_reads_only_what_is_cached_constructed(tmp_path: Path) -> No
 
 
 def test_char_gear_text_has_the_headers_lines_constructed(
-    server: Any, install70450: Path, monkeypatch: pytest.MonkeyPatch
+    install70450: Path, data_dir: Path
 ) -> None:
     """`char gear`'s text says what the page's header says, with the same
     fallbacks: names once the tables are cached, ids before."""
-    from typer.testing import CliRunner
-
-    runner = CliRunner()
-    args = ["char", "gear", "--character", MAGE, "--account", ACCOUNT, "--flavor", FLAVOR]
+    args = _gear_args(MAGE)
     before = runner.invoke(cli.app, args)
     assert before.exit_code == 0, before.output
     lines = before.stdout.splitlines()
@@ -310,7 +336,7 @@ def test_char_gear_text_has_the_headers_lines_constructed(
     assert "Class: MAGE (class id 8)" in lines
     assert "Race: race id 2" in lines
     assert any(line.startswith("Spec: spec id 1482 (index ") for line in lines)
-    _cache_tables(_gear(server, MAGE)["names"]["build"])
+    _cache_tables(data_dir, _gear(MAGE)["names"]["build"])
     after = runner.invoke(cli.app, args).stdout.splitlines()
     assert "Class: Mage (class id 8)" in after
     assert "Race: Orc (race id 2)" in after
