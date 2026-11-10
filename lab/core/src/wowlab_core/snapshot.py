@@ -1422,6 +1422,20 @@ class SnapshotStore:
         except guard.GuardError as exc:
             raise StoreLocationError(str(exc)) from exc
 
+    def _recheck_inside_any_install(self) -> None:
+        """`_refuse_inside_any_install` again, after the store's folder was
+        opened or created (M16-68 fix round 1). A refusal here says that the
+        second check caught it, and names the folder: it may have been
+        created inside the install, and is left as it is."""
+        try:
+            self._refuse_inside_any_install()
+        except StoreLocationError as exc:
+            raise StoreLocationError(
+                f"{exc} (found by the second check, after the store folder {self.path} "
+                "was opened or created and before anything was written; nothing was "
+                "removed, so check that folder)"
+            ) from exc.__cause__
+
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
         """`lstat` protects only the last component; check the ones before it."""
@@ -2169,13 +2183,21 @@ class SnapshotStore:
         staged copy is removed and nothing is written in its place.
 
         A store inside any install is refused (`StoreLocationError`) before
-        anything is created, by `create`'s rule (L1; M16-68)."""
+        anything is created, by `create`'s rule (L1; M16-68). The rule runs
+        again once the store's folder is opened (or created), before the
+        first byte is written, as `guard`'s `take_store` does after its
+        mkdir (§6.10, defence in depth): a parent swapped for a link into an
+        install in between is refused too. That refusal removes nothing,
+        and names the folder it may have created."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
         self._refuse_inside_any_install()
         try:
             with self._holding_dirs():
                 self._refuse_linked_store_dirs()
+                with self._store_dir((), create=True):
+                    pass  # the root, made and (with descriptors) held
+                self._recheck_inside_any_install()
                 digest, _ = self._store_stream(io.BytesIO(data), set())
         except OSError as exc:
             planned = hashlib.sha256(data).hexdigest()

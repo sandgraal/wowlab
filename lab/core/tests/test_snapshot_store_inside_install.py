@@ -14,6 +14,7 @@ synthetic install is a directory under `tmp_path` holding an empty
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,36 @@ def test_the_rule_is_guards_own_constructed(
     assert isinstance(caught.value.__cause__, guard.GuardError)
     assert calls == [(store.path, "the store")]
     assert not (tmp_path / "ud").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+@pytest.mark.parametrize("marker", MARKERS)
+def test_put_object_rechecks_after_opening_the_store_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str
+) -> None:
+    """Fix round 1 (security review, low 2): the store's parent is swapped
+    for a link into an install after the first check and before the store's
+    folder is opened, through a monkeypatched hook. The second check, made
+    once the folder is open, refuses before any byte is written."""
+    install = _install(tmp_path, marker)
+    parent = tmp_path / "ud"
+    parent.mkdir()
+    store = SnapshotStore(parent / "store")
+    real = SnapshotStore._refuse_linked_store_dirs
+    swapped: list[bool] = []
+
+    def swap_then_check(self: SnapshotStore) -> None:
+        parent.rmdir()
+        parent.symlink_to(install, target_is_directory=True)
+        swapped.append(True)
+        real(self)
+
+    monkeypatch.setattr(SnapshotStore, "_refuse_linked_store_dirs", swap_then_check)
+    with pytest.raises(StoreLocationError, match="second check") as caught:
+        store.put_object(DATA)
+    assert swapped == [True]
+    assert isinstance(caught.value.__cause__, guard.GuardError)
+    files = sorted(p.name for p in install.rglob("*") if not p.is_dir())
+    assert files == [marker], "no object, staged file or other byte written in the install"
+    assert not (install / "store" / "objects").exists()
+    assert not (install / "store" / "tmp").exists()
