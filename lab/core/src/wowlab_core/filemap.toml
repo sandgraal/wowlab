@@ -521,7 +521,7 @@ what = "Which addons are enabled for this character. On the Forever beta a copy 
 written_by = "Client"
 edit = "gate"
 tier = "A"
-module = "`layout` (lines)"
+module = "`layout`, `wtfconfig`"
 match = ["WTF/Account/*/*/*/AddOns.txt"]
 
 [[entry]]

@@ -141,6 +141,11 @@ SAMPLES: dict[str, tuple[str, str, filemap.Kind]] = {
         f"WTF/Account/{ACCOUNT}/{CHARACTER}/config-cache.wtf",
         "file",
     ),
+    "character-addons-txt": (
+        "flavor",
+        f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt",
+        "file",
+    ),
     "addons-folder": ("flavor", "Interface/AddOns", "dir"),
     "addon": ("flavor", "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc", "file"),
     # Constructed (the capture has none): an addon folder named like a bundle.
@@ -249,6 +254,7 @@ def test_each_view_decodes_the_captured_file(root: Path, flavor: Path) -> None:
         "Interface/AddOns/",
         "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc",
         "Logs/WoWCombatLog-040126_021630.txt",
+        f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt",
     ]
     seen = set()
     for path in paths:
@@ -469,17 +475,15 @@ def test_a_combat_log_gets_log_tail_only_when_it_is_the_newest(root: Path, flavo
 
 
 def test_a_file_no_command_reads_says_so(root: Path) -> None:
-    """Domain review 6 and 12: AddOns.txt, and a file in an addon that is not
-    a TOC, get no view and a note."""
+    """Domain review 6 and 12: a file in an addon that is not a TOC gets no
+    view and a note. AddOns.txt had none either until M16-34, whose
+    `addons check` reads it."""
     addons_txt = f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt"
     report = explained(addons_txt)
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == "character-addons-txt"
-    assert (report.views, report.views_note) == ([], "no wowlab command shows this file's contents")
-    assert (
-        "  views:        no wowlab command shows this file's contents\n"
-        in ok("explain", addons_txt).stdout
-    )
+    assert [v.command for v in report.views] == [["addons", "check"]]
+    assert report.views_note is None
     # On disk: a path with nothing on it has its own note (M13-29).
     lua_rel = "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed"
     (root / FLAVOR / lua_rel).write_bytes(b"")

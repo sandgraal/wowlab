@@ -100,6 +100,13 @@ FORCED_FLAGS: Mapping[tuple[str, ...], Mapping[str, str]] = {
 }
 """Flags the server gives every run of a leaf, so not ones the form offers."""
 
+HIDDEN_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
+    # M16-07: `doctor` is offline by default; `--offline` is a no-op kept so
+    # old scripts still run, hidden from `--help` and so not offered here.
+    ("doctor",): {"offline": "a no-op kept for old scripts, hidden from --help"},
+}
+"""Parameters `--help` hides (Click's `hidden`), which the form does not offer."""
+
 # The stand-in `wowlab`: prints the argv it was given, as JSON (constructed).
 _ECHO = "import json, sys; print(json.dumps(sys.argv[1:]))"
 
@@ -443,6 +450,14 @@ def _parity_problems(
         for forced in FORCED_FLAGS.get(path, {}):
             declared.pop(forced)
         offered = {p["name"]: p for p in item["params"]}
+        for hidden in HIDDEN_PARAMS.get(path, {}):
+            if not getattr(declared.pop(hidden), "hidden", False):
+                problems.append(f"{name}: HIDDEN_PARAMS names {hidden!r}, which is not hidden")
+            if hidden in offered:
+                problems.append(f"{name}: offers the hidden {hidden!r}")
+        for param in declared.values():
+            if getattr(param, "hidden", False):
+                problems.append(f"{name}: hides {param.name!r}, not in HIDDEN_PARAMS")
         for missing in sorted(set(declared) - set(offered)):
             problems.append(f"{name}: declares {missing!r} but the form cannot offer it")
         for extra in sorted(set(offered) - set(declared)):
