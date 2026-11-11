@@ -149,9 +149,9 @@ as unclassified. (Added 2026-09-22, M10-06.)
   yet, so player-facing text should not state either timing for it as fact;
   "restart the client so it reads it again" is safe under both, since a
   start always comes before a login (logging out and back in may not be
-  enough, and the client may save over the file on exit). Today
-  `profiles.LOGIN_NOTE` and `cli._RELOGIN` each state one; M16-97 (#468)
-  rewords both.
+  enough, and the client may save over the file on exit). M16-97 (#468,
+  merged 2026-11-11) reworded `profiles.LOGIN_NOTE` and `cli._RELOGIN` to
+  tie the read to the next start of the client.
 - On Windows the client can hold files open; a read can fail with a sharing
   violation. Readers retry briefly and then report, they do not loop.
 - Macros and binds may be synced server-side depending on the

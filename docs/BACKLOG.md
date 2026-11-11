@@ -2599,13 +2599,7 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 `cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
 
-*Widened 2026-11-11 (the M16-84 review, #457):* the same early return also catches a `rollback_incomplete` record whose `paths` is empty but whose `created_dirs` is not. `doctor` tells the player to run `wowlab undo --expect <id>` for it, so that command must be able to finish it.
-
-**Acceptance:**
-- A constructed `open` record with no paths: `undo --expect <id> --yes` closes it, and `doctor` then exits 0.
-- The same holds for a constructed `rollback_incomplete` record with no paths and one created folder; the folder is removed if it is empty.
-
-Reviewed by `code-reviewer`.
+**Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
 
 ## [x] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
@@ -2631,22 +2625,42 @@ Reviewed by `code-reviewer`.
 **Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-101 — `profile apply` prints its login note once
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 code and domain reviews (#468)
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 code and domain reviews (#468); the batch-7 code review (#473)
 
-In text mode, `profile apply` prints `profiles.LOGIN_NOTE` in its plan and then again, unconditionally, after it writes. Print it once. Choose either place and say why in the PR. `--json` output is unchanged.
+In text mode, `profile apply` prints `profiles.LOGIN_NOTE` twice when it writes. It prints the note in the plan, and then again, unconditionally, after the write. LAB_PLAN (the plan-footer paragraph and its M16-97 amendment) says plans "add the login caveat before the prompt and do not repeat it after the write". Keep the note in the plan, where it is also part of `ProfileApplyReport.plan_lines` and so of `--json`. Drop the print after the write.
 
-**Acceptance:** a pinned text-mode test of an apply that writes, with the note printed exactly once. Reviewed by `code-reviewer`.
+**Acceptance:**
+- A pinned text-mode test of an apply that writes, with the note printed exactly once, before the prompt.
+- `test_profile_apply_plan_recreating_a_cache_file_has_the_login_caveat` still passes, unchanged.
+
+Reviewed by `code-reviewer`.
 
 ## [ ] M16-102 — `undo`'s plan and result agree on the login caveat
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 domain review (#468)
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 domain review (#468); reproduced in the batch-7 code review (#473)
 
-The undo plan's footer decides on `_RELOGIN` from the listed paths only. The result's notes decide from every path the undo touched. Suppose the undo touches a `*-cache` file that needs no change and lists a file that is not a cache file. Then the plan shows no caveat and the result prints one. The reviewer found this by reading the code and did not run it. Reproduce it first, then make both decide from the same set of paths.
+The undo plan's footer decides on `_RELOGIN` from the listed paths: those whose disk differs from `before`. The result decides from `UndoReport.notes = _relogin_notes([p.path for p in last.paths])`, which is every path of the record being undone, whether or not the undo changes it. `--json` `notes` comes from that same set. The mismatch was reproduced on main:
+1. Take a snapshot.
+2. Change a SavedVariables file and the account's `config-cache.wtf`.
+3. Run `snap restore --yes`.
+4. Write `config-cache.wtf` back to its pre-restore bytes.
+5. Now the undo plan lists only the SavedVariables file and shows no caveat, but `undo --yes` prints `_RELOGIN`.
 
-**Acceptance:** a pinned test of that case, whose plan and result agree, or a PR note showing the case cannot occur. Reviewed by `code-reviewer` and `domain-reviewer`.
+Make the result and its `notes` decide from the same paths the plan lists.
 
-## [ ] M16-103 — The relogin note leads with the files actually listed
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 merge (#468), conductor note
+**Acceptance:** a pinned test of that case in text and `--json`, with the plan and result agreeing. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-`_RELOGIN` always opens with "The next time you start the client, it reads Config.wtf again". When the plan lists only `*-cache` files, that first sentence is about a file the plan does not touch. Open with the sentence for the files that are listed. Keep the LAB_FILE_MAP **[verify]** wording: say "restart the client"; do not state when `Config.wtf` is read.
+## [ ] M16-103 — The login notes lead with the files actually listed
+**Size:** XS · **Depends on:** M16-101 · **Sources:** the M16-97 merge (#468), conductor note; the batch-7 code review (#473)
 
-**Acceptance:** pinned tests for a plan with only `Config.wtf`, only cache files, and both. Reviewed by `code-reviewer` and `domain-reviewer`.
+`cli._RELOGIN` and `profiles.LOGIN_NOTE` both open with what the client does with `Config.wtf` at its next start. They do so even when the plan lists only `*-cache` files, where that sentence is about a file the plan does not touch. Change the wording to fit the set:
+- When only `*-cache` files are listed: say they are read at login and the server may replace them. Say nothing about `Config.wtf`.
+- When only `Config.wtf` is listed: keep the restart sentence. Drop the server-sync sentence, because `Config.wtf` is not synced.
+- When both are listed: keep both sentences.
+
+Keep the LAB_FILE_MAP **[verify]** rule: "restart the client" is safe; a claim of when `Config.wtf` is read is not. This changes the wording that LAB_PLAN's M16-97 amendment fixes, so the PR adds a dated LAB_PLAN amendment beside it.
+
+**Acceptance:**
+- Pinned tests for the three sets, for both notes.
+- The LAB_PLAN amendment.
+
+Reviewed by `code-reviewer` and `domain-reviewer`.
