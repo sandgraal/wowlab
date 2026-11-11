@@ -446,6 +446,29 @@ one reads "<folder> is a link; wowlab does not read through links, so it
 reads this only when the real folder is there. Nothing in it is listed."
 `install.NotTaken.note`, `doctor` and the other "not followed" tags are
 unchanged.
+*Amended 2026-11-11 (M16-91):* one case of "different rows for each" now
+says "real file": a file at the link's place has its own row, and the row a
+folder there would get is a different one whose `**` subtree hangs from a
+folder strictly above the place, never from the place itself (the general
+row of the area). This covers `Logs/WoWCombatLog*.txt` and `Logs/*.log`
+(under `Logs/**`), and `Cache/ADB/<locale>/DBCache.bin` and
+`Cache/WDB/<locale>/*.wdb` (under `Cache/**`). Other pairs of different
+rows, and one row for both kinds below the folder it hangs from, still say
+"real one".
+*Amended 2026-11-11 (M16-95):* a second case of "different rows for each"
+says "real file": the file at the link's place has a row that spells out
+its name, and the row a folder there would get takes a folder of any name
+at that one place (a folder pattern with no `**` whose last segment is a
+wildcard or token). This covers the client's files in an account folder,
+`WTF/Account/<ACCOUNT>/` `config-cache.wtf`, `bindings-cache.wtf`,
+`macros-cache.txt`, `SavedVariables.lua` and its `.bak`,
+`edit-mode-cache-account.txt` and `.old`, `chat-frontend-cache.txt`,
+`flagged-cache-account.txt`, `tts-cache-account.txt` and
+`character-list-order.txt`, whose folder row is `realm-folder`.
+`WTF/Account/SavedVariables/<Addon>.lua` and `.lua.bak` name no fixed file
+and are left to the M13-50 check: on a walk that folder is no account
+folder, so no folder row applies there and the note says "real file";
+classified with nothing on disk to judge, it stays "real one".
 
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
@@ -4162,6 +4185,8 @@ command the player did not confirm, and never runs a confirmed argv other
 than the one it showed.
 
 *Amended 2026-10-19 (M14-03, as built):* the server lists no confirm set; it reads each `--yes` leaf's shape from what the leaf declares (`--dry-run` → the first shape; `doctor` → the second; no `--dry-run` with a one-value `--expect` and a report field named in `cli.EXPECT_FIELDS` → the third, `cli.CONFIRM_DECLINED` as the exact last stderr line of an exit-1 run with one JSON object on stdout), so a future `--yes --dry-run --json` leaf joins the step with no UI change. The confirmed argv of the third shape is the plan argv plus `--yes` and `--expect=<pin>`, the pin read from the plan's own report when the token is minted (`undo`: the journal record id `undone`; `sv merge`: `target_sha256`), never from the confirm request; the pin is checked once before `guard`'s lock and again under it. Only those two commands refuse when something changed after the plan: `undo` on a newer journal record, `sv merge` on its target's bytes. The dry-run shape carries no pin: `snap restore` is held to its snapshot id and `--paths` and re-checks its plan inside the transaction, `addon install` and `addon remove` to the addon name, and `profile apply` to a profile name only, so its drift is captured by the pre-write snapshot, not pinned; each applies what is there at confirm time, after that snapshot. `sv merge`'s source is not pinned either (M13-74). A confirmed run killed at the UI's limit (120 s, or the output cap): the lock goes with the process, the snapshot taken before the first change holds every file, and the page says to show `undo`'s plan and confirm it only if the record it names is this command's, in state `open`; `snap gc` and `doctor` get a store-only sentence instead.
+
+*Amended 2026-11-10 (M16-86):* `undo`'s plan says a record's state in words, never by its name, so the killed-run sentence tells the player to confirm only if the record the plan names is this command's and the plan says it did not finish (the words for `open`). The plan also lists only the files the undo will change.
 
 *Amended 2026-10-22 (M13-74, as built):* `sv merge` pins what it writes, not only its target. Its report names `merged_sha256` beside `target_sha256`: the SHA-256 of the bytes `tx.write` receives (null when unresolved conflicts stop the merge). `cli.EXPECT_FIELDS` maps each command to a tuple of report fields, joined by `:` into the pin (`undo`: `undone`; `sv merge`: `target_sha256:merged_sha256`), and `sv merge --expect` takes only that two-part form (anything else exits 2). The confirmed run refuses with exit 3 unless both halves match: the target half before the lock and again against `tx.plan[0].before`, the merged half before the lock and again against `tx.plan[0].after`, the hash the gate took of the bytes it was handed. A source character that logged out between plan and confirm, or a `--from`/`--base` snapshot prefix that now names another snapshot, therefore changes the merged half and is refused. The sentence above that `sv merge`'s source is not pinned no longer holds.
 

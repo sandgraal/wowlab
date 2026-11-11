@@ -2912,13 +2912,31 @@ def _link_stands_for(
     are its place classified as each kind. "file" where only a file there
     gets a row (a linked `WTF/Config.wtf`), "folder" where only a folder
     does, or where one row takes both and the place is the folder that row's
-    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). Otherwise,
-    one row for both kinds below that folder (a font file, an addon's
-    `.toc`), different rows, or none: "one", which says neither."""
+    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). "file", too,
+    where a file there has its own row and a folder there only the general
+    row of a folder above it (`Logs/WoWCombatLog.txt`: `combat-log` as a
+    file, `logs-other`, which hangs from `Logs`, as a folder; likewise
+    `Logs/*.log`, and `Cache/ADB/<locale>/DBCache.bin` and
+    `Cache/WDB/<locale>/*.wdb` under `cache-other`, which hangs from
+    `Cache`; M16-91). "file", too, where a file there has a row that spells
+    out its name and a folder there only a row that takes a folder of any
+    name at this one place (`WTF/Account/<acct>/macros-cache.txt`:
+    `account-macros-cache` as a file, `realm-folder` as a folder; M16-95).
+    Otherwise, one row for both kinds below that folder (a font file, an
+    addon's `.toc`), other different rows, or none: "one", which says
+    neither."""
     file_row = as_file.entry if isinstance(as_file, layout.Classified) else None
     folder_row = as_folder.entry if isinstance(as_folder, layout.Classified) else None
     if file_row is not None and folder_row is None:
         return "file"
+    if file_row is not None and folder_row is not None and file_row.id != folder_row.id:
+        parts = as_folder.path.split("/")
+        if not folder_row.heads_a_subtree(parts) and any(
+            folder_row.heads_a_subtree(parts[:n]) for n in range(1, len(parts))
+        ):
+            return "file"
+        if file_row.names_the_file(parts) and folder_row.takes_any_name_here(parts):
+            return "file"
     if folder_row is not None and file_row is None:
         return "folder"
     if (
@@ -8785,10 +8803,59 @@ def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = N
         return _UNREAD
 
 
+# What the undo does to a file someone changed after the change it undoes:
+# it writes over it, but its own transaction snapshots the file before it
+# writes, so a second undo puts those changes back, as long as it comes next
+# and the game has not rewritten the file at logout meanwhile. Said in every
+# state, after a line on who probably changed the file, which depends on it.
+_KEEPS_A_COPY = (
+    "keeps a copy first, and running wowlab undo again next, before you play, brings them back"
+)
+_COMPARE = "the lines below compare what is on disk now with what undo puts back"
+# A change that finished.
 _CHANGED_SINCE = (
-    f"{_DETAIL_INDENT}(changed since that transaction, probably by the client at logout: "
-    "the lines below compare what is on disk now with what undo puts back, and include "
-    "those later changes)"
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    f"/reload: {_COMPARE}, and include those later changes; undo replaces those changes, "
+    f"but {_KEEPS_A_COPY})"
+)
+# A change that failed and whose rollback finished: every journaled path
+# already held what was there before it, so a listed file differs only by
+# later changes.
+_CHANGED_AFTER_ROLLBACK = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    "/reload; that change's own edits were already put back when it failed, so every line "
+    f"below is a later change, and undo only replaces them; it {_KEEPS_A_COPY})"
+)
+# A change that did not finish (the run was stopped): the record cannot show
+# whether another program wrote during the run or after it, nor whether the
+# run wrote this file at all.
+_CHANGED_UNFINISHED = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    "while that change ran or since; that change stopped before it finished and may not "
+    f"have written this file: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
+# For a change whose rollback did not finish: the gate leaves a file another
+# program changed while the change ran as that program left it.
+_CHANGED_DURING = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    f"while that change ran, or since: {_COMPARE}; undo replaces that program's changes, "
+    f"but {_KEEPS_A_COPY})"
+)
+_CHANGED_LINE = {
+    "open": _CHANGED_UNFINISHED,
+    "rolled_back": _CHANGED_AFTER_ROLLBACK,
+    "rollback_incomplete": _CHANGED_DURING,
+}
+# Every journaled path already holds its pre-transaction bytes and no folder
+# it created is left: the undo changes nothing on disk. For a change that did
+# not finish, or whose rollback did not, `doctor` reports it until it is
+# undone, so that line says what answering yes does.
+_NOTHING_TO_PUT_BACK = (
+    "  every file already holds what was there before that transaction, so the undo changes no file"
+)
+_NOTHING_TO_PUT_BACK_UNFINISHED = (
+    f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
+    "reporting that change"
 )
 
 
@@ -9658,21 +9725,37 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan. Under each file, what the undo changes by name:
-    from what the install holds at that path now (read read-only through
-    the guarded opener, whatever it holds) to what was there before that
-    transaction (in its pre-write snapshot), since the undo replaces the
-    file whatever is on disk. When the disk no longer holds what that
-    transaction wrote (the client rewrites these files at logout), a line
-    says the comparison includes those later changes."""
+    """`undo`'s text plan: only the steps the undo will take. A path whose
+    disk already holds what was there before that transaction (a file a
+    rollback already put back or removed) is skipped by the undo, so it is
+    not listed; one wowlab cannot read is listed. Under each file, what the
+    undo changes by name: from what the install holds at that path now
+    (read read-only through the guarded opener, whatever it holds) to what
+    was there before that transaction (in its pre-write snapshot), since the
+    undo replaces the file whatever is on disk. When the disk no longer
+    holds what that transaction wrote, a line says the comparison includes
+    those later changes and who probably made them, by the record's state
+    (`_CHANGED_LINE`; a finished change and a state this version does not
+    know get `_CHANGED_SINCE`). In every state it also says that the undo
+    replaces those changes, that its own snapshot keeps a copy of them
+    first, and that a second undo, run next, brings them back."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
+    changed = _CHANGED_LINE.get(last.state, _CHANGED_SINCE)
     lines = [
-        f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})',
+        f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
         f"  in {last.flavor_path}:",
     ]
     detailed = False
+    listed: list[str] = []
     for p in last.paths:
+        now = _disk_now(flavor_path, p.path)
+        now_sha = (
+            None if now is None or isinstance(now, _Unread) else hashlib.sha256(now).hexdigest()
+        )
+        if not isinstance(now, _Unread) and now_sha == p.before:
+            continue  # already as it was before: the undo leaves it alone
+        listed.append(p.path)
         if p.before is None:
             lines.append(f"  delete     {p.path}  (created by that transaction)")
         elif p.after is None:
@@ -9680,19 +9763,18 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         else:
             lines.append(f"  put back   {p.path}  (as it was before that transaction)")
         if _wants_detail(p.path):
-            now = _disk_now(flavor_path, p.path)
             back = _stored(store, p.before)
             detail = _detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT)
-            if detail and not isinstance(now, _Unread):
-                now_sha = None if now is None else hashlib.sha256(now).hexdigest()
-                if now_sha != p.after:
-                    lines.append(_CHANGED_SINCE)
+            if detail and not isinstance(now, _Unread) and now_sha != p.after:
+                lines.append(changed)
             lines.extend(detail)
             detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
-    lines.extend(
-        f"  remove folder {d}  (created by that transaction, if empty)" for d in last.created_dirs
-    )
-    lines.extend(_plan_footer(detailed, [p.path for p in last.paths]))
+    folders = [d for d in last.created_dirs if os.path.lexists(flavor_path / d)]
+    lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
+    if not listed and not folders:
+        unfinished = last.state in ("open", "rollback_incomplete")
+        lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
+    lines.extend(_plan_footer(detailed, listed))
     return lines
 
 
@@ -9787,9 +9869,19 @@ def undo(
         )
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
-    done = report(applied=True, transaction=guard.history()[-1].id)
+    undone = guard.history()[-1]
+    done = report(applied=True, transaction=undone.id)
     if json_out:
         _emit(done)
+        return
+    if not undone.paths:
+        # Judged from the undo's own record, not the plan: a file rewritten
+        # while the prompt waited is put back and listed there. No file
+        # changed, so no login note applies (`--json` keeps them).
+        _say(
+            "Undone; no file needed changing. This undo is journaled, but there is nothing "
+            "for `wowlab undo` to reverse."
+        )
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
     for n in done.notes:

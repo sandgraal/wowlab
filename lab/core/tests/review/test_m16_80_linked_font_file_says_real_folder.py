@@ -1,10 +1,13 @@
 # Probe from review of m16/80-link-notes; reproduces a linked font file whose `tree` note says "real folder"
-"""`tree`'s link note picks "real folder" or "real file" from the file map
-(`cli._link_stands_for`, M16-80). Under `Fonts/` (and `Screenshots/`,
-`Interface/AddOns/<addon>/`) one row covers files and folders alike, so a
-link that stands in place of a font file, the file the `fonts` row names
-(`FRIZQT__.TTF`), is told "it reads this only when the real folder is
-there". The ticket asks for the word chosen by kind; a font file is a file.
+"""`tree`'s link note picks "real folder", "real file" or "real one" from the
+file map (`cli._link_stands_for`, M16-80). Under `Fonts/` (and
+`Screenshots/`, `Interface/AddOns/<addon>/`) one row covers files and
+folders alike, and the link is never followed, so wowlab cannot tell what a
+link below that folder stands in place of. The probe first caught a linked
+font file (`FRIZQT__.TTF`, the file the `fonts` row names) told "it reads
+this only when the real folder is there"; after the conductor's ruling in
+fix round 1 the note says "real one", and what this probe guards against is
+"real folder" for a file.
 
 Positive control: a linked SavedVariables file in the same tree says "real
 file", as the branch's own test pins.

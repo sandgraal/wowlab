@@ -381,7 +381,7 @@ def test_a_confirmed_run_killed_at_its_limit_says_what_to_do(recorder: Recorder)
     assert status == 200 and done["timed_out"] is True
     note = done["confirm"]["note"]
     assert note == ui._KILLED_NOTE
-    for words in ("lock", "snapshot", "undo", "state open"):
+    for words in ("lock", "snapshot", "undo", cli._journal_state_words("open")):
         assert words in note, words
 
 

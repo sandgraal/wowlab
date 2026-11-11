@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2478,7 +2478,7 @@ The store line prints the raw journal state (`open`, `rollback_incomplete`) in t
 
 # M16 follow-ups found in review (filed 2026-11-10, fourth batch)
 
-## [ ] M16-86 — `undo`'s plan for an unfinished rollback says what it will do
+## [x] M16-86 — `undo`'s plan for an unfinished rollback says what it will do
 **Size:** S · **Depends on:** M16-85 · **Sources:** the M16-71 code review (#441); the M16-85 implementer report
 
 For a `rollback_incomplete` record, `undo --expect <id>`'s plan has two problems:
@@ -2539,7 +2539,7 @@ A probe showed that main's `guard.history()` returns whatever strings a record o
 
 **Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-91 — `tree` link notes: a combat log is a file, and "real one" reads plainly
+## [x] M16-91 — `tree` link notes: a combat log is a file, and "real one" reads plainly
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-80 domain re-check (#452)
 
 Two polish items:
@@ -2550,7 +2550,7 @@ Also update the stale docstring of `review/test_m16_80_linked_font_file_says_rea
 
 **Acceptance:** pinned tests for the combat log and the chosen wording. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-92 — `undo`'s plan warns that undo replaces newer changes, in every state
+## [x] M16-92 — `undo`'s plan warns that undo replaces newer changes, in every state
 **Size:** XS · **Depends on:** M16-86 · **Sources:** the M16-86 domain review (#454)
 
 M16-86 says, for an unfinished rollback, that undo replaces another program's changes, keeps a copy, and that a second undo brings them back. Other states keep `_CHANGED_SINCE` ("changed since that transaction, probably by the client at logout"), which does not say what undo does to those changes. Give them the same consequence.
@@ -2559,21 +2559,21 @@ M16-86 says, for an unfinished rollback, that undo replaces another program's ch
 
 # M16 owner answers and review follow-ups (filed 2026-11-11)
 
-## [ ] M16-93T — [TEST] A change killed between the temp cleanup and its snapshot changed nothing
+## [x] M16-93T — [TEST] A change killed between the temp cleanup and its snapshot changed nothing
 **Size:** S · **Depends on:** M16-69T · **Sources:** the owner's answer of 2026-11-11 to M16-69's question; LAB_PLAN §6.10, amendment of 2026-11-11 (a)
 
 Strict-xfail crash graders for `guard.py`. A record with journaled temp removals but no pre-write snapshot, as left by a kill between the cleanup and the snapshot, is closed by `undo` without restoring anything, and no removed temp comes back. `doctor` says the change stopped before it touched anything. Use a constructed crash point (L8, boundary), not a real kill.
 
 **Acceptance:** strict xfail on `main`, activated by M16-69 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-78T — [TEST] The folders `guard` creates under the user data directory are private
+## [x] M16-78T — [TEST] The folders `guard` creates under the user data directory are private
 **Size:** XS · **Depends on:** nothing · **Sources:** M16-78; LAB_PLAN §6.10, amendment of 2026-11-11 (b)
 
 Strict-xfail graders: `<user data dir>/locks/` and every parent `guard` makes on the way to a missing store are created 0700 under a permissive umask (POSIX only, skipped on Windows with a reason). The store root and `journal/` graders already on main stay.
 
 **Acceptance:** strict xfail on `main`, activated by M16-78 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-94T — [TEST] The listing memo's key holds the directory's ctime
+## [x] M16-94T — [TEST] The listing memo's key holds the directory's ctime
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-23T review (owner topic); the owner's answer of 2026-11-11; LAB_PLAN §18.1 item 6, amendment of 2026-11-11
 
 Strict-xfail graders for `guard.py`. A directory whose listing changes while its mtime is restored to the old value, but whose ctime moves, is listed again and not served from the memo. POSIX only, skipped on Windows with a reason: there `st_ctime_ns` is the creation time and does not move.
@@ -2585,9 +2585,41 @@ Strict-xfail graders for `guard.py`. A directory whose listing changes while its
 
 **Acceptance:** M16-94T's graders activated by marker deletion only. The full suite is green (`guard.py`), and the scaling grader and the M16-27 nightly budget still hold. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-95 — `tree` says "real file" for the client's files in the account folder
+## [x] M16-95 — `tree` says "real file" for the client's files in the account folder
 **Size:** XS · **Depends on:** M16-91 · **Sources:** the M16-91 domain review (#456)
 
 Under `WTF/Account/<acct>/`, a link at the place of a client-written file still reads "real one". Examples are `config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt`, `SavedVariables.lua` and its `.bak`, the edit-mode, chat-frontend, flagged and TTS caches, and `character-list-order.txt`. The same applies to `WTF/Account/SavedVariables/<x>.lua` and `.bak`. A folder at the same place matches `realm-folder`, a one-star row at that place, so M16-91's rule leaves these alone. One option: when the file row names a fixed file name and the folder row is a one-star place, prefer the file row. Also confirm that `WTF/Account/SavedVariables/<x>.lua`, classified as a folder with nothing on disk, does not come out as `realm-folder` on a real walk (the M13-50 not-an-account check).
 
 **Acceptance:** pinned tests per row, with a dated LAB_PLAN amendment under M16-91's. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-11, sixth batch)
+
+## [ ] M16-96 — CLI `undo` closes any open record that names no file
+**Size:** XS · **Depends on:** M16-69 · **Sources:** the M16-93T code review (#462)
+
+`cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
+
+**Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
+
+## [ ] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
+
+`_plan_footer` adds `_RELOGIN` only when a listed file got detail lines. That note says the client reads these files at its next login and the server may replace synced `*-cache` files then. So a listed `config-cache.wtf`, `bindings-cache.wtf` or `macros-cache.txt` with no detail lines gets no note. Examples are a file wowlab cannot read, or a delete or recreate. The same rule applies to the undo, restore and apply plans.
+
+**Acceptance:** a pinned test for each plan kind that lists a `*-cache` file with no detail. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-98 — Small wording and docstring follow-ups
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-95 code review (#463); the M16-92 domain and code reviews (#465)
+
+- `filemap._literal`'s docstring says "no wildcard, no token", but it does not exclude `<wowlab-temp>`, and `rows_named` relies on that. Either correct the docstring or rule that bare-name lookup should skip the token.
+- A journal state this version does not know falls back to the "finished" changed-file line, which guesses the game. Give it a neutral line.
+- The undo plan for a newly created character `macros-cache.txt` gives "a binding mode or modifier line" as its example of other differing lines. A binding example under a macros file looks wrong; trace and fix the example per file kind.
+
+**Acceptance:** each item pinned or explained in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-99 — The M16-93T crash-seam probe exercises descriptor writes again
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-93T code re-check (#462)
+
+`review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` reuses `CRASH_SCRIPT`, which now sets `snapshot._WRITE_BY_DIR_FD = False`. So its non-control case no longer takes the descriptor-write route and repeats the control. Add a new review probe, as a new file, that forces `_WRITE_BY_DIR_FD = True` and checks that the seam still fires through `dir_fd`. The reviewers checked this by hand.
+
+**Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.

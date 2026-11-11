@@ -206,6 +206,42 @@ class FileMapEntry(BaseModel):
                 return True
         return False
 
+    def names_the_file(self, parts: Sequence[str]) -> bool:
+        """Whether the path matches one of this entry's file patterns whose
+        last segment is a name spelled out (`WTF/Account/*/macros-cache.txt`),
+        not a wildcard or a token (M16-95). `<wowlab-temp>` is a token here
+        too: it stands for many names, so a link named like a gate temp
+        file is not taken for that one file."""
+        path = tuple(parts)
+        if any(_match(_segments(p), path) for p in self.exclude):
+            return False
+        return any(
+            p != _SELF
+            and not p.endswith("/")
+            and _segments(p)[-1] != _WOWLAB_TEMP
+            and _literal(_segments(p)[-1])
+            and _match(_segments(p), path)
+            for p in self.match
+        )
+
+    def takes_any_name_here(self, parts: Sequence[str]) -> bool:
+        """Whether the path matches one of this entry's folder patterns with
+        no `**` whose last segment is a wildcard or a token, so the row takes
+        a folder of any name at this one place (`WTF/Account/*/<name>/`;
+        M16-95)."""
+        path = tuple(parts)
+        if any(_match(_segments(p), path) for p in self.exclude):
+            return False
+        for pattern in self.match:
+            if pattern == _SELF or not pattern.endswith("/"):
+                continue
+            segments = _segments(pattern)
+            if _ANY_DEPTH in segments or _literal(segments[-1]):
+                continue
+            if _match(segments, path):
+                return True
+        return False
+
 
 class FileMap(BaseModel):
     """Every section and entry, in file order."""
