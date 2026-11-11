@@ -462,6 +462,70 @@ def test_a_change_that_wrote_nothing_says_the_next_change_clears_it_constructed(
     assert not json.loads(after.stdout)["problems"]
 
 
+FOLDERS_LEAD = (
+    "the last change wowlab made failed after it created folders and before it changed any file"
+)
+FOLDERS_TAIL = (
+    "undo removes the folders it created if they are empty and records the undo, and wowlab "
+    "doctor stops reporting this change: wowlab undo --expect "
+)
+# A file under three folders the change creates (constructed names).
+IN_NEW_FOLDERS = f"WTF/Account/{ACCOUNT}/Labnewrealm/Labnewchar/SavedVariables/Constructed.lua"
+
+
+def test_a_change_that_created_folders_but_no_file_offers_undo_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """The gate creates the three folders, then another program writes the
+    file just as wowlab would: the write is refused after the folders were
+    made, so the record has no paths but three folders, which the rollback
+    cannot remove (the other program's file is in them). `undo` does act on
+    such a record (it removes the folders if empty and records itself), so
+    the problem offers it, last; and running it clears the problem."""
+
+    def foreign(found: Any, *args: Any, **kwargs: Any) -> None:
+        found.path.write_bytes(OTHER)  # another program, as wowlab writes
+        raise guard._changed(found.rel, "was written by another program as wowlab wrote it")
+
+    with pytest.MonkeyPatch.context() as patched:  # noqa: SIM117 - the exit is what rolls back
+        with pytest.raises(guard.GuardError):
+            with guard.transaction(_discovered(root), label="constructed: folders") as tx:
+                patched.setattr(guard, "_replace", foreign)
+                with pytest.raises(guard.ChangedSinceSnapshotError):
+                    tx.write(IN_NEW_FOLDERS, CHANGED)
+    last = guard.history()[-1]
+    assert last.state == "rollback_incomplete"
+    assert last.paths == ()
+    assert len(last.created_dirs) == 3, last.created_dirs
+    assert last.paths_left == (IN_NEW_FOLDERS,)
+    record_id = last.id
+
+    expected = (
+        f"{FOLDERS_LEAD} (record {record_id}): in {FLAVOR}, wowlab did not write "
+        f"{IN_NEW_FOLDERS}, which another program changed while wowlab was working, and undo "
+        f"leaves it as it is. {FOLDERS_TAIL}{record_id}"
+    )
+    assert _both(record_id) == (expected, expected)
+    data = _json()
+    assert data["store"]["last_transaction"]["paths"] == 0
+    assert data["store"]["last_transaction"]["created_dirs"] == 3
+
+    ok("undo", "--expect", record_id, "--yes")
+    assert (flavor / IN_NEW_FOLDERS).read_bytes() == OTHER, "the other program's file stays"
+    assert guard.history()[-1].id != record_id, "undo recorded itself"
+    after = run("doctor", "--json")
+    assert after.exit_code == 0, after.output
+    assert not json.loads(after.stdout)["problems"]
+
+
+def test_a_change_that_created_folders_and_names_no_file_constructed() -> None:
+    problem = cli._rollback_unfinished("00000001-0123abcd", [], "_x_", paths=0, created_dirs=2)
+    assert problem == (
+        f"{FOLDERS_LEAD} (record 00000001-0123abcd): wowlab could not remove every folder it "
+        f"created. {FOLDERS_TAIL}00000001-0123abcd"
+    )
+
+
 def test_a_change_that_wrote_nothing_and_names_no_file_constructed() -> None:
     problem = cli._rollback_unfinished("00000001-0123abcd", [], "_x_", paths=0)
     assert problem == (

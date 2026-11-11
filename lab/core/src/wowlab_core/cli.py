@@ -1721,6 +1721,9 @@ class LastTransaction(_Out):
     # as-is: a state names nobody (M16-85).
     state: guard._State
     paths: int
+    # How many folders the change created (M16-84): with no `paths`, undo
+    # still has those to remove, and records itself.
+    created_dirs: int
     # The last name of the record's flavor folder, as journaled (M16-84).
     flavor_folder: str
     # The files the rollback of a `rollback_incomplete` record left as they
@@ -1974,6 +1977,7 @@ def _store_report() -> StoreReport:
                 label=r.label,
                 state=r.state,
                 paths=len(r.paths),
+                created_dirs=len(r.created_dirs),
                 flavor_folder=Path(r.flavor_path).name,
                 paths_left=_left_paths(r, None),
             )
@@ -2073,7 +2077,11 @@ def _doctor(
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
         t = store.last_transaction
-        problems.append(_rollback_unfinished(t.id, t.paths_left, t.flavor_folder, paths=t.paths))
+        problems.append(
+            _rollback_unfinished(
+                t.id, t.paths_left, t.flavor_folder, paths=t.paths, created_dirs=t.created_dirs
+            )
+        )
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -2114,7 +2122,12 @@ def _interrupted(record_id: str) -> str:
 
 
 def _rollback_unfinished(
-    record_id: str, left: Sequence[LeftPath] = (), flavor_folder: str = "", *, paths: int = 1
+    record_id: str,
+    left: Sequence[LeftPath] = (),
+    flavor_folder: str = "",
+    *,
+    paths: int = 1,
+    created_dirs: int = 0,
 ) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
@@ -2130,10 +2143,12 @@ def _rollback_unfinished(
     `flavor_folder`, grouped by what doctor read there now (`LeftPath`). A
     file the change never wrote (its only operation was refused) is said to
     be left alone by undo, which acts only on `paths`. With `paths == 0`
-    the change wrote nothing, so undo has nothing to put back and records
-    nothing (`undo` returns before planning when a record has no paths and
-    no folders): the problem says so, and that the next change clears it,
-    and offers no command (the one exception to "the command stays last"). Names are kept as stored: the text output escapes
+    the change wrote nothing, and with `created_dirs == 0` too undo has
+    nothing to do and records nothing (`undo` returns before planning when a
+    record has no paths and no folders): the problem says so, and that the
+    next change clears it, and offers no command (the one exception to "the
+    command stays last"). With folders but no paths, undo removes the empty
+    folders and records itself, so the command is offered, last. Names are kept as stored: the text output escapes
     them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
     unescaped. A record that lists no file gets the sentence without names."""
     groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
@@ -2141,6 +2156,24 @@ def _rollback_unfinished(
         groups.setdefault((p.now, p.exists), []).append(p.path)
     said = [_left_clause(key, groups[key]) for key in _LEFT_ORDER if key in groups]
     where = f"in {flavor_folder}, " if flavor_folder else ""
+    if paths == 0 and created_dirs:
+        # No file journaled, but folders created (a write refused after its
+        # folders were made): undo removes them if empty and records itself,
+        # so this record stops being the last (M16-86's plan says the same).
+        lead = (
+            "the last change wowlab made failed after it created folders and before it changed "
+            f"any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said) if said else "wowlab could not remove every folder it created"
+        )
+        return (
+            lead
+            + named
+            + ". undo removes the folders it created if they are empty and records the undo, "
+            "and wowlab doctor stops reporting this change: "
+            f"wowlab undo --expect {record_id}"
+        )
     if paths == 0:
         lead = (
             f"the last change wowlab made failed before it changed any file (record {record_id}): "
