@@ -222,7 +222,10 @@ def test_constructed_dropped_that_is_not_a_count_is_refused(value: object) -> No
         "CLICK BT4Button13:Button",  # no digits
         "CLICK BT4Button13:button4",
         "CLICK BT4Button13:LeftButton2",
-        "CLICK BT4Button13:Button" + "9" * 27,  # over 32 bytes
+        "CLICK BT4Button13:Button0",  # no leading zero
+        "CLICK BT4Button13:Button01",
+        "CLICK BT4Button13:Button100",  # at most two digits
+        "CLICK BT4Button13:Button" + "9" * 26,
     ],
     ids=lambda c: c[:40],
 )
@@ -236,7 +239,7 @@ def test_constructed_click_command_outside_the_rule_is_refused(command: str) -> 
 def test_constructed_click_bounds_are_the_addons() -> None:
     """The longest frame and button parts the addon keeps are read."""
     raw = _schema_5()
-    _with_click(raw, "CLICK " + "_" + "F" * 63 + ":Button" + "9" * 26)
+    _with_click(raw, "CLICK " + "_" + "F" * 63 + ":MiddleButton")
     labaddon.load_char(raw)
     source = ACTIONS_LUA.read_text(encoding="utf-8")
     assert '"^CLICK ([%a_][%w_]*):(%a%w*)$"' in source
@@ -245,7 +248,8 @@ def test_constructed_click_bounds_are_the_addons() -> None:
 
 
 @pytest.mark.parametrize(
-    "button", ["LeftButton", "RightButton", "MiddleButton", "Button4", "Button31"]
+    "button",
+    ["LeftButton", "RightButton", "MiddleButton", "Button1", "Button9", "Button10", "Button99"],
 )
 def test_constructed_click_mouse_button_parts_are_read(button: str) -> None:
     raw = _schema_5()

@@ -498,7 +498,8 @@ Notes on the fields:
   1. `c` matches `^CLICK ([%a_][%w_]*):(%a%w*)$`, with a frame part of at
      most 64 bytes and a button part of at most 32, and (amendment of
      2026-11-11) the button part is `LeftButton`, `RightButton`,
-     `MiddleButton`, `Button` followed by digits (`^Button%d+$`), or a name
+     `MiddleButton`, `Button` followed by one or two digits with no leading zero
+     (`^Button[1-9]%d?$`), or a name
      on the bar-addon list in "Click bindings" below. The addon checks the
      button part before it looks the frame up, so a command it refuses here
      reads nothing from its frame;
@@ -533,7 +534,8 @@ Notes on the fields:
   would bind a key to a real action button with a word the player typed as
   its button part. The addon keeps a button part only when it is a
   mouse-button name (`LeftButton`, `RightButton`, `MiddleButton`, or
-  `Button` followed by digits) or a name on the bar-addon list below. Any
+  `Button` followed by one or two digits with no leading zero, `Button1`
+  to `Button99`) or a name on the bar-addon list below. Any
   other button part sends the command to `clicks_left_out` (and
   `commands_left_out`), and nothing of it is stored. The Lab's reader
   refuses a record whose kept `CLICK` command ends in any other button part.

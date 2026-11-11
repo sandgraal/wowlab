@@ -447,14 +447,15 @@ local CLICK_BAR_BUTTONS = {}
 
 -- Whether a CLICK command's button part may be kept (ADR-0026, amendment of
 -- 2026-11-11): a mouse-button name (LeftButton, RightButton, MiddleButton,
--- or Button followed by digits) or a name on CLICK_BAR_BUTTONS.
+-- or Button followed by one or two digits with no leading zero) or a name on
+-- CLICK_BAR_BUTTONS.
 -- SetBindingClick takes any string as the button, so any other button part
 -- may be a word the player typed, and the command is left out.
 local function clickButton(button)
     if button == "LeftButton" or button == "RightButton" or button == "MiddleButton" then
         return true
     end
-    if string.find(button, "^Button%d+$") then
+    if string.find(button, "^Button[1-9]%d?$") then
         return true
     end
     for i = 1, #CLICK_BAR_BUTTONS do

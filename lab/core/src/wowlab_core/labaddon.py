@@ -1483,7 +1483,7 @@ class CharDBV4(CharDBV3):
 CLICK_MOUSE_BUTTONS: tuple[str, ...] = ("LeftButton", "RightButton", "MiddleButton")
 CLICK_BAR_BUTTONS: tuple[str, ...] = ()
 _CLICK_BUTTON = "|".join(
-    [*(re.escape(b) for b in (*CLICK_MOUSE_BUTTONS, *CLICK_BAR_BUTTONS)), "Button[0-9]{1,26}"]
+    [*(re.escape(b) for b in (*CLICK_MOUSE_BUTTONS, *CLICK_BAR_BUTTONS)), "Button[1-9][0-9]?"]
 )
 # A `CLICK <frame>:<button>` binding command the addon keeps (ADR-0026,
 # amendment of 2026-10-22, rule (a), narrowed 2026-11-11): the Lua pattern

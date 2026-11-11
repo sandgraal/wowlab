@@ -2547,8 +2547,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     when all three of ADR-0026's 2026-10-22 rules hold: `c` matches
     `^CLICK ([%a_][%w_]*):(%a%w*)$` with a frame part of at most 64 bytes
     and a button part of at most 32 that (ADR-0026, amendment of
-    2026-11-11) is `LeftButton`, `RightButton`, `MiddleButton`, `Button`
-    and digits, or a name on the bar-addon list `lab/addon/README.md` names
+    2026-11-11) is `LeftButton`, `RightButton`, `MiddleButton`, `Button` and
+    one or two digits with no leading zero (`Button1` to `Button99`), or a name on the bar-addon list `lab/addon/README.md` names
     ("Click bindings"; empty until a ticket adds a name a capture has
     shown), checked before the frame is looked up; `f = _G[frame]` is a table (whose
     `rawget(f, 0)` is the client's userdata, checked first) and

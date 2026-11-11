@@ -546,7 +546,7 @@ def test_m16_45_click_button_part_is_a_mouse_name_or_on_the_bar_list() -> None:
         "local function clickButton ( button ) "
         'if button == "LeftButton" or button == "RightButton" or button == "MiddleButton" '
         "then return true end "
-        'if string . find ( button , "^Button%d+$" ) then return true end '
+        'if string . find ( button , "^Button[1-9]%d?$" ) then return true end '
         "for i = 1 , # CLICK_BAR_BUTTONS do "
         "if button == CLICK_BAR_BUTTONS [ i ] then return true end end "
         "return false end"
@@ -567,8 +567,14 @@ _CLICK_BUTTON_CASES: list[tuple[str, str | None]] = [
     ("CLICK BT4Button13:RightButton", "BT4Button13"),
     ("CLICK BT4Button13:MiddleButton", "BT4Button13"),
     ("CLICK BT4Button13:Button4", "BT4Button13"),
-    ("CLICK BT4Button13:Button" + "9" * 26, "BT4Button13"),
-    ("CLICK BT4Button13:Button" + "9" * 27, None),  # over 32 bytes
+    ("CLICK BT4Button13:Button1", "BT4Button13"),
+    ("CLICK BT4Button13:Button9", "BT4Button13"),
+    ("CLICK BT4Button13:Button10", "BT4Button13"),
+    ("CLICK BT4Button13:Button99", "BT4Button13"),
+    ("CLICK BT4Button13:Button0", None),  # no leading zero
+    ("CLICK BT4Button13:Button01", None),
+    ("CLICK BT4Button13:Button100", None),  # at most two digits
+    ("CLICK BT4Button13:Button" + "9" * 26, None),
     ("CLICK BT4Button13:Button", None),  # no digits
     ("CLICK BT4Button13:button4", None),
     ("CLICK BT4Button13:LeftButton2", None),
