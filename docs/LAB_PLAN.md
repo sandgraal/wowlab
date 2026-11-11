@@ -4109,6 +4109,7 @@ a file. The file read is the real path that was checked.
   - The server is bound to `127.0.0.1` and checks its Host header as before.
   - Every API request must still prove it comes from the browser that opened the link. The design is the implementer's. The default is an `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie set when the link is first opened, which the server accepts in place of the `token` parameter, so a reload or a second tab in that browser works.
   - A request with neither the cookie nor a valid token is refused, as now.
+  - Accepted risk (owner, 2026-11-11): the link is in the browser's process arguments, which another account on the same computer can read, and it opens the session until Ctrl-C; this tool is used on single-user machines, and the risk is revisited before outside users are invited (ADR-0037).
   - Stopping `wowlab ui` (Ctrl-C) ends the session. A new `wowlab ui` makes a new link, and the old one stops working.
 - **What goes:**
   - the one-time boot key, and its "already used" page and terminal notice;

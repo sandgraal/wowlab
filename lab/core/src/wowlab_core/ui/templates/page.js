@@ -26,15 +26,33 @@
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
 // text goes in through textContent only. The home folder is shown as "~".
 (function () {
-  // The server set its session cookie when it served this page for the link
-  // `wowlab ui` opened (M16-113), and the browser sends it with every request
-  // to the server's own path: the page holds no key and reads none. The
+  // The session key (M16-113). The page served for the link `wowlab ui`
+  // opened holds it in one <meta> element, which is read and removed here;
+  // it is kept in localStorage, which belongs to this origin alone (this
+  // server's port included), so a reload and a second tab, which get the
+  // page with no key in it, send it too. It is never read from the URL. The
   // link's query leaves the address bar, and so the history, before the
-  // first request; a reload asks for `/` and the cookie carries the session.
+  // first request. Every request sends the key in a header, never a cookie.
+  const STORE = "wowlab-session";
+  let session = "";
+  const given = document.getElementById("wowlab-session");
+  if (given) {
+    session = given.getAttribute("content") || "";
+    given.remove();
+  }
+  try {
+    if (session) window.localStorage.setItem(STORE, session);
+    else session = window.localStorage.getItem(STORE) || "";
+  } catch (error) {
+    // No storage (a locked-down browser): this tab keeps the key it was given.
+  }
   if (window.location.search && window.history && typeof window.history.replaceState === "function") {
     window.history.replaceState(null, "", "/");
   }
   const api = (path) => path;
+  const keyed = (headers) => Object.assign({ "X-Wowlab-Session": session }, headers || {});
+  const NO_SESSION =
+    "This page needs the link wowlab ui opened. Open that link again, or, if wowlab ui was stopped, start it again.";
   const byId = (id) => document.getElementById(id);
   // The one outside origin the page may link to (M15-02; ADR-0019's and
   // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
@@ -154,8 +172,8 @@
       reply = await fetch(api("/api/run"), {
         method: "POST",
         cache: "no-store",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
+        credentials: "omit",
+        headers: keyed({ "Content-Type": "application/json" }),
         body: JSON.stringify({ command: command, params: params }),
       });
       result = await reply.json();
@@ -1997,7 +2015,7 @@
     let reply;
     let result;
     try {
-      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "same-origin" });
+      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit", headers: keyed() });
       result = await reply.json();
     } catch (error) {
       return { error: "The request failed: " + error };
@@ -2268,8 +2286,8 @@
       const reply = await fetch(api("/api/run"), {
         method: "POST",
         cache: "no-store",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
+        credentials: "omit",
+        headers: keyed({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
       const result = await reply.json();
@@ -2313,17 +2331,19 @@
   }
 
   async function load() {
+    // With no key the server refuses, and the 403 below says what to do.
     let reply;
     try {
-      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "same-origin" });
+      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit", headers: keyed() });
     } catch (error) {
       say("The server could not be reached: " + error, true);
       explorerSay("The server could not be reached: " + error, true);
       return;
     }
     if (!reply.ok) {
-      say("The server refused the request (" + reply.status + ").", true);
-      explorerSay("The server refused the request (" + reply.status + ").", true);
+      const refused = reply.status === 403 ? NO_SESSION : "The server refused the request (" + reply.status + ").";
+      say(refused, true);
+      explorerSay(refused, true);
       return;
     }
     const data = await reply.json();

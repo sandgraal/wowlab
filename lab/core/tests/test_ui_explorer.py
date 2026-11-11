@@ -541,12 +541,10 @@ def test_a_request_without_the_token_is_refused(server: Any) -> None:
     port = int(server.port)
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     try:
-        connection.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
+        connection.request("GET", "/api/commands", headers={"Host": f"127.0.0.1:{port}"})
         response = connection.getresponse()
         assert response.status == 403
-        # `/` with no session answers the player a sentence (M16-113).
-        assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
-        assert b"start it again" in response.read()
+        assert json.loads(response.read()) == {"error": "token"}
     finally:
         connection.close()
 
@@ -1886,12 +1884,13 @@ def test_the_level_choices_are_not_written_into_the_page(server: Any) -> None:
 # ─── the session under Node (M16-42, M16-113) ────────────────────────────────
 
 
-def test_the_page_drops_its_query_and_sends_no_key(
+def test_the_page_drops_its_query_and_puts_no_key_in_a_url(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
     """The page opened on `?boot=k` calls `history.replaceState` before any
     request, and no request carries a key in its URL or asks for one: the
-    session cookie the server set goes with each (M16-113)."""
+    key goes in the `X-Wowlab-Session` header (M16-113,
+    `test_ui_local_exposure.py`)."""
     scenario, _ = _scenario(server, [], [])
     out = _drive(tmp_path / "node", scenario)
     events = out["events"]

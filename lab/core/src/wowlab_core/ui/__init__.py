@@ -9,27 +9,30 @@ Every request is checked, in this order, before anything else is done with
 it (a POST body included):
 - `Host` is exactly `127.0.0.1:<port>` or `localhost:<port>`;
 - an `Origin`, when present, is exactly `http://` plus that `Host`;
-- it carries the session: the query parameter `token` is the server's
-  session key (`secrets.token_urlsafe(32)`), or, with no `token` field, the
-  session cookie `wowlab_ui_<port>` holds the server's cookie key (another
-  `secrets.token_urlsafe(32)`).
-The link `wowlab ui` opens holds a boot key instead (`/?boot=<key>`,
-`secrets.token_urlsafe(32)`), which opens only the shell (`GET` and `HEAD`
-of `/`, the query exactly that one field). The shell served for it sets the
-cookie, `HttpOnly; SameSite=Strict; Path=/`, so the page's own requests, a
-reload, and a second tab in that browser carry the session without a key in
-their URL (M16-113, which replaced M16-42's one-time boot key). The boot key
-is not spent: the link keeps working until the server stops. Every key lives
-in this process's memory only, so a new `wowlab ui` makes new ones and the
-old link and cookie open nothing. The session key and the cookie key are in
-no response body, no log, the URL `wowlab ui` opens, or a child's argv or
-environment; the cookie key is in one header only, that `Set-Cookie`, which
-script on the page cannot read (`HttpOnly`). `page.js` takes the query out of
-the address bar with `history.replaceState` before its first request and
-sends no key itself. `GET /` (or `HEAD /`) refused for want of a session,
-with no query (a reload) or a `boot` query (a link that is wrong or of an
-earlier server), answers 403 with the fixed sentence `_NO_SESSION` as plain
-text, so the player reads words, not JSON.
+- but for `GET` and `HEAD` of `/` with no query, it carries the session:
+  the session key (`secrets.token_urlsafe(32)`) in the header
+  `X-Wowlab-Session`, or in the query parameter `token`; a `token` that is
+  given decides, right or wrong.
+`/` with no query is the page shell as template text, which holds no key,
+so a reload and a second tab get the page; the page then sends the key it
+kept. The link `wowlab ui` opens holds a boot key (`/?boot=<key>`, another
+`secrets.token_urlsafe(32)`), which opens only the shell, and only when it
+is the whole query. The shell served for it, and no other response, holds
+the session key, in `<meta id="wowlab-session" content="...">`; `page.js`
+reads it, removes the element, takes the query out of the address bar with
+`history.replaceState` before its first request, and keeps the key in
+`localStorage`, which is per origin, the port included, so another server
+on this machine never sees it, unlike a cookie (M16-113, which replaced
+M16-42's one-time boot key). Every request the page makes carries the key in
+`X-Wowlab-Session`; another site's page cannot send that header without a
+CORS preflight, and no preflight is answered with CORS. The boot key is not
+spent: the link keeps working until the server stops. Every key lives in
+this process's memory only, so a new `wowlab ui` makes new ones and the old
+link and key open nothing. No key is in a log, the URL `wowlab ui` opens
+but for the boot key, or a child's argv or environment. `GET /` with a
+`boot` query that is not the boot key (a wrong link, or one of an earlier
+server) answers 403 with the fixed sentence `_NO_SESSION` as plain text, so
+the player reads words, not JSON.
 A refusal answers 403 `{"error": "host" | "origin" | "token"}`. Every
 response, refusals and errors included, carries the same
 Content-Security-Policy, which allows the server itself, the page's own
@@ -1372,8 +1375,6 @@ class UiServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     token: str
     boot: str
-    cookie_name: str
-    cookie_key: str
     url: str
     wowlab_argv: Sequence[str]
 
@@ -1389,13 +1390,11 @@ class UiServer(http.server.ThreadingHTTPServer):
         self.timeout_s = timeout_s
         self.output_cap_bytes = output_cap_bytes
         # The keys, in memory only, so they end with this process (M16-113):
-        # the session key a request may carry as `token`; the boot key the
-        # opened URL carries, which opens only the shell and is never spent;
-        # and the cookie key the shell served for the boot key sets, which
-        # the page's requests, a reload and a second tab carry instead.
+        # the session key every request but the shell's carries, and the boot
+        # key the opened URL carries, which opens only the shell (with the
+        # session key in it) and is never spent.
         self.token = secrets.token_urlsafe(32)
         self.boot = secrets.token_urlsafe(32)
-        self.cookie_key = secrets.token_urlsafe(32)
         self._runs_lock = threading.Lock()
         self._runs: set[int] = set()
         self._closing = threading.Event()
@@ -1410,9 +1409,6 @@ class UiServer(http.server.ThreadingHTTPServer):
         super().__init__((_LOOPBACK, 0), _Handler)
         self.port = int(self.server_address[1])
         self.url = f"http://{_LOOPBACK}:{self.port}/?boot={self.boot}"
-        # Cookies are kept by host, not by port: the port in the name keeps
-        # two servers on this machine from replacing each other's cookie.
-        self.cookie_name = f"wowlab_ui_{self.port}"
         self.hosts = frozenset({f"{_LOOPBACK}:{self.port}", f"localhost:{self.port}"})
         self.commands_body = _commands_body(leaves)
 
@@ -1459,11 +1455,15 @@ class UiServer(http.server.ThreadingHTTPServer):
             while self._runs and time.monotonic() < deadline:
                 self._idle.wait(_POLL_S)
 
-    def set_cookie(self) -> str:
-        """The `Set-Cookie` value the shell served for the boot key carries:
-        a session cookie (no expiry), sent back only to this host, never to
-        a request another site starts, and unreadable by script."""
-        return f"{self.cookie_name}={self.cookie_key}; HttpOnly; SameSite=Strict; Path=/"
+    def booted_shell(self) -> bytes:
+        """The shell served for the boot key: the page shell with the session
+        key in a `<meta>` element the page reads once and removes."""
+        page = _shell()[0]
+        marker = b'<meta charset="utf-8">'
+        if page.count(marker) != 1:
+            raise RuntimeError("the page shell has no single charset element")
+        key = self.token.encode("ascii")  # token_urlsafe: nothing to escape
+        return page.replace(marker, marker + b'\n<meta id="wowlab-session" content="' + key + b'">')
 
     def run(self, argv: list[str]) -> _Run:
         """One run of `wowlab` with `argv`, bounded in time and output."""
@@ -1640,8 +1640,8 @@ _NO_SESSION = (
     "This page needs the link wowlab ui opened. Open that link again, or, if "
     "wowlab ui was stopped, start it again.\n"
 )
-# The most cookie pairs read from a request.
-_MAX_COOKIES = 64
+# The header the page sends the session key in.
+_SESSION_HEADER = "X-Wowlab-Session"
 
 
 def _same(given: str, key: str) -> bool:
@@ -1657,8 +1657,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     sys_version = ""
     protocol_version = "HTTP/1.0"
     timeout = _SOCKET_TIMEOUT_S
-    # Set by `_check` when the boot key opened the shell: its reply sets the
-    # session cookie.
+    # Set by `_check` when the boot key opened the shell: it is served with
+    # the session key in it.
     _booted = False
 
     # ── output ──
@@ -1678,8 +1678,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        if self._booted:
-            self.send_header("Set-Cookie", self.server.set_cookie())
         super().end_headers()
 
     def _reply(self, status: int, body: bytes, content_type: str) -> None:
@@ -1710,9 +1708,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def _check(self, shell: bool = False) -> str | None:
         """Host, Origin and the session, in that order; the refusal code, or
-        None. With `shell` (`GET` and `HEAD` of `/`), a query that is exactly
-        one `boot` field holding the boot key passes too, and the reply sets
-        the session cookie."""
+        None. With `shell` (`GET` and `HEAD` of `/`), no query at all passes
+        (the shell holds no key), and so does a query that is exactly one
+        `boot` field holding the boot key (the shell is served with the
+        session key in it)."""
         hosts = self.headers.get_all("Host") or []
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             return "host"
@@ -1720,6 +1719,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if origins is not None and (len(origins) != 1 or origins[0] != "http://" + hosts[0]):
             return "origin"
         query = self.path.partition("?")[2].partition("#")[0]
+        if shell and not query and "?" not in self.path.partition("#")[0]:
+            return None
         try:
             pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=32)
         except ValueError:
@@ -1730,28 +1731,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._booted = True
             return None
         given = [value for name, value in pairs if name == "token"]
-        if given:
-            if len(given) != 1 or not _same(given[0], self.server.token):
-                return "token"
-            return None
-        if not any(_same(value, self.server.cookie_key) for value in self._cookies()):
+        if not given:
+            given = self.headers.get_all(_SESSION_HEADER) or []
+        if len(given) != 1 or not _same(given[0], self.server.token):
             return "token"
         return None
-
-    def _cookies(self) -> list[str]:
-        """The values of every session cookie this request carries under the
-        server's own cookie name; other cookies are not looked at."""
-        found: list[str] = []
-        pairs = 0
-        for header in self.headers.get_all("Cookie") or []:
-            for piece in header.split(";"):
-                pairs += 1
-                if pairs > _MAX_COOKIES:
-                    return found
-                name, sep, value = piece.strip().partition("=")
-                if sep and name.strip() == self.server.cookie_name:
-                    found.append(value.strip())
-        return found
 
     def _route(self) -> str:
         return self.path.partition("?")[0].partition("#")[0]
@@ -1764,9 +1748,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         refusal = self._check(shell)
         if refusal is not None:
             query = self.path.partition("?")[2].partition("#")[0]
-            if shell and refusal == "token" and (not query or query.startswith("boot=")):
-                # The page the player opens or reloads, or a link of an
-                # earlier `wowlab ui`: a sentence, not JSON.
+            if shell and refusal == "token" and query.startswith("boot="):
+                # A wrong link, or one of an earlier `wowlab ui`: a
+                # sentence, not JSON.
                 self._reply(403, _NO_SESSION.encode("utf-8"), "text/plain; charset=utf-8")
             else:
                 self._error(403, refusal)
@@ -1780,7 +1764,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path is None:
             return
         files = static_files()
-        if path in files:
+        if path == "/" and self._booted:
+            self._reply(200, self.server.booted_shell(), "text/html; charset=utf-8")
+        elif path in files:
             self._reply(200, files[path], "text/html; charset=utf-8")
         elif path == "/api/commands":
             self._reply(200, self.server.commands_body, "application/json")

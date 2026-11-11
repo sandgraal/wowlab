@@ -563,12 +563,14 @@ def test_token_is_random_urlsafe_and_only_in_the_url(recorder: Recorder) -> None
         assert one.boot != two.boot
 
 
+# M16-113: `GET` and `HEAD` of `/` with no query serve the shell, which holds
+# no key (a reload); `test_ui_local_exposure.py` grades that.
 _NO_TOKEN_PATHS = [
-    ("GET", "/"),
+    ("POST", "/"),
     ("GET", "/api/commands"),
     ("POST", "/api/run"),
     ("GET", "/no-such-page"),
-    ("HEAD", "/"),
+    ("HEAD", "/api/commands"),
 ]
 
 
@@ -579,11 +581,7 @@ def test_a_request_without_the_token_is_refused(
     body = json.dumps({"command": ["echo"], "params": {"path": "x"}}).encode()
     reply = _send(planted, method, path, body=body if method == "POST" else None)
     assert reply.status == 403
-    if path == "/":
-        # M16-42: the page a reload asks for answers the player a sentence,
-        # as plain text (test_ui_local_exposure.py); every other path JSON.
-        assert reply.all("Content-Type") == ["text/plain; charset=utf-8"]
-    elif method != "HEAD":
+    if method != "HEAD":
         assert reply.error() == "token"
     assert recorder.calls() == []
 
@@ -1647,6 +1645,6 @@ def test_serving_and_running_write_no_file(
         assert _send(server, "GET", _target(server, "/api/commands")).status == 200
         assert _argv_of(_run(server, ["echo"], {"path": "x", "tag": ["a"]}))[0] == "echo"
         assert _run(server, ["danger"], {}).status == 403
-        assert _send(server, "GET", "/").status == 403
+        assert _send(server, "GET", "/api/commands").status == 403
         assert _send(server, "GET", _target(server, "/../cli.py")).status in (400, 403, 404)
     assert _listing(root) == before
