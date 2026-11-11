@@ -2152,11 +2152,15 @@ _RECORD_HOW = (
     "character select), log in, then log out or type /reload."
 )
 _COMBATLOG_HOW = (
-    "In game, type /combatlog once each time you log in (it switches logging on and off; "
-    "the chat window says which)."
+    "In game, type /combatlog to turn combat logging on; the game writes a log only while it is on."
 )
-# What a lab-addon that is missing or out of date means for the records.
-_RECORDS_WAIT = "they are not updated until the lab-addon above is fixed"
+# What a missing or out-of-date lab-addon means for the records: none
+# while it is missing; an out-of-date one may still load ('Load out of date
+# AddOns'), so that is hedged; and nothing when wowlab cannot tell.
+_RECORDS_WAIT = {
+    "missing": "they are not updated until the lab-addon above is fixed",
+    "stale": "they may not be updated until the lab-addon above is fixed",
+}
 
 
 def _install_step(build_info_missing: bool) -> NextStep:
@@ -2222,7 +2226,11 @@ def _lab_addon_step(
 
 
 def _characters_step(
-    lay: layout.Layout, folder: str, several: bool, root: str | None, lab_ready: bool
+    lay: layout.Layout,
+    folder: str,
+    several: bool,
+    root: str | None,
+    lab_state: NextStepState,
 ) -> NextStep:
     """How many character folders hold a lab-addon record: from the listing
     alone (`budget=0` opens no file), so doctor reads no record. A place
@@ -2240,8 +2248,8 @@ def _characters_step(
         notes.append(
             f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
         )
-    if count and not lab_ready:
-        notes.append(_RECORDS_WAIT)
+    if count and lab_state in _RECORDS_WAIT:
+        notes.append(_RECORDS_WAIT[lab_state])
     state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
     return NextStep(
         item="characters",
@@ -2294,7 +2302,7 @@ def _flavor_steps(
     lab = _lab_addon_step(folder, lab_addon, several, root)
     return [
         lab,
-        _characters_step(lay, folder, several, root, lab_ready=lab.state == "ok"),
+        _characters_step(lay, folder, several, root, lab_state=lab.state),
         _combat_log_step(lay, folder),
     ]
 
@@ -2317,10 +2325,12 @@ def _next_step_answer(step: NextStep) -> str:
             said = "Lab-addon: wowlab cannot tell whether it fits this client"
         case "characters", "missing":
             said = f"{records}: none"
+        case "characters", "unknown" if n == 0:
+            said = f"{records}: none found"
         case "characters", _:
             said = (
-                f"{records}: {n} (each saved at that character's last logout; "
-                f"`{step.command}` reads them)"
+                f"{records}: {n} (each as of that character's last logout or /reload with "
+                f"the lab-addon on; `{step.command}` reads them)"
             )
         case "combat_log", "ok":
             said = f"Combat log: present ({n} under Logs/"

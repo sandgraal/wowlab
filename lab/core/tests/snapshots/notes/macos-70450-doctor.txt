@@ -12,9 +12,9 @@ Snapshot store: <tmp>/userdata/wowlab/store
   no transactions in the journal
 Next steps:
   Lab-addon: not installed. Close the game, then run `wowlab addon install lab`.
-  Character folders with a lab-addon record: 4 (each saved at that character's
-    last logout; `wowlab char list` reads them); they are not updated until the
-    lab-addon above is fixed.
+  Character folders with a lab-addon record: 4 (each as of that character's last
+    logout or /reload with the lab-addon on; `wowlab char list` reads them);
+    they are not updated until the lab-addon above is fixed.
   Combat log: present (1 under Logs/, the newest written
     <local time>).
 2 notes: --notes shows them

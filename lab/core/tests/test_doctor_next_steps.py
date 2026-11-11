@@ -123,9 +123,9 @@ def test_text_block_says_what_json_says(flavor: Path) -> None:
     block = _block(text)
     assert block.startswith("Next steps: Lab-addon: not installed.")
     assert (
-        "Character folders with a lab-addon record: 2 (each saved at that character's last "
-        "logout; `wowlab char list` reads them); they are not updated until the lab-addon "
-        "above is fixed."
+        "Character folders with a lab-addon record: 2 (each as of that character's last "
+        "logout or /reload with the lab-addon on; `wowlab char list` reads them); they are "
+        "not updated until the lab-addon above is fixed."
     ) in block
     assert "Combat log: present (1 under Logs/, the newest written " in block
 
@@ -178,6 +178,10 @@ def test_lab_addon_for_another_client_names_the_reinstall_constructed(
     assert step.state == "stale"
     assert step.detail == "made for another client version"
     assert step.fix == f"Close the game, then run `{REINSTALL}`."
+    # It may still load ('Load out of date AddOns'): the records' note is hedged.
+    assert _steps()["characters"].detail == (
+        "they may not be updated until the lab-addon above is fixed"
+    )
     text = _text()
     assert (
         "Lab-addon: out of date for this client; made for another client version. "
@@ -204,6 +208,8 @@ def test_lab_addon_unknown_prints_its_detail_constructed(flavor: Path) -> None:
     text = _text()
     assert _flat(f"cannot tell whether it fits this client; {step.detail}") in _block(text)
     assert _block(text).startswith("Next steps: Lab-addon")  # not "nothing to do"
+    # wowlab cannot tell whether the records are stuck, so it does not say so.
+    assert "until the lab-addon" not in _block(text)
     _agrees(text, _report())
 
 
@@ -239,7 +245,10 @@ def test_no_combat_log_names_slash_combatlog(flavor: Path, how: str) -> None:
     assert (step.state, step.count) == ("missing", 0)
     assert step.fix is not None and "/combatlog" in step.fix
     text = _text()
-    assert "Combat log: none under Logs/. In game, type /combatlog once each time" in _block(text)
+    assert (
+        "Combat log: none under Logs/. In game, type /combatlog to turn combat logging on;"
+        in _block(text)
+    )
     _agrees(text, _report())
 
 
@@ -279,7 +288,10 @@ def test_unseen_character_folders_are_unknown_not_none_constructed(
     step = _steps()["characters"]
     assert (step.state, step.count, step.fix) == ("unknown", 0, None)
     assert step.detail is not None and "1 place" in step.detail
-    _agrees(_text(), _report())
+    text = _text()
+    assert "Character folders with a lab-addon record: none found; 1 place wowlab" in _block(text)
+    assert "last logout" not in _block(text)
+    _agrees(text, _report())
 
 
 def test_unseen_place_is_said_beside_a_count_constructed(
