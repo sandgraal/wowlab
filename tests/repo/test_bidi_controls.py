@@ -404,10 +404,24 @@ def test_pytest_never_collects_under_the_fixtures(tmp_path: Path) -> None:
 
 def _git_tree(root: Path, links: dict[str, str]) -> None:
     """A constructed git repository at `root` with the given symlinks
-    (name to target text) added to its index."""
+    (name to target text) added to its index. Skips where symlinks cannot be
+    made (Windows without the privilege, or a file system without them) or
+    git would not record them as links (core.symlinks false)."""
     subprocess.run([_git(), "init", "-q", str(root)], check=True, capture_output=True)
+    symlinks = subprocess.run(
+        [_git(), "config", "--bool", "core.symlinks"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if symlinks.stdout.strip() == "false":
+        pytest.skip("git has core.symlinks false here, so it checks out no symlinks")
     for name, target in links.items():
-        (root / name).symlink_to(target)
+        try:
+            (root / name).symlink_to(target)
+        except (OSError, NotImplementedError) as err:
+            pytest.skip(f"symlinks cannot be made here: {err}")
     subprocess.run([_git(), "add", *links], cwd=root, check=True, capture_output=True)
 
 
@@ -425,16 +439,29 @@ def test_constructed_broken_symlink_target_is_scanned(tmp_path: Path) -> None:
     assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
 
 
+def test_constructed_working_symlink_to_a_clean_file_is_scanned(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): a working link to a clean file, whose
+    target text holds U+2069, is reported (the scan followed the link and
+    read only the clean file). Control: a working link with a clean target
+    text to the same file passes."""
+    clean = f"clean{BIDI[8]}.md"
+    assert BIDI[8] == chr(0x2069)
+    (tmp_path / clean).write_text("plain\n", encoding="utf-8")
+    (tmp_path / "plain.md").write_text("plain\n", encoding="utf-8")
+    _git_tree(tmp_path, {"notes.md": clean, "control.md": "plain.md"})
+    assert (tmp_path / "notes.md").is_file()  # the premise: it resolves
+    assert (tmp_path / "control.md").is_file()
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+2069"]})
+
+
 def test_constructed_working_symlink_is_not_followed(tmp_path: Path) -> None:
     """Constructed tree (M16-104): a working link is never followed. The file
-    it points at (untracked here) holds U+202E and is not reported through
-    the link; a control in the target text is."""
+    it points at (untracked here) holds U+202E, and nothing is reported
+    through the link, whose target text is clean."""
     (tmp_path / "target.md").write_text(f"x {BIDI[4]}\n", encoding="utf-8")
-    (tmp_path / f"t{BIDI[4]}.md").write_text("plain\n", encoding="utf-8")
-    _git_tree(tmp_path, {"clean.md": "target.md", "notes.md": f"t{BIDI[4]}.md"})
-    assert (tmp_path / "clean.md").is_file()  # the premise: it resolves
-    assert (tmp_path / "notes.md").is_file()
-    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
+    _git_tree(tmp_path, {"clean.md": "target.md"})
+    assert (tmp_path / "clean.md").read_text(encoding="utf-8") == f"x {BIDI[4]}\n"  # premise
+    assert _scan_checkout(tmp_path) == (1, {})
 
 
 def test_constructed_symlink_blob_is_read_without_a_link_on_disk(tmp_path: Path) -> None:
