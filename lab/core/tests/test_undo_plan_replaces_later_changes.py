@@ -1,11 +1,13 @@
 """`undo`'s plan says what the undo does to later changes, in every state (M16-92).
 
 When a file no longer holds what the change being undone wrote, the plan says
-who probably changed it since, and, whatever the record's state, that the undo
+who probably changed it since, in words that fit the record's state (a change
+that failed and was put back has no edits of its own left; one that did not
+finish may not have written the file), and, whatever the state, that the undo
 replaces those changes, keeps a copy of them first, and that running `wowlab
-undo` again brings them back. Each test then holds the plan to its word: the
-undo puts the file back as it was before the change, and a second undo puts
-the later changes back.
+undo` again next, before playing, brings them back. Each test then holds the
+plan to its word: the undo puts the file back as it was before the change,
+and a second undo puts the later changes back.
 
 The install is the captured tree copied into `tmp_path` as `test_cli.py`
 builds it, the user data directory is redirected and the process table is a
@@ -44,23 +46,38 @@ CONFIG = "WTF/Config.wtf"
 USE_TARGET_FPS = (b'SET useTargetFPS "0"', b'SET useTargetFPS "1"')
 LATER = b'SET constructedLater "1"\r\n'
 
-CONSEQUENCE = "but keeps a copy first, and running wowlab undo again brings them back)"
+CONSEQUENCE = (
+    "keeps a copy first, and running wowlab undo again next, before you play, brings them back)"
+)
 CHANGED_SINCE = (
-    "      (changed since that transaction, probably by the client at logout: the lines "
-    "below compare what is on disk now with what undo puts back, and include those later "
-    "changes; undo replaces those changes, but keeps a copy first, and running wowlab undo "
-    "again brings them back)"
+    "      (changed since that transaction, probably by the game at logout or /reload: the "
+    "lines below compare what is on disk now with what undo puts back, and include those "
+    "later changes; undo replaces those changes, but keeps a copy first, and running wowlab "
+    "undo again next, before you play, brings them back)"
+)
+CHANGED_UNFINISHED = (
+    "      (changed by another program, such as the game at logout or /reload, while that "
+    "change ran or since; that change stopped before it finished and may not have written "
+    "this file: the lines below compare what is on disk now with what undo puts back; undo "
+    "replaces those changes, but keeps a copy first, and running wowlab undo again next, "
+    "before you play, brings them back)"
+)
+CHANGED_AFTER_ROLLBACK = (
+    "      (changed since that transaction, probably by the game at logout or /reload; that "
+    "change's own edits were already put back when it failed, so every line below is a "
+    "later change, and undo only replaces them; it keeps a copy first, and running wowlab "
+    "undo again next, before you play, brings them back)"
 )
 CHANGED_DURING = (
-    "      (changed by another program, such as the game, while that change ran, or since: "
-    "the lines below compare what is on disk now with what undo puts back; undo replaces "
-    "that program's changes, but keeps a copy first, and running wowlab undo again brings "
-    "them back)"
+    "      (changed by another program, such as the game at logout or /reload, while that "
+    "change ran, or since: the lines below compare what is on disk now with what undo puts "
+    "back; undo replaces that program's changes, but keeps a copy first, and running wowlab "
+    "undo again next, before you play, brings them back)"
 )
 LINE = {
     "committed": CHANGED_SINCE,
-    "open": CHANGED_SINCE,
-    "rolled_back": CHANGED_SINCE,
+    "open": CHANGED_UNFINISHED,
+    "rolled_back": CHANGED_AFTER_ROLLBACK,
     "rollback_incomplete": CHANGED_DURING,
 }
 STATES = typing.get_args(guard._State)

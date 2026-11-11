@@ -8625,26 +8625,47 @@ def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = N
 
 # What the undo does to a file someone changed after the change it undoes:
 # it writes over it, but its own transaction snapshots the file before it
-# writes, so a second undo puts those changes back. Said in every state.
-_UNDO_REPLACES = (
-    "undo replaces {whose} changes, but keeps a copy first, and running wowlab undo again "
-    "brings them back"
+# writes, so a second undo puts those changes back, as long as it comes next
+# and the game has not rewritten the file at logout meanwhile. Said in every
+# state, after a line on who probably changed the file, which depends on it.
+_KEEPS_A_COPY = (
+    "keeps a copy first, and running wowlab undo again next, before you play, brings them back"
 )
+_COMPARE = "the lines below compare what is on disk now with what undo puts back"
+# A change that finished.
 _CHANGED_SINCE = (
-    f"{_DETAIL_INDENT}(changed since that transaction, probably by the client at logout: "
-    "the lines below compare what is on disk now with what undo puts back, and include "
-    "those later changes; " + _UNDO_REPLACES.format(whose="those") + ")"
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    f"/reload: {_COMPARE}, and include those later changes; undo replaces those changes, "
+    f"but {_KEEPS_A_COPY})"
 )
-
-
+# A change that failed and whose rollback finished: every journaled path
+# already held what was there before it, so a listed file differs only by
+# later changes.
+_CHANGED_AFTER_ROLLBACK = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    "/reload; that change's own edits were already put back when it failed, so every line "
+    f"below is a later change, and undo only replaces them; it {_KEEPS_A_COPY})"
+)
+# A change that did not finish (the run was stopped): the record cannot show
+# whether another program wrote during the run or after it, nor whether the
+# run wrote this file at all.
+_CHANGED_UNFINISHED = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    "while that change ran or since; that change stopped before it finished and may not "
+    f"have written this file: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
 # For a change whose rollback did not finish: the gate leaves a file another
 # program changed while the change ran as that program left it.
 _CHANGED_DURING = (
-    f"{_DETAIL_INDENT}(changed by another program, such as the game, while that change ran, "
-    "or since: the lines below compare what is on disk now with what undo puts back; "
-    + _UNDO_REPLACES.format(whose="that program's")
-    + ")"
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    f"while that change ran, or since: {_COMPARE}; undo replaces that program's changes, "
+    f"but {_KEEPS_A_COPY})"
 )
+_CHANGED_LINE = {
+    "open": _CHANGED_UNFINISHED,
+    "rolled_back": _CHANGED_AFTER_ROLLBACK,
+    "rollback_incomplete": _CHANGED_DURING,
+}
 # Every journaled path already holds its pre-transaction bytes and no folder
 # it created is left: the undo changes nothing on disk. For a change that did
 # not finish, or whose rollback did not, `doctor` reports it until it is
@@ -9533,14 +9554,14 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     was there before that transaction (in its pre-write snapshot), since the
     undo replaces the file whatever is on disk. When the disk no longer
     holds what that transaction wrote, a line says the comparison includes
-    those later changes and who probably made them: for a change whose
-    rollback did not finish, another program while it ran (or since);
-    otherwise the client at logout. In every state it also says that the
-    undo replaces those changes, that its own snapshot keeps a copy of them
-    first, and that a second undo brings them back."""
+    those later changes and who probably made them, by the record's state
+    (`_CHANGED_LINE`; a finished change and a state this version does not
+    know get `_CHANGED_SINCE`). In every state it also says that the undo
+    replaces those changes, that its own snapshot keeps a copy of them
+    first, and that a second undo, run next, brings them back."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
-    changed = _CHANGED_DURING if last.state == "rollback_incomplete" else _CHANGED_SINCE
+    changed = _CHANGED_LINE.get(last.state, _CHANGED_SINCE)
     lines = [
         f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
         f"  in {last.flavor_path}:",

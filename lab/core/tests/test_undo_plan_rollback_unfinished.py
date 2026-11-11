@@ -78,10 +78,11 @@ def _plan(record: guard.HistoryRecord, flavor: Path) -> list[str]:
         "failed, and putting the files back did not finish)",
         f"  in {flavor}:",
         f"  put back   {CONFIG}  (as it was before that transaction)",
-        "      (changed by another program, such as the game, while that change ran, or since: "
-        "the lines below compare what is on disk now with what undo puts back; undo replaces "
-        "that program's changes, but keeps a copy first, and running wowlab undo again brings "
-        "them back)",
+        # M16-92: the cause names logout or /reload, and the second undo must come next.
+        "      (changed by another program, such as the game at logout or /reload, while that "
+        "change ran, or since: the lines below compare what is on disk now with what undo puts "
+        "back; undo replaces that program's changes, but keeps a copy first, and running "
+        "wowlab undo again next, before you play, brings them back)",
         '      CVar useTargetFPS: "1" -> "0"',
         "  Each file is one scope (machine, account or character): key bindings come from "
         'the account or the character file, as "Character Specific Key Bindings" sets; '
@@ -104,8 +105,10 @@ def test_the_plan_lists_only_what_the_undo_changes_and_why_constructed(
     assert shown.exit_code == 1, shown.output
     assert shown.stdout.startswith("\n".join(expected) + "\n"), shown.stdout
     # Neither the state's name nor the logout guess is printed, and neither
-    # file the rollback finished is named.
-    for absent in ("rollback_incomplete", "at logout", SYNDICATOR, CREATED, "delete"):
+    # file the rollback finished is named. (M16-92: "at logout" is now named
+    # as an example of the other program, so the guess is checked by its
+    # words, "probably by".)
+    for absent in ("rollback_incomplete", "probably by", SYNDICATOR, CREATED, "delete"):
         assert absent not in shown.stdout, absent
 
 
