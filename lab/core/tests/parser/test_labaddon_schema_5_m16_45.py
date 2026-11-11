@@ -116,7 +116,7 @@ def test_constructed_schema_5_click_binding_is_read_with_its_action_slot() -> No
     assert [(b.command, b.action, b.keys) for b in kept] == [(CLICK, 13, ["SHIFT-1"])]
     text = "\n".join(labaddon.describe(record))
     assert "click bindings: 1 action button kept" in text
-    assert "(for a paging bar, the slot of the page shown then)" in text
+    assert "(the slot at that moment: a bar's page, stance, form or vehicle can change it)" in text
     # Round 2 (domain 3): the rule's other failures (shape, length, not a
     # frame, a secret or invalid slot) are counted too, so the line does not
     # say why.
@@ -216,6 +216,13 @@ def test_constructed_dropped_that_is_not_a_count_is_refused(value: object) -> No
         "CLICK BT4Button13:" + "B" * 33,  # button part over 32 bytes
         "CLICK Bé:LeftButton",  # not ASCII
         "click BT4Button13:LeftButton",  # not the client's word
+        # The button part (ADR-0026, amendment of 2026-11-11): only a mouse
+        # name or a listed bar-addon name; the list is empty.
+        "CLICK BT4Button13:Swordfish",  # a word the player typed
+        "CLICK BT4Button13:Button",  # no digits
+        "CLICK BT4Button13:button4",
+        "CLICK BT4Button13:LeftButton2",
+        "CLICK BT4Button13:Button" + "9" * 27,  # over 32 bytes
     ],
     ids=lambda c: c[:40],
 )
@@ -229,12 +236,31 @@ def test_constructed_click_command_outside_the_rule_is_refused(command: str) -> 
 def test_constructed_click_bounds_are_the_addons() -> None:
     """The longest frame and button parts the addon keeps are read."""
     raw = _schema_5()
-    _with_click(raw, "CLICK " + "_" + "F" * 63 + ":" + "B" * 32)
+    _with_click(raw, "CLICK " + "_" + "F" * 63 + ":Button" + "9" * 26)
     labaddon.load_char(raw)
     source = ACTIONS_LUA.read_text(encoding="utf-8")
     assert '"^CLICK ([%a_][%w_]*):(%a%w*)$"' in source
     assert "#frameName <= 64 and #button <= 32" in source
     assert re.search(r"local MAX_ACTION_SLOT = 2147483647\n", source)
+
+
+@pytest.mark.parametrize(
+    "button", ["LeftButton", "RightButton", "MiddleButton", "Button4", "Button31"]
+)
+def test_constructed_click_mouse_button_parts_are_read(button: str) -> None:
+    raw = _schema_5()
+    _with_click(raw, f"CLICK BT4Button13:{button}")
+    labaddon.load_char(raw)
+
+
+def test_constructed_click_with_a_typed_button_word_is_not_echoed() -> None:
+    """A record holding a typed button word is refused, and the error does
+    not repeat the word (ADR-0026, amendment of 2026-11-11)."""
+    raw = _schema_5()
+    _with_click(raw, "CLICK BT4Button13:Swordfish")
+    with pytest.raises(labaddon.LabAddonError) as caught:
+        labaddon.load_char(raw)
+    assert "Swordfish" not in str(caught.value)
 
 
 @pytest.mark.parametrize(

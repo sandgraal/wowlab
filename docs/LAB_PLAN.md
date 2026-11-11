@@ -2524,7 +2524,11 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     the secret check only when it is a plain upper-case name (as before) or
     when all three of ADR-0026's 2026-10-22 rules hold: `c` matches
     `^CLICK ([%a_][%w_]*):(%a%w*)$` with a frame part of at most 64 bytes
-    and a button part of at most 32; `f = _G[frame]` is a table (whose
+    and a button part of at most 32 that (ADR-0026, amendment of
+    2026-11-11) is `LeftButton`, `RightButton`, `MiddleButton`, `Button`
+    and digits, or a name on the bar-addon list `lab/addon/README.md` names
+    ("Click bindings"; empty until a ticket adds a name a capture has
+    shown), checked before the frame is looked up; `f = _G[frame]` is a table (whose
     `rawget(f, 0)` is the client's userdata, checked first) and
     `pcall(f.GetAttribute, f, "type")` returns exactly `"action"`; and
     `pcall(f.GetAttribute, f, "action")` returns a number for which
@@ -2532,7 +2536,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     also keeps only when it is a whole number from 1 to 2147483647. The
     record then keeps the command, `action` (the button's `action`
     attribute when the bindings were gathered; for a paging bar, the slot of
-    the page shown then) and the keys. Until M16-46 maps `action` to a slot,
+    the page shown then; on a paged or stance-aware bar it depends on the
+    page, stance, form or vehicle, and no reader presents it as fixed) and
+    the keys. Until M16-46 maps `action` to a slot,
     every view treats a kept `CLICK` command as unseen and counts it with
     the left-out commands, as before schema 5. Every
     other command starting `CLICK ` is counted in `clicks_left_out` and in
@@ -2544,7 +2550,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   The reader (`CharDBV5`) reads schema 1 to 4 files exactly as before and
   refuses a schema it does not know. In schema 5 `probes` is optional on
   the three sections; `debug` is a boolean, `announced` a schema number;
-  a kept `CLICK` command must have the shape above and an `action`, a plain
+  a kept `CLICK` command must have the shape above (its button part one of
+  the names above) and an `action`, a plain
   one must not; `dropped` is a count. `char show` adds a line under the key
   bindings (how many action buttons were kept, with that slot) and one per
   Actions section with its `dropped` count, and the left-out line counts
@@ -5242,7 +5249,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
-   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, Proposed):* only those whose frame is an action-slot button.
+   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, accepted 2026-11-11):* only those whose frame is an action-slot button. *Narrowed 2026-11-11 (ADR-0026 amendment of that date):* and whose button part is a mouse-button name or on the bar-addon list `lab/addon/README.md` names.
    - A salted macro hash is added afterwards by M16-48, only if the launch
      session's macro-place answer needs it. `addon install` copies the salt
      from the user data directory into the installed addon; it is never in

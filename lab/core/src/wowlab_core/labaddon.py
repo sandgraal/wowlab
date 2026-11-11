@@ -1474,13 +1474,24 @@ class CharDBV4(CharDBV3):
 
 # ─── schema 5 (M16-45) ───────────────────────────────────────────────────────
 
+# The `<button>` parts of a kept CLICK command (ADR-0026, amendment of
+# 2026-11-11): the mouse-button names, and the bar-addon button names listed
+# in `lab/addon/README.md` ("Click bindings"). That list is empty: a name is
+# added to it, and to `CLICK_BAR_BUTTONS` in `Actions.lua`, only by a ticket,
+# once a capture has shown it. `SetBindingClick` takes any string as the
+# button, so any other button part may be a word the player typed.
+CLICK_MOUSE_BUTTONS: tuple[str, ...] = ("LeftButton", "RightButton", "MiddleButton")
+CLICK_BAR_BUTTONS: tuple[str, ...] = ()
+_CLICK_BUTTON = "|".join(
+    [*(re.escape(b) for b in (*CLICK_MOUSE_BUTTONS, *CLICK_BAR_BUTTONS)), "Button[0-9]{1,26}"]
+)
 # A `CLICK <frame>:<button>` binding command the addon keeps (ADR-0026,
-# amendment of 2026-10-22, rule (a)): the Lua pattern
-# `^CLICK ([%a_][%w_]*):(%a%w*)$`, a frame part of at most 64 bytes and a
-# button part of at most 32, ASCII only.
+# amendment of 2026-10-22, rule (a), narrowed 2026-11-11): the Lua pattern
+# `^CLICK ([%a_][%w_]*):(%a%w*)$`, a frame part of at most 64 bytes, and a
+# button part of at most 32 that is one of the names above, ASCII only.
 ClickCommand = Annotated[
     str,
-    StringConstraints(pattern=r"^CLICK [A-Za-z_][A-Za-z0-9_]{0,63}:[A-Za-z][A-Za-z0-9]{0,31}$"),
+    StringConstraints(pattern=rf"^CLICK [A-Za-z_][A-Za-z0-9_]{{0,63}}:(?:{_CLICK_BUTTON})$"),
 ]
 CLICK_PREFIX = "CLICK "
 # The action slot a kept CLICK command presses: a whole number from 1 to the
@@ -1512,7 +1523,11 @@ class BindingV5(Binding):
     `CLICK <frame>:<button>` command whose frame was an action button, with
     `action`: the button's `action` attribute when the bindings were
     gathered (for a paging bar, the slot of the page shown then; ADR-0026,
-    amendment of 2026-10-22). A CLICK command has `action`; a plain one has
+    amendment of 2026-10-22). That is the slot at gather time: a bar's page,
+    stance, form or vehicle can change it, so no reader presents it as the
+    button's fixed slot. The button part is a mouse-button name or a listed
+    bar-addon name (`CLICK_BAR_BUTTONS`; amendment of 2026-11-11), so it
+    holds no word the player typed. A CLICK command has `action`; a plain one has
     none. Until the keybind views map `action` to a slot, every view treats
     a kept CLICK binding as unseen (`unseen_commands`)."""
 
@@ -3626,16 +3641,18 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
     if isinstance(record, BindingsV5):
         if record.clicks_left_out:
             # The click bindings the action-button rule left out, for any of
-            # its reasons (shape, length, not a frame, the type, a secret or
-            # invalid slot; M16-45 round 2, domain 3).
+            # its reasons (shape, length, a button part that is not a mouse
+            # button or listed, not a frame, the type, a secret or invalid
+            # slot; M16-45 round 2, domain 3, and ADR-0026's 2026-11-11 rule).
             lines[1] += (
                 f"; {record.clicks_left_out} of them click bindings the action-button rule "
                 "left out (their names are not kept)"
             )
         lines.append(
             f"  click bindings: {_count(kept_clicks(record), 'action button')} kept, each with "
-            "the button's action slot when the bindings were read (for a paging bar, the slot "
-            "of the page shown then); the key views do not place them yet"
+            "the button's action slot when the bindings were read (the slot at that moment: "
+            "a bar's page, stance, form or vehicle can change it); the key views do not place "
+            "them yet"
         )
     return lines + _dropped_lines(record) + _probe_lines(record.probes) + _events(record)
 

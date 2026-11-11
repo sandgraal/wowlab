@@ -490,6 +490,137 @@ def test_m16_45_the_click_frame_lookup_is_the_one_exception() -> None:
     assert _render(tokens).count("clicksLeftOut = clicksLeftOut + 1") == 1
 
 
+# ADR-0026, amendment of 2026-11-11: the button part a kept CLICK command may
+# end in. The Lua patterns below are read from Actions.lua and translated
+# (only the classes they use), so the negative case runs the addon's own rule.
+_LUA_CLASSES = {"%a": "A-Za-z", "%w": "A-Za-z0-9", "%d": "0-9"}
+
+
+def _lua_pattern(pattern: str) -> re.Pattern[str]:
+    out, in_set, i = "", False, 0
+    while i < len(pattern):
+        two = pattern[i : i + 2]
+        if two in _LUA_CLASSES:
+            out += _LUA_CLASSES[two] if in_set else f"[{_LUA_CLASSES[two]}]"
+            i += 2
+            continue
+        assert pattern[i] != "%", pattern  # no other Lua class or escape
+        in_set = (in_set or pattern[i] == "[") and pattern[i] != "]"
+        out += pattern[i]
+        i += 1
+    return re.compile(out.removesuffix("$") + r"\Z")
+
+
+def _click_rule() -> tuple[re.Pattern[str], re.Pattern[str], tuple[str, ...]]:
+    """clickParts' command pattern, clickButton's digits pattern and its
+    mouse names, read from the rendered source the tests below pin."""
+    tokens = _render(_tokens(ADDON / CLICK_FRAME_FILE))
+    command = re.search(r'string \. find \( value , "(\^CLICK [^"]*)" \)', tokens)
+    digits = re.search(r'string \. find \( button , "(\^Button[^"]*)" \)', tokens)
+    assert command and digits, "clickParts or clickButton changed shape"
+    mouse = tuple(re.findall(r'button == "(\w+)"', tokens))
+    return _lua_pattern(command.group(1)), _lua_pattern(digits.group(1)), mouse
+
+
+def _clicks_kept_frame(command: str) -> str | None:
+    """What clickParts returns for `command`, by the addon's rule (the bar
+    list is pinned empty below)."""
+    whole, digits, mouse = _click_rule()
+    found = whole.match(command)
+    if found is None:
+        return None
+    frame, button = found.group(1), found.group(2)
+    if len(frame) > 64 or len(button) > 32:
+        return None
+    return frame if button in mouse or digits.match(button) else None
+
+
+def test_m16_45_click_button_part_is_a_mouse_name_or_on_the_bar_list() -> None:
+    """The button part is checked in clickParts, before clickAction looks the
+    frame up: a mouse-button name or a name on CLICK_BAR_BUTTONS, which is
+    empty, and nothing else."""
+    tokens = _render(_tokens(ADDON / CLICK_FRAME_FILE))
+    assert "local CLICK_BAR_BUTTONS = { }" in tokens
+    assert tokens.count("CLICK_BAR_BUTTONS") == 3  # its definition and clickButton's loop
+    assert (
+        "local function clickButton ( button ) "
+        'if button == "LeftButton" or button == "RightButton" or button == "MiddleButton" '
+        "then return true end "
+        'if string . find ( button , "^Button%d+$" ) then return true end '
+        "for i = 1 , # CLICK_BAR_BUTTONS do "
+        "if button == CLICK_BAR_BUTTONS [ i ] then return true end end "
+        "return false end"
+    ) in tokens
+    assert (
+        "if frameName and # frameName <= 64 and # button <= 32 and clickButton ( button ) "
+        "then return frameName end return nil end"
+    ) in tokens
+    assert tokens.count("clickButton (") == 2  # its definition and clickParts' call
+    _, _, mouse = _click_rule()
+    assert mouse == ("LeftButton", "RightButton", "MiddleButton")
+
+
+@pytest.mark.parametrize(
+    ("command", "kept"),
+    [
+        ("CLICK BT4Button13:LeftButton", "BT4Button13"),
+        ("CLICK BT4Button13:RightButton", "BT4Button13"),
+        ("CLICK BT4Button13:MiddleButton", "BT4Button13"),
+        ("CLICK BT4Button13:Button4", "BT4Button13"),
+        ("CLICK BT4Button13:Button" + "9" * 26, "BT4Button13"),
+        ("CLICK BT4Button13:Button" + "9" * 27, None),  # over 32 bytes
+        ("CLICK BT4Button13:Button", None),  # no digits
+        ("CLICK BT4Button13:button4", None),
+        ("CLICK BT4Button13:LeftButton2", None),
+        ("CLICK BT4Button13:Keybind", None),
+        ("CLICK BT4Button13:Left_Button", None),
+    ],
+    ids=lambda v: str(v)[:40],
+)
+def test_m16_45_constructed_click_button_parts(command: str, kept: str | None) -> None:
+    """Constructed boundary cases for the button part, through the addon's
+    own patterns."""
+    assert _clicks_kept_frame(command) == kept
+
+
+def test_m16_45_constructed_set_binding_click_with_a_made_up_word_stores_nothing() -> None:
+    """The negative case of the 2026-11-11 amendment, constructed:
+    `/run SetBindingClick("X", "BT4Button13", "Swordfish")` makes GetBinding
+    list `CLICK BT4Button13:Swordfish`. clickParts returns nil, so (by the
+    flow pinned in test_m16_45_the_click_frame_lookup_is_the_one_exception)
+    clickAction never runs, `name` stays nil, the command is counted in
+    clicks_left_out and commands_left_out, and nothing of it is stored."""
+    word = "Swordfish"
+    assert _clicks_kept_frame(f"CLICK BT4Button13:{word}") is None
+    assert _clicks_kept_frame("CLICK BT4Button13:LeftButton") == "BT4Button13"
+    tokens = _render(_tokens(ADDON / CLICK_FRAME_FILE))
+    # The only store of a CLICK command is `name = ns.String(click)`, reached
+    # only when clickAction returned an action for clickParts' frame; the
+    # record keeps `name`, never `click` or `found`.
+    assert tokens.count("ns . String ( click )") == 1
+    assert (
+        "local frameName = clickParts ( click ) if frameName then "
+        "action = clickAction ( isSecret , secret , attributeProbe , frameName ) end "
+        "if action then name = ns . String ( click ) "
+        "else clicksLeftOut = clicksLeftOut + 1 end end"
+    ) in tokens
+    assert "command = ns . String ( name ) , action = ns . Number ( action )" in tokens
+    assert word not in (ADDON / CLICK_FRAME_FILE).read_text(encoding="utf-8")
+
+
+def test_m16_45_click_bar_button_list_is_the_same_in_three_places() -> None:
+    """The bar-addon list is named in the README, in Actions.lua and in the
+    reader, and all three are empty until a ticket adds a captured name."""
+    from wowlab_core import labaddon
+
+    readme = README.read_text(encoding="utf-8")
+    head = "  | Bar addon | Button name | Capture |\n  |---|---|---|\n"
+    after = readme[readme.index(head) + len(head) :].split("\n", 1)[0]
+    assert not after.lstrip().startswith("|"), after  # no row yet
+    assert labaddon.CLICK_BAR_BUTTONS == ()
+    assert _click_rule()[2] == labaddon.CLICK_MOUSE_BUTTONS
+
+
 def test_dynamic_lookup_constructed_environment_reads() -> None:
     """Constructed inputs (boundary cases from the M11-37 security review):
     each line reaches a client global without `_G` or `getfenv` by name, and

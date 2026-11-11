@@ -28,7 +28,9 @@
 --               [verify], so `commands_left_out` counts only those it listed.
 --               Since schema 5 (M16-45; ADR-0026, amendment of 2026-10-22)
 --               one more shape is kept: `CLICK <frame>:<button>`, only when
---               the frame is an action button (clickAction below), with
+--               the frame is an action button (clickAction below) and the
+--               button part is a mouse-button name or on CLICK_BAR_BUTTONS
+--               (clickButton below; amendment of 2026-11-11), with
 --               `action`: the button's `action` attribute when the bindings
 --               were gathered (for a paging bar, the slot of the page shown
 --               then). Every other CLICK command
@@ -437,16 +439,44 @@ local function command(value)
     return nil
 end
 
--- A `CLICK <frame>:<button>` binding command (M16-45; ADR-0026, amendment of
--- 2026-10-22): its frame and button parts, when the command is exactly that
--- shape, with a frame part of at most 64 bytes and a button part of at most
--- 32; nil otherwise.
+-- The bar-addon button names a kept CLICK command may end in, besides the
+-- mouse-button names (ADR-0026, amendment of 2026-11-11). Empty: a name is
+-- added here, and to lab/addon/README.md ("Click bindings") and the reader's
+-- CLICK_BAR_BUTTONS, only by a ticket, once a capture has shown it.
+local CLICK_BAR_BUTTONS = {}
+
+-- Whether a CLICK command's button part may be kept (ADR-0026, amendment of
+-- 2026-11-11): a mouse-button name (LeftButton, RightButton, MiddleButton,
+-- or Button followed by digits) or a name on CLICK_BAR_BUTTONS.
+-- SetBindingClick takes any string as the button, so any other button part
+-- may be a word the player typed, and the command is left out.
+local function clickButton(button)
+    if button == "LeftButton" or button == "RightButton" or button == "MiddleButton" then
+        return true
+    end
+    if string.find(button, "^Button%d+$") then
+        return true
+    end
+    for i = 1, #CLICK_BAR_BUTTONS do
+        if button == CLICK_BAR_BUTTONS[i] then
+            return true
+        end
+    end
+    return false
+end
+
+-- A `CLICK <frame>:<button>` binding command (M16-45; ADR-0026, amendments of
+-- 2026-10-22 and 2026-11-11): its frame part, when the command is exactly
+-- that shape, with a frame part of at most 64 bytes and a button part of at
+-- most 32 that clickButton keeps; nil otherwise. The button is checked here,
+-- before the frame is looked up, so a command it refuses reads nothing from
+-- its frame.
 local function clickParts(value)
     if type(value) ~= "string" then
         return nil
     end
     local _, _, frameName, button = string.find(value, "^CLICK ([%a_][%w_]*):(%a%w*)$")
-    if frameName and #frameName <= 64 and #button <= 32 then
+    if frameName and #frameName <= 64 and #button <= 32 and clickButton(button) then
         return frameName
     end
     return nil

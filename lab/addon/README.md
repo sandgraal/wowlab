@@ -125,8 +125,10 @@ Schema 5 (M16-45) is schema 4, quieter, with one more kind of binding:
   addon never writes one) reads "whether any value was dropped is not
   recorded";
 - `bindings` keeps a `CLICK <frame>:<button>` command when the frame is an
-  action button, with `action`: the button's `action` attribute when the bindings were gathered (for a
-  paging bar, the slot of the page shown then). It counts every other `CLICK` command in `clicks_left_out` as well
+  action button and the button part is a mouse-button name or on the
+  bar-addon list ("Click bindings" below), with `action`: the button's
+  `action` attribute when the bindings were gathered (for a paging bar, the
+  slot of the page shown then; see "Click bindings"). It counts every other `CLICK` command in `clicks_left_out` as well
   as `commands_left_out`. Until the keybind views map `action` to a slot,
   every view (`binds coach`, `binds list`, `char binds`, the macro checks)
   treats a kept `CLICK` command as unseen and counts it with the left-out
@@ -494,7 +496,12 @@ Notes on the fields:
   is kept: a command `c` that `GetBinding` lists, that passes the secret
   check, and for which all three hold:
   1. `c` matches `^CLICK ([%a_][%w_]*):(%a%w*)$`, with a frame part of at
-     most 64 bytes and a button part of at most 32;
+     most 64 bytes and a button part of at most 32, and (amendment of
+     2026-11-11) the button part is `LeftButton`, `RightButton`,
+     `MiddleButton`, `Button` followed by digits (`^Button%d+$`), or a name
+     on the bar-addon list in "Click bindings" below. The addon checks the
+     button part before it looks the frame up, so a command it refuses here
+     reads nothing from its frame;
   2. `f = _G[frame]` is a table, and `pcall(f.GetAttribute, f, "type")`
      returns exactly `"action"`. The addon first checks that `f[0]`, read
      with `rawget` (no metatable), is the client's userdata, so only a real
@@ -518,6 +525,32 @@ Notes on the fields:
   that ruling.
   Whether `GetBinding` lists `CLICK` commands at all is **[verify]**: the
   schema-5 capture settles it (`docs/handoffs/M16-45.md`).
+
+  **Click bindings.**
+
+  *The button part.* `SetBindingClick(key, frame, button)` takes any string
+  as `button`, so `/run SetBindingClick("X", "<bar button>", "<a word>")`
+  would bind a key to a real action button with a word the player typed as
+  its button part. The addon keeps a button part only when it is a
+  mouse-button name (`LeftButton`, `RightButton`, `MiddleButton`, or
+  `Button` followed by digits) or a name on the bar-addon list below. Any
+  other button part sends the command to `clicks_left_out` (and
+  `commands_left_out`), and nothing of it is stored. The Lab's reader
+  refuses a record whose kept `CLICK` command ends in any other button part.
+
+  *The bar-addon list.* A bar addon's own button name is added here only by
+  a ticket, once a capture has shown it, and in the same change to
+  `CLICK_BAR_BUTTONS` in `WowLab/Actions.lua` and in
+  `wowlab_core.labaddon` (a test keeps the three equal). The list is empty:
+
+  | Bar addon | Button name | Capture |
+  |---|---|---|
+
+  *The slot.* The stored `action` is the slot the button's `action`
+  attribute named when the bindings were gathered. On a paged or
+  stance-aware bar it changes with the bar page, the stance, the form or a
+  vehicle, so a reader never presents it as the button's fixed slot: it is
+  the slot at gather time.
 - `probe.lost` is set when `WowLabCharDB` loaded as a table without a probe,
   for that load only; a later load that finds the probe clears it. A first
   load and a file that failed to load both show `loads = 1`.
