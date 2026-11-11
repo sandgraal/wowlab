@@ -27,9 +27,20 @@ What is graded
   allowlist root, a lone surrogate) in any of them is damaged: `history()` raises `GuardError` and nothing in the install or the
   store changes. `paths_left` and `paths_refused` are M16-84T's.
 - `flavor_path` is absolute by design and is not checked for that here. It
-  must hold no control character (C0, DEL or C1) and no bidi control
-  character, since `undo`'s plan header prints it. Its absoluteness is
-  graded nowhere in this file.
+  must hold no C0, DEL, C1, Cf, Zl or Zp character (owner ruling
+  2026-11-11, "2 yes", §6.10 (e); `undo`'s plan header prints it). Its
+  absoluteness is graded nowhere in this file.
+- The write gate agrees (§6.10 (e)): `transaction()`, and `undo()` of an
+  earlier record, on a flavor whose absolute path holds such a character
+  raise `GuardError` before any snapshot or journal record, with the install
+  and the store unchanged and no new journal file. The path checked is the
+  resolved one that would be journaled, so a clean symlink to such a folder
+  is refused too, and a dry run refuses as well. The set is C0, DEL, C1,
+  `svmerge._FORMAT_CHARACTERS` and lone surrogates (§6.10 (e), be19c9b on
+  docs/owner-answer-undo-crash); a lone surrogate is skipped where the
+  platform cannot make such a path. A flavor path with
+  ordinary non-ASCII letters is still accepted by the gate and by
+  `history()`.
 - A damaged record is an error, never skipped: a damaged older record under
   a sound newer one still makes `history()` raise.
 - Positive controls: the record the gate itself wrote (one new file in two
@@ -248,8 +259,29 @@ HOSTILE_FLAVOR_PATH: tuple[tuple[str, str, str], ...] = (
     ("folder-bidi-override", "folder", "\u202e"),
     ("folder-bidi-isolate", "folder", "\u2067"),
     ("folder-bidi-embedding", "folder", "\u202b"),
+    # The owner's ruling of 2026-11-11 ("2 yes", \u00a76.10 (e)): every C0, DEL,
+    # C1, Cf, Zl and Zp character, the bidi marks included.
+    ("folder-lrm", "folder", "\u200e"),
+    ("folder-rlm", "folder", "\u200f"),
+    ("folder-arabic-letter-mark", "folder", "\u061c"),
+    ("folder-lre", "folder", "\u202a"),
+    ("folder-pdf", "folder", "\u202c"),
+    ("folder-lro", "folder", "\u202d"),
+    ("folder-lri", "folder", "\u2066"),
+    ("folder-fsi", "folder", "\u2068"),
+    ("folder-pdi", "folder", "\u2069"),
+    ("folder-line-separator", "folder", "\u2028"),
+    ("folder-paragraph-separator", "folder", "\u2029"),
+    ("folder-zero-width-space", "folder", "\u200b"),
+    ("folder-bom", "folder", "\ufeff"),
+    ("folder-soft-hyphen", "folder", "\u00ad"),
+    ("folder-invisible-plus-u2065", "folder", "\u2065"),
+    ("folder-tag-character", "folder", "\U000e0041"),
+    ("folder-lone-low-surrogate", "folder", "\udc80"),
+    ("folder-lone-high-surrogate", "folder", "\ud800"),
     ("install-terminal-clear", "install", "\x1b[2J"),
     ("install-bidi-override", "install", "\u202e"),
+    ("install-lone-surrogate", "install", "\udcff"),
 )
 
 
@@ -281,6 +313,35 @@ def test_constructed_a_flavor_path_with_a_control_or_bidi_character_is_damaged(
     raw["flavor_path"] = str(hostile)
     write_record(file, raw)
     assert_history_refuses(guard, store, world)
+
+
+def forbidden_flavor_characters() -> list[int]:
+    """The whole set §6.10 (e) names: C0, DEL, C1, the pinned table
+    `svmerge._FORMAT_CHARACTERS`, and lone surrogates (both ends of each
+    half, and the bytes a POSIX name that is not UTF-8 decodes to)."""
+    from wowlab_core import svmerge
+
+    codes = [*range(0x00, 0x20), 0x7F, *range(0x80, 0xA0)]
+    codes += [c for lo, hi in svmerge._FORMAT_CHARACTERS for c in range(lo, hi + 1)]
+    codes += [0xD800, 0xDBFF, 0xDC00, 0xDC80, 0xDCFF, 0xDFFF]
+    assert 0x2065 in codes and 0x202E in codes and 0x2028 in codes, "the pinned table"
+    return codes
+
+
+@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
+def test_constructed_every_forbidden_character_in_a_flavor_path_is_damaged(
+    guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
+) -> None:
+    """Every character of the set, one at a time, in the flavor folder's
+    name: each makes the record damaged. The gate's record is restored byte
+    for byte between characters."""
+    store, file, raw = gate_record(guard, tmp_path, flavor)
+    original = file.read_bytes()
+    for code in forbidden_flavor_characters():
+        raw["flavor_path"] = str(flavor.path.parent / f"{flavor.path.name}{chr(code)}")
+        write_record(file, raw)
+        assert_history_refuses(guard, store, world)
+        file.write_bytes(original)
 
 
 # ─── a damaged record is never skipped ───────────────────────────────────────
@@ -354,3 +415,185 @@ def test_constructed_created_allowlist_roots_still_read(
         "Interface/AddOns/NewThing",
     )
     assert G.content(world) == install_before
+
+
+# ─── the gate refuses such a flavor (owner ruling 2026-11-11, §6.10 (e)) ─────
+
+# (id, the character). A C0 character cannot be in a Windows file name, so
+# that case is POSIX only; the others are legal names on every platform.
+GATE_HOSTILE: tuple[tuple[str, str], ...] = (
+    ("c0-escape", "\x1b"),
+    ("c1-csi", "\x9b"),
+    ("bidi-override", "\u202e"),
+    ("rlm", "\u200f"),
+    ("line-separator", "\u2028"),
+    # What a POSIX file name with a byte that is not UTF-8 decodes to.
+    ("lone-surrogate", "\udc80"),
+)
+GATE_PARAMS = [
+    pytest.param(
+        c,
+        id=f"constructed-{n}",
+        marks=[pytest.mark.skipif(sys.platform == "win32", reason="no C0 in a Windows name")]
+        if c < " "
+        else [],
+    )
+    for n, c in GATE_HOSTILE
+]
+# A snapshot manifest cannot hold a lone surrogate (it is not valid JSON
+# text for the manifest's parser), so no record that `undo()` could act on
+# names such an install; on main `undo()` already refuses the planted one
+# for that reason. The undo grader leaves that case out.
+UNDO_PARAMS = [p for p in GATE_PARAMS if not any(0xD800 <= ord(c) <= 0xDFFF for c in p.values[0])]
+
+
+def moved_install(world: Path, flavor: Flavor, parent_name: str) -> tuple[Path, Flavor]:
+    """Move the synthetic install (with the folder beside it) under a new
+    folder named `parent_name`; return the new world and the same flavor
+    there. The flavor's absolute path then holds `parent_name`."""
+    parent = world.parent / parent_name
+    try:
+        parent.mkdir()
+    except (OSError, UnicodeError) as exc:
+        if not any(0xD800 <= ord(c) <= 0xDFFF for c in parent_name):
+            raise
+        pytest.skip(f"this platform cannot make a path holding a lone surrogate: {exc!r}")
+    moved = parent / world.name
+    world.rename(moved)
+    new_path = moved / flavor.path.relative_to(world)
+    return moved, flavor.model_copy(update={"path": new_path})
+
+
+def journal_files(store: Path) -> set[str]:
+    return {p.name for p in (store / "journal").iterdir()}
+
+
+def assert_transaction_refused(
+    guard: Any, odd: Flavor, moved: Path, store: Path, *, dry_run: bool
+) -> None:
+    install_before, store_before = G.content(moved), G.content(store)
+    journal_before = journal_files(store)
+    with (
+        pytest.raises(guard.GuardError) as raised,
+        guard.transaction(odd, label="refused", store=store, dry_run=dry_run) as tx,
+    ):
+        tx.write(CONFIG, NEW_CONFIG)
+    assert type(raised.value).__name__ not in {"GuardBusyError", "ChangedSinceSnapshotError"}
+    assert G.content(moved) == install_before, "the refused transaction touched the install"
+    assert G.content(store) == store_before, "the refused transaction touched the store"
+    assert journal_files(store) == journal_before, "the refused transaction journaled"
+
+
+@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
+@pytest.mark.parametrize(
+    "dry_run",
+    [pytest.param(False, id="constructed-write"), pytest.param(True, id="constructed-dry-run")],
+)
+@pytest.mark.parametrize("char", GATE_PARAMS)
+def test_constructed_transaction_refuses_a_flavor_path_with_a_forbidden_character(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    flavor: Flavor,
+    idle: None,
+    char: str,
+    dry_run: bool,
+) -> None:
+    """A store with one sound record (of the install at its plain path); the
+    install is then moved under a folder whose name holds `char`. A
+    transaction on it, a dry run included, raises `GuardError` before any
+    snapshot or journal record: install and store unchanged, no new journal
+    file. The earlier record is left as the gate wrote it, so it cannot be
+    the reason."""
+    store, _, _ = gate_record(guard, tmp_path, flavor)
+    moved, odd = moved_install(world, flavor, f"odd{char}folder")
+    assert char in str(odd.path) and odd.path.is_dir()
+    assert_transaction_refused(guard, odd, moved, store, dry_run=dry_run)
+
+
+@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
+@pytest.mark.parametrize(
+    "dry_run",
+    [pytest.param(False, id="constructed-write"), pytest.param(True, id="constructed-dry-run")],
+)
+def test_constructed_transaction_refuses_a_clean_symlink_to_a_forbidden_path(
+    guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None, dry_run: bool
+) -> None:
+    """What is checked is the resolved flavor path that would be journaled,
+    install root included, never the caller's spelling (§6.10 (e)): the
+    flavor is reached through `clean`, a symlink whose target folder's name
+    holds U+202E. The spelling the caller passes is clean; the transaction
+    is refused all the same, with nothing journaled and the store
+    unchanged."""
+    store, _, _ = gate_record(guard, tmp_path, flavor)
+    moved, odd = moved_install(world, flavor, "odd\u202efolder")
+    clean = tmp_path / "clean"
+    G.symlink_or_skip(clean, moved.parent, is_dir=True)
+    via_link = flavor.model_copy(update={"path": clean / moved.name / odd.path.relative_to(moved)})
+    assert "\u202e" not in str(via_link.path) and via_link.path.is_dir()
+    assert "\u202e" in str(via_link.path.resolve())
+    assert_transaction_refused(guard, via_link, moved, store, dry_run=dry_run)
+
+
+@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
+@pytest.mark.parametrize("char", UNDO_PARAMS)
+def test_constructed_undo_refuses_a_flavor_path_with_a_forbidden_character(
+    guard: Any,
+    tmp_path: Path,
+    world: Path,
+    install_root: Path,
+    flavor: Flavor,
+    idle: None,
+    char: str,
+) -> None:
+    """A record the gate wrote; the install is then moved under a folder
+    whose name holds `char`, and the record's `flavor_path` and
+    `install_root` and its pre-write snapshot's `install_root` follow it
+    (what a gate without the check would have written there; with the plain
+    path left in the manifest, `undo()` on main refuses for that mismatch
+    instead). `undo()` raises `GuardError` before any snapshot or journal
+    record: install and store unchanged, no new journal file."""
+    store, file, raw = gate_record(guard, tmp_path, flavor)
+    moved, odd = moved_install(world, flavor, f"odd{char}folder")
+    for key in ("flavor_path", "install_root"):
+        assert raw[key].startswith(str(world)), (key, raw[key])
+        raw[key] = str(moved) + raw[key][len(str(world)) :]
+    assert raw["flavor_path"] == str(odd.path)
+    write_record(file, raw)
+    manifest = SnapshotStore(store).manifests_dir / f"{raw['snapshot_id']}.json"
+    data = json.loads(manifest.read_bytes().decode("utf-8"))
+    assert data["install_root"] == str(world / install_root.name), data["install_root"]
+    data["install_root"] = str(moved / install_root.name)
+    manifest.write_bytes((json.dumps(data, ensure_ascii=True, indent=1) + "\n").encode("ascii"))
+    install_before, store_before = G.content(moved), G.content(store)
+    journal_before = journal_files(store)
+    with pytest.raises(guard.GuardError) as raised:
+        guard.undo(store=store)
+    assert type(raised.value).__name__ not in {"GuardBusyError", "ChangedSinceSnapshotError"}
+    assert G.content(moved) == install_before, "the refused undo touched the install"
+    assert G.content(store) == store_before, "the refused undo touched the store"
+    assert journal_files(store) == journal_before, "the refused undo journaled"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("W\u00f6rld", id="constructed-latin-umlaut"),
+        pytest.param("\u9b54\u517d\u4e16\u754c", id="constructed-cjk"),
+    ],
+)
+def test_constructed_a_flavor_path_with_ordinary_non_ascii_letters_is_accepted(
+    guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None, name: str
+) -> None:
+    """Control: an install under a folder named with ordinary non-ASCII
+    letters is written by the gate, and its record reads back through
+    `history()` with that `flavor_path`."""
+    _, odd = moved_install(world, flavor, name)
+    store = tmp_path / "store"
+    with guard.transaction(odd, label="letters", store=store) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    assert (odd.path / CONFIG).read_bytes() == NEW_CONFIG
+    record = record_for(guard, SnapshotStore(store), "letters")
+    assert record.state == "committed"
+    assert Path(record.flavor_path) == odd.path
+    assert name in record.flavor_path
