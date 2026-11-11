@@ -10,6 +10,10 @@ Client: not running
 Snapshot store: <tmp>/userdata/wowlab/store
   1 snapshot(s) that load; none damaged
   no transactions in the journal
+Next steps:
+  Lab-addon: not installed. Close the game, then run `wowlab addon install lab`.
+  Characters recorded: 2.
+  Combat log: present (1 under Logs/).
 Notes:
   - Which other *-cache files server sync replaces at login, besides key
     bindings, macros and settings, is not known.

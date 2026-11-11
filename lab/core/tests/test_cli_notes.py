@@ -370,8 +370,9 @@ def test_doctor_with_problems_matches_its_snapshot_constructed(
     make: Callable[[str], Path], tmp_path: Path
 ) -> None:
     """Constructed (boundary): a manifest in the store that does not load.
-    The footer comes after the problems, the report's last lines (conductor's
-    ruling, 2026-11-06); doctor exits 1, as `problems` in --json says."""
+    The footer comes after the problems (conductor's ruling, 2026-11-06),
+    and after the next steps that end the report (M16-37, LAB_PLAN §18.1
+    item 5); doctor exits 1, as `problems` in --json says."""
     make("macos")
     _past_first_run(("doctor",))
     manifests = tmp_path / "userdata" / "wowlab" / "store" / "manifests"
@@ -380,7 +381,9 @@ def test_doctor_with_problems_matches_its_snapshot_constructed(
     assert result.exit_code == 1
     lines = result.stdout.splitlines()
     assert FOOTER.fullmatch(lines[-1])
-    assert lines[-3:-1] == ["Problems:", "  1 damaged snapshot manifest(s)"]
+    steps = lines.index("Next steps:")
+    assert lines[steps - 2 : steps] == ["Problems:", "  1 damaged snapshot manifest(s)"]
+    assert all(line.startswith("  ") for line in lines[steps + 1 : -1])
     _snapshot(
         "macos-doctor-problems-constructed.txt",
         # Why the manifest does not load is the JSON library's message, which

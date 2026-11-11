@@ -83,5 +83,31 @@
     }
   },
   "problems": [],
-  "first_run": null
+  "first_run": null,
+  "next_steps": [
+    {
+      "item": "lab_addon",
+      "flavor_folder": "_classic_beta_",
+      "state": "missing",
+      "count": null,
+      "detail": null,
+      "fix": "Close the game, then run `wowlab addon install lab`."
+    },
+    {
+      "item": "characters",
+      "flavor_folder": "_classic_beta_",
+      "state": "ok",
+      "count": 2,
+      "detail": null,
+      "fix": null
+    },
+    {
+      "item": "combat_log",
+      "flavor_folder": "_classic_beta_",
+      "state": "ok",
+      "count": 1,
+      "detail": null,
+      "fix": null
+    }
+  ]
 }

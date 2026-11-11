@@ -13,4 +13,8 @@ Snapshot store: <tmp>/userdata/wowlab/store
   no transactions in the journal
 Problems:
   1 damaged snapshot manifest(s)
+Next steps:
+  Lab-addon: not installed. Close the game, then run `wowlab addon install lab`.
+  Characters recorded: 2.
+  Combat log: present (1 under Logs/).
 2 notes: --notes shows them
