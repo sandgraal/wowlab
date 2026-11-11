@@ -8636,7 +8636,6 @@ _NOTHING_TO_PUT_BACK_UNFINISHED = (
     f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
     "reporting that change"
 )
-_NOTHING_LINES = frozenset({_NOTHING_TO_PUT_BACK, _NOTHING_TO_PUT_BACK_UNFINISHED})
 
 
 def _read_detail(flavor_path: Path, rel: str) -> bytes:
@@ -9647,12 +9646,15 @@ def undo(
         )
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
-    done = report(applied=True, transaction=guard.history()[-1].id)
+    undone = guard.history()[-1]
+    done = report(applied=True, transaction=undone.id)
     if json_out:
         _emit(done)
         return
-    if not _NOTHING_LINES.isdisjoint(plan_lines):
-        # No file changed, so no login note applies (`--json` keeps them).
+    if not undone.paths:
+        # Judged from the undo's own record, not the plan: a file rewritten
+        # while the prompt waited is put back and listed there. No file
+        # changed, so no login note applies (`--json` keeps them).
         _say(
             "Undone; no file needed changing. This undo is journaled, but there is nothing "
             "for `wowlab undo` to reverse."
