@@ -414,8 +414,8 @@ def test_install_show_not_found_names_what_could_not_be_checked(
     assert result.exit_code == 1
     assert f"could not check: {a_file} (not a directory)" in result.stderr
     assert (
-        f"no WoW install found where the game installs by default (could not check: {a_file}"
-        in (result.stderr)
+        "no WoW install found where the game installs by default "
+        "(1 location checked, listed below)" in result.stderr
     )
     assert "--root" in result.stderr and "WOWLAB_WOW_ROOT" in result.stderr
 
