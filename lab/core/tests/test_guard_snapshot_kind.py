@@ -23,7 +23,10 @@ What is graded
   dry run creating no manifest at all, and the store's layout: its root
   holds exactly today's entries and its directories only what the manifests
   and records name, so the kind is not kept in an index or a second copy
-  beside the manifests (security-reviewer finding, PR #333).
+  beside the manifests (security-reviewer finding, PR #333). One exception
+  to "nothing changes": under §6.10 (a1) the record of the undo scenario
+  also carries `undoes`, the id of the record it undoes. That case is graded
+  here as `xfail(strict)` until M16-69 activates it by deleting the marker.
 
 `snap create` recording `kind="user"` is graded through the CLI in
 `test_cli_snap_kind.py`.
