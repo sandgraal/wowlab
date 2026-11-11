@@ -1529,6 +1529,7 @@ Such a record changed no player file: at most it removed leftover temps. So skip
 - K's `paths` and `created_dirs` must both be empty. A record that lists a path or a created folder is never passed over, whatever it says about snapshots.
 - A record that closes K is passed over only if it too has no `paths`, no `created_dirs` and no snapshot.
 - Any number of such records in a row are passed over.
+- `undo` closes a record without restoring anything only when that record would be passed over once closed: no snapshot, no `paths` and no `created_dirs`. Any other record without a readable snapshot is refused as before, and nothing changes.
 
 What follows from this:
 - **A killed transaction.** After its record K is closed, the target is the newest record before K that is not passed over. If that record D is still `open` or `rollback_incomplete`, `doctor` reports D as (a1) describes for a killed undo. It gives D's own `wowlab undo --expect <D id>` line, names K as stopped before it changed anything, and exits 1 until D is undone. If D is settled, `doctor` has no problem.
