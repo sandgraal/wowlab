@@ -1049,10 +1049,12 @@ Found 2026-10-18 in the code review of #280 (M13-50). `gaps.py` and `Symlink.ent
 
 ---
 
-## [ ] M13-70 — `labaddon.ActionBars` admits duplicate and out-of-range slots
+## [x] M13-70 — `labaddon.ActionBars` admits duplicate and out-of-range slots
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the code review of #287 (M14-06), on `main` before it. `labaddon.ActionBars` (`labaddon.py` ~1174) accepts duplicate slot numbers, slots outside `first_slot..last_slot`, and `first_slot > last_slot`; code built on it silently keeps the last duplicate (`bindscoach.py` ~529 on `main`, the keep-the-last dict at ~536; and `keymap.join`'s `filled` dict once #287 merges). No real capture has shown one. Decide whether the reader should refuse these (a record error, the section marked unread with the reason) or keep them with a note; labelled constructed tests either way; the fixtures' reads byte-identical.
+
+*Decision (2026-11-11, #482):* refuse. A duplicate slot, a slot outside `first_slot..last_slot`, or `first_slot > last_slot` makes the whole record a `LabAddonError`. The reader shows it as the character's record error, with the reason. This follows the reader's pattern for every rule the addon guarantees. `Actions.lua` walks each slot once, so a real file never trips the check. `Gear` has the same gap; M16-106 covers it.
 
 **Acceptance:** the decision stated in the report and recorded here by the conductor; the tests pass; byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
@@ -1503,7 +1505,7 @@ The same session runs the binding and macro persistence tests (`docs/handoffs/M1
 
 ---
 
-## [ ] M16-06 — The lab-addon's staleness is visible
+## [x] M16-06 — The lab-addon's staleness is visible
 **Size:** S · **Depends on:** nothing · **Sources:** addon-author:F5, F11 (EV-04)
 
 - `doctor` compares the installed `WowLab.toc` interface with the one derived from discovery. When they differ, it names `wowlab addon install lab`.
@@ -2021,6 +2023,15 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 **Before dispatch:** `domain-reviewer` checks ADR-0026's `CLICK` premise. Some addons (GSE, for example) name secure buttons after text the player typed, so a `CLICK <name>:<button>` can carry it. If so, the ticket stores the command only when the frame belongs to an installed addon's declared frames, or the owner rules again.
 
 **Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
+
+*Pre-dispatch domain check (2026-11-11):* the premise was ruled on 2026-10-22, and that ruling excludes the GSE case. It can be dispatched as a continuation of draft #379. That draft is 100 commits behind main. It has a merge conflict in `labaddon.py` and must follow M16-16 and M16-22. Amendments:
+- The stored `action` is the slot at gather time. On a paged or stance-aware bar it depends on the page, stance, form or vehicle. Neither the reader nor M16-46 presents it as fixed.
+- The positive capture binds a key on bar 2 or higher, confirmed in game with `/dump GetBindingAction`. An override binding (ElvUI, Dominos) never appears in `GetBinding`. If `GetBinding` does not list `CLICK` at all, report that and do not build a key-by-key walk.
+- The reader, coach and CLI half of #379 (`labaddon`, `keymap`, `bindscoach`, `macrocheck`, `cli`) belongs to this ticket, as M16-55 assumes.
+- The negative-case capture's `bindings-cache.wtf` holds a typed name and is never committed (#379's runbook).
+- **Owner, before merge:**
+  - accept ADR-0026's 2026-10-22 amendment, which is still Proposed;
+  - rule whether the `<button>` part of a kept `CLICK` is restricted to mouse-button names, plus bar-addon names seen in a capture, or kept as is with the leak stated in the ADR. A `/run SetBindingClick(key, "<bar button>", "<typed word>")` would otherwise store the typed word.
 
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
@@ -2651,7 +2662,7 @@ Make the result and its `notes` decide from the same paths the plan lists.
 
 **Acceptance:** a pinned test of that case in text and `--json`, with the plan and result agreeing. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-103 — The login notes lead with the files actually listed
+## [x] M16-103 — The login notes lead with the files actually listed
 **Size:** XS · **Depends on:** M16-101 · **Sources:** the M16-97 merge (#468), conductor note; the batch-7 code review (#473)
 
 `cli._RELOGIN` and `profiles.LOGIN_NOTE` both state what the client does with `Config.wtf` at its next start. They do so even when the plan lists only `*-cache` files, where that sentence is about a file the plan does not touch. Change the wording to fit the set:
@@ -2670,7 +2681,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 # M16 follow-ups found in review (filed 2026-11-11, eighth batch)
 
-## [ ] M16-104 — The bidi scan reads what git commits for a symlink
+## [x] M16-104 — The bidi scan reads what git commits for a symlink
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-89 security review (#478, LOW, pre-existing)
 
 `tests/repo/test_bidi_controls.py` reads each tracked path from the checkout, and only when `path.is_file()` is true. For a symlink (git mode 120000), the bytes git commits are the link's target text. A broken link is skipped. A working link is followed, so its target file is scanned instead. Either way, a bidi control in a link's target text passes. On a docs-only PR, `docs/evil.md` can be such a link. Fix: list entries with `git ls-files -s -z`. For a mode-120000 entry, run the check on `os.readlink(path)`, or on the blob, and never follow the link.
@@ -2697,3 +2708,18 @@ Since M16-102, the undo result gives the login caveat for every `Config.wtf` or 
 - A dated LAB_PLAN amendment beside M16-97's, recording two rules: the result follows what the undo wrote, and a file written after the plan is named after the write.
 
 Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-11, ninth batch)
+
+## [ ] M16-106 — `labaddon.Gear` refuses duplicate and out-of-range slots
+**Size:** XS · **Depends on:** nothing · **Sources:** the M13-70 code review (#482)
+
+`labaddon.Gear` (`labaddon.py` near line 640) has the same unchecked `first_slot`, `last_slot` and `slots` that M13-70 closed for `ActionBars`. `Gear.lua` walks `for slot = first, last` once, appending only the slot it is on, so a real file never holds a duplicate. A hand-edited one would print a duplicated slot twice in `char gear`, text and `--json`, and would give the dressing-room builder two items for one slot. Apply the same refusal as M13-70.
+
+**Acceptance:**
+- Labelled constructed tests: a duplicate, a slot outside the walk, and a backwards range.
+- Real-fixture reads byte-identical before and after.
+- `make ci` green.
+- The change listed as user-facing (a record error).
+
+Reviewed by `code-reviewer`.
