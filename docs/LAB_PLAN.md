@@ -1612,6 +1612,13 @@ completeness; their behaviour is specified in §13.
 it is implied. Every command that prints data has `--json`. Exit codes:
 0 ok, 1 error, 2 usage, 3 refused by guard.
 
+*Amended 2026-11-11 (owner decision in session, M16-114):* the owner's install has two flavors, `_classic_beta_` and `_forever_`. `wowlab ui`'s Character tab then showed only "choose one with --flavor", with no way to choose, and his characters could not be reached. "The app should find my characters if it knows where my wow install is."
+- **`WOWLAB_FLAVOR`.** It names the flavor folder when `--flavor` is not given, as `WOWLAB_WOW_ROOT` names the root. `--flavor` wins over it. A value that names no flavor of the install is an error that lists the flavors.
+- **`char list` without `--flavor`** on an install with several flavors lists the characters of every flavor, each row labelled with its flavor folder. `--json` gains a `flavor` field per character. The other `char` commands still need one flavor. When only one flavor has any character folder (in `--account`'s account, when it is given), and every other flavor could be read and has none, they use that flavor and print one line saying so: `wowlab: using <folder> (<version>), the only flavor with character folders (--flavor picks another)`. A flavor wowlab could not look inside counts as unknown, and the several-flavors error stands. `CharGearReport` gains `flavor_folder`, just before `dressing` (which stays last), as the other `char` reports carry it (review of 2026-11-11).
+- **Write commands.** A command that writes (through `guard`) never picks a flavor by itself. With several flavors and no `--flavor` or `WOWLAB_FLAVOR`, it fails as today. The error now lists each flavor with the exact command line to copy.
+- **`wowlab ui`** shows a flavor picker in its header when the install has more than one flavor. Every run from every tab passes the picked flavor as `--flavor`. The picker starts on the only flavor that has characters, else on the first flavor whose `.build.info` row has a version, else on the first flavor. It keeps the choice while the page is open. With one flavor, the picker is not shown.
+
+
 *Amended 2026-09-27 (owner decision after the PR #68 reviews):* a
 whole-snapshot `wowlab snap restore` (no `--paths`) skips every file whose
 file-map row has Edit `no`: files the client writes (`*.bak`, `.old`),

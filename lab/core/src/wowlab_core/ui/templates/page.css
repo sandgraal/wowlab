@@ -151,6 +151,13 @@ button, select, input, textarea { font: inherit; color: var(--text); }
 }
 .banner p { margin: var(--space-1) 0 0; color: var(--text-muted); font-size: 15px; line-height: 22px; max-width: 46rem; }
 .banner .tabs { align-self: flex-end; }
+/* The flavor every run uses, shown only with several flavors (M16-114). */
+.run-flavor {
+  display: inline-flex; align-items: center; gap: var(--space-2); padding-bottom: var(--space-4);
+  font-family: var(--font-display); font-size: 15px; line-height: 20px; font-weight: 500; letter-spacing: 0.05em;
+  color: var(--brass);
+}
+.run-flavor[hidden] { display: none; }
 .tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .tab {
   padding: var(--space-2) var(--space-4) calc(var(--space-2) + 2px); cursor: pointer;
@@ -197,7 +204,7 @@ main { padding: var(--space-5) var(--space-6) var(--space-7); }
   color: var(--brass);
 }
 .toolbar label[hidden] { display: none; }
-.toolbar select, .toolbar input, .field input, .field textarea {
+.toolbar select, .toolbar input, .field input, .field textarea, .run-flavor select {
   background: var(--surface-sunken); border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2); min-height: 32px;
   font-family: var(--font-serif); font-size: 15px; line-height: 22px; font-weight: 400; letter-spacing: normal;
