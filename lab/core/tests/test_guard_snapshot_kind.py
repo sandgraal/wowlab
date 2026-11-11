@@ -356,7 +356,6 @@ JOURNAL_SCENARIO_PARAMS = [
     pytest.param(
         name,
         id=f"constructed-{name}",
-        marks=pytest.mark.xfail(strict=True, reason="M16-69 not implemented"),
     )
     if name == "undo"
     else pytest.param(name, id=f"constructed-{name}")
