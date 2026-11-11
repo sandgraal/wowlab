@@ -146,7 +146,13 @@ store, looked up by that hash (the store checks content against the name, so
 a manifest cannot substitute other bytes). A path that already holds its
 pre-transaction bytes needs nothing; a path someone else changed is left as
 it is, named in the record's note and in the error, and the record ends
-`rollback_incomplete`. Rollback therefore never overwrites content that no
+`rollback_incomplete`. The record also lists those paths in `paths_left`
+(M16-84), flavor-relative and spelled as `paths` spells them: a path the
+rollback could not put back, or a refused path whose disk moved since guard
+read it; never a directory it could not remove. Paths whose only operation
+was refused are journaled under `paths_refused`, so a `paths_left` entry
+that `paths` does not name is vouched for by that key alone, never by the
+note, which is not parsed. Rollback therefore never overwrites content that no
 snapshot holds and this transaction did not write. The record says
 `rolled_back` only if all of that succeeded. A `restore` that fails after
 changing a path leaves the transaction unable to commit: it rolls back on
@@ -202,7 +208,7 @@ from pathlib import Path, PureWindowsPath
 from types import TracebackType
 from typing import Literal, NoReturn, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator, model_validator
 
 from wowlab_core import longpath, process
 from wowlab_core import snapshot as _snapshots
@@ -318,6 +324,11 @@ _MAX_NAME_BYTES = 255
 _JOURNAL_DIR = "journal"
 _JOURNAL_FORMAT = 2
 # Format 1 is what the M10-11 gate wrote: no temp paths, no cleanup.
+# Format 2 gained `paths_left` and `paths_refused` (M16-84) without a new
+# number: each is written only when it is not empty, so a record with nothing
+# left alone or refused is byte for byte what the M16-71 gate wrote, and a
+# gate from before M16-84 refuses a record that carries either key as damaged
+# (its records forbid unknown keys) rather than reading it without the list.
 _READABLE_FORMATS = frozenset({1, _JOURNAL_FORMAT})
 _RECORD_NAME = re.compile(r"\A([0-9]{8})-[0-9a-f]{8}\.json\Z")
 _MAX_RECORD_BYTES = 64 << 20
@@ -414,6 +425,13 @@ class HistoryRecord(_Frozen):
     temps_left: tuple[str, ...]
     """Temp paths earlier records name that this one left alone: they failed a
     check, or their removal failed."""
+    paths_left: tuple[str, ...] = ()
+    """Files the rollback of this record left as they are (M16-84): changed
+    by another program, refused by the system, or refused before anything
+    was written and changed since guard read them. Flavor-relative, spelled
+    as `paths` spells them; empty unless `state` is `rollback_incomplete`,
+    and empty for a record written before M16-84 (its note is not parsed).
+    A directory the rollback could not remove is not listed."""
 
 
 class PlanItem(_Frozen):
@@ -536,6 +554,11 @@ class _JournalRecord(_Frozen):
     temps_removed: tuple[str, ...] = ()
     temps_left: tuple[str, ...] = ()
     cleanup_finished: bool = False
+    # M16-84, format 2. `paths_refused` names each path whose only operation
+    # was refused (not in `paths`); `paths_left` the paths the rollback left
+    # as they are. Written only when not empty (`_write_record`).
+    paths_refused: tuple[StrictStr, ...] = ()
+    paths_left: tuple[StrictStr, ...] = ()
 
     @field_validator("format")
     @classmethod
@@ -550,6 +573,30 @@ class _JournalRecord(_Frozen):
             self.temps or self.temps_removed or self.temps_left or self.cleanup_finished
         ):
             raise ValueError("a format-1 record names no temp paths and ran no cleanup")
+        return self
+
+    @model_validator(mode="after")
+    def _left_alone_is_journaled(self) -> _JournalRecord:
+        """`paths_refused` and `paths_left` hold plain allowlisted paths, each
+        once; `paths_left` only on a `rollback_incomplete` record, and only
+        paths the record journals (`paths` or `paths_refused`). The note
+        vouches for nothing."""
+        if self.format == 1 and (self.paths_refused or self.paths_left):
+            raise ValueError("a format-1 record names no refused or left-alone paths")
+        for key, values in (("paths_refused", self.paths_refused), ("paths_left", self.paths_left)):
+            if len(set(values)) != len(values):
+                raise ValueError(f"{key} names a path twice")
+            for rel in values:
+                try:
+                    _check_rel(rel)
+                except PathNotAllowedError as exc:
+                    raise ValueError(f"{key}: {exc}") from None
+        if self.paths_left:
+            if self.state != "rollback_incomplete":
+                raise ValueError("only a rollback_incomplete record names paths left alone")
+            journaled = {p.path for p in self.paths} | set(self.paths_refused)
+            if not set(self.paths_left) <= journaled:
+                raise ValueError("paths_left names a path the record does not journal")
         return self
 
 
@@ -608,7 +655,13 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     """Replace the record's file atomically; the bytes are fsynced before the
     rename and the directory after it, so what the journal says is on disk."""
     directory = _journal_dir(store_path)
-    text = json.dumps(record.model_dump(), ensure_ascii=True, sort_keys=True, indent=1)
+    raw = record.model_dump()
+    # M16-84's keys only when they say something: a record with neither is
+    # what a gate from before M16-84 reads.
+    for key in ("paths_refused", "paths_left"):
+        if not raw[key]:
+            del raw[key]
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -646,6 +699,7 @@ def _public(record: _JournalRecord) -> HistoryRecord:
         created_dirs=record.created_dirs,
         temps_removed=record.temps_removed,
         temps_left=record.temps_left,
+        paths_left=record.paths_left,
     )
 
 
@@ -1781,6 +1835,7 @@ class _Transaction:
         "_order",
         "_overlay",
         "_own_locks",
+        "_paths_left",
         "_pid",
         "_place",
         "_plan",
@@ -1831,6 +1886,8 @@ class _Transaction:
         self._last: dict[str, tuple[str | None, ...]] = {}
         # Paths whose only operation was refused, with what guard read there.
         self._refused: dict[str, str | None] = {}
+        # What the rollback left as it is (M16-84): set once, at exit.
+        self._paths_left: tuple[str, ...] = ()
         # The pre-write snapshot's entries: flavor-relative path to (kind, hash).
         self._pre_entries: dict[str, tuple[str, str | None]] = {}
         self._created: list[str] = []
@@ -2136,7 +2193,8 @@ class _Transaction:
         if exc is None and self._broken is None:
             self._journal_write("committed")
             return False
-        problems = self._rollback()
+        problems, left = self._rollback()
+        self._paths_left = tuple(dict.fromkeys(left))
         state: _State = "rollback_incomplete" if problems else "rolled_back"
         note = "; ".join(problems) if problems else None
         if problems:
@@ -2187,6 +2245,8 @@ class _Transaction:
                 "temps_removed": tuple(self._temps_removed),
                 "temps_left": tuple(self._temps_left),
                 "cleanup_finished": self._cleanup_finished,
+                "paths_refused": tuple(self._refused),
+                "paths_left": self._paths_left if state == "rollback_incomplete" else (),
             }
         )
         _write_record(self._store_path, self._record)
@@ -2489,13 +2549,16 @@ class _Transaction:
                 self._broken = f"a restore stopped part way ({type(exc).__name__}: {exc})"
             raise
 
-    def _rollback(self) -> list[str]:
+    def _rollback(self) -> tuple[list[str], list[str]]:
         """Put every touched path back to its pre-transaction bytes (from the
         pre-write snapshot, by hash) where the disk still holds guard's own
         record of it; leave any path someone else changed, and say so; remove
-        the directories this transaction created."""
+        the directories this transaction created. Returns the problems (the
+        note) and the file paths left as they are (`paths_left`, M16-84): a
+        directory that could not be removed is a problem, not a path left."""
         assert self._place is not None
         problems: list[str] = []
+        left: list[str] = []
         store = SnapshotStore(self._store_path)
         for rel in reversed(self._order):
             before, mode, size = self._before[rel]
@@ -2511,6 +2574,7 @@ class _Transaction:
                         f"{rel}: changed by something else after this transaction last wrote "
                         "it; left as it is"
                     )
+                    left.append(rel)
                     continue
                 data = None if before is None else _fetch(store, before, size, rel)
                 tmp_name = None
@@ -2530,6 +2594,7 @@ class _Transaction:
                 )
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel, read in self._refused.items():
             # Refused before anything landed: kept as it is, but a disk that
             # moved since guard read it is not "rolled back".
@@ -2540,14 +2605,16 @@ class _Transaction:
                         f"{rel}: changed by something else while this transaction ran; "
                         "left as it is"
                     )
+                    left.append(rel)
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel_dir in reversed(self._created):
             try:
                 _remove_dir(self._place, rel_dir, self._listings)
             except Exception as exc:
                 problems.append(f"{rel_dir}/: {exc}")
-        return problems
+        return problems, left
 
     def _undo(self, ops: Sequence[_Op], created_dirs: Sequence[str]) -> None:
         store = SnapshotStore(self._store_path)
