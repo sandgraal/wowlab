@@ -20,6 +20,13 @@ at all, is Python too). The raw bytes and the decoded text are both
 searched: a NUL or a stray byte elsewhere in a file cannot hide a control,
 it fails the file. Every tracked file name is checked too.
 
+A symlink is scanned as what git commits for it, its target text (M16-104).
+The index is listed with `git ls-files -s`; for a mode-120000 entry the
+target is read with readlink, or from the blob when the checkout holds no
+link there, and the link is never followed: a broken link is not skipped,
+and a working one does not stand in for the file it points at. Every other
+entry is read only when it is a regular file, by lstat.
+
 Nothing is skipped for its content or its size: pre-commit keeps every
 tracked file outside the fixtures under 512 KB (cli.py under 1 MB), so each is
 read whole. Under
@@ -43,8 +50,10 @@ from __future__ import annotations
 
 import fnmatch
 import io
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tokenize
@@ -84,6 +93,8 @@ PINNED_FONTS = frozenset(
         "ibm-plex-mono-500-latin-ext",
     )
 )
+# The git index mode of a symlink, whose blob is the link's target text.
+SYMLINK = b"120000"
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 PYTHON_ENCODINGS = frozenset({"utf-8", "utf-8-sig"})
 # PEP 263: a coding declaration on the first or second line.
@@ -139,14 +150,50 @@ def _problems(name: str, data: bytes) -> list[str]:
     return sorted(found) + out
 
 
-def _tracked() -> list[bytes]:
+def _git() -> str:
     git = shutil.which("git")
     if git is None:
         pytest.skip("git is not available")
-    done = subprocess.run([git, "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False)
+    return git
+
+
+def _tracked() -> list[bytes]:
+    return [name for _, _, name in _entries(ROOT)]
+
+
+def _entries(root: Path) -> list[tuple[bytes, bytes, bytes]]:
+    """Each index entry of the checkout at `root` as (mode, blob id, name),
+    from `git ls-files -s -z` (M16-104: the mode says which entry is a
+    symlink)."""
+    done = subprocess.run(
+        [_git(), "ls-files", "-s", "-z"], cwd=root, capture_output=True, check=False
+    )
     if done.returncode != 0:
         pytest.skip("not a git checkout")
-    return [name for name in done.stdout.split(b"\0") if name]
+    out = []
+    for record in done.stdout.split(b"\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition(b"\t")
+        mode, blob, _stage = meta.split(b" ")
+        out.append((mode, blob, name))
+    return out
+
+
+def _link_target(root: Path, path: Path, blob: bytes) -> bytes:
+    """What git commits for a symlink (mode 120000): the link's target text,
+    never the file it points at. readlink never follows the link; where
+    the checkout holds no symlink at that path (core.symlinks false, or the
+    entry deleted or replaced), the committed blob itself is read."""
+    if path.is_symlink():
+        return os.fsencode(path.readlink())
+    done = subprocess.run(
+        [_git(), "cat-file", "blob", blob.decode("ascii")],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+    return done.stdout
 
 
 def _scanned(name: str) -> bool:
@@ -170,10 +217,12 @@ def _misplaced(name: str) -> bool:
     )
 
 
-def test_no_tracked_file_holds_a_bidi_control() -> None:
+def _scan_checkout(root: Path) -> tuple[int, dict[str, list[str]]]:
+    """Scan every index entry of the checkout at `root`: the number of
+    entries, and the findings by name. No link is ever followed (M16-104)."""
     found: dict[str, list[str]] = {}
-    names = _tracked()
-    for raw in names:
+    entries = _entries(root)
+    for mode, blob, raw in entries:
         try:
             name = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -184,10 +233,27 @@ def test_no_tracked_file_holds_a_bidi_control() -> None:
         if _misplaced(name):
             found[repr(name)] = ["a Python, Markdown or test*.txt file among the captures"]
             continue
-        path = ROOT / name
-        if _scanned(name) and path.is_file() and (problems := _problems(name, path.read_bytes())):
+        path = root / name
+        if mode == SYMLINK:
+            # Its committed bytes are the target text, whatever its name or
+            # place: a symlink is never a capture or a pinned font.
+            if problems := _problems(name, _link_target(root, path, blob)):
+                found[repr(name) + " (symlink target)"] = problems
+            continue
+        if not _scanned(name):
+            continue
+        try:
+            regular = stat.S_ISREG(path.lstat().st_mode)
+        except FileNotFoundError:
+            continue  # deleted in the working tree: nothing of it to read
+        if regular and (problems := _problems(name, path.read_bytes())):
             found[repr(name)] = problems
-    assert names, "git listed no tracked files"
+    return len(entries), found
+
+
+def test_no_tracked_file_holds_a_bidi_control() -> None:
+    count, found = _scan_checkout(ROOT)
+    assert count, "git listed no tracked files"
     assert not found, found
 
 
@@ -334,3 +400,49 @@ def test_pytest_never_collects_under_the_fixtures(tmp_path: Path) -> None:
     assert not any("fixtures" in line for line in items), items
     allowed = collected("-o", "norecursedirs=.venv")
     assert any("fixtures/wago/test_planted.txt" in line for line in allowed), allowed
+
+
+def _git_tree(root: Path, links: dict[str, str]) -> None:
+    """A constructed git repository at `root` with the given symlinks
+    (name to target text) added to its index."""
+    subprocess.run([_git(), "init", "-q", str(root)], check=True, capture_output=True)
+    for name, target in links.items():
+        (root / name).symlink_to(target)
+    subprocess.run([_git(), "add", *links], cwd=root, check=True, capture_output=True)
+
+
+def test_constructed_broken_symlink_target_is_scanned(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): git commits a symlink's target text, so a
+    broken link whose target holds U+202E is reported (path.is_file() was
+    false for it, and the scan skipped it). Control: a broken link with a
+    clean target passes."""
+    _git_tree(tmp_path, {"notes.md": f"a{BIDI[4]}b.md", "clean.md": "missing.md"})
+    for name in ("notes.md", "clean.md"):
+        link = tmp_path / name
+        assert link.is_symlink() and not link.exists(), name  # the premise: broken
+    modes = {name: mode for mode, _, name in _entries(tmp_path)}
+    assert modes == {b"notes.md": SYMLINK, b"clean.md": SYMLINK}
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
+
+
+def test_constructed_working_symlink_is_not_followed(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): a working link is never followed. The file
+    it points at (untracked here) holds U+202E and is not reported through
+    the link; a control in the target text is."""
+    (tmp_path / "target.md").write_text(f"x {BIDI[4]}\n", encoding="utf-8")
+    (tmp_path / f"t{BIDI[4]}.md").write_text("plain\n", encoding="utf-8")
+    _git_tree(tmp_path, {"clean.md": "target.md", "notes.md": f"t{BIDI[4]}.md"})
+    assert (tmp_path / "clean.md").is_file()  # the premise: it resolves
+    assert (tmp_path / "notes.md").is_file()
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
+
+
+def test_constructed_symlink_blob_is_read_without_a_link_on_disk(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): where the checkout holds no symlink for a
+    mode-120000 entry (core.symlinks false writes a plain file, or the entry
+    is deleted), the committed blob is read, never the file on disk."""
+    _git_tree(tmp_path, {"notes.md": f"a{BIDI[4]}b.md", "plain.md": "clean.md"})
+    (tmp_path / "notes.md").unlink()
+    (tmp_path / "plain.md").unlink()
+    (tmp_path / "plain.md").write_text(f"x {BIDI[4]}\n", encoding="utf-8")
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
