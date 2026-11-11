@@ -2329,7 +2329,7 @@ _REINSTALL = f"wowlab addon install {addoninstall.LAB_ADDON}"
 _LOAD_OUT_OF_DATE = "Load out of date AddOns"
 # What an out-of-date lab-addon means for the player (M16-06, domain review).
 _STALE_EFFECT = (
-    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and no new records are saved"
+    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and then no new records are saved"
 )
 
 
@@ -10793,6 +10793,9 @@ class CharShowReport(_Out):
     # that saved the record is older (M16-06; None when either is unknown).
     installed_version: str | None = None
     older_client: bool | None = None
+    # The installed lab-addon against this client, as `doctor` reads it
+    # (M16-06): what the text's advice for an older record rests on.
+    lab_addon: addoninstall.LabAddonState | None = None
 
 
 def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
@@ -10846,6 +10849,7 @@ def char_show(
         notes=_CHAR_NOTES,
         installed_version=chosen.version,
         older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
+        lab_addon=addoninstall.lab_addon_state(chosen),
     )
     if json_out:
         _emit(report)
@@ -10854,7 +10858,9 @@ def char_show(
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
     if report.older_client:
-        _say_prose(_older_record_line(chosen), hang="  ", keep=[_REINSTALL])
+        _say_prose(
+            _older_record_line(chosen.version, report.lab_addon), hang="  ", keep=[_REINSTALL]
+        )
     # describe() renders its own words with `_player_copy` before a value
     # read from the record goes in; the line then prints as it is.
     for line in labaddon.describe(record, render=_player_copy):
@@ -10869,17 +10875,17 @@ def char_show(
         _say_note(note)
 
 
-def _older_record_line(chosen: install.Flavor) -> str:
+def _older_record_line(installed: str | None, state: addoninstall.LabAddonState | None) -> str:
     """`char show`'s line for a record an older client saved (M16-06): how
     to save a fresh one, and first, when the installed lab-addon is out of
     date for this client or not installed, that it may not load (its state
     as `doctor` reads it)."""
-    head = f"This record was saved by an older client than the installed {chosen.version}"
+    head = f"This record was saved by an older client than the installed {installed}"
     fresh = (
         "with the lab-addon enabled for this character, log in on it, then log out or "
         "/reload, to save a fresh one."
     )
-    status = addoninstall.lab_addon_state(chosen).status
+    status = state.status if state is not None else None
     if status == "stale":
         return (
             f"{head}, and the installed lab-addon is out of date for this client, so the game "
@@ -10887,7 +10893,10 @@ def _older_record_line(chosen: install.Flavor) -> str:
             f"then, {fresh}"
         )
     if status == "not_installed":
-        return f"{head}, and the lab-addon is not installed. Run `{_REINSTALL}`, then, {fresh}"
+        return (
+            f"{head}, and the lab-addon is not installed. Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
     return f"{head}: {fresh}"
 
 

@@ -193,7 +193,7 @@ def test_doctor_names_the_reinstall_after_a_client_update_constructed(
     assert (
         "Lab-addon: made for another client version (## Interface: 16001; this client is "
         "16102), so the game may list it as out of date and not load it (unless 'Load out "
-        "of date AddOns' is ticked), and no new records are saved. Close the game and run "
+        "of date AddOns' is ticked), and then no new records are saved. Close the game and run "
         f"`{REINSTALL}` to update it."
     ) in text
     # A stale addon is advice, not a problem: it does not make doctor fail.
@@ -222,7 +222,7 @@ def test_doctor_an_unfilled_toc_is_stale_constructed(flavor: Path) -> None:
     assert (
         "Lab-addon: its WowLab.toc has no usable ## Interface: value, so the game may treat "
         "it as out of date and not load it (unless 'Load out of date AddOns' is ticked), and "
-        f"no new records are saved. Close the game and run `{REINSTALL}`."
+        f"then no new records are saved. Close the game and run `{REINSTALL}`."
     ) in text
 
 
@@ -242,6 +242,33 @@ def test_doctor_a_suffixed_toc_makes_it_unknown_constructed(flavor: Path, with_m
         f"{LAB}/ also holds WowLab_Mainline.toc, which the client may load instead of WowLab.toc"
     )
     assert "WowLab_Mainline.toc, which the client may load instead" in _doctor_text()
+
+
+def test_doctor_a_toc_that_is_not_wowlabs_is_named_neutrally_constructed(
+    flavor: Path,
+) -> None:
+    """Any other `*.toc` keeps the state unknown, but only a `WowLab_<x>.toc`
+    is said to be one the client may load instead."""
+    ok("addon", "install", "lab", "--yes")
+    (flavor / LAB / "Other.toc").write_bytes(b"## Interface: 1\n")
+    (flavor / LAB / "wowlab-Classic.TOC").write_bytes(b"## Interface: 1\n")
+    state = _lab_state()
+    assert state.status == "unknown"
+    assert state.detail == (
+        f"{LAB}/ also holds wowlab-Classic.TOC, which the client may load instead of "
+        "WowLab.toc; and Other.toc, which is not wowlab's"
+    )
+
+
+def test_other_tocs_skip_wowlab_toc_in_any_case_constructed(tmp_path: Path) -> None:
+    """On a case-insensitive file system a lone `wowlab.toc` is WowLab.toc,
+    not another TOC (constructed: the listing is checked directly, as this
+    file system may be case-sensitive)."""
+    (tmp_path / "wowlab.toc").write_bytes(b"## Interface: 1\n")
+    (tmp_path / "WOWLAB.TOC.bak").write_bytes(b"")
+    assert addoninstall._other_tocs(tmp_path) == []
+    (tmp_path / "WowLab_Mainline.toc").write_bytes(b"")
+    assert addoninstall._other_tocs(tmp_path) == ["WowLab_Mainline.toc"]
 
 
 def test_doctor_names_the_real_reason_it_could_not_look_constructed(
@@ -386,13 +413,34 @@ def test_char_show_flags_a_record_an_older_client_saved_constructed(
     data = json.loads(ok("char", "show", "--character", FIRST, "--json").stdout)
     assert data["installed_version"] == "1.60.1.70010"
     assert data["older_client"] is True
+    # The lab-addon is not installed in the captured tree: text and JSON agree.
+    assert data["lab_addon"]["status"] == "not_installed"
     text = " ".join(ok("char", "show", "--character", FIRST).stdout.split())
-    # The lab-addon is not installed in the captured tree.
     assert (
         "This record was saved by an older client than the installed 1.60.1.70010, and the "
-        f"lab-addon is not installed. Run `{REINSTALL}`, then, with the lab-addon enabled "
-        "for this character, log in on it, then log out or /reload, to save a fresh one."
+        f"lab-addon is not installed. Close the game, run `{REINSTALL}`, then, with the "
+        "lab-addon enabled for this character, log in on it, then log out or /reload, to "
+        "save a fresh one."
     ) in text
+
+
+@pytest.mark.parametrize(
+    ("version", "status"),
+    [("1.60.1.70010", "current"), ("1.61.2.70001", "stale")],
+    ids=["build-only-update", "patch-update"],
+)
+def test_char_show_json_carries_the_addon_state_constructed(
+    root: Path, flavor: Path, version: str, status: str
+) -> None:
+    """`char show --json` gives the same `lab_addon` state `doctor --json`
+    gives for the flavor, which the text's advice rests on."""
+    ok("addon", "install", "lab", "--yes")
+    _set_version(root, version)
+    report = cli.CharShowReport.model_validate_json(
+        ok("char", "show", "--character", FIRST, "--json").stdout
+    )
+    assert report.lab_addon is not None and report.lab_addon.status == status
+    assert report.lab_addon == _lab_state()
 
 
 def test_char_show_advice_with_a_current_addon_constructed(root: Path, flavor: Path) -> None:

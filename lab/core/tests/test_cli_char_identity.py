@@ -49,6 +49,7 @@ SHOW_FIELDS = [
     "notes",
     "installed_version",  # M16-06
     "older_client",  # M16-06
+    "lab_addon",  # M16-06
 ]
 
 runner = CliRunner()

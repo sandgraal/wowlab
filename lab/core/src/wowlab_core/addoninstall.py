@@ -916,13 +916,35 @@ def remove(plan: RemovePlan, flavor: _FlavorLike, *, store: Path | None = None) 
 
 
 def _other_tocs(folder: Path) -> list[str]:
-    """Every `*.toc` in the addon folder other than `WowLab.toc`, by name,
+    """Every `*.toc` in the addon folder other than `WowLab.toc` (compared
+    with case folded, as a case-insensitive file system names it), by name,
     from a listing that follows no link. `OSError` when it cannot be listed."""
     return sorted(
         e.name
         for e in longpath.entries(folder)
-        if e.name.casefold().endswith(".toc") and e.name != TOC_NAME
+        if e.name.casefold().endswith(".toc") and e.name.casefold() != TOC_NAME.casefold()
     )
+
+
+def _is_suffixed(name: str) -> bool:
+    """`WowLab_<suffix>.toc` or `WowLab-<suffix>.toc` (case folded): a TOC
+    the client may load instead of `WowLab.toc`, by game type."""
+    stem = name.casefold().removesuffix(".toc")
+    head = ADDON_NAME.casefold()
+    return len(stem) > len(head) + 1 and stem.startswith(head) and stem[len(head)] in "_-"
+
+
+def _others_detail(others: Sequence[str]) -> str:
+    """Why `lab_addon_state` cannot judge the folder with these other TOCs."""
+    suffixed = [n for n in others if _is_suffixed(n)]
+    rest = [n for n in others if not _is_suffixed(n)]
+    parts: list[str] = []
+    if suffixed:
+        parts.append(f"{', '.join(suffixed)}, which the client may load instead of {TOC_NAME}")
+    if rest:
+        verb = "is" if len(rest) == 1 else "are"
+        parts.append(f"{', '.join(rest)}, which {verb} not wowlab's")
+    return f"{ADDON_FOLDER}/ also holds " + "; and ".join(parts)
 
 
 def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
@@ -977,10 +999,7 @@ def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
             installed=installed,
             expected=expected,
             version=version,
-            detail=(
-                f"{ADDON_FOLDER}/ also holds {', '.join(others)}, which the client may load "
-                f"instead of {TOC_NAME}"
-            ),
+            detail=_others_detail(others),
         )
     if expected is None:
         return LabAddonState(
