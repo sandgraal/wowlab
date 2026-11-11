@@ -142,6 +142,16 @@ as unclassified. (Added 2026-09-22, M10-06.)
 - The client reads SavedVariables, `Config.wtf`, binds and macros at login or
   `/reload` and overwrites them on the next write. Editing them while the
   client runs is lost work; that is one reason `guard` refuses.
+  *Amended 2026-11-11 (M16-97 domain review):* when `Config.wtf` is read is
+  **[verify]**. This line says at login or `/reload`; `profiles.LOGIN_NOTE`
+  says the client reads it when it starts, which fits graphics, language and
+  the last account used being set before any login. No capture settles it
+  yet, so player-facing text should not state either timing for it as fact;
+  "restart the client so it reads it again" is safe under both, since a
+  start always comes before a login (logging out and back in may not be
+  enough, and the client may save over the file on exit). Today
+  `profiles.LOGIN_NOTE` and `cli._RELOGIN` each state one; M16-97 (#468)
+  rewords both.
 - On Windows the client can hold files open; a read can fail with a sharing
   violation. Readers retry briefly and then report, they do not loop.
 - Macros and binds may be synced server-side depending on the
