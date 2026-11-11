@@ -16,8 +16,10 @@ Ship the current branch.
    as hooks; never bypass them.
 4. `git push -u origin <branch>` then `git ls-remote origin <branch>` to
    confirm the sha landed.
-5. Write the PR body to a file under your scratch area and give its path in
-   your report. Body: ticket id, each acceptance criterion with the command
+5. Write the PR body to a file in the scratchpad named for the ticket
+   (`m16-95-body.md`, never `body.md`: the scratchpad is shared, see
+   `pr-shepherd.md`) and give its absolute path in your report's
+   `pr body:` line. Body: ticket id, each acceptance criterion with the command
    and one-line result that proved it, judgment calls flagged as claims for
    the reviewer, and the footers `session: <id>` and
    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
