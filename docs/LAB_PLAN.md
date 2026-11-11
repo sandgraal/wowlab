@@ -379,7 +379,7 @@ discovery output of an unchanged install is byte for byte what it was.
   4. `~/Applications`
   5. `~/Games`
   6. `/Users/Shared`
-  7. for each entry directly under `/Volumes`, sorted by name: `/Volumes/<name>`, `/Volumes/<name>/Applications` and `/Volumes/<name>/Games`. An entry under `/Volumes` that is a link by `is_link` is skipped, which covers the boot volume's link back to `/`. So is one that cannot be listed.
+  7. for each entry directly under `/Volumes`, sorted by name: `/Volumes/<name>`, `/Volumes/<name>/Applications` and `/Volumes/<name>/Games`. These are searched only after the first six have failed, so a stalled network share or a sleeping disk costs nothing when the install is found earlier. An entry under `/Volumes` that is a link by `is_link` is skipped, which covers the boot volume's link back to `/`. So is a name that starts with `.`. Each candidate is checked with one `stat`, and a failure is reported as "could not check" (domain review, 2026-11-11).
 
   `~` is the current user's home directory. If the home cannot be found, the two `~` entries are skipped.
 - **Windows:** each drive's list gains `<drive>\Games\World of Warcraft`, after the three existing locations and in the same drive order.
@@ -390,7 +390,7 @@ discovery output of an unchanged install is byte for byte what it was.
   - one that holds an unusable `.build.info` is reported, as before.
 
   The output already names the root it used, so a player with two installs can see which one was taken.
-- **When nothing is found**, the error lists every location that was checked, in order. It ends with the two ways to name the install: `--root "<path>"`, and `export WOWLAB_WOW_ROOT="<path>"` (macOS) or `set WOWLAB_WOW_ROOT=<path>` (Windows). It also says the path to use is the folder that holds `.build.info`, not `_retail_`.
+- **When nothing is found**, the error lists every location that was checked, in order. It ends with the two ways to name the install: `--root "<path>"`, and the variable for the current terminal window, `export WOWLAB_WOW_ROOT="<path>"` (macOS), or on Windows both `set WOWLAB_WOW_ROOT=<path>` (cmd) and `$env:WOWLAB_WOW_ROOT = "<path>"` (PowerShell). It also says the path to use is the folder that holds `.build.info`, not `_retail_`.
 - **Still out of scope:** reading Battle.net's own records of where it installed the game. That would need an ADR and a real capture.
 - **Linux:** still explicit root only.
 

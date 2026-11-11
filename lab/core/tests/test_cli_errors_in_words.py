@@ -171,10 +171,8 @@ def test_no_install_found_names_root_and_the_variable(no_install: Path) -> None:
     assert result.exit_code == cli.EXIT_ERROR
     assert _one_line(result.stderr) == (
         "wowlab: no WoW install found where the game installs by default "
-        f"(1 location checked, listed below); {NAMES_THE_INSTALL}; wowlab doctor says how"
+        f"(searched: {no_install}); {NAMES_THE_INSTALL}; wowlab doctor says how"
     )
-    # M16-112: the location, then the lines that name the install, one each.
-    assert f"searched, no install there: {no_install}" in result.stderr.splitlines()
 
 
 def test_no_default_location_names_root_and_the_variable(
@@ -194,10 +192,8 @@ def test_could_not_check_names_root_and_the_variable(
     a_file = tmp_path / "World of Warcraft"
     a_file.write_bytes(b"")  # constructed: not a directory
     monkeypatch.setattr(install, "default_roots", lambda **k: (a_file,))
-    stderr = run("install", "show").stderr
-    line = _one_line(stderr)
-    assert "(1 location checked, listed below)" in line
-    assert f"could not check: {a_file} (not a directory)" in stderr.splitlines()
+    line = _one_line(run("install", "show").stderr)
+    assert f"(could not check: {a_file} (not a directory))" in line
     assert NAMES_THE_INSTALL in line
 
 

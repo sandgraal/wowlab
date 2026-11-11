@@ -68,10 +68,9 @@ when selene is missing (`make selene` fetches it).
 ## Pointing the tools at your install
 
 Discovery looks in the platform default locations
-(`/Applications/World of Warcraft`, `/Games/World of Warcraft`, the same
-under `~` and each volume on macOS; `C:\Program Files (x86)\World of Warcraft`,
-`C:\Games\World of Warcraft` and the like under each drive on Windows; the
-full order is in `docs/LAB_PLAN.md` §6.1, amendment of 2026-11-11). For anything else, including Linux
+(`/Applications/World of Warcraft`, `C:\Program Files (x86)\World of Warcraft`,
+`C:\Program Files\World of Warcraft` and the same under each fixed drive on
+Windows; `docs/LAB_PLAN.md` §6.1). For anything else, including Linux
 installs under Wine, Lutris or Proton, set the install root, the directory
 that holds `.build.info`:
 

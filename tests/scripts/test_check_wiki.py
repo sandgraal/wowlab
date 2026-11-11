@@ -307,7 +307,7 @@ def test_constructed_unexpected_files_fail(tmp_path: Path) -> None:
         ("See C:\\Users\\someone\\Desktop.", "an absolute home path"),
         ("It lives on /Volumes/External Disk/stuff.", "an absolute home path"),
         (
-            "`D:\\Stuff\\World of Warcraft`",
+            "`D:\\Games\\World of Warcraft`",
             "an install path other than a documented default location",
         ),
         ("`WTF/Account/123456789#1/`", "a numeric account folder"),
@@ -322,7 +322,7 @@ def test_constructed_personal_data_fails_without_quoting_it(
     root = _build(tmp_path / "wiki", Extra=f"# Extra\n\n{line}\n")
     out = _failures(root)
     assert out == [f"Extra.md:3: {kind} (not quoted here; the log is public)"]
-    for word in ("someone", "Brakka", "123456789", "External", "sk-ant", "Stuff"):
+    for word in ("someone", "Brakka", "123456789", "External", "sk-ant", "Games"):
         assert all(word not in f for f in out)
 
 
@@ -333,8 +333,6 @@ def test_constructed_documented_placeholders_and_defaults_pass(tmp_path: Path) -
         "in the log `Name-Realm-US`. See the Getting-Started and Command-Reference pages.\n\n"
         "Defaults: `/Applications/World of Warcraft`, `C:\\Program Files (x86)\\World of Warcraft`, "
         "`E:\\World of Warcraft`, `<drive>\\Program Files\\World of Warcraft`, "
-        "`D:\\Games\\World of Warcraft`, `/Games/World of Warcraft`, "
-        "`~/Games/World of Warcraft`, `~/Applications/World of Warcraft`, "
         '`export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"`, `~/.local/share/wowlab/`, '
         "`WTF/Account/<ACCOUNT>/<digits>/`.\n\n"
         "Links: https://github.com/sandgraal/wowlab/blob/main/docs/LAB_PLAN.md\n"

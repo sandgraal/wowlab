@@ -139,15 +139,9 @@ Finder to show hidden files.
 
 Without help, wowlab looks only where the game installs by default:
 
-- macOS: `World of Warcraft` in `/Applications`, `/Applications/Games`,
-  `/Games`, `~/Applications`, `~/Games` and `/Users/Shared`, then on each
-  volume under `/Volumes` (by name): at its top, in its `Applications` and
-  in its `Games`
+- macOS: `/Applications/World of Warcraft`
 - Windows: `World of Warcraft` at the top of each drive, then under
-  `Program Files (x86)`, `Program Files` and `Games`, the system drive first
-
-The first install found is used, and wowlab says which folder it took.
-When it finds none, it lists every folder it looked in.
+  `Program Files (x86)` and `Program Files`, the system drive first
 
 On Linux there is no default: the game runs under Wine, Lutris or
 Proton, inside a Windows-style folder tree called a prefix, and wowlab

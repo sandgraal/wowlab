@@ -572,11 +572,9 @@ def test_install_not_found_notes_escape_the_locations_constructed(
     assert result.exit_code == 1
     _assert_terminal_safe(result)
     lines = result.stderr.split("\n")[:-1]
-    # The error line, then its notes (M16-112): the locations in the order
-    # checked, then the three lines that name the install.
-    assert len(lines) == 6, lines
+    assert len(lines) == 3, lines
     shown_absent = f"{tmp_path}/{SHOWN['newline']}/World of Warcraft"
     shown_file = f"{tmp_path}/{SHOWN['line-separator']}"
-    assert lines[0].startswith("wowlab: ")
-    assert lines[1] == f"searched, no install there: {shown_absent}"
-    assert lines[2] == f"could not check: {shown_file} (not a directory)"
+    assert lines[0] == f"searched, no install there: {shown_absent}"
+    assert lines[1] == f"could not check: {shown_file} (not a directory)"
+    assert lines[2].startswith("wowlab: ")

@@ -373,28 +373,15 @@ def test_relative_and_tilde_roots_are_made_absolute(
 # ─── platform defaults ───────────────────────────────────────────────────────
 
 
-def test_default_roots_macos(tmp_path: Path) -> None:
-    """The order of the 2026-11-11 amendment (M16-112); more in
-    test_install_default_roots.py."""
-    got = default_roots("darwin", home="/Users/someone", volumes=tmp_path / "no-volumes")
-    assert got == tuple(
-        PurePosixPath(p, "World of Warcraft")
-        for p in (
-            "/Applications",
-            "/Applications/Games",
-            "/Games",
-            "/Users/someone/Applications",
-            "/Users/someone/Games",
-            "/Users/Shared",
-        )
-    )
+def test_default_roots_macos() -> None:
+    assert default_roots("darwin") == (PurePosixPath("/Applications/World of Warcraft"),)
 
 
 def _win_roots(*drives: str) -> tuple[PureWindowsPath, ...]:
     return tuple(
         PureWindowsPath(f"{d}:\\{p}World of Warcraft")
         for d in drives
-        for p in ("", "Program Files (x86)\\", "Program Files\\", "Games\\")
+        for p in ("", "Program Files (x86)\\", "Program Files\\")
     )
 
 

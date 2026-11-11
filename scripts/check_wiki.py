@@ -183,11 +183,6 @@ _CREDENTIAL = re.compile(
 _INSTALL_DIR = re.compile(r"(?<=[\\/])World of Warcraft", re.IGNORECASE)
 
 
-# A `/Volumes` folder that does not list (a file, not a folder), so the
-# documented defaults never depend on the disks of the machine running this.
-_NO_VOLUMES = Path(__file__)
-
-
 def _default_root_pattern() -> re.Pattern[str]:
     """The install locations `wowlab_core.install` searches by default, any drive.
 
@@ -195,11 +190,8 @@ def _default_root_pattern() -> re.Pattern[str]:
     machine; any other absolute path to an install folder is a finding.
     """
     alternatives: list[str] = []
-    # Never this machine's home or volumes: `~` stands for the home, and no
-    # volume is listed (any path under `/Volumes` is a home path here anyway).
-    for root in install.default_roots(platform="darwin", home="~", volumes=_NO_VOLUMES):
-        home = r"~" if root.parts[0] == "~" else ""
-        alternatives.append(home + "".join(r"[\\/]+" + re.escape(p) for p in root.parts[1:]))
+    for root in install.default_roots(platform="darwin"):
+        alternatives.append("".join(r"[\\/]+" + re.escape(p) for p in root.parts[1:]))
     for root in install.default_roots(platform="win32", drives=[], environ={}):
         rest = PureWindowsPath(root).parts[1:]
         alternatives.append(
