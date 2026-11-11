@@ -1697,6 +1697,19 @@ class DoctorFlavor(_Out):
     sync_cvars: list[SyncCVar]
 
 
+# What a file the rollback left holds as `doctor` reads it now (M16-84):
+# the change's own bytes (`after`), what was there before it (`before`),
+# anything else, or unknown (the record's flavor is not one doctor found, or
+# the file could not be read). `not_written`: the change never wrote it (its
+# only operation was refused), so undo leaves it as it is.
+LeftNow = Literal["wowlab_change", "before_change", "changed_since", "unknown", "not_written"]
+
+
+class LeftPath(_Out):
+    path: str
+    now: LeftNow
+
+
 class LastTransaction(_Out):
     id: str
     created_at: str
@@ -1705,10 +1718,12 @@ class LastTransaction(_Out):
     # as-is: a state names nobody (M16-85).
     state: guard._State
     paths: int
+    # The last name of the record's flavor folder, as journaled (M16-84).
+    flavor_folder: str
     # The files the rollback of a `rollback_incomplete` record left as they
-    # are, relative to the flavor folder (M16-84); empty otherwise, and for a
-    # record written before the journal listed them.
-    paths_left: list[str]
+    # are, relative to the flavor folder, sorted (M16-84); empty otherwise,
+    # and for a record written before the journal listed them.
+    paths_left: list[LeftPath]
 
 
 class StoreReport(_Out):
@@ -1847,6 +1862,91 @@ def _client_report(inst: install.Install) -> ClientReport:
     return ClientReport(state=state, processes=list(clients), error=None)
 
 
+def _left_paths(r: guard.HistoryRecord, inst: install.Install | None) -> list[LeftPath]:
+    """Each file the rollback of `r` left, with what it holds now. Reads
+    only, and only inside the install doctor found, when the record's flavor
+    folder is one of its flavors; the journal's own path is never opened."""
+    written = {p.path: p for p in r.paths}
+    folder = _journaled_flavor(r, inst)
+    out: list[LeftPath] = []
+    for rel in sorted(r.paths_left):
+        change = written.get(rel)
+        now: LeftNow
+        if change is None:
+            now = "not_written"
+        elif folder is None:
+            now = "unknown"
+        else:
+            read, digest = _hash_now(folder[0], folder[0] / folder[1] / rel)
+            if not read:
+                now = "unknown"
+            elif digest == change.after:
+                now = "wowlab_change"
+            elif digest == change.before:
+                now = "before_change"
+            else:
+                now = "changed_since"
+        out.append(LeftPath(path=rel, now=now))
+    return out
+
+
+def _journaled_flavor(
+    r: guard.HistoryRecord, inst: install.Install | None
+) -> tuple[Path, str] | None:
+    """The resolved install root and the flavor folder name of the flavor
+    `r` was written to, when it is one of `inst`'s; else None."""
+    if inst is None:
+        return None
+    try:
+        root = inst.root.resolve()
+    except (OSError, RuntimeError):
+        return None
+    journaled = Path(r.flavor_path)
+    for f in inst.flavors:
+        if root / f.folder == journaled:
+            return root, f.folder
+    return None
+
+
+def _hash_now(root: Path, path: Path) -> tuple[bool, str | None]:
+    """(read, SHA-256 hex or None for absent) of `path` under `root`,
+    opened as the snapshot reads an install (no link followed, regular file
+    only); (False, None) when it cannot be read."""
+    try:
+        fd, _ = snapshot.open_regular_file_from_root(path, root)
+    except FileNotFoundError:
+        return True, None
+    except (OSError, ValueError):
+        return False, None
+    try:
+        hasher = hashlib.sha256()
+        while chunk := os.read(fd, 1 << 20):
+            hasher.update(chunk)
+    except OSError:
+        return False, None
+    finally:
+        os.close(fd)
+    return True, hasher.hexdigest()
+
+
+def _read_left(store: StoreReport, inst: install.Install | None) -> StoreReport:
+    """`store` with what each file its last record's rollback left holds
+    now, read in the install doctor found (M16-84). `_store_report` knows no
+    install, so it says those it wrote as `unknown`; the journal is read
+    again, and a record that is no longer the last one is left as it was."""
+    t = store.last_transaction
+    if t is None or not t.paths_left or inst is None:
+        return store
+    try:
+        records = guard.history()
+    except guard.GuardError:
+        return store
+    if not records or records[-1].id != t.id:
+        return store
+    left = _left_paths(records[-1], inst)
+    return store.model_copy(update={"last_transaction": t.model_copy(update={"paths_left": left})})
+
+
 def _store_report() -> StoreReport:
     store = snapshot.SnapshotStore()
     listing = store.list_lenient()
@@ -1867,7 +1967,8 @@ def _store_report() -> StoreReport:
                 label=r.label,
                 state=r.state,
                 paths=len(r.paths),
-                paths_left=sorted(r.paths_left),
+                flavor_folder=Path(r.flavor_path).name,
+                paths_left=_left_paths(r, None),
             )
     return StoreReport(
         path=str(store.path),
@@ -1954,7 +2055,7 @@ def _doctor(
             )
         client = _client_report(inst)
 
-    store = _store_report()
+    store = _read_left(_store_report(), inst)
     if store.damaged:
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     if store.journal_error:
@@ -1964,9 +2065,8 @@ def _doctor(
     elif (
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
-        problems.append(
-            _rollback_unfinished(store.last_transaction.id, store.last_transaction.paths_left)
-        )
+        t = store.last_transaction
+        problems.append(_rollback_unfinished(t.id, t.paths_left, t.flavor_folder))
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -2006,42 +2106,81 @@ def _interrupted(record_id: str) -> str:
     )
 
 
-def _rollback_unfinished(record_id: str, paths_left: Sequence[str] = ()) -> str:
+def _rollback_unfinished(
+    record_id: str, left: Sequence[LeftPath] = (), flavor_folder: str = ""
+) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
     could not put every file back. Usually another program (the game)
     changed a file mid-change, and the gate left that program's bytes in
-    place; a file may also still hold the change. The undo replaces those
-    newer bytes, but takes a snapshot of the files first, so a second undo
+    place; a file may also still hold the change. The undo puts back every
+    file the change wrote (its journaled paths), the game's later saves
+    included, but takes a snapshot of the files first, so a second undo
     (which undoes the undo) brings them back.
 
-    `paths_left` names each file left as it is (M16-84), relative to the
-    flavor folder, escaped by `_safe` in `--json` too (a real file name may
-    hold a bidi mark). A record that lists none (written before the journal
-    listed them, or only a folder was left) gets the sentence without
-    names. The command stays last (M16-71)."""
-    if paths_left:
-        names = [_safe(p) for p in paths_left]
-        one = len(names) == 1
-        listed = names[0] if one else f"{', '.join(names[:-1])} and {names[-1]}"
+    With `left` (M16-84) the problem names each file the rollback left, in
+    `flavor_folder`, grouped by what doctor read there now (`LeftPath.now`).
+    A file the change never wrote (its only operation was refused) is said
+    to be left alone by undo, which acts only on what the change wrote.
+    Names are kept as stored: the text output escapes them as it prints
+    (`_say`), `--json` as ASCII, and `--redact` sees them unescaped. A
+    record that lists no file gets the sentence without names. The command
+    stays last (M16-71)."""
+    lead = (
+        "the last change wowlab made failed, and putting the files back did not finish "
+        f"(record {record_id}): "
+    )
+    tail = (
+        "To put back what was there before the change, close the game and run this; it puts "
+        "back every file the change wrote, including anything the game has saved to them "
+        "since, but the undo keeps a copy and running wowlab undo again brings them back: "
+        f"wowlab undo --expect {record_id}"
+    )
+    clauses = [_left_clause(now, [p.path for p in left if p.now == now]) for now in _LEFT_ORDER]
+    said = [c for c in clauses if c]
+    if not said:
         return (
-            "the last change wowlab made failed, and putting the files back did not finish "
-            f"(record {record_id}): wowlab left {listed} as "
-            + ("it was. It" if one else "they were. Each")
-            + " may have been changed by another program, such as the game, while wowlab "
-            "was writing, or may still hold wowlab's change. To put back what was there "
-            "before the change, run this; it replaces what is in "
-            + ("that file" if one else "those files")
-            + " now, but the undo keeps a copy and running wowlab undo again brings it back: "
-            f"wowlab undo --expect {record_id}"
+            lead + "a file may have been changed by another program, such as the game, while "
+            "wowlab was writing or since, or may still hold wowlab's change. " + tail
+        )
+    where = f"in {flavor_folder}, " if flavor_folder else ""
+    return lead + where + "; ".join(said) + ". " + tail
+
+
+# The order the problem names the files in, by what doctor read there.
+_LEFT_ORDER: tuple[LeftNow, ...] = (
+    "wowlab_change",
+    "changed_since",
+    "unknown",
+    "before_change",
+    "not_written",
+)
+
+
+def _left_clause(now: LeftNow, paths: Sequence[str]) -> str:
+    """One group of `_rollback_unfinished`: the files, then what they hold."""
+    if not paths:
+        return ""
+    one = len(paths) == 1
+    names = paths[0] if one else f"{', '.join(paths[:-1])} and {paths[-1]}"
+    it = "it" if one else "them"
+    if now == "wowlab_change":
+        return f"{names} still {'holds' if one else 'hold'} wowlab's change"
+    if now == "changed_since":
+        return (
+            f"{names} {'has' if one else 'have'} been changed by another program, such as the "
+            f"game, since wowlab wrote {it}"
+        )
+    if now == "before_change":
+        return f"{names} already {'holds' if one else 'hold'} what was there before the change"
+    if now == "not_written":
+        return (
+            f"wowlab did not write {names}; another program changed {it} while wowlab was "
+            f"working, and undo leaves {it} as {'it is' if one else 'they are'}"
         )
     return (
-        "the last change wowlab made failed, and putting the files back did not finish "
-        f"(record {record_id}): a file may have been changed by another program, such as "
-        "the game, while wowlab was writing, or may still hold wowlab's change. To put back "
-        "what was there before the change, run this; it replaces what is in those files "
-        "now, but the undo keeps a copy and running wowlab undo again brings it back: "
-        f"wowlab undo --expect {record_id}"
+        f"wowlab could not put back {names}, which {'holds' if one else 'hold'} either "
+        f"wowlab's change or what another program, such as the game, has written to {it} since"
     )
 
 

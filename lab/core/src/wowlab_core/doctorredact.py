@@ -349,9 +349,12 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "store.last_transaction.label": redact.LABEL,
     # A closed literal (the write gate's states): it names nobody (M16-85).
     "store.last_transaction.state": AS_IS,
-    # Flavor-relative file paths the rollback left as they are (M16-84): an
-    # account, realm or character folder in them is a name.
-    "store.last_transaction.paths_left": REDACT,
+    # The record's flavor folder name, and the flavor-relative file paths
+    # the rollback left as they are (M16-84): an account, realm or character
+    # folder in them is a name. What each holds now is a closed literal.
+    "store.last_transaction.flavor_folder": REDACT,
+    "store.last_transaction.paths_left.path": REDACT,
+    "store.last_transaction.paths_left.now": AS_IS,
     # Store-relative paths: object names and snapshot ids (M16-41).
     "store.exposure.entries": REDACT,
     "problems": REDACT,
