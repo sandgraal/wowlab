@@ -14305,10 +14305,10 @@ def ui_command() -> None:
     each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
-    answers only requests that carry a random key. The link it opens works
-    once: the page trades it for that key and takes it out of the address
-    bar, so a reload needs a new wowlab ui. A link already used says so in
-    the browser, and here if it is used a second time.
+    answers only requests that carry its link's random key, or the session
+    your browser got from that link. The link, a reload and a second tab
+    keep working until you stop wowlab ui; a new wowlab ui makes a new link,
+    and the old one stops working.
     The page has five tabs. Explorer shows the whole install's files, each
     with whether wowlab may edit it, and what a picked file is and who
     writes it. Gaps lists the paths the file map does not describe.
@@ -14336,14 +14336,12 @@ def ui_command() -> None:
     from wowlab_core import ui
 
     server = ui.make_server()
-    # The spent link presented again: one line here, with no key in it.
-    server.notice = _say_err
 
     def announce(opened: bool) -> None:
         if opened:
             _say_err(f"wowlab ui: serving on http://127.0.0.1:{server.port}/; Ctrl-C to stop")
         else:
-            _say_err("wowlab ui: no browser opened; open this link (it works only once):")
+            _say_err("wowlab ui: no browser opened; open this link:")
             typer.echo(server.url)
 
     lock = threading.Lock()

@@ -315,15 +315,14 @@ wowlab ui
 ```
 
 It picks a free port, listens only on this machine, and opens your
-browser on a link that works once; if no browser opens, the link is
-printed once, so paste it. Stop it with Ctrl-C. The page trades the link
-for a key it keeps only while it is open, and takes the link out of the
-address bar, so reloading the page needs a new `wowlab ui`.
+browser on its link; if no browser opens, the link is printed once, so
+paste it. The link, a reload of the page and a second tab keep working
+until you stop `wowlab ui` with Ctrl-C; a new `wowlab ui` makes a new
+link, and the old one stops working.
 
 `wowlab ui` is made for a single-user machine. On a computer other people
 log in to, they can see the link in their process list while your browser
-starts, and if one of them opens it first, your page says the link was
-already used: stop `wowlab ui` and start it again. From the page,
+starts, and can open it too, until you stop `wowlab ui`. From the page,
 `sv dump` reads only files inside your install.
 
 Reading never changes anything. Six commands can change game files; each

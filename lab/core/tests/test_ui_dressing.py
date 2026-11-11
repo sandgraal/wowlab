@@ -141,7 +141,7 @@ def _only_api(out: dict[str, Any]) -> None:
     """Every request the page made went to the server's own API, by path."""
     for step in out["steps"]:
         for request in step.get("requestsSoFar", []) + step.get("newRequests", []):
-            assert request["url"].startswith(("/api/commands?", "/api/run?")), request
+            assert request["url"].startswith(("/api/commands", "/api/run")), request
 
 
 # ─── the markup ──────────────────────────────────────────────────────────────

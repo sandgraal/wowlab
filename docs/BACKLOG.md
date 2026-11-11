@@ -2816,6 +2816,25 @@ Keep `default_roots` testable without the real filesystem: the platform, the hom
 - **User-facing:** listed in the PR (wiki: install, getting started).
 - **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
 
+## [ ] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 ("get rid of this requirement"); LAB_PLAN, `wowlab ui` amendment of 2026-11-11
+
+Replace the one-time boot key (M16-42) with a session that lasts as long as the `wowlab ui` process, as the amendment says:
+- the link `wowlab ui` opens works, and keeps working;
+- a reload works, and so does a second tab in the same browser;
+- other origins and processes are still refused;
+- Ctrl-C ends it.
+
+Remove the "already used" page, its terminal notice, and the `--help` and docs text that say a reload needs a new `wowlab ui`.
+
+**Acceptance:**
+- **Reload works:** a reload of the shell, and a second request without the query, are served when they carry the session.
+- **Refusals:** a request with no session and no token is refused. So is a request whose Origin or Host is not the server's own.
+- **New server, new session:** a request carrying the session of an earlier server is refused.
+- **Tests:** existing UI tests updated where they pinned the one-time behaviour. In this PR, name each test that changed and why.
+- **User-facing:** listed in the PR (wiki: ui).
+- **Reviews:** `code-reviewer` and `security-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
