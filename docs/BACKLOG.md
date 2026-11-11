@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99, M16-100T
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2322,7 +2322,7 @@ The archive holds the same settings and saved data as the store, but is created 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T, M16-93T · **Sources:** as M16-69T
+**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
@@ -2623,3 +2623,12 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 `review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` reuses `CRASH_SCRIPT`, which now sets `snapshot._WRITE_BY_DIR_FD = False`. So its non-control case no longer takes the descriptor-write route and repeats the control. Add a new review probe, as a new file, that forces `_WRITE_BY_DIR_FD = True` and checks that the seam still fires through `dir_fd`. The reviewers checked this by hand.
 
 **Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.
+
+# M16 owner answer (filed 2026-11-11, seventh batch)
+
+## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
+**Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
+
+M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
+
+**Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
