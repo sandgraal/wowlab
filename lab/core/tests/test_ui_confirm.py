@@ -14,7 +14,8 @@ Three kinds of run here, none touching a real install:
 - the real CLI, through a shim that redirects the user data directory into
   `tmp_path` and empties the process table, on an install copied from the
   captured tree (`fixtures/macos/`, as `test_cli` does) or on a constructed
-  second flavor beside it; `--offline`, so nothing reaches the network;
+  second flavor beside it; without `--check-builds`, so nothing reaches the
+  network;
 - the page under Node with a small DOM stub (skipped when `node` is not on
   PATH): Confirm appears only with a token and sends the plan's own
   parameters with it.
@@ -268,11 +269,11 @@ def _first_run(outcome: str, chosen: str | None) -> dict[str, Any]:
 def test_doctor_plan_runs_with_json_alone(server: ui.UiServer, recorder: Recorder) -> None:
     recorder.reply(_doctor_report(None))
     _plan(server, DOCTOR)
-    _plan(server, DOCTOR, {"offline": True, "flavor": "--yes", "root": "/r"})
+    _plan(server, DOCTOR, {"check_builds": True, "flavor": "--yes", "root": "/r"})
     first, second = recorder.argvs()
     assert first == ["doctor", "--json"]
     assert second[0] == "doctor" and second[-1] == "--json"
-    assert sorted(second[1:-1]) == sorted(["--root=/r", "--offline", "--flavor=--yes"])
+    assert sorted(second[1:-1]) == sorted(["--root=/r", "--check-builds", "--flavor=--yes"])
 
 
 @pytest.mark.parametrize(
@@ -335,7 +336,7 @@ def test_doctor_mints_a_token_only_for_not_asked_with_a_flavor(
         (DOCTOR, {}, ["doctor", "--json"], ["doctor", "--json", "--yes"]),
         (
             DOCTOR,
-            {"root": "/a b", "offline": True, "flavor": "--yes"},
+            {"root": "/a b", "check_builds": True, "flavor": "--yes"},
             None,
             None,
         ),
@@ -356,7 +357,14 @@ def test_the_confirmed_argv_is_the_plan_without_dry_run_and_with_yes_appended(
     assert token is not None
     status, payload = _confirm(server, path, token, params)
     assert status == 200, payload
-    assert payload["confirm"] == {"stage": "confirmed", "token": None, "note": None, "needs": None}
+    assert payload["confirm"] == {
+        "stage": "confirmed",
+        "token": None,
+        "note": None,
+        "needs": None,
+        "plan_lines": [],
+        "label": None,
+    }
     plan, confirmed = recorder.argvs()
     if plan_argv is not None:
         assert (plan, confirmed) == (plan_argv, confirmed_argv)
@@ -377,16 +385,16 @@ def test_a_token_confirms_exactly_once(server: ui.UiServer, recorder: Recorder) 
 
 def test_a_token_confirms_only_its_own_argv(server: ui.UiServer, recorder: Recorder) -> None:
     recorder.reply(_doctor_report(_first_run("not_asked", FLAVOR)))
-    token = _token(_plan(server, DOCTOR, {"offline": True}))
+    token = _token(_plan(server, DOCTOR, {"check_builds": True}))
     assert token is not None
     # Another argv: other parameters, or another leaf of the step.
-    assert _confirm(server, DOCTOR, token, {"offline": True, "flavor": "x"}) == (
+    assert _confirm(server, DOCTOR, token, {"check_builds": True, "flavor": "x"}) == (
         403,
         {"error": "confirm"},
     )
     # Presented once with the wrong argv, it is spent.
-    assert _confirm(server, DOCTOR, token, {"offline": True}) == (403, {"error": "confirm"})
-    token = _token(_plan(server, DOCTOR, {"offline": True}))
+    assert _confirm(server, DOCTOR, token, {"check_builds": True}) == (403, {"error": "confirm"})
+    token = _token(_plan(server, DOCTOR, {"check_builds": True}))
     assert token is not None
     assert _confirm(server, GC, token) == (403, {"error": "confirm"})
     assert _confirm(server, DOCTOR, token, {}) == (403, {"error": "confirm"})
@@ -482,6 +490,27 @@ def _commands(server: ui.UiServer) -> list[dict[str, Any]]:
         conn.close()
 
 
+def test_the_doctor_form_is_offline_by_default_and_offers_no_offline(
+    server: ui.UiServer, recorder: Recorder
+) -> None:
+    """M16-07: the doctor form's network flag is `--check-builds`, off unless
+    ticked, so a plan run with nothing ticked is `doctor --json` and asks
+    wago.tools nothing. The hidden no-op `--offline` is not offered, and a
+    request that names it is an unknown parameter that runs nothing."""
+    listed = {tuple(c["path"]): c for c in _commands(server)}
+    params = {p["name"]: p for p in listed[DOCTOR]["params"]}
+    assert params["check_builds"]["label"] == "--check-builds"
+    assert params["check_builds"]["kind"] == "flag"
+    assert "offline" not in params
+    recorder.reply(_doctor_report(None))
+    _plan(server, DOCTOR)
+    assert recorder.argvs() == [["doctor", "--json"]]
+    for value in (True, False):
+        status, payload = _post(server, {"command": list(DOCTOR), "params": {"offline": value}})
+        assert (status, payload) == (403, {"error": "unknown_parameter"}), value
+    assert len(recorder.calls()) == 1
+
+
 def test_the_command_list_names_the_shape_and_hides_yes(server: ui.UiServer) -> None:
     listed = {tuple(c["path"]): c for c in _commands(server)}
     assert listed[GC]["confirm"] == "dry_run" and listed[GC]["excluded"] is None
@@ -541,7 +570,7 @@ def test_doctor_confirms_a_first_snapshot_into_the_store_and_not_the_install(
     server, data = real_cli
     root = _install(tmp_path, second=False)
     before = _state(root)
-    params: dict[str, object] = {"root": str(root), "offline": True}
+    params: dict[str, object] = {"root": str(root)}
     plan = _plan(server, DOCTOR, params)
     assert plan["exit_code"] == 0, plan["stderr"]
     first = json.loads(plan["stdout"])["first_run"]
@@ -568,7 +597,7 @@ def test_doctor_on_a_two_flavor_install_asks_for_a_flavor_and_offers_no_token(
 ) -> None:
     server, _ = real_cli
     root = _install(tmp_path, second=True)
-    params: dict[str, object] = {"root": str(root), "offline": True}
+    params: dict[str, object] = {"root": str(root)}
     plan = _plan(server, DOCTOR, params)
     assert plan["exit_code"] == 0, plan["stderr"]
     first = json.loads(plan["stdout"])["first_run"]
@@ -744,8 +773,14 @@ def _result(stdout: object, offer: dict[str, Any] | None) -> dict[str, Any]:
         "stdout": json.dumps(stdout),
         "stderr": "",
     }
+    stage = None
     if offer is not None:
         reply["confirm"] = offer
+        stage = offer["stage"]
+    # The server's own words for how this run ended (M16-21): a plan is
+    # marked when the server minted a token for it.
+    marked = offer is not None and bool(offer.get("token"))
+    reply["outcome"] = ui._outcome(ui._Run(0, [], [], False, False), stage, marked)
     return reply
 
 
@@ -801,11 +836,11 @@ def test_the_page_offers_confirm_only_with_a_token_and_sends_it_with_the_plans_p
     out = _drive(tmp_path, replies, steps)
     picked, planned, confirmed, again = out["steps"]
     assert picked["run"] == "Show the plan" and picked["boxHidden"] and picked["confirmHidden"]
-    assert planned["status"].startswith("Plan, nothing was changed")
+    assert planned["status"] == "Plan only: nothing was changed."
     assert planned["note"] == "Nothing to remove. Confirm runs it anyway."
     assert not planned["boxHidden"] and not planned["confirmHidden"]
     assert not planned["confirmDisabled"]
-    assert confirmed["status"].startswith("Confirmed: exit code 0")
+    assert confirmed["status"] == "After Confirm: Done (exit code 0)."
     assert confirmed["confirmHidden"] and confirmed["boxHidden"]
     assert again == confirmed  # one click, one confirmed run
     bodies = [r["body"] for r in out["requests"]]
@@ -857,4 +892,4 @@ def test_the_page_sends_the_plans_params_and_drops_confirm_when_a_field_changes(
         {"command": ["doctor"], "params": {"flavor": "_x_"}},
         {"command": ["doctor"], "params": {"flavor": "_x_"}, "confirm": "tok-2"},
     ]
-    assert out["steps"][-1]["status"].startswith("Confirmed")
+    assert out["steps"][-1]["status"] == "After Confirm: Done (exit code 0)."

@@ -1,0 +1,59 @@
+{
+  "flavor_folder": "_classic_beta_",
+  "account": "90000001#6",
+  "character": "1/Labcharb-Labrealmd",
+  "files": [
+    {
+      "scope": "account",
+      "file": "WTF/Account/90000001#6/macros-cache.txt",
+      "macros": 0,
+      "unknown_lines": 0
+    },
+    {
+      "scope": "character",
+      "file": "WTF/Account/90000001#6/1/Labcharb-Labrealmd/macros-cache.txt",
+      "macros": 1,
+      "unknown_lines": 0
+    }
+  ],
+  "record_file": null,
+  "record_schema": null,
+  "record_error": null,
+  "length_limit": 255,
+  "length_unit": "characters and UTF-8 bytes of the body lines joined by LF, with no final line break; over 255 characters is a finding, over 255 bytes only is cannot judge",
+  "macros": [
+    {
+      "scope": "character",
+      "file": "WTF/Account/90000001#6/1/Labcharb-Labrealmd/macros-cache.txt",
+      "id": "0100000000000001",
+      "name": "PolyArc",
+      "line": 1,
+      "bytes": 41,
+      "characters": 41,
+      "complete": true
+    }
+  ],
+  "findings": [],
+  "cannot_judge": [
+    {
+      "rule": "spell-not-in-spellbook",
+      "macro": null,
+      "name": null,
+      "line": null,
+      "reason": "no spellbook record (install the lab-addon with the client closed (wowlab addon install lab), log in on this character, then log out or /reload; schema 3 is needed)"
+    },
+    {
+      "rule": "not-on-action-bar",
+      "macro": null,
+      "name": null,
+      "line": null,
+      "reason": "no spellbook record (install the lab-addon with the client closed (wowlab addon install lab), log in on this character, then log out or /reload; schema 3 is needed)"
+    }
+  ],
+  "on_no_bar_at_least": null,
+  "blank_names": 0,
+  "notes": [
+    "macros-cache.txt is what the client last wrote; the server can replace it at login when macro sync is on. In a real capture (docs/LAB_FORMATS.md, 2026-10-16) a macro made in a finished session was missing from it (whether the client rewrites it at logout is [verify]), so a macro may be missing here, or still listed after you deleted it.",
+    "The spellbook and action bars are the lab-addon's record as of its last save (logout or /reload), not the session in progress. It reads the player's spellbook only, so an item, a pet, mount or toy spell after /cast reads as not in the spellbook."
+  ]
+}

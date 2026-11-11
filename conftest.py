@@ -1,4 +1,5 @@
-"""Which tests run alone, after the parallel pass (M13-18).
+"""Which tests run alone, after the parallel pass (M13-18), and which get a
+longer hang guard (M13-81).
 
 `make test` and CI run the suite in two passes. The first runs every test
 not marked `serial` across all cores with pytest-xdist (`-n auto`). The
@@ -36,6 +37,8 @@ This file is also loaded by the hook tests under Python 3.9
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 # Every test in these files measures (node id prefix: the file).
@@ -54,6 +57,10 @@ SERIAL_FILES: frozenset[str] = frozenset(
         "lab/core/tests/review/test_review_m10_02_followup_blank_runs.py",
         # RSS of a child refusing a long line-break run (ru_maxrss).
         "lab/core/tests/test_luadata_budget_constructed.py",
+        # RSS of a child parsing a WTF document at its budget (VmHWM; M16-25).
+        "lab/core/tests/parser/test_wtfconfig_budget_rss_constructed.py",
+        # RSS of a child parsing two-line macro records at MACROS_BUDGET (VmHWM).
+        "lab/core/tests/review/test_review_m16_25_macros_record_density.py",
     }
 )
 
@@ -82,7 +89,7 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_constructed_long_separator_runs_scan_in_linear_time",
         "tests/scripts/test_lab_capture_round2.py"
         "::test_constructed_one_megabyte_run_scrubs_in_bounded_time",
-        # CPU-time ratio of guard's no-op whole restore at 8,000 and 2,000 files.
+        # CPU-time growth of guard's no-op whole restore from 1,000 to 8,000 files.
         "lab/core/tests/test_guard_listing_memo.py"
         "::test_constructed_the_no_op_whole_restore_check_scales_linearly",
         # Wall clock against a bare walk of the same tree.
@@ -95,6 +102,16 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits",
     }
 )
+
+# Tests that may legitimately run longer than the hang guard's 300 s
+# (`timeout` in pyproject.toml, M13-81), by node id without the parameter
+# suffix, with the seconds they get. None is listed: the slowest measured
+# test took 255 s (a lab-addon review probe, on 4 cores at load average about
+# 20; M13-81), 45 s inside the guard. An entry goes here, never into the test
+# file, for the same reason as the serial list.
+# `tests/repo/test_make_test_fast.py` checks that every entry names a test
+# that exists.
+TIMEOUT_OVERRIDES: dict[str, int] = {}
 
 SERIAL = pytest.mark.serial
 
@@ -110,3 +127,30 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if is_serial(item.nodeid):
             item.add_marker(SERIAL)
+        seconds = TIMEOUT_OVERRIDES.get(item.nodeid.split("[", 1)[0])
+        if seconds is not None:
+            item.add_marker(pytest.mark.timeout(seconds))
+
+
+@pytest.fixture(autouse=True)
+def _undo_monkeypatch_before_tmp_path_cleanup(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Undo a test's monkeypatching before pytest deletes its `tmp_path` (M13-81).
+
+    With `tmp_path_retention_policy = "failed"` (pyproject.toml), pytest removes
+    a passing test's `tmp_path` when that fixture is torn down. A test that
+    asks for `monkeypatch` before `tmp_path` still has its patches in place
+    then, so a patched `os` function (an `os.scandir` that takes no
+    descriptor, in the M10-18T graders) breaks `shutil.rmtree` and the test
+    errors at teardown. This fixture depends on both, so it is torn down
+    first and undoes the patches; `monkeypatch`'s own teardown then has
+    nothing left to undo. Fixtures the test sets up later are torn down
+    before this one, with their patches still in place, as before. It edits
+    no test file, for the same reason as the serial list.
+    """
+    if "tmp_path" in request.fixturenames and "monkeypatch" in request.fixturenames:
+        request.getfixturevalue("tmp_path")
+        patches = request.getfixturevalue("monkeypatch")
+        yield
+        patches.undo()
+    else:
+        yield

@@ -24,14 +24,14 @@ The first run prints this too, before it does anything else (ADR-0031):
 - **Its own files stay in its own folder.** Snapshots, the record of every
   change and downloaded game tables live in wowlab's data folder, never in
   your install. `wowlab doctor` prints where that is.
-- **Nothing is uploaded.** The only network traffic is to
-  [wago.tools](https://wago.tools), a community-run public site of game
-  data. `wowlab doctor` downloads its public list of game versions and
-  looks for your installed versions in it; nothing from your install is
-  sent. Run `wowlab doctor --offline` to skip that. `wowlab db2` and
-  `wowlab looks` download public game tables from the same site, and to
-  ask for the right ones they send your installed game version string
-  (such as `1.60.1.69913`) in the request.
+
+<!-- network:begin -->
+**What leaves your machine. Nothing is uploaded: these three are wowlab's only network traffic, and no other command makes a request.**
+
+- `wowlab doctor --check-builds` downloads the public list of game versions from wago.tools, a community-run public site of game data, and looks for your installed versions in it; nothing from your install is sent. Without `--check-builds`, `doctor` makes no network request.
+- `wowlab db2` and `wowlab looks` download public game data from wago.tools: its list of game versions, and tables for one version at a time. A table request names that version: your installed one, or the one you give with `--build`.
+- A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
+<!-- network:end -->
 
 ## Platforms
 
@@ -77,6 +77,7 @@ checked:
    file has to print `OK`. Then, for a release after v0.1.0, check where the
    wheel was built (next paragraph):
 
+   <!-- not-run: needs the network -->
    ```bash
    gh attestation verify wowlab_core-<version>-py3-none-any.whl \
      --repo sandgraal/wowlab \
@@ -86,6 +87,7 @@ checked:
 
 3. Install the file you checked, not the address:
 
+   <!-- not-run: an install, from the network -->
    ```bash
    uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl
    ```
@@ -107,6 +109,7 @@ added, so it has none: for it, `SHA256SUMS` is the check.
 
 **From source**, if you want the development version:
 
+<!-- not-run: a source checkout, from the network -->
 ```bash
 git clone https://github.com/sandgraal/wowlab
 cd wowlab
@@ -116,6 +119,10 @@ uv run wowlab doctor
 
 From a source checkout every command is `uv run wowlab …`. The examples
 below write `wowlab …`.
+
+**If `wowlab` is not found** after `uv tool install` reported success, the
+folder uv puts its commands in is not on your `PATH` yet (uv warns about
+this as it installs). Run `uv tool update-shell`, then open a new terminal.
 
 ## Pointing wowlab at your install
 
@@ -136,6 +143,28 @@ Without help, wowlab looks only where the game installs by default:
 - Windows: `World of Warcraft` at the top of each drive, then under
   `Program Files (x86)` and `Program Files`, the system drive first
 
+On Linux there is no default: the game runs under Wine, Lutris or
+Proton, inside a Windows-style folder tree called a prefix, and wowlab
+does not search prefixes. These are the places such installs usually are;
+yours may differ, and the folder you want is the `World of Warcraft`
+folder that holds `.build.info`:
+
+- Wine: `~/.wine/drive_c/Program Files (x86)/World of Warcraft`
+- Lutris (its Battle.net installer): `~/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft`
+- Steam with Proton (Battle.net added as a non-Steam game):
+  `~/.local/share/Steam/steamapps/compatdata/<number>/pfx/drive_c/Program Files (x86)/World of Warcraft`,
+  where `<number>` is the id Steam gave the shortcut; with Steam from
+  Flatpak, the same path under `~/.var/app/com.valvesoftware.Steam/.local/share/Steam/`
+
+To search your home folder for it:
+
+<!-- not-run: searches your own folders, not a wowlab command -->
+```bash
+find ~ -name .build.info -path '*World of Warcraft*' 2>/dev/null
+```
+
+The folder that line prints, without `/.build.info`, is the install folder.
+
 If yours is somewhere else, name it for one command with `--root`:
 
 ```bash
@@ -144,11 +173,13 @@ wowlab doctor --root "/path/to/World of Warcraft"
 
 or for every command with `WOWLAB_WOW_ROOT`:
 
+<!-- not-run: sets a variable on your own machine -->
 ```bash
 # macOS or Linux (add it to your shell's profile to keep it)
 export WOWLAB_WOW_ROOT="/path/to/World of Warcraft"
 ```
 
+<!-- not-run: sets a variable on your own machine -->
 ```powershell
 # Windows PowerShell, this window only
 $env:WOWLAB_WOW_ROOT = "D:\Games\World of Warcraft"
@@ -165,9 +196,10 @@ Run `wowlab doctor`. A run is a first run while wowlab's store holds no
 snapshot of this install. It goes like this:
 
 1. **What wowlab will and will not do**, as above, before anything else.
-2. **The usual report**: the install, each flavor and its version, whether
-   wago.tools lists that version, your server-sync settings, whether the
-   game is running, and the state of the snapshot store.
+2. **The usual report**: the install, each flavor and its version, your
+   server-sync settings, whether the game is running, and the state of the
+   snapshot store. Whether wago.tools lists each version is checked only
+   with `--check-builds`.
 3. **What a first snapshot would hold**, for each flavor: the `WTF`,
    `Interface` and `Fonts` folders (the same ones `wowlab snap create`
    takes), how many files, how big, and an estimated time. The estimate is
@@ -211,7 +243,7 @@ Options for the first run:
 |---|---|
 | `--yes` | Take the snapshot without asking. With several flavors, add `--flavor`. |
 | `--flavor <folder>` | The flavor to snapshot, as `wowlab doctor` lists it. |
-| `--offline` | Do not contact wago.tools. |
+| `--check-builds` | Ask wago.tools whether it lists each installed version. Without it, `doctor` makes no network request. (`--offline` is still accepted, does nothing, and says so.) |
 | `--json` | Print the report as JSON (the `DoctorReport` model; its `first_run` field holds the first-run part). Never asks: without `--yes` no snapshot is taken. |
 
 When input is not a terminal (a script, a pipe) and `--yes` is not given,
@@ -271,6 +303,7 @@ would.
 `wowlab ui` opens a local page that shows your install the way `wowlab
 tree` and `wowlab explain` do, one folder at a time:
 
+<!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab ui
 ```
@@ -318,7 +351,7 @@ What to look for:
   log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
   the result. Every command is offered except `ui` itself,
-  `log tail --follow` and `looks page --out`. The six that change game
+  `log tail --follow`, `looks page --out` and `snap export`. The six that change game
   files are `snap restore`, `undo`, `profile apply`, `sv merge`,
   `addon install` and `addon remove`: each shows its plan first, takes a
   snapshot before it writes, and `wowlab undo` reverses it.
@@ -358,5 +391,32 @@ stored files that no snapshot needs, after asking.
   with `--paths`. They stay in the snapshot, and the plan counts them and
   names the first ten that differ from the disk, are missing, or could not
   be read (`Screenshots/` now a link).
+- **After the launch rename.** A snapshot goes back only into the folder it
+  was taken of, unless you name another. When a beta launches, the game's
+  folder gets a new name; you do not rename it yourself. Start the launched
+  game and log in once with each character you want settings for, so its
+  account, realm and character folders exist, and quit it. Then
+  `wowlab snap restore <id> --into-flavor <new folder>` puts the snapshot
+  into the new folder, and `wowlab profile apply <name> --into-flavor <new folder>`
+  does the same for a profile. `--into-root <path>` restores into another
+  install folder on this machine (a reinstall somewhere else, or a second
+  install). To carry a snapshot to another computer,
+  `wowlab snap export <id> <file>` writes it into one file (outside any
+  install), and `wowlab snap import <file>` on the other computer adds it to
+  that computer's snapshots once every file in it has passed its check;
+  then restore it there with `--into-root`. The plan
+  names both folders and which account folder under `WTF/Account/` goes
+  where. When the snapshot and the target each have one account folder they
+  are paired for you; otherwise say which goes where with
+  `--map-account <snapshot's folder>=<target's folder>`, once for each
+  account folder the snapshot holds (the target's may be a new one). A
+  folder there that is no account folder (no character folder in it) goes
+  back under its own name, and the plan says so. Per-character settings go
+  only to the character folder of the same realm and character name: a
+  character that has another realm or name in the new folder gets nothing
+  from them. Applied to another folder, a profile deletes the files under
+  its folders that are in the target but not in the profile; the plan
+  lists them as "in the target folder, not in the profile". `--paths`
+  names files as `wowlab snap show <id>` lists them.
 - Both go through the same write gate: the game must be closed, a snapshot
   is taken first, and you are asked before anything is written.

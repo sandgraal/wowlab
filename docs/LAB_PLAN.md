@@ -431,6 +431,44 @@ followed" is said once); the flavor-folder wording above
 remains for a folder that becomes a link after discovery. A reparse point
 without that bit (a cloud placeholder, a deduplicated file) is walked and
 named in `Inventory.reparse_points` (M13-33).
+*Amended 2026-11-10 (M16-80):* each `tree` link note above now goes on
+after "not followed" in the readers' words (M16-65,
+`snapshot.not_read_through`): "…, not followed; wowlab does not read
+through links, so it reads this only when the real folder is there". The
+link is never followed, so the word comes from the file map: "real file"
+where only a file at the link's place gets a row (a linked `WTF/Config.wtf`
+or SavedVariables file); "real folder" where only a folder does, or where
+one row takes both and the place is the folder that row's subtree hangs
+from (`Fonts`, `Interface/AddOns/<addon>`); "real one" otherwise (no row, a
+font file or an addon's `.toc` under a row that takes both, or different
+rows for each). A flavor folder that is a link is "real folder" always, and `tree`'s stderr line for
+one reads "<folder> is a link; wowlab does not read through links, so it
+reads this only when the real folder is there. Nothing in it is listed."
+`install.NotTaken.note`, `doctor` and the other "not followed" tags are
+unchanged.
+*Amended 2026-11-11 (M16-91):* one case of "different rows for each" now
+says "real file": a file at the link's place has its own row, and the row a
+folder there would get is a different one whose `**` subtree hangs from a
+folder strictly above the place, never from the place itself (the general
+row of the area). This covers `Logs/WoWCombatLog*.txt` and `Logs/*.log`
+(under `Logs/**`), and `Cache/ADB/<locale>/DBCache.bin` and
+`Cache/WDB/<locale>/*.wdb` (under `Cache/**`). Other pairs of different
+rows, and one row for both kinds below the folder it hangs from, still say
+"real one".
+*Amended 2026-11-11 (M16-95):* a second case of "different rows for each"
+says "real file": the file at the link's place has a row that spells out
+its name, and the row a folder there would get takes a folder of any name
+at that one place (a folder pattern with no `**` whose last segment is a
+wildcard or token). This covers the client's files in an account folder,
+`WTF/Account/<ACCOUNT>/` `config-cache.wtf`, `bindings-cache.wtf`,
+`macros-cache.txt`, `SavedVariables.lua` and its `.bak`,
+`edit-mode-cache-account.txt` and `.old`, `chat-frontend-cache.txt`,
+`flagged-cache-account.txt`, `tts-cache-account.txt` and
+`character-list-order.txt`, whose folder row is `realm-folder`.
+`WTF/Account/SavedVariables/<Addon>.lua` and `.lua.bak` name no fixed file
+and are left to the M13-50 check: on a walk that folder is no account
+folder, so no folder row applies there and the note says "real file";
+classified with nothing on disk to judge, it stays "real one".
 
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
@@ -795,6 +833,26 @@ Each parser exposes `lines` (everything, in order, typed or `Unknown`) and a
 convenience view. No writer in Wave 1; the document model must be sufficient
 for one (that is the reason `Unknown` lines are kept).
 
+*Amended 2026-11-09 (M16-25, §18.1 item 6):* budgets and the BOM.
+
+- **Budgets.** Each file type has a byte budget and a line budget:
+  `Config.wtf` and `config-cache.wtf` 4 MiB and 50,000 lines,
+  `bindings-cache.wtf` 4 MiB and 50,000 lines, `macros-cache.txt` 4 MiB
+  and 50,000 lines. The real files are a few KiB; a full macros file is at
+  most about 38,700 lines (150 records of up to 258 lines, the slot counts
+  **[verify]**). A file over either budget is refused with `WtfLimitError`
+  at the first byte or the first line past it (line, column, byte offset),
+  before any line model is built. The readers read at most the budget plus
+  one byte. A serial RSS probe parses the densest shapes at each budget,
+  two-line macro records included. It measured about 35 to 61 MiB of
+  growth on Linux, at most 61 MiB for config, holds Linux under 100 MiB,
+  and measured a refusal at none.
+- **The BOM.** A leading UTF-8 BOM is the document's `bom`, a prefix token,
+  and never part of line 1. `to_bytes()` is `bom` followed by the lines, so
+  it stays byte-identical (L4), and a `SET` line right after the BOM is
+  line 1 for `cvar get`. Only the first three bytes can be the BOM. Whether
+  the client ever writes one is **[verify]**: no capture shows it.
+
 ### 6.6 `gamedata` — DB2 tables by build (M10-08)
 
 Source and rationale: ADR-0022, `docs/DATA_SOURCES.md` (wago.tools).
@@ -1100,6 +1158,78 @@ include `labaddon`'s `WowLab.lua` reads (`char list`, `char show`, the
 survey) and `tree PATH` / `tree --install PATH`, which take a `\\?\`
 argument with a plain spelling by that spelling.
 
+*Amended 2026-11-09 (M16-04, §18.1 item 1):* a snapshot travels between
+computers as one zip archive, `wowlab_core.snaparchive`. It holds
+`manifest.json` (the manifest file byte for byte), one `objects/<sha256>`
+entry per distinct content (the file's bytes, deflated by the zip), and the
+zip comment `wowlab snapshot archive 1`; every entry is dated 1980-01-01,
+so one snapshot always exports to the same bytes. `snap export <id> FILE`
+reads the store only, checks every object against its name and size as it
+reads it, and creates FILE exclusively (`O_EXCL | O_NOFOLLOW`: an existing
+file or a link there is refused, never replaced or followed). FILE inside
+any install is refused by guard's inside-any-install rule, before FILE is
+created and again once it exists, before a byte is written; FILE inside the
+store is refused too. `snap import FILE` treats the archive as hostile: it
+is opened as a store file is (no link, no FIFO), nothing is extracted to a
+path, every entry name must be exactly `manifest.json` or `objects/` and
+64 lowercase hex digits, once each (anything else, including `..`, an
+absolute path, a directory, a link, encryption or an unknown compression,
+refuses the archive), the manifest must load as a store manifest does and be
+in the canonical encoding (`snapshot.parse_manifest`), the archive must
+hold exactly the objects the manifest names at the sizes it records, and
+the sizes are bounded (1 GiB an object, 16 GiB in all, 64 MiB of
+manifest, 250,000 entries; amended below). `SnapshotStore.add_snapshot` then streams
+each object, at most one byte past its recorded size, into a staged file
+under `tmp/` while hashing it; only when every object has verified are they
+moved into their shards and the manifest written last, so a corrupt
+archive adds nothing. An id already in the store with the same bytes adds
+nothing; with other bytes (a relabelled copy) it is refused. The import
+holds the store lock. An imported snapshot keeps the install root it was
+taken of, so it is restored with `--into-root` (and `--into-flavor` when
+the folder has another name there). `wowlab ui` refuses `snap export` whole
+(its FILE is required), for the reason it refuses `looks page --out`.
+*2026-11-10 (M16-04 review round 1):* (a) On POSIX the export file is
+created through a descriptor on its folder, held to be the folder that was
+checked; a failed export removes the file only while its name still names
+the file it created (device and inode, not a link), so an install's own
+file reached through a swapped folder is never removed. (b) An imported
+manifest is held to `snapshot.check_foreign_manifest`: `created_at` well
+formed, equal to the moment in its id, and no later than this computer's
+clock plus ten minutes; `flavor_folder` one folder name; every subtree and
+excluded path relative and that folder or under it; every entry under a
+subtree and under no excluded path. (c) The store records each imported id
+as an empty file `imported/<id>`, written before the manifest; the
+manifest's bytes and fingerprint are unchanged. `kind_of` reports such a
+snapshot as `imported` (a fifth `SnapshotKind`; a manifest still records
+only the four, `RecordedKind`), whatever its manifest claims, so
+`latest-user` never names it; `latest` and `~N` still go by date, which
+(b) holds to the past. `snap show` prints the kind. (d) Before `zipfile`
+reads the central directory, the end record (Zip64 included) is read where
+an exported archive has it, right before the comment, and the entry count,
+the directory size and the comment are checked.
+*2026-11-10 (M16-04 review round 2):* (a) Whenever a Zip64 locator sits
+before the end record, both Zip64 records `zipfile` could use (at the
+locator's offset, and just before the locator) are read and bounded, as
+the classic record is, whatever its fields say. The bounds are now 250,000
+entries and a central directory of 250,000 x 210 bytes (about 35 MiB, room
+for that many entries as an export writes them); the directory size is the
+bound that holds, since `zipfile` reads entries until it runs out (at most
+about 793,000 of the shortest). (b) On POSIX the export's folder is opened
+as resolved, without following a link, and it and every folder above it
+are examined for install markers through descriptors (`..`), so a folder
+swapped before or after the open cannot put the file in an install; on
+Windows the path checks before and after creation narrow that window
+without closing it. (c) `explain`'s snapshot facts and `snap show --json`
+report an imported snapshot's kind as `imported`; a `Manifest` accepts
+that kind, and `create` never writes it.
+*Amended 2026-11-10 (M16-67, M16-76, M16-77; #422, #437, #438):*
+
+(a) On POSIX, `snap export` creates FILE 0600, whatever the umask, and every member of the archive carries mode 0600 in its external attributes. A tool that reads the Unix bits, such as `unzip`, unpacks it owner-only. The export stays deterministic.
+
+(b) A snapshot id, a manifest file name and a manifest's `created_at` are ASCII digits only (`[0-9]`, never `\d`). A name spelled with other Unicode digits is never loaded as a snapshot: `snap list` names it as damaged, as in (c), and no reference resolves to it.
+
+(c) A stored manifest's `created_at` must be the moment its id carries. `create` has always written both from one moment. A manifest that fails this is damaged, as any manifest that does not load is: `snap list` names it and exits 1, `latest`, `~N` and `latest-user` refuse, and `snap gc` will not run. An import is held to the same rule, and to its own check against future dates.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -1342,6 +1472,38 @@ A mapping may name a target account folder that does not exist yet; the gate cre
 
 The target root must not overlap the snapshot store in either direction (L1). A client running from the target refuses the write, whatever the source install's state.
 
+*Amended 2026-11-10 (M16-13, M16-66, M16-70; #416, #432, #430):*
+
+(a) **Journal record names.** A record is `journal/<8 ASCII digits>-<8 lowercase hex>.json` and nothing else (`\A[0-9]{8}-[0-9a-f]{8}\.json\Z`). The loader ignores any other name in `journal/`, including one spelled with other Unicode digits. `doctor` and `undo` never offer it.
+
+(b) **Private store folders.** The gate creates the store root and `journal/` with mode 0700 in the `mkdir` itself, so they are never wider than 0700, whatever the umask. M16-78 asks the owner whether the user data directory's other folders follow.
+
+(c) **`doctor` and the journal.** When the most recent record is still `open`, meaning an interrupted change, `doctor` reports it with exit 1 and the exact `wowlab undo --expect <id>` line.
+
+A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FILE_MAP.md`).
+
+*Amended 2026-11-10 (M16-84T, M16-84; #453):* **The files a rollback left alone.**
+
+(a) **On the record.** `HistoryRecord.paths_left: tuple[str, ...]` lists the files the rollback of a `rollback_incomplete` record left as they are (item 3 as clarified 2026-09-22): a path changed by another program, a path the system refused to put back, and a refused path whose disk moved since guard read it. Each is relative to the flavor folder and spelled as `paths[].path` spells it, once; order is not part of the contract. A directory the rollback could not remove is not listed (it stays in the note). The list is empty for every other state, and for a record written before M16-84: the note is never parsed.
+
+(b) **In the journal.** The record file carries the list under `paths_left`, and the paths whose only operation was refused (which `paths` does not name) under `paths_refused`. On read, each entry of either must pass the allowlist's lexical check, appear once, and, for `paths_left`, be one of the record's `paths` or `paths_refused`, on a `rollback_incomplete` record only. Anything else is a damaged record: `history()` raises `GuardError`.
+
+(c) **The format stays 2.** Both keys are written only when they are not empty, so a record with nothing left alone or refused is what the M16-71 gate wrote. A gate from before M16-84 forbids unknown keys, so it refuses a record that carries either key as damaged rather than reading it without the list. A format-1 record carries neither.
+
+(d) **`doctor`.** The `rollback_incomplete` problem (M16-71) names each file in `paths_left`, sorted and relative to the flavor folder, and names that folder once (the last component of the record's `flavor_path`, never a constant). It groups the files by what doctor reads there now. That read is read-only and is made only when the record's flavor is one of the install's discovered flavors, the way a snapshot reads (no link followed); the journal's own path is never opened.
+
+A file in `paths` holds the change's `after` ("still holds wowlab's change", or "is still deleted, as wowlab's change left it" when the change deleted it), its `before` ("already holds what was there before the change", or "is gone again, as before the change" when the change created it), something else ("another program, such as the game when it saves your settings or addon data, has changed X since wowlab's change", or "has deleted X since wowlab's change"; the wording holds whether the change wrote or deleted X), or could not be read ("wowlab could not put back X, which holds either wowlab's change or what another program, such as the game when it saves your settings or addon data, has written to it since"). No timing is stated: SavedVariables are written at logout or /reload, `Config.wtf` on exit and on some setting changes. A file in `paths_left` but not in `paths` was never written by the change, because its only operation was refused: "wowlab did not write X, which another program changed while wowlab was working, and undo leaves it as it is". Groups are joined with "; ", and no group holds a semicolon of its own.
+
+The command's clause says what `undo()` does: it puts back every file in the record's `paths` (every file the change wrote or deleted) whose bytes differ from the pre-change bytes, including what the game has saved to them since the failure. It keeps a copy, so running undo again next, before the player plays, brings them back (the wording M16-92 gives undo's plan). `wowlab undo --expect <id>` stays last, with one exception. A record whose `paths` and `created_dirs` are both empty (its only operations were refused before any folder was made) wrote nothing, and `undo` of it records nothing either (it says the change "changed no files" and returns), so offering the command would not clear the problem. Its problem opens "the last change wowlab made failed before it changed any file" and ends "wowlab changed no file, so there is nothing for undo to put back, and undo leaves this record as it is; wowlab doctor stops reporting it after wowlab's next change.", with no command. A record with no `paths` but with `created_dirs` (a write refused after the gate made its folders, whose removal another program's file then blocks) is not that exception: `undo` removes those folders if they are empty and records itself, as M16-86's plan says. Its problem opens "the last change wowlab made failed after it created folders and before it changed any file", names the files as above, and ends "undo removes the folders it created if they are empty and records the undo, and wowlab doctor stops reporting this change: wowlab undo --expect <id>". `--json` gains `store.last_transaction.created_dirs`, a count. A record that lists no file gets the same clauses without names.
+
+`--json` gains `store.last_transaction.flavor_folder` and `store.last_transaction.paths_left`, a list of `{path, now, exists}`: `now` is one of `wowlab_change`, `before_change`, `changed_since`, `unknown` or `not_written`, and `exists` is whether the file is there now (null when it was not read). The problem and the list hold names as stored, and only the output escapes them. The text output escapes control, format and separator characters as `\xNN` (a real file name may hold a bidi mark), and `--json` is ASCII. So `--redact` sees each name unescaped and replaces account, realm and character folders in those paths like any other. Those names come from the install, the snapshots and the paths of every journal record, since a folder the transaction created is in no snapshot.
+
+*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78):*
+
+(a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
+
+(b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -1357,6 +1519,8 @@ wowlab sv dump FILE [--json] [--path 'Var.key[3].name']   # path grammar: §13.4
 wowlab cvar list|get NAME [--scope global|account|character]
 wowlab binds list / wowlab macros list
 wowlab addons list [--json]
+wowlab addons check [--json] [--notes]               # §18.1 item 8 (M16-34)
+wowlab sv list --orphans [--json] [--notes]          # §18.1 item 8 (M16-34)
 wowlab db2 builds | wowlab db2 fetch TABLE [--build B] | wowlab db2 head TABLE
 wowlab log tail [--follow]
 wowlab snap create [-m LABEL] | list | show ID | diff A B | verify | gc
@@ -1521,6 +1685,77 @@ as one line and then the traceback line by line, rendered as the hook
 renders it. Before this, the whole record printed on one line with `\x0a`
 escapes. A record that cannot be formatted prints one escaped line naming it
 instead of logging's own error report, which prints the record raw.
+
+### 6.12 Command-level performance budget (M16-27)
+
+*Added 2026-11-10 (M16-27, §18.1 item 6).* Five commands have a cost
+target, checked every night by `.github/workflows/perf-nightly.yml` on
+GitHub's `ubuntu-latest` (the reference runner) and never on the PR path.
+The job runs `scripts/perf_budget.py`; it makes no live call (ADR-0012) and
+touches no real install or snapshot store.
+
+- **The sandbox.** The captured `macos/` fixture tree, copied into a
+  temporary folder under a flavor folder whose name means nothing
+  (discovery reads `.flavor.info`, L6), grown with 20,000 constructed files
+  shaped like the M16-23T grader's tree: one in eight a SavedVariables file
+  in the account folder, the rest addon files in folders of 40. The home and
+  user data directories point into the sandbox, and each command gets
+  `--root`.
+- **The measure.** Each command runs as its own `python -m wowlab_core`
+  process, five times (the whole restore three), and the least child CPU
+  time (user plus system) is kept: load only adds time. It is divided by
+  the least CPU time of a fixed pure-Python calibration loop measured in
+  the same job (dict, string and integer work), so a faster or slower
+  runner moves both sides together.
+- **The verdict.** A command fails when its ratio is over 1.5 times its
+  baseline below.
+- **The absolute check (§18.1 item 6).** The gate's whole-restore check of
+  the 20,000-file tree with nothing to change takes at most 5 s of
+  wall-clock time, best of three runs: `tx.restore(ID)` in a dry-run
+  transaction, the snapshot taken of the same tree, timed with
+  `perf_counter` in a child process around that call alone, as the
+  M16-23T scaling grader times it. The interpreter start, discovery and
+  opening the transaction are outside the timer; the manifest is read
+  inside `tx.restore`, so it is inside. The `snap restore ID --dry-run`
+  command around it (discovery, the check and the printed plan) is timed
+  too, and its wall-clock time is printed for information only; its CPU
+  time is the `whole-restore` row below.
+
+| Command | What is run | Baseline ratio |
+|---|---|---|
+| `whole-restore` | `snap restore ID --dry-run --json`, the 20,000-file tree, nothing to change | 15.6 |
+| `sv-dump-json` | `sv dump --json` of a captured character `WowLab.lua` (23 KB) | 2.5 |
+| `sv-merge` | `sv merge WowLab.lua --into` one captured character `--from` the other `--json` (conflicts listed, nothing written, exit 1) | 7.8 |
+| `addons-list` | `addons list --json` | 2.5 |
+| `version` | `wowlab --version` | 2.4 |
+
+**These baselines are provisional** until they are re-recorded from the
+first runs of the nightly job on `main`, on `ubuntu-latest`. They were set
+on the development container on 2026-11-10 from five runs of the
+20,000-file tree: four at load averages of 10 to 19 from other sessions,
+and one on the quiet machine (load average about 1). The calibration loop
+took 0.24 to 0.27 s CPU. The ratios measured were 12.9 to 15.6 (whole
+restore; 3.2 to 4.0 s CPU), 2.0 to 2.4 (`sv dump --json`), 6.9 to 7.7 (`sv
+merge`), 2.0 to 2.4 (`addons list`) and 2.1 to 2.4 (`--version`). Most of
+each short command is the interpreter start and the imports, about 0.5 s
+CPU. Each baseline is the highest ratio recorded, rounded up to one
+decimal, with no padding: the 1.5 times of the verdict is the whole
+tolerance. From one run to the next the ratios moved by up to about 20 %,
+loaded or quiet (a sixth, checking run on the quiet machine gave 15.5 for
+the whole restore and passed every row). Using CPU time rather than
+wall-clock time, and the least of several runs, keeps load from moving
+them more than that.
+
+The gate's check took 2.48 and 2.64 s of wall-clock time in the two quiet
+runs (the `snap restore --dry-run` command around it took 3.22 and
+3.71 s). The four loaded runs timed the whole command only, at 4.9 to
+8.6 s of wall-clock time.
+
+To re-set a baseline after an intended change, run the workflow by hand,
+read the ratios its log prints (`python scripts/perf_budget.py --record`
+prints them and checks nothing), and change this table and
+`BASELINE` in the script together; `tests/scripts/test_perf_budget.py`
+keeps them equal.
 
 ## 7. Repository layout
 
@@ -2610,6 +2845,28 @@ the limit `read` applies, before creating anything. `char show` adds
 "Recorded when the barber shop opened: a change applied during that visit
 may not be in it [verify]." to a record with `recorded_at` "open".
 
+*Amended 2026-11-09 (M13-80):* the class. A schema-4 record carries the
+character's class in its `identity` section (M15-01), so without `--class`
+`import-char` takes the look's class from `identity.class_id` and says so in
+one remark ("The class is the one the lab-addon recorded for this character:
+<name> (<id>)."), the class named from the build's `ChrClasses` as the class
+line names it; that id is checked by the look against the build's
+`ChrClasses` exactly as a typed `--class` id is. `--class` still wins when
+given; when it names another class than the record's, one remark says so and
+that `--class` is used. A record of schema 1 to 3 keeps the "holds no class"
+remark unchanged; a schema-4 record whose class is absent says "The record
+holds no class: <reason>." before the same advice. The identity is gathered
+at every login, while the customization record can be carried from an
+earlier session, so the two halves can describe different characters (one
+deleted and re-created under the same name, say): when the identity's
+`race_id` is not the customization record's, the recorded class is still
+used and one remark says the two were recorded in different sessions and
+the class may not be that of the character that made the look.
+`LooksImportReport` gains `class_from` (`"--class"`, `"record"` or null),
+the record's `recorded_class_id`, `recorded_class_file` and
+`recorded_class_absent`, and `recorded_race_id` (the identity's race, beside
+`record.race_id`). The text output is otherwise unchanged.
+
 ### 13.3 profiles
 
 Named sets of the client's local UI files (not the whole UI: action-bar
@@ -2663,8 +2920,12 @@ after the PR #96 reviews:*
   installed since are removed with their SavedVariables, and addons updated
   since go back to the saved version, which an addon manager will not know
   about. One apply deletes at most 2,000 files; above that it is refused
-  with the count and a pointer to `snap restore` or a narrower profile (the
-  gate re-walks the install per delete; a gate-side listing cache is a
+  with the count and a pointer to `snap restore` or a narrower profile
+  (restated 2026-11-10, M16-23: the gate's directory listings are now
+  memoized per transaction, but its write-ahead journal rewrites its whole
+  record on every delete, so the cost grows with the square of the count:
+  2,000 deletes take about 16 s CPU, 8,000 about 243 s and 20,000 about
+  1,570 s on the development container; an incremental journal is the
   follow-up).
 - **The lab-addon is always left alone** (owner decision c). The lab-addon's
   code (`Interface/AddOns/WowLab/`) and its SavedVariables (`WowLab.lua`) are
@@ -3482,6 +3743,13 @@ A static local page over every character's `WowLab.lua`.
   record`, or `<label>: <Realm>/<First> folder` when `first_name_folder` is
   set, disabled; it is never picked, so no read is run for it and it gets
   no record panels.
+  *Amended 2026-11-10 (M16-31):* each `CharListReport` row gains
+  `record_schema`: the schema of its `WowLab.lua` record, or null when there
+  is none or it could not be read. It is named `record_schema`, not `schema`,
+  because `schema` shadows a pydantic attribute. `--brief` keeps it. The
+  Character tab's picker uses it to break a tie between two records written
+  at the same `mtime_ns`, taking the newest schema first. Text output is
+  unchanged.
 - **Page** `wowlab char page [--out PATH] [--anonymize] [--offline]`: one
   static file (ADR-0027), a card per character: when the client last saved the
   file (a time from the file, not from the addon, which records none), the
@@ -3594,7 +3862,8 @@ the `@claude` responder and the automated PR review, because each ran
 Claude in CI. `scripts/check_wiki.py` stays as a local gate for a wiki push;
 `scripts/wiki_diagnose.py` (it read only the Claude step's output) and
 `scripts/wiki_state.py` (the job's state and model context) were deleted
-with it. The conductor updates the wiki after a merge.
+with it. Since 2026-11-09 (owner ruling) the owner updates the wiki from
+`docs/handoffs/wiki-pending.md`, which the conductor keeps.
 
 The deferred tickets move, word for word, to `docs/handoffs/M12-deferred.md`.
 They return only through a later wave pick (ADR-0024). §14.1 to §14.7 stay
@@ -3705,6 +3974,11 @@ and the CI job stays on.
   logging on (`/combatlog`); the command says so.
 - **First run.** `wowlab doctor` asks wago.tools whether each installed
   version is listed unless `--offline` is given; the first-run text says so.
+  *Amended 2026-11-09 (M16-07, §18.1 item 2):* `doctor` is offline by
+  default and asks only with `--check-builds`; `--offline` is a no-op that
+  prints one deprecation line. The first-run text ends in the one "What
+  leaves your machine" block (`wowlab_core.disclosure`), which README.md and
+  docs/INSTALL.md carry between `network:begin`/`network:end` markers.
   A WTF folder under OneDrive, Dropbox or Syncthing may hold placeholder or
   conflict files; snapshots never follow a link (M11-18); a sync folder is
   detected by heuristics and reported as such, never refused.
@@ -3995,6 +4269,8 @@ than the one it showed.
 
 *Amended 2026-10-19 (M14-03, as built):* the server lists no confirm set; it reads each `--yes` leaf's shape from what the leaf declares (`--dry-run` → the first shape; `doctor` → the second; no `--dry-run` with a one-value `--expect` and a report field named in `cli.EXPECT_FIELDS` → the third, `cli.CONFIRM_DECLINED` as the exact last stderr line of an exit-1 run with one JSON object on stdout), so a future `--yes --dry-run --json` leaf joins the step with no UI change. The confirmed argv of the third shape is the plan argv plus `--yes` and `--expect=<pin>`, the pin read from the plan's own report when the token is minted (`undo`: the journal record id `undone`; `sv merge`: `target_sha256`), never from the confirm request; the pin is checked once before `guard`'s lock and again under it. Only those two commands refuse when something changed after the plan: `undo` on a newer journal record, `sv merge` on its target's bytes. The dry-run shape carries no pin: `snap restore` is held to its snapshot id and `--paths` and re-checks its plan inside the transaction, `addon install` and `addon remove` to the addon name, and `profile apply` to a profile name only, so its drift is captured by the pre-write snapshot, not pinned; each applies what is there at confirm time, after that snapshot. `sv merge`'s source is not pinned either (M13-74). A confirmed run killed at the UI's limit (120 s, or the output cap): the lock goes with the process, the snapshot taken before the first change holds every file, and the page says to show `undo`'s plan and confirm it only if the record it names is this command's, in state `open`; `snap gc` and `doctor` get a store-only sentence instead.
 
+*Amended 2026-11-10 (M16-86):* `undo`'s plan says a record's state in words, never by its name, so the killed-run sentence tells the player to confirm only if the record the plan names is this command's and the plan says it did not finish (the words for `open`). The plan also lists only the files the undo will change.
+
 *Amended 2026-10-22 (M13-74, as built):* `sv merge` pins what it writes, not only its target. Its report names `merged_sha256` beside `target_sha256`: the SHA-256 of the bytes `tx.write` receives (null when unresolved conflicts stop the merge). `cli.EXPECT_FIELDS` maps each command to a tuple of report fields, joined by `:` into the pin (`undo`: `undone`; `sv merge`: `target_sha256:merged_sha256`), and `sv merge --expect` takes only that two-part form (anything else exits 2). The confirmed run refuses with exit 3 unless both halves match: the target half before the lock and again against `tx.plan[0].before`, the merged half before the lock and again against `tx.plan[0].after`, the hash the gate took of the bytes it was handed. A source character that logged out between plan and confirm, or a `--from`/`--base` snapshot prefix that now names another snapshot, therefore changes the merged half and is refused. The sentence above that `sv merge`'s source is not pinned no longer holds.
 
 ### 16.2 The character: what the CLI adds
@@ -4089,6 +4365,13 @@ new command and the wiki"). `char show` is unchanged.
 
 *Amended 2026-11-04 (M16-36, `binds coach`'s inputs and defaults):* `binds coach` no longer picks its character as `char show` does. Without `--character` it judges the character whose `WowLab.lua` has the newest record schema, then, among those, the one written last (ties: the last by folder name, said); every character's record is read to learn its schema, and one that cannot be read ranks below any that can. The text names the reason on the record's line ("its record has the newest schema (4) of the 3 characters' records; 1/X was written later, at schema 3; choose another with --character"), and `BindsCoachReport` carries it as `chosen_because`, with `chosen_by` `"newest schema"` (was `"latest"`). The `char` commands (`char show`, `char gear`, `char binds`, `char macros`) keep the latest-written rule above. The combat log is chosen by the caster: without `--log`, the newest of the 10 newest logs under `Logs/` whose own casts have a source name with the character folder's first name (compared without case, after Unicode NFC; the log writes `<First>-<Realm>-`, a Forever folder `<First>-<Second>`, `docs/GLOSSARY.md` "Second name", so the first name is all the two share); when none has, the newest, with a warning naming whose casts it holds. Older logs are read up to 256 MiB in all: one larger than what is left of that is not read and the scan goes on to the smaller ones, and one that cannot be read is skipped; `scan_note` names those logs in one line and says that `--log FILE` reads one. When another character folder of the account has the same first name (a retail-style `<Realm>/<First>/` twin holding only `AddOns.txt` is the same character and does not count), a match is `"first name shared"` and a warning names the other folders. The character's folder is used even when it has no usable record. `--log` reads the log named and warns the same way on a mismatch. Your casts are still picked by the source flags alone (§15.2); the name only chooses the log. `CoachLog` gains `character_name`, `casters` (`CastCounts.source_names`, at most 16 kept), `caster_match` (`"matches"` | `"first name shared"` | `"does not match"` | `"no casts"` | `"no caster name"` | `"no character"`), `warning` and `scan_note`; its `chosen_by` gains `"caster name"`. Before any finding, the text says how many binding commands the record did not read (whether or not a key is bound to them) and how many keys whose name is not printable ASCII it left out (`commands_unseen`, `keys_unseen`, `unseen`), in `char binds`'s words and naming no addon, and always, also at 0 and 0, that a key bound straight to a spell or to an addon's button may be in neither count **[verify]**. "Bound, never cast" is withheld below a minimum sample of the player's casts in the log, `never_cast_min_casts` in the key-cost table, **200** in the shipped table (a short log leaves out spells cast once a fight or less): the report says "withheld" with the count and the minimum, `never_cast_withheld` is true, and its `cannot_judge` row gives the reason (text and JSON give the same "cannot judge" count). When the report is judged and lists a key, it adds the caveat that a spell cast rarely (a long buff, a resurrection, a long cooldown) can be missing from any log. A player can set it in their own table, from 1 to 100000.
 
+*Amended 2026-11-10 (M16-31, `CharGearReport` in player terms):* `CharGearReport` gains three fields:
+- `level`: the character's level, from the record's talent block (`player_level`), the value the dressing address already reads. The schema-4 `identity` carries no level.
+- `level_absent`: the reason when there is no level.
+- `names`: `{build, spec, race, class_name}`, the spec, race and class names for the installed build. They are read only from the game-data cache through `gamedata.cached_rows`, which never fetches and never writes (L1, ADR-0012), keyed by the installed version (L5), with the female name column used when the identity's sex is 1 and that column is non-empty. A table that is not cached, lacks the row, or is not valid UTF-8 leaves that name null, and the reader shows the id. No name is a constant (L6).
+
+The text header always prints Level, Class, Race and Spec lines. A cached name is shown with its id in parentheses (`Class: Mage (class id 8)`). With an id but no cached name the line gives the id (`Class: MAGE (class id 8)`, `Race: race id 2`, `Spec: spec id 1482 (index 1, from C_SpecializationInfo)`; the Spec line read "Spec: id N" before). With no id it reads `Class: not recorded: <reason>`, and `Race: not recorded: as for Class` when the two reasons are the same. Without a level it reads `Level: not recorded: <level_absent>`. `--notes` gains the standing note "Spec is the client's specialization, not the talent points spent." The reason given when a record has no identity section now reads "this record predates the identity section; log in and out on this character with a current lab-addon (wowlab addon install lab updates it)" in `char show`, `char gear`, `looks import-char` and the dressing note. It names no schema number and no ticket.
+
 ### 16.3 The character in the UI
 
 A fourth tab, **Character**, beside Explorer, Gaps and Commands, drawn
@@ -4140,6 +4423,8 @@ bodies and item names are player text and are never interpreted as markup.
 *Amended 2026-10-19 (M15-01 and M15-02, the first Wave 6 tickets, owner's ask of the same day):* the lab-addon records the character's identity (race id, body type, class id and file; schema 4, M15-01), since the gear report carried no race or class and the `customization` record exists only after a barber-shop visit. On that, the Character tab gains one button under the gear table, **See it dressed** (M15-02), which opens, in the player's own browser, an outside dressing room (one per game version on the site, from memory **[verify]**) at an address the CLI builds from the identity and the equipped items' item ids and bonus ids and returns in `char gear --json` as `dressing`. The address holds no name, realm, account, path or token. The Lab makes no request: the page sets the `href` of a static `<a target="_blank" rel="noopener noreferrer">` only when the parsed url is `https:` with exactly the site's origin, the CSP is unchanged, and clicking is the player's act (ADR-0019 and ADR-0031 amendments of 2026-10-19; the README and SECURITY trust-model sentences gain one clause saying so). The site's address grammar is undocumented, so the builder is graded on recorded examples with a provenance row and fails closed: when the identity is absent, no equipped item can be placed, or the site's version label for this client is unknown (chosen by the client's discovered major version, never a product code: L6), the button is replaced by the list of item ids with a Copy button. Whether a Forever-era character's items render there is **[verify]** until the owner tries it.
 
 *As built, 2026-10-19 (M15-02):* the site's address grammar lives in the shipped data file `dressing_sites.toml` (the hash codec's alphabet, delimiters and field order as data, the site's slot table, one room per site version label) and is graded on two recorded examples in the derived fixture `macos-70450/derived/dressing-room.json`: addresses the site's own encoder produced in the conductor's browser for the two real 70450 characters, which the site then decoded into the same identity and items. Three facts the examples settled beyond the grammar as read from the site's script: the site drops the trailing zeros of the encoded fields (both examples end that way, so the builder trims them and the decoder reads an absent final field as 0); the address also carries the character's level (read from the record's talent block, else the site's default of 100 **[verify]**), so ADR-0019's amendment lists it; and the version band is a range at major.minor precision (`1.60` and above, below `2`, is the Forever room), narrower than "major version" on purpose, since a Classic Era client is also a 1.x version and was not tried. An address whose empty slots would need more than 116 compressed pairs is not built (the chained form of that compression is untested against the site: owner question); such a character gets the item-id list. The page's two test exemptions became four: the ticket's constant and `.href` assignment, plus the literal `new URL(value)` the ticket itself requires (its `url(` would otherwise trip the external-url marker) and the same constant in the parity test; each is pinned to exactly one occurrence. Whether the model draws in a real browser is still the owner's check.
+
+*Amended 2026-11-10 (M16-31, the header in player terms):* the M14-08 header now shows Level, Class, Race and Spec. Level comes from `char gear --json`'s `level`. Class and race come from the record's `identity`, and the names come from `names` when a table is cached. Each name carries its id in a `title` tooltip. With no cache, the header shows the identity's `class_file` (for example `MAGE`), "race id N" and "spec id N". With no id, as on every schema 1–3 record, a row reads "not recorded: <reason>" ("as for Class" when race has the same reason), and a missing level reads "Level: not recorded: <reason>". "Spec id" becomes "Spec". The equipped and overall average item levels show one decimal, with the exact recorded value in `title`; a value that is not a number shows "not returned". The picker breaks an `mtime_ns` tie by the newest `record_schema` (§14.4). The JavaScript holds no class, race or spec name: every name comes from the model.
 
 ### 16.4 What is known, and what is [verify]
 
@@ -4766,6 +5051,91 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
 3. **Plans that say what they lose.**
    - Plans and `snap diff` print key, macro and CVar changes by name for
      the WTF text files.
+     *Amended 2026-11-09 (M16-10):* under each changed `bindings-cache.wtf`,
+     `macros-cache.txt`, `config-cache.wtf` or `Config.wtf` (by file name,
+     in any folder) the lines are `key K: old -> new`, `macro "N": added`,
+     `removed` or `text`/`icon changed`, and `CVar N: "old" -> "new"`. An
+     absent side is `(no line: the client's default binding)` for a key and
+     `(no line: set elsewhere or the client default)` for a CVar (`null` in
+     `--json`). They come from the `wtfconfig` parsers (module `wtfdiff`):
+     CVars by the last line setting the name, compared without ASCII case;
+     keys by the last `bind` line (that the client applies the last line is
+     believed, not observed **[verify]**). Every `SET` line is shown as a
+     CVar whatever it holds, `SET CACHE-…` lines included. Macros are
+     matched by name, two of one name compared in file order (`"N" (2)`,
+     and one line under the file says an inserted or removed one shifts the
+     rest); a blank or whitespace-only name is shown by its place, `macro
+     (blank name, 17th)`; a macro's id is not compared. When lines the
+     parsers leave `Unknown` differ, one line says so; when nothing differs
+     by name, one line says what can still differ (for macros: order or
+     ids, so a button that holds a macro may run a different one). Under a
+     SavedVariables file, one summary line: `values: R removed, A added, C
+     changed; size X -> Y` (`snap diff` then lists each value as before). A
+     plan names at most 20 per file and counts the rest; `snap diff` lists
+     all. Plan sides are read read-only: the disk when it still hashes to
+     the plan's `before`, else the snapshot store; a side over 64 MiB (a
+     stored one by its recorded size, before any read) or not readable back
+     gets a "not compared" line. `undo` compares what the disk holds now
+     with what it puts back, and when that is not what the transaction
+     wrote (the client rewrites these files at logout), a line says the
+     comparison includes those later changes. A plan that names a change
+     in a bindings, macros or CVar file (a SavedVariables summary alone
+     does not count) adds one line saying each file is one scope (machine,
+     account or character): bindings come from the account or the character
+     file as "Character Specific Key Bindings" sets, account and character
+     macros are two sets, and each CVar is read from the file of its own
+     scope. `snap restore` and `undo` then add the login caveat before the
+     prompt and do not repeat it after the write. *Amended 2026-11-11
+     (M16-97):* the login caveat no longer waits on that condition. It
+     follows the listed paths: a plan that lists `Config.wtf` or a
+     `*-cache` file under `WTF/` (not in a SavedVariables folder) gets it,
+     whether or not a line names what changes in that file (a file wowlab
+     cannot compare, an empty one, a delete or a recreate), by the same
+     rule the result uses after the write. The scope line still needs a
+     named change. The caveat says the client reads `Config.wtf` again the
+     next time it starts (whether a login alone rereads it is unconfirmed,
+     and the client may save over it on exit, so a re-login is not
+     offered) and the other files at login; that the server may replace
+     binds, macros and account or character settings at login when their
+     sync setting is on; and that which other `*-cache` files it may
+     replace, and under which setting, is not yet known. `profile apply`'s
+     own login note says the same of `Config.wtf`. *Amended 2026-11-11
+     (M16-103):* both notes now lead with the files the plan lists, by the
+     same rule (`Config.wtf` or a `*-cache` file under `WTF/`, not in a
+     SavedVariables folder). When only `*-cache` files are listed, the
+     caveat says the client reads them at login and the server may replace
+     them, and says nothing of `Config.wtf`. When only `Config.wtf` is
+     listed, it keeps only the restart sentence (the client reads it again
+     the next time it starts) and drops the server-sync sentence: the file
+     map lists no server replacement for `Config.wtf` (its row and the
+     Timing rules), which holds machine-scope settings. When both are listed, it keeps both
+     sentences, as above. `profile apply`'s note, shown for every non-empty
+     apply plan, follows the same three cases; when neither is listed (a
+     SavedVariables-only or `AddOns.txt`-only apply) it keeps only that the
+     result is proven by starting the client and logging in, naming neither
+     `Config.wtf` nor sync. No note states when `Config.wtf` is read beyond
+     the next start (`docs/LAB_FILE_MAP.md`, its timing rules, **[verify]**).
+     *Amended 2026-11-11 (M16-105):* for `undo`, the result follows what
+     the undo wrote (its own journal record), not the paths the plan
+     listed (M16-102's ruling). The two are the same unless a file changes
+     after the plan read it (while the prompt waits, or between the plan
+     and the write under `--yes`): the undo then puts it back too, and when
+     it is `Config.wtf` or a `*-cache` file the caveat appears after the
+     write even when the plan had none, or showed a narrower one (M16-103's
+     sets: a `Config.wtf`-only plan's restart sentence becomes both
+     sentences when a `*-cache` file is written too). So "do not repeat it
+     after the write" holds only for a caveat the plan already showed. A
+     file the undo wrote that the plan did not list is named once, after
+     "Undone.", before any caveat (`also put back`, `also deleted` or
+     `also recreated`, with "it changed after the plan was shown").
+     `UndoReport` gains `written_paths`, the paths the undo wrote, from
+     that record, and `unlisted_written`, those of them the plan did not
+     list (`plan` is the whole record undone, so it cannot tell them
+     apart); both are empty when nothing was undone. Additive only.
+     `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
+     text output), line by line as the terminal shows it (escaped), for the
+     UI's confirm step (EV-20). Additive only.
    - A whole restore lists what it leaves alone.
    - `sv merge` lists every key it removes. Its rulings change: an array
      part is merged as one value, and `--key X` merges inside `X`, with the
@@ -4793,6 +5163,11 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    per-transaction directory-listing memo, keyed by the directory's
    identity (dev, ino, mtime_ns) and invalidated by the transaction's own
    writes. The commit-time re-check is unchanged.
+   *Amended 2026-11-11 (owner decision; M16-94):* the key also holds the
+   directory's ctime_ns. On POSIX a change to the directory that leaves
+   its mtime where it was still changes its ctime, so the memo is not
+   reused. On Windows `st_ctime_ns` is the creation time and does not move,
+   so the extra field adds nothing there and the Windows memo is unchanged.
    - Target: a whole-restore check of 20,000 files with nothing to change
      takes at most 5 s on the reference runner (GitHub's `ubuntu-latest`,
      as M16-27's nightly job measures it; the PR path checks scaling only).
@@ -4821,6 +5196,41 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      which characters enable it.
    - `sv list --orphans` lists SavedVariables that no installed TOC
      declares.
+   - *Amended 2026-11-09 (M16-34, as built):* `addons check` checks each
+     TOC named after its folder (with suffixed TOCs each one, since which
+     loads depends on the game type). The client's interface comes from
+     the flavor's version by the patch-number rule, as `addon install`
+     fills it; without a version no interface is judged, and the one
+     caveat says so. With several TOCs the client loads one by game type:
+     an addon is out of date only when its one TOC differs; with several,
+     the TOCs that match the client are taken to be the ones it loads
+     **[verify]** and are the ones counted (their dependencies alone), and when none matches the addon is reported as
+     "with several TOCs, none for this client's interface". A dependency is
+     `RequiredDeps` or `Dependencies` (not `OptionalDeps` or other `Dep*`
+     directives, which the client may also treat as required **[verify]**);
+     it is installed when `Interface/AddOns/` holds a folder of its name
+     (ASCII case folded), "installed, but has no TOC the client loads" when
+     that folder has none (such an addon is counted in the summary as
+     "needing an addon that has no TOC the client loads", JSON
+     `unloadable_dependencies`), and a `Blizzard_*` one is taken to be the
+     client's own **[verify]** and never counted missing. The characters are those whose `AddOns.txt` (read by
+     `wtfconfig.parse_addons`, LAB_FORMATS amendment of 2026-11-09) lists
+     the addon, with the state word as written; an unlisted addon is at the
+     client's default and is not called disabled. `sv list --orphans` lists
+     a file when no folder of its addon's name is installed, or that
+     folder's TOCs declare no `SavedVariables` (an account file) or no
+     `SavedVariablesPerCharacter` (a character file); a `.lua.bak` follows
+     its addon, Blizzard's files are never listed, an addon whose TOC
+     could not be read is not judged, and the saved data of a folder with no
+     TOC named after it (often an addon unzipped one folder too deep) is
+     left out and named apart. The answer line says that an addon installed
+     again reads its file again, so deleting one loses those settings. The
+     lab-addon's `WowLab.lua` files
+     are left out even when the lab-addon is not installed, because wowlab
+     reads them; the caveat counts them. Both are read-only and offline,
+     answer first, with one caveat at most and the standing notes behind
+     `--notes`. JSON: `AddonsCheckReport`, and `SvListReport` gains
+     `orphans` (false without the option), an additive change.
    - `char list` lists every character folder, with "no lab record" where
      there is no `WowLab.lua`.
    - The keybind views see addon action bars through stored

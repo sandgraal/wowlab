@@ -6,7 +6,9 @@ characters, 70009), `macos-70058/`, `macos-70425/` and `macos-70450/` (two
 characters, schema 4), whose rows say their files are classified inside the
 install root borrowed from `macos/` (its `.build.info` and `.flavor.info`).
 The two `macos-70450` text snapshots were written by `main`'s code before
-M15-02 changed `char gear`, so they prove its text is byte for byte as it was. The text and `--json` of each character
+M15-02 changed `char gear`, so they prove its text is byte for byte as it was,
+apart from the Level, Class, Race and Spec lines M16-31 rewrote (the
+Character header's words). The text and `--json` of each character
 are compared with snapshot files under `tests/snapshots/char_gear/`; the
 file times are set to one fixed instant, and the text's local time and the
 two slot-table paths are put back as placeholders before the comparison.
@@ -52,7 +54,7 @@ CASES = [
 ]
 # Runs committed without their own .build.info and .flavor.info (fixture index).
 FILES_ONLY = ("macos-70425", "macos-70450")
-_WRITTEN = re.compile(r"^Written: .* \(the file's modification time\)$", re.MULTILINE)
+_WRITTEN = re.compile(r"^Written: \S+ \S+ \S+ (\(the file's modification time.*\))$", re.MULTILINE)
 
 runner = CliRunner()
 
@@ -99,7 +101,7 @@ def ok(*args: str) -> Any:
 
 
 def _placeholders(text: str, user_config: Path) -> str:
-    text = _WRITTEN.sub("Written: <local time> (the file's modification time)", text)
+    text = _WRITTEN.sub(r"Written: <local time> \1", text)
     text = text.replace(gear.shipped_slots_path(), "<shipped gear_slots.toml>")
     return text.replace(str(user_config / gear.SLOTS_FILE), "<user gear_slots.toml>")
 
@@ -166,8 +168,9 @@ def test_char_gear_json_matches_its_snapshot_and_validates(
 
 def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§16.2's `CharGearReport` field list, in that order, with `identity`
-    after `spec` since M15-01 (§13.1's schema-4 amendment) and `dressing`
-    last since M15-02 (§16.3's amendment of 2026-10-19)."""
+    after `spec` since M15-01 (§13.1's schema-4 amendment), `dressing`
+    last since M15-02 (§16.3's amendment of 2026-10-19), and `level`,
+    `level_absent` and `names` after `identity` since M16-31 (the Character header)."""
     _install("macos-70425", tmp_path, monkeypatch)
     data = json.loads(ok("char", "gear", "--json").stdout)
     assert list(data) == [
@@ -176,6 +179,9 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "mtime_ns",
         "spec",
         "identity",
+        "level",
+        "level_absent",
+        "names",
         "average",
         "slots",
         "empty_slots",
@@ -242,7 +248,11 @@ def test_constructed_a_record_without_gear_exits_1_with_the_reason(
     for extra in ([], ["--json"]):
         result = run("char", "gear", "--character", "1/Labchard-Labrealmg", *extra)
         assert result.exit_code == 1, (result.stdout, result.stderr)
-        assert result.stdout == ""
+        if extra:  # under --json, the error alone as a report (M16-22)
+            report = cli.ErrorReport.model_validate_json(result.stdout)
+            assert f"wowlab: {report.message}" in result.stderr
+        else:
+            assert result.stdout == ""
         assert reason in " ".join(result.stderr.split())
 
 
@@ -265,7 +275,10 @@ def test_constructed_a_user_slot_table_is_used_and_named(
         '[slots]\n18 = "Wand"\n[quality]\n"nIQ2:" = "Green"\n', encoding="utf-8"
     )
     out = ok("char", "gear").stdout
-    assert f"your table {user_dirs / gear.SLOTS_FILE}, over the shipped default" in out
+    # Named, not printed as an absolute path (M16-16).
+    flat = " ".join(out.split())
+    assert "your gear_slots.toml in wowlab's user config folder, over the shipped default" in flat
+    assert str(user_dirs) not in out
     assert "slot 18 Wand" in out and "Shadow Wand: Green" in out
     report = cli.CharGearReport.model_validate_json(ok("char", "gear", "--json").stdout)
     assert any("your gear_slots.toml" in n for n in report.notes)
@@ -307,9 +320,10 @@ def test_char_gear_writes_nothing_into_the_install(
 def test_char_gear_text_carries_the_tables_verify_and_the_overall_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review round 1: the text says what the JSON notes say."""
+    """Review round 1: the text says what the JSON notes say; since M16-16
+    the overall note is behind --notes, and wraps to the terminal."""
     _install("macos-70425", tmp_path, monkeypatch)
-    out = ok("char", "gear").stdout
+    out = " ".join(ok("char", "gear", "--notes").stdout.split())
     assert "community documentation for Retail, not yet confirmed on Forever" in out
     assert "overall: on Retail, the best items owned, bags included" in out
     assert "from memory" not in out

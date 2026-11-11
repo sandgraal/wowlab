@@ -28,7 +28,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import DEFAULT_OFFSET
+from _lab_capture_offset import DEFAULT_OFFSET
 from test_lab_capture import (
     _sensitive_spans,
     build_install,
@@ -578,7 +578,7 @@ def test_constructed_other_player_name_in_a_folded_spelling_refuses(
 
 
 def test_constructed_suite_default_offset_is_inside_the_real_range() -> None:
-    """conftest.DEFAULT_OFFSET must look like a real draw, or suites run unshifted."""
+    """_lab_capture_offset.DEFAULT_OFFSET must look like a real draw, or suites run unshifted."""
     low, high = lab_capture.SHIFT_MIN_SECONDS, lab_capture.SHIFT_MAX_SECONDS
     assert low <= abs(DEFAULT_OFFSET) <= high
     assert lab_capture.draw_time_shift() == DEFAULT_OFFSET  # what this test runs with

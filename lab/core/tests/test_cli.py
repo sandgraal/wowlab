@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sys
 import zlib
 from collections.abc import Iterator
@@ -209,18 +210,22 @@ def _state(root: Path) -> dict[str, tuple[bytes | None, int]]:
 
 
 def test_doctor_reports_install_flavor_client_and_store(root: Path) -> None:
-    result = ok("doctor")
+    result = ok("doctor", "--check-builds")
     out = _plain(result.stdout)
     assert f"Install: {root} (found by ${install.ENV_ROOT})" in out
     assert f"Flavor {FLAVOR}: product wow_classic_beta, version {VERSION}" in out
     assert f"Game data: wago.tools lists version {VERSION}" in out
-    assert "synchronizeBindings not set (client default; wowlab does not know" in out
+    # Six unset sync settings fold into one line (M16-16).
+    assert (
+        "Server sync: the three sync settings wowlab reads are not set in WTF/Config.wtf or "
+        "WTF/Account/" in " ".join(out.split())
+    )
     assert "Client: not running" in out
     assert "Snapshot store:" in out
 
 
 def test_doctor_json_validates_and_prints_only_the_version_of_a_match(root: Path) -> None:
-    report = _json(cli.DoctorReport, "doctor")
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
     assert report.install_root == str(root)
     (f,) = report.flavors
     assert (f.folder, f.version, f.game_data.status) == (FLAVOR, VERSION, "published")
@@ -239,7 +244,7 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     product or its config hashes (§6.6, M10-14 amendment)."""
     for path in (root / ".build.info", root / FLAVOR / ".flavor.info"):
         path.write_bytes(path.read_bytes().replace(b"wow_classic_beta", b"wow_constructed"))
-    result = ok("doctor")
+    result = ok("doctor", "--check-builds")
     out = result.stdout
     assert f"Game data: wago.tools lists version {VERSION}" in out
     assert "wow_classic_beta" not in out
@@ -247,7 +252,7 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     (matched,) = [b for b in listing["wow_classic_beta"] if b["version"] == VERSION]
     for field in ("build_config", "product_config", "cdn_config"):
         assert matched[field] not in out
-    report = _json(cli.DoctorReport, "doctor")
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
     assert report.flavors[0].game_data.model_dump() == {
         "status": "published",
         "version": VERSION,
@@ -255,9 +260,80 @@ def test_doctor_after_a_cross_product_match_prints_the_version_only_constructed(
     }
 
 
-def test_doctor_offline_makes_no_request(root: Path, replayed: list[httpx.Request]) -> None:
-    report = _json(cli.DoctorReport, "doctor", "--offline")
-    assert report.flavors[0].game_data.status == "not_checked"
+@pytest.fixture
+def no_socket(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Every socket that would open, recorded and refused (constructed): a
+    second seam under the replayed game data, so a request that went around
+    `_open_gamedata` would still be seen."""
+    opened: list[object] = []
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        opened.append(args)
+        raise OSError("a test refused a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    return opened
+
+
+@pytest.mark.parametrize("json_out", [(), ("--json",)], ids=["text", "json"])
+def test_doctor_is_offline_by_default(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object], json_out: tuple[str, ...]
+) -> None:
+    """Without --check-builds, `doctor` opens no socket and asks the game-data
+    seam nothing (M16-07); its first run included."""
+    result = ok("doctor", *json_out)
+    assert replayed == [] and no_socket == []
+    if json_out:
+        report = cli.DoctorReport.model_validate_json(result.stdout)
+        assert report.flavors[0].game_data.model_dump() == {
+            "status": "not_checked",
+            "version": VERSION,
+            "detail": "no --check-builds",
+        }
+    else:
+        assert "Game data: not checked (--check-builds asks wago.tools)" in result.stdout
+    assert "--offline" not in result.stdout + result.stderr
+
+
+def test_doctor_with_redact_is_offline_by_default(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object]
+) -> None:
+    ok("doctor", "--redact")
+    assert replayed == [] and no_socket == []
+
+
+def test_doctor_check_builds_asks_the_version_list_only(
+    root: Path, replayed: list[httpx.Request]
+) -> None:
+    report = _json(cli.DoctorReport, "doctor", "--check-builds")
+    assert report.flavors[0].game_data.status == "published"
+    assert [r.url.path for r in replayed] == ["/api/builds"]
+
+
+def test_doctor_offline_is_a_no_op_with_one_deprecation_line(
+    root: Path, replayed: list[httpx.Request], no_socket: list[object]
+) -> None:
+    """`--offline` stays accepted: the same report as without it, one line on
+    stderr saying it does nothing, and it is not in `--help`."""
+    plain = ok("doctor", "--json")
+    old = ok("doctor", "--offline", "--json")
+    assert old.stdout == plain.stdout
+    assert old.stderr.count("--offline") == 1
+    assert old.stderr.strip().splitlines() == [cli._OFFLINE_DEPRECATED]
+    assert replayed == [] and no_socket == []
+    assert "--offline" not in _plain(ok("doctor", "--help").stdout)
+    assert "--check-builds" in _plain(ok("doctor", "--help").stdout)
+
+
+def test_doctor_offline_with_check_builds_is_refused(
+    root: Path, replayed: list[httpx.Request]
+) -> None:
+    result = run("doctor", "--offline", "--check-builds")
+    assert result.exit_code == cli.EXIT_USAGE
+    assert "contradict" in result.stderr
     assert replayed == []
 
 
@@ -337,7 +413,11 @@ def test_install_show_not_found_names_what_could_not_be_checked(
     result = run("install", "show")
     assert result.exit_code == 1
     assert f"could not check: {a_file} (not a directory)" in result.stderr
-    assert "searched: nothing; could not check" in result.stderr
+    assert (
+        f"no WoW install found where the game installs by default (could not check: {a_file}"
+        in (result.stderr)
+    )
+    assert "--root" in result.stderr and "WOWLAB_WOW_ROOT" in result.stderr
 
 
 def test_several_flavors_without_flavor_is_a_usage_error_constructed(
@@ -405,7 +485,9 @@ def test_explain_returns_the_file_map_entry(root: Path, path: str, entry_id: str
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == entry_id
     text = ok("explain", path).stdout
-    assert f"file-map row: {entry_id} " in text
+    assert f"  file-map row: {entry_id}" in text.splitlines()
+    verbose = ok("explain", path, "--verbose").stdout
+    assert f"file-map row: {entry_id} (" in verbose
 
 
 def test_explain_an_absolute_path_and_one_relative_to_the_current_folder(
@@ -870,7 +952,12 @@ def test_db2_table_the_build_lacks_exits_1_with_the_reason(
 
     assert result.exit_code == 1, (result.stdout, result.stderr, result.exception)
     assert isinstance(result.exception, SystemExit), "a clean exit, not an uncaught error"
-    assert result.stdout == ""
+    if json_out:  # under --json, the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert (report.kind, report.exit_code) == ("TableNotPublished", 1)
+        assert f"wowlab: {report.message}\n" == result.stderr
+    else:
+        assert result.stdout == ""
     assert result.stderr == (
         f"wowlab: table {LACKING_TABLE!r} is not published for build {LISTED_BUILD!r}: "
         f"wago.tools answered HTTP 400 for "
@@ -1317,7 +1404,8 @@ def test_whole_restore_skips_files_the_client_manages(root: Path, flavor: Path) 
     text = ok("snap", "restore", a.id, "--dry-run").stdout
     assert (
         '  Skipped 2 file(s) wowlab leaves alone (file-map Edit "no": client-written backups, '
-        "Blizzard_* folders, file-browser metadata; name one with --paths to restore it):"
+        "wowlab's leftover temp files, Blizzard_* folders, file-browser metadata; name one "
+        "with --paths to restore it):"
     ) in text
     assert "name one with --paths to restore it" in text
 
@@ -1366,7 +1454,7 @@ def test_restore_json_carries_the_plan_and_the_result(root: Path, flavor: Path) 
     done = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
     assert done.applied and done.plan == dry.plan
     assert done.transaction == guard.history()[-1].id
-    assert done.notes == [cli._RELOGIN], "Config.wtf was touched"
+    assert done.notes == [cli._RESTART], "Config.wtf was touched, and no *-cache file"
     text_undo = _json(cli.UndoReport, "undo", "--yes")
     assert text_undo.applied and text_undo.undone == done.transaction
     assert {p.path for p in text_undo.plan} == {SYNDICATOR, "WTF/Config.wtf"}
@@ -1694,7 +1782,7 @@ _NEW_EXPLAIN_LINES = (
 
 
 def test_explain_words_for_edit_and_tier(root: Path) -> None:
-    bak = ok("explain", BAK).stdout
+    bak = ok("explain", BAK, "--verbose").stdout
     assert (
         "edit:         no; wowlab leaves it alone (a restore writes it only if you name it "
         "with --paths)"
@@ -1713,11 +1801,43 @@ def test_explain_words_for_edit_and_tier(root: Path) -> None:
         "edit:         yes, through wowlab's write gate only, with the client closed; the server "
         "may replace it at login (sync settings: wowlab doctor)"
     ) in cache
-    fonts = ok("explain", f"{FLAVOR}/Fonts/FRIZQT__.TTF").stdout
+    fonts = ok("explain", f"{FLAVOR}/Fonts/FRIZQT__.TTF", "--verbose").stdout
     assert "; unsupported by Blizzard, a patch can reset it" in fonts
     assert "tier:         B: works, but Blizzard does not support it" in fonts
     folder = ok("explain", "WTF/").stdout
     assert "edit:         —; a folder, see the files in it" in folder
+
+
+def test_explain_prints_tier_and_reader_only_when_verbose(root: Path) -> None:
+    """M16-17: by default `explain` answers what the file is, who writes it
+    and whether wowlab may edit it, and names its file-map row; the tier,
+    the reader and the row's path pattern are `--verbose`'s. `--json`
+    carries them either way, and the row's spec notes."""
+    path = f"WTF/Account/{ACCOUNT}/config-cache.wtf"
+    plain = ok("explain", path).stdout.splitlines()
+    assert not any(line.startswith(("  tier:", "  read by:")) for line in plain)
+    assert "  file-map row: account-config-cache" in plain
+    verbose = ok("explain", path, "--verbose").stdout.splitlines()
+    assert "  tier:         A: ordinary addon-user behaviour" in verbose
+    assert "  read by:      the WTF settings reader" in verbose
+    row = next(line for line in verbose if line.startswith("  file-map row: "))
+    assert row.startswith("  file-map row: account-config-cache (`WTF/Account/")
+    # every other line is the same, in the same order
+    assert [x for x in verbose if not x.startswith(("  tier:", "  read by:"))] == [
+        row if x.startswith("  file-map row: ") else x for x in plain
+    ]
+    report = _json(cli.ExplainReport, "explain", path)
+    entry = filemap.load().entry("account-config-cache")
+    assert isinstance(report.result, cli.layout.Classified)
+    assert report.result.entry.notes == entry.notes != ""
+    assert report.result.entry.tier == entry.tier
+
+
+def test_explain_says_battle_net_app(root: Path) -> None:
+    """M16-17: the game's word for the Battle.net app, never "Agent"."""
+    out = ok("explain", ".build.info").stdout
+    assert "  written by:   Battle.net app, on install and patch" in out
+    assert "agent" not in out.lower()
 
 
 def test_notes_carry_the_caveats_in_json(root: Path) -> None:

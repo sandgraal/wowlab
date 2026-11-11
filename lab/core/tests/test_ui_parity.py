@@ -79,6 +79,10 @@ _KNOWN_YES = {
 EXCLUDED: Mapping[tuple[str, ...], str] = {
     # The server must not start another server, or itself.
     ("ui",): "the UI itself",
+    # M16-04: it always writes the file it is named (the reason of the
+    # owner's 2026-10-15 ruling on `looks page --out`), and that FILE is
+    # required, so the whole leaf is refused.
+    ("snap", "export"): "it creates a file anywhere outside an install",
 }
 """Leaves excluded for a reason other than `--yes`. A new entry needs its
 reason written here and in the server, and nothing else."""
@@ -95,6 +99,13 @@ FORCED_FLAGS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     ("sv", "dump"): {"install_only": "--install-only"},
 }
 """Flags the server gives every run of a leaf, so not ones the form offers."""
+
+HIDDEN_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
+    # M16-07: `doctor` is offline by default; `--offline` is a no-op kept so
+    # old scripts still run, hidden from `--help` and so not offered here.
+    ("doctor",): {"offline": "a no-op kept for old scripts, hidden from --help"},
+}
+"""Parameters `--help` hides (Click's `hidden`), which the form does not offer."""
 
 # The stand-in `wowlab`: prints the argv it was given, as JSON (constructed).
 _ECHO = "import json, sys; print(json.dumps(sys.argv[1:]))"
@@ -439,6 +450,14 @@ def _parity_problems(
         for forced in FORCED_FLAGS.get(path, {}):
             declared.pop(forced)
         offered = {p["name"]: p for p in item["params"]}
+        for hidden in HIDDEN_PARAMS.get(path, {}):
+            if not getattr(declared.pop(hidden), "hidden", False):
+                problems.append(f"{name}: HIDDEN_PARAMS names {hidden!r}, which is not hidden")
+            if hidden in offered:
+                problems.append(f"{name}: offers the hidden {hidden!r}")
+        for param in declared.values():
+            if getattr(param, "hidden", False):
+                problems.append(f"{name}: hides {param.name!r}, not in HIDDEN_PARAMS")
         for missing in sorted(set(declared) - set(offered)):
             problems.append(f"{name}: declares {missing!r} but the form cannot offer it")
         for extra in sorted(set(offered) - set(declared)):
@@ -612,7 +631,7 @@ def test_every_refused_param_is_declared_and_offered_with_the_servers_reason(
 def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     """ADR-0029 "Parity" (M14-02, M14-03): every `--yes` leaf of the real
     tree, read from the tree, goes through the confirm step with the shape
-    its declarations give it; none is excluded, and `ui` alone is."""
+    its declarations give it; none is excluded, and only `EXCLUDED` is."""
     tree = _real_tree()
     yes = {path for path, cmd in _leaves(tree) if _declares_yes(cmd)}
     assert yes >= _KNOWN_YES
@@ -626,7 +645,7 @@ def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     }
     assert _confirm_problems(tree, real, CONFIRM_STEP) == []
     listed = real.commands()
-    assert {path for path, item in listed.items() if item["excluded"] is not None} == {("ui",)}
+    assert {path for path, item in listed.items() if item["excluded"] is not None} == set(EXCLUDED)
     assert not any(item["excluded"] == NO_CONFIRM_SHAPE for item in listed.values())
     assert {path for path, item in listed.items() if item["confirm"]} == set(CONFIRM_STEP)
     for path in sorted(CONFIRM_STEP):

@@ -87,7 +87,9 @@ def flavor(root: Path) -> Path:
 
 
 def run(*args: str) -> Any:
-    return runner.invoke(cli.app, list(args))
+    # Wide enough that no line wraps, and with --notes: the text these
+    # tests read is every line, unwrapped (M16-16).
+    return runner.invoke(cli.app, [*args, "--notes"], terminal_width=10_000)
 
 
 def ok(*args: str) -> Any:
@@ -241,7 +243,8 @@ def test_char_macros_text_on_the_fixture_install_cross_capture(flavor: Path) -> 
         f"spellbook record ({MAY_BE})"
     )
     assert "Cannot judge for any macro: 1" in lines
-    assert unmarked(macroplace.CANDIDATE_RULE) in [unmarked(line) for line in lines]
+    # No slot is shown, so the rule is a note, not the caveat (M16-16).
+    assert f"  - {unmarked(macroplace.CANDIDATE_RULE)}" in [unmarked(line) for line in lines]
 
 
 def test_char_macros_without_character_takes_the_latest_record_cross_capture_constructed(
@@ -450,8 +453,8 @@ def test_no_bindings_record_qualifies_no_key_reaches_it_constructed(
     _twenty_nine(flavor)
     original = labaddon.read_char
 
-    def no_bindings(path: Path) -> labaddon.CharDB:
-        record = original(path)
+    def no_bindings(path: Path, **kwargs: Any) -> labaddon.CharDB:
+        record = original(path, **kwargs)
         absent = labaddon.AbsentProbedSection(absent="constructed: not gathered")
         return record.model_copy(update={"bindings": absent})
 

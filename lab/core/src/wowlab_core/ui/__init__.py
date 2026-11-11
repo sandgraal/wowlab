@@ -51,8 +51,8 @@ arguments after `--`, flags given or not, never through a shell. Refused
 (403 `excluded`, ADR-0029 amendment and owner rulings of 2026-10-15): a leaf
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
-`follow` (a run must end) and `looks page` with `out` (it can create a file
-anywhere outside an install). `sv dump` always runs with `--install-only`
+`follow` (a run must end), `looks page` with `out` (it can create a file
+anywhere outside an install) and `snap export` (it creates one). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -115,6 +115,16 @@ killed at its limit says what to do (`_KILLED_NOTE`, or
 nothing itself: the confirmed run is the CLI's, and every change it causes
 is the CLI's (L2).
 
+How the step is presented is read here too, never in the page (§14.5 D3,
+§18.1 item 7, M16-21). A marked plan's `confirm` carries `plan_lines`, the
+text plan line by line (the report's own, or for `sv merge` what it printed
+before it asked), and `label`, Confirm's text and accessible name, which
+names the action. Every run's response carries `outcome`: one sentence and
+whether it is an alert. Only a plan run that ended with its marker is called
+a plan; a run the server stopped is named by that stop; every other run is
+named by its exit code in words. The plan lines count against the output
+cap with the rest of the body, and are left out when they would pass it.
+
 At most `MAX_CONCURRENT_RUNS` run at once (503
 `busy` past that). Each run has a timeout and an output cap, read as a stream
 and counted on the encoded response. The run's whole process tree,
@@ -139,6 +149,7 @@ import base64
 import codecs
 import collections
 import contextlib
+import dataclasses
 import functools
 import hashlib
 import http.server
@@ -149,6 +160,7 @@ import os
 import re
 import secrets
 import signal
+import socket
 import socketserver
 import stat
 import subprocess
@@ -193,6 +205,12 @@ _READ_CHUNK = 64 * 1024
 _SOCKET_TIMEOUT_S = 30.0
 # How long the readers get to reach end of file once the run has ended.
 _DRAIN_GRACE_S = 2.0
+# The lingering close after a reply: how long, and how many request bytes
+# at most, the server keeps reading and discarding until the client closes,
+# so that request bytes still arriving (a body behind a refusal) do not make
+# the close an abort that destroys the reply (Windows: WSAECONNABORTED).
+_LINGER_S = 2.0
+_LINGER_BYTES = MAX_BODY_BYTES + _READ_CHUNK
 # How long server_close() waits for runs in progress to be killed.
 _CLOSE_WAIT_S = 10.0
 _POLL_S = 0.05
@@ -201,6 +219,14 @@ _POLL_S = 0.05
 # until it declares what a plan of it is (none does on 2026-10-19).
 _EXCLUDED_YES = "--yes with no plan run the UI can confirm"
 _EXCLUDED_UI = "the UI itself"
+# Leaves refused whole for a reason of their own, by leaf path. `snap export`
+# (M16-04) always writes the file it is named, so the reason of the owner's
+# 2026-10-15 ruling on `looks page --out` refuses all of it: its FILE is
+# required, so refusing only that parameter would leave a leaf no run reaches.
+_EXCLUDED_LEAVES: dict[tuple[str, ...], str] = {
+    ("ui",): _EXCLUDED_UI,
+    ("snap", "export"): "it creates a file anywhere outside an install",
+}
 
 _JSON = "--json"
 _YES = "--yes"
@@ -610,6 +636,11 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
             if _JSON in opts:
                 json_opt = _JSON
                 continue  # the server adds it itself; it is not a parameter here
+            if getattr(param, "hidden", False):
+                # An option `--help` does not show (`doctor --offline`, a
+                # no-op kept for old scripts, M16-07) is not offered here,
+                # and a request that names it is an unknown parameter.
+                continue
             params[str(param.name)] = _read_param(param)
         excluded = None
         confirm = None
@@ -642,8 +673,8 @@ def _read_tree(root: Any) -> dict[tuple[str, ...], _Leaf]:
                     pin = _cli_contract()[1][path]
                 for param in own:
                     params.pop(str(param.name), None)
-        if path == ("ui",):
-            excluded = _EXCLUDED_UI
+        if path in _EXCLUDED_LEAVES:
+            excluded = _EXCLUDED_LEAVES[path]
         if excluded is not None:
             confirm = None
             pin = None
@@ -891,13 +922,20 @@ class _Run:
     truncated: bool
     # For a leaf of the confirm step: what the page is offered (`_Confirm`).
     confirm: Mapping[str, object] | None = None
+    # How the run ended, in words, and whether that is an alert (`_outcome`,
+    # M16-21): set by `run_leaf` for every request's run.
+    outcome: Mapping[str, object] | None = None
 
     def response(self) -> list[bytes]:
         """The JSON body, in pieces, never joined into one copy."""
         head = (
             f'{{"exit_code": {self.exit_code}, "timed_out": {json.dumps(self.timed_out)}, '
-            f'"truncated": {json.dumps(self.truncated)}, "stdout": "'
+            f'"truncated": {json.dumps(self.truncated)}, '
         )
+        if self.outcome is not None:
+            said = json.dumps(self.outcome, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES)
+            head += f'"outcome": {said}, '
+        head += '"stdout": "'
         end = b'"}'
         if self.confirm is not None:
             offer = json.dumps(self.confirm, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES)
@@ -964,10 +1002,82 @@ class _Offer:
     note: str | None = None
     needs: str | None = None
     pin: str | None = None
+    # The text plan, line by line, shown above Confirm (M16-21): only for a
+    # marked plan.
+    plan_lines: tuple[str, ...] = ()
 
 
-def _offer(leaf: _Leaf, run: _Run) -> _Offer:
-    """The plan run's outcome by its shape's marker (§16.1). Anything that is
+def _offer(leaf: _Leaf, run: _Run, cap: int) -> _Offer:
+    """The plan run's outcome by its shape's marker (§16.1), with the plan's
+    lines when it has them (`_plan_lines`) and they fit: the lines repeat
+    text the body already holds, so they count against the same output cap
+    (`cap`) as stdout and stderr together, encoded as they are sent, and
+    when they would pass it none is sent. Anything that is not the marker
+    offers nothing."""
+    found = _marked_offer(leaf, run)
+    if not found.marked:
+        return found
+    lines = _plan_lines(leaf, run)
+    used = sum(len(piece) for piece in (*run.stdout, *run.stderr))
+    if lines and used + len(_encoded(list(lines))) > cap:
+        lines = ()
+    note = found.note
+    if leaf.confirm == _SHAPE_DECLINED and note is not None:
+        lead = _DECLINED_LEAD if lines else _DECLINED_LEAD_BELOW
+        note = f"{lead} {note}"
+    elif not lines and note is None:
+        note = _DETAILS_NOTE
+    return dataclasses.replace(found, note=note, plan_lines=lines)
+
+
+def _encoded(value: object) -> bytes:
+    """`value` as the response carries it (`_Run.response`)."""
+    return json.dumps(value, ensure_ascii=True).translate(_JSON_EXTRA_ESCAPES).encode("ascii")
+
+
+# The note beside a marked plan that has no lines of its own and no other
+# note: what Confirm would change is only in the report (M16-21).
+_DETAILS_NOTE = "Open Details, below, to see what Confirm would change."
+# The first sentence of a declined plan's note, with its lines above Confirm,
+# or, when they did not fit, with the plan only in the command's own text
+# below.
+_DECLINED_LEAD = "The plan above is what the command shows before it asks you to say yes."
+_DECLINED_LEAD_BELOW = (
+    "The plan is the text below, which the command shows before it asks you to say yes."
+)
+
+# The prompt `_confirm` prints before the declined line, without a line end.
+_PROMPT = re.compile(r".*\[y/N\]:\s*")
+
+
+def _plan_lines(leaf: _Leaf, run: _Run) -> tuple[str, ...]:
+    """The plan as the terminal shows it, for the page to put above Confirm
+    (§18.1 item 7): the report's own `plan_lines` when it holds a list of
+    strings (`snap restore`, `profile apply`, `undo`); for the declined shape
+    without one (`sv merge`), what stderr held before `_confirm` asked, its
+    prompt and its declined line left out; else none."""
+    report = run.declined() if leaf.confirm == _SHAPE_DECLINED else run.report()
+    if report is not None:
+        given = report.get("plan_lines")
+        if isinstance(given, list) and given and all(isinstance(x, str) for x in given):
+            return tuple(given)
+    if leaf.confirm != _SHAPE_DECLINED:
+        return ()
+    stderr = _Run._text(run.stderr)
+    if stderr is None:
+        return ()
+    lines = stderr.replace("\r\n", "\n").split("\n")
+    # `declined` checked the ending: a line end, then the declined line.
+    lines = lines[:-2]
+    if lines and _PROMPT.fullmatch(lines[-1]):
+        lines = lines[:-1]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    return tuple(lines)
+
+
+def _marked_offer(leaf: _Leaf, run: _Run) -> _Offer:
+    """Whether the plan run ended with its shape's marker. Anything that is
     not the marker offers nothing: for the dry-run and doctor shapes an exit
     other than 0 (a refusal, exit 3, included) or output that is not one
     whole JSON object; for the declined shape anything but exit 1 ended by
@@ -1015,8 +1125,7 @@ def _declined_offer(leaf: _Leaf, report: Mapping[str, Any] | None) -> _Offer:
     )
     return _Offer(
         True,
-        "The plan is what the command printed on stderr before it asked. Confirm runs it "
-        f"with --yes and --expect {pin}: {check}.",
+        f"Confirm runs it with --yes and --expect {pin}: {check}.",
         pin=pin,
     )
 
@@ -1040,13 +1149,16 @@ _PIN_CHECKS: Mapping[tuple[str, ...], str] = {
 # output cap) before it ended. M14-03 decides this case (§16.1): a `guard`
 # transaction cannot roll back in a process that was killed, but the lock is
 # the OS's and goes with the process, the journal record is written before
-# the first change, and the snapshot taken before it holds every file.
+# the first change, and the snapshot taken before it holds every file. The
+# plan's header says a record's state in `cli._journal_state_words`' words
+# (M16-86); "did not finish" is that function's text for `open`, written
+# out because this module imports `cli` only inside functions.
 _KILLED_NOTE = (
     "It was stopped before it finished, so it may have changed some files and not others. "
     "A change through the write gate releases its lock when its process ends, and the "
     "snapshot it took before its first change holds every file as it was: show the plan of "
-    "undo, and if the record it names is this command's (state open), Confirm there puts "
-    "back what it changed."
+    "undo, and if the record it names is this command's and says it did not finish, "
+    "Confirm there puts back what it changed."
 )
 # The same for a leaf of the step that changes only wowlab's own store and
 # never goes through the write gate: it takes no pre-write snapshot and
@@ -1090,6 +1202,53 @@ def _dry_run_note(leaf: _Leaf, report: Mapping[str, Any]) -> str | None:
                 "nothing keeps when it runs; a snapshot taken meanwhile keeps its own."
             )
     return None
+
+
+@functools.cache
+def _exit_words() -> Mapping[int, str]:
+    """The CLI's exit codes in words (§18.1 item 7): what the page shows
+    instead of a number."""
+    from wowlab_core import cli
+
+    return {
+        cli.EXIT_OK: "Done",
+        cli.EXIT_ERROR: "Failed",
+        cli.EXIT_USAGE: "Missing or invalid input",
+        cli.EXIT_REFUSED: "Refused",
+    }
+
+
+def _outcome(run: _Run, stage: str | None, marked: bool = False) -> dict[str, object]:
+    """How one run ended, as the one sentence the page's status line shows,
+    and whether it is an alert (§18.1 item 7, M16-21). Only a plan run that
+    ended with its shape's marker is called a plan, and it is never an
+    alert (the declined shape's marker is exit 1); every other run is named
+    by its exit code in words, a confirmed one after "After Confirm:". A
+    run the server stopped (its time limit, or its output reaching the size
+    limit) is named by that stop and never by its exit code, which is the
+    kill's and not the CLI's; it is an alert."""
+    if run.timed_out:
+        text, alert = "Stopped at its time limit before it finished.", True
+    elif run.truncated:
+        text, alert = "Stopped when its output reached the size limit, before it finished.", True
+    elif stage == "plan" and marked:
+        text, alert = "Plan only: nothing was changed.", False
+    else:
+        word = _exit_words().get(run.exit_code)
+        if word is None:
+            text = f"Ended with exit code {run.exit_code}."
+        else:
+            text = f"{word} (exit code {run.exit_code})."
+        alert = run.exit_code != 0
+    if stage == "confirmed":
+        text = f"After Confirm: {text}"
+    return {"text": text, "alert": alert}
+
+
+def _confirm_label(leaf: _Leaf) -> str:
+    """Confirm's text, which is its accessible name: the action it takes,
+    as the status line names it while it runs (`--yes`)."""
+    return "Confirm: run wowlab " + " ".join(leaf.path) + " --yes"
 
 
 _KILL = getattr(signal, "SIGKILL", signal.SIGTERM)
@@ -1186,6 +1345,25 @@ def _commands_body(leaves: Mapping[tuple[str, ...], _Leaf]) -> bytes:
     )
 
 
+def _linger(sock: socket.socket) -> None:
+    """Read and discard from `sock` until the peer closes, `_LINGER_S`
+    passes or `_LINGER_BYTES` were read, whichever comes first."""
+    deadline = time.monotonic() + _LINGER_S
+    seen = 0
+    try:
+        while seen <= _LINGER_BYTES:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            sock.settimeout(left)
+            chunk = sock.recv(_READ_CHUNK)
+            if not chunk:
+                return
+            seen += len(chunk)
+    except OSError:
+        return
+
+
 class UiServer(http.server.ThreadingHTTPServer):
     """The `wowlab ui` server. Built by `make_server`, bound and not yet
     serving."""
@@ -1243,6 +1421,23 @@ class UiServer(http.server.ThreadingHTTPServer):
         socketserver.TCPServer.server_bind(self)
         self.server_name = _LOOPBACK
         self.server_port = int(self.server_address[1])
+
+    @override
+    def shutdown_request(self, request: Any) -> None:
+        """End the connection with a lingering close: send FIN after the
+        reply, then read and discard what the client still sends until it
+        closes, bounded by `_LINGER_S` and `_LINGER_BYTES`, and only then
+        close. A refusal answers before the body is read; closing a socket
+        that still receives request bytes sends RST, and on Windows an RST
+        discards the reply the client has not read yet. What is drained is
+        never parsed or kept."""
+        try:
+            request.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        else:
+            _linger(request)
+        self.close_request(request)
 
     @override
     def handle_error(self, request: Any, client_address: Any) -> None:
@@ -1324,17 +1519,22 @@ class UiServer(http.server.ThreadingHTTPServer):
             built = _build(leaf, params)
             plan = built.plan()
             run = self.run(plan)
-            if leaf.confirm is not None:
-                offer = _offer(leaf, run)
-                # The confirmed argv is made here, from the plan's own report
-                # (its pin), never from the request that confirms it.
-                minted = self._mint(plan, built.confirmed(offer.pin)) if offer.marked else None
-                run.confirm = {
-                    "stage": "plan",
-                    "token": minted,
-                    "note": offer.note,
-                    "needs": offer.needs,
-                }
+            if leaf.confirm is None:
+                run.outcome = _outcome(run, None)
+                return run
+            offer = _offer(leaf, run, self.output_cap_bytes)
+            # The confirmed argv is made here, from the plan's own report
+            # (its pin), never from the request that confirms it.
+            minted = self._mint(plan, built.confirmed(offer.pin)) if offer.marked else None
+            run.confirm = {
+                "stage": "plan",
+                "token": minted,
+                "note": offer.note,
+                "needs": offer.needs,
+                "plan_lines": list(offer.plan_lines),
+                "label": _confirm_label(leaf) if minted is not None else None,
+            }
+            run.outcome = _outcome(run, "plan", offer.marked)
             return run
         # The slot first, so that a busy server does not spend a token.
         with self._slot():
@@ -1354,7 +1554,10 @@ class UiServer(http.server.ThreadingHTTPServer):
             "token": None,
             "note": _confirmed_note(leaf, run),
             "needs": None,
+            "plan_lines": [],
+            "label": None,
         }
+        run.outcome = _outcome(run, "confirmed")
         return run
 
     def _mint(self, plan: Sequence[str], confirmed: Sequence[str]) -> str:

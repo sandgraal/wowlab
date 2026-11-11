@@ -61,6 +61,16 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   or an unblanked identity CVar is refused: nothing is written for it and the
   exit status is non-zero.
 
+Free text (M16-44): the patterns above cannot see other people's words. So
+the automatic SavedVariables selection never picks a chat-log, mail or notes
+addon's file (FREE_TEXT_SV_ADDONS, FREE_TEXT_SV_WORDS, matched anywhere in
+the folded file name); one is captured only when `--sv` names it and
+`--confirm-free-text` names it again, and a `--sv` of one without that stops
+the run. Every SavedVariables string, key or value, of FREE_TEXT_MIN_WORDS
+words or more, or of FREE_TEXT_MIN_LETTERS non-ASCII letters or more, is
+flagged "free text, review by hand", with its place and never its text; the
+flag is a note, not a refusal.
+
 `Identity` still accepts realms, characters and second names; since M13-49
 discovery passes none, and the inputs are kept for the unit tests that grade
 the scrub engine through them. The own-realm partner checks and the
@@ -96,6 +106,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+from dataclasses import replace as with_fields
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -297,6 +308,83 @@ CHARACTER_CACHE_FILES = (
     "flagged-cache-character.txt",
     "tts-cache-character.txt",
     "edit-mode-cache-character.txt",
+)
+
+# SavedVariables the automatic selection never picks (M16-44, security:F8):
+# addons that keep chat history, mail, roleplay profiles, or notes a player
+# typed about other people. Their files are other people's words and names,
+# which no identifier pattern finds. Such a file is captured only when `--sv`
+# names it AND `--confirm-free-text` names it again. The whole file name is
+# folded (NFKC, then case) and held back if it CONTAINS a listed name (so
+# `Elephant - Copy.lua`, `Elephant.lua.old` and a fullwidth spelling are
+# caught) or one of FREE_TEXT_SV_WORDS (so a module or an unlisted addon,
+# `Prat-3.0`, `DataStore_Mail`, `MyGuildNotes`, is caught without an entry),
+# or if one of its camel-case or punctuation-separated parts is a roleplay
+# tag (FREE_TEXT_SV_RP_RE: `TotalRP3`, `XRP`; a bare `rp` substring would
+# hold `WarpDeplete` and `Sharpie`). Holding back a harmless file costs one
+# candidate; picking a chat log leaks private conversations into a public
+# repository's history, so every rule here leans toward holding back.
+FREE_TEXT_SV_ADDONS = (
+    # chat history and whispers (ElvUI keeps `ChatHistoryLog` in its own file)
+    "Elephant",
+    "WIM",
+    "Prat-3.0",
+    "Chattynator",
+    "Chatter",
+    "Glass",
+    "BasicChatMods",
+    "ChatHistory",
+    "ElvUI",
+    "Listener",
+    "BadBoy",
+    # mail
+    "Postal",
+    "DataStore_Mail",
+    "TradeSkillMaster_Mailing",
+    "Altoholic",
+    # roleplay profiles (other players' typed descriptions)
+    "TotalRP3",
+    "MyRolePlay",
+    "XRP",
+    # notes about players, rosters, and raid notes naming them
+    "MRT",
+    "ExRT",
+    "AngryAssignments",
+    "GlobalIgnoreList",
+    "FriendGroups",
+    "Guild_Roster_Manager",
+    "Spy",
+)
+FREE_TEXT_SV_WORDS = (
+    "chat",
+    "mail",
+    "note",
+    "whisper",
+    "message",
+    "msg",
+    "friend",
+    "diary",
+    "guild",
+    "log",
+    "history",
+    "roleplay",
+)
+# A part of the name, split at punctuation and at camel-case and digit
+# boundaries, that is `rp` with an optional number (`TotalRP3` -> `RP`, `3`).
+FREE_TEXT_SV_RP_RE = re.compile(r"rp", re.IGNORECASE)
+_NAME_PART_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+FREE_TEXT_SV_LABEL = "chat-log, mail or notes addon (free text)"
+# A string of this many words or more is flagged in the run's output as free
+# text to review by hand (M16-44): it may be a note, a message or a name the
+# identifier patterns cannot know. So is one with FREE_TEXT_MIN_LETTERS or
+# more non-ASCII letters, since Chinese, Japanese and Korean text has no
+# blanks between words. Keys are checked as well as values. A note only;
+# nothing is refused.
+FREE_TEXT_MIN_WORDS = 5
+FREE_TEXT_MIN_LETTERS = 10
+FREE_TEXT_LABEL = (
+    f"free text, review by hand (string of {FREE_TEXT_MIN_WORDS}+ words "
+    f"or {FREE_TEXT_MIN_LETTERS}+ non-ASCII letters)"
 )
 OLD_SUFFIX = ".old"
 # The only combat-log file names captured, by default or with --combat-log:
@@ -2227,6 +2315,97 @@ def table_shape(data: bytes) -> tuple[int, int]:
     return deepest, positional
 
 
+def sv_stem(name: str) -> str:
+    """A SavedVariables file name up to its first `.lua` (any case): the
+    addon's folder name, whatever follows (`.lua`, `.lua.bak`, `.lua.old`,
+    `.lua~`)."""
+    at = name.casefold().find(".lua")
+    return name if at < 0 else name[:at]
+
+
+def _folded(text: str) -> str:
+    return unicodedata.normalize("NFKC", text).casefold()
+
+
+_FOLDED_ADDONS = tuple(_folded(name) for name in FREE_TEXT_SV_ADDONS)
+
+
+def is_free_text_sv(name: str) -> bool:
+    """Whether a SavedVariables file belongs to a chat-log, mail, roleplay or
+    notes addon (FREE_TEXT_SV_ADDONS, FREE_TEXT_SV_WORDS, FREE_TEXT_SV_RP_RE):
+    never picked automatically, and captured only when confirmed. The whole
+    name is checked, so no suffix or copy marker gets a file past it."""
+    folded = _folded(name)
+    if any(n in folded for n in _FOLDED_ADDONS) or any(w in folded for w in FREE_TEXT_SV_WORDS):
+        return True
+    plain = unicodedata.normalize("NFKC", name)
+    return any(FREE_TEXT_SV_RP_RE.fullmatch(part) for part in _NAME_PART_RE.findall(plain))
+
+
+_STRING_NEXT_RE = re.compile(rb"--|\[=*\[|[\"']")
+# What separates two words inside a string, as the bytes are written: blanks;
+# the Unicode spaces in UTF-8 (U+0085, NBSP, U+1680, U+2000 to U+200B,
+# U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF); Lua escapes that stand for
+# a blank (`\n`, `\t`, `\r`, `\v`, `\f`, `\z`, a decimal `\ddd` or hex `\xNN`
+# of 9 to 13 or 32); the client's `|n`; and AceSerializer's escapes (`~` and
+# one byte: `` ~` `` is its space).
+_WORD_SPLIT_RE = re.compile(
+    rb"[ \t\r\n\f\v]+"
+    rb"|\xc2[\x85\xa0]|\xe1\x9a\x80|\xe2\x80[\x80-\x8b\xa8\xa9\xaf]|\xe2\x81\x9f"
+    rb"|\xe3\x80\x80|\xef\xbb\xbf"
+    rb"|\\[ntrvfz]|\\0{0,2}(?:9|1[0-3])(?![0-9])|\\0?32(?![0-9])|\\x(?:0[9a-dA-D]|20)"
+    rb"|\|n|~[\x00-\x7f]"
+)
+_WORD_CHAR_RE = re.compile(rb"[A-Za-z0-9\x80-\xff]")
+
+
+def _is_free_text(body: bytes) -> bool:
+    words = sum(1 for part in _WORD_SPLIT_RE.split(body) if part and _WORD_CHAR_RE.search(part))
+    if words >= FREE_TEXT_MIN_WORDS:
+        return True
+    if body.isascii():
+        return False
+    text = body.decode("utf-8", "replace")
+    return sum(1 for c in text if ord(c) > 0x7F and c.isalpha()) >= FREE_TEXT_MIN_LETTERS
+
+
+def free_text_offsets(data: bytes) -> list[int]:
+    """Offsets of the strings in Lua-syntax bytes, values and keys alike
+    (`["meet me at the bank"] = true`), that hold FREE_TEXT_MIN_WORDS or more
+    words or FREE_TEXT_MIN_LETTERS or more non-ASCII letters: quoted strings
+    and long strings, not comments.
+
+    A word is a run between separators (`_WORD_SPLIT_RE`) holding a letter, a
+    digit or a non-ASCII byte. Like `table_shape`, this only skips spans and
+    reads every byte a bounded number of times; nothing is parsed, decoded as
+    Lua or evaluated (L3)."""
+    offsets: list[int] = []
+    at = 0
+    while 0 <= at < len(data):
+        token = _STRING_NEXT_RE.search(data, at)
+        if token is None:
+            break
+        start = token.start()
+        first = token.group(0)[:1]
+        if first == b"-":
+            at = _skip_comment(data, start)
+            continue
+        if first == b"[":
+            end = _skip_long(data, start)
+            opener = _LONG_OPEN_RE.match(data, start)
+            assert opener is not None
+            stop = len(data) if end < 0 else end - len(opener.group(0))
+            body = data[opener.end() : stop]
+        else:
+            end = _skip_quoted(data, start)
+            closed = end > start + 1 and data[end - 1] == data[start] and end - 1 > start
+            body = data[start + 1 : end - 1 if closed else end]
+        if _is_free_text(body):
+            offsets.append(start)
+        at = end
+    return offsets
+
+
 def sv_stats(data: bytes) -> SvStats:
     depth, positional = table_shape(data)
     return SvStats(
@@ -2476,13 +2655,27 @@ class Planner:
         for owner in (account, *character):
             if owner is not None:
                 pool.extend(files(child(owner, SAVED_VARIABLES_DIR)))
-        lua = [p for p in pool if p.name.casefold().endswith(".lua")]
-        backups = [p for p in pool if p.name.casefold().endswith(".lua.bak")]
+        held = sorted({sv_stem(p.name).casefold() for p in pool if is_free_text_sv(p.name)})
+        if held:
+            # A count only: which addons are installed is not the note's business.
+            self.notes.append(
+                f"{flavor.name}: {len(held)} {FREE_TEXT_SV_LABEL} SavedVariables never picked "
+                "automatically (--sv with --confirm-free-text to capture one)"
+            )
+        pool_auto = [p for p in pool if not is_free_text_sv(p.name)]
+        lua = [p for p in pool_auto if p.name.casefold().endswith(".lua")]
+        backups = [p for p in pool_auto if p.name.casefold().endswith(".lua.bak")]
 
+        confirmed = {_nfc(n).casefold() for n in self.args.confirm_free_text or []}
         for name in self.args.sv or []:
             for path in pool:
                 if path.name.casefold() == name.casefold():
-                    self.add(flavor, path, "requested with --sv")
+                    note = "requested with --sv"
+                    if is_free_text_sv(path.name):
+                        if _nfc(path.name).casefold() not in confirmed:
+                            continue  # run() stops before planning (check_free_text_svs)
+                        note += f"; {FREE_TEXT_SV_LABEL}, confirmed with --confirm-free-text"
+                    self.add(flavor, path, note)
 
         cap = self.args.max_sv_bytes
         raw: dict[Path, SvStats] = {}
@@ -2686,6 +2879,12 @@ def process(
     if countries is not None:
         # Counts only: an offset would point at the country.
         kept_whole.extend(f"{label} x{count}" for label, count in countries.unplaced)
+    # Any SavedVariables-named file, `.lua.old` and `.lua~` too (`name` is folded).
+    lua_text = kind == "savedvariables" or ".lua" in name
+    if lua_text and (free := free_text_offsets(result.data)):
+        # A note, never a refusal: the owner reads these strings before publishing.
+        free_note = _located_at(FREE_TEXT_LABEL, result.data, free)
+        result = with_fields(result, notes=(*result.notes, free_note))
     path_problems = [*path_problems, *_path_refusals(item.rel, dest)]
     if kinds and dest.parts[0] in kinds:
         # The index files fixtures under <platform>/<flavor-kind>/, not the folder name.
@@ -2984,6 +3183,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="REALM/NAME, or a <First>-<Second> folder name, to capture (default: most recent)",
     )
     parser.add_argument("--sv", action="append", help="also capture this SavedVariables file name")
+    parser.add_argument(
+        "--confirm-free-text",
+        action="append",
+        metavar="NAME",
+        help="confirm a --sv file of a chat-log, mail or notes addon (never picked "
+        "automatically): you have read it and its free text may be published; repeatable",
+    )
     parser.add_argument("--toc", action="append", help="also capture this addon's TOC files")
     parser.add_argument("--extra-name", action="append", help="another identity string to replace")
     parser.add_argument("--own-guid", action="append", help="a Player-<n>-<hex> GUID that is yours")
@@ -3068,6 +3274,28 @@ def _check_combat_log_names(names: Sequence[str]) -> None:
             )
 
 
+def check_free_text_svs(sv: Sequence[str], confirmed: Sequence[str]) -> None:
+    """A `--sv` name of a chat-log, mail or notes addon's file (is_free_text_sv)
+    needs the same name in `--confirm-free-text`: the extra confirmation that
+    its other people's words were read and may be published (M16-44). A
+    `--confirm-free-text` that no `--sv` names confirms nothing and stops the
+    run too, so a typo cannot pass for a confirmation."""
+    asked = {_nfc(n).casefold() for n in sv}
+    given = {_nfc(n).casefold() for n in confirmed}
+    for name in sv:
+        if is_free_text_sv(name) and _nfc(name).casefold() not in given:
+            raise CaptureError(
+                f"--sv {name}: a {FREE_TEXT_SV_LABEL} file holds other people's words, which "
+                "no scrub finds. Read it first; to capture it anyway, pass "
+                f"--confirm-free-text {name} as well. Nothing is captured"
+            )
+    for name in confirmed:
+        if _nfc(name).casefold() not in asked:
+            raise CaptureError(
+                f"--confirm-free-text {name}: no --sv names this file; nothing is captured"
+            )
+
+
 def _ordinal(n: int) -> str:
     """1st, 2nd, 3rd, 4th, ..., 11th, 12th, 13th, 21st, ..."""
     suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
@@ -3107,6 +3335,7 @@ def run(args: argparse.Namespace) -> int:
         raise CaptureError("no flavor folder (a directory with .flavor.info) found under --root")
     kinds = _kinds(args, flavors)
     _check_combat_log_names(args.combat_log or [])
+    check_free_text_svs(args.sv or [], args.confirm_free_text or [])
 
     identity = discover_identity(root, flavors, args)
     others = OtherPlayers() if args.pseudonymise_other_players else None

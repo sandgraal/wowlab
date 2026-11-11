@@ -32,7 +32,14 @@ repos:
       # so fixtures get their own 16 MB ceiling instead of no ceiling.
       - id: check-added-large-files
         args: [--maxkb=512, --enforce-all]
-        exclude: '^lab/core/tests/fixtures/'
+        exclude: '^(lab/core/tests/fixtures/|lab/core/src/wowlab_core/cli\.py\Z)'
+      # cli.py alone: 1 MB, owner decision 2026-11-10 (it reached 512 KB with
+      # M16-18 and M16-19). If the owner wants it split into a package, that
+      # split comes before M15-06 (docs/LAB_PLAN.md, 2026-10-21 owner decision).
+      - id: check-added-large-files
+        name: check for added large files (cli.py, 1 MB)
+        args: [--maxkb=1024, --enforce-all]
+        files: '^lab/core/src/wowlab_core/cli\.py\Z'
       - id: check-added-large-files
         name: check for added large files (fixtures, 16 MB)
         args: [--maxkb=16384, --enforce-all]

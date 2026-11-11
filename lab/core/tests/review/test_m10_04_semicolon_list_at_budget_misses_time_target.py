@@ -64,7 +64,7 @@ flattered (CPU time only overstates under load), so a parser slower
 than the 10 s target on an idle machine fails every sample; one between the
 real parser's time and the target can pass, as the twice-as-slow stand-in
 does for the two cases under 5 s. Each sample is shown in the warnings
-summary as a `ProbeReading`. Over 40 runner jobs of the full `lab (macos)`
+summary as a `UserWarning`. Over 40 runner jobs of the full `lab (macos)`
 steps (runs 39069464056 and 39096528977) every case passed; one `0,` case
 needed a second parse (11.41, then 9.57 CPU s), and the largest first
 parse otherwise was 9.29 CPU s.
@@ -85,8 +85,9 @@ TARGET_SECONDS = 10.0
 SAMPLES = 5
 
 
-class ProbeReading(UserWarning):
-    """One child's parse time, shown in the warnings summary (not a fault)."""
+# Readings are plain UserWarnings, shown in the warnings summary (not a
+# fault). A warning class defined in a test module cannot be unpickled by
+# an xdist controller, which cannot import the module by name (M16-61T).
 
 
 # Prints "<clock> <seconds>": the CPU time of the parse, or wall clock where
@@ -128,7 +129,8 @@ def _seconds_to_the_budget(item: bytes, folder: Path) -> tuple[float, str, list[
         clock, seconds = out.split()
         samples.append(float(seconds))
         warnings.warn(
-            ProbeReading(f"{sys.platform} {item!r} at the budget: {samples[-1]:.2f} {clock} s"),
+            f"probe reading, {sys.platform} {item!r} at the budget: {samples[-1]:.2f} {clock} s",
+            UserWarning,
             stacklevel=2,
         )
         if samples[-1] < TARGET_SECONDS:

@@ -4,8 +4,9 @@ time, and what the snapshots of its flavor folder say about it.
 
 Everything here reads. The install is read only through `lstat`, a listing
 of each folder on the way to the path (to find its spelling on disk; a link
-is never entered), and one `snapshot.open_regular_file` of the named path (no
-link followed, a FIFO never blocks); the store only through
+is never entered), and one open of the named path from the install root, one
+folder at a time (`snapshot.open_regular_file_from_root`, M16-79: no link
+followed on the way or at the end, a FIFO never blocks); the store only through
 `SnapshotStore.list_lenient`, which never creates it. Only the one named file
 is hashed, and only when the snapshot's copy has its size: a different size
 already differs.
@@ -38,8 +39,9 @@ __all__ = [
 ]
 
 _CHUNK = 1 << 20
-# A manifest file's name: its snapshot id, which sorts by creation time.
-_MANIFEST_NAME = re.compile(r"\A(\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8})\.json\Z")
+# A manifest file's name: its snapshot id, which sorts by creation time. ASCII
+# digits only, as `snapshot._ID_RE` (M16-77).
+_MANIFEST_NAME = re.compile(r"\A([0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8})\.json\Z")
 
 Live = Literal["same", "differs", "missing", "unreadable"]
 
@@ -425,7 +427,14 @@ def snapshot_facts(
         key=lambda m: (m.created_at, m.id),
     )
     newer_pre_write: SnapshotRef | None = None
-    kinds = {m.id: snapshot.kind_of(m, pre_write_ids) for m in covering}
+    # An imported snapshot is `imported`, whatever its manifest claims
+    # (M16-04): a forged `pre-write` is not set aside as one, and a forged
+    # `user` is reported as what it is.
+    try:
+        imported = store.imported_ids()
+    except snapshot.SnapshotError:
+        imported = frozenset()
+    kinds = {m.id: snapshot.kind_of(m, pre_write_ids, imported) for m in covering}
     chosen = [m for m in covering if kinds[m.id] != "pre-write"]
     if chosen:
         newer = covering[covering.index(chosen[-1]) + 1 :]  # pre-write copies, all
@@ -483,7 +492,7 @@ def snapshot_facts(
             newer_pre_write=newer_pre_write,
         )
     entry, confirmed = found
-    live = _compare(install_root / flavor_folder / rel, entry)
+    live = _compare(install_root / flavor_folder / rel, install_root, entry)
     return SnapshotFacts(
         snapshot_id=latest.id,
         created_at=latest.created_at,
@@ -503,11 +512,14 @@ def snapshot_facts(
     )
 
 
-def _compare(path: Path, entry: snapshot.Entry) -> Live:
-    """The file at `path` against the snapshot's `entry`: opened without
-    following a link, read in chunks, never held whole."""
+def _compare(path: Path, install_root: Path, entry: snapshot.Entry) -> Live:
+    """The file at `path` against the snapshot's `entry`: opened from
+    `install_root` one folder at a time, so no link is followed on the way
+    or at the end (M16-79), read in chunks, never held whole. A link met on
+    the way (a folder swapped for one after `explain` looked) is
+    `unreadable`: nothing behind it is read or compared."""
     try:
-        fd, st = snapshot.open_regular_file(path)
+        fd, st = snapshot.open_regular_file_from_root(path, install_root)
     except FileNotFoundError:
         return "missing"
     except OSError:

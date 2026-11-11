@@ -79,15 +79,24 @@ Each operation then checks the path lexically (the allowlist, executables,
 Windows spellings), walks it on disk without following any link, junction or
 other reparse point, refuses a name that differs only in case or Unicode form
 from one on disk, and refuses a name the file system resolves to something it
-does not list (an 8.3 short name). A path whose disk state differs from what
-guard expects there is refused with `ChangedSinceSnapshotError` (item 3): at
-its first touch the pre-write snapshot's entry (content hash and kind, or
-absent against present), later guard's own record of the path (the hash of
-its last write there that landed, else the hash read at first touch). The
-path, its `before` hash and the name of the temp file about to be created are
-written to the journal and fsynced before the install is touched
-(write-ahead), so a process killed at any point can still be undone, and its
-temp file found, from the journal alone. The new bytes go to that temp file in
+does not list (an 8.3 short name). The directory listings that walk reads
+come from a per-transaction memo (§18.1 item 6, M16-23): a listing is kept
+under the directory's (dev, ino, mtime_ns), with its ctime_ns on POSIX
+(amended 2026-11-11), read before the listing and again after it, used only
+while a fresh `lstat` still shows that key, forgotten for every directory on
+the path of the transaction's own write, delete or directory removal, and
+never kept when the listing failed; the target itself is `lstat`ed on every
+lookup, and the re-checks below never use the memo, so a whole restore lists
+each directory once instead of once per file in it. A path whose disk state
+differs from what guard expects there is refused with
+`ChangedSinceSnapshotError` (item 3): at its first touch the pre-write
+snapshot's entry (content hash and kind, or absent against present), later
+guard's own record of the path (the hash of its last write there that
+landed, else the hash read at first touch). The path, its `before` hash
+and the name of the temp file about to be created are written to the journal
+and fsynced before the install is touched (write-ahead), so a process killed
+at any point can still be undone, and its temp file found, from the journal
+alone. The new bytes go to that temp file in
 the same directory, which is fsynced; the target is then read again and must
 still hash to what guard expects (for a create: still be absent), and as the
 last step before the call its identity, size and mtime (by `lstat`) must be
@@ -138,7 +147,13 @@ store, looked up by that hash (the store checks content against the name, so
 a manifest cannot substitute other bytes). A path that already holds its
 pre-transaction bytes needs nothing; a path someone else changed is left as
 it is, named in the record's note and in the error, and the record ends
-`rollback_incomplete`. Rollback therefore never overwrites content that no
+`rollback_incomplete`. The record also lists those paths in `paths_left`
+(M16-84), flavor-relative and spelled as `paths` spells them: a path the
+rollback could not put back, or a refused path whose disk moved since guard
+read it; never a directory it could not remove. Paths whose only operation
+was refused are journaled under `paths_refused`, so a `paths_left` entry
+that `paths` does not name is vouched for by that key alone, never by the
+note, which is not parsed. Rollback therefore never overwrites content that no
 snapshot holds and this transaction did not write. The record says
 `rolled_back` only if all of that succeeded. A `restore` that fails after
 changing a path leaves the transaction unable to commit: it rolls back on
@@ -194,7 +209,7 @@ from pathlib import Path, PureWindowsPath
 from types import TracebackType
 from typing import Literal, NoReturn, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator, model_validator
 
 from wowlab_core import longpath, process
 from wowlab_core import snapshot as _snapshots
@@ -214,6 +229,7 @@ __all__ = [
     "PathChange",
     "PathNotAllowedError",
     "PlanItem",
+    "Target",
     "history",
     "store_lock",
     "transaction",
@@ -228,6 +244,40 @@ _log = logging.getLogger(__name__)
 # (ADR-0023). Spelled as the client spells them; a respelling is refused.
 _ROOTS = ("WTF", "Interface", "Fonts")
 _ADDONS = "AddOns"
+
+
+def _allowlisted_trees(paths: Iterable[str], folder: str) -> tuple[str, ...]:
+    """`paths` (install-relative, `/`-separated, as a manifest names its
+    subtrees or excluded paths) held to the allowlist roots of the flavor
+    `folder`: `folder` itself stands for each root, a path below a root is
+    kept, and every other path is dropped. Sorted, once each. The rule a
+    whole restore's left-alone list is walked by, shared with the CLI so its
+    own list matches the gate's."""
+    here = folder + "/"
+    out: set[str] = set()
+    for path in paths:
+        if path == folder:
+            out.update(here + root for root in _ROOTS)
+        elif path.startswith(here) and _in_allowlist_root(path.removeprefix(here)):
+            out.add(path)
+    return tuple(sorted(out))
+
+
+def _in_allowlist_root(rel: str) -> bool:
+    """Whether `rel` (flavor-relative, `/`-separated) lies under, or is, one
+    of the allowlist roots, spelled as the client spells them."""
+    return rel.split("/", 1)[0] in _ROOTS
+
+
+# Account folders under `WTF/Account/`, for a restore into another target
+# (§6.10 as amended 2026-10-22). The rule is `layout`'s (M13-50): a folder
+# is an account folder when its name has the `<digits>#<n>` shape, or when
+# it holds a character folder (a realm folder other than `SavedVariables/`
+# with a folder inside other than `SavedVariables/`). `SavedVariables/`
+# directly under `WTF/Account/` is the client's own and no account.
+_ACCOUNT_PARTS = ("WTF", "Account")
+_ACCOUNT_SAVED_VARIABLES = "SavedVariables"
+_ACCOUNT_NAME = re.compile(r"[0-9]+#[0-9]+")
 
 # A path with any component ending in one of these, compared
 # case-insensitively, is an executable and is never written (L7).
@@ -275,8 +325,13 @@ _MAX_NAME_BYTES = 255
 _JOURNAL_DIR = "journal"
 _JOURNAL_FORMAT = 2
 # Format 1 is what the M10-11 gate wrote: no temp paths, no cleanup.
+# Format 2 gained `paths_left` and `paths_refused` (M16-84) without a new
+# number: each is written only when it is not empty, so a record with nothing
+# left alone or refused is byte for byte what the M16-71 gate wrote, and a
+# gate from before M16-84 refuses a record that carries either key as damaged
+# (its records forbid unknown keys) rather than reading it without the list.
 _READABLE_FORMATS = frozenset({1, _JOURNAL_FORMAT})
-_RECORD_NAME = re.compile(r"\A(\d{8})-[0-9a-f]{8}\.json\Z")
+_RECORD_NAME = re.compile(r"\A([0-9]{8})-[0-9a-f]{8}\.json\Z")
 _MAX_RECORD_BYTES = 64 << 20
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 _TEMP_PREFIX = ".wowlab-"
@@ -371,6 +426,13 @@ class HistoryRecord(_Frozen):
     temps_left: tuple[str, ...]
     """Temp paths earlier records name that this one left alone: they failed a
     check, or their removal failed."""
+    paths_left: tuple[str, ...] = ()
+    """Files the rollback of this record left as they are (M16-84): changed
+    by another program, refused by the system, or refused before anything
+    was written and changed since guard read them. Flavor-relative, spelled
+    as `paths` spells them; empty unless `state` is `rollback_incomplete`,
+    and empty for a record written before M16-84 (its note is not parsed).
+    A directory the rollback could not remove is not listed."""
 
 
 class PlanItem(_Frozen):
@@ -381,6 +443,76 @@ class PlanItem(_Frozen):
     after: str | None
     size: int | None
     """Bytes written; `None` for a delete."""
+
+
+def _plain_folder_name(name: object, what: str) -> str:
+    """`name` as one plain folder name the gate would write under `WTF/`
+    (`_check_rel`'s rules for one part: no separator, `.`, `..`, drive, data
+    stream, reserved device name, trailing dot or space, executable suffix,
+    NUL or other control character). Raises `PathNotAllowedError`."""
+    if not isinstance(name, str):
+        raise PathNotAllowedError(f"{what} is a str, not {type(name).__name__}")
+    if "/" in name or name in ("", ".", ".."):
+        raise PathNotAllowedError(f"{what} {name!r} is not one plain folder name")
+    try:
+        _check_rel(f"WTF/{name}")
+    except PathNotAllowedError as exc:
+        raise PathNotAllowedError(f"{what} {name!r} is not one plain folder name: {exc}") from exc
+    return name
+
+
+class Target(_Frozen):
+    """Where `tx.restore(..., into=Target(...))` puts a snapshot of another
+    flavor folder or another install root (§6.10 as amended 2026-10-22,
+    §18.1 item 1). `flavor` is the transaction's own flavor (anything with
+    a `path`); `accounts` maps account folders under `WTF/Account/`, the
+    snapshot's name to the target's. Each name is one plain folder name and
+    no two source folders go to one target folder; the restore checks the
+    rest (and these again) against the snapshot and the target."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    flavor: object
+    accounts: dict[str, str] | None = None
+
+    @field_validator("flavor")
+    @classmethod
+    def _has_path(cls, value: object) -> object:
+        if not isinstance(getattr(value, "path", None), str | os.PathLike):
+            raise ValueError("a target flavor needs a path (the flavor folder)")
+        return value
+
+    @field_validator("accounts")
+    @classmethod
+    def _plain_accounts(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        try:
+            _check_account_mapping(value)
+        except PathNotAllowedError as exc:
+            raise ValueError(str(exc)) from exc
+        return dict(value)
+
+
+def _check_account_mapping(mapping: dict[str, str]) -> None:
+    """Every name plain, and no two source account folders sent to one target
+    folder (compared as the file system may: case and Unicode form folded)."""
+    seen: dict[str, str] = {}
+    for source, target in mapping.items():
+        _plain_folder_name(source, "the source account folder")
+        _plain_folder_name(target, f"the account folder {source!r} maps to,")
+        if _fold(target) == _fold(_ACCOUNT_SAVED_VARIABLES):
+            raise PathNotAllowedError(
+                f"account folder {source!r} cannot map to {target!r}: that is the client's "
+                "own folder of SavedVariables that belong to no account"
+            )
+        other = seen.get(_fold(target))
+        if other is not None:
+            raise PathNotAllowedError(
+                f"account folders {other!r} and {source!r} both map to {target!r}; "
+                "each source account folder needs a target folder of its own"
+            )
+        seen[_fold(target)] = source
 
 
 # ─── the journal on disk ─────────────────────────────────────────────────────
@@ -423,6 +555,11 @@ class _JournalRecord(_Frozen):
     temps_removed: tuple[str, ...] = ()
     temps_left: tuple[str, ...] = ()
     cleanup_finished: bool = False
+    # M16-84, format 2. `paths_refused` names each path whose only operation
+    # was refused (not in `paths`); `paths_left` the paths the rollback left
+    # as they are. Written only when not empty (`_write_record`).
+    paths_refused: tuple[StrictStr, ...] = ()
+    paths_left: tuple[StrictStr, ...] = ()
 
     @field_validator("format")
     @classmethod
@@ -437,6 +574,30 @@ class _JournalRecord(_Frozen):
             self.temps or self.temps_removed or self.temps_left or self.cleanup_finished
         ):
             raise ValueError("a format-1 record names no temp paths and ran no cleanup")
+        return self
+
+    @model_validator(mode="after")
+    def _left_alone_is_journaled(self) -> _JournalRecord:
+        """`paths_refused` and `paths_left` hold plain allowlisted paths, each
+        once; `paths_left` only on a `rollback_incomplete` record, and only
+        paths the record journals (`paths` or `paths_refused`). The note
+        vouches for nothing."""
+        if self.format == 1 and (self.paths_refused or self.paths_left):
+            raise ValueError("a format-1 record names no refused or left-alone paths")
+        for key, values in (("paths_refused", self.paths_refused), ("paths_left", self.paths_left)):
+            if len(set(values)) != len(values):
+                raise ValueError(f"{key} names a path twice")
+            for rel in values:
+                try:
+                    _check_rel(rel)
+                except PathNotAllowedError as exc:
+                    raise ValueError(f"{key}: {exc}") from None
+        if self.paths_left:
+            if self.state != "rollback_incomplete":
+                raise ValueError("only a rollback_incomplete record names paths left alone")
+            journaled = {p.path for p in self.paths} | set(self.paths_refused)
+            if not set(self.paths_left) <= journaled:
+                raise ValueError("paths_left names a path the record does not journal")
         return self
 
 
@@ -495,10 +656,17 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     """Replace the record's file atomically; the bytes are fsynced before the
     rename and the directory after it, so what the journal says is on disk."""
     directory = _journal_dir(store_path)
-    text = json.dumps(record.model_dump(), ensure_ascii=True, sort_keys=True, indent=1)
+    raw = record.model_dump()
+    # M16-84's keys only when they say something: a record with neither is
+    # what a gate from before M16-84 reads.
+    for key in ("paths_refused", "paths_left"):
+        if not raw[key]:
+            del raw[key]
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        # 0700 (M16-66, M16-78); mode 0700 on Windows too, as before M16-78.
+        _snapshots.make_private_dirs(directory, outside=True, private_on_windows=True)
         tmp = directory / f".{record.id}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, 0o600)
@@ -533,6 +701,7 @@ def _public(record: _JournalRecord) -> HistoryRecord:
         created_dirs=record.created_dirs,
         temps_removed=record.temps_removed,
         temps_left=record.temps_left,
+        paths_left=record.paths_left,
     )
 
 
@@ -694,11 +863,13 @@ class _HeldLock:
     """The process that took it: a forked child never unlocks the parent's lock."""
 
 
-def _plain_dir(path: Path, *, parents: bool) -> None:
-    """Make `path` if it is missing, then require a real directory there: not
-    a symbolic link, not a junction or any other reparse point."""
+def _plain_dir(path: Path) -> None:
+    """Make `path` and any missing folder above it, each 0700 in its own
+    `mkdir` (LAB_PLAN §6.10, amended 2026-11-11 (b); M16-78), then require a
+    real directory there: not a symbolic link, not a junction or any other
+    reparse point."""
     try:
-        path.mkdir(parents=parents, exist_ok=True)
+        _snapshots.make_private_dirs(path)
         st = path.lstat()
         junction = path.is_junction()
     except OSError as exc:
@@ -848,7 +1019,8 @@ class _Locks:
         _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
-                resolved.mkdir(parents=True, exist_ok=True)
+                # The store and every missing parent 0700, top-down (M16-78).
+                _snapshots.make_private_dirs(resolved, outside=True, private_on_windows=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
             _refuse_inside_any_install(store_path, "the store")
@@ -859,8 +1031,8 @@ class _Locks:
         path = _install_lock_path(place)
         _refuse_inside_any_install(path.parent, "the lock directory")
         _refuse_inside_any_install(path, "the install lock")
-        _plain_dir(path.parent.parent, parents=True)
-        _plain_dir(path.parent, parents=False)
+        _plain_dir(path.parent.parent)
+        _plain_dir(path.parent)
         self._held.append(_take_lock(path, "the install lock"))
 
     def cover(self, store_path: Path, place: _Place) -> bool:
@@ -1185,17 +1357,161 @@ def _verify_after(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
         raise _ChangedUnderneathError(f"{exc}; the change may have landed elsewhere") from exc
 
 
-def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
+_ListingKey = tuple[int, int, int, int]
+
+
+def _listing_key(directory: Path) -> _ListingKey | None:
+    """What a memoized listing of `directory` is held to: its (dev, ino,
+    mtime_ns, ctime_ns) by `lstat`. None for a link or anything not a
+    directory, whose listing is never kept. An `OSError` from the `lstat`
+    propagates.
+
+    ctime_ns is part of the key on POSIX only (§18.1 item 6, amended
+    2026-11-11): there any change to the directory moves it, an mtime put
+    back with `utime` included, and user space cannot set it. On Windows
+    `st_ctime_ns` is the creation time, which does not move when the
+    listing changes, so the field is held at 0 there and the Windows memo
+    is the (dev, ino, mtime_ns) one."""
+    st = longpath.lstat(directory)
+    if _is_link(st) or not stat.S_ISDIR(st.st_mode):
+        return None
+    ctime_ns = st.st_ctime_ns if os.name == "posix" else 0
+    return (st.st_dev, st.st_ino, st.st_mtime_ns, ctime_ns)
+
+
+@dataclass
+class _Listing:
+    """One directory listing, as `longpath.entries` returned it."""
+
+    key: _ListingKey | None
+    entries: tuple[os.DirEntry[str], ...]
+    names: frozenset[str]
+    folded: dict[str, list[str]] | None = None
+
+    def clashes(self, name: str) -> list[str]:
+        """The listed names that differ from `name` only by case or Unicode
+        form, sorted; folded once per listing, not once per lookup."""
+        if self.folded is None:
+            folded: dict[str, list[str]] = {}
+            for listed in sorted(self.names):
+                folded.setdefault(_fold(listed), []).append(listed)
+            self.folded = folded
+        return [n for n in self.folded.get(_fold(name), ()) if n != name]
+
+
+class _ListingMemo:
+    """§18.1 item 6 (M16-23): one transaction's directory listings.
+
+    A listing is kept under the key (`_listing_key`) read before it was
+    listed, and only when the key read again after the listing agrees, so a
+    change that lands while or right after a directory is listed is never
+    kept under the new key. Every lookup reads the key again and lists again
+    when it differs: someone else's file added or removed moves the
+    directory's mtime (and, on POSIX, its ctime, even when the mtime is
+    put back afterwards), and a directory replaced by another has another
+    inode. The transaction's own writes, directory creations, deletes and
+    removals forget every directory on their path (`forget`), whatever the
+    clock did. A listing that fails is never kept: the error propagates and
+    the next lookup lists again. The memo answers only which names a
+    directory lists; every target is still `lstat`ed per lookup, and the
+    commit-time re-check (`_recheck`, `_verify`) never reads the memo.
+    On POSIX, someone else's change within one tick of a coarse directory
+    clock (both its mtime and its ctime clock) keeps the key as it was. On
+    Windows, where the key holds no change time, a change whose mtime is
+    put back keeps the key for the rest of the transaction. That residual
+    risk is accepted (the M16-23T graders' docstring, 2026-10-22; §18.1
+    item 6, amended 2026-11-11): on either platform it can let a
+    case-variant sibling name through or leave a name out of the report,
+    never a write outside the allowlist or past a link (each directory on a
+    write's path is `lstat`ed and `_verify`ed, never taken from a kept
+    listing). A stale entry never leads the walk of what a whole restore
+    leaves alone through a link (`entries` holds each directory to one by
+    its own `lstat`), and a single swap for a link is refused. A swap in and
+    back again within one scan can still return names from outside, as a
+    walk without the memo can; they are never written or listed."""
+
+    def __init__(self) -> None:
+        self._held: dict[str, _Listing] = {}
+
+    def listing(self, directory: Path) -> _Listing:
+        """`directory`'s listing: the kept one when its key still holds,
+        else a new one. An `OSError` (the `lstat` or the listing) propagates
+        and nothing is kept."""
+        where = str(directory)
+        key = _listing_key(directory)
+        held = self._held.get(where)
+        if held is not None and key is not None and held.key == key:
+            return held
+        self._held.pop(where, None)
+        entries = tuple(longpath.entries(directory))
+        listing = _Listing(key=key, entries=entries, names=frozenset(e.name for e in entries))
+        if key is not None:
+            try:
+                after = _listing_key(directory)
+            except OSError:
+                after = None
+            if after == key:
+                self._held[where] = listing
+        return listing
+
+    def entries(self, directory: Path) -> list[os.DirEntry[str]]:
+        """`longpath.entries(directory)` through the memo (for `list_tree`).
+
+        `list_tree` descends by the entry type the parent's listing showed,
+        and that listing may be a kept one: a subdirectory swapped for a
+        link within one tick of the parent's clock still shows as a
+        directory there. So `directory` is held to a directory by its own
+        `lstat` first and is never listed through a link: a link gives no
+        entries (a fresh walk does not descend into one either), and
+        anything else that is not a directory, or that stops being one
+        while it is listed, raises `NotADirectoryError`, which `list_tree`
+        turns into `SnapshotError`."""
+        st = longpath.lstat(directory)
+        if _is_link(st):
+            return []
+        if not stat.S_ISDIR(st.st_mode):
+            raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(directory))
+        listing = self.listing(directory)
+        if listing.key is None or _listing_key(directory) is None:
+            raise NotADirectoryError(
+                errno.ENOTDIR, "stopped being a directory while it was listed", str(directory)
+            )
+        return list(listing.entries)
+
+    def forget(self, place: _Place, parts: Sequence[str]) -> None:
+        """Drop the listings of the flavor folder and of every directory
+        below it on the way to `parts` (`parts` itself included)."""
+        current = place.flavor_dir
+        self._held.pop(str(current), None)
+        for name in parts:
+            current = current / name
+            self._held.pop(str(current), None)
+
+
+def _entry(
+    directory: Path, name: str, rel: str, memo: _ListingMemo | None = None
+) -> os.stat_result | None:
     """`lstat` of `directory/name`, or None when absent. Refuses a link, a
     name that only matches an existing one by case or Unicode form, and a
-    name the file system resolves although the directory does not list it."""
+    name the file system resolves although the directory does not list it.
+    With `memo`, the directory's listing comes from it (§18.1 item 6); the
+    `lstat` of the target is made every time."""
+    listing: _Listing | None = None
     try:
-        names = {p.name for p in longpath.iterdir(directory)}
+        if memo is None:
+            names = frozenset(p.name for p in longpath.iterdir(directory))
+        else:
+            listing = memo.listing(directory)
+            names = listing.names
     except OSError as exc:
         raise GuardError(f"{rel}: cannot list {directory}: {exc}") from exc
     path = directory / name
     if name not in names:
-        clash = sorted(n for n in names if _fold(n) == _fold(name))
+        clash = (
+            sorted(n for n in names if _fold(n) == _fold(name))
+            if listing is None
+            else listing.clashes(name)
+        )
         if clash:
             raise PathNotAllowedError(
                 f"{rel}: {name!r} collides with {clash[0]!r} already in {directory}"
@@ -1218,8 +1534,15 @@ def _entry(directory: Path, name: str, rel: str) -> os.stat_result | None:
     return st
 
 
-def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Found:
-    """Walk `parts` below the flavor folder, following nothing."""
+def _look(
+    place: _Place,
+    parts: Sequence[str],
+    *,
+    want_dir: bool = False,
+    memo: _ListingMemo | None = None,
+) -> _Found:
+    """Walk `parts` below the flavor folder, following nothing. With `memo`,
+    directory listings come from the transaction's memo."""
     rel = "/".join(parts)
     chain: list[tuple[Path, _Identity]] = [
         (place.install_root, place.root_id),
@@ -1233,7 +1556,7 @@ def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Fo
         if missing:
             missing.append("/".join(parts[:depth]))
             continue
-        st = _entry(current.parent, name, rel)
+        st = _entry(current.parent, name, rel, memo)
         if st is None:
             missing.append("/".join(parts[:depth]))
         elif stat.S_ISDIR(st.st_mode):
@@ -1241,7 +1564,7 @@ def _look(place: _Place, parts: Sequence[str], *, want_dir: bool = False) -> _Fo
         else:
             raise PathNotAllowedError(f"{rel}: {'/'.join(parts[:depth])} is not a directory")
     target = current / parts[-1]
-    st = None if missing else _entry(current, parts[-1], rel)
+    st = None if missing else _entry(current, parts[-1], rel, memo)
     if st is not None:
         if want_dir and not stat.S_ISDIR(st.st_mode):
             raise PathNotAllowedError(f"{rel} is not a directory")
@@ -1414,15 +1737,47 @@ def _mutate(
     *,
     expect_hash: str | None,
     tmp_name: str | None,
+    memo: _ListingMemo | None = None,
 ) -> None:
     """Put `data` at `parts` (None deletes), after walking the path again and
     checking the target is still what `expect` found and still hashes to
     `expect_hash`. A write goes through the temp file `tmp_name`, which the
     caller has already journaled. Directories made on the way are appended
-    to `created` as they are made."""
+    to `created` as they are made. Whatever happens, `memo` forgets every
+    directory on the path afterwards (the transaction's own write)."""
     if _check_rel("/".join(parts)) != tuple(parts):
         raise PathNotAllowedError(f"{'/'.join(parts)!r} is not a path the gate writes")
-    found = _look(place, parts)
+    try:
+        _mutate_walked(
+            place,
+            parts,
+            data,
+            rule,
+            expect,
+            created,
+            expect_hash=expect_hash,
+            tmp_name=tmp_name,
+            memo=memo,
+        )
+    finally:
+        if memo is not None:
+            memo.forget(place, parts[:-1])
+
+
+def _mutate_walked(
+    place: _Place,
+    parts: Sequence[str],
+    data: bytes | None,
+    rule: _ModeRule,
+    expect: _Found,
+    created: list[str],
+    *,
+    expect_hash: str | None,
+    tmp_name: str | None,
+    memo: _ListingMemo | None,
+) -> None:
+    """`_mutate` after its lexical check; see there."""
+    found = _look(place, parts, memo=memo)
     rel = found.rel
     if not _same_state(found.st, expect.st):
         raise _changed(rel, "changed between guard's read and its write")
@@ -1457,19 +1812,24 @@ def _mutate(
     _replace(found, chain, data, rule, tmp_name, expect_hash)
 
 
-def _remove_dir(place: _Place, rel_dir: str) -> None:
+def _remove_dir(place: _Place, rel_dir: str, memo: _ListingMemo | None = None) -> None:
     """Remove a directory this gate created, if it is still there. Only an
-    empty directory is removed; anything else raises GuardError."""
+    empty directory is removed; anything else raises GuardError. `memo`
+    forgets every directory on the path afterwards, the removed one too."""
     parts = _check_rel(rel_dir, directory=True)
-    found = _look(place, parts, want_dir=True)
-    if found.st is None:
-        return
-    _verify(found.chain, rel_dir)
     try:
-        with longpath.plain_errors():
-            longpath.xpath(found.path).rmdir()
-    except OSError as exc:
-        raise GuardError(f"cannot remove {rel_dir}: {exc}") from exc
+        found = _look(place, parts, want_dir=True, memo=memo)
+        if found.st is None:
+            return
+        _verify(found.chain, rel_dir)
+        try:
+            with longpath.plain_errors():
+                longpath.xpath(found.path).rmdir()
+        except OSError as exc:
+            raise GuardError(f"cannot remove {rel_dir}: {exc}") from exc
+    finally:
+        if memo is not None:
+            memo.forget(place, parts)
 
 
 # ─── the transaction ─────────────────────────────────────────────────────────
@@ -1489,9 +1849,12 @@ class _Transaction:
         "_journal",
         "_label",
         "_last",
+        "_left_alone",
+        "_listings",
         "_order",
         "_overlay",
         "_own_locks",
+        "_paths_left",
         "_pid",
         "_place",
         "_plan",
@@ -1542,12 +1905,18 @@ class _Transaction:
         self._last: dict[str, tuple[str | None, ...]] = {}
         # Paths whose only operation was refused, with what guard read there.
         self._refused: dict[str, str | None] = {}
+        # What the rollback left as it is (M16-84): set once, at exit.
+        self._paths_left: tuple[str, ...] = ()
         # The pre-write snapshot's entries: flavor-relative path to (kind, hash).
         self._pre_entries: dict[str, tuple[str, str | None]] = {}
         self._created: list[str] = []
         self._planned_dirs: list[str] = []
         self._plan: dict[str, PlanItem] = {}
+        # What the last whole restore leaves alone (M16-11); never in the plan.
+        self._left_alone: tuple[str, ...] = ()
         self._overlay: dict[str, bytes | None] = {}
+        # Directory listings, this transaction's only (§18.1 item 6, M16-23).
+        self._listings = _ListingMemo()
         self._broken: str | None = None
         self._temps: list[str] = []
         self._temps_removed: list[str] = []
@@ -1561,6 +1930,18 @@ class _Transaction:
         """Every path changed so far (in a dry run: that would be changed),
         once each, with its first `before` and its last `after`."""
         return tuple(self._plan.values())
+
+    @property
+    def left_alone(self) -> tuple[str, ...]:
+        """The files a whole restore leaves alone: every regular file now
+        under one of the snapshot's subtrees, outside its excluded paths, that
+        the snapshot does not hold (added since it was taken). Flavor-relative,
+        `/`-separated, sorted, once each. A whole restore never writes or
+        deletes them, and they are not in `plan`. Empty until a whole restore
+        fills it; a restore by name, a write or a delete leaves it as it is.
+        The listing reads directory entries and `lstat` only: it opens no
+        file and follows no link, and a FIFO is never listed."""
+        return self._left_alone
 
     def write(self, rel_path: str, data: bytes) -> None:
         """Replace or create the file at `rel_path` (relative to the flavor
@@ -1578,7 +1959,13 @@ class _Transaction:
         parts = _check_rel(rel_path)
         self._apply(rel_path, parts, None, ("keep", 0))
 
-    def restore(self, snapshot_id: str, paths: Iterable[str] | None = None) -> None:
+    def restore(
+        self,
+        snapshot_id: str,
+        paths: Iterable[str] | None = None,
+        *,
+        into: Target | None = None,
+    ) -> tuple[tuple[str, str], ...]:
         """Put back the files of a snapshot of this flavor: every file it holds,
         or only `paths` (a named path the snapshot's subtrees cover but that it
         does not hold is deleted). Every entry is checked against the gate
@@ -1586,7 +1973,17 @@ class _Transaction:
         nothing behind. With `paths=None` any entry the gate refuses stops the
         whole restore, even an unchanged one; an unchanged link is the one
         exception, since leaving it needs no write. A failure after a path has
-        changed makes the transaction roll back on exit."""
+        changed makes the transaction roll back on exit.
+
+        A snapshot of another flavor folder or another install root restores
+        only with `into`, a `Target` naming this transaction's own flavor
+        (§6.10 as amended 2026-10-22): every path it holds is mapped by its
+        path relative to its flavor folder, and account folders under
+        `WTF/Account/` as `Target.accounts` maps them (with no mapping, only
+        when the snapshot and this flavor hold exactly one each). `paths`
+        are spelled as the snapshot spells them. Returns the account folders
+        mapped, as (the snapshot's, this flavor's) pairs; empty without
+        `into` or when the snapshot holds no account folder."""
         self._alive()
         if not isinstance(snapshot_id, str):
             raise GuardError(f"a snapshot id is a str, not {type(snapshot_id).__name__}")
@@ -1596,8 +1993,24 @@ class _Transaction:
         except SnapshotError as exc:
             raise GuardError(f"cannot read snapshot {snapshot_id!r}: {exc}") from exc
         assert self._place is not None
-        _refuse_foreign_snapshot(manifest, self._place)
-        prefix = self._place.folder + "/"
+        place = self._place
+        mapping: dict[str, str] = {}
+        if into is None:
+            _refuse_foreign_snapshot(manifest, place, hint=_INTO_HINT)
+            prefix = place.folder + "/"
+        else:
+            prefix = _into_prefix(manifest, into, place)
+            touched: set[str] | None = None
+            if paths is not None:
+                if isinstance(paths, str | bytes):
+                    raise GuardError("paths is an iterable of paths, not a single string")
+                paths = list(paths)
+                touched = {
+                    name
+                    for rel in paths
+                    if isinstance(rel, str) and (name := _account_of(rel.split("/"))) is not None
+                }
+            mapping = _account_mapping(manifest, prefix, into, place, touched=touched)
         wanted: list[tuple[str, Entry | None]] = []
         if paths is None:
             for entry in manifest.entries:
@@ -1605,18 +2018,28 @@ class _Transaction:
                     raise PathNotAllowedError(
                         f"snapshot {manifest.id} holds {entry.path!r}, which is not in this flavor"
                     )
-                wanted.append((entry.path.removeprefix(prefix), entry))
+                wanted.append((_mapped(entry.path.removeprefix(prefix), mapping), entry))
         else:
             if isinstance(paths, str | bytes):
                 raise GuardError("paths is an iterable of paths, not a single string")
             for rel in paths:
                 _check_rel(rel)
+                if into is not None:
+                    _refuse_target_spelling(rel, manifest, prefix, mapping, place)
                 named = manifest.entry(prefix + rel)
                 if named is None and not _covers(manifest, prefix + rel):
                     raise GuardError(f"{rel!r} is not in snapshot {manifest.id}")
-                wanted.append((rel, named))
+                wanted.append((_mapped(rel, mapping), named))
         ops = self._restore_ops(store, manifest, wanted, named=paths is not None)
+        left_alone = (
+            None
+            if paths is not None
+            else self._added_since(store, manifest, prefix, mapping, {rel for rel, _ in wanted})
+        )
         self._run_all(store, ops)
+        if left_alone is not None:
+            self._left_alone = left_alone
+        return tuple(sorted(mapping.items()))
 
     # -- context manager ---------------------------------------------------
 
@@ -1789,7 +2212,8 @@ class _Transaction:
         if exc is None and self._broken is None:
             self._journal_write("committed")
             return False
-        problems = self._rollback()
+        problems, left = self._rollback()
+        self._paths_left = tuple(dict.fromkeys(left))
         state: _State = "rollback_incomplete" if problems else "rolled_back"
         note = "; ".join(problems) if problems else None
         if problems:
@@ -1840,6 +2264,8 @@ class _Transaction:
                 "temps_removed": tuple(self._temps_removed),
                 "temps_left": tuple(self._temps_left),
                 "cleanup_finished": self._cleanup_finished,
+                "paths_refused": tuple(self._refused),
+                "paths_left": self._paths_left if state == "rollback_incomplete" else (),
             }
         )
         _write_record(self._store_path, self._record)
@@ -1888,7 +2314,7 @@ class _Transaction:
         if self._dry_run and rel in self._overlay:
             return self._overlay[rel]
         assert self._place is not None
-        return _read(_look(self._place, parts))
+        return _read(_look(self._place, parts, memo=self._listings))
 
     def _note_plan(
         self, rel: str, before: str | None, after: str | None, data: bytes | None
@@ -1910,7 +2336,7 @@ class _Transaction:
             self._note_plan(rel, None if current is None else _sha(current), after, data)
             self._overlay[rel] = data
             return
-        found = _look(self._place, parts)
+        found = _look(self._place, parts, memo=self._listings)
         current = _read(found)
         mode = 0 if found.st is None else stat.S_IMODE(found.st.st_mode)
         before = None if current is None else _sha(current)
@@ -1949,6 +2375,7 @@ class _Transaction:
                 self._created,
                 expect_hash=before,
                 tmp_name=tmp_name,
+                memo=self._listings,
             )
         except _ChangedUnderneathError as exc:
             # The change happened, but maybe not where it was meant to: the
@@ -2022,6 +2449,72 @@ class _Transaction:
             )
         return ops
 
+    def _added_since(
+        self,
+        store: SnapshotStore,
+        manifest: Manifest,
+        prefix: str,
+        mapping: dict[str, str],
+        held: set[str],
+    ) -> tuple[str, ...]:
+        """For a whole restore: the regular files under the snapshot's
+        subtrees (mapped into this flavor), outside its excluded paths, that
+        it does not hold (`held`, flavor-relative). Walked with `lstat` only
+        (`SnapshotStore.list_tree`): no file is opened, no link is followed,
+        and a FIFO is reported as `other` and dropped. In a dry run the
+        planned changes count as made, so a dry run lists what a commit
+        lists."""
+        assert self._place is not None
+        place = self._place
+        here = place.folder + "/"
+
+        def target(path: str) -> str | None:
+            # A snapshot path as this flavor spells it; an account folder
+            # named as a subtree is mapped as the files below it are.
+            if path + "/" == prefix:
+                return place.folder
+            if not path.startswith(prefix):
+                return None  # not this flavor's: the whole restore refused it
+            rel = _mapped(path.removeprefix(prefix) + "/-", mapping).removesuffix("/-")
+            return here + rel
+
+        # Held to the allowlist roots: a whole restore never names a file
+        # outside them, so none is listed as one --paths could delete.
+        subtrees = _allowlisted_trees(
+            (t for s in manifest.subtrees if (t := target(s)) is not None), place.folder
+        )
+        excluded = _allowlisted_trees(
+            (t for x in manifest.excluded if (t := target(x)) is not None), place.folder
+        )
+        if not subtrees:
+            return ()
+        try:
+            listed = store.list_tree(
+                place.install_root, subtrees, exclude=excluded, entries=self._listings.entries
+            )
+        except (SnapshotError, ValueError) as exc:
+            raise GuardError(
+                f"cannot list what the restore of snapshot {manifest.id} leaves alone: {exc}"
+            ) from exc
+        found = {
+            path.removeprefix(here)
+            for path, kind in listed
+            if kind == "file"
+            and path.startswith(here)
+            and _in_allowlist_root(path.removeprefix(here))
+        }
+        if self._dry_run:
+            for rel, data in self._overlay.items():
+                if data is None:
+                    found.discard(rel)
+                    continue
+                full = here + rel
+                if any(full.startswith(s + "/") for s in subtrees) and not any(
+                    full == x or full.startswith(x + "/") for x in excluded
+                ):
+                    found.add(rel)
+        return tuple(sorted(found - held))
+
     def _unchanged_executable(self, rel: str, entry: Entry) -> bool:
         """True when `rel` is refused only as an executable, and a walk that
         follows nothing finds a regular file with the entry's bytes and mode.
@@ -2031,7 +2524,7 @@ class _Transaction:
             return False
         try:
             parts = _check_rel(rel, allow_executable=True)
-            found = _look(self._place, parts)
+            found = _look(self._place, parts, memo=self._listings)
             if found.st is None or stat.S_IMODE(found.st.st_mode) != entry.mode:
                 return False
             current = _read(found)
@@ -2046,7 +2539,11 @@ class _Transaction:
         assert self._place is not None
         if entry.target is None:
             return False
-        found = _look(self._place, parts[:-1], want_dir=True) if len(parts) > 1 else None
+        found = (
+            _look(self._place, parts[:-1], want_dir=True, memo=self._listings)
+            if len(parts) > 1
+            else None
+        )
         if found is not None and found.st is None:
             return False
         path = self._place.flavor_dir.joinpath(*parts)
@@ -2071,19 +2568,22 @@ class _Transaction:
                 self._broken = f"a restore stopped part way ({type(exc).__name__}: {exc})"
             raise
 
-    def _rollback(self) -> list[str]:
+    def _rollback(self) -> tuple[list[str], list[str]]:
         """Put every touched path back to its pre-transaction bytes (from the
         pre-write snapshot, by hash) where the disk still holds guard's own
         record of it; leave any path someone else changed, and say so; remove
-        the directories this transaction created."""
+        the directories this transaction created. Returns the problems (the
+        note) and the file paths left as they are (`paths_left`, M16-84): a
+        directory that could not be removed is a problem, not a path left."""
         assert self._place is not None
         problems: list[str] = []
+        left: list[str] = []
         store = SnapshotStore(self._store_path)
         for rel in reversed(self._order):
             before, mode, size = self._before[rel]
             parts = tuple(rel.split("/"))
             try:
-                found = _look(self._place, parts)
+                found = _look(self._place, parts, memo=self._listings)
                 current = _read(found)
                 now = None if current is None else _sha(current)
                 if now == before:
@@ -2093,6 +2593,7 @@ class _Transaction:
                         f"{rel}: changed by something else after this transaction last wrote "
                         "it; left as it is"
                     )
+                    left.append(rel)
                     continue
                 data = None if before is None else _fetch(store, before, size, rel)
                 tmp_name = None
@@ -2108,27 +2609,31 @@ class _Transaction:
                     [],
                     expect_hash=now,
                     tmp_name=tmp_name,
+                    memo=self._listings,
                 )
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel, read in self._refused.items():
             # Refused before anything landed: kept as it is, but a disk that
             # moved since guard read it is not "rolled back".
             try:
-                current = _read(_look(self._place, tuple(rel.split("/"))))
+                current = _read(_look(self._place, tuple(rel.split("/")), memo=self._listings))
                 if (None if current is None else _sha(current)) != read:
                     problems.append(
                         f"{rel}: changed by something else while this transaction ran; "
                         "left as it is"
                     )
+                    left.append(rel)
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel_dir in reversed(self._created):
             try:
-                _remove_dir(self._place, rel_dir)
+                _remove_dir(self._place, rel_dir, self._listings)
             except Exception as exc:
                 problems.append(f"{rel_dir}/: {exc}")
-        return problems
+        return problems, left
 
     def _undo(self, ops: Sequence[_Op], created_dirs: Sequence[str]) -> None:
         store = SnapshotStore(self._store_path)
@@ -2140,7 +2645,7 @@ class _Transaction:
         assert self._place is not None
         for rel_dir in reversed(created_dirs):
             with contextlib.suppress(GuardError):
-                _remove_dir(self._place, rel_dir)  # only if empty: best effort
+                _remove_dir(self._place, rel_dir, self._listings)  # only if empty: best effort
 
 
 def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
@@ -2159,10 +2664,10 @@ def _record_is_of(record: _JournalRecord, place: _Place) -> bool:
     )
 
 
-def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
-    """A snapshot restores only into the flavor of the install it was taken
-    from; restoring across installs or flavors is not a thing the gate does.
-    An install root that is not a local absolute path is never looked up."""
+def _refuse_foreign_snapshot(manifest: Manifest, place: _Place, *, hint: str = "") -> None:
+    """Without a named target a snapshot restores only into the flavor of the
+    install it was taken from (and `undo()` always). An install root that is
+    not a local absolute path is never looked up."""
     if (
         manifest.flavor_folder != place.folder
         or not _local_absolute(manifest.install_root)
@@ -2170,7 +2675,266 @@ def _refuse_foreign_snapshot(manifest: Manifest, place: _Place) -> None:
     ):
         raise GuardError(
             f"snapshot {manifest.id} was taken of {manifest.flavor_folder!r} in "
-            f"{manifest.install_root}, not of {place.folder!r} in {place.install_root}"
+            f"{manifest.install_root}, not of {place.folder!r} in {place.install_root}{hint}"
+        )
+
+
+# What the refusal of a foreign snapshot adds (§18.1 item 1: it names the option).
+_INTO_HINT = (
+    "; to restore it here, name this flavor as the target to restore into "
+    "(--into-flavor FOLDER for another flavor folder, --into-root PATH for another install)"
+)
+
+
+def _into_prefix(manifest: Manifest, into: object, place: _Place) -> str:
+    """Hold `into` to this transaction's own flavor and the manifest's flavor
+    folder to one path component; return the snapshot's entry prefix."""
+    if not isinstance(into, Target):
+        raise GuardError(f"into is a guard.Target, not {type(into).__name__}")
+    named = _place(getattr(into.flavor, "path", None), None)
+    if not (
+        _same_dir(named.flavor_dir, place.flavor_dir)
+        and _same_dir(named.install_root, place.install_root)
+    ):
+        raise GuardError(
+            f"the target {named.flavor_dir} is not this transaction's flavor "
+            f"({place.flavor_dir}); a restore writes only where the gate was opened"
+        )
+    folder = manifest.flavor_folder
+    # Untrusted input (§6.10 as amended 2026-10-22): exactly one plain
+    # component, or nothing is mapped at all.
+    if (
+        not isinstance(folder, str)
+        or folder in ("", ".", "..")
+        or any(c == "/" or c in _FORBIDDEN_CHARACTERS for c in folder)
+    ):
+        raise GuardError(
+            f"snapshot {manifest.id} names its flavor folder as {folder!r}, which is not one "
+            "folder name; it cannot be restored into another target"
+        )
+    return folder + "/"
+
+
+def _account_of(parts: Sequence[str]) -> str | None:
+    """The folder under `WTF/Account/` that `parts` (flavor-relative, a file)
+    lies below, or None."""
+    if (
+        len(parts) >= 4
+        and parts[0] == _ACCOUNT_PARTS[0]
+        and _fold(parts[1]) == _fold(_ACCOUNT_PARTS[1])
+    ):
+        return parts[2]
+    return None
+
+
+def _not_saved_variables(name: str) -> bool:
+    return _fold(name) != _fold(_ACCOUNT_SAVED_VARIABLES)
+
+
+def _source_accounts(manifest: Manifest, prefix: str) -> tuple[set[str], set[str]]:
+    """The account folders the snapshot holds entries below, and the other
+    folders under `WTF/Account/` it holds entries below."""
+    folders: set[str] = set()
+    accounts: set[str] = set()
+    for entry in manifest.entries:
+        if not entry.path.startswith(prefix):
+            continue
+        parts = entry.path.removeprefix(prefix).split("/")
+        name = _account_of(parts)
+        if name is None:
+            continue
+        folders.add(name)
+        if _ACCOUNT_NAME.fullmatch(name) or (
+            len(parts) >= 6 and _not_saved_variables(parts[3]) and _not_saved_variables(parts[4])
+        ):
+            accounts.add(name)
+    return accounts, folders - accounts
+
+
+def _real_subdirs(path: Path) -> list[str]:
+    """Names of the real folders (no links) directly inside `path`; none when
+    it cannot be listed."""
+    out: list[str] = []
+    try:
+        for child in longpath.iterdir(path):
+            st = longpath.lstat(child)
+            if stat.S_ISDIR(st.st_mode) and not _is_link(st):
+                out.append(child.name)
+    except OSError:
+        return []
+    return out
+
+
+def _target_accounts(place: _Place) -> dict[str, bool]:
+    """The account folders under the target's `WTF/Account/`, each with
+    whether it is a link. Read without following a link; a link there is
+    counted as an account folder, and what it reaches is never looked at."""
+    found = _look(place, _ACCOUNT_PARTS, want_dir=True)
+    if found.st is None:
+        return {}
+    out: dict[str, bool] = {}
+    try:
+        children = sorted(longpath.iterdir(found.path))
+    except OSError as exc:
+        raise GuardError(f"cannot list {found.path}: {exc}") from exc
+    for child in children:
+        try:
+            st = longpath.lstat(child)
+        except OSError as exc:
+            raise GuardError(f"cannot inspect {child}: {exc}") from exc
+        if _is_link(st):
+            out[child.name] = True
+        elif stat.S_ISDIR(st.st_mode) and (
+            _ACCOUNT_NAME.fullmatch(child.name)
+            or any(
+                _not_saved_variables(realm)
+                and any(_not_saved_variables(c) for c in _real_subdirs(child / realm))
+                for realm in _real_subdirs(child)
+            )
+        ):
+            out[child.name] = False
+    return out
+
+
+def _names(names: Iterable[str]) -> str:
+    listed = sorted(names)
+    return ", ".join(listed) if listed else "none"
+
+
+def _refuse_others_on_target_accounts(
+    manifest: Manifest,
+    others: set[str],
+    target: dict[str, bool],
+    place: _Place,
+    touched: set[str] | None,
+) -> None:
+    """A folder the snapshot holds under `WTF/Account/` that is no account
+    goes back under its own name. Where the target has an account folder of
+    that name (compared case-folded, whatever the file system does with
+    case), that would write into an account no mapping named, or merge two
+    source folders into the one the automatic mapping chose: refused. With
+    `paths=`, only the folders the named paths lie below (`touched`) count,
+    so naming the other files is a way to restore without that folder."""
+    target_folded = {_fold(name): name for name in target}
+    for other in sorted(others):
+        if not _not_saved_variables(other):
+            continue  # the client's own folder, never an account
+        if touched is not None and other not in touched:
+            continue
+        hit = target_folded.get(_fold(other))
+        if hit is not None:
+            raise GuardError(
+                f"snapshot {manifest.id} holds {other!r} under WTF/Account/, a folder that is "
+                f"no account (an old-style folder with no character folder in it), and "
+                f"{place.flavor_dir} has the account folder {hit!r}; restoring it under its "
+                "own name would write into that account, so nothing is restored. Restore "
+                f"without it by naming the files you want with --paths, or clear {hit!r} "
+                "from the target first: rename it, or run `wowlab snap create` and then "
+                "remove it"
+            )
+
+
+def _account_mapping(
+    manifest: Manifest,
+    prefix: str,
+    into: Target,
+    place: _Place,
+    *,
+    touched: set[str] | None = None,
+) -> dict[str, str]:
+    """The account folders a restore into `place` maps (§6.10 as amended
+    2026-10-22). Refusals name the accounts; nothing has been written.
+    `touched`: with `paths=`, the folders under `WTF/Account/` they name."""
+    accounts, others = _source_accounts(manifest, prefix)
+    given = None if into.accounts is None else dict(into.accounts)
+    if not accounts:
+        if given:
+            raise GuardError(
+                f"snapshot {manifest.id} holds no account folder, but the account mapping "
+                f"names {_names(given)}; restore it without a mapping"
+            )
+        if others:
+            _refuse_others_on_target_accounts(
+                manifest, others, _target_accounts(place), place, touched
+            )
+        return {}
+    target = _target_accounts(place)
+    if given is None:
+        if len(accounts) != 1 or len(target) != 1:
+            raise GuardError(
+                f"snapshot {manifest.id} holds account folder(s) {_names(accounts)} and "
+                f"{place.flavor_dir} holds {_names(target)}; account folders are mapped "
+                "without being asked only when each side has exactly one, so give the "
+                "mapping (--map-account SOURCE=TARGET for each account folder the snapshot holds)"
+            )
+        mapping = {next(iter(accounts)): next(iter(target))}
+    else:
+        # Checked again here: the mapping is the caller's dict.
+        try:
+            _check_account_mapping(given)
+        except PathNotAllowedError as exc:
+            raise GuardError(f"the account mapping is refused: {exc}") from exc
+        extra = set(given) - accounts
+        if extra:
+            raise GuardError(
+                f"the account mapping names {_names(extra)}, which snapshot {manifest.id} "
+                f"holds no account folder of (it holds {_names(accounts)})"
+            )
+        missing = accounts - set(given)
+        if missing:
+            raise GuardError(
+                f"the account mapping leaves out {_names(missing)}; it must map every "
+                f"account folder snapshot {manifest.id} holds ({_names(accounts)})"
+            )
+        clash = {_fold(o) for o in others} & {_fold(v) for v in given.values()}
+        if clash:
+            raise GuardError(
+                f"the account mapping sends an account folder to {_names(clash)}, which the "
+                "snapshot holds as a folder that is no account"
+            )
+        mapping = given
+    _refuse_others_on_target_accounts(manifest, others, target, place, touched)
+    linked = {_fold(name) for name, is_link in target.items() if is_link}
+    for source, dest in mapping.items():
+        if _fold(dest) in linked:
+            raise PathNotAllowedError(
+                f"account folder {source!r} maps to {dest!r}, which is a link in "
+                f"{place.flavor_dir}; guard never follows one"
+            )
+    return mapping
+
+
+def _mapped(rel: str, mapping: dict[str, str]) -> str:
+    """`rel`, spelled as the snapshot spells it, as the target spells it."""
+    parts = rel.split("/")
+    name = _account_of(parts)
+    if name is None or name not in mapping:
+        return rel
+    return "/".join((*parts[:2], mapping[name], *parts[3:]))
+
+
+def _refuse_target_spelling(
+    rel: str, manifest: Manifest, prefix: str, mapping: dict[str, str], place: _Place
+) -> None:
+    """`paths=` under `into` names files as the snapshot spells them. A path
+    below a folder the snapshot holds no account folder of, when the mapping
+    sends one there or it is an account folder (on the target, or by its
+    name), is refused, so it is never planned as a delete of the target's
+    file (§6.10 as amended 2026-10-22)."""
+    name = _account_of(rel.split("/"))
+    if name is None or name in mapping:
+        return
+    accounts, _others = _source_accounts(manifest, prefix)
+    if name in accounts:
+        return
+    if (
+        _fold(name) in {_fold(v) for v in mapping.values()}
+        or _ACCOUNT_NAME.fullmatch(name)
+        or _fold(name) in {_fold(t) for t in _target_accounts(place)}
+    ):
+        raise GuardError(
+            f"{rel!r} is not spelled as snapshot {manifest.id} spells it: name files in its "
+            f"account folders ({_names(accounts)}); the mapping puts them into the target's"
         )
 
 

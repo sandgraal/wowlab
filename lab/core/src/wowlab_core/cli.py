@@ -96,6 +96,7 @@ import base64
 import contextlib
 import csv
 import datetime
+import errno
 import functools
 import hashlib
 import io
@@ -104,36 +105,43 @@ import logging
 import os
 import re
 import shlex
+import shutil
+import signal
 import stat
 import sys
+import textwrap
 import time
 import traceback
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import TracebackType
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn, override
 
 import typer
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
 
 # Typer vendors click as `typer._click` from 0.26 (lab/core/pyproject.toml
 # bounds typer to the 0.27 minor this was tested on) and gives its exceptions
 # and context no public name: the root command (`_WowlabGroup`) and its
-# context catch click's errors and print them itself (`_click_error`).
+# context catch click's errors and print them itself (`_click_error`). Prose
+# wraps to the width its context holds (`_width`).
 from typer._click import Context
 from typer._click.exceptions import ClickException, NoArgsIsHelpError, UsageError
+from typer._click.globals import get_current_context
 from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    addoncheck,
     addoninstall,
     bindscoach,
     combatlog,
     doctorredact,
     dressing,
+    filemap,
     firstrun,
     gamedata,
     gaps,
@@ -154,12 +162,16 @@ from wowlab_core import (
     pathfacts,
     process,
     profiles,
+    snaparchive,
     snapshot,
     svmerge,
     wtfconfig,
+    wtfdiff,
 )
+from wowlab_core.errors import WowlabError
 from wowlab_core.filemap import FileMapEntry
 from wowlab_core.verdict import (
+    WOWLAB_TEMP_ROW,
     Verdict,
     gate_names_but_for_executable,
     gate_refuses_stat,
@@ -172,6 +184,114 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_REFUSED = 3
+
+
+def _closed_pipe(exc: BaseException, *, windows: bool | None = None) -> bool:
+    """Whether `exc`, raised by a write to stdout, means the reader went away.
+
+    Everywhere that is `BrokenPipeError` (EPIPE). On Windows a write to a
+    pipe whose reader closed can also fail with EINVAL instead: the C
+    runtime maps the system's "the pipe is being closed" error to it, so
+    there EINVAL from stdout counts too. `windows` is for tests; None reads
+    the platform."""
+    if isinstance(exc, BrokenPipeError):
+        return True
+    if windows is None:
+        windows = sys.platform == "win32"
+    return windows and isinstance(exc, OSError) and exc.errno == errno.EINVAL
+
+
+class _PipeState:
+    """Whether the reader of stdout has gone, shared by the text stream and
+    its `buffer`."""
+
+    def __init__(self) -> None:
+        self.gone = False
+
+
+class _PipeSafeStream:
+    """stdout for the `wowlab` command (`_WowlabApp`): when the reader of a
+    pipe goes away (`wowlab tree | head -1`), the rest of the output is
+    dropped and the command goes on to the end, so a restore or any other
+    write never stops half way because nobody reads its report. The command
+    then exits as it would have: 0 when its work completed, with no errno
+    line on stderr.
+
+    On the first failed write the stream's file descriptor is pointed at the
+    null device, so the bytes still in Python's own buffer, which it flushes
+    as the process ends, go there instead of failing again. Every other
+    attribute is the wrapped stream's, and `buffer` is guarded the same way
+    for a write of bytes."""
+
+    def __init__(self, stream: Any, state: _PipeState | None = None) -> None:
+        self._stream = stream
+        self._state = state if state is not None else _PipeState()
+        self._buffer: _PipeSafeStream | None = None
+
+    @property
+    def buffer(self) -> Any:
+        if self._buffer is None:
+            self._buffer = _PipeSafeStream(self._stream.buffer, self._state)
+        return self._buffer
+
+    def write(self, data: Any) -> int:
+        if self._state.gone:
+            return len(data)
+        try:
+            written: int = self._stream.write(data)
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+            return len(data)
+        return written
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        if self._state.gone:
+            return
+        try:
+            self._stream.flush()
+        except OSError as exc:
+            if not _closed_pipe(exc):
+                raise
+            self._reader_gone()
+
+    def _reader_gone(self) -> None:
+        self._state.gone = True
+        try:
+            fd = self._stream.fileno()
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, fd)
+            finally:
+                os.close(devnull)
+        except (OSError, ValueError, AttributeError):
+            # Not a real file descriptor (a test's stream): nothing to point.
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _ignore_sigpipe() -> None:
+    """SIGPIPE ignored, so a write to a closed pipe raises an error that
+    `_PipeSafeStream` handles instead of killing the process mid-write.
+    Python ignores it at startup already; this keeps it so when a parent
+    process or an embedding changed that. Windows has no SIGPIPE, and a
+    thread other than the main one cannot set a handler: both are left
+    as they are."""
+    sigpipe = getattr(signal, "SIGPIPE", None)
+    if sigpipe is None:
+        return
+    # Not `contextlib.suppress`: one call fewer where Ctrl-C can land.
+    try:  # noqa: SIM105
+        signal.signal(sigpipe, signal.SIG_IGN)
+    except ValueError:
+        pass
 
 
 class _WowlabApp(typer.Typer):
@@ -189,10 +309,19 @@ class _WowlabApp(typer.Typer):
     exit 1, as Python would make it; Ctrl-C while that line is escaped is
     swallowed, and `_excepthook` is in place first in case it is not. The
     test runner calls the root command's `main`, not this, and so gets the
-    exception itself."""
+    exception itself.
+
+    A closed pipe on stdout is handled here too, once for every command:
+    stdout is a `_PipeSafeStream` while the app runs and SIGPIPE stays
+    ignored (`_ignore_sigpipe`)."""
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         hook = sys.excepthook
+        _ignore_sigpipe()
+        stdout = sys.stdout
+        guarded = stdout is not None and not isinstance(stdout, _PipeSafeStream)
+        if guarded:
+            sys.stdout = _PipeSafeStream(stdout)
         try:
             return super().__call__(*args, **kwargs)
         except SystemExit as exc:
@@ -212,6 +341,16 @@ class _WowlabApp(typer.Typer):
             raise
         finally:
             sys.excepthook = hook
+            if guarded:
+                current = sys.stdout
+                # Output still buffered goes out (or, with the reader gone,
+                # nowhere) before stdout is put back as it was.
+                try:  # noqa: SIM105
+                    current.flush()
+                except (OSError, ValueError):
+                    pass
+                if isinstance(current, _PipeSafeStream):
+                    sys.stdout = stdout
 
 
 class _WowlabContext(Context):
@@ -383,6 +522,14 @@ FlavorOpt = Annotated[
     ),
 ]
 JsonOpt = Annotated[bool, typer.Option("--json", help="Print JSON instead of text.")]
+NotesOpt = Annotated[
+    bool,
+    typer.Option(
+        "--notes",
+        help="Also print the standing notes: what the figures mean and what wowlab cannot "
+        "tell. Without it, one line after the answer counts them.",
+    ),
+]
 YesOpt = Annotated[bool, typer.Option("--yes", "-y", help="Do not ask before changing files.")]
 AccountOpt = Annotated[
     str | None,
@@ -401,12 +548,17 @@ CharacterOpt = Annotated[
 # ─── output ──────────────────────────────────────────────────────────────────
 
 
-class CliError(Exception):
+class CliError(WowlabError):
     """An error the command reports as one line, with its exit code."""
 
     def __init__(self, message: str, code: int = EXIT_ERROR) -> None:
         super().__init__(message)
-        self.code = code
+        self.exit_code = code
+
+    @property
+    def code(self) -> int:
+        """The exit code (`exit_code`), by the name this module first gave it."""
+        return self.exit_code
 
 
 # What `_safe` escapes: every C0 control (tab and line feed included), DEL,
@@ -482,16 +634,24 @@ _SPEC_POINTER = re.compile(
 
 class _Report:
     """One run: whether "(not yet confirmed)" was printed yet, and whether
-    it is a `--json` run, whose stderr is left as the library wrote it."""
+    it is a `--json` run, whose stderr is left as the library wrote it;
+    and whether it has printed JSON on stdout yet (`printed`), after which
+    an error prints no `ErrorReport` there (one JSON document per run);
+    and whether its stdout is one JSON value per line (`lines`, set by
+    `log tail --follow --json`), where an `ErrorReport` is one line too."""
 
     confirmed_shown = False
     json = False
+    printed = False
+    lines = False
 
 
 def _new_report(json_out: bool = False) -> None:
     """A new run: its first `[verify]` will read "(not yet confirmed)"."""
     _Report.confirmed_shown = False
     _Report.json = json_out
+    _Report.printed = False
+    _Report.lines = False
 
 
 def _later_marker(match: re.Match[str]) -> str:
@@ -584,6 +744,96 @@ def _say_note(text: str = "") -> None:
     """One line of wowlab's own words on stdout (a note, a file-map row),
     in player words (`_player_copy`) and escaped by `_safe`."""
     typer.echo(_safe(_player_copy(text)))
+
+
+def _width() -> int:
+    """The width prose wraps to: the context's terminal width (a test sets
+    it, so the output is the same on every machine), else the terminal's,
+    as click's help formatter takes it; never under 40 columns."""
+    ctx = get_current_context(silent=True)
+    width = ctx.terminal_width if ctx is not None else None
+    if not width:
+        width = shutil.get_terminal_size().columns
+    return max(width, 40)
+
+
+# Stands for a space inside a value `_say_prose` keeps whole. `_safe` escapes
+# every C0 control, so the text it returns never holds one of its own.
+_HELD_SPACE = "\x00"
+
+
+def _say_prose(
+    text: str, indent: str = "", hang: str | None = None, keep: Sequence[str | None] = ()
+) -> None:
+    """Prose on stdout, escaped by `_safe` and wrapped to the terminal width
+    (`_width`). The first line starts with `indent`, the others with `hang`
+    (`indent` and two spaces when None). Each value in `keep` is one
+    unbreakable token, spaces and all: every caller passes the paths and
+    folder names its text holds (a `~/...` path, a record's path, a realm
+    folder), and a word is never split, so no path is broken across lines;
+    a line holding a long one runs past the width instead."""
+    rest = indent + "  " if hang is None else hang
+    safe = _safe(text)
+    for value in sorted({_safe(v) for v in keep if v and " " in v}, key=len, reverse=True):
+        safe = safe.replace(value, value.replace(" ", _HELD_SPACE))
+    lines = textwrap.wrap(
+        safe,
+        width=_width(),
+        initial_indent=indent,
+        subsequent_indent=rest,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    for line in lines or [indent.rstrip()]:
+        typer.echo(line.replace(_HELD_SPACE, " "))
+
+
+def _say_notes(
+    notes: Sequence[str],
+    show: bool,
+    caveat: str | None = None,
+    keep: Sequence[str | None] = (),
+) -> None:
+    """The end of a text answer: at most one caveat that applies to this
+    result, then, with --notes, the standing notes, each in player words
+    (`_player_copy`), or else one footer line that counts them. A note that
+    is the caveat is not said twice. `keep`: the paths and names in them,
+    which `_say_prose` keeps whole."""
+    if caveat is not None:
+        _say_prose(_player_copy(caveat), keep=keep)
+    rest = [n for n in notes if n != caveat]
+    if not rest:
+        return
+    if show:
+        _say("Notes:")
+        for note in rest:
+            _say_prose(_player_copy(note), indent="  - ", hang="    ", keep=keep)
+        return
+    them = "it" if len(rest) == 1 else "them"
+    _say(f"{_plural(len(rest), 'note')}: --notes shows {them}")
+
+
+def _account_words(acct: layout.Account) -> list[str]:
+    """The account's folder names and character paths, as `_say_prose` keeps
+    them whole: a realm folder may hold spaces."""
+    words = [acct.folder]
+    for realm in acct.realms:
+        words.append(realm.folder)
+        words += [f"{realm.folder}/{c.folder}" for c in realm.characters]
+    return words
+
+
+_SAVED_AT = "the file's modification time: the character as of that save"
+
+
+def _home_words(path: str) -> str:
+    """A path in the player's home folder as `~` and the rest, so that text
+    output does not print the home folder's absolute path."""
+    try:
+        rest = Path(path).relative_to(Path.home())
+    except ValueError:
+        return path
+    return str(Path("~") / rest)
 
 
 def _say_err(text: str = "") -> None:
@@ -902,11 +1152,21 @@ def _dumps(payload: Any) -> str:
 
 def _emit(model: BaseModel) -> None:
     """The model as JSON on stdout; `type(model).model_validate_json` reads it back."""
+    _Report.printed = True
     typer.echo(_dumps(model.model_dump(mode="json")))
+
+
+def _emit_line(model: BaseModel) -> None:
+    """The model as one line of JSON on stdout, for a line-delimited run."""
+    _Report.printed = True
+    typer.echo(
+        json.dumps(_map_strings(model.model_dump(mode="json"), _json_text), ensure_ascii=True)
+    )
 
 
 def _emit_manifest(manifest: snapshot.Manifest) -> None:
     """A manifest in its one canonical encoding (`snapshot.manifest_bytes`)."""
+    _Report.printed = True
     typer.echo(snapshot.manifest_bytes(manifest).decode("ascii"), nl=False)
 
 
@@ -989,8 +1249,138 @@ def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
     return f"not SavedVariables data wowlab can read: {why}"
 
 
+# What every "no install" error ends with (M16-19): how to name the install.
+_NAME_THE_INSTALL = (
+    f"name the install folder (the one that holds {install.BUILD_INFO}) with --root, "
+    f"or set {install.ENV_ROOT} to it; wowlab doctor says how"
+)
+
+
+# The same, where the install must be the one wowlab finds by itself and
+# `--root` is only checked against it (`sv dump --install-only`).
+_NAME_THE_INSTALL_BY_ITSELF = (
+    f"set {install.ENV_ROOT} to the install folder (the one that holds {install.BUILD_INFO}); "
+    "with --install-only, --root does not choose the install, it is only checked against "
+    "the one wowlab finds by itself"
+)
+
+
+def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> str:
+    """Why there is no install to read, then how to name one (`how`): every
+    such error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
+    if isinstance(exc, install.InstallNotFoundError):
+        looked = []
+        if exc.searched:
+            looked.append("searched: " + ", ".join(str(p) for p in exc.searched))
+        if exc.unchecked:
+            looked.append(
+                "could not check: "
+                + ", ".join(
+                    f"{p} ({why})" if why else str(p)
+                    for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True)
+                )
+            )
+        if looked:
+            found = f"no WoW install found where the game installs by default ({'; '.join(looked)})"
+        else:
+            found = "no WoW install found: wowlab knows no default install location on this system"
+        return f"{found}; {how}"
+    return f"{exc}; {how}"
+
+
+# The command that lists what a command of each group names (M16-19): a
+# file, snapshot or profile it could not find is answered with it.
+_LISTERS = {
+    "sv": "wowlab sv list",
+    "snap": "wowlab snap list",
+    "profile": "wowlab profile list",
+}
+
+
+def _lister() -> str | None:
+    """The lister of the command running now (`_LISTERS`), if it has one."""
+    ctx = get_current_context(silent=True)
+    if ctx is None:
+        return None
+    words = ctx.command_path.split()
+    return _LISTERS.get(words[1]) if len(words) > 1 else None
+
+
+def _os_error_words(exc: OSError) -> str:
+    """An operating-system error in words, with no `[Errno N]` in them: a
+    missing file names the lister of the command (`_lister`), and any other
+    error says what the system said about which path (M16-19)."""
+    path = exc.filename
+    if isinstance(exc, FileNotFoundError):
+        where = f"no file or folder at {os.fsdecode(path)}" if path is not None else str(exc)
+        lister = _lister()
+        return f"{where}; {lister} lists what there is" if lister else where
+    if path is None or not exc.strerror:
+        return str(exc)
+    why = exc.strerror[:1].lower() + exc.strerror[1:]
+    if exc.filename2 is not None:
+        return f"{why}: {os.fsdecode(path)} -> {os.fsdecode(exc.filename2)}"
+    return f"{why}: {os.fsdecode(path)}"
+
+
+# Every error `_handled` turns into words (`_error_words`), and nothing else:
+# wowlab's own errors by their one base (M16-22: `CliError` and the errors of
+# install, snapshot, profiles, addoninstall, labaddon, gamedata, lookstore and
+# wtfconfig), the write gate's and the SavedVariables parser's errors, which
+# keep their own bases, and the operating system's.
+_HANDLED_ERRORS: tuple[type[Exception], ...] = (
+    WowlabError,
+    guard.GuardError,
+    luadata.LuaDataError,
+    OSError,
+)
+
+
+def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
+    """The one line a handled error is reported as, and its exit code: the
+    single place an error becomes words (M16-19), which `--json` error
+    output builds on."""
+    if isinstance(exc, guard.GuardError):
+        return f"refused by the write gate: {exc}", EXIT_REFUSED
+    if isinstance(exc, CliError):
+        return str(exc), exc.exit_code
+    if isinstance(exc, luadata.LuaLimitError):
+        limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
+        return (
+            f"refused: this file is beyond what the SavedVariables parser will hold "
+            f"({limit}); nothing was printed"
+        ), EXIT_ERROR
+    if isinstance(exc, wtfconfig.WtfLimitError):
+        return (
+            f"refused: this file is beyond what wowlab will read of it ({exc}); nothing was printed"
+        ), EXIT_ERROR
+    if isinstance(exc, luadata.LuaDataError):
+        if json_out:
+            return f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR
+        return _lua_refusal_words(exc), EXIT_ERROR
+    if isinstance(exc, install.InstallError):
+        return _install_words(exc), EXIT_ERROR
+    if isinstance(exc, OSError):
+        return _os_error_words(exc), EXIT_ERROR
+    if isinstance(exc, WowlabError):
+        return str(exc), exc.exit_code
+    return str(exc), EXIT_ERROR
+
+
+def _error_kind(exc: Exception) -> str:
+    """`ErrorReport.kind`: the name of the error's class, or of the first
+    public class it derives from (`FileNotFoundError`, `ClientRunningError`,
+    `InstallNotFoundError`, `CliError`)."""
+    for cls in type(exc).__mro__:
+        if not cls.__name__.startswith("_"):
+            return cls.__name__
+    return "Exception"  # pragma: no cover - `Exception` is public
+
+
 def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
-    """Turn the library's typed errors into one line on stderr and an exit code."""
+    """Turn the library's typed errors into one line on stderr and an exit
+    code; in a `--json` run that has printed no JSON yet, an `ErrorReport`
+    on stdout too (M16-22)."""
 
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -998,39 +1388,35 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         _new_report(json_out)
         try:
             return fn(*args, **kwargs)
-        except guard.GuardError as exc:
-            _fail(f"refused by the write gate: {exc}", EXIT_REFUSED, exc)
-        except CliError as exc:
-            _fail(str(exc), exc.code, exc)
-        except luadata.LuaLimitError as exc:
-            limit = exc.message if json_out else exc.message.replace(" (MAX_COST)", "")
-            _fail(
-                f"refused: this file is beyond what the SavedVariables parser will hold "
-                f"({limit}); nothing was printed",
-                EXIT_ERROR,
-                exc,
-            )
-        except luadata.LuaDataError as exc:
-            if json_out:
-                _fail(f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR, exc)
-            _fail(_lua_refusal_words(exc), EXIT_ERROR, exc)
-        except (
-            install.InstallError,
-            snapshot.SnapshotError,
-            profiles.ProfileError,
-            addoninstall.AddonError,
-            labaddon.LabAddonError,
-            gamedata.GameDataError,
-            lookstore.LookStoreError,
-            OSError,
-        ) as exc:
-            _fail(str(exc), EXIT_ERROR, exc)
+        except _HANDLED_ERRORS as exc:
+            message, code = _error_words(exc, json_out)
+            if json_out and not _Report.printed:
+                report = ErrorReport(kind=_error_kind(exc), message=message, exit_code=code)
+                if _Report.lines:
+                    _emit_line(report)
+                else:
+                    _emit(report)
+            _fail(message, code, exc)
 
     return wrapper
 
 
 class _Out(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ErrorReport(_Out):
+    """A `--json` run that ended in an error (M16-22): the error's class
+    (`kind`), the line printed on stderr after `wowlab: ` (`message`), and
+    the exit code. Printed on stdout only when the run printed no other JSON
+    there (as one line in a line-delimited run, `log tail --follow`); the
+    stderr line and the exit code are as without `--json`. `kind` is the
+    bare class name (`_error_kind`), not a stable enum: it changes if a class
+    is renamed, and a new error class adds a value."""
+
+    kind: str
+    message: str
+    exit_code: int
 
 
 # ─── install, flavor, account, character ────────────────────────────────────
@@ -1309,14 +1695,43 @@ class DoctorFlavor(_Out):
     matching_rows: int
     game_data: GameDataReport
     sync_cvars: list[SyncCVar]
+    # The installed lab-addon's ## Interface: against this client's (M16-06).
+    lab_addon: addoninstall.LabAddonState
+
+
+# What a file the rollback left holds as `doctor` reads it now (M16-84):
+# the change's own bytes (`after`), what was there before it (`before`),
+# anything else, or unknown (the record's flavor is not one doctor found, or
+# the file could not be read). `not_written`: the change never wrote it (its
+# only operation was refused), so undo leaves it as it is.
+LeftNow = Literal["wowlab_change", "before_change", "changed_since", "unknown", "not_written"]
+
+
+class LeftPath(_Out):
+    path: str
+    now: LeftNow
+    # Whether the file is there now; None when doctor did not read it
+    # (`unknown`, `not_written`).
+    exists: bool | None
 
 
 class LastTransaction(_Out):
     id: str
     created_at: str
     label: str
-    state: str
+    # The write gate's closed set of states, so `doctor --redact` can keep it
+    # as-is: a state names nobody (M16-85).
+    state: guard._State
     paths: int
+    # How many folders the change created (M16-84): with no `paths`, undo
+    # still has those to remove, and records itself.
+    created_dirs: int
+    # The last name of the record's flavor folder, as journaled (M16-84).
+    flavor_folder: str
+    # The files the rollback of a `rollback_incomplete` record left as they
+    # are, relative to the flavor folder, sorted (M16-84); empty otherwise,
+    # and for a record written before the journal listed them.
+    paths_left: list[LeftPath]
 
 
 class StoreReport(_Out):
@@ -1327,6 +1742,40 @@ class StoreReport(_Out):
     transactions: int | None
     last_transaction: LastTransaction | None
     journal_error: str | None
+    # Who besides the player can open the store (M16-41); not checked on Windows.
+    exposure: snapshot.StoreExposure
+
+
+# What each "Next steps" item of `doctor` is about (M16-37).
+NextStepItem = Literal["install", "lab_addon", "characters", "combat_log"]
+# `ok`: nothing to do; `missing`: not there yet; `stale`: the lab-addon is
+# made for another client version; `unknown`: wowlab cannot tell.
+NextStepState = Literal["ok", "missing", "stale", "unknown"]
+
+
+class NextStep(_Out):
+    """One item of `doctor`'s "Next steps" (M16-37). The text output says
+    each item from these fields, so the two never disagree."""
+
+    item: NextStepItem
+    # The flavor folder the item is about; None for `install`.
+    flavor_folder: str | None
+    state: NextStepState
+    # `characters`: the character folders holding a lab-addon record;
+    # `combat_log`: the combat logs under Logs/; None otherwise.
+    count: int | None = None
+    # `combat_log`: the newest log's modification time; None otherwise.
+    newest_mtime_ns: int | None = None
+    # The wowlab command the item names, quoted for this machine's shell,
+    # with the caller's --root and, on an install with several flavors,
+    # --flavor: the reinstall for `lab_addon`, `char list` for `characters`.
+    command: str | None = None
+    # What else the item says, in the player's words: why its state is
+    # `unknown` or `stale`, or what a missing lab-addon means for the records.
+    detail: str | None = None
+    # The one command or in-game action that fixes it, as the text says it;
+    # None when there is nothing to do or nothing wowlab can name.
+    fix: str | None = None
 
 
 class DoctorReport(_Out):
@@ -1347,6 +1796,14 @@ class DoctorReport(_Out):
     # `Install.not_taken`: each name of `other_dirs` with why it was not
     # taken (M13-45). Left out of the JSON when empty, as there.
     not_taken: list[install.NotTaken] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # The root given is a folder that holds no .build.info, is not a flavor
+    # folder, and has no install above it (`_could_be_an_install`): the text
+    # names the Battle.net app's Scan and Repair (M16-13). Left out of the
+    # JSON when false.
+    build_info_missing: bool = Field(default=False, exclude_if=lambda v: not v)
+    # What to do next (M16-37): the install when none was found, else for
+    # each flavor the lab-addon, the characters recorded and a combat log.
+    next_steps: list[NextStep] = Field(default_factory=list)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1373,7 +1830,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
         is_account = f.scope == "account" and name == "config-cache.wtf"
         if not (is_machine or is_account):
             continue
-        doc = wtfconfig.read_config(lay.flavor_path / f.path)
+        doc = _listed(wtfconfig.read_config, lay, f.path)
         for cvar in _SYNC_CVARS:
             found = doc.get(cvar)
             out.append(
@@ -1387,7 +1844,7 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
     return out
 
 
-def _game_data(flavors: Sequence[install.Flavor], offline: bool) -> dict[str, GameDataReport]:
+def _game_data(flavors: Sequence[install.Flavor], check_builds: bool) -> dict[str, GameDataReport]:
     reports: dict[str, GameDataReport] = {}
     pending: list[install.Flavor] = []
     for f in flavors:
@@ -1397,9 +1854,9 @@ def _game_data(flavors: Sequence[install.Flavor], offline: bool) -> dict[str, Ga
                 version=None,
                 detail=f".build.info has no version for product {f.product!r}",
             )
-        elif offline:
+        elif not check_builds:
             reports[f.folder] = GameDataReport(
-                status="not_checked", version=f.version, detail="--offline"
+                status="not_checked", version=f.version, detail="no --check-builds"
             )
         else:
             pending.append(f)
@@ -1448,6 +1905,95 @@ def _client_report(inst: install.Install) -> ClientReport:
     return ClientReport(state=state, processes=list(clients), error=None)
 
 
+def _left_paths(r: guard.HistoryRecord, inst: install.Install | None) -> list[LeftPath]:
+    """Each file the rollback of `r` left, with what it holds now. Reads
+    only, and only inside the install doctor found, when the record's flavor
+    folder is one of its flavors; the journal's own path is never opened."""
+    written = {p.path: p for p in r.paths}
+    folder = _journaled_flavor(r, inst)
+    out: list[LeftPath] = []
+    for rel in sorted(r.paths_left):
+        change = written.get(rel)
+        now: LeftNow
+        exists: bool | None = None
+        if change is None:
+            now = "not_written"
+        elif folder is None:
+            now = "unknown"
+        else:
+            read, digest = _hash_now(folder[0], folder[0] / folder[1] / rel)
+            if not read:
+                now = "unknown"
+            else:
+                exists = digest is not None
+                if digest == change.after:
+                    now = "wowlab_change"
+                elif digest == change.before:
+                    now = "before_change"
+                else:
+                    now = "changed_since"
+        out.append(LeftPath(path=rel, now=now, exists=exists))
+    return out
+
+
+def _journaled_flavor(
+    r: guard.HistoryRecord, inst: install.Install | None
+) -> tuple[Path, str] | None:
+    """The resolved install root and the flavor folder name of the flavor
+    `r` was written to, when it is one of `inst`'s (resolved as the write
+    gate resolves a flavor before it journals it); else None."""
+    if inst is None:
+        return None
+    journaled = Path(r.flavor_path)
+    for f in inst.flavors:
+        try:
+            real = longpath.resolve(inst.root / f.folder, strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if real == journaled:
+            return real.parent, real.name
+    return None
+
+
+def _hash_now(root: Path, path: Path) -> tuple[bool, str | None]:
+    """(read, SHA-256 hex or None for absent) of `path` under `root`,
+    opened as the snapshot reads an install (no link followed, regular file
+    only); (False, None) when it cannot be read."""
+    try:
+        fd, _ = snapshot.open_regular_file_from_root(path, root)
+    except FileNotFoundError:
+        return True, None
+    except (OSError, ValueError):
+        return False, None
+    try:
+        hasher = hashlib.sha256()
+        while chunk := os.read(fd, 1 << 20):
+            hasher.update(chunk)
+    except OSError:
+        return False, None
+    finally:
+        os.close(fd)
+    return True, hasher.hexdigest()
+
+
+def _read_left(store: StoreReport, inst: install.Install | None) -> StoreReport:
+    """`store` with what each file its last record's rollback left holds
+    now, read in the install doctor found (M16-84). `_store_report` knows no
+    install, so it says those it wrote as `unknown`; the journal is read
+    again, and a record that is no longer the last one is left as it was."""
+    t = store.last_transaction
+    if t is None or not t.paths_left or inst is None:
+        return store
+    try:
+        records = guard.history()
+    except guard.GuardError:
+        return store
+    if not records or records[-1].id != t.id:
+        return store
+    left = _left_paths(records[-1], inst)
+    return store.model_copy(update={"last_transaction": t.model_copy(update={"paths_left": left})})
+
+
 def _store_report() -> StoreReport:
     store = snapshot.SnapshotStore()
     listing = store.list_lenient()
@@ -1463,7 +2009,14 @@ def _store_report() -> StoreReport:
         if records:
             r = records[-1]
             last = LastTransaction(
-                id=r.id, created_at=r.created_at, label=r.label, state=r.state, paths=len(r.paths)
+                id=r.id,
+                created_at=r.created_at,
+                label=r.label,
+                state=r.state,
+                paths=len(r.paths),
+                created_dirs=len(r.created_dirs),
+                flavor_folder=Path(r.flavor_path).name,
+                paths_left=_left_paths(r, None),
             )
     return StoreReport(
         path=str(store.path),
@@ -1473,20 +2026,23 @@ def _store_report() -> StoreReport:
         transactions=transactions,
         last_transaction=last,
         journal_error=journal_error,
+        exposure=store.exposure(),
     )
 
 
 def _doctor(
     root: Path | None,
-    offline: bool,
+    check_builds: bool,
     on_found: Callable[[install.Install | None], None] | None = None,
 ) -> DoctorReport:
     """The doctor report. `on_found` is called once discovery has finished
-    (with None when no install was found), before any network request."""
+    (with None when no install was found), before any network request.
+    Without `check_builds` no request is made at all (M16-07)."""
     problems: list[str] = []
     inst: install.Install | None = None
     found_by: str | None = None
     install_error: str | None = None
+    build_info_missing = False
     locations: Locations | None = None
     try:
         inst, found_by = _discover(root)
@@ -1507,20 +2063,35 @@ def _doctor(
     except install.InstallError as exc:
         install_error = str(exc)
         problems.append(install_error)
+        build_info_missing = (
+            isinstance(exc, install.NotAnInstallError)
+            and exc.reason == "missing"
+            and exc.root_exists
+            and not exc.hint
+            and _could_be_an_install(exc.root)
+        )
     if on_found is not None:
         on_found(inst)
 
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
-    if inst is not None:
-        game = _game_data(inst.flavors, offline)
+    steps: list[NextStep] = []
+    if inst is None:
+        steps.append(_install_step(build_info_missing))
+    else:
+        game = _game_data(inst.flavors, check_builds)
+        several = len(inst.flavors) > 1
+        # The --root the player gave, as given, for the commands the next
+        # steps name; None when the install was found without one.
+        given_root = str(root) if root is not None and str(root) != "" else None
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
                 sync = _sync_cvars(lay)
-            except OSError as exc:
+            except (OSError, wtfconfig.WtfLimitError) as exc:
                 problems.append(f"{f.folder}: cannot read the config files: {exc}")
                 sync = []
+            lab_addon = addoninstall.lab_addon_state(f)
             flavors.append(
                 DoctorFlavor(
                     folder=f.folder,
@@ -1530,8 +2101,10 @@ def _doctor(
                     matching_rows=f.matching_rows,
                     game_data=game[f.folder],
                     sync_cvars=sync,
+                    lab_addon=lab_addon,
                 )
             )
+            steps += _flavor_steps(lay, f.folder, lab_addon, several, given_root)
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -1540,11 +2113,22 @@ def _doctor(
             )
         client = _client_report(inst)
 
-    store = _store_report()
+    store = _read_left(_store_report(), inst)
     if store.damaged:
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     if store.journal_error:
         problems.append("the journal of the write gate cannot be read")
+    elif store.last_transaction is not None and store.last_transaction.state == "open":
+        problems.append(_interrupted(store.last_transaction.id))
+    elif (
+        store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
+    ):
+        t = store.last_transaction
+        problems.append(
+            _rollback_unfinished(
+                t.id, t.paths_left, t.flavor_folder, paths=t.paths, created_dirs=t.created_dirs
+            )
+        )
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1556,7 +2140,428 @@ def _doctor(
         store=store,
         problems=problems,
         not_taken=list(inst.not_taken) if inst is not None else [],
+        build_info_missing=build_info_missing,
+        next_steps=steps,
     )
+
+
+# ─── doctor: next steps (M16-37) ─────────────────────────────────────────────
+
+_RECORD_HOW = (
+    "In game, with the lab-addon installed and enabled for the character (AddOns at "
+    "character select), log in, then log out or type /reload."
+)
+_COMBATLOG_HOW = (
+    "In game, type /combatlog to turn combat logging on; the game writes a log only while it is on."
+)
+# What a missing or out-of-date lab-addon means for the records: none
+# while it is missing; an out-of-date one may still load ('Load out of date
+# AddOns'), so that is hedged; and nothing when wowlab cannot tell.
+_RECORDS_WAIT = {
+    "missing": "they are not updated until the lab-addon above is fixed",
+    "stale": "they may not be updated until the lab-addon above is fixed",
+}
+
+
+def _install_step(build_info_missing: bool) -> NextStep:
+    """The one next step when no install was found. The how-to is the lines
+    above it in the text (`firstrun.pointing_lines`, the Scan and Repair
+    line), so this points there rather than saying it again."""
+    if build_info_missing:
+        fix = (
+            "If this is the game's folder, run Scan and Repair as the lines above say; if "
+            "not, name the folder that holds .build.info, as they also say."
+        )
+    else:
+        fix = "Name the folder that holds .build.info, as the lines above say."
+    return NextStep(item="install", flavor_folder=None, state="missing", fix=fix)
+
+
+def _wowlab_command(args: Sequence[str], folder: str, several: bool, root: str | None) -> str:
+    """A wowlab command for this flavor, as a player would type it: the
+    caller's --root as given (only when one was given, as `labaddon.survey`
+    names it for `char show`; on Windows a `\\\\?\\` root by its plain
+    spelling), and --flavor when the install has several flavors, every
+    argument quoted for this machine's shell."""
+    argv = ["wowlab", *args]
+    if root is not None:
+        argv += ["--root", longpath.plain_text(root) if longpath.ON_WINDOWS else root]
+    if several:
+        argv += ["--flavor", folder]
+    return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
+
+
+def _lab_addon_step(
+    folder: str, state: addoninstall.LabAddonState, several: bool, root: str | None = None
+) -> NextStep:
+    command = _wowlab_command(_REINSTALL.split()[1:], folder, several, root)
+    fix = f"Close the game, then run `{command}`."
+    if state.status == "current":
+        return NextStep(item="lab_addon", flavor_folder=folder, state="ok", command=command)
+    if state.status == "not_installed":
+        return NextStep(
+            item="lab_addon", flavor_folder=folder, state="missing", command=command, fix=fix
+        )
+    if state.status == "stale":
+        detail = (
+            "made for another client version"
+            if state.installed
+            else "its ## Interface: line is missing or unusable"
+        )
+        return NextStep(
+            item="lab_addon",
+            flavor_folder=folder,
+            state="stale",
+            command=command,
+            detail=detail,
+            fix=fix,
+        )
+    return NextStep(
+        item="lab_addon",
+        flavor_folder=folder,
+        state="unknown",
+        command=command,
+        detail=state.detail,
+    )
+
+
+def _characters_step(
+    lay: layout.Layout,
+    folder: str,
+    several: bool,
+    root: str | None,
+    lab_state: NextStepState,
+) -> NextStep:
+    """How many character folders hold a lab-addon record: from the listing
+    alone (`budget=0` opens no file), so doctor reads no record. A place
+    wowlab could not look inside, above the character folders or a
+    character's own folder or SavedVariables/, may hold more: then the
+    count is not the whole answer (`unknown`)."""
+    command = _wowlab_command(["char", "list"], folder, several, root)
+    found = labaddon.survey(lay, keep_records=False, budget=0)
+    count = sum(1 for e in found.characters if e.place == "file")
+    unseen = len(found.not_looked_at)
+    unseen += sum(1 for e in found.characters if e.place in _BLOCKED_PLACE)
+    notes: list[str] = []
+    if unseen:
+        it = "it" if unseen == 1 else "them"
+        notes.append(
+            f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
+        )
+    if count and lab_state in _RECORDS_WAIT:
+        notes.append(_RECORDS_WAIT[lab_state])
+    state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
+    return NextStep(
+        item="characters",
+        flavor_folder=folder,
+        state=state,
+        count=count,
+        command=command,
+        detail="; ".join(notes) or None,
+        fix=_RECORD_HOW if state == "missing" else None,
+    )
+
+
+def _combat_log_step(lay: layout.Layout, folder: str) -> NextStep:
+    """Whether Logs/ holds a combat log, and when the newest was written: a
+    listing and one stat, no file opened."""
+    try:
+        logs_dir = _logs_dir(lay)
+        logs = combatlog.find_logs(logs_dir) if logs_dir is not None else []
+    except OSError as exc:
+        return NextStep(
+            item="combat_log",
+            flavor_folder=folder,
+            state="unknown",
+            detail=f"wowlab could not look in Logs/: {exc.strerror or exc}",
+        )
+    if not logs:
+        return NextStep(
+            item="combat_log", flavor_folder=folder, state="missing", count=0, fix=_COMBATLOG_HOW
+        )
+    try:
+        newest: int | None = longpath.lstat(logs[-1]).st_mtime_ns
+    except OSError:
+        newest = None  # gone since the listing
+    return NextStep(
+        item="combat_log",
+        flavor_folder=folder,
+        state="ok",
+        count=len(logs),
+        newest_mtime_ns=newest,
+    )
+
+
+def _flavor_steps(
+    lay: layout.Layout,
+    folder: str,
+    lab_addon: addoninstall.LabAddonState,
+    several: bool,
+    root: str | None,
+) -> list[NextStep]:
+    lab = _lab_addon_step(folder, lab_addon, several, root)
+    return [
+        lab,
+        _characters_step(lay, folder, several, root, lab_state=lab.state),
+        _combat_log_step(lay, folder),
+    ]
+
+
+def _next_step_answer(step: NextStep) -> str:
+    """What an item of "Next steps" says before its fix: its answer, then
+    its `detail` when it has one."""
+    n = step.count or 0
+    records = "Character folders with a lab-addon record"
+    match step.item, step.state:
+        case "install", _:
+            said = "Install: not found"
+        case "lab_addon", "ok":
+            said = "Lab-addon: installed, made for this client"
+        case "lab_addon", "missing":
+            said = "Lab-addon: not installed"
+        case "lab_addon", "stale":
+            said = "Lab-addon: out of date for this client"
+        case "lab_addon", _:
+            said = "Lab-addon: wowlab cannot tell whether it fits this client"
+        case "characters", "missing":
+            said = f"{records}: none"
+        case "characters", "unknown" if n == 0:
+            said = f"{records}: none found"
+        case "characters", _:
+            said = (
+                f"{records}: {n} (each as of that character's last logout or /reload with "
+                f"the lab-addon on; `{step.command}` reads them)"
+            )
+        case "combat_log", "ok":
+            said = f"Combat log: present ({n} under Logs/"
+            if step.newest_mtime_ns is not None:
+                said += f", the newest written {_local_time(step.newest_mtime_ns)}"
+            said += ")"
+        case "combat_log", "missing":
+            said = "Combat log: none under Logs/"
+        case _:
+            said = "Combat log: wowlab cannot tell whether one is there"
+    if step.detail:
+        said += f"; {step.detail}"
+    return said + "."
+
+
+def _print_next_steps(steps: Sequence[NextStep]) -> None:
+    """The "Next steps" block: each item's answer, then its fix. With
+    several flavors, the items are grouped under each flavor's name. It
+    says "nothing to do" only when every item is `ok`."""
+    if not steps:
+        return
+    done = all(s.state == "ok" for s in steps)
+    _say("Next steps: nothing to do." if done else "Next steps:")
+    grouped = len({s.flavor_folder for s in steps if s.flavor_folder is not None}) > 1
+    heading: str | None = None
+    for step in steps:
+        indent = "  "
+        if grouped and step.flavor_folder is not None:
+            if step.flavor_folder != heading:
+                heading = step.flavor_folder
+                _say(f"  {heading}:")
+            indent = "    "
+        text = _next_step_answer(step)
+        if step.fix is not None:
+            text += f" {step.fix}"
+        # Each command, and a time, is kept on one line.
+        keep = _commands_in(text)
+        if step.newest_mtime_ns is not None:
+            keep.append(_local_time(step.newest_mtime_ns))
+        _say_prose(text, indent=indent, hang=indent + "  ", keep=keep)
+
+
+def _commands_in(text: str) -> list[str]:
+    """The commands between backticks in an item, each kept whole when wrapped."""
+    return text.split("`")[1::2]
+
+
+def _could_be_an_install(root: Path) -> bool:
+    """Whether `root`, which holds no .build.info, could be an install that
+    lost it (M16-13): a folder, and inside no install (no folder above it
+    holds a regular .build.info). Reads only; any error is a no."""
+    try:
+        if not longpath.is_dir(root):
+            return False
+        return not any(longpath.is_file(p / install.BUILD_INFO) for p in root.parents)
+    except OSError:
+        return False
+
+
+def _interrupted(record_id: str) -> str:
+    """The `doctor` problem for a most recent journal record still `open`
+    (M16-13): a change that was killed, or is running now, so some files
+    may hold its new bytes and others not. `undo --expect` names exactly
+    that record, and refuses if another change is journaled first."""
+    return (
+        f"the last change wowlab made did not finish (record {record_id}): some files may "
+        "be changed and others not. To put back what was there before it, run: "
+        f"wowlab undo --expect {record_id}"
+    )
+
+
+def _rollback_unfinished(
+    record_id: str,
+    left: Sequence[LeftPath] = (),
+    flavor_folder: str = "",
+    *,
+    paths: int = 1,
+    created_dirs: int = 0,
+) -> str:
+    """The `doctor` problem for a most recent journal record in
+    `rollback_incomplete` (M16-71): the change failed and the write gate
+    could not put every file back. Usually another program (the game, when
+    it saves settings or addon data) changed a file mid-change, and the gate
+    left that program's bytes in place; a file may also still hold the
+    change. The undo puts back every file the change wrote or deleted (its
+    `paths`, M16-86), the game's later saves included, but takes a snapshot
+    of the files first, so undoing the undo next, before the player plays,
+    brings them back (the wording of undo's own plan, M16-92).
+
+    With `left` (M16-84) the problem names each file the rollback left, in
+    `flavor_folder`, grouped by what doctor read there now (`LeftPath`). A
+    file the change never wrote (its only operation was refused) is said to
+    be left alone by undo, which acts only on `paths`. With `paths == 0`
+    the change wrote nothing, and with `created_dirs == 0` too undo has
+    nothing to do and records nothing (`undo` returns before planning when a
+    record has no paths and no folders): the problem says so, and that the
+    next change clears it, and offers no command (the one exception to "the
+    command stays last"). With folders but no paths, undo removes the empty
+    folders and records itself, so the command is offered, last. Names are kept as stored: the text output escapes
+    them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
+    unescaped. A record that lists no file gets the sentence without names."""
+    groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
+    for p in left:
+        groups.setdefault((p.now, p.exists), []).append(p.path)
+    said = [_left_clause(key, groups[key]) for key in _LEFT_ORDER if key in groups]
+    where = f"in {flavor_folder}, " if flavor_folder else ""
+    if paths == 0 and created_dirs:
+        # No file journaled, but folders created (a write refused after its
+        # folders were made): undo removes them if empty and records itself,
+        # so this record stops being the last (M16-86's plan says the same).
+        lead = (
+            "the last change wowlab made failed after it created folders and before it changed "
+            f"any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said) if said else "wowlab could not remove every folder it created"
+        )
+        return (
+            lead
+            + named
+            + ". undo removes the folders it created if they are empty and records the undo, "
+            "and wowlab doctor stops reporting this change: "
+            f"wowlab undo --expect {record_id}"
+        )
+    if paths == 0:
+        lead = (
+            f"the last change wowlab made failed before it changed any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said)
+            if said
+            else f"another program, {_THE_GAME}, changed a file while wowlab was working"
+        )
+        return (
+            lead
+            + named
+            + ". wowlab changed no file, so there is nothing for undo to put back, and undo "
+            "leaves this record as it is; wowlab doctor stops reporting it after wowlab's "
+            "next change."
+        )
+    lead = (
+        "the last change wowlab made failed, and putting the files back did not finish "
+        f"(record {record_id}): "
+    )
+    tail = (
+        "To put back what was there before the change, close the game and run this; it puts "
+        "back every file the change wrote or deleted, including anything the game has saved "
+        "to them since, but the undo keeps a copy and running wowlab undo again next, before "
+        f"you play, brings them back: wowlab undo --expect {record_id}"
+    )
+    if not said:
+        return (
+            lead + f"another program, {_THE_GAME}, may have changed a file while wowlab was "
+            "writing or since, or a file may still hold wowlab's change. " + tail
+        )
+    return lead + where + "; ".join(said) + ". " + tail
+
+
+# Who else writes these files, without a timing that holds for only some of
+# them (SavedVariables at logout or /reload, Config.wtf on exit and on some
+# setting changes).
+_THE_GAME = "such as the game when it saves your settings or addon data"
+
+# The order the problem names the files in: what doctor read there, and
+# whether the file is there at all (None: not read).
+_LEFT_ORDER: tuple[tuple[LeftNow, bool | None], ...] = (
+    ("wowlab_change", True),
+    ("wowlab_change", False),
+    ("changed_since", True),
+    ("changed_since", False),
+    ("unknown", None),
+    ("before_change", True),
+    ("before_change", False),
+    ("not_written", None),
+)
+
+
+def _left_clause(key: tuple[LeftNow, bool | None], paths: Sequence[str]) -> str:
+    """One group of `_rollback_unfinished`: the files, then what they hold.
+    No semicolon inside one: the groups are joined with "; "."""
+    now, exists = key
+    one = len(paths) == 1
+    names = paths[0] if one else f"{', '.join(paths[:-1])} and {paths[-1]}"
+    it = "it" if one else "them"
+    is_ = "is" if one else "are"
+    holds = "holds" if one else "hold"
+    if now == "wowlab_change":
+        if exists:
+            return f"{names} still {holds} wowlab's change"
+        return f"{names} {is_} still deleted, as wowlab's change left {it}"
+    if now == "changed_since":
+        did = "changed" if exists else "deleted"
+        return f"another program, {_THE_GAME}, has {did} {names} since wowlab's change"
+    if now == "before_change":
+        if exists:
+            return f"{names} already {holds} what was there before the change"
+        return f"{names} {is_} gone again, as before the change"
+    if now == "not_written":
+        return (
+            f"wowlab did not write {names}, which another program changed while wowlab was "
+            f"working, and undo leaves {it} as {'it is' if one else 'they are'}"
+        )
+    return (
+        f"wowlab could not put back {names}, which {holds} either wowlab's change or what "
+        f"another program, {_THE_GAME}, has written to {it} since"
+    )
+
+
+# A journal record's state as `doctor`'s text output says it (M16-85): the
+# player-copy rules forbid printing the state names, which `--json` keeps.
+# Every state the write gate journals is here; the words for the two that
+# are problems match `_interrupted` and `_rollback_unfinished`.
+_JOURNAL_STATE_WORDS: dict[str, str] = {
+    "committed": "finished",
+    "open": "did not finish",
+    "rolled_back": "failed, and its files were put back",
+    "rollback_incomplete": "failed, and putting the files back did not finish",
+}
+
+
+def _journal_state_words(state: str) -> str:
+    """The words for a journal record's state; a state this version does not
+    know (a journal written by a later one) is said as such, not by name."""
+    return _JOURNAL_STATE_WORDS.get(state, "in a state this version of wowlab does not know")
+
+
+# Where the Battle.net app repairs an install, a missing .build.info included.
+_SCAN_AND_REPAIR = (
+    "  If this is the game's folder and its .build.info went missing, the Battle.net app "
+    "puts it back: choose the game, then the gear beside Play, then Scan and Repair."
+)
 
 
 def _print_game_data(g: GameDataReport) -> str:
@@ -1569,15 +2574,83 @@ def _print_game_data(g: GameDataReport) -> str:
     if g.status == "no_version":
         return f"no version to look up ({g.detail})"
     if g.status == "not_checked":
-        return "not checked (--offline)"
+        return "not checked (--check-builds asks wago.tools)"
     return f"could not check ({g.detail})"
 
 
-def _print_doctor(report: DoctorReport) -> None:
+_NUMBER_WORDS = {2: "two", 3: "three", 4: "four"}
+# What the sync lines themselves do not say (they say what sync replaces).
+_SYNC_NOTE = (
+    "Which other *-cache files server sync replaces at login, besides key bindings, macros "
+    "and settings, is not known."
+)
+_STORE_VERIFY_NOTE = "wowlab snap verify re-hashes every object in the snapshot store."
+_STORE_MODES_NOTE = (
+    "On Windows, wowlab does not check who else can read the snapshot store; the folder "
+    "takes its access from your user profile."
+)
+
+
+def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
+    """The warning when other accounts on this computer can open the store
+    (M16-41), or None."""
+    if not exposure.readable_by_others:
+        return None
+    return (
+        f"Other accounts on this computer can read the snapshot store "
+        f"({exposure.count} of its files and folders). wowlab makes it private the next time it "
+        "writes there, such as at the next snapshot."
+    )
+
+
+_REINSTALL = f"wowlab addon install {addoninstall.LAB_ADDON}"
+_LOAD_OUT_OF_DATE = "Load out of date AddOns"
+# What an out-of-date lab-addon means for the player (M16-06, domain review).
+_STALE_EFFECT = (
+    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and then no new records are saved"
+)
+
+
+def _lab_addon_line(state: addoninstall.LabAddonState, reinstall: str = _REINSTALL) -> str | None:
+    """The `doctor` line about the installed lab-addon (M16-06), or None
+    when it is not installed. `reinstall` is the command its next step
+    names (M16-37): with the caller's --root, and --flavor on an install
+    with several flavors."""
+    if state.status == "current":
+        found = ", ".join(str(n) for n in state.installed)
+        return f"  Lab-addon: installed, made for this client (## Interface: {found})"
+    if state.status == "stale" and not state.installed:
+        return (
+            f"  Lab-addon: its {addoninstall.TOC_NAME} has no usable ## Interface: value, so "
+            f"the game may treat it as out of date {_STALE_EFFECT}. Close the game and run "
+            f"`{reinstall}`."
+        )
+    if state.status == "stale":
+        found = ", ".join(str(n) for n in state.installed)
+        return (
+            f"  Lab-addon: made for another client version (## Interface: {found}; this "
+            f"client is {state.expected}), so the game may list it as out of date "
+            f"{_STALE_EFFECT}. Close the game and run `{reinstall}` to update it."
+        )
+    if state.status == "unknown":
+        return (
+            "  Lab-addon: installed; wowlab cannot tell whether it fits this client "
+            f"({state.detail})"
+        )
+    return None
+
+
+def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
+    """The doctor report as text, its problems and then its next steps
+    last (M16-37), then its standing notes behind --notes (`_say_notes`). The first run's section, said only
+    once, comes after it."""
+    notes: list[str] = []
     if report.install_root is not None:
         _say(f"Install: {report.install_root} (found by {report.found_by})")
     else:
         _say(f"Install: {report.install_error}")
+        if report.build_info_missing:
+            _say_prose(_SCAN_AND_REPAIR, hang="  ", keep=["Battle.net app", "Scan and Repair"])
         if report.locations is not None:
             for loc in report.locations.searched:
                 _say(f"  searched, no install there: {loc}")
@@ -1595,18 +2668,44 @@ def _print_doctor(report: DoctorReport) -> None:
                 "the first active one is shown"
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
-        if f.sync_cvars:
-            _say(
-                "  Server sync (when on, the server can replace local binds, macros or settings "
-                "at login; which other *-cache files it replaces is not known):"
+        reinstall = next(
+            (
+                s.command
+                for s in report.next_steps
+                if s.item == "lab_addon" and s.flavor_folder == f.folder and s.command
+            ),
+            _REINSTALL,
+        )
+        lab_line = _lab_addon_line(f.lab_addon, reinstall)
+        if lab_line is not None:
+            _say_prose(lab_line, hang="    ", keep=[reinstall, _LOAD_OUT_OF_DATE])
+        if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
+            # Six lines saying "not set" were one fact (M16-16).
+            files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))
+            names = len({sync.name for sync in f.sync_cvars})
+            _say_prose(
+                f"  Server sync: the {_NUMBER_WORDS.get(names, str(names))} sync settings wowlab "
+                f"reads are not set in {' or '.join(files)} (when on, the server can replace "
+                "your bindings, macros or settings at login; not set is the client's default, "
+                "and wowlab cannot tell whether that default is on)",
+                hang="    ",
+                keep=files,
+            )
+        elif f.sync_cvars:
+            _say_prose(
+                "  Server sync (when on, the server can replace your bindings, macros or "
+                "settings at login):",
+                hang="    ",
             )
             for sync in f.sync_cvars:
                 value = (
                     f'"{sync.value}"'
                     if sync.value is not None
-                    else "not set (client default; wowlab does not know whether that default is on)"
+                    else "not set (the client's default, and wowlab cannot tell whether it is on)"
                 )
                 _say(f"    {sync.file}: {sync.name} {value}")
+    if any(f.sync_cvars for f in report.flavors):
+        notes.append(_SYNC_NOTE)
     for line in _not_taken_lines(report.not_taken, report.other_dirs):
         _say(line)
     if report.client is not None:
@@ -1634,20 +2733,34 @@ def _print_doctor(report: DoctorReport) -> None:
         t = store.last_transaction
         _say(
             f"  {store.transactions} transaction(s) in the journal; most recent: {t.id} "
-            f'({t.state}, {t.paths} file(s)) "{t.label}"'
+            f'({_journal_state_words(t.state)}; {t.paths} file(s)) "{t.label}"'
         )
     else:
         _say("  no transactions in the journal")
-    _say("  (`wowlab snap verify` re-hashes every stored object)")
+    exposed = _exposure_line(store.exposure)
+    if exposed is not None:
+        _say_prose(f"  {exposed}", hang="    ")
+    # On Windows the store's note says the modes are not checked as well;
+    # one note about the store, so the footer counts the same everywhere.
+    notes.append(
+        _STORE_VERIFY_NOTE
+        if store.exposure.checked
+        else f"{_STORE_VERIFY_NOTE} {_STORE_MODES_NOTE}"
+    )
     # Why the command exits 1, as `problems` says it in `--json` (M13-56):
     # without this, a run that skips the first run said nothing.
     if report.problems:
         _say("Problems:")
         for problem in report.problems:
             _say(f"  {problem}")
+    # What to do next ends the report's answer (M16-37), before the footer.
+    _print_next_steps(report.next_steps)
+    # The footer ends the report (conductor's ruling, 2026-11-06): after the
+    # problems, before the first run's one-time section.
+    _say_notes(notes, show_notes)
 
 
-def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> DoctorReport:
+def _doctor_redacted(root: Path | None, check_builds: bool, names: list[str]) -> DoctorReport:
     """`_doctor` through `doctorredact` (M13-09): every string redacted before it is printed."""
     try:
         extra = doctorredact.check_names(names)
@@ -1655,7 +2768,7 @@ def _doctor_redacted(root: Path | None, offline: bool, names: list[str]) -> Doct
         raise CliError(str(exc), EXIT_USAGE) from None
     try:
         return doctorredact.redacted(
-            lambda: _doctor(root, offline), root, extra, doctorredact.DOCTOR_FIELDS
+            lambda: _doctor(root, check_builds), root, extra, doctorredact.DOCTOR_FIELDS
         )
     except doctorredact.RedactedError as exc:
         raise CliError(str(exc)) from None
@@ -1745,6 +2858,13 @@ def _first_run(
     )
 
 
+# The one deprecation line of `doctor --offline` (M16-07), on stderr.
+_OFFLINE_DEPRECATED = (
+    "--offline is no longer needed and does nothing: doctor makes no network request "
+    "unless --check-builds is given."
+)
+
+
 def _no_text(_line: str) -> None:
     """`say` with --json: the first-run text is not printed."""
 
@@ -1753,9 +2873,21 @@ def _no_text(_line: str) -> None:
 @_handled
 def doctor(
     root: RootOpt = None,
+    check_builds: Annotated[
+        bool,
+        typer.Option(
+            "--check-builds",
+            help="Ask wago.tools whether it lists each installed version (downloads its "
+            "public version list). Without it, doctor makes no network request.",
+        ),
+    ] = False,
     offline: Annotated[
         bool,
-        typer.Option("--offline", help="Do not ask wago.tools whether each version is listed."),
+        typer.Option(
+            "--offline",
+            hidden=True,
+            help="Does nothing: doctor is offline unless --check-builds is given.",
+        ),
     ] = False,
     yes: Annotated[
         bool,
@@ -1791,8 +2923,12 @@ def doctor(
             help="Another name to replace, such as your guild's (repeatable). Implies --redact.",
         ),
     ] = None,
+    notes: NotesOpt = False,
 ) -> None:
     """Install, flavors, versions, whether the client runs, store health.
+    It ends with next steps: whether the lab-addon is installed and made for
+    this client, how many characters it has recorded, and whether a combat
+    log is there, each with the command or in-game action that fixes it.
 
     On a first run (the snapshot store holds no snapshot of this install) it
     also says what wowlab will and will not do, shows what a first snapshot
@@ -1806,6 +2942,14 @@ def doctor(
 
     \f
     JSON: DoctorReport."""
+    if offline:
+        if check_builds:
+            raise CliError(
+                "--offline and --check-builds contradict each other; doctor is offline "
+                "unless --check-builds is given, so drop --offline",
+                EXIT_USAGE,
+            )
+        _note(_OFFLINE_DEPRECATED)
     if redact or redact_name:
         if yes or flavor is not None:
             raise CliError(
@@ -1813,11 +2957,11 @@ def doctor(
                 "run `wowlab doctor` without --redact to take a first snapshot",
                 EXIT_USAGE,
             )
-        report = _doctor_redacted(root, offline, redact_name or [])
+        report = _doctor_redacted(root, check_builds, redact_name or [])
         if json_out:
             _emit(report)
         else:
-            _print_doctor(report)
+            _print_doctor(report, notes)
         if report.problems:
             raise typer.Exit(EXIT_ERROR)
         return
@@ -1834,14 +2978,20 @@ def doctor(
         if inst is not None and flavor is not None:
             _select_flavor(inst, flavor)  # a bad --flavor fails before any request
         first = firstrun.is_first_run(store, inst)
-        if first and not json_out:
-            for line in firstrun.intro_lines(offline=offline, store_path=store.path):
+        # With no install, the verdict on the folder comes first (M16-13):
+        # the intro follows the report instead (no request is made then).
+        if first and not json_out and inst is not None:
+            for line in firstrun.intro_lines(store_path=store.path):
                 say(line)
             say("")
 
-    report = _doctor(root, offline, on_found)
+    report = _doctor(root, check_builds, on_found)
     if not json_out:
-        _print_doctor(report)
+        _print_doctor(report, notes)
+        if first and found[0] is None:
+            say("")  # the first run's section adds the blank line after it
+            for line in firstrun.intro_lines(store_path=store.path):
+                say(line)
     if first:
         result = _first_run(found[0], store, flavor, yes, json_out, say)
         problems = list(report.problems)
@@ -1933,7 +3083,8 @@ class Explained(_Out):
     """A file-map entry, as `explain` and `tree --explain` show it."""
 
     entry_id: str
-    what: str
+    what: str  # the player's text (M16-17)
+    notes: str  # the spec's notes on the row (M16-17); "—" when it has none
     written_by: str
     edit: str
     tier: str
@@ -1994,6 +3145,7 @@ def _explained(entry: FileMapEntry, verdict: Verdict) -> Explained:
     return Explained(
         entry_id=entry.id,
         what=entry.what,
+        notes=entry.notes,
         written_by=entry.written_by,
         edit=entry.edit,
         tier=entry.tier,
@@ -2121,22 +3273,84 @@ def _tree_items(
                 f"{area.files} files in {area.folders} folders, not listed one by one",
             )
     for link in inv.symlinks:
-        add(link.path, "symlink", None, _link_note(link.target, link.inside_install))
+        stands_for = _link_stands_for(
+            lay.classify(link.path, is_dir=False, not_accounts=not_accounts),
+            lay.classify(link.path, is_dir=True, not_accounts=not_accounts),
+        )
+        add(link.path, "symlink", None, _link_note(link.target, link.inside_install, stands_for))
     for meta in inv.os_metadata:
         add(meta, "file", None, "operating-system folder metadata")
     return items
 
 
-def _link_note(target: str | None, inside: bool | None) -> str:
+def _link_note(target: str | None, inside: bool | None, stands_for: str = "folder") -> str:
     """`tree`'s note for a link, at the install root and in a flavor folder
     alike (M13-35). `inside` None: where it points is unknown, as for a WCI
-    link or a WSL symlink, whose link text cannot be read."""
+    link or a WSL symlink, whose link text cannot be read. It ends in the
+    readers' words for a link (M16-80), as `labaddon.NOT_FOLLOWED` and
+    `labaddon.LINKED_FILE` say it: `stands_for` is "folder", "file" or
+    "one" (`_link_stands_for`)."""
     to = f" to {target}" if target is not None else ""
     if inside is None:
         where = "where it points is unknown"
     else:
         where = f"{'inside' if inside else 'outside'} the install"
-    return f"link{to} ({where}), not followed"
+    return f"link{to} ({where}), not followed; {snapshot.not_read_through(stands_for)}"
+
+
+_FLAVOR_LINK_NOTE = (
+    "{} is a link; wowlab does not read through links, so it reads this only when the "
+    "real folder is there. Nothing in it is listed."
+)
+"""`tree`'s stderr line for a flavor folder that is a link (M13-35), in the
+readers' words for a linked folder (M16-80: `snapshot.not_read_through`).
+A literal, as every `_note` message is; a test holds it to those words."""
+
+
+def _link_stands_for(
+    as_file: layout.Classified | layout.Unclassified,
+    as_folder: layout.Classified | layout.Unclassified,
+) -> str:
+    """What a link stands in place of, for `_link_note` (M16-80), from the
+    file map alone, as the link is never followed: `as_file` and `as_folder`
+    are its place classified as each kind. "file" where only a file there
+    gets a row (a linked `WTF/Config.wtf`), "folder" where only a folder
+    does, or where one row takes both and the place is the folder that row's
+    subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). "file", too,
+    where a file there has its own row and a folder there only the general
+    row of a folder above it (`Logs/WoWCombatLog.txt`: `combat-log` as a
+    file, `logs-other`, which hangs from `Logs`, as a folder; likewise
+    `Logs/*.log`, and `Cache/ADB/<locale>/DBCache.bin` and
+    `Cache/WDB/<locale>/*.wdb` under `cache-other`, which hangs from
+    `Cache`; M16-91). "file", too, where a file there has a row that spells
+    out its name and a folder there only a row that takes a folder of any
+    name at this one place (`WTF/Account/<acct>/macros-cache.txt`:
+    `account-macros-cache` as a file, `realm-folder` as a folder; M16-95).
+    Otherwise, one row for both kinds below that folder (a font file, an
+    addon's `.toc`), other different rows, or none: "one", which says
+    neither."""
+    file_row = as_file.entry if isinstance(as_file, layout.Classified) else None
+    folder_row = as_folder.entry if isinstance(as_folder, layout.Classified) else None
+    if file_row is not None and folder_row is None:
+        return "file"
+    if file_row is not None and folder_row is not None and file_row.id != folder_row.id:
+        parts = as_folder.path.split("/")
+        if not folder_row.heads_a_subtree(parts) and any(
+            folder_row.heads_a_subtree(parts[:n]) for n in range(1, len(parts))
+        ):
+            return "file"
+        if file_row.names_the_file(parts) and folder_row.takes_any_name_here(parts):
+            return "file"
+    if folder_row is not None and file_row is None:
+        return "folder"
+    if (
+        file_row is not None
+        and folder_row is not None
+        and file_row.id == folder_row.id
+        and folder_row.heads_a_subtree(as_folder.path.split("/"))
+    ):
+        return "folder"
+    return "one"
 
 
 _SELECTION_WORDS = {
@@ -2268,7 +3482,7 @@ def tree(
         return
     _say(f"{chosen.folder} in {inst.root}")
     if flavor_link:
-        _note("{} is a link; wowlab does not follow it, so nothing in it is listed.", chosen.folder)
+        _note(_FLAVOR_LINK_NOTE, chosen.folder)
     for item in items:
         _say_tree_item(item.path, item, explain)
     if truncated:
@@ -2314,7 +3528,7 @@ def _say_tree_item(shown: str, item: TreeItem, explain: bool) -> None:
         else:
             e = item.explained
             _say(f"      [{e.entry_id}] {_player_copy(_plain(e.what))}")
-            _say(f"      written by: {_plain(e.written_by)}")
+            _say(f"      written by: {_player_copy(_plain(e.written_by))}")
             _say(f"      edit: {e.verdict.words}")
 
 
@@ -2358,7 +3572,15 @@ def _root_items(inst: install.Install, errors: list[str]) -> list[TreeItem]:
         entry = found.entry if isinstance(found, layout.Classified) else None
         note: str | None = None
         if link:
-            note = _link_note(*layout.link_facts(root / e.name, real_root))
+            stands_for = (
+                "folder"
+                if e.name in flavors
+                else _link_stands_for(
+                    layout.classify(e.name, inst, is_dir=False),
+                    layout.classify(e.name, inst, is_dir=True),
+                )
+            )
+            note = _link_note(*layout.link_facts(root / e.name, real_root), stands_for)
             if e.name in flavors:
                 # M13-35: as `tree` says it for this flavor folder alone.
                 note = f"flavor folder; {note}; nothing in it is listed"
@@ -2626,6 +3848,24 @@ _SHELL_LABELS = {
 }
 
 
+class ExplainCandidate(_Out):
+    """M16-18: one path, or one file-map row, a name `explain` did not find
+    as typed may mean."""
+
+    # A file or folder on disk, relative to its flavor folder; None for a
+    # row that names the name but matches no path found.
+    path: str | None
+    flavor_folder: str | None
+    entry_id: str | None  # the row the path has, or the row itself
+    doc_path: str | None  # that row's path pattern, as the file map writes it
+
+
+# The most candidates `explain` prints; `--json` has them all.
+_CANDIDATES_SHOWN = 20
+# At most this many candidates are each explained in full (M16-18).
+_CANDIDATES_EXPLAINED = 3
+
+
 class ExplainReport(_Out):
     """`wowlab explain --json`."""
 
@@ -2651,6 +3891,11 @@ class ExplainReport(_Out):
     # did not take as a flavor (`Install.not_taken`), with why. Left out of
     # the JSON when None, so every other path prints as before.
     not_taken: install.NotTaken | None = Field(default=None, exclude_if=lambda v: v is None)
+    # M16-18: for a relative path with nothing on disk and no row, what its
+    # last part names: the files by that name in the flavor folders read,
+    # then the rows that name it and match none of them. Left out of the
+    # JSON when empty, so every other path prints as before.
+    candidates: list[ExplainCandidate] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 # The option each view parameter is spelled with; `file` is `sv dump`'s
@@ -2707,6 +3952,18 @@ def _addons_list(at: _At) -> list[_ViewSpec] | str:
     if at.folder or at.parts[-1].casefold().endswith(".toc"):
         return [(("addons", "list"), _flavor(at), "list installed addons and their TOC files")]
     return f"{_NO_READER}; `wowlab addons list` lists addon folders and their TOC files"
+
+
+def _addons_check_view(at: _At) -> list[_ViewSpec] | str:
+    """M16-34: a character's AddOns.txt is read by `addons check`, which
+    names the characters that list each installed addon."""
+    return [
+        (
+            ("addons", "check"),
+            _flavor(at),
+            "check each addon against this client, and which characters' AddOns.txt list it",
+        )
+    ]
 
 
 def _addon_executable(at: _At) -> list[_ViewSpec] | str:
@@ -2774,6 +4031,7 @@ _VIEWS: dict[str, Callable[[_At], list[_ViewSpec] | str]] = {
     "account-bindings-cache": _account_binds,
     "account-macros-cache": _account_macros,
     "character-wtf-config": _character_wtf,
+    "character-addons-txt": _addons_check_view,
     "addons-folder": _addons_list,
     "addon": _addons_list,
     "addon-executable": _addon_executable,
@@ -2849,15 +4107,17 @@ def _hints(
     views: Sequence[ExplainView],
     *,
     absent: bool = False,
+    snapshot_hints: bool = True,
 ) -> list[ExplainHint]:
     """Copyable commands for one path. A restore hint only for a file the
     write gate would write (`restorable` is True: never a folder or a link)
     that the latest snapshot holds, when the file on disk differs from that
     copy or is gone. A first-snapshot hint for such a file when no snapshot
-    covers it or none ever held it, and no manifest was unreadable."""
+    covers it or none ever held it, and no manifest was unreadable. Neither
+    without `snapshot_hints` (wowlab's own leftover temp file, M16-13)."""
     hints: list[ExplainHint] = []
     with_root = ["--root", root] if root is not None else []
-    if verdict.restorable is True and facts is not None and facts.error is None:
+    if snapshot_hints and verdict.restorable is True and facts is not None and facts.error is None:
         latest = facts.snapshot_id
         if (
             latest is not None
@@ -3160,6 +4420,14 @@ def explain(
     ],
     root: RootOpt = None,
     flavor: FlavorOpt = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Also print the row's tier (how ordinary using this file is), "
+            "what in wowlab reads it, and the paths the row covers.",
+        ),
+    ] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """What a path in the install is, who writes it, whether wowlab may edit it.
@@ -3268,6 +4536,19 @@ def explain(
         # M13-27: the line the text output prints, carried in the JSON so
         # `wowlab ui` shows Python's words and words nothing itself.
         facts = facts.model_copy(update={"words": _snapshot_line(facts, captured)})
+    # M16-18: a relative path not on disk, with no row: what its last part
+    # names, in the flavor folder it is read in (every one, with several and
+    # none chosen).
+    candidates: list[ExplainCandidate] = []
+    if (
+        relative
+        and nowhere
+        and isinstance(result, layout.Unclassified)
+        and result.base is not None
+        and _not_taken_at(inst, judged) is None
+    ):
+        folders = [chosen_folder] if chosen_folder else [f.folder for f in inst.flavors]
+        candidates = _explain_candidates(inst, path, folders)
     report = ExplainReport(
         query=path,
         result=result,
@@ -3280,9 +4561,19 @@ def explain(
         plain=_plain_text(result.entry) if isinstance(result, layout.Classified) else None,
         absent=nowhere,
         not_taken=_not_taken_at(inst, judged),
+        candidates=candidates,
+    )
+    # M16-18: a path that matches nothing (outside the install, or nothing
+    # on disk under any reading, no row, and nothing by its name) exits 1.
+    matched = not (
+        isinstance(result, layout.Unclassified)
+        and (result.base is None or nowhere)
+        and not candidates
     )
     if json_out:
         _emit(report)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     taken = report.not_taken
     if isinstance(result, layout.Unclassified):
@@ -3309,21 +4600,103 @@ def explain(
         ):
             _say("  (with several flavors, pass --flavor to read PATH inside one of them)")
         _say_detail(report, captured)
+        if candidates:
+            _say_candidates(inst, candidates, root)
+        if not matched:
+            raise typer.Exit(EXIT_ERROR)
         return
     e = result.entry
     base = f"in flavor folder {result.flavor_folder}" if result.base == "flavor" else "install root"
     _say(f"{result.path or '.'} ({base})")
     _say(f"  what:         {_player_copy(_plain(e.what))}")
-    _say(f"  written by:   {_plain(e.written_by)}")
+    _say(f"  written by:   {_player_copy(_plain(e.written_by))}")
     _say(f"  edit:         {report.verdict.words}")
-    _say(f"  tier:         {tier_words(e.tier)}")
-    _say(f"  read by:      {_reader_words(e.module)}")
-    _say(f"  file-map row: {e.id} ({e.doc_path})")
+    # M16-17: the tier, the reader and the row's own path pattern are the
+    # spec's words; they print only on request (`--json` always has them).
+    if verbose:
+        _say(f"  tier:         {tier_words(e.tier)}")
+        _say(f"  read by:      {_reader_words(e.module)}")
+        _say(f"  file-map row: {e.id} ({e.doc_path})")
+    else:
+        _say(f"  file-map row: {e.id}")
     if taken is not None:  # no install-root row matches below `_..._` today
         _say(f"  {taken.name}: {taken.note}")
     if nowhere:
         _say(f"  on disk:      {_absent_line(result, folder)}")
     _say_detail(report, captured)
+
+
+def _explain_candidates(
+    inst: install.Install, path: str, folders: Sequence[str]
+) -> list[ExplainCandidate]:
+    """M16-18: the paths in `folders` (flavor folders) whose last parts are
+    `path`'s, with their rows; then the rows that name it and that none of
+    those paths has. Empty for a path with `.` or `..` in it."""
+    parts = list(PurePath(path).parts)
+    if not parts or any(p in (".", "..") for p in parts):
+        return []
+    found: list[ExplainCandidate] = []
+    for folder in folders:
+        base = Path(inst.root) / folder
+        for rel in layout.named_paths(base, parts):
+            got = layout.classify(base / rel, inst)
+            entry = got.entry if isinstance(got, layout.Classified) else None
+            found.append(
+                ExplainCandidate(
+                    path=rel,
+                    flavor_folder=folder,
+                    entry_id=entry.id if entry else None,
+                    doc_path=_plain(entry.doc_path) if entry else None,
+                )
+            )
+    seen = {c.entry_id for c in found}
+    rows = [
+        ExplainCandidate(path=None, flavor_folder=None, entry_id=e.id, doc_path=_plain(e.doc_path))
+        for e in filemap.load().named(parts)
+        if e.id not in seen
+    ]
+    return found + rows
+
+
+def _say_candidates(
+    inst: install.Install, candidates: Sequence[ExplainCandidate], root: Path | None
+) -> None:
+    """M16-18: what a name not found as typed may mean, listed, and each
+    explained when there are `_CANDIDATES_EXPLAINED` or fewer."""
+    paths = [c for c in candidates if c.path is not None]
+    rows = [c for c in candidates if c.path is None]
+    if paths:
+        _say(f"  on disk by this name ({len(paths)}):")
+        for c in paths[:_CANDIDATES_SHOWN]:
+            # Each spelled so that `explain` takes it as typed: from the
+            # flavor folder with one flavor, from the install root with
+            # several (a flavor-relative path then needs --flavor).
+            if len(inst.flavors) == 1:
+                _say(f"    {c.path} (in {c.flavor_folder})")
+            else:
+                _say(f"    {c.flavor_folder}/{c.path}")
+        if len(paths) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(paths) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if rows:
+        _say(f"  file-map rows for a file by this name ({len(rows)}):")
+        for c in rows[:_CANDIDATES_SHOWN]:
+            _say(f"    {c.entry_id}: {c.doc_path}")
+        if len(rows) > _CANDIDATES_SHOWN:
+            _say(f"    … and {len(rows) - _CANDIDATES_SHOWN} more (--json lists them all)")
+    if len(candidates) > _CANDIDATES_EXPLAINED:
+        _say("  explain one of them by the path shown")
+        return
+    fm = filemap.load()
+    for c in candidates:
+        _say("")
+        if c.path is not None:
+            # Named from the install root, so it is read where it was found.
+            explain(path=f"{c.flavor_folder}/{c.path}", root=root, flavor=None, json_out=False)
+        elif c.entry_id is not None:
+            e = fm.entry(c.entry_id)
+            _say(f"{c.doc_path} (file-map row {e.id}; no file for this row was found)")
+            _say(f"  what:         {_player_copy(_plain(e.what))}")
+            _say(f"  written by:   {_plain(e.written_by)}")
 
 
 def _say_detail(report: ExplainReport, captured: str) -> None:
@@ -3429,7 +4802,16 @@ def _detail(
             newest_log=newest,
         )
         views, note = _views(judged.entry.id, at, given_root)
-    hints = _hints(verdict, facts, judged.flavor_folder, given_root, views, absent=absent)
+    leftover = isinstance(judged, layout.Classified) and judged.entry.id == WOWLAB_TEMP_ROW
+    hints = _hints(
+        verdict,
+        facts,
+        judged.flavor_folder,
+        given_root,
+        views,
+        absent=absent,
+        snapshot_hints=not leftover,
+    )
     return stat_, facts, views, note, hints
 
 
@@ -3449,6 +4831,53 @@ class SvListReport(_Out):
     flavor_folder: str
     files: list[layout.SavedVariablesFile]
     notes: list[str]  # the caveats the text output prints
+    # M16-34: with --orphans, `files` holds only those no installed TOC declares.
+    orphans: bool = False
+
+
+OrphansOpt = Annotated[
+    bool,
+    typer.Option(
+        "--orphans",
+        help="Only the files that no installed addon declares (saved data an addon left "
+        "behind), with their size and the total.",
+    ),
+]
+_ORPHAN_REINSTALL = (
+    "If the addon is installed again it reads this file again, so deleting it loses those settings."
+)
+_ORPHAN_WHAT = (
+    "A file is listed when Interface/AddOns/ holds no folder of its name, or when that "
+    "folder's TOC declares no SavedVariables (account-wide file) or no "
+    "SavedVariablesPerCharacter (character file). Such a file is usually left by an addon "
+    "that was removed, renamed, or stopped saving at that scope. The client does not delete "
+    "it, and neither does wowlab. " + _ORPHAN_REINSTALL
+)
+_ORPHAN_BLIZZARD = (
+    "Blizzard's own files (SavedVariables.lua and Blizzard_*.lua) are never listed: the "
+    "client loads its own addons from game data, not from Interface/AddOns/ [verify]."
+)
+
+
+def _lab_records_caveat(n: int) -> str:
+    return (
+        f"Not listed: {_plural(n, 'WowLab.lua file')}, the lab-addon's records, which wowlab "
+        "reads whether or not the lab-addon is installed."
+    )
+
+
+def _no_toc_caveat(folders: Sequence[str]) -> str:
+    return (
+        f"Not listed: the saved data of {', '.join(folders)}, whose folder has no TOC named "
+        "after it (often an addon unzipped one folder too deep); `wowlab addons check` shows it."
+    )
+
+
+def _not_judged_caveat(folders: Sequence[str]) -> str:
+    return (
+        f"Not judged: the saved data of {', '.join(folders)}, whose TOC could not be read; "
+        "`wowlab addons check` says why."
+    )
 
 
 @sv_app.command("list", short_help="Every SavedVariables file, account-wide and per character.")
@@ -3456,11 +4885,15 @@ class SvListReport(_Out):
 def sv_list(
     account: AccountOpt = None,
     character: CharacterOpt = None,
+    orphans: OrphansOpt = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
-    """Every SavedVariables file, account-wide and per character.
+    """Every SavedVariables file, account-wide and per character. With
+    --orphans, only the files that no installed addon declares, with their
+    size and the total; its standing notes are behind --notes. Reads only.
 
     \f
     JSON: SvListReport."""
@@ -3483,6 +4916,9 @@ def sv_list(
         if account is None and character is None
         else []
     )
+    if orphans:
+        _sv_orphans(lay, chosen.folder, files, no_account, json_out, notes_out)
+        return
     report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING, *no_account])
     if json_out:
         _emit(report)
@@ -3490,13 +4926,62 @@ def sv_list(
     if not files:
         _say("No SavedVariables files.")
     for f in files:
-        who = "Blizzard UI" if f.blizzard else (f.addon or "?")
-        flags = " (previous write, .bak)" if f.backup else ""
-        _say(f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}")
+        _say(_sv_row(f))
     if files:
         _say(_SV_TIMING)
     for line in no_account:
         _say(line)
+
+
+def _sv_row(f: layout.SavedVariablesFile) -> str:
+    who = "Blizzard UI" if f.blizzard else (f.addon or "?")
+    flags = " (previous write, .bak)" if f.backup else ""
+    return f"{f.scope:<9}  {who:<32}  {_bytes(f.size):>14}  {f.path}{flags}"
+
+
+def _sv_orphans(
+    lay: layout.Layout,
+    flavor_folder: str,
+    files: Sequence[layout.SavedVariablesFile],
+    no_account: Sequence[str],
+    json_out: bool,
+    notes_out: bool,
+) -> None:
+    """M16-34, `sv list --orphans`: the answer (a count, then the rows), at
+    most one caveat for this result, then the standing notes or a footer."""
+    found = addoncheck.orphan_saved_variables(files, lay.addons())
+    # What was left out, most telling first: the first is this result's one
+    # caveat, any other joins the standing notes ahead of them.
+    left_out = [
+        *([_lab_records_caveat(len(found.lab_addon_records))] if found.lab_addon_records else []),
+        *([_no_toc_caveat(found.no_toc)] if found.no_toc else []),
+        *([_not_judged_caveat(found.not_judged)] if found.not_judged else []),
+    ]
+    caveat = left_out[0] if left_out else None
+    standing = [*left_out[1:], _ORPHAN_WHAT, _ORPHAN_BLIZZARD, _SV_TIMING, *no_account]
+    report = SvListReport(
+        flavor_folder=flavor_folder,
+        files=list(found.files),
+        notes=[caveat, *standing] if caveat is not None else standing,
+        orphans=True,
+    )
+    if json_out:
+        _emit(report)
+        return
+    if not found.files:
+        _say("No SavedVariables file is left without an installed addon that declares it.")
+    else:
+        addons = {wtfconfig.fold_name(f.addon or "") for f in found.files}
+        total = sum(f.size for f in found.files)
+        verb = "is" if len(found.files) == 1 else "are"
+        _say_prose(
+            f"{_plural(len(found.files), 'SavedVariables file')} of "
+            f"{_plural(len(addons), 'addon')}, {_bytes(total)} in all, {verb} declared by no "
+            f"installed addon. {_ORPHAN_REINSTALL}"
+        )
+        for f in found.files:
+            _say(_sv_row(f))
+    _say_notes(standing, notes_out, caveat, keep=[*found.not_judged, *found.no_toc, *no_account])
 
 
 def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:
@@ -3675,16 +5160,18 @@ def _rows(tops: Sequence[tuple[str, str, luadata.LuaValue]]) -> Iterator[dict[st
 def _stream_dump(file: str, path: str | None, rows: Iterator[dict[str, Any]]) -> None:
     """Write `SvDumpReport` JSON to stdout row by row: only one row is held
     at a time, and nothing is indented (a deep file would otherwise print a
-    wall of spaces on every line)."""
+    wall of spaces on every line). Each row is one `encode` call, which takes
+    the C encoder; `iterencode` would take the pure-Python one (M16-24). A row
+    is at most three levels deep, so the C encoder's recursion is bounded."""
     encoder = json.JSONEncoder(ensure_ascii=True, separators=(",", ":"))
     out = typer.get_text_stream("stdout")
     head = {"file": _json_text(file), "path": None if path is None else _json_text(path)}
+    _Report.printed = True
     out.write(encoder.encode(head)[:-1] + ',"values":[')
     for n, row in enumerate(rows):
         if n:
             out.write(",")
-        for chunk in encoder.iterencode(_map_strings(row, _json_text)):
-            out.write(chunk)
+        out.write(encoder.encode(_map_strings(row, _json_text)))
     out.write("]}\n")
     out.flush()
 
@@ -3768,17 +5255,276 @@ def _resolve_path(doc: luadata.LuaDocument, expr: str) -> luadata.LuaValue:
     return value
 
 
-def _sv_file(path: str, root: Path | None, flavor: str | None) -> Path:
+def _sv_file(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> Path:
     """FILE as `sv dump` takes it, plain (a `\\\\?\\` spelling named by its plain
-    one, so no output shows it), looked up past the plain limit too (M13-44)."""
+    one, so no output shows it), looked up past the plain limit too (M13-44).
+    A relative FILE that is not there, under the current folder or the
+    flavor folder, is a name `sv list` lists (M16-18): `_sv_named`."""
     given = Path(_plain_arg(path))
     if given.is_absolute() or longpath.lexists(given):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
         return given
-    _, _, lay = _open(root, flavor)
-    return lay.flavor_path / given
+    _, chosen, lay = _open(root, flavor)
+    direct = lay.flavor_path / given
+    if longpath.lexists(direct):
+        if account is not None or character is not None:
+            _note("--account and --character choose among names only; {} was read as typed", path)
+        return direct
+    return lay.flavor_path / _sv_named(lay, chosen.folder, given, account, character).path
 
 
-def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tuple[Path, Path]:
+def _sv_file_and_root(
+    path: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path | None]:
+    """FILE as `_sv_file` finds it (a relative FILE not on disk is looked up
+    under the flavor folder, then by name, `_sv_named`, M16-18), and the root
+    of the install it lies in (M16-49): the install `--root` or discovery
+    names, when FILE is under it as spelled; otherwise None, and the file is
+    read with only its last part checked for a link. A path in the install
+    spelled with `..`, or through another spelling of the install (a link
+    into one of its folders among them, M16-65), is refused (exit 3)."""
+    target = _sv_file(path, root, flavor, account, character)
+    try:
+        # A FILE `_sv_file` looked up under the flavor folder has had the
+        # install found already; one given as a path may lie outside any.
+        found, _ = _discover(root)
+    except install.InstallError:
+        return target, None
+    install_root = found.root
+    holding = _install_holding(target, install_root)
+    if holding is not None and ".." in target.absolute().parts:
+        raise CliError(
+            f"refused: {target} has '..' in it, and wowlab reads a file in an install only "
+            "by a path without '..'",
+            EXIT_REFUSED,
+        )
+    if holding is None and _really_inside(target, install_root):
+        # Another spelling of the install (a link to it, the folder named in
+        # another case, a working folder reached by its real path): the walk
+        # cannot start from a root the path is not spelled under, and
+        # checking the last part only would follow a linked folder in it.
+        raise CliError(
+            f"refused: {target} is in the install at {install_root}, but not spelled under "
+            "that folder; give the path as it sits under that folder",
+            EXIT_REFUSED,
+        )
+    linked = _link_out_of_install(target, install_root) if holding is None else None
+    if linked is not None:
+        # A link into a folder of the install, and a linked folder in the
+        # install that leads out again (M16-65): neither check above sees
+        # the install, and checking the last part only would follow it.
+        raise CliError(
+            f"refused: {snapshot.linked_folder_words(target, linked)}",
+            EXIT_REFUSED,
+        )
+    return target, holding
+
+
+def _install_holding(path: Path, root: Path) -> Path | None:
+    """`root`, absolute, when `path` names something inside it once its
+    `..` are taken lexically (no link resolved); otherwise None. The path
+    itself is not changed: one spelled with `..` inside the install is then
+    refused by the read, never read with only its last part checked."""
+    base = Path(root).absolute()
+    norm = Path(os.path.normpath(path.absolute()))
+    n = len(base.parts)
+    if len(norm.parts) <= n or type(base)(*norm.parts[:n]) != base:
+        return None
+    return base
+
+
+def _really_inside(path: Path, root: Path) -> bool:
+    """Whether `path` names something under `root` by another spelling of
+    it: some folder above the path, as spelled (`..` taken lexically), is the root's folder by
+    device and inode (each `stat`ed following links, so a link to the root
+    and the root named in another case on macOS or Windows count, and a
+    linked folder further down cannot hide it); or, as a second check, some
+    folder above its real path is. False when the root cannot be `stat`ed.
+    A path that enters the install by a link and leaves it again by a linked
+    folder is `_link_out_of_install`'s."""
+    try:
+        st = longpath.stat(root)
+    except (OSError, ValueError):
+        return False
+    want = (st.st_dev, st.st_ino)
+    # `..` taken lexically first, as `_install_holding` takes it, so a folder
+    # a `..` steps back out of is not counted as holding the file.
+    folders = list(reversed(Path(os.path.normpath(path.absolute())).parents))
+    with contextlib.suppress(OSError, ValueError):
+        folders += list(Path(longpath.realpath(path)).parents)
+    for folder in folders:
+        try:
+            here = longpath.stat(folder)
+        except OSError:
+            continue
+        if (here.st_dev, here.st_ino) == want:
+            return True
+    return False
+
+
+_MAX_LINK_HOPS = 40  # links resolved on one path before the walk gives up (as POSIX's ELOOP)
+
+
+def _links_met(path: Path) -> list[tuple[Path, list[Path]]]:
+    """Each link an open of `path` meets on the way to its folder, with the
+    folders that hold it at that moment (from the top of the drive down to
+    the folder the link is in), each link resolved where it is met, its
+    target read, never followed blindly (M16-65). On POSIX the parts are
+    taken as typed and each `..` steps out of the folder actually reached,
+    as the system's open takes it (after a link, into the link's target's
+    parent); on Windows, which takes `..` as text, they are taken lexically
+    first. The walk stops at the first part that is missing, is not a
+    folder, or cannot be read, and after `_MAX_LINK_HOPS` links. Nothing is
+    opened; each part is `lstat`ed."""
+    full = path.absolute()
+    if longpath.ON_WINDOWS:
+        full = Path(os.path.normpath(full))
+    chain = [Path(full.anchor)]  # the folders reached, the last one the current
+    pending = list(full.parts[1:-1])  # the folders; the file itself is not one
+    met: list[tuple[Path, list[Path]]] = []
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            if len(chain) > 1:
+                chain.pop()  # every folder in `chain` is a real one, no link
+            continue
+        step = chain[-1] / name
+        try:
+            st = longpath.lstat(step)
+            linked = stat.S_ISLNK(st.st_mode) or longpath.is_junction(step)
+            target = longpath.readlink(step) if linked else None
+        except (OSError, ValueError):
+            break
+        if target is not None:
+            met.append((step, list(chain)))
+            if len(met) > _MAX_LINK_HOPS:
+                break
+            if target.is_absolute():
+                chain = [Path(target.anchor)]
+                pending[:0] = target.parts[1:]
+            else:
+                pending[:0] = target.parts
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            break
+        chain.append(step)
+    return met
+
+
+def _link_out_of_install(path: Path, root: Path) -> Path | None:
+    """The first link an open of `path` meets inside the install at `root`
+    (a folder holding it is the root's folder by device and inode), as the
+    open reaches it: a shortcut into a folder of the install whose way on
+    leaves it by a linked folder (M16-65). None when there is none, or the
+    root cannot be `stat`ed."""
+    try:
+        st = longpath.stat(root)
+    except (OSError, ValueError):
+        return None
+    want = (st.st_dev, st.st_ino)
+    for link, holders in _links_met(path):
+        for folder in holders:
+            try:
+                here = longpath.stat(folder)
+            except OSError:
+                continue
+            if (here.st_dev, here.st_ino) == want:
+                return link
+    return None
+
+
+_SV_LAST_PART_ONLY = (
+    "This file is not in an install wowlab found, so only the file itself was checked for a "
+    "link: a linked folder on the way to it was not looked for."
+)
+
+
+def _sv_not_found(target: Path) -> CliError:
+    """`sv dump` of a file that is not there (M16-19): the lister that names
+    every SavedVariables file by the path `sv dump` takes."""
+    return CliError(
+        f"no SavedVariables file at {target}; wowlab sv list lists them, each with the "
+        "path to give sv dump (relative to the flavor folder)"
+    )
+
+
+def _sv_named(
+    lay: layout.Layout,
+    folder: str,
+    given: Path,
+    account: str | None,
+    character: str | None,
+) -> layout.SavedVariablesFile:
+    """M16-18: the one SavedVariables file `sv list` lists that `given`
+    names: by its path relative to its account folder
+    (`SavedVariables/<Addon>.lua`, `<Realm>/<Character>/SavedVariables/…`),
+    by its file name, or by its addon name (a `.bak` only by its name or
+    path), case-insensitively, among the files of `--account` and
+    `--character` when given; `--account` alone prefers its account-wide
+    file. None is exit 1 and several exit 2, each with the paths that would
+    do."""
+    files = list(lay.wtf_walk().saved_variables)
+    if account is not None or character is not None:
+        acct = _select_account(lay, account)
+        files = [f for f in files if f.account == acct.folder]
+        if character is not None:
+            char = _select_character(acct, character)
+            files = [
+                f
+                for f in files
+                if f.realm_folder == char.realm_folder and f.character_folder == char.folder
+            ]
+    text = "/".join(given.parts)
+    key = text.casefold()
+
+    def in_account(f: layout.SavedVariablesFile) -> str:
+        return f.path.split("/", 3)[3] if f.path.count("/") >= 3 else f.path
+
+    found = [
+        f
+        for f in files
+        if key in (in_account(f).casefold(), _sv_name(f).casefold())
+        or (not f.backup and f.addon is not None and f.addon.casefold() == key)
+    ]
+    if account is not None and character is None and len(found) > 1:
+        # `--account` alone names the account-wide file among several.
+        found = [f for f in found if f.scope == "account"] or found
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise CliError(
+            f"no SavedVariables file {text!r}: nothing at that path in the flavor folder "
+            f"{folder}, and no file `wowlab sv list` lists has that name, addon or path "
+            "in its account folder"
+        )
+    listing = "; ".join(f.path for f in found)
+    raise CliError(
+        f"{text!r} names {len(found)} SavedVariables files ({listing}); pick one with "
+        "--account or --character, or name it by its path in the account folder",
+        EXIT_USAGE,
+    )
+
+
+def _sv_inside_install(
+    file: str,
+    root: Path | None,
+    flavor: str | None,
+    account: str | None = None,
+    character: str | None = None,
+) -> tuple[Path, Path, Path]:
     """`sv dump --install-only`: FILE as `_sv_file` finds it, and its real path
     (every link on the way resolved), refused (exit 3) unless that is under
     the real path of the install wowlab finds by itself, without `--root`
@@ -3787,21 +5533,27 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
     arguments cannot plant an install around the file. Nothing of the file is
     read first, so a refusal quotes none of it; the caller reads the real path
     that was checked, not the spelling given (returns both: the spelling for
-    the report). No install found is refused (exit 3) as well. Where
+    the report), with the real path of the install, which the read starts
+    from. No install found is refused (exit 3) as well. Where
     `realpath` keeps the case a name was given in (macOS, Linux), a file of
     the install named in another case is refused: the check errs towards
     refusing; where it gives the stored case (Windows), it is allowed."""
     try:
         found, _ = _discover(None)
+    except install.InstallError as exc:
+        # --root cannot help here, given or not: only the variable can.
+        words = _install_words(exc, _NAME_THE_INSTALL_BY_ITSELF)
+        raise CliError(f"refused: {words}", EXIT_REFUSED) from exc
+    try:
         home = longpath.realpath(found.root)
         if root is not None and longpath.realpath(_discover(root)[0].root) != home:
             raise CliError(
                 f"refused: --root {root} is not the install wowlab finds, {found.root}",
                 EXIT_REFUSED,
             )
-        target = _sv_file(file, root, flavor)
+        target = _sv_file(file, root, flavor, account, character)
     except install.InstallError as exc:
-        raise CliError(f"refused: {exc}", EXIT_REFUSED) from exc
+        raise CliError(f"refused: {_install_words(exc)}", EXIT_REFUSED) from exc
     try:
         real = Path(longpath.realpath(target))
         inside = real.is_relative_to(home)
@@ -3809,7 +5561,7 @@ def _sv_inside_install(file: str, root: Path | None, flavor: str | None) -> tupl
         inside = False
     if not inside:
         raise CliError(f"refused: {target} is not in the install at {found.root}", EXIT_REFUSED)
-    return target, real
+    return target, real, Path(home)
 
 
 @sv_app.command("dump", short_help="One SavedVariables file as data, value by value.")
@@ -3819,7 +5571,8 @@ def sv_dump(
         str,
         typer.Argument(
             help="A SavedVariables file: absolute, relative to the current folder, "
-            "or relative to the flavor folder."
+            "or relative to the flavor folder; else as `sv list` lists it: an addon "
+            "name, a file name, or a path relative to its account folder."
         ),
     ],
     path: Annotated[
@@ -3839,6 +5592,22 @@ def sv_dump(
             "The browser view always passes this.",
         ),
     ] = False,
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            help="When FILE is a name several files have: the account folder's "
+            "(its account-wide file, unless --character names one of its characters).",
+        ),
+    ] = None,
+    character: Annotated[
+        str | None,
+        typer.Option(
+            "--character",
+            help="When FILE is a name several files have: this character folder's, "
+            "as <Character> or <Realm folder>/<Character>.",
+        ),
+    ] = None,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -3848,14 +5617,22 @@ def sv_dump(
 
     \f
     JSON: SvDumpReport."""
+    last_part_only = False
     if install_only:
-        # Read the path that was checked; opening it without following a
-        # link on the way is EV-24's.
-        target, real = _sv_inside_install(file, root, flavor)
-        doc = luadata.read(real)
+        # Read the real path that was checked, opened from the real path of
+        # the install one folder at a time (M16-49), so a folder swapped for
+        # a link after the check is refused, not followed.
+        target, real, home = _sv_inside_install(file, root, flavor, account, character)
+        read_root: Path | None = home
     else:
-        target = _sv_file(file, root, flavor)
-        doc = luadata.read(target)
+        target, read_root = _sv_file_and_root(file, root, flavor, account, character)
+        real = target
+        # Outside any install wowlab found: only the file itself is checked.
+        last_part_only = read_root is None
+    try:
+        doc = luadata.read(real, root=read_root)
+    except FileNotFoundError as exc:
+        raise _sv_not_found(target) from exc
     if path is not None:
         value = _resolve_path(doc, path)
         if json_out:
@@ -3870,6 +5647,8 @@ def sv_dump(
         for a in doc.assignments:
             for p, v in _flatten(a.name, a.value):
                 _say(f"{p} = {v}")
+    if last_part_only:
+        _note(_SV_LAST_PART_ONLY)
     _note(_SV_TIMING)
 
 
@@ -4094,10 +5873,23 @@ def _merge_target(
     return target
 
 
-def _read_sv(path: Path) -> bytes:
-    """A SavedVariables file's bytes, read without following a link and
-    without blocking on anything but a regular file (L1)."""
-    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+def _listed[T](read: Callable[..., T], lay: layout.Layout, rel: str, **kwargs: Any) -> T:
+    """`read(<flavor folder>/rel, root=<install root>, **kwargs)`: a file a
+    listing of the install just found, read from the install root one folder
+    at a time (M16-49, M16-65). The listing follows no link, so a link met
+    now changed while wowlab read it, and the refusal says so."""
+    try:
+        return read(lay.flavor_path / rel, root=lay.install_root, **kwargs)
+    except snapshot.LinkedPathError as exc:
+        raise exc.changed_while_read(lay.flavor_path) from exc
+
+
+def _read_sv(lay: layout.Layout, rel: str) -> bytes:
+    """A SavedVariables file's bytes, `rel` under the flavor folder, opened
+    from the install root one folder at a time (M16-65), so a link anywhere
+    on the way is refused with the folder named, and without blocking on
+    anything but a regular file (L1)."""
+    return _listed(snapshot.read_regular_file, lay, rel, limit=luadata.MAX_FILE_BYTES)
 
 
 def _snapshot_sv(store: snapshot.SnapshotStore, snapshot_id: str, rel: str, folder: str) -> bytes:
@@ -4221,7 +6013,7 @@ def _loader_check(
             "lab-addon installed (`wowlab addon install lab`), one login and logout writes it."
         ]
     rel = found.path
-    disk = _read_sv(lay.flavor_path / rel)
+    disk = _read_sv(lay, rel)
     try:
         probe = svmerge.read_probe(luadata.parse(disk))
     except luadata.LuaDataError as exc:
@@ -4607,7 +6399,7 @@ def sv_merge(
             raise CliError("--base goes with --from SNAPSHOT, not a character", EXIT_USAGE)
     base_id = store.resolve_id(base) if base is not None else None
     target_path = lay.flavor_path / target.path
-    ours_bytes = _read_sv(target_path)
+    ours_bytes = _read_sv(lay, target.path)
     expected = hashlib.sha256(ours_bytes).hexdigest()
     if expect_target is not None and expect_target != expected:
         # Final already: this run would merge into other bytes than the plan
@@ -4623,7 +6415,7 @@ def sv_merge(
         found = _character_sv(files, acct, source_char, _sv_name(target))
         if found is None:
             raise CliError(f"{source_char.path}/SavedVariables/ has no {_sv_name(target)}")
-        theirs_bytes = _read_sv(lay.flavor_path / found.path)
+        theirs_bytes = _read_sv(lay, found.path)
         source = f"character {source_char.realm_folder}/{source_char.folder}"
     elif source_snap is not None:
         theirs_bytes = _snapshot_sv(store, source_snap, target.path, chosen.folder)
@@ -4865,7 +6657,11 @@ def _read_config(
     target, found = _wtf_file(lay, name, scope, account, character)
     if found is None:
         return target, None, None
-    return target, found.path, wtfconfig.read_config(lay.flavor_path / found.path)
+    return (
+        target,
+        found.path,
+        _listed(wtfconfig.read_config, lay, found.path),
+    )
 
 
 def _no_file(what: str, target: _Target) -> str:
@@ -5017,7 +6813,7 @@ def binds_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "bindings-cache.wtf", scope, account, character)
-    doc = wtfconfig.read_bindings(lay.flavor_path / found.path) if found else None
+    doc = _listed(wtfconfig.read_bindings, lay, found.path) if found else None
     report = BindsReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -5154,7 +6950,7 @@ def _coach_record(
             raise
         return None, None, None, str(exc)
     try:
-        return target, how, labaddon.read_char(lay.flavor_path / target.path), None
+        return target, how, _listed(labaddon.read_char, lay, target.path), None
     except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
         return target, how, None, str(exc)
 
@@ -5225,7 +7021,7 @@ def _coach_default_record(
             ranked.append((-1, newest, folder, None, None, str(exc)))
             continue
         try:
-            record = labaddon.read_char(lay.flavor_path / target.path)
+            record = _listed(labaddon.read_char, lay, target.path)
         except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
             ranked.append((-1, newest, folder, target, None, str(exc)))
             continue
@@ -5471,6 +7267,7 @@ def binds_coach(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
     """Coach your key bindings from a combat log: spells you cast often on
     high-cost keys, spells you cast with no key, and keys bound to spells you did not
@@ -5540,10 +7337,22 @@ def binds_coach(
     if json_out:
         _emit(report)
         return
-    _say_coach(report)
+    _say_coach(report, notes_out, _account_words(acct))
 
 
-def _say_coach(report: BindsCoachReport) -> None:
+_SHORT_REASON = re.compile(r" \(|: |\. |, so ")
+
+
+def _short_reason(reason: str) -> str:
+    """A cannot-judge reason up to its first explanation, for the count line
+    it replaces; the whole reason is said once below the counts."""
+    m = _SHORT_REASON.search(reason)
+    return reason[: m.start()] if m else reason
+
+
+def _say_coach(
+    report: BindsCoachReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
     counts = report.log.counts
     against = report.record_file or "no lab-addon record"
     if report.log.file is None or counts is None:
@@ -5556,19 +7365,23 @@ def _say_coach(report: BindsCoachReport) -> None:
             else "; none of your casts"
         )
         newest = {
-            "newest": " (the newest)",
+            # Not the judged character's log, perhaps: said here, so the
+            # caveat slot is free (domain review, M16-16).
+            "newest": " (the newest, whichever character wrote it; choose another with --log)",
             "--log": " (--log)",
             "caster name": f" (the newest with casts by {report.log.character_name})",
             None: "",
         }[report.log.chosen_by]
-        _say(
+        _say_prose(
             f"Combat log: {report.log.file}{newest} ({_plural(counts.lines, 'line')}; "
-            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}"
+            f"COMBAT_LOG_VERSION {versions}{span}), judged against {against}",
+            keep=[report.log.file, report.record_file],
         )
+        held = [*keep, report.log.file, *report.log.casters]
         if report.log.warning is not None:
-            _say(f"  Warning: {report.log.warning}")
+            _say_prose(f"Warning: {report.log.warning}", indent="  ", hang="    ", keep=held)
         if report.log.scan_note is not None:
-            _say(f"  Note: {report.log.scan_note}")
+            _say_prose(f"Note: {report.log.scan_note}", indent="  ", hang="    ", keep=held)
         _say(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
             f"(picked by the source flags: yours, and a player); {counts.others} by other units"
@@ -5585,7 +7398,7 @@ def _say_coach(report: BindsCoachReport) -> None:
             _say(f"  {_plural(counts.unparsed, 'line')} the tokenizer could not read")
     if report.record_file is None:
         why = report.record_error or bindscoach.GET_RECORD
-        _say(f"Action bars and bindings: no lab-addon record ({why})")
+        _say_prose(f"Action bars and bindings: no lab-addon record ({why})", keep=keep)
     elif report.record_error is not None:
         _say(f"Action bars and bindings: {report.record_file} not read ({report.record_error})")
     else:
@@ -5593,35 +7406,53 @@ def _say_coach(report: BindsCoachReport) -> None:
         if report.chosen_by == "newest schema":
             because = report.chosen_because or "the newest record schema, then written last"
             picked = f" ({because}; choose another with --character)"
-        _say(
+        _say_prose(
             f"Action bars and bindings: {report.record_file} "
-            f"(schema {report.record_schema}){picked}"
+            f"(schema {report.record_schema}){picked}",
+            keep=[*keep, report.record_file],
         )
     if report.unseen is not None:
-        _say_note(report.unseen)
+        _say_prose(_player_copy(report.unseen))
     costs = report.costs
     table = costs.table
+    # No absolute path: the tables' places are in --json and --notes (M16-16).
     if costs.source == "default":
-        _say(
+        _say_prose(
             "Key costs: the shipped default table, an opinion that assumes a QWERTY keyboard, "
-            "the left hand on W A S D and a mouse with two side buttons. To use your own, copy "
-            f"{costs.shipped} to {costs.user_file} (create the folder if it is missing) and "
-            "edit it."
+            "the left hand on W A S D and a mouse with two side buttons"
         )
     else:
-        _say(f"Key costs: your table {costs.user_file}, over the shipped default {costs.shipped}")
+        _say_prose(
+            f"Key costs: your {bindscoach.COSTS_FILE} in wowlab's user config folder, over the "
+            "shipped default"
+        )
     _say(
         f"  High-cost: {table.high_cost} or more. Frequent: at least {table.frequent_share:.0%} "
         f"of your casts and at least {_plural(table.frequent_min_casts, 'cast')}."
     )
+    # A report the coach cannot judge says so where its count would be: a 0
+    # there read as "nothing wrong" (M16-16).
+    unjudged: dict[str, str] = {}
+    for c in report.cannot_judge:
+        unjudged.setdefault(c.report, c.reason)
+    # Without bars or bindings the coach cannot see a key: "no key" would
+    # claim one (domain review, M16-16).
+    no_key = "key unknown" if "cast-without-bind" in unjudged else "no key"
     _say(f"Your casts by spell (matched to slots by {report.matched_by}):")
     if not report.spells:
         _say("  none")
     for s in report.spells:
-        keys = _key_words(s.keys) if s.keys else "no key"
+        keys = _key_words(s.keys) if s.keys else no_key
         note = f"; {s.match_note}" if s.match_note else ""
         _say(f"  {s.casts:>6}  {s.spell_name} ({s.spell_id}): {keys}{note}")
-    _say(f"Frequent spells on high-cost keys: {len(report.frequent_on_high_cost)}")
+
+    def count(rule: str, n: int) -> str:
+        if rule in unjudged:
+            return f"cannot judge ({_short_reason(unjudged[rule])})"
+        return str(n)
+
+    frequent = count("frequent-on-high-cost", len(report.frequent_on_high_cost))
+    _say_prose(f"Frequent spells on high-cost keys: {frequent}", keep=keep)
     for f in report.frequent_on_high_cost:
         note = f"; {f.match_note}" if f.match_note else ""
         _say(
@@ -5629,10 +7460,16 @@ def _say_coach(report: BindsCoachReport) -> None:
             f"{_plural(f.casts, 'cast')} ({f.share:.0%}), "
             f"{_key_words(f.keys)}{note}"
         )
-    _say(f"Spells cast with no bind: {len(report.cast_without_bind)}")
+    _say_prose(
+        f"Spells cast with no bind: {count('cast-without-bind', len(report.cast_without_bind))}"
+    )
     for u in report.cast_without_bind:
         where = f" (slots {', '.join(map(str, u.slots))})" if u.slots else ""
-        _say(f"  {u.spell_name} ({u.spell_id}): {_plural(u.casts, 'cast')}{where}: {u.detail}")
+        _say_prose(
+            f"{u.spell_name} ({u.spell_id}): {_plural(u.casts, 'cast')}{where}: {u.detail}",
+            indent="  ",
+            hang="    ",
+        )
     if report.on_unfollowed_page:
         _say(
             "Spells only on main-bar pages the coach does not follow: "
@@ -5650,27 +7487,40 @@ def _say_coach(report: BindsCoachReport) -> None:
     least = table.never_cast_min_casts
     withheld = report.never_cast_withheld
     if withheld:
-        _say(
+        _say_prose(
             f"Binds to spells not cast in this log: withheld, this log has {mine} of your casts, "
             f"under the minimum sample of {least}"
         )
-    elif mine == 0 or any(c.report == "bound-never-cast" for c in report.cannot_judge):
-        _say(f"Binds to spells not cast in this log: {len(report.bound_never_cast)}")
+    elif "bound-never-cast" in unjudged:
+        _say_prose(
+            "Binds to spells not cast in this log: "
+            f"{count('bound-never-cast', len(report.bound_never_cast))}"
+        )
     else:
-        _say(
+        _say_prose(
             f"Binds to spells not cast in this log ({_plural(mine, 'cast')}{span}; judged from "
             f"{_plural(least, 'cast')} up): {len(report.bound_never_cast)}"
         )
     for b in report.bound_never_cast:
         name = b.spell_name or "a spell the spellbook record does not name"
         _say(f"  {_key_words(b.keys)}: slot {b.slot}, {name} ({b.spell_id})")
-    _say(f"Cannot judge: {len(report.cannot_judge)}")
-    for c in report.cannot_judge:
-        _say(f"  {c.report}: {c.reason}")
-    for caveat in report.caveats:
-        _say_note(f"Note: {caveat}")
-    for note in report.notes:
-        _say_note(note)
+    # Each reason once, in full, when a count line gave it short; the
+    # withheld sample has its own line above.
+    shown = [c for c in report.cannot_judge if not (withheld and c.report == "bound-never-cast")]
+    for reason in dict.fromkeys(c.reason for c in shown):
+        if _short_reason(reason) != reason:
+            _say_prose(f"Cannot judge because: {reason}", keep=keep)
+    # The one caveat is the first of the coach's own for this result; any
+    # other joins the standing notes.
+    caveats = [f"{c[:1].upper()}{c[1:]}." for c in report.caveats]
+    standing = [*caveats[1:], *report.notes]
+    if costs.source == "default":
+        standing.append(
+            f"To change what a key costs, put the values to change in "
+            f"{_home_words(costs.user_file)} (create the folder if it is missing); a value there "
+            "replaces the shipped one."
+        )
+    _say_notes(standing, show_notes, caveats[0] if caveats else None)
 
 
 class MacroItem(_Out):
@@ -5709,7 +7559,7 @@ def macros_list(
     _, _, lay = _open(root, flavor)
     scope: Scope = "character" if character is not None else "account"
     target, found = _wtf_file(lay, "macros-cache.txt", scope, account, character)
-    doc = wtfconfig.read_macros(lay.flavor_path / found.path) if found else None
+    doc = _listed(wtfconfig.read_macros, lay, found.path) if found else None
     report = MacrosReport(
         file=found.path if found else None,
         scope=target.scope,
@@ -5754,11 +7604,24 @@ def macros_list(
 # is refused before it is read.
 _MACROS_LIMIT = 16 * 1024 * 1024
 
-_MACROS_CHECK_NOTES = [
+_MACRO_FILE_NOTE = (
     "macros-cache.txt is what the client last wrote; the server can replace it at login when "
     "macro sync is on. In a real capture (docs/LAB_FORMATS.md, 2026-10-16) a macro made in a "
     "finished session was missing from it (whether the client rewrites it at logout is "
-    "[verify]), so a macro may be missing here, or still listed after you deleted it.",
+    "[verify]), so a macro may be missing here, or still listed after you deleted it."
+)
+# The note in text: its marker as the sentence's own words, wherever it is
+# said ("whether ... is not yet confirmed"), as char gear does for its own.
+_MACRO_FILE_TEXT = _MACRO_FILE_NOTE.replace("logout is [verify])", "logout is not yet confirmed)")
+
+
+def _macro_notes(notes: Sequence[str]) -> list[str]:
+    """`notes` with the macros-cache.txt note in its text words."""
+    return [_MACRO_FILE_TEXT if n == _MACRO_FILE_NOTE else n for n in notes]
+
+
+_MACROS_CHECK_NOTES = [
+    _MACRO_FILE_NOTE,
     "The spellbook and action bars are the lab-addon's record as of its last save "
     "(logout or /reload), not the session in progress. It reads the player's spellbook "
     "only, so an item, a pet, mount or toy spell after /cast reads as not in the spellbook.",
@@ -5816,7 +7679,7 @@ def _check_record(
     except CliError as exc:  # several files and no single choice (case variants)
         return None, None, str(exc)
     try:
-        return target.path, labaddon.read_char(lay.flavor_path / target.path), None
+        return target.path, _listed(labaddon.read_char, lay, target.path), None
     except (labaddon.LabAddonError, luadata.LuaDataError, OSError) as exc:
         return target.path, None, str(exc)
 
@@ -5829,6 +7692,7 @@ def macros_check(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
     """Check the account's macros, and one character's with --character, for
     a body over 255, a spell not in the spellbook, a macro on no action bar,
@@ -5853,7 +7717,7 @@ def macros_check(
         if found is None:
             files.append(MacrosFile(scope=scope, file=None, macros=0, unknown_lines=0))
             continue
-        data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+        data = _listed(snapshot.read_regular_file, lay, found.path, limit=_MACROS_LIMIT)
         doc = wtfconfig.parse_macros(data)
         files.append(
             MacrosFile(
@@ -5904,18 +7768,17 @@ def macros_check(
                 f"{f.scope.capitalize()} macros: {_plural(f.macros, 'macro')} in {f.file}"
                 + (extra if f.unknown_lines else "")
             )
+    held = [*_account_words(acct), report.record_file]
     if report.record_error is not None:
         place = report.record_file or "the WowLab.lua"
-        _say(f"Spellbook and action bars: {place} not read ({report.record_error})")
+        _say_prose(
+            f"Spellbook and action bars: {place} not read ({report.record_error})", keep=held
+        )
     elif report.record_file is None:
         hint = "use --character" if character is None else macrocheck.GET_RECORD
-        _say(f"Spellbook and action bars: no lab-addon record ({hint})")
+        _say_prose(f"Spellbook and action bars: no lab-addon record ({hint})", keep=held)
     else:
         _say(f"Spellbook and action bars: {report.record_file} (schema {report.record_schema})")
-    _say_note(
-        f"Length: counted in {report.length_unit}; the client's limit is "
-        f"{report.length_limit}, and whether it counts characters or bytes is [verify]"
-    )
     if report.blank_names:
         _say(
             f"Blank names: {_plural(report.blank_names, 'macro')} named with nothing but spaces, "
@@ -5923,21 +7786,35 @@ def macros_check(
         )
     _say(f"Findings: {len(report.findings)}")
     for finding in report.findings:
-        _say(
-            f"  {finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
-            f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}'
+        _say_prose(
+            f"{finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
+            f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}',
+            indent="  ",
+            hang="    ",
         )
     _say(f"Cannot judge: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
         if c.macro is None:
-            _say(f"  {c.rule}: {_player_copy(c.reason)}")
+            _say_prose(f"{c.rule}: {_player_copy(c.reason)}", indent="  ", hang="    ")
         else:
-            _say(
-                f"  {c.rule}: {c.macro.scope} macro {c.macro.id} "
-                f'"{c.name}" (line {c.line}): {_player_copy(c.reason)}'
+            _say_prose(
+                f"{c.rule}: {c.macro.scope} macro {c.macro.id} "
+                f'"{c.name}" (line {c.line}): {_player_copy(c.reason)}',
+                indent="  ",
+                hang="    ",
             )
-    for note in report.notes:
-        _say_note(note)
+    # Built so the marker reads as words: "... in bytes (not yet confirmed)."
+    length = (
+        f"Length: counted in {report.length_unit}; the client's limit is "
+        f"{report.length_limit}, counted in characters or in bytes [verify]."
+    )
+    # The one caveat: the length rule's unknown when a body is over the
+    # limit; otherwise that macros-cache.txt may be stale or replaced.
+    over = any(
+        m.characters > report.length_limit or m.bytes > report.length_limit for m in report.macros
+    )
+    caveat = length if over else _MACRO_FILE_TEXT
+    _say_notes([length, *_macro_notes(report.notes)], notes_out, caveat, keep=held)
 
 
 # ─── addons ──────────────────────────────────────────────────────────────────
@@ -5990,6 +7867,195 @@ def addons_list(root: RootOpt = None, flavor: FlavorOpt = None, json_out: JsonOp
         if a.blizzard:
             bits.append("named like a Blizzard addon")
         _say("  ".join(bits))
+
+
+class AddonsCheckReport(_Out):
+    """`wowlab addons check --json`."""
+
+    flavor_folder: str
+    check: addoncheck.AddonsCheck
+    notes: list[str]  # the caveat, if any, then the standing notes
+
+
+_CHECK_OUT_OF_DATE = (
+    "An interface that differs from the client's makes the client list the addon as out of "
+    "date; it does not change what the addon can call. This client's interface is worked out "
+    "from its version: major x 10000 + minor x 100 + patch."
+)
+_CHECK_DEFAULT = (
+    "An addon that a character's AddOns.txt does not list is at the client's default for that "
+    "character, so a missing name does not mean disabled. When a character has two folders "
+    "that each hold an AddOns.txt, which one the client reads is not known [verify]."
+)
+_CHECK_BLIZZARD = (
+    "A Blizzard_ dependency is taken to be one of the client's own addons, which load from "
+    "game data, not from Interface/AddOns/ [verify]. wowlab cannot see which ones this client "
+    "ships, so it never counts one as missing."
+)
+_CHECK_DEPS = (
+    "Only RequiredDeps and Dependencies are checked; OptionalDeps and other Dep-prefixed "
+    "directives (which the client may also treat as required [verify]) are not."
+)
+
+
+def _check_caveat(check: addoncheck.AddonsCheck) -> str | None:
+    """The one caveat that applies to this result, if any."""
+    if check.client_interface is None:
+        return (
+            "wowlab cannot tell this client's interface: the flavor's version is not known, "
+            "so no addon's interface is judged."
+        )
+    unread = [t for t in check.addons_txt if t.error is not None]
+    if unread:
+        return (
+            f"{_plural(len(unread), 'AddOns.txt file')} could not be read, so the characters "
+            "shown may be incomplete: " + "; ".join(f"{t.path}: {t.error}" for t in unread)
+        )
+    return None
+
+
+_TocRole = Literal["only", "several", "another game type"]
+
+
+def _check_interface(toc: addoncheck.TocCheck, interface: int | None, role: _TocRole) -> str:
+    """`role`: the addon's one TOC; one of several; or one of several when
+    another one matches this client, so this one is for another game type."""
+    if toc.interface_status == "unread":
+        return f"not read: {toc.error}"
+    if toc.interface_status == "none":
+        return "no ## Interface: line"
+    if toc.interface_status == "matches":
+        return f"{toc.interface}: matches this client"
+    if toc.interface_status == "differs":
+        if role == "another game type":
+            # wowlab's own words, rendered for a player; the interface is the TOC's.
+            return f"{toc.interface}: " + _player_copy("taken to be for another game type [verify]")
+        if role == "several":
+            return f"{toc.interface}: not this client's {interface}"
+        return f"{toc.interface}: this client is {interface}, so it is out of date"
+    return f"{toc.interface}: this client's is not known"
+
+
+def _check_toc_lines(
+    toc: addoncheck.TocCheck, interface: int | None, indent: str, role: _TocRole
+) -> list[str]:
+    lines = [f"{indent}interface   {_check_interface(toc, interface, role)}"]
+    if toc.interface_status == "unread":
+        return lines
+    if toc.dependencies:
+        words = {
+            "installed": "installed",
+            "installed_no_toc": "installed, but has no TOC the client loads",
+            "missing": "not installed",
+            "blizzard": "the client's own",
+        }
+        deps = ", ".join(f"{d.name} ({words[d.status]})" for d in toc.dependencies)
+        lines.append(f"{indent}needs       {deps}")
+    else:
+        lines.append(f"{indent}needs       nothing")
+    lines.append(
+        f"{indent}loads       "
+        + (
+            "on demand: only when another addon or the client asks for it"
+            if toc.load_on_demand
+            else "at login, when enabled"
+        )
+    )
+    lines.append(f"{indent}version     {_ui_text(toc.version) if toc.version else 'not given'}")
+    return lines
+
+
+def _check_characters(addon: addoncheck.AddonCheck, files: int) -> str:
+    if files == 0:
+        return "no character folder holds an AddOns.txt"
+    if not addon.characters:
+        if files == 1:
+            return "not listed in the one AddOns.txt found"
+        return f"not listed in any of the {files} AddOns.txt files found"
+    groups: dict[str, list[str]] = {}
+    for c in addon.characters:
+        groups.setdefault(c.state, []).append(f"{c.realm_folder}/{c.character_folder}")
+    return "; ".join(f"{state} for {', '.join(names)}" for state, names in groups.items())
+
+
+@addons_app.command(
+    "check", short_help="Each addon against this client: interface, dependencies, characters."
+)
+@_handled
+def addons_check(
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """Check each folder under Interface/AddOns/: its TOC's interface against
+    this client's, a required dependency that is not installed, whether it
+    loads on demand, its version, and which characters' AddOns.txt list it.
+    Reads only; nothing is fetched.
+
+    \f
+    JSON: AddonsCheckReport."""
+    _, chosen, lay = _open(root, flavor)
+    check = addoncheck.check_addons(lay, chosen.version)
+    caveat = _check_caveat(check)
+    standing = [_CHECK_OUT_OF_DATE, _CHECK_DEFAULT, _CHECK_BLIZZARD, _CHECK_DEPS]
+    report = AddonsCheckReport(
+        flavor_folder=chosen.folder,
+        check=check,
+        notes=[caveat, *standing] if caveat is not None else standing,
+    )
+    if json_out:
+        _emit(report)
+        return
+    addons = check.addons
+    if not addons:
+        _say("No addon folders.")
+    else:
+        missing = sum(1 for a in addons if a.missing_dependencies)
+        differs = sum(1 for a in addons if a.out_of_date)
+        none_for_client = sum(1 for a in addons if a.no_toc_for_client)
+        unloaded = sum(1 for a in addons if a.selection == "no_toc")
+        unloadable = sum(1 for a in addons if a.unloadable_dependencies)
+        bits = [f"{missing} missing a required addon", f"{differs} out of date"]
+        if unloadable:
+            bits.append(f"{unloadable} needing an addon that has no TOC the client loads")
+        if none_for_client:
+            bits.append(f"{none_for_client} with several TOCs, none for this client's interface")
+        if unloaded:
+            bits.append(f"{unloaded} with no TOC the client loads")
+        interface = (
+            f"this client's interface is {check.client_interface}"
+            if check.client_interface is not None
+            else "this client's interface is not known"
+        )
+        _say(f"{_plural(len(addons), 'addon')}: {', '.join(bits)}; {interface}.")
+    files = len(check.addons_txt)
+    for a in addons:
+        _say()
+        head = [a.name]
+        titled = next((t.title for t in a.tocs if t.title), None)
+        if titled:
+            head.append(f'"{_ui_text(titled)}"')
+        if a.blizzard:
+            head.append("named like a Blizzard addon")
+        _say("  ".join(head))
+        if a.selection == "no_toc":
+            _say("  no TOC file named after the folder; the client does not load it")
+        elif len(a.tocs) == 1:
+            for line in _check_toc_lines(a.tocs[0], check.client_interface, "  ", "only"):
+                _say(line)
+        else:
+            _say(f"  {len(a.tocs)} TOC files; which one loads depends on the game type")
+            one_match = sum(1 for t in a.tocs if t.interface_status == "matches") == 1
+            for toc in a.tocs:
+                role: _TocRole = "another game type" if one_match else "several"
+                _say(f"  {toc.file}")
+                for line in _check_toc_lines(toc, check.client_interface, "    ", role):
+                    _say(line)
+        _say(f"  characters  {_check_characters(a, files)}")
+    if addons:
+        _say()
+    _say_notes(standing, notes_out, caveat, keep=[t.path for t in check.addons_txt])
 
 
 # ─── log ─────────────────────────────────────────────────────────────────────
@@ -6062,6 +8128,7 @@ _FOLLOWING_WORDS = {
 def _print_log_entry(entry: combatlog.Entry | LogFollowing, json_out: bool) -> None:
     if json_out:
         line = LogTailLine(entry).model_dump(mode="json")
+        _Report.printed = True
         typer.echo(json.dumps(_map_strings(line, _json_text), ensure_ascii=True))
     elif isinstance(entry, LogFollowing):
         _say(f"==> {entry.file}{_FOLLOWING_WORDS[entry.reason]} <==")
@@ -6146,6 +8213,8 @@ def log_tail(
 
     \f
     JSON: LogTailReport; with --follow, one LogTailLine per line of output."""
+    # Line-delimited before anything can fail: an error is one line too.
+    _Report.lines = follow and json_out
     _, _, lay = _open(root, flavor)
     logs = _logs_dir(lay)
     newest = combatlog.newest_log(logs) if logs is not None else None
@@ -6366,6 +8435,10 @@ _KIND_WORDS: dict[snapshot.SnapshotKind, str] = {
         "taken automatically just before a change; restoring it puts the files back "
         "as they were just before that change"
     ),
+    "imported": (
+        "added from a file by snap import, so not one you took on this computer; "
+        "latest-user never names it"
+    ),
 }
 
 
@@ -6528,18 +8601,18 @@ def snap_show(
     JSON: the manifest (snapshot.Manifest), with its kind."""
     store = snapshot.SnapshotStore()
     manifest = store.show(_resolve_ref(store, snapshot_id))
-    if manifest.kind is None:
-        # Written before kinds existed: say what it is, as the journal tells.
-        manifest = manifest.model_copy(
-            update={"kind": snapshot.kind_of(manifest, _pre_write_ids(store))}
-        )
+    # The effective kind, in the text and the JSON alike: one written before
+    # kinds existed is what the journal tells, and an imported one is said
+    # to be so whatever kind its manifest claims (M16-04).
+    pre_write = _pre_write_ids(store) if manifest.kind is None else frozenset[str]()
+    kind = snapshot.kind_of(manifest, pre_write, store.imported_ids())
+    manifest = manifest.model_copy(update={"kind": kind})
     if json_out:
         _emit_manifest(manifest)
         return
     _say(f"Snapshot {manifest.id}")
     _say(f"  taken:    {manifest.created_at}")
-    if manifest.kind is not None:
-        _say(f"  kind:     {manifest.kind}, {_KIND_WORDS[manifest.kind]}")
+    _say(f"  kind:     {kind}, {_KIND_WORDS[kind]}")
     if manifest.label:
         _say(f"  label:    {manifest.label}")
     _say(f"  install:  {manifest.install_root}")
@@ -6584,6 +8657,10 @@ class DiffReport(_Out):
     removed: list[snapshot.Entry]
     changed: list[ChangedFile]
     mode_changed: list[snapshot.Change]
+    # The text output, line by line, as the terminal shows it: under a changed
+    # bindings, macros or CVar file the keys, macros and CVars by name, under
+    # a SavedVariables file one summary line (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 def _is_saved_variables(path: str) -> bool:
@@ -6609,6 +8686,14 @@ def _lua_diff(
         return None, None
     if change.before.sha256 is None or change.after.sha256 is None:
         return None, "one side is a link"
+    # The parser's own bound (M16-72): a side over it would be refused by
+    # `luadata.parse` anyway, so it is never inflated into memory first.
+    largest = max(change.before.size, change.after.size)
+    if largest > luadata.MAX_FILE_BYTES:
+        return None, (
+            f"not compared as data: one side holds {largest} bytes, "
+            f"more than the {luadata.MAX_FILE_BYTES} wowlab reads as data"
+        )
     try:
         # By content hash: the store checks the bytes against the name.
         before = _leaves(store.read_object(change.before.sha256, size=change.before.size))
@@ -6662,36 +8747,65 @@ def snap_diff(
         changed=changed,
         mode_changed=list(diff.mode_changed),
     )
+    lines = [f"From {diff.a} to {diff.b}:"]
+    if a_version != b_version:
+        lines.append(
+            f"  ({diff.a} was taken on {_version(a_version)}; {diff.b} on {_version(b_version)})"
+        )
+    if diff.is_empty:
+        lines.append("  no differences")
+    lines.extend(f"  added    {e.path}" for e in report.added)
+    lines.extend(f"  removed  {e.path}" for e in report.removed)
+    for cf in report.changed:
+        lines.append(f"  changed  {cf.path}")
+        lines.extend(_diff_detail_lines(store, cf))
+    lines.extend(
+        f"  mode     {m.path} ({m.before.mode:o} -> {m.after.mode:o})" for m in report.mode_changed
+    )
+    report = report.model_copy(update={"plan_lines": [_safe(line) for line in lines]})
     if json_out:
         _emit(report)
         return
-    _say(f"From {diff.a} to {diff.b}:")
-    if a_version != b_version:
-        _say(f"  ({diff.a} was taken on {_version(a_version)}; {diff.b} on {_version(b_version)})")
-    if diff.is_empty:
-        _say("  no differences")
-    for e in report.added:
-        _say(f"  added    {e.path}")
-    for e in report.removed:
-        _say(f"  removed  {e.path}")
-    for cf in report.changed:
-        _say(f"  changed  {cf.path}")
-        if cf.lua_note:
-            _say(f"      ({cf.lua_note})")
-        for lc in cf.lua or []:
+    for line in lines:
+        _say(line)
+
+
+def _diff_detail_lines(store: snapshot.SnapshotStore, cf: ChangedFile) -> list[str]:
+    """The lines under one changed file of `snap diff`: every key, macro or
+    CVar by name; for SavedVariables the summary line, then each value."""
+    if _is_saved_variables(cf.path):
+        before_size, after_size = _bytes(cf.before.size), _bytes(cf.after.size)
+        lines: list[str] = []
+        if cf.lua is None:
+            if cf.lua_note:
+                lines.append(f"{_DETAIL_INDENT}({cf.lua_note})")
+            lines.append(_sv_summary(None, 0, 0, before_size, after_size))
+            return lines
+        removed = sum(1 for lc in cf.lua if lc.after is None)
+        added = sum(1 for lc in cf.lua if lc.before is None)
+        lines.append(
+            _sv_summary(removed, added, len(cf.lua) - removed - added, before_size, after_size)
+        )
+        for lc in cf.lua:
             if lc.before is None:
-                _say(f"      + {lc.path} = {lc.after}")
+                lines.append(f"{_DETAIL_INDENT}+ {lc.path} = {lc.after}")
             elif lc.after is None:
-                _say(f"      - {lc.path} = {lc.before}")
+                lines.append(f"{_DETAIL_INDENT}- {lc.path} = {lc.before}")
             else:
-                _say(f"      ~ {lc.path}: {lc.before} -> {lc.after}")
-    for m in report.mode_changed:
-        _say(f"  mode     {m.path} ({m.before.mode:o} -> {m.after.mode:o})")
+                lines.append(f"{_DETAIL_INDENT}~ {lc.path}: {lc.before} -> {lc.after}")
+        return lines
+    if wtfdiff.kind_of(cf.path) is None:
+        return []
+    if cf.before.sha256 is None or cf.after.sha256 is None:
+        return []  # a link on one side: no bytes to compare
+    before = _stored(store, cf.before.sha256, cf.before.size)
+    after = _stored(store, cf.after.sha256, cf.after.size)
+    return _detail_lines(cf.path, before, after, limit=None)
 
 
 @snap_app.command("verify", short_help="Check every stored file and snapshot.")
 @_handled
-def snap_verify(json_out: JsonOpt = False) -> None:
+def snap_verify(json_out: JsonOpt = False, notes_out: NotesOpt = False) -> None:
     """Re-hash every stored object and check every manifest. Exits 1 on any
     problem.
 
@@ -6719,6 +8833,11 @@ def snap_verify(json_out: JsonOpt = False) -> None:
             _say(f"  damaged manifest {bad.name}: {bad.reason}")
         if report.ok:
             _say("  all sound")
+        exposed = _exposure_line(report.exposure)
+        if exposed is not None:
+            _say_prose(f"  {exposed}", hang="    ")
+        # A standing caveat on Windows, so behind --notes (M16-41, fix round 1).
+        _say_notes([] if report.exposure.checked else [_STORE_MODES_NOTE], notes_out)
     if not report.ok:
         raise typer.Exit(EXIT_ERROR)
 
@@ -6746,7 +8865,9 @@ def snap_gc(
     JSON: snapshot.GcReport."""
     store = snapshot.SnapshotStore()
     if not store.path.is_dir():
-        report = snapshot.GcReport(dry_run=True, unreferenced=(), unreferenced_bytes=0, removed=())
+        report = snapshot.GcReport(
+            dry_run=dry_run, unreferenced=(), unreferenced_bytes=0, removed=()
+        )
         if json_out:
             _emit(report)
         else:
@@ -6774,6 +8895,9 @@ def snap_gc(
                 )
             _confirm("Remove them?", yes)
             report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
+    # `dry_run` says whether this was a dry run: a run that was not, and found
+    # nothing to remove, did not list as a dry run (M16-21).
+    report = report.model_copy(update={"dry_run": dry_run})
     if json_out:
         _emit(report)
         return
@@ -6800,9 +8924,99 @@ def snap_gc(
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
 
 
+@snap_app.command("export", short_help="Write one snapshot to a file you can carry elsewhere.")
+@_handled
+def snap_export(
+    snapshot_id: Annotated[str, typer.Argument(metavar="ID", help=_REF_HELP)],
+    file: Annotated[
+        Path,
+        typer.Argument(
+            metavar="FILE",
+            help="The new file to write, outside any game install. An existing file is "
+            "never replaced.",
+        ),
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Write one snapshot, with every file it holds, into a single new FILE
+    that `wowlab snap import` reads on another computer. Reads the store
+    only and opens nothing in a game install; FILE inside an install is
+    refused.
+
+    \f
+    JSON: snaparchive.ExportReport."""
+    store = snapshot.SnapshotStore()
+    report = snaparchive.export_snapshot(store, _resolve_ref(store, snapshot_id), file)
+    if json_out:
+        _emit(report)
+        return
+    _say(f"Exported snapshot {report.id} to {report.file}")
+    _say(
+        f"  {report.files} file(s), {_bytes(report.bytes)}; "
+        f"the archive is {_bytes(report.archive_bytes)}"
+    )
+
+
+@snap_app.command("import", short_help="Add a snapshot from a file snap export wrote.")
+@_handled
+def snap_import(
+    file: Annotated[
+        Path, typer.Argument(metavar="FILE", help="A file written by wowlab snap export.")
+    ],
+    json_out: JsonOpt = False,
+) -> None:
+    """Add the snapshot in FILE to this computer's store. Every file in it
+    is checked against its recorded size and content hash first; a damaged
+    or unexpected archive adds nothing. Changes nothing in a game install:
+    put the snapshot back with `wowlab snap restore`.
+
+    \f
+    JSON: snaparchive.ImportReport."""
+    store = snapshot.SnapshotStore()
+    with guard.store_lock(store.path, create=True):
+        report = snaparchive.import_snapshot(store, file)
+    if json_out:
+        _emit(report)
+        return
+    if report.added:
+        _say(f"Imported snapshot {report.id}")
+    else:
+        _say(f"Snapshot {report.id} is already in the store; nothing was added.")
+    _say(f"  taken:   {report.created_at}, on the computer it came from")
+    _say(
+        f"  of:      {report.flavor_folder} ({report.flavor_version or 'no version'}) "
+        f"in {report.install_root}"
+    )
+    if report.label:
+        _say(f"  label:   {report.label}")
+    _say(f"  files:   {report.files}")
+    _say(
+        f"To put it into an install on this computer: wowlab snap restore {report.id} "
+        "--into-root <install folder> (add --into-flavor <folder> if its folder has "
+        "another name there)."
+    )
+
+
+# The login caveat leads with the files the plan lists (M16-103). Whether
+# the client reads Config.wtf again at login, or only when it starts, is
+# unconfirmed, so the note ties it to the next start. The file map lists no
+# server replacement for Config.wtf (its row and the Timing rules; it holds
+# machine-scope settings), so its note names no server. The three sync CVars
+# `doctor` shows cover binds, macros and settings; which other *-cache files
+# the server replaces, and under which setting, is unconfirmed
+# (docs/LAB_FILE_MAP.md, its server sync note), so the note says so (M16-97).
 _RELOGIN = (
-    "The client reads these files at its next login; with server sync on (see wowlab "
-    "doctor), the server may replace binds, macros, settings and other *-cache files then."
+    "The client reads the *-cache files at login. The server may replace binds, macros and "
+    "account or character settings at login when their sync setting is on (see wowlab "
+    "doctor); it may also replace other *-cache files then, and under which setting is not "
+    "yet known."
+)
+_RESTART = "The next time you start the client, it reads Config.wtf again."
+_RESTART_RELOGIN = (
+    "The next time you start the client, it reads Config.wtf again; it reads the other "
+    "files at login. The server may replace binds, macros and account or character "
+    "settings at login when their sync setting is on (see wowlab doctor); it may also "
+    "replace other *-cache files then, and under which setting is not yet known."
 )
 
 
@@ -6811,11 +9025,19 @@ def _version(version: str | None) -> str:
 
 
 def _relogin_notes(paths: Sequence[str]) -> list[str]:
-    """The login caveat, when a change touches Config.wtf or a *-cache file."""
-    for path in paths:
-        name = path.rsplit("/", 1)[-1].casefold()
-        if name == "config.wtf" or "-cache" in name:
-            return [_RELOGIN]
+    """The login caveat, when a change touches Config.wtf or a *-cache file
+    under `WTF/` (paths relative to the flavor folder), in the words of the
+    files it touches: `_RELOGIN` for *-cache files only, `_RESTART` for
+    Config.wtf only, `_RESTART_RELOGIN` for both (M16-103). A file in a
+    SavedVariables folder, or outside `WTF/` (an addon's own file), is
+    neither, whatever its name (M16-97)."""
+    config, cache_file = profiles.login_files(paths)
+    if config and cache_file:
+        return [_RESTART_RELOGIN]
+    if config:
+        return [_RESTART]
+    if cache_file:
+        return [_RELOGIN]
     return []
 
 
@@ -6825,6 +9047,330 @@ def _plan_line(item: guard.PlanItem) -> str:
     if item.after is None:
         return f"  delete   {item.path}"
     return f"  replace  {item.path}  ({_bytes(item.size or 0)})"
+
+
+# ─── changes by name (M16-10) ────────────────────────────────────────────────
+#
+# Under a changed bindings, macros or CVar file, `snap diff` and the plans
+# of `snap restore`, `profile apply` and `undo` say what changes by name;
+# under a changed SavedVariables file, how many values go and the size.
+# Both sides are read read-only (the snapshot store, or the install through
+# the guarded opener) and parsed as data by the existing parsers.
+
+_DETAIL_INDENT = "      "
+_DETAIL_PLAN_LIMIT = 20  # named lines per file in a plan; `snap diff` lists every one
+_DETAIL_READ_LIMIT = 64 * 1024 * 1024  # a side larger than this is not compared
+_VALUE_WIDTH = 60
+
+
+class _Unread:
+    """A side that holds bytes wowlab could not read back (missing from the
+    store, changed on disk since the plan's hash, or over the size limit).
+    `why`, when set, is said in place of the general words: a file on disk
+    reached through a linked folder, the folder named (M16-65)."""
+
+    def __init__(self, why: str | None = None) -> None:
+        self.why = why
+
+
+_UNREAD = _Unread()
+type _Side = bytes | _Unread | None
+
+
+_NO_KEY_LINE = "(no line: the client's default binding)"
+_NO_CVAR_LINE = "(no line: set elsewhere or the client default)"
+_SCOPE_LINE = (
+    "  Each file is one scope (machine, account or character): key bindings come from "
+    'the account or the character file, as "Character Specific Key Bindings" sets; '
+    "account and character macros are two separate sets; each CVar is read from the "
+    "file of its own scope."
+)
+
+
+def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
+    """The lines a plan ends with before the prompt: the scope line when it
+    named a key, macro or CVar change (`named`: a bindings, macros or CVar
+    file got detail lines), and the login caveat whenever a listed path is
+    one the caveat is about, with or without detail lines under it (a file
+    wowlab cannot read, a delete or a recreate; M16-97). A
+    SavedVariables-only plan gets neither."""
+    scope = [_SCOPE_LINE] if named else []
+    return [*scope, *_relogin_notes(paths)]
+
+
+def _value_text(value: str | None, *, cvar: bool) -> str:
+    if value is None:
+        return _NO_CVAR_LINE if cvar else _NO_KEY_LINE
+    if len(value) > _VALUE_WIDTH:
+        value = value[: _VALUE_WIDTH - 3] + "..."
+    return f'"{value}"' if cvar else value
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _macro_label(change: wtfdiff.NamedChange) -> str:
+    """A macro's name as printed: quoted, `(2)` for the second of a name; a
+    blank or whitespace-only name by its place among the file's macros."""
+    if not change.name.strip():
+        return f"(blank name, {_ordinal(change.position)})"
+    label = f'"{change.name}"'
+    return label if change.occurrence <= 1 else f"{label} ({change.occurrence})"
+
+
+def _named_line(change: wtfdiff.NamedChange) -> str:
+    if change.what == "macro":
+        if change.before is None:
+            how = "added"
+        elif change.after is None:
+            how = "removed"
+        else:
+            how = " and ".join(change.parts) + " changed"
+        return f"{_DETAIL_INDENT}macro {_macro_label(change)}: {how}"
+    label = "key" if change.what == "key" else "CVar"
+    cvar = change.what == "cvar"
+    return (
+        f"{_DETAIL_INDENT}{label} {change.name}: {_value_text(change.before, cvar=cvar)}"
+        f" -> {_value_text(change.after, cvar=cvar)}"
+    )
+
+
+# What a line `wtfdiff` does not read by name is, in each kind of file: the
+# lines its parser keeps as unknown, said by their form, not their effect (the
+# client may still read a CVar line typed by hand; M16-98).
+_OTHER_LINES: dict[wtfdiff.Kind, str] = {
+    "bindings": "for example a binding mode or modifier line",
+    "macros": "lines outside any macro wowlab can read",
+    "cvars": "lines not in the game's usual setting form, such as a setting typed in by hand",
+}
+
+
+def _wtf_lines(
+    kind: wtfdiff.Kind, before: bytes | None, after: bytes | None, limit: int | None
+) -> list[str]:
+    try:
+        diff = wtfdiff.compare(kind, before, after)
+    except ValueError as exc:  # a parser invariant; never expected on real bytes
+        return [f"{_DETAIL_INDENT}(not compared by name: {exc})"]
+    lines = [_named_line(c) for c in diff.changes]
+    if limit is not None and len(lines) > limit:
+        more = len(lines) - limit
+        lines = [*lines[:limit], f"{_DETAIL_INDENT}... and {more} more (snap diff lists them all)"]
+    if diff.repeated_names:
+        lines.append(
+            f"{_DETAIL_INDENT}macros with the same name are compared in file order; an "
+            "inserted or removed one shifts the rest"
+        )
+    if diff.other_lines_differ:
+        lines.append(
+            f"{_DETAIL_INDENT}other lines differ too ({_OTHER_LINES[kind]}), which wowlab "
+            "does not read by name"
+        )
+    elif not diff.changes and before is not None and after is not None:
+        if kind == "macros":
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name; the macros' order or ids differ, "
+                "and a button that holds a macro may then run a different one"
+            )
+        else:
+            lines.append(
+                f"{_DETAIL_INDENT}nothing changes by name (the order, line endings, spelling "
+                "or a line an earlier one overrides differ)"
+            )
+    return lines
+
+
+def _size_text(data: bytes | None) -> str:
+    return "none" if data is None else _bytes(len(data))
+
+
+def _sv_summary(
+    removed: int | None, added: int, changed: int, before_size: str, after_size: str
+) -> str:
+    """The one summary line under a SavedVariables file; `removed` is None
+    when the values were not compared (a side does not parse)."""
+    size = f"size {before_size} -> {after_size}"
+    if removed is None:
+        return f"{_DETAIL_INDENT}values not compared; {size}"
+    return f"{_DETAIL_INDENT}values: {removed} removed, {added} added, {changed} changed; {size}"
+
+
+def _sv_lines(before: bytes | None, after: bytes | None) -> list[str]:
+    try:
+        old = _leaves(before) if before is not None else {}
+        new = _leaves(after) if after is not None else {}
+    except luadata.LuaDataError:
+        return [_sv_summary(None, 0, 0, _size_text(before), _size_text(after))]
+    removed = sum(1 for p in old if p not in new)
+    added = sum(1 for p in new if p not in old)
+    changed = sum(1 for p, v in new.items() if p in old and old[p] != v)
+    return [_sv_summary(removed, added, changed, _size_text(before), _size_text(after))]
+
+
+def _detail_lines(path: str, before: _Side, after: _Side, *, limit: int | None) -> list[str]:
+    """The lines under one changed file: by name for a bindings, macros or
+    CVar file, the summary for a SavedVariables file, else none."""
+    kind = wtfdiff.kind_of(path)
+    if kind is None and not _is_saved_variables(path):
+        return []
+    if isinstance(before, _Unread) or isinstance(after, _Unread):
+        why = next(
+            (s.why for s in (before, after) if isinstance(s, _Unread) and s.why is not None),
+            "wowlab could not read both versions back",
+        )
+        return [f"{_DETAIL_INDENT}(not compared: {why})"]
+    if kind is not None:
+        return _wtf_lines(kind, before, after, limit)
+    return _sv_lines(before, after)
+
+
+def _wants_detail(path: str) -> bool:
+    return wtfdiff.kind_of(path) is not None or _is_saved_variables(path)
+
+
+def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = None) -> _Side:
+    """An object's bytes from the store, checked against its hash. One whose
+    recorded `size` is over the detail limit is not read; with no recorded
+    size, one that inflates past the limit is refused."""
+    if sha is None:
+        return None
+    if size is not None and size > _DETAIL_READ_LIMIT:
+        return _UNREAD
+    try:
+        return store.read_object(sha, size=_DETAIL_READ_LIMIT if size is None else size)
+    except (snapshot.SnapshotError, OSError):
+        return _UNREAD
+
+
+# What the undo does to a file someone changed after the change it undoes:
+# it writes over it, but its own transaction snapshots the file before it
+# writes, so a second undo puts those changes back, as long as it comes next
+# and the game has not rewritten the file at logout meanwhile. Said in every
+# state, after a line on who probably changed the file, which depends on it.
+_KEEPS_A_COPY = (
+    "keeps a copy first, and running wowlab undo again next, before you play, brings them back"
+)
+_COMPARE = "the lines below compare what is on disk now with what undo puts back"
+# A change that finished.
+_CHANGED_SINCE = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    f"/reload: {_COMPARE}, and include those later changes; undo replaces those changes, "
+    f"but {_KEEPS_A_COPY})"
+)
+# A change that failed and whose rollback finished: every journaled path
+# already held what was there before it, so a listed file differs only by
+# later changes.
+_CHANGED_AFTER_ROLLBACK = (
+    f"{_DETAIL_INDENT}(changed since that transaction, probably by the game at logout or "
+    "/reload; that change's own edits were already put back when it failed, so every line "
+    f"below is a later change, and undo only replaces them; it {_KEEPS_A_COPY})"
+)
+# A change that did not finish (the run was stopped): the record cannot show
+# whether another program wrote during the run or after it, nor whether the
+# run wrote this file at all.
+_CHANGED_UNFINISHED = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    "while that change ran or since; that change stopped before it finished and may not "
+    f"have written this file: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
+# For a change whose rollback did not finish: the gate leaves a file another
+# program changed while the change ran as that program left it.
+_CHANGED_DURING = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game at logout or /reload, "
+    f"while that change ran, or since: {_COMPARE}; undo replaces that program's changes, "
+    f"but {_KEEPS_A_COPY})"
+)
+# A state this version does not know (a journal written by a later one): the
+# record cannot be read for who changed the file or when, so the line guesses
+# neither (M16-98).
+_CHANGED_UNKNOWN_STATE = (
+    f"{_DETAIL_INDENT}(changed while that transaction ran or since; this version of wowlab "
+    f"cannot tell what changed it: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
+_CHANGED_LINE = {
+    "committed": _CHANGED_SINCE,
+    "open": _CHANGED_UNFINISHED,
+    "rolled_back": _CHANGED_AFTER_ROLLBACK,
+    "rollback_incomplete": _CHANGED_DURING,
+}
+# Every journaled path already holds its pre-transaction bytes and no folder
+# it created is left: the undo changes nothing on disk. For a change that did
+# not finish, or whose rollback did not, `doctor` reports it until it is
+# undone, so that line says what answering yes does.
+_NOTHING_TO_PUT_BACK = (
+    "  every file already holds what was there before that transaction, so the undo changes no file"
+)
+_NOTHING_TO_PUT_BACK_UNFINISHED = (
+    f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
+    "reporting that change"
+)
+
+
+def _read_detail(flavor_path: Path, rel: str) -> bytes:
+    """The install's file at `rel` for a detail line, read-only through the
+    guarded opener, from the install root (the flavor folder's parent, as
+    `layout` takes it) one folder at a time (M16-65): a link anywhere on the
+    way is refused, `snapshot.LinkedPathError` naming it."""
+    return snapshot.read_regular_file(
+        flavor_path / rel, limit=_DETAIL_READ_LIMIT, root=flavor_path.parent
+    )
+
+
+def _linked_side(exc: snapshot.LinkedPathError) -> _Unread:
+    """The install's side of a detail, refused as a link: why, in the
+    detail line's words (the file is named on the line above it)."""
+    if exc.final:
+        return _Unread("the install's copy is a link")
+    return _Unread(f"the install's copy is reached through a linked folder, {exc.folder}")
+
+
+def _disk_now(flavor_path: Path, rel: str) -> _Side:
+    """What the install holds at `rel` now, read-only through the guarded
+    opener: None when nothing is there, `_UNREAD` when it cannot be read as
+    a regular file under the detail limit (a FIFO, too large); a link, or a
+    file reached through a linked folder, says so (M16-65)."""
+    try:
+        return _read_detail(flavor_path, rel)
+    except FileNotFoundError:
+        return None
+    except snapshot.LinkedPathError as exc:
+        return _linked_side(exc)
+    except OSError:
+        return _UNREAD
+
+
+def _on_disk(store: snapshot.SnapshotStore, flavor_path: Path, rel: str, sha: str | None) -> _Side:
+    """The bytes the install holds at `rel` when they still hash to `sha`
+    (read-only, through the guarded opener), else the store's copy. A link,
+    or a file reached through a linked folder, is not read and not stood in
+    for by the store's copy: the detail says so (M16-65)."""
+    if sha is None:
+        return None
+    try:
+        data = _read_detail(flavor_path, rel)
+    except snapshot.LinkedPathError as exc:
+        return _linked_side(exc)
+    except OSError:
+        data = None
+    if data is not None and hashlib.sha256(data).hexdigest() == sha:
+        return data
+    return _stored(store, sha)
+
+
+def _plan_item_lines(
+    store: snapshot.SnapshotStore, flavor_path: Path, item: guard.PlanItem
+) -> list[str]:
+    """The detail lines under one item of a write plan: `before` is on disk
+    now, `after` is what the write puts there (a stored object)."""
+    if not _wants_detail(item.path):
+        return []
+    before = _on_disk(store, flavor_path, item.path, item.before)
+    after = _stored(store, item.after, item.size)
+    return _detail_lines(item.path, before, after, limit=_DETAIL_PLAN_LIMIT)
 
 
 class SkippedPath(_Out):
@@ -6849,6 +9395,24 @@ class NotRestoredPath(_Out):
     disk: Literal["same", "differs", "missing", "behind_link"]
 
 
+class AccountMapped(_Out):
+    """One account folder a restore into another target maps."""
+
+    snapshot: str  # the folder under WTF/Account/ as the snapshot names it
+    target: str  # the folder it is written to in the target
+
+
+class IntoReport(_Out):
+    """A restore into a target the player named (--into-flavor, --into-root)."""
+
+    from_flavor_folder: str  # the flavor folder the snapshot was taken of
+    from_install_root: str  # the install root it was taken in
+    accounts: list[AccountMapped]
+    # Folders under the snapshot's WTF/Account/ that are no account folder and
+    # so are not mapped: they go back under their own name. Left out when none.
+    unmapped: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
+
+
 class RestoreReport(_Out):
     """`wowlab snap restore --json`: the plan, and with `--yes` what was done."""
 
@@ -6868,6 +9432,12 @@ class RestoreReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the applied restore
     notes: list[str]
+    # With --into-flavor or --into-root: where the snapshot was taken, and the
+    # account folders mapped. Left out of the JSON otherwise.
+    into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 class UndoReport(_Out):
@@ -6885,6 +9455,18 @@ class UndoReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the undo itself
     notes: list[str]
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
+    # The paths the undo wrote (relative to `flavor_path`), from its own
+    # journal record `transaction`: the listed ones, and any that changed
+    # after the plan read it. Empty when nothing was undone (M16-105).
+    written_paths: list[str] = Field(default_factory=list)
+    # Those of `written_paths` the text plan did not list (`plan` is the
+    # whole record undone, so it cannot tell them apart): files that changed
+    # after the plan read them, which the text result names after "Undone."
+    # (M16-105).
+    unlisted_written: list[str] = Field(default_factory=list)
 
 
 def _client_managed(
@@ -7118,8 +9700,8 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
     if others:
         lines.append(
             f'  Skipped {len(others)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata; name one "
-            "with --paths to restore it):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata; name one with --paths to restore it):"
         )
         lines += [f"    {sk.path}  [{sk.entry_id}]" for sk in others]
     if executables:
@@ -7134,6 +9716,44 @@ def _skipped_lines(skipped: Sequence[SkippedPath]) -> list[str]:
 
 # How many changed screenshots the text plan names; --json lists every one.
 _NOT_RESTORED_SHOWN = 10
+
+
+def _left_alone_lines(left_alone: Sequence[str]) -> list[str]:
+    """The text plan's "left alone" heading: the files added under the
+    snapshot's folders since it was taken, which a whole restore never
+    writes or deletes."""
+    if not left_alone:
+        return []
+    return [
+        f"  Left alone: {len(left_alone)} file(s) added since the snapshot was taken. "
+        "A whole restore never deletes them; name one with --paths to delete it:",
+        *(f"    {rel}" for rel in left_alone),
+    ]
+
+
+def _added_since(
+    store: snapshot.SnapshotStore, manifest: snapshot.Manifest, install_root: Path, folder: str
+) -> tuple[str, ...]:
+    """What a whole restore of `manifest` (spelled as this flavor spells it)
+    leaves alone, by the gate's rule: every regular file under its subtrees,
+    outside its excluded paths, that it does not hold, held to the gate's
+    allowlist roots as the gate holds its own list. Reads directory entries
+    and `lstat` only, following no link; flavor-relative, sorted."""
+    prefix = folder + "/"
+    held = {e.path for e in manifest.entries}
+    ours = guard._allowlisted_trees(manifest.subtrees, folder)
+    if not ours:
+        return ()
+    excluded = guard._allowlisted_trees(manifest.excluded, folder)
+    listed = store.list_tree(install_root, ours, exclude=excluded)
+    return tuple(
+        path.removeprefix(prefix)
+        for path, kind in listed
+        if kind == "file"
+        and path.startswith(prefix)
+        and guard._in_allowlist_root(path.removeprefix(prefix))
+        and path not in held
+    )
 
 
 def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> list[str]:
@@ -7151,7 +9771,12 @@ def _not_restored_lines(snapshot_id: str, aside: Sequence[NotRestoredPath]) -> l
         )
     if unread:
         top = unread[0].path.split("/", 1)[0]
-        clauses.append(f"{len(unread)} not read ({top}/ is now a link, wowlab does not follow it)")
+        # M16-80: the readers' rule for a link, said of the folder that is now one.
+        subject = "it" if len(unread) == 1 else "each"
+        clauses.append(
+            f"{len(unread)} not read ({subject} is reached through {top}/, which is now a "
+            "link, and wowlab does not read through links)"
+        )
     lines = [
         f"  Not restored: {len(aside)} screenshot(s) wowlab never writes (file-map Edit "
         f'"n/a"; --paths cannot restore them either). They stay in snapshot {snapshot_id}; '
@@ -7195,6 +9820,93 @@ def _executable_note(lay: layout.Layout, named: Sequence[str], exc: Exception) -
         return
 
 
+IntoFlavorOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--into-flavor",
+        metavar="FOLDER",
+        help="Restore into this flavor folder of the install instead of the one the snapshot "
+        "was taken of. When a beta launches, the game's folder gets a new name (you do not "
+        "rename it): name the new folder here.",
+    ),
+]
+MapAccountOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--map-account",
+        metavar="SOURCE=TARGET",
+        help="With --into-flavor or --into-root: put the snapshot's account folder SOURCE "
+        "into the target's account folder TARGET (folder names under WTF/Account/); repeat "
+        "for each. Needed unless each side has exactly one account folder.",
+    ),
+]
+
+
+def _one_folder_name(value: str, option: str) -> str:
+    """`value` as one plain folder name, or a refusal naming `option`."""
+    if (
+        value in ("", ".", "..")
+        or value != value.strip()
+        or any(c in value for c in "/\\:\x00")
+        or any(ord(c) < 32 for c in value)
+    ):
+        raise CliError(f"{option} takes one folder name, not {value!r}")
+    return value
+
+
+def _account_pairs(pairs: Sequence[str] | None) -> dict[str, str] | None:
+    """`--map-account SOURCE=TARGET` values as a mapping; None when none was given."""
+    if not pairs:
+        return None
+    mapping: dict[str, str] = {}
+    for pair in pairs:
+        source, sep, target = pair.partition("=")
+        if not sep or "=" in target or not source or not target:
+            raise CliError(
+                f"--map-account takes SOURCE=TARGET, two account folder names, not {pair!r}"
+            )
+        _one_folder_name(source, "--map-account")
+        _one_folder_name(target, "--map-account")
+        if source in mapping:
+            raise CliError(f"--map-account names account folder {source!r} twice")
+        mapping[source] = target
+    return mapping
+
+
+def _into_target(chosen: install.Flavor, accounts: dict[str, str] | None) -> guard.Target:
+    try:
+        return guard.Target(flavor=chosen, accounts=accounts)
+    except ValidationError as exc:
+        why = "; ".join(str(e.get("msg", "")) for e in exc.errors())
+        raise CliError(f"--map-account is refused: {why}") from exc
+
+
+def _into_report(manifest: snapshot.Manifest, accounts: Sequence[tuple[str, str]]) -> IntoReport:
+    return IntoReport(
+        from_flavor_folder=manifest.flavor_folder or "",
+        from_install_root=manifest.install_root,
+        accounts=[AccountMapped(snapshot=a, target=b) for a, b in accounts],
+        unmapped=list(profiles.unmapped_folders(manifest, dict(accounts))),
+    )
+
+
+def _into_lines(into: IntoReport, chosen: install.Flavor) -> list[str]:
+    """The plan's lines that name both folders and every mapped account folder."""
+    lines = [
+        f"  From {into.from_flavor_folder} in {into.from_install_root} into {chosen.folder} "
+        f"in {chosen.path.parent}."
+    ]
+    lines += [
+        f"  Account folder {a.snapshot} goes into account folder {a.target}." for a in into.accounts
+    ]
+    lines += [
+        f"  WTF/Account/{name}/ is not taken as an account folder (no character folder in "
+        "it), so it is not mapped: its files go back under the same name."
+        for name in into.unmapped
+    ]
+    return lines
+
+
 @snap_app.command(
     "restore", short_help="Put back files from a snapshot (asks first; undo reverses it)."
 )
@@ -7206,7 +9918,8 @@ def snap_restore(
         typer.Option(
             "--paths",
             help="Only this path, relative to the flavor folder; repeat for more. "
-            "A path the snapshot covers but does not hold is deleted. A named path is "
+            "If the snapshot has no file at a path you name, inside a folder it saved, the "
+            "file on disk at that path is deleted. A named path is "
             "restored even when its file-map row says wowlab leaves it alone, except an "
             "executable, which never is. Nor is a screenshot: wowlab never writes "
             "Screenshots/.",
@@ -7217,10 +9930,27 @@ def snap_restore(
     ] = False,
     yes: YesOpt = False,
     root: RootOpt = None,
+    into_flavor: IntoFlavorOpt = None,
+    into_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--into-root",
+            metavar="PATH",
+            help="Restore into the install at PATH (the folder that holds .build.info) "
+            "instead of the one the snapshot was taken in, such as a reinstall in another "
+            "folder or a second install on this machine. Into the flavor folder of the same "
+            "name unless --into-flavor names one.",
+        ),
+    ] = None,
+    map_account: MapAccountOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Put back files from a snapshot, through the write gate: the client must be
     closed, a pre-write snapshot is taken first, and `wowlab undo` reverses it.
+
+    Without --paths, files added under the snapshot's folders since it was
+    taken are never deleted: the plan lists the ones under WTF, Interface
+    and Fonts under "Left alone".
 
     Without --paths, files whose file-map Edit is `no` (client-written
     backups such as `.lua.bak` and `.old`, `Interface/AddOns/Blizzard_*`,
@@ -7233,22 +9963,42 @@ def snap_restore(
     Screenshots/, not even with --paths): a whole restore leaves them in the
     snapshot, counts them, and restores the rest.
 
+    When a beta launches, the game's folder gets a new name: restore into
+    the new folder with --into-flavor, or into another install folder with
+    --into-root. --paths are then spelled as `snap show` lists them.
+
     \f
     JSON: RestoreReport."""
+    into = into_flavor is not None or into_root is not None
+    if map_account and not into:
+        raise CliError("--map-account is used with --into-flavor or --into-root")
+    if into_root is not None and root is not None:
+        raise CliError("--into-root names the install to restore into; leave out --root")
+    if into_flavor is not None:
+        _one_folder_name(into_flavor, "--into-flavor")
+    accounts_given = _account_pairs(map_account)
     store = snapshot.SnapshotStore()
     manifest = store.show(_resolve_ref(store, snapshot_id))
-    inst, _ = _discover(root)
-    if manifest.flavor_folder is None:
+    inst, _ = _discover(into_root if into_root is not None else root)
+    wanted_folder = into_flavor if into_flavor is not None else manifest.flavor_folder
+    if wanted_folder is None:
         raise CliError(f"snapshot {manifest.id} names no flavor folder; it cannot be restored")
-    match = [f for f in inst.flavors if f.folder == manifest.flavor_folder]
+    match = [f for f in inst.flavors if f.folder == wanted_folder]
+    if not match and into:
+        raise CliError(
+            f"{inst.root} has no flavor folder {wanted_folder!r} (flavors: {_flavor_list(inst)})"
+        )
     if not match:
         raise CliError(
             f"snapshot {manifest.id} is of flavor folder {manifest.flavor_folder!r}, which "
             f"{inst.root} does not have (flavors: {_flavor_list(inst)}). Flavor folders are "
-            "renamed between beta and launch; wowlab restores only into the folder a snapshot "
-            "was taken from."
+            "renamed between beta and launch; to restore into the new one, name it with "
+            "--into-flavor FOLDER."
         )
     chosen = match[0]
+    target = _into_target(chosen, accounts_given) if into else None
+    into_report: IntoReport | None = None
+    back: dict[str, str] = {}
     say = _say_err if json_out else _say
     # With --json the plan goes to stdout as JSON at the end; when a prompt
     # will ask first, the text plan goes to stderr so the question is not blind.
@@ -7264,10 +10014,24 @@ def snap_restore(
     aside: list[NotRestoredPath] = []
     names: list[str] | None = None
     executables: list[SkippedPath] = []
+    left_alone: tuple[str, ...] = ()  # a whole restore's added files, never touched
     with guard.transaction(chosen, label=label, dry_run=True) as tx:
+        if target is not None:
+            # The gate maps the account folders, or refuses, before anything
+            # here reads the target. The plan reads the snapshot as the
+            # target spells it; the gate is always given the snapshot's names.
+            accounts = tx.restore(manifest.id, [], into=target)
+            into_report = _into_report(manifest, accounts)
+            back = {b: a for a, b in accounts}
+            manifest = profiles.mapped_view(manifest, folder, inst.root, dict(accounts))
+            rest = list(manifest.entries)
+
+        def by_name(names: list[str]) -> list[str]:
+            return [profiles.map_account(n, back) for n in names]
+
         if named is not None:
             try:
-                tx.restore(manifest.id, named)
+                tx.restore(manifest.id, named, into=target)
             except guard.PathNotAllowedError as exc:
                 _screenshot_note(lay, manifest, folder, named, exc)
                 _executable_note(lay, named, exc)
@@ -7275,7 +10039,7 @@ def snap_restore(
         else:
             # The gate's snapshot checks (another install, another flavor)
             # come before anything here reads the disk.
-            tx.restore(manifest.id, [])
+            tx.restore(manifest.id, [], into=target)
             # Screenshots, which the gate never writes, are set aside; the
             # gate would otherwise refuse the whole restore.
             rest, aside = _set_aside(lay, manifest, inst.root, folder)
@@ -7285,12 +10049,17 @@ def snap_restore(
             rest, executables = _changed_executables(lay, rest, inst.root, folder)
             try:
                 if not aside and not executables:
-                    tx.restore(manifest.id)
+                    tx.restore(manifest.id, into=target)
+                    left_alone = tx.left_alone
                 else:
                     if any(not e.path.startswith(folder + "/") for e in rest):
-                        tx.restore(manifest.id)  # refused: a path outside this flavor
+                        # refused: a path outside this flavor
+                        tx.restore(manifest.id, into=target)
+                    # Restored by name, so the gate lists nothing it leaves
+                    # alone: the same list, by the same rule, read here.
+                    left_alone = _added_since(store, manifest, inst.root, folder)
                     names, left = _names_for_whole(rest, inst.root, folder)
-                    tx.restore(manifest.id, names)
+                    tx.restore(manifest.id, by_name(names), into=target)
             except guard.PathNotAllowedError as exc:
                 # An executable the gate still refuses (its bytes are the
                 # snapshot's but its mode is not, or a link or a folder
@@ -7334,23 +10103,37 @@ def snap_restore(
             applied=applied,
             transaction=transaction,
             notes=notes,
+            into=into_report,
+            plan_lines=[_safe(line) for line in plan_lines],
         )
 
     shots_differ = any(a.disk != "same" for a in aside)
-    if (not json_out or (prompting and plan)) and (plan or skipped or aside):
-        show(f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)")
+    plan_lines: list[str] = []
+    if plan or skipped or aside or left_alone:
+        plan_lines.append(
+            f"Restore from snapshot {manifest.id} into {chosen.path}: {len(plan)} change(s)"
+        )
+        if into_report is not None:
+            plan_lines.extend(_into_lines(into_report, chosen))
         if manifest.flavor_version != chosen.version:
-            show(
+            plan_lines.append(
                 f"  Taken on version {_version(manifest.flavor_version)}; {folder} is "
                 f"now on {_version(chosen.version)}."
             )
+        detailed = False
         for item in plan:
-            show(_plan_line(item))
-        for line in _skipped_lines(skipped):
-            show(line)
+            plan_lines.append(_plan_line(item))
+            detail = _plan_item_lines(store, chosen.path, item)
+            plan_lines.extend(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
+        plan_lines.extend(_skipped_lines(skipped))
         if aside:
-            for line in _not_restored_lines(manifest.id, aside):
-                show(line)
+            plan_lines.extend(_not_restored_lines(manifest.id, aside))
+        plan_lines.extend(_left_alone_lines(left_alone))
+        plan_lines.extend(_plan_footer(detailed, [i.path for i in plan]))
+    if not json_out or (prompting and plan):
+        for line in plan_lines:
+            show(line)
     if not plan:
         if json_out:
             _emit(report(applied=False))
@@ -7379,7 +10162,10 @@ def snap_restore(
             _emit(report(applied=False))
         raise
     with guard.transaction(chosen, label=label) as tx:
-        tx.restore(manifest.id, wanted)
+        if wanted is None or named is not None:
+            tx.restore(manifest.id, wanted, into=target)
+        else:
+            tx.restore(manifest.id, by_name(wanted), into=target)
         moved = any(not _unchanged(inst.root, folder, e) for e in left_out)
         if tx.plan != tuple(plan) or moved:
             # Raising inside the transaction makes the gate roll it back.
@@ -7394,7 +10180,89 @@ def snap_restore(
         return
     say(f"Restored {len(plan)} file(s). `wowlab undo` puts back what was there before.")
     for n in done.notes:
-        say(n)
+        if n not in plan_lines:  # the plan above already said it
+            say(n)
+
+
+def _undo_lines(last: guard.HistoryRecord) -> list[str]:
+    """`undo`'s text plan (`_undo_plan`, its lines only)."""
+    return _undo_plan(last)[0]
+
+
+def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
+    """`undo`'s text plan, and the paths it lists: only the steps the undo will take. A path whose
+    disk already holds what was there before that transaction (a file a
+    rollback already put back or removed) is skipped by the undo, so it is
+    not listed; one wowlab cannot read is listed. Under each file, what the
+    undo changes by name: from what the install holds at that path now
+    (read read-only through the guarded opener, whatever it holds) to what
+    was there before that transaction (in its pre-write snapshot), since the
+    undo replaces the file whatever is on disk. When the disk no longer
+    holds what that transaction wrote, a line says the comparison includes
+    those later changes and who probably made them, by the record's state
+    (`_CHANGED_LINE`; a state this version does not know gets
+    `_CHANGED_UNKNOWN_STATE`, which guesses no one). In every state it also says that the undo
+    replaces those changes, that its own snapshot keeps a copy of them
+    first, and that a second undo, run next, brings them back."""
+    store = snapshot.SnapshotStore()
+    flavor_path = Path(last.flavor_path)
+    changed = _CHANGED_LINE.get(last.state, _CHANGED_UNKNOWN_STATE)
+    lines = [
+        f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
+        f"  in {last.flavor_path}:",
+    ]
+    detailed = False
+    listed: list[str] = []
+    for p in last.paths:
+        now = _disk_now(flavor_path, p.path)
+        now_sha = (
+            None if now is None or isinstance(now, _Unread) else hashlib.sha256(now).hexdigest()
+        )
+        if not isinstance(now, _Unread) and now_sha == p.before:
+            continue  # already as it was before: the undo leaves it alone
+        listed.append(p.path)
+        if p.before is None:
+            lines.append(f"  delete     {p.path}  (created by that transaction)")
+        elif p.after is None:
+            lines.append(f"  recreate   {p.path}  (deleted by that transaction)")
+        else:
+            lines.append(f"  put back   {p.path}  (as it was before that transaction)")
+        if _wants_detail(p.path):
+            back = _stored(store, p.before)
+            detail = _detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT)
+            if detail and not isinstance(now, _Unread) and now_sha != p.after:
+                lines.append(changed)
+            lines.extend(detail)
+            detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
+    folders = [d for d in last.created_dirs if os.path.lexists(flavor_path / d)]
+    lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
+    if not listed and not folders:
+        unfinished = last.state in ("open", "rollback_incomplete")
+        lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
+    lines.extend(_plan_footer(detailed, listed))
+    return lines, listed
+
+
+def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str]) -> list[str]:
+    """The result's lines for each file the undo wrote that its plan did not
+    list: it changed after the plan read it, so the undo put it back too.
+    Named once, after "Undone.", so the login caveat that may follow has a
+    file on screen to point at (M16-105). `written` is the undo's own
+    journal record, whose `before` is the disk the undo found."""
+    shown = set(listed)
+    lines: list[str] = []
+    for p in written:
+        if p.path in shown:
+            continue
+        shown.add(p.path)
+        if p.after is None:
+            verb = "also deleted   "
+        elif p.before is None:
+            verb = "also recreated "
+        else:
+            verb = "also put back  "
+        lines.append(f"  {verb}{p.path}  (it changed after the plan was shown)")
+    return lines
 
 
 @app.command(short_help="Undo the last change wowlab made to your game files.")
@@ -7413,13 +10281,19 @@ def undo(
     ] = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Undo the most recent change made through the write gate (a restore, or an
-    earlier undo), from the snapshot taken before it.
+    """Undo the most recent change wowlab made to your game files: a
+    `snap restore`, `profile apply`, `sv merge`, `addon install` or
+    `addon remove`, or an earlier undo. It shows the plan and asks first, then
+    puts your files back as they were before that change, from the snapshot
+    taken before it; files it added are deleted.
 
-    The journal is read again after you answer, and the undo is refused if
-    its most recent record changed meanwhile. The gate compares again under
-    its store lock, so a change journaled
-    after that re-read is refused too: only the record shown is undone.
+    Undo steps back one change only. An undo is itself a change, so running
+    `wowlab undo` a second time redoes what the first one undid. To go further
+    back, pick an older snapshot with `snap list` and put it back with
+    `snap restore`.
+
+    Only the change the plan shows is undone: if another change is recorded
+    after the plan was shown, nothing is undone.
 
     \f
     JSON: UndoReport."""
@@ -7438,8 +10312,9 @@ def undo(
         raise CliError("nothing to undo: the write gate's journal is empty")
     last = records[-1]
 
-    def report(*, applied: bool, transaction: str | None = None) -> UndoReport:
-        touched = [p.path for p in last.paths]
+    def report(
+        *, applied: bool, transaction: str | None = None, written: Sequence[str] = ()
+    ) -> UndoReport:
         return UndoReport(
             undone=last.id,
             label=last.label,
@@ -7450,29 +10325,31 @@ def undo(
             created_dirs=list(last.created_dirs),
             applied=applied,
             transaction=transaction,
-            notes=_relogin_notes(touched) if applied else [],
+            # From what the undo wrote (its own journal record), not every path
+            # of the record undone: a file the disk already held as it was
+            # before is skipped by the undo, so it is not listed in the plan
+            # and gets no note; one changed after the plan read it is
+            # rewritten, so it does (M16-102).
+            notes=_relogin_notes(written) if applied else [],
+            plan_lines=[_safe(line) for line in plan_lines],
+            written_paths=list(written),
+            unlisted_written=[w for w in written if w not in set(listed)],
         )
 
+    plan_lines: list[str] = []
+    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
+    plan_lines, listed = _undo_plan(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
-        show(f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})')
-        show(f"  in {last.flavor_path}:")
-        for p in last.paths:
-            if p.before is None:
-                show(f"  delete     {p.path}  (created by that transaction)")
-            elif p.after is None:
-                show(f"  recreate   {p.path}  (deleted by that transaction)")
-            else:
-                show(f"  put back   {p.path}  (as it was before that transaction)")
-        for d in last.created_dirs:
-            show(f"  remove folder {d}  (created by that transaction, if empty)")
+        for line in plan_lines:
+            show(line)
     try:
         _confirm("Undo it?", yes)
     except typer.Exit:
@@ -7488,13 +10365,26 @@ def undo(
         )
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
-    done = report(applied=True, transaction=guard.history()[-1].id)
+    undone = guard.history()[-1]
+    done = report(applied=True, transaction=undone.id, written=[p.path for p in undone.paths])
     if json_out:
         _emit(done)
         return
+    if not undone.paths:
+        # Judged from the undo's own record, not the plan: a file rewritten
+        # after the plan read it is put back and listed there. No file
+        # changed, so no login note applies (`--json` keeps them).
+        _say(
+            "Undone; no file needed changing. This undo is journaled, but there is nothing "
+            "for `wowlab undo` to reverse."
+        )
+        return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
+    for line in _undone_unlisted(undone.paths, listed):
+        _say(line)
     for n in done.notes:
-        _say(n)
+        if n not in plan_lines:  # the plan above already said it
+            _say(n)
 
 
 # ─── profile ─────────────────────────────────────────────────────────────────
@@ -7555,6 +10445,12 @@ class ProfileApplyReport(_Out):
     applied: bool
     transaction: str | None  # the journal record of the applied profile
     notes: list[str]
+    # With --into-flavor: where the profile was saved, and the account
+    # folders mapped. Left out of the JSON otherwise.
+    into: IntoReport | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The text plan, line by line, as the terminal shows it before the
+    # prompt, with keys, macros and CVars by name (M16-10).
+    plan_lines: list[str] = Field(default_factory=list)
 
 
 def _profile_summary(p: profiles.Profile) -> ProfileSummary:
@@ -7753,31 +10649,48 @@ def profile_delete(name: NameArg, json_out: JsonOpt = False) -> None:
         _say(f"Deleted profile {name}; snapshot {m.id} stays in the store, labelled {m.label!r}.")
 
 
-def _print_apply_plan(show: Callable[[str], None], plan: profiles.ApplyPlan) -> None:
+def _apply_plan_lines(
+    store: snapshot.SnapshotStore, flavor_path: Path, plan: profiles.ApplyPlan
+) -> list[str]:
+    # Into another flavor folder, a file the profile does not hold was not
+    # "added since": it is the target folder's own.
+    extra = (
+        "added since the profile was saved"
+        if plan.source_flavor_path is None
+        else "in the target folder, not in the profile"
+    )
+    lines: list[str] = []
+    detailed = False
     for item in plan.plan:
         line = _plan_line(item)
         if item.after is None:
-            line += "  (added since the profile was saved)"
-        show(line)
+            line += f"  ({extra})"
+        lines.append(line)
+        detail = _plan_item_lines(store, flavor_path, item)
+        lines.extend(detail)
+        detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
+    if detailed:
+        # The login caveat is the command's own login note, shown after the plan.
+        lines.append(_SCOPE_LINE)
     if plan.skipped:
-        show(
+        lines.append(
             f'  Skipped {len(plan.skipped)} file(s) wowlab leaves alone (file-map Edit "no": '
-            "client-written backups, Blizzard_* folders, file-browser metadata, "
-            "addon executables):"
+            "client-written backups, wowlab's leftover temp files, Blizzard_* folders, "
+            "file-browser metadata, addon executables):"
         )
         for sk in plan.skipped:
-            undone = "  (added since the profile was saved; not deleted)"
-            show(f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else ""))
+            undone = f"  ({extra}; not deleted)"
+            lines.append(
+                f"    {sk.path}  [{sk.entry_id}]" + (undone if sk.action == "delete" else "")
+            )
     if plan.left:
-        show(f"  Left alone ({len(plan.left)} path(s)):")
-        for lp in plan.left:
-            show(f"    {lp.path}  ({lp.reason})")
+        lines.append(f"  Left alone ({len(plan.left)} path(s)):")
+        lines.extend(f"    {lp.path}  ({lp.reason})" for lp in plan.left)
     if plan.cache_files:
-        show("  *-cache files in this change:")
-        for c in plan.cache_files:
-            show(f"    {c.path}: {c.note}")
-    for n in plan.notes[1:]:  # the scope note (first) is printed under the header
-        show(n)
+        lines.append("  *-cache files in this change:")
+        lines.extend(f"    {c.path}: {c.note}" for c in plan.cache_files)
+    lines.extend(plan.notes[1:])  # the scope note (first) is printed under the header
+    return lines
 
 
 @profile_app.command(
@@ -7791,6 +10704,17 @@ def profile_apply(
     ] = False,
     yes: YesOpt = False,
     root: RootOpt = None,
+    into_flavor: Annotated[
+        str | None,
+        typer.Option(
+            "--into-flavor",
+            metavar="FOLDER",
+            help="Apply to this flavor folder of the install instead of the one the profile "
+            "was saved from. When a beta launches, the game's folder gets a new name (you do "
+            "not rename it): name the new folder here.",
+        ),
+    ] = None,
+    map_account: MapAccountOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Return the profile's files to their saved bytes, through the write gate: the
@@ -7814,29 +10738,45 @@ def profile_apply(
     these files (the server keeps them; not yet verified on this client), so no
     profile saves or restores them.
 
+    When a beta launches, the game's folder gets a new name: apply the
+    profile to the new folder with --into-flavor.
+
     \f
     JSON: ProfileApplyReport."""
+    if map_account and into_flavor is None:
+        raise CliError("--map-account is used with --into-flavor")
+    if into_flavor is not None:
+        _one_folder_name(into_flavor, "--into-flavor")
+    accounts_given = _account_pairs(map_account)
     store = snapshot.SnapshotStore()
     profile = profiles.find(store, name)
     manifest = profile.manifest
     inst, _ = _discover(root)
-    match = [f for f in inst.flavors if f.folder == manifest.flavor_folder]
+    wanted_folder = into_flavor if into_flavor is not None else manifest.flavor_folder
+    match = [f for f in inst.flavors if f.folder == wanted_folder]
+    if into_flavor is not None and not match:
+        raise CliError(
+            f"{inst.root} has no flavor folder {into_flavor!r} (flavors: {_flavor_list(inst)})"
+        )
     if manifest.flavor_folder is None or not match:
         raise CliError(
             f"profile {name} is of flavor folder {manifest.flavor_folder!r}, which "
             f"{inst.root} does not have (flavors: {_flavor_list(inst)}). Flavor folders are "
-            "renamed between beta and launch; wowlab applies a profile only to the folder it "
-            "was saved from."
+            "renamed between beta and launch; to apply the profile to the new one, name it "
+            "with --into-flavor FOLDER."
         )
     chosen = match[0]
-    plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store)
+    target = None if into_flavor is None else _into_target(chosen, accounts_given)
+    plan = profiles.plan_apply(profile, chosen, Path(inst.root), store=store, into=target)
+    into_report = None if target is None else _into_report(manifest, plan.accounts)
     prompting = json_out and not yes and not dry_run
     show = _say if not json_out else _say_err
+    login_note = profiles.login_note(i.path for i in plan.plan)
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
         notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
         if plan.plan:
-            notes.append(profiles.LOGIN_NOTE)
+            notes.append(login_note)
         return ProfileApplyReport(
             profile=name,
             snapshot_id=manifest.id,
@@ -7852,22 +10792,30 @@ def profile_apply(
             applied=applied,
             transaction=transaction,
             notes=notes,
+            into=into_report,
+            plan_lines=[_safe(line) for line in plan_lines],
         )
 
-    if (not json_out or (prompting and plan.plan)) and (plan.plan or plan.skipped or plan.left):
-        show(
+    plan_lines: list[str] = []
+    if plan.plan or plan.skipped or plan.left:
+        plan_lines.append(
             f"Apply profile {name} (snapshot {manifest.id}) to {chosen.path}: "
             f"{len(plan.plan)} change(s)"
         )
-        show(f"  {plan.notes[0]}")
+        if into_report is not None:
+            plan_lines.extend(_into_lines(into_report, chosen))
+        plan_lines.append(f"  {plan.notes[0]}")
         if manifest.flavor_version != chosen.version:
-            show(
+            plan_lines.append(
                 f"  Saved on version {_version(manifest.flavor_version)}; {chosen.folder} is "
                 f"now on {_version(chosen.version)}."
             )
-        _print_apply_plan(show, plan)
+        plan_lines.extend(_apply_plan_lines(store, chosen.path, plan))
         if plan.plan:
-            show(profiles.LOGIN_NOTE)
+            plan_lines.append(login_note)
+    if not json_out or (prompting and plan.plan):
+        for line in plan_lines:
+            show(line)
     if not plan.plan:
         if json_out:
             _emit(report(applied=False))
@@ -7899,7 +10847,7 @@ def profile_apply(
     )
     if profiles.MACROS_NOTE in plan.notes:
         _say(profiles.MACROS_NOTE)
-    _say(profiles.LOGIN_NOTE)
+    # The login note was shown with the plan, before the prompt; it is not repeated here.
 
 
 # ─── addon ───────────────────────────────────────────────────────────────────
@@ -7912,6 +10860,7 @@ class AddonInstallReport(_Out):
     flavor_path: str
     flavor_version: str  # the discovered version the interface was derived from
     interface: int  # what the installed TOC's ## Interface: says
+    addon_version: str  # what the installed TOC's ## Version: says: this wowlab's (M16-06)
     source: str  # the source folder read
     files: list[str]  # every file of the addon, relative to the flavor folder
     plan: list[guard.PlanItem]  # new or changed files, then deletes of files not in the sources
@@ -7979,7 +10928,8 @@ def addon_install(
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
     patch-number rule; after a client update that changes the first three parts of
-    the version, run this again. Only WowLab.toc and the .lua files it lists are
+    the version, run this again (`wowlab doctor` says when). Its ## Version: is this
+    wowlab's version. Only WowLab.toc and the .lua files it lists are
     copied. Over an existing copy only changed files are written, and files not in
     the sources are deleted.
 
@@ -7999,6 +10949,7 @@ def addon_install(
             flavor_path=str(chosen.path),
             flavor_version=plan.flavor_version,
             interface=plan.interface,
+            addon_version=plan.addon_version,
             source=plan.source,
             files=list(plan.files),
             plan=list(plan.plan),
@@ -8014,7 +10965,7 @@ def addon_install(
     if not json_out or (prompting and plan.plan):
         show(
             f"Install the lab-addon into {chosen.path / target}: {len(plan.plan)} change(s), "
-            f"## Interface: {plan.interface}"
+            f"## Interface: {plan.interface}, ## Version: {plan.addon_version}"
         )
         show(f"  from {plan.source}")
         for item in plan.plan:
@@ -8182,6 +11133,13 @@ class CharShowReport(_Out):
     customization_loads_ago: int | None
     unknown_keys: list[str]
     notes: list[str]
+    # The installed client's version from .build.info, and whether the client
+    # that saved the record is older (M16-06; None when either is unknown).
+    installed_version: str | None = None
+    older_client: bool | None = None
+    # The installed lab-addon against this client, as `doctor` reads it
+    # (M16-06): what the text's advice for an older record rests on.
+    lab_addon: addoninstall.LabAddonState | None = None
 
 
 def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
@@ -8210,11 +11168,11 @@ def char_show(
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     account_files = [f for f in files if f.scope == "account"]
     account_file = account_files[0] if account_files else None
     account_record = (
-        labaddon.read_account(lay.flavor_path / account_file.path) if account_file else None
+        _listed(labaddon.read_account, lay, account_file.path) if account_file else None
     )
     known, ignored = labaddon.skip_known(record)
     report = CharShowReport(
@@ -8233,6 +11191,9 @@ def char_show(
         customization_loads_ago=labaddon.customization_loads_ago(record),
         unknown_keys=labaddon.unknown_keys(record),
         notes=_CHAR_NOTES,
+        installed_version=chosen.version,
+        older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
+        lab_addon=addoninstall.lab_addon_state(chosen),
     )
     if json_out:
         _emit(report)
@@ -8240,6 +11201,10 @@ def char_show(
     _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    if report.older_client:
+        _say_prose(
+            _older_record_line(chosen.version, report.lab_addon), hang="  ", keep=[_REINSTALL]
+        )
     # describe() renders its own words with `_player_copy` before a value
     # read from the record goes in; the line then prints as it is.
     for line in labaddon.describe(record, render=_player_copy):
@@ -8252,6 +11217,31 @@ def char_show(
             _say(line)
     for note in _CHAR_NOTES:
         _say_note(note)
+
+
+def _older_record_line(installed: str | None, state: addoninstall.LabAddonState | None) -> str:
+    """`char show`'s line for a record an older client saved (M16-06): how
+    to save a fresh one, and first, when the installed lab-addon is out of
+    date for this client or not installed, that it may not load (its state
+    as `doctor` reads it)."""
+    head = f"This record was saved by an older client than the installed {installed}"
+    fresh = (
+        "with the lab-addon enabled for this character, log in on it, then log out or "
+        "/reload, to save a fresh one."
+    )
+    status = state.status if state is not None else None
+    if status == "stale":
+        return (
+            f"{head}, and the installed lab-addon is out of date for this client, so the game "
+            f"may not load it (`wowlab doctor` says why). Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    if status == "not_installed":
+        return (
+            f"{head}, and the lab-addon is not installed. Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    return f"{head}: {fresh}"
 
 
 def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
@@ -8356,6 +11346,9 @@ class CharListReport(_Out):
     characters: list[labaddon.CharacterFile]
     not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
+    # The installed client's version from .build.info, which each row's
+    # `older_client` compares with (M16-06).
+    installed_version: str | None = None
 
 
 _CHAR_LIST_NOTES = [
@@ -8428,10 +11421,13 @@ def _bare_words(facts: labaddon.FolderFacts) -> str:
     return words
 
 
-def _row_words(e: labaddon.CharacterFile) -> str:
+def _row_words(e: labaddon.CharacterFile, installed: str | None = None) -> str:
     if e.no_lab_record is not None:
         return _bare_words(e.no_lab_record)
     if e.summary is not None:
+        if e.older_client:
+            # The summary names the saving client; this says it is the older one (M16-06).
+            return f"{e.summary}; older than the installed client {installed}"
         return e.summary
     if e.place in _BLOCKED_PLACE:
         return f"not read: could not look inside {_BLOCKED_PLACE[e.place]} ({e.error})"
@@ -8513,6 +11509,7 @@ def char_list(
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
             every_folder=True,
+            installed_version=chosen.version,
         )
         entries, unseen = found.characters, found.not_looked_at
     # Rows of character folders, apart from the `<Realm>/<First>/` folders.
@@ -8526,6 +11523,7 @@ def char_list(
         characters=entries,
         not_looked_at=unseen,
         notes=notes,
+        installed_version=chosen.version,
     )
     if json_out:
         _emit(report)
@@ -8564,7 +11562,8 @@ def char_list(
                     when = "time unknown"
                 else:
                     when = f"written {_local_time(e.mtime_ns)}"
-                _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+                row = _row_words(e, chosen.version)
+                _say(f"  {names[e.character]:<{width}}  {when}  {row}")
         # No install advice while a place went unseen: it may hold the files.
         if bare_rows and len(bare_rows) == len(folders) and not unseen:
             _say_note(
@@ -8594,6 +11593,22 @@ def char_list(
         raise typer.Exit(EXIT_ERROR)
 
 
+class CharNames(_Out):
+    """The spec, race and class names `char gear --json` gives beside their
+    ids (M16-31): each the `Name_lang` (or, for a body type of 1, the
+    non-empty female form) of the row with that id in the game-data table
+    already cached for `build`, the installed client's version. A name is
+    None when the install has no version, no such table is cached, the
+    table has no row for the id or cannot be read, or the record holds no
+    id; the page then shows the id. Nothing is fetched: `wowlab db2 fetch`
+    fills the cache."""
+
+    build: str | None
+    spec: str | None
+    race: str | None
+    class_name: str | None
+
+
 class CharGearReport(_Out):
     """`wowlab char gear --json`: one character's equipped gear from the
     lab-addon's `gear` record, slot by slot in the client's slot order, each
@@ -8607,6 +11622,11 @@ class CharGearReport(_Out):
     spec: gear.GearSpec
     # The race, body type and class (M15-01), as `char show --json` gives it.
     identity: labaddon.CharIdentity
+    # The character's level as the record holds it (the talent block's
+    # `player_level`, read at the save), or None (M16-31).
+    level: int | None
+    level_absent: str | None  # why there is no level; None when there is one
+    names: CharNames
     average: gear.GearAverage
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
@@ -8632,6 +11652,8 @@ _GEAR_OVERALL_NOTE = (
     "overall: on Retail, the best items owned, bags included (community documentation, "
     "[verify] on Forever)."
 )
+# Said by the page as the Spec row's title (M16-31); in the text, behind --notes.
+_GEAR_SPEC_NOTE = "Spec is the client's specialization, not the talent points spent."
 
 
 def _gear_table_note(source: gear.SlotTableSource) -> str:
@@ -8645,6 +11667,90 @@ def _gear_table_note(source: gear.SlotTableSource) -> str:
         f"Slot names and quality words: your {gear.SLOTS_FILE} in wowlab's user config folder, "
         "over the shipped default."
     )
+
+
+# The cached tables the names are read from, with the column of the female
+# form of the name in each (M16-31). Table and column names, not game data.
+_NAME_TABLES = {
+    "spec": ("ChrSpecialization", "FemaleName_lang"),
+    "race": ("ChrRaces", "Name_female_lang"),
+    "class_name": ("ChrClasses", "Name_female_lang"),
+}
+
+
+def _cached_name(table: str, female: str, build: str, row_id: int, sex: int | None) -> str | None:
+    """The name of row `row_id` in `table` as cached for `build`, or None."""
+    try:
+        rows = gamedata.cached_rows(table, build)
+        if rows is None:
+            return None
+        for row in rows:
+            if row.get("ID") != str(row_id):
+                continue
+            name = (row.get(female) or "").strip() if sex == 1 else ""
+            name = name or (row.get("Name_lang") or "").strip()
+            return name or None
+    except (ValueError, OSError, gamedata.GameDataError):
+        return None
+    return None
+
+
+def _char_names(
+    version: str | None, spec: gear.GearSpec, identity: labaddon.CharIdentity
+) -> CharNames:
+    """Names for the record's ids from the tables cached for `version`."""
+    ids = {"spec": spec.id, "race": identity.race_id, "class_name": identity.class_id}
+    found: dict[str, str | None] = dict.fromkeys(ids)
+    if version is not None:
+        for field, row_id in ids.items():
+            if row_id is not None:
+                table, female = _NAME_TABLES[field]
+                found[field] = _cached_name(table, female, version, row_id, identity.sex)
+    return CharNames(
+        build=version, spec=found["spec"], race=found["race"], class_name=found["class_name"]
+    )
+
+
+def _named(label: str, name: str | None, row_id: int | None, absent: str | None) -> str:
+    """One header line as the UI's Character tab draws it (M16-31): the name
+    with its id, else the id, else why there is none."""
+    if row_id is not None:
+        ident = f"{label.lower()} id {row_id}"
+        return f"{label}: {name} ({ident})" if name else f"{label}: {ident}"
+    return f"{label}: not recorded: {absent or 'not returned'}"
+
+
+def _header_lines(report: CharGearReport) -> list[str]:
+    """Level, class, race and spec, with the page's fallbacks."""
+    ident = report.identity
+    names = report.names
+    level = (
+        f"Level: {report.level}"
+        if report.level is not None
+        else f"Level: not recorded: {report.level_absent or 'not returned'}"
+    )
+    # One reason said once: a race missing for the class's reason says so.
+    race_absent = ident.race_id_absent
+    if ident.class_id is None and race_absent is not None and race_absent == ident.class_id_absent:
+        race_absent = "as for Class"
+    spec = report.spec
+    spec_line = _named("Spec", None, spec.id, spec.absent)
+    if spec.id is not None:
+        index = "index not returned" if spec.index is None else f"index {spec.index}"
+        where = f"{index}, from {spec.api}"
+        spec_line = (
+            f"Spec: {names.spec} (spec id {spec.id}, {where})"
+            if names.spec
+            else f"Spec: spec id {spec.id} ({where})"
+        )
+    return [
+        level,
+        _named(
+            "Class", names.class_name or ident.class_file, ident.class_id, ident.class_id_absent
+        ),
+        _named("Race", names.race, ident.race_id, race_absent),
+        spec_line,
+    ]
 
 
 def _no_gear(record: labaddon.CharDB, path: str) -> str | None:
@@ -8697,6 +11803,7 @@ def char_gear(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
     """The equipped gear the lab-addon recorded for one character, slot by slot
     in the client's order, with the item levels and averages the client gave.
@@ -8711,7 +11818,7 @@ def char_gear(
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     missing = _no_gear(record, target.path)
     if missing is not None:
         raise CliError(missing)
@@ -8733,33 +11840,35 @@ def char_gear(
         )
     notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE]
     identity = labaddon.identity_of(record)
+    spec = gear.spec_of(record)
+    level = dressing.level_of(record)
     report = CharGearReport(
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
         mtime_ns=target.mtime_ns,
-        spec=gear.spec_of(record),
+        spec=spec,
         identity=identity,
+        level=level,
+        level_absent=labaddon.level_absent_of(record) if level is None else None,
+        names=_char_names(chosen.version, spec, identity),
         average=gear.average_of(section),
         slots=filled,
         empty_slots=empty,
         notes=notes,
-        dressing=dressing.build(
-            identity, filled, version=chosen.version, level=dressing.level_of(record)
-        ),
+        dressing=dressing.build(identity, filled, version=chosen.version, level=level),
     )
     if json_out:
         _emit(report)
         return
-    _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
+    held = [*_account_words(acct), target.path]
+    _say_prose(
+        f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}",
+        keep=held,
+    )
     _say(f"File: {target.path}")
-    _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
-    spec = report.spec
-    if spec.absent is not None:
-        _say(f"Spec: {spec.absent}")
-    else:
-        ident = "id not returned" if spec.id is None else f"id {spec.id}"
-        index = "index not returned" if spec.index is None else f"index {spec.index}"
-        _say(f"Spec: {ident} ({index}, from {spec.api})")
+    _say(f"Written: {_local_time(target.mtime_ns)} ({_SAVED_AT})")
+    for line in _header_lines(report):
+        _say(line)
     _say(
         f"Gear (slots {section.first_slot} to {section.last_slot} as the client numbers them, "
         f"{len(filled)} filled):"
@@ -8776,30 +11885,35 @@ def char_gear(
         _say(f"Averages: absent ({average.absent})")
     else:
         _say(
-            f"Averages (GetAverageItemLevel, as the client returns them): equipped "
-            f"{_num_words(average.equipped)}, overall {_num_words(average.overall)}, pvp "
-            f"{_num_words(average.pvp)}"
+            f"Averages (GetAverageItemLevel, as the client returns them, not the mean of the "
+            f"levels above): equipped {_num_words(average.equipped)}, overall "
+            f"{_num_words(average.overall)}, pvp {_num_words(average.pvp)}"
         )
     apis = sorted({s.item_level_api for s in filled if s.item_level_api is not None})
     if apis:
         _say(f"Item levels from {', '.join(apis)}.")
+    # No absolute path: the shipped table's place is in --json (M16-16).
     if table.source == "default":
-        _say(
-            f"Slot names and quality words: the shipped default {table.shipped}, community "
-            "documentation for Retail, not yet confirmed on Forever. To use your "
-            f"own, copy it to {table.user_file} (create the folder if it is missing) and edit it."
+        _say_prose(
+            "Slot names and quality words: the shipped default table, community "
+            "documentation for Retail, not yet confirmed on Forever"
         )
     else:
-        _say(
-            f"Slot names and quality words: your table {table.user_file}, over the shipped "
-            f"default {table.shipped}"
+        _say_prose(
+            f"Slot names and quality words: your {gear.SLOTS_FILE} in wowlab's user config "
+            "folder, over the shipped default"
         )
-    for note in notes[len(_CHAR_NOTES) :]:
-        if note != _gear_table_note(table):
-            # The marker stands for an adjective here; said in words (M16-15).
-            _say_note(note.replace("[verify] on Forever", "not yet confirmed on Forever"))
-    for note in _CHAR_NOTES:
-        _say_note(note)
+    standing = [
+        # The marker stands for an adjective here; said in words (M16-15).
+        note.replace("[verify] on Forever", "not yet confirmed on Forever")
+        for note in (_GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE, _GEAR_SPEC_NOTE)
+    ]
+    standing.append(
+        f"To use your own slot names or quality words, put the values to change in "
+        f"{_home_words(table.user_file)} (create the folder if it is missing); a value there "
+        "replaces the shipped one."
+    )
+    _say_notes([*standing, *_CHAR_NOTES], notes_out, keep=[_home_words(table.user_file)])
 
 
 class CharBindsFile(_Out):
@@ -8864,7 +11978,7 @@ def _char_binds_file(
         ]
         scope = "character"
     target = found[0] if found else None
-    doc = wtfconfig.read_bindings(lay.flavor_path / target.path) if target else None
+    doc = _listed(wtfconfig.read_bindings, lay, target.path) if target else None
     note = _ACCOUNT_BINDINGS if scope == "account" else _NO_CHARACTER_BINDINGS
     if scope == "character" and doc is not None:
         note = _bindings_note("character", True)
@@ -8889,6 +12003,7 @@ def char_binds(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
     """What each key does for one character: the account and character
     bindings-cache.wtf and the keys the lab-addon recorded, each key
@@ -8958,7 +12073,7 @@ def char_binds(
     if json_out:
         _emit(report)
         return
-    _say_char_binds(report)
+    _say_char_binds(report, notes_out, _account_words(acct))
 
 
 def _kept_clicks(record: labaddon.CharDB | None) -> int:
@@ -9020,7 +12135,39 @@ def _source_words(row: keymap.KeyRow) -> str:
     return "record only: disagrees with the files"
 
 
-def _say_char_binds(report: CharBindsReport) -> None:
+def _say_record(
+    path: str | None,
+    error: str | None,
+    schema: int | None,
+    mtime_ns: int | None,
+    keep: Sequence[str],
+) -> None:
+    """The Record line of `char binds` and `char macros`, wrapped, its paths
+    and folder names kept whole."""
+    held = [*keep, path]
+    if path is None:
+        _say_prose(f"Record: none ({error or keymap.GET_RECORD})", keep=held)
+    elif error is not None:
+        _say_prose(f"Record: {path} not read ({error})", keep=held)
+    else:
+        assert mtime_ns is not None
+        _say_prose(
+            f"Record: {path} (schema {schema}), written {_local_time(mtime_ns)} ({_SAVED_AT})",
+            keep=held,
+        )
+
+
+def _file_note(label: str, note: str) -> str:
+    """A bindings file's parenthesised note (`_bindings_note`) as a sentence
+    of its own under the file's label, for behind --notes."""
+    text = note.removeprefix("(").removesuffix(")").removeprefix("account bindings; ")
+    return f"{label}: {text}."
+
+
+def _say_char_binds(
+    report: CharBindsReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
+    standing: list[str] = []
     if report.character is None:
         _say(
             f"Character: none in account {report.account} has a {labaddon.LAB_FILE_NAME}; "
@@ -9029,38 +12176,35 @@ def _say_char_binds(report: CharBindsReport) -> None:
     else:
         picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
         _say(f"Character: {report.character} in account {report.account}{picked}")
-    if report.record_file is None:
-        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
-    elif report.record_error is not None:
-        _say(f"Record: {report.record_file} not read ({report.record_error})")
-    else:
-        assert report.record_mtime_ns is not None
-        _say(
-            f"Record: {report.record_file} (schema {report.record_schema}), written "
-            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
-        )
+    _say_record(
+        report.record_file, report.record_error, report.record_schema, report.record_mtime_ns, keep
+    )
     for f in report.files:
         label = "Account bindings" if f.scope == "account" else "Character bindings"
+        # What each file is goes behind --notes: the same words on every run.
+        standing.append(_file_note(label, f.note))
         if f.path is None or f.mtime_ns is None:
-            _say(f"{label}: no bindings-cache.wtf {_player_copy(f.note)}")
+            _say(f"{label}: no bindings-cache.wtf")
             continue
         unknown = f"; {_plural(f.unknown_lines, 'other line')}, kept" * bool(f.unknown_lines)
         _say(
             f"{label}: {f.path} ({_plural(f.bind_lines, 'bind line')}{unknown}), written "
-            f"{_local_time(f.mtime_ns)} {_player_copy(f.note)}"
+            f"{_local_time(f.mtime_ns)}"
         )
     # Without a record read, the Record line above already says why.
     read = report.record_file is not None and report.record_error is None
     if read and isinstance(report.record_schema, int) and report.record_schema < 3:
-        _say(
+        _say_prose(
             "Cannot place keys on action slots or compare the files with the record: schema "
             f"{report.record_schema} has no action-bar or bindings record ({keymap.GET_RECORD})"
         )
     elif read:
         if report.cannot_place is not None:
-            _say(f"Cannot place keys on action slots: {report.cannot_place}")
+            _say_prose(f"Cannot place keys on action slots: {report.cannot_place}", keep=keep)
         if report.cannot_compare is not None:
-            _say(f"Cannot compare the files with the record: {report.cannot_compare}")
+            _say_prose(
+                f"Cannot compare the files with the record: {report.cannot_compare}", keep=keep
+            )
     tally = ""
     if report.cannot_compare is None:
         count = {a: sum(1 for k in report.keys if k.agreement == a) for a in _AGREEMENTS}
@@ -9070,12 +12214,15 @@ def _say_char_binds(report: CharBindsReport) -> None:
             f"another command, {count['not in a file']} only in the record with no file line "
             f"for the key, {count['cleared']} cleared)"
         )
-    _say(f"Keys: {len(report.keys)}{tally}")
+    # Said inline, not as the caveat: what a main-bar key does depends on the
+    # page a form, stance or stealth shows (domain review, M16-16).
     if any(k.command.startswith("ACTIONBUTTON") and k.slot is not None for k in report.keys):
-        _say(
-            "  Main-bar keys (ACTIONBUTTON1 to 12) are read at page 1, the page shown with no "
-            "form, stance or stealth active; another page they may show is not followed."
+        tally = (
+            f" (main-bar keys at page 1, with no form, stance or stealth; {tally[2:]}"
+            if tally
+            else " (main-bar keys at page 1, with no form, stance or stealth)"
         )
+    _say_prose(f"Keys: {len(report.keys)}{tally}")
     generic = False
     pad = f"  {'':<16} {'':<26} {'':>4}  "
     for k in report.keys:
@@ -9089,7 +12236,9 @@ def _say_char_binds(report: CharBindsReport) -> None:
         elif k.note is not None and k.disagrees:
             _say(f"{pad}{k.note}")
     if generic:
-        _say_note(f"  Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}.")
+        standing.append(
+            f"Only in the record, no file line for the key: {keymap.WHY_NOT_IN_A_FILE}."
+        )
     if report.cannot_place is None:
         reached = [u for u in report.unreached_slots if not u.unfollowed_page]
         paged = [u for u in report.unreached_slots if u.unfollowed_page]
@@ -9104,10 +12253,12 @@ def _say_char_binds(report: CharBindsReport) -> None:
                 _say(
                     f"  slot {u.slot:>3}  {_player_copy(u.does, _held_words(u.holds))}  ({u.page_note})"
                 )
-    if report.left_out_note is not None:
-        _say_note(report.left_out_note)
-    for note in report.notes:
-        _say_note(note)
+    # The one caveat: what the record left out, else that keys at the
+    # client's defaults are not listed. Both say the key list may be short.
+    caveat = report.left_out_note or next(
+        (n for n in report.notes if n == keymap.NO_BINDINGS_NOTE), None
+    )
+    _say_notes([*standing, *report.notes], show_notes, caveat)
 
 
 _AGREEMENTS: tuple[keymap.Agreement, ...] = (
@@ -9185,7 +12336,7 @@ def _char_macros_file(
     _, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, who)
     if found is None:
         return CharMacrosFile(scope=scope, path=None, mtime_ns=None, macros=0, unknown_lines=0), []
-    data = snapshot.read_regular_file(lay.flavor_path / found.path, limit=_MACROS_LIMIT)
+    data = _listed(snapshot.read_regular_file, lay, found.path, limit=_MACROS_LIMIT)
     doc = wtfconfig.parse_macros(data)
     return (
         CharMacrosFile(
@@ -9207,6 +12358,7 @@ def char_macros(
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
 ) -> None:
     """The macros of the account and one character's macros-cache.txt, each
     with the action slots it may sit at and the keys that reach them, and
@@ -9332,7 +12484,7 @@ def char_macros(
     if json_out:
         _emit(report)
         return
-    _say_char_macros(report)
+    _say_char_macros(report, notes_out, _account_words(acct))
 
 
 def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> list[str]:
@@ -9348,7 +12500,9 @@ def _placement_lines(p: macroplace.Placement, keys_incomplete: str | None) -> li
     return lines
 
 
-def _say_char_macros(report: CharMacrosReport) -> None:
+def _say_char_macros(
+    report: CharMacrosReport, show_notes: bool = False, keep: Sequence[str] = ()
+) -> None:
     if report.character is None:
         _say(
             f"Character: none in account {report.account} has a {labaddon.LAB_FILE_NAME}; "
@@ -9357,16 +12511,9 @@ def _say_char_macros(report: CharMacrosReport) -> None:
     else:
         picked = " (written last; choose another with --character)" * (report.chosen_by == "latest")
         _say(f"Character: {report.character} in account {report.account}{picked}")
-    if report.record_file is None:
-        _say(f"Record: none ({report.record_error or keymap.GET_RECORD})")
-    elif report.record_error is not None:
-        _say(f"Record: {report.record_file} not read ({report.record_error})")
-    else:
-        assert report.record_mtime_ns is not None
-        _say(
-            f"Record: {report.record_file} (schema {report.record_schema}), written "
-            f"{_local_time(report.record_mtime_ns)} (the file's modification time)"
-        )
+    _say_record(
+        report.record_file, report.record_error, report.record_schema, report.record_mtime_ns, keep
+    )
     for f in report.files:
         label = f"{f.scope.capitalize()} macros"
         if f.path is None or f.mtime_ns is None:
@@ -9398,16 +12545,26 @@ def _say_char_macros(report: CharMacrosReport) -> None:
         for line in m.body_lines:
             _say(f"      {line}")
         for line in _placement_lines(m.placement, report.keys_incomplete):
-            _say(f"    {line}")
+            # The rule's own words carry the spec's markers (domain F8).
+            _say_prose(_player_copy(line), indent="    ", hang="        ", keep=keep)
         for finding in m.findings:
-            _say(f"    finding {finding.rule} (line {finding.line}): {finding.detail}")
+            _say_prose(
+                f"finding {finding.rule} (line {finding.line}): {finding.detail}",
+                indent="    ",
+                hang="        ",
+            )
         for c in m.cannot_judge:
-            _say(f"    cannot judge {c.rule} (line {c.line}): {c.reason}")
+            _say_prose(
+                f"cannot judge {c.rule} (line {c.line}): {c.reason}", indent="    ", hang="        "
+            )
     _say(f"Cannot judge for any macro: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
-        _say(f"  {c.rule}: {_player_copy(c.reason)}")
-    for note in report.notes:
-        _say_note(note)
+        _say_prose(f"{c.rule}: {_player_copy(c.reason)}", indent="  ", hang="    ", keep=keep)
+    # The one caveat: with a slot shown, that every slot is a candidate only;
+    # otherwise that macros-cache.txt may be stale or replaced by the server,
+    # so "0 macros" may be wrong (domain review, M16-16).
+    caveat = macroplace.CANDIDATE_RULE if may_sit else _MACRO_FILE_TEXT
+    _say_notes(_macro_notes(report.notes), show_notes, caveat, keep=keep)
 
 
 # ─── looks ───────────────────────────────────────────────────────────────────
@@ -9642,7 +12799,10 @@ def _looks_build(
                 "customization tables are cached (--build chooses another)."
             ]
         have = f" (cached: {', '.join(cached)})" if cached else ""
-        raise CliError(f"{exc}; pass --build with a full version string{have}") from exc
+        raise CliError(
+            f"{_install_words(exc)}. Without an install, pass --build with a full "
+            f"version string{have}"
+        ) from exc
 
 
 def _load_model(data: gamedata.GameData, build: str) -> looks.Customizations:
@@ -10446,6 +13606,19 @@ _NO_CLASS_REMARK = (
     "The record holds no class: class-restricted choices are noted, not refused; --class "
     "checks them."
 )
+_RECORDED_NO_CLASS_REMARK = (
+    "The record holds no class: {reason}. Class-restricted choices are noted, not refused; "
+    "--class checks them."
+)
+_RECORDED_CLASS_REMARK = "The class is the one the lab-addon recorded for this character: {cls}."
+_CLASS_DISAGREES_REMARK = (
+    "--class gives {given}, but the lab-addon recorded {cls} for this character; --class is used."
+)
+_RACES_DIFFER_REMARK = (
+    "The record's identity (race {identity}) and its customization (race {customization}) were "
+    "recorded in different sessions; the class is the identity's, which may not be the class "
+    "of the character that made this look."
+)
 
 
 class LooksImportReport(_Out):
@@ -10462,6 +13635,19 @@ class LooksImportReport(_Out):
     as_of_words: str  # how the record's moment is said: never the character's appearance now
     saved: bool
     look: LookReport
+    # Where `look.class_id` came from: the --class option, the record's
+    # `identity` (schema 4), or nowhere (None: no class in the look).
+    class_from: Literal["--class", "record"] | None = None
+    # The class the record holds (schema 4's `identity`), each beside the
+    # reason it holds no class id; exactly one of the id and the reason is
+    # set (the class file is beside the id when the record has both).
+    recorded_class_id: int | None = None
+    recorded_class_file: str | None = None
+    recorded_class_absent: str | None = None
+    # The race the record's `identity` holds (None when it holds none). It
+    # can differ from `record.race_id`: the identity is gathered at each
+    # login, the customization record is carried from an earlier session.
+    recorded_race_id: int | None = None
 
 
 def _loads_ago_text(ago: int | None) -> str:
@@ -10473,7 +13659,7 @@ def _loads_ago_text(ago: int | None) -> str:
 
 
 def _import_remarks(
-    model: looks.Customizations, got: labaddon.CustomizationImport, class_id: int | None
+    model: looks.Customizations, got: labaddon.CustomizationImport, class_remarks: list[str]
 ) -> list[str]:
     at = got.recorded_at if got.recorded_at is not None else "not recorded"
     remarks = [
@@ -10516,8 +13702,7 @@ def _import_remarks(
             f"The barber shop was showing model {got.chr_model_id}; build {model.build}'s "
             f"tables give race {got.race_id} body type {got.body_type} model {expected}."
         )
-    if class_id is None:
-        remarks.append(_NO_CLASS_REMARK)
+    remarks.extend(class_remarks)
     if got.client_build is not None and got.client_build != model.build:
         remarks.append(
             f"Recorded by client build {got.client_build}; checked against build "
@@ -10525,6 +13710,52 @@ def _import_remarks(
             "come from a hotfix."
         )
     return remarks
+
+
+def _import_class(
+    model: looks.Customizations,
+    record: labaddon.CharDB,
+    got: labaddon.CustomizationImport,
+    given: str | None,
+) -> tuple[int | None, Literal["--class", "record"] | None, labaddon.CharIdentity, list[str]]:
+    """The look's class, where it came from, the record's identity and the
+    remarks that say so. --class wins over the record (said in one line when
+    they differ); a record of schema 1 to 3 holds no class and keeps the
+    remark it always had. The record's class id is checked by the look, as a
+    typed --class id is. A class taken from an identity whose race is not the
+    customization record's is said to come from another session."""
+    identity = labaddon.identity_of(record)
+    recorded = identity.class_id
+    class_id = _resolve_class(model, given)
+    if class_id is not None:
+        remarks: list[str] = []
+        if recorded is not None and recorded != class_id:
+            remarks.append(
+                _CLASS_DISAGREES_REMARK.format(
+                    given=_class_words(model, class_id), cls=_class_words(model, recorded)
+                )
+            )
+        return class_id, "--class", identity, remarks
+    if recorded is not None:
+        remarks = [_RECORDED_CLASS_REMARK.format(cls=_class_words(model, recorded))]
+        if identity.race_id is not None and identity.race_id != got.race_id:
+            remarks.append(
+                _RACES_DIFFER_REMARK.format(identity=identity.race_id, customization=got.race_id)
+            )
+        return recorded, "record", identity, remarks
+    if not isinstance(record, labaddon.CharDBV4):
+        return None, None, identity, [_NO_CLASS_REMARK]
+    return (
+        None,
+        None,
+        identity,
+        [_RECORDED_NO_CLASS_REMARK.format(reason=(identity.class_id_absent or "").rstrip("."))],
+    )
+
+
+def _class_words(model: looks.Customizations, class_id: int) -> str:
+    known = model.classes.get(class_id)
+    return f"{known.name} ({class_id})" if known is not None else f"{class_id}"
 
 
 @looks_app.command("import-char", short_help="Save a character's recorded customization as a look.")
@@ -10548,7 +13779,9 @@ def looks_import_char(
     only); without --character, the one written last. A character with no
     recorded visit gets the addon's reason (exit 1). The look is checked like
     `looks save`: one the tables refuse is not saved (exit 1); an id the
-    tables lack is noted "(possibly a hotfix)".
+    tables lack is noted "(possibly a hotfix)". Without --class, the class is
+    the one the lab-addon recorded for the character, when its record holds
+    one; --class wins over it.
 
     \f
     JSON: LooksImportReport."""
@@ -10561,7 +13794,7 @@ def looks_import_char(
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
     who = f"{target.realm_folder}/{target.character_folder}"
-    record = labaddon.read_char(lay.flavor_path / target.path)
+    record = _listed(labaddon.read_char, lay, target.path)
     try:
         got = labaddon.customization_import(record)
     except labaddon.NoCustomizationError as exc:
@@ -10571,7 +13804,7 @@ def looks_import_char(
     with _open_gamedata() as data:
         version, build_remarks = _looks_build(data, build, root, flavor)
         model = _load_model(data, version)
-    class_id = _resolve_class(model, class_)
+    class_id, class_from, identity, class_remarks = _import_class(model, record, got, class_)
     look = looks.Look(
         name=name,
         race_id=got.race_id,
@@ -10585,7 +13818,7 @@ def looks_import_char(
         recorded_client_build=got.client_build,
         look=look,
     )
-    remarks = [*_import_remarks(model, got, class_id), *build_remarks]
+    remarks = [*_import_remarks(model, got, class_remarks), *build_remarks]
     report = _look_report(model, saved, None, remarks, imported_remark=False)
     path: Path | None = None
     if not report.refused:
@@ -10602,6 +13835,11 @@ def looks_import_char(
         as_of_words=_AS_OF_WORDS[got.recorded_at],
         saved=path is not None,
         look=report,
+        class_from=class_from,
+        recorded_class_id=identity.class_id,
+        recorded_class_file=identity.class_file,
+        recorded_class_absent=identity.class_id_absent,
+        recorded_race_id=identity.race_id,
     )
     if json_out:
         _emit(out)
@@ -10888,11 +14126,13 @@ def looks_page(
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
 ) -> None:
-    """Write one self-contained HTML page (no network requests) to browse the
-    races, body types, classes, options and choices of the build's tables, with
-    what the tables say about each choice, and to view the saved looks checked
-    against that build. Never written into an install; names each damaged look
-    file and then exits 1, as `looks show` does.
+    """Write one self-contained HTML page to browse the races, body types,
+    classes, options and choices of the build's tables, with what the tables
+    say about each choice, and to view the saved looks checked against that
+    build. The build's public game tables are downloaded from wago.tools when
+    wowlab does not have them yet; the page itself makes no network request.
+    Never written into an install; names each damaged look file and then
+    exits 1, as `looks show` does.
 
     \f
     JSON: LooksPageReport."""

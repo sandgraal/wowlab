@@ -382,7 +382,11 @@ def test_no_visit_gives_the_addons_reason_and_saves_nothing(
     extra = ("--character", character, *(("--json",) if json_out else ()))
     result = _import(unvisited, "nope", *extra)
     assert result.exit_code == 1
-    assert result.stdout == ""
+    if json_out:  # the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert f"wowlab: {report.message}" in result.stderr
+    else:
+        assert result.stdout == ""
     assert f"1/{character}: nothing to import" in result.stderr
     assert f"customization is absent, with the addon's reason: {NO_VISIT_REASON}" in result.stderr
     assert "nothing was saved" in result.stderr
@@ -719,3 +723,237 @@ def test_a_requirement_id_the_tables_lack_keeps_the_models_words_constructed(
         "build of these tables: the id may exist only in that build, or come from a hotfix)",
         requirement.message,
     ]
+
+
+# ─── the class from the schema-4 identity record (M13-80) ────────────────────
+
+# The M15-01 capture (`fixtures/macos-70450/`, files-only: the install root's
+# `.build.info` and `.flavor.info` are borrowed from `macos/`, as
+# `test_cli_char_gear.py` does). Sangraal-Sett is an Undead warlock with a
+# carried customization record; Dangling-Participle has none.
+CAPTURE_70450 = FIXTURES / "macos-70450"
+SETT = "Sangraal-Sett"
+SETT_FILE = f"WTF/Account/90000001#6/1/{SETT}/SavedVariables/WowLab.lua"
+DANGLING = "Dangling-Participle"
+# Sangraal-Sett's record is carried: recorded one load before the saving one.
+SETT_WHEN = "1 login(s) or reload(s) before the session that saved this file"
+WARLOCK, MAGE = 9, 8  # the record's identity.class_id; ChrClasses ids in 70009
+RECORDED_CLASS = "The class is the one the lab-addon recorded for this character: Warlock (9)."
+DISAGREES = (
+    "--class gives Mage (8), but the lab-addon recorded Warlock (9) for this character; --class "
+    "is used."
+)
+
+
+@pytest.fixture
+def identified(tmp_path: Path) -> Path:
+    """The M15-01 capture as an install."""
+    root = tmp_path / "identified" / "World of Warcraft"
+    root.mkdir(parents=True)
+    shutil.copy2(CAPTURE_70009 / ".build.info", root / ".build.info")
+    shutil.copytree(CAPTURE_70450 / "forever", root / FLAVOR)
+    shutil.copy2(CAPTURE_70009 / "forever" / ".flavor.info", root / FLAVOR / ".flavor.info")
+    return root
+
+
+def _sett_constructed(root: Path, old: bytes, new: bytes) -> None:
+    """Constructed: the installed copy of Sangraal-Sett's record with one change."""
+    path = root / FLAVOR / SETT_FILE
+    data = path.read_bytes()
+    assert data.count(old) == 1, old
+    path.write_bytes(data.replace(old, new))
+
+
+def test_a_schema_4_record_gives_the_class(identified: Path) -> None:
+    report = _report(identified, "sett", "--character", SETT)
+    assert report.character == f"1/{SETT}"
+    assert (report.look.class_id, report.look.class_name) == (WARLOCK, "Warlock")
+    assert report.class_from == "record"
+    assert (report.recorded_class_id, report.recorded_class_file) == (WARLOCK, "WARLOCK")
+    assert report.recorded_class_absent is None
+    assert report.look.remarks == _remarks_with_class([RECORDED_CLASS], "1.60.1.70450", SETT_WHEN)
+    assert report.recorded_race_id == report.record.race_id == UNDEAD
+    assert report.look.refused is False
+    saved = SavedLook.model_validate_json(Path(report.look.path or "").read_bytes())
+    assert saved.look.class_id == WARLOCK
+
+
+def test_a_schema_4_record_gives_the_class_in_text(identified: Path) -> None:
+    text = ok(
+        "looks", "import-char", "sett", "--character", SETT, "--root", str(identified),
+        "--build", BUILD,
+    ).stdout  # fmt: skip
+    assert "  class:     Warlock (9)\n" in text
+    assert unmarked(RECORDED_CLASS) in text
+    assert unmarked(cli._NO_CLASS_REMARK) not in text
+
+
+@pytest.mark.parametrize("json_out", [False, True], ids=["text", "json"])
+def test_no_customization_record_still_has_nothing_to_import(
+    identified: Path, user_data: Path, json_out: bool
+) -> None:
+    result = _import(
+        identified, "nope", "--character", DANGLING, *(("--json",) if json_out else ())
+    )
+    assert result.exit_code == 1
+    if json_out:  # the error alone as a report (M16-22)
+        report = cli.ErrorReport.model_validate_json(result.stdout)
+        assert f"wowlab: {report.message}" in result.stderr
+    else:
+        assert result.stdout == ""
+    assert result.stderr == (
+        f"wowlab: 1/{DANGLING}: nothing to import: customization is absent, with the addon's "
+        f"reason: {NO_VISIT_REASON}; nothing was saved\n"
+    )
+    assert not (user_data / "looks").exists()
+
+
+@pytest.fixture
+def schema_3(tmp_path: Path) -> Path:
+    """The M13-05 capture (`fixtures/macos-70425/`, files-only): a schema-3
+    record with a customization record (Labchard-Labrealme, an Undead)."""
+    root = tmp_path / "schema3" / "World of Warcraft"
+    root.mkdir(parents=True)
+    shutil.copy2(CAPTURE_70009 / ".build.info", root / ".build.info")
+    shutil.copytree(FIXTURES / "macos-70425" / "forever", root / FLAVOR)
+    shutil.copy2(CAPTURE_70009 / "forever" / ".flavor.info", root / FLAVOR / ".flavor.info")
+    return root
+
+
+def _remarks_with_class(
+    class_remarks: list[str], client_build: str, when: str = "in the session that saved this file"
+) -> list[str]:
+    """Every remark `import-char` gives the real Undead records (all three
+    captures were recorded at "open", with no model id), in order, with the
+    class remarks in their place."""
+    return [
+        "Customization as of the last barber-shop open (recorded_at: open; the addon's as_of: "
+        f'"{AS_OF}"), {when}. The character may look different since.',
+        cli._OPEN_REMARK,
+        labaddon.PAID_CHANGE_NOTE,
+        cli._MODEL_ONLY_REMARK,
+        NOT_LISTED,
+        "The record names no model (chr_model_id): the body type is its sex value 0, read as "
+        "the tables' body type (ChrRaceXChrModel.Sex) [verify].",
+        *class_remarks,
+        f"Recorded by client build {client_build}; checked against build {BUILD}'s tables: an "
+        "id they lack may exist only in the recording build, or come from a hotfix.",
+        EXPORTED_ONLY,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("capture", "schema", "client_build"),
+    [("visited", 1, CLIENT_BUILD), ("schema_3", 3, "1.60.1.70425")],
+)
+def test_an_older_record_keeps_the_no_class_remark(
+    request: pytest.FixtureRequest, capture: str, schema: int, client_build: str
+) -> None:
+    root: Path = request.getfixturevalue(capture)
+    report = _report(root, "undead")
+    assert report.look.remarks == _remarks_with_class([cli._NO_CLASS_REMARK], client_build)
+    assert report.class_from is None
+    assert report.look.class_id is None
+    assert [r for r in report.look.remarks if "class" in r.casefold()] == [cli._NO_CLASS_REMARK]
+    assert report.recorded_class_id is None
+    assert report.recorded_class_file is None
+    assert (report.recorded_class_absent or "").startswith(
+        "this record predates the identity section;"
+    )
+    text = ok("looks", "import-char", "undead2", "--root", str(root), "--build", BUILD).stdout
+    assert "  class:     not given (class-restricted choices are noted, not refused)\n" in text
+    assert text.count(f"\n{cli._NO_CLASS_REMARK}\n") == 1
+
+
+def test_class_option_on_a_schema_3_record_comes_from_the_option(schema_3: Path) -> None:
+    report = _report(schema_3, "undead", "--class", "Warlock")
+    assert (report.class_from, report.look.class_id) == ("--class", WARLOCK)
+    assert not any("class" in r.casefold() for r in report.look.remarks)
+
+
+def test_class_option_that_agrees_with_the_record_adds_nothing(identified: Path) -> None:
+    report = _report(identified, "sett", "--character", SETT, "--class", "9")
+    assert (report.class_from, report.look.class_id) == ("--class", WARLOCK)
+    assert RECORDED_CLASS not in report.look.remarks
+    assert DISAGREES not in report.look.remarks
+    assert cli._NO_CLASS_REMARK not in report.look.remarks
+
+
+@pytest.mark.parametrize("given", ["8", "mage"])
+def test_class_option_that_disagrees_with_the_record_wins_constructed(
+    identified: Path, given: str
+) -> None:
+    """Constructed: --class names another class than the real record's."""
+    report = _report(identified, "sett", "--character", SETT, "--class", given)
+    assert (report.class_from, report.look.class_id) == ("--class", MAGE)
+    assert report.recorded_class_id == WARLOCK
+    assert [r for r in report.look.remarks if "class" in r.casefold()] == [DISAGREES]
+    text = ok(
+        "looks", "import-char", "sett2", "--character", SETT, "--class", given,
+        "--root", str(identified), "--build", BUILD,
+    ).stdout  # fmt: skip
+    assert "  class:     Mage (8)\n" in text
+    assert text.count(DISAGREES) == 1
+
+
+def test_a_recorded_class_the_tables_lack_is_checked_like_the_option_constructed(
+    identified: Path,
+) -> None:
+    """Constructed: the record's class id changed to one 70009's ChrClasses lacks."""
+    _sett_constructed(identified, b'["class_id"] = 9,', b'["class_id"] = 99999,')
+    results = [
+        _import(identified, "a", "--character", SETT, "--json"),
+        _import(identified, "b", "--character", SETT, "--class", "99999", "--json"),
+    ]
+    assert [r.exit_code for r in results] == [1, 1]  # refused, as the option is
+    recorded, typed = (cli.LooksImportReport.model_validate_json(r.stdout) for r in results)
+    assert recorded.class_from == "record"
+    assert recorded.saved is typed.saved is False
+    assert recorded.look.class_id == typed.look.class_id == 99999
+    assert recorded.look.class_name is typed.look.class_name is None
+    assert recorded.look.refused == typed.look.refused
+    assert recorded.look.refusals == typed.look.refusals
+    assert recorded.look.notes == typed.look.notes
+
+
+def test_a_schema_4_record_without_a_class_says_why_constructed(identified: Path) -> None:
+    """Constructed: the record's class id replaced by an absent reason."""
+    _sett_constructed(
+        identified, b'["class_id"] = 9,', b'["class_id_absent"] = "UnitClass returned nothing",'
+    )
+    report = _report(identified, "sett", "--character", SETT)
+    assert report.class_from is None
+    assert report.look.class_id is None
+    assert report.recorded_class_absent == "UnitClass returned nothing"
+    assert report.recorded_class_file == "WARLOCK"
+    assert (
+        "The record holds no class: UnitClass returned nothing. Class-restricted choices are "
+        "noted, not refused; --class checks them."
+    ) in report.look.remarks
+    assert cli._NO_CLASS_REMARK not in report.look.remarks
+
+
+def test_an_identity_of_another_race_is_said_to_be_another_session_constructed(
+    identified: Path,
+) -> None:
+    """Constructed: the identity's race changed to 2 (Orc), as when the
+    customization record was carried from a character of another race."""
+    _sett_constructed(
+        identified, b'["race_id"] = 5,\r\n["class_file"]', b'["race_id"] = 2,\r\n["class_file"]'
+    )
+    report = _report(identified, "sett", "--character", SETT)
+    assert (report.class_from, report.look.class_id) == ("record", WARLOCK)
+    assert (report.recorded_race_id, report.record.race_id) == (2, UNDEAD)
+    differ = (
+        "The record's identity (race 2) and its customization (race 5) were recorded in "
+        "different sessions; the class is the identity's, which may not be the class of the "
+        "character that made this look."
+    )
+    assert report.look.remarks == _remarks_with_class(
+        [RECORDED_CLASS, differ], "1.60.1.70450", SETT_WHEN
+    )
+    text = ok(
+        "looks", "import-char", "sett2", "--character", SETT, "--root", str(identified),
+        "--build", BUILD,
+    ).stdout  # fmt: skip
+    assert text.count(differ) == 1

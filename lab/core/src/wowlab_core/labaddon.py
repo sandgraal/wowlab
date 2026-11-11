@@ -90,8 +90,9 @@ available"; an empty list reads "none recorded"; a trait config's `type` is
 the raw client enum number; professions are named by skill line.
 
 Reads never write (L1): `read_char` and `read_account` open one file with
-`snapshot.read_regular_file` (read-only, no final link followed, no blocking
-on a FIFO, bounded by `luadata.MAX_FILE_BYTES`) and write nothing anywhere;
+`snapshot.read_regular_file` (read-only, from the install root one folder at
+a time so no link on the way is followed, no blocking on a FIFO, bounded by
+`luadata.MAX_FILE_BYTES`) and write nothing anywhere;
 `survey` lists folders through `layout` and reads each file the same way,
 within `MAX_SURVEY_BYTES` for all of them together.
 Nothing here names a flavor, a product or a build (L6).
@@ -122,6 +123,7 @@ from pydantic import (
 )
 
 from wowlab_core import filemap, layout, longpath, luadata, snapshot, wtfconfig
+from wowlab_core.errors import WowlabError
 from wowlab_core.layout import FsText
 
 __all__ = [
@@ -134,6 +136,7 @@ __all__ = [
     "IDENTITY_FIELDS",
     "ID_MAX",
     "LAB_FILE_NAME",
+    "LINKED_FILE",
     "MAX_IMPORT_CHOICES",
     "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
@@ -193,6 +196,7 @@ __all__ = [
     "SpellbookV5",
     "TalentsV3",
     "choose_lab_file",
+    "client_build",
     "clip_reason",
     "customization_import",
     "customization_loads_ago",
@@ -201,8 +205,10 @@ __all__ = [
     "identity_of",
     "is_lab_file_name",
     "legacy_headline",
+    "level_absent_of",
     "load_account",
     "load_char",
+    "older_client",
     "parse_account",
     "parse_char",
     "read_account",
@@ -253,7 +259,7 @@ PAID_CHANGE_NOTE = (
 )
 
 
-class LabAddonError(ValueError):
+class LabAddonError(WowlabError, ValueError):
     """A `WowLab.lua` this reader refuses: not the addon's variable, a schema
     it does not know, or a value that does not fit the schema's model."""
 
@@ -645,11 +651,40 @@ class GearAverage(_Record):
     pvp: Number | None = None
 
 
+def _check_slots_walked_once(first: int, last: int, slots: list[int]) -> None:
+    """The addon walks `for slot = first, last` once and lists only the
+    slot it is on, so a range that runs backwards, a slot outside it and a
+    slot listed twice are each a file it cannot have written (M13-70 for
+    `actionbars`, M16-106 for `gear`). The messages carry only bounded
+    `Int` slot numbers, nothing else from the file."""
+    if first > last:
+        raise ValueError("first_slot is after last_slot")
+    seen: set[int] = set()
+    for slot in slots:
+        if not first <= slot <= last:
+            raise ValueError(f"slot {slot} is outside the slots walked ({first} to {last})")
+        if slot in seen:
+            raise ValueError(f"slot {slot} is listed more than once")
+        seen.add(slot)
+
+
 class Gear(_Section):
+    """`gear`: equipment slots `first_slot` to `last_slot` walked, the
+    filled ones listed. `Gear.lua` walks each slot of the range once, so a
+    range that runs backwards, a slot listed twice and a slot outside the
+    range are refused (M16-106, as M13-70 did for `actionbars`): kept, a
+    duplicate would print twice in `char gear` and give the dressing room
+    two items for one slot."""
+
     first_slot: Int
     last_slot: Int
     slots: Lst[GearSlot]
     average: Annotated[Annotated[GearAverage, Tag(_P)] | Annotated[AbsentRecord, Tag(_A)], _SPLIT]
+
+    @model_validator(mode="after")
+    def _slots_walked_once(self) -> Self:
+        _check_slots_walked_once(self.first_slot, self.last_slot, [s.slot for s in self.slots])
+        return self
 
 
 # ─── spec ────────────────────────────────────────────────────────────────────
@@ -1215,12 +1250,21 @@ class ActionSlot(_Record):
 
 class ActionBars(_Section):
     """`actionbars` (schema 3): slots `first_slot` to `last_slot` walked,
-    the filled ones listed, read out of combat."""
+    the filled ones listed, read out of combat. The addon walks each slot
+    of the range once, so a range that runs backwards, a slot listed twice
+    and a slot outside the range are refused (M13-70): each is a file the
+    addon cannot have written, and a reader that kept one would leave every
+    tool built on the slots to pick which entry counts."""
 
     first_slot: Int
     last_slot: Int
     slots: Lst[ActionSlot]
     probes: Lst[ApiProbe]
+
+    @model_validator(mode="after")
+    def _slots_walked_once(self) -> Self:
+        _check_slots_walked_once(self.first_slot, self.last_slot, [s.slot for s in self.slots])
+        return self
 
 
 class Binding(_Record):
@@ -1731,18 +1775,50 @@ def parse_account(data: bytes) -> AccountDB:
     return load_account(_variable(data, ACCOUNT_VARIABLE))
 
 
-def _read(path: Path) -> bytes:
-    return snapshot.read_regular_file(Path(path), limit=luadata.MAX_FILE_BYTES)
+def _install_root_of(path: Path) -> Path | None:
+    """The install root a file in a flavor's `WTF/Account/` tree lies under,
+    as `path` spells it: the folder above the flavor folder that holds the
+    first `WTF/Account` pair of folders in it (compared without case), so no
+    folder name below the account (a realm folder named `WTF`, say) can move
+    it. None when `path` has no such pair with a flavor folder and a root
+    above it. Nothing is opened; the names come from the path, never a
+    flavor (L6). For a library caller that gives no root; the CLI gives the
+    install's."""
+    parts = Path(path).absolute().parts
+    for i in range(2, len(parts) - 1):
+        if (
+            parts[i].casefold() == _WTF.casefold()
+            and parts[i + 1].casefold() == _ACCOUNT.casefold()
+        ):
+            return Path(*parts[: i - 1])
+    return None
 
 
-def read_char(path: Path) -> CharDB:
-    """Read a character's `WowLab.lua` (read-only; writes nothing, L1)."""
-    return parse_char(_read(path))
+def _read(path: Path, root: Path | None = None) -> bytes:
+    """The file's bytes within `luadata.MAX_FILE_BYTES`, opened from the
+    install root one folder at a time (M16-65): `root` when given, else the
+    root `_install_root_of` reads from the path, so a folder on the way that
+    is a link (an account folder swapped for one, say) is refused with the
+    folder named. A path with no install root in it has only its last part
+    checked."""
+    path = Path(path)
+    home = root if root is not None else _install_root_of(path)
+    if home is None:
+        return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES)
+    return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES, root=Path(home))
 
 
-def read_account(path: Path) -> AccountDB:
-    """Read the account's `WowLab.lua` (read-only; writes nothing, L1)."""
-    return parse_account(_read(path))
+def read_char(path: Path, *, root: Path | None = None) -> CharDB:
+    """Read a character's `WowLab.lua` (read-only; writes nothing, L1), from
+    the install root (`root`, else the one the path spells) one folder at a
+    time, so a linked folder on the way is refused (M16-65)."""
+    return parse_char(_read(path, root))
+
+
+def read_account(path: Path, *, root: Path | None = None) -> AccountDB:
+    """Read the account's `WowLab.lua` (read-only; writes nothing, L1), from
+    the install root as `read_char` reads one (M16-65)."""
+    return parse_account(_read(path, root))
 
 
 # ─── every character (§14.4, M12-09) ─────────────────────────────────────────
@@ -1765,7 +1841,8 @@ _REALM_ENTRIES = frozenset({"realm-folder", "numeric-folder"})
 # is refused on its own without charging this one.
 MAX_SURVEY_BYTES = 64 * 1024 * 1024
 
-NOT_FOLLOWED = "a link, not followed, as wowlab never follows links"
+NOT_FOLLOWED = f"a link, not followed; {snapshot.not_read_through('folder')}"
+LINKED_FILE = f"a link, not followed; {snapshot.not_read_through('file')}"
 NOT_REGULAR = "not a regular file (a FIFO, socket or device), so it was not opened"
 A_FOLDER = "a folder, not a file"
 
@@ -1873,6 +1950,16 @@ class CharacterFile(BaseModel):
     place: Place = "file"
     mtime_ns: int | None
     summary: str | None = None
+    # The record's schema, set with `summary` (kept with --brief too): the
+    # UI's picker breaks a file-time tie by the newest schema (M16-31).
+    record_schema: int | None = None
+    # "<version>.<build>" from the record's client block, when both are
+    # there (`client_build`), set with `summary` (M16-06).
+    client_build: str | None = None
+    # Whether that client is older than the installed one (`older_client`),
+    # when `survey` was given the installed version; None when either side
+    # is unknown (M16-06).
+    older_client: bool | None = None
     record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5 | None = None
     error: str | None = None
     same_as: FsText | None = None
@@ -1905,6 +1992,8 @@ class CharacterFile(BaseModel):
             raise ValueError("a CharacterFile with an error holds no record")
         if self.same_as is not None and self.error is None:
             raise ValueError("a CharacterFile that is the same file as another holds an error")
+        if self.record_schema is not None and self.summary is None:
+            raise ValueError("a CharacterFile holds a record schema only beside its summary")
         return self
 
     @property
@@ -1995,6 +2084,8 @@ class _Read(NamedTuple):
 
     record: CharDB | None = None  # None unless the reader keeps records
     summary: str | None = None  # set when the file was read and parsed
+    record_schema: int | None = None  # set with `summary`
+    client_build: str | None = None  # set with `summary`, when the record has one
     error: str | None = None
     same_as: str | None = None  # a hard link to the file read on this character's row
 
@@ -2004,9 +2095,20 @@ class _Reader:
     all of them together, and each (device, inode) once."""
 
     def __init__(
-        self, flavor_path: Path, budget: int, keep_records: bool, root: str | None
+        self,
+        flavor_path: Path,
+        budget: int,
+        keep_records: bool,
+        root: str | None,
+        install_root: Path | None = None,
+        installed_version: str | None = None,
     ) -> None:
         self.flavor_path = flavor_path
+        # The installed client's version, which each row's client is
+        # compared with (M16-06); None: no comparison.
+        self.installed_version = installed_version
+        # Where each read starts, one folder at a time (M16-65).
+        self.install_root = install_root if install_root is not None else flavor_path.parent
         # The start of the `char show` command a refused row suggests: the
         # caller's --root (only when one was given), then the flavor folder.
         self.show = ["wowlab", "char", "show"]
@@ -2022,7 +2124,7 @@ class _Reader:
         # (device, inode) of each file read and parsed -> (its account, its character)
         self.seen: dict[tuple[int, int], tuple[str, str]] = {}
         # The counts of folders without a WowLab.lua (M16-35), on their own bounds.
-        self.counter = _Counter(flavor_path)
+        self.counter = _Counter(flavor_path, self.install_root)
 
     def _on_its_own(self, account: str, who: str) -> str:
         """The advice ending a refused row: a `char show` command for this
@@ -2090,7 +2192,11 @@ class _Reader:
             return self._spent(account, who)
         limit = min(luadata.MAX_FILE_BYTES, self.left)
         try:
-            data = snapshot.read_regular_file(path, limit=limit, expect=st)
+            data = snapshot.read_regular_file(path, limit=limit, expect=st, root=self.install_root)
+        except snapshot.LinkedPathError as exc:
+            # The walk found this file behind no link a moment ago.
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return _Read(error=str(changed))
         except snapshot.UnsafeReadError as exc:
             if limit < luadata.MAX_FILE_BYTES and _grew_past(path, limit):
                 return self._spent(account, who, grew=True)
@@ -2110,7 +2216,12 @@ class _Reader:
         # file systems report it for every file) says nothing, so it is never kept.
         if st.st_ino:
             self.seen[key] = (account, who)
-        return _Read(record=record if self.keep_records else None, summary=summary(record))
+        return _Read(
+            record=record if self.keep_records else None,
+            summary=summary(record),
+            record_schema=record.schema_,
+            client_build=client_build(record),
+        )
 
 
 def _grew_past(path: Path, limit: int) -> bool:
@@ -2171,8 +2282,9 @@ class _Counter:
     (`wtfconfig.count_cvar_names`, `count_macro_records`) and build no
     document, so the cost stays in proportion to the bytes read."""
 
-    def __init__(self, flavor_path: Path) -> None:
+    def __init__(self, flavor_path: Path, install_root: Path | None = None) -> None:
         self.flavor_path = flavor_path
+        self.install_root = install_root if install_root is not None else flavor_path.parent
         self.total = MAX_COUNTED_TOTAL_BYTES
         self.left = self.total
         self.full = False
@@ -2198,7 +2310,13 @@ class _Counter:
             )
         path = self.flavor_path / first.path
         try:
-            data = snapshot.read_regular_file(path, limit=min(MAX_COUNTED_FILE_BYTES, self.left))
+            data = snapshot.read_regular_file(
+                path, limit=min(MAX_COUNTED_FILE_BYTES, self.left), root=self.install_root
+            )
+        except snapshot.LinkedPathError as exc:
+            # The walk listed this file behind no link a moment ago.
+            changed = exc.changed_while_read(self.flavor_path, subject="the file")
+            return None, f"{name} not read: {changed}"
         except OSError as exc:
             return None, f"{name} not read: {_os_error(exc, path)}"
         self.left -= len(data)
@@ -2242,6 +2360,9 @@ class _Folder:
         place: Place = "file",
         record: CharDB | None = None,
         summary: str | None = None,
+        record_schema: int | None = None,
+        client_build: str | None = None,
+        older_client: bool | None = None,
         error: str | None = None,
         same_as: str | None = None,
         no_lab_record: FolderFacts | None = None,
@@ -2255,6 +2376,9 @@ class _Folder:
             place=place,
             mtime_ns=mtime_ns,
             summary=summary,
+            record_schema=record_schema,
+            client_build=client_build,
+            older_client=older_client,
             record=record,
             error=error,
             same_as=same_as,
@@ -2309,6 +2433,9 @@ class _Folder:
             found.mtime_ns,
             record=got.record,
             summary=got.summary,
+            record_schema=got.record_schema,
+            client_build=got.client_build,
+            older_client=older_client(got.client_build, reader.installed_version),
             error=got.error,
             same_as=got.same_as,
         )
@@ -2341,6 +2468,7 @@ def survey(
     budget: int = MAX_SURVEY_BYTES,
     root: str | None = None,
     every_folder: bool = False,
+    installed_version: str | None = None,
 ) -> AllCharacters:
     """Every character `WowLab.lua` in the flavor (§14.4, M12-09), from one
     walk of `WTF/` (`Layout.wtf_walk`).
@@ -2403,6 +2531,10 @@ def survey(
     the addon files in its SavedVariables/. Without it (the default) such a
     folder gives no row and those files are never opened.
 
+    With `installed_version` (the flavor's version from `.build.info`,
+    M16-06) each read row's `older_client` says whether the client that
+    saved it is older (`older_client`); without it, it stays None.
+
     Read only (L1): each file is
     `lstat`ed, opened as `read_char` opens it (checked to be that same file)
     and parsed by `parse_char`; nothing is written anywhere."""
@@ -2454,7 +2586,12 @@ def survey(
         # account row (M13-69), yet a linked realm there can still hide a
         # character, and only following it would tell.
         shape = fm.classify(tuple(link.path.split("/")), "flavor", "any")
-        note(link.path, NOT_FOLLOWED, shape.id if shape else None, is_link=True)
+        entry_id = shape.id if shape else None
+        # Every place a link can hide a character's file is a folder, but
+        # for the file itself (M16-65: the words name which).
+        found = _place(link.path, entry_id, is_link=True)
+        reason = LINKED_FILE if found is not None and found[0] == "file" else NOT_FOLLOWED
+        note(link.path, reason, entry_id, is_link=True)
     for error in walk.errors:
         if error.path == "":  # the flavor folder itself could not be listed
             not_looked_at.append(NotLookedAt(path=lay.flavor_folder, reason=error.error))
@@ -2494,7 +2631,9 @@ def survey(
                 ),
             )
         )
-    reader = _Reader(lay.flavor_path, budget, keep_records, root)
+    reader = _Reader(
+        lay.flavor_path, budget, keep_records, root, lay.install_root, installed_version
+    )
     entries = []
     for folder in sorted(folders.values(), key=_Folder.key):
         if account is not None and folder.account != account:
@@ -2602,15 +2741,30 @@ def _identity_reason(record: Identity, name: str) -> str:
     return f"the record holds neither {name} nor {name}_absent"
 
 
+def level_absent_of(char: CharDB) -> str | None:
+    """Why the record holds no level (`talents.legacy.player_level`, the
+    level the reports read), or None when it holds one (M16-31)."""
+    talents = char.talents
+    if talents is None:
+        return f"the talent record is {NOT_IN_FILE}"
+    legacy = talents.legacy
+    if legacy is None:
+        return f"the legacy talent record is {NOT_IN_FILE}"
+    if isinstance(legacy, AbsentSection):
+        return f"the legacy talent record is {_absent(legacy, events_shown=False)}"
+    if legacy.player_level is None:
+        return "the legacy talent record holds no level"
+    return None
+
+
 def identity_of(char: CharDB) -> CharIdentity:
     """The character's identity from its record (M15-01); never raises for a
     record the models read. A record of schema 1 to 3 has none, and says so
     for every value."""
     if not isinstance(char, CharDBV4):
         return _all_absent(
-            f"the record is schema {char.schema_}; identity is recorded from schema 4 "
-            "(the lab-addon from M15-01: install it with wowlab addon install lab, then log "
-            "in and out on this character)"
+            "this record predates the identity section; log in and out on this character "
+            "with a current lab-addon (wowlab addon install lab updates it)"
         )
     section = char.identity
     if section is None:
@@ -2713,12 +2867,7 @@ def customization_import(char: CharDB) -> CustomizationImport:
             without.append(entry.option)
         else:
             choices[entry.option] = entry.choice
-    client = char.client
-    build = (
-        f"{client.version}.{client.build}"
-        if isinstance(client, Client) and client.version is not None and client.build is not None
-        else None
-    )
+    build = client_build(char)
     return CustomizationImport(
         race_id=record.race_id,
         body_type=record.sex,
@@ -3648,6 +3797,37 @@ def describe_account(account: AccountDB) -> list[str]:
         f"{', '.join(extra)} (kept in --json; account data reflects whichever character "
         "logged out last)"
     ]
+
+
+def client_build(char: CharDB) -> str | None:
+    """`"<version>.<build>"` from the record's client block (`GetBuildInfo()`
+    at the save), or None when the block lacks either."""
+    client = char.client
+    if isinstance(client, Client) and client.version is not None and client.build is not None:
+        return f"{client.version}.{client.build}"
+    return None
+
+
+def _version_parts(version: str | None) -> tuple[int, ...] | None:
+    """`major.minor.patch.build` as four numbers, or None for anything else."""
+    if version is None:
+        return None
+    parts = version.split(".")
+    if len(parts) != 4 or not all(p.isascii() and p.isdecimal() and len(p) <= 9 for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def older_client(saved: str | None, installed: str | None) -> bool | None:
+    """Whether the client that saved a record (`client_build`) is older than
+    the installed one (the flavor's version from `.build.info`), both
+    `major.minor.patch.build` (M16-06). The whole version is compared, not
+    the build number alone, which is not unique across versions (GLOSSARY,
+    Build). None when either is missing or not that shape."""
+    a, b = _version_parts(saved), _version_parts(installed)
+    if a is None or b is None:
+        return None
+    return a < b
 
 
 def summary(char: CharDB) -> str:

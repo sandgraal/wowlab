@@ -145,6 +145,11 @@ quote is not expected **[verify]**. `Config.wtf` lives at `WTF/Config.wtf`
 Lines that do not match are kept as `Unknown`. Names are case-insensitive to
 the client.
 
+*Amended 2026-11-09 (M16-25; applies to §5–§7):* no capture of these files
+starts with a UTF-8 BOM, so whether the client writes one is **[verify]**.
+The parsers keep a leading BOM as its own prefix token, never part of line 1
+(`docs/LAB_PLAN.md` §6.5).
+
 Identity-bearing CVars the scrubber blanks: `accountName`, `accountList`,
 `lastCharacterGuid`. The list is confirmed and extended from the first
 capture **[verify]**; the deny-list lives in `wowlab_core.redact`
@@ -1058,3 +1063,15 @@ Dated entries, newest last. Each names the fixture that prompted it.
   `Sangraal-Sett` is the 70425 character). Still **[verify]**: whether
   `UnitSex` gives the new body type at the gather 2 s after
   `BARBER_SHOP_APPEARANCE_APPLIED` (not tested by this capture).
+- **2026-11-09, AddOns.txt read as data (M16-34; the `addons-txt` row,
+  part 2, 1.60.1.69977).** `wtfconfig.parse_addons` reads the file
+  losslessly: a line is `<addon>: <state>` when the name is a run of bytes
+  other than `:`, CR and LF, one `: ` follows, and the state is a run of
+  bytes other than space, `:`, CR and LF; any other line is kept as
+  `Unknown`, with its own ending. Both real lines match, and the file
+  round-trips byte for byte. Names are compared with ASCII case folded, and
+  when a name repeats the last line wins (both **[verify]**). `enabled` is
+  the only state observed; `disabled` and any other word are kept as
+  written. Nothing here settles the 2026-09-22 open points: an unlisted
+  addon is at the client's default, and which copy the client reads stays
+  **[verify]**. No contradiction with this reference.

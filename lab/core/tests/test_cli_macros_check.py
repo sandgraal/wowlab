@@ -77,7 +77,9 @@ def flavor(root: Path) -> Path:
 
 
 def run(*args: str) -> Any:
-    return runner.invoke(cli.app, list(args))
+    # Wide enough that no line wraps, and with --notes: the text these
+    # tests read is every line, unwrapped (M16-16).
+    return runner.invoke(cli.app, [*args, "--notes"], terminal_width=10_000)
 
 
 def ok(*args: str) -> Any:

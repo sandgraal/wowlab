@@ -291,7 +291,6 @@ def two_roots(tmp_path: Path, store: SnapshotStore) -> tuple[Path, Flavor, Flavo
 # ─── the renamed flavor folder ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     ("old", "new"), [pytest.param(old, new, id=name) for name, old, new in RENAMES]
 )
@@ -329,7 +328,6 @@ def test_constructed_restore_into_a_renamed_flavor_folder(
 # ─── another install root ────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "folder", ["same-folder", "other-folder"], ids=lambda f: f"constructed-{f}"
 )
@@ -367,7 +365,6 @@ def test_constructed_restore_into_another_install_root(
 # ─── account folders ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_constructed_single_account_folders_are_mapped_without_being_asked(
     guard: Any, two_roots: tuple[Path, Flavor, Flavor, str], store: SnapshotStore, idle: None
 ) -> None:
@@ -425,7 +422,6 @@ AMBIGUOUS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str]], .
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     ("src_accounts", "dst_accounts", "mapping"),
     [pytest.param(s, d, m, id=name) for name, s, d, m in AMBIGUOUS],
@@ -506,7 +502,6 @@ BAD_MAPPINGS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], dict[str, str]]
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "dst_accounts",
     [
@@ -542,7 +537,6 @@ def test_constructed_snapshot_without_account_folders_restores_without_a_mapping
     assert set(changes(record_for(guard, store, "no accounts").paths)) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     ("src_accounts", "dst_accounts", "mapping"),
     [pytest.param(s, d, m, id=name) for name, s, d, m in BAD_MAPPINGS],
@@ -594,7 +588,6 @@ HOSTILE_ACCOUNT_VALUES: tuple[tuple[str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("value", [pytest.param(v, id=name) for name, v in HOSTILE_ACCOUNT_VALUES])
 def test_constructed_account_mapping_that_is_not_one_folder_name_is_refused(
     guard: Any,
@@ -630,7 +623,6 @@ SRC_BINDINGS = f"WTF/Account/{SRC_ACCOUNT}/bindings-cache.wtf"
 DST_BINDINGS = f"WTF/Account/{DST_ACCOUNT}/bindings-cache.wtf"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("given", ["automatic", "given"], ids=lambda g: f"constructed-{g}-mapping")
 def test_constructed_paths_use_the_snapshots_spelling_and_the_other_is_never_deleted(
     guard: Any,
@@ -699,7 +691,6 @@ def forge_flavor_folder(store: SnapshotStore, snapshot_id: str, folder: str | No
     return forged.id
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("folder", [pytest.param(f, id=name) for name, f in FORGED_FLAVOR_FOLDERS])
 def test_constructed_untrusted_manifest_flavor_folder_under_into_is_refused(
     guard: Any,
@@ -735,7 +726,6 @@ def test_constructed_untrusted_manifest_flavor_folder_under_into_is_refused(
 # ─── without `into` ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("paths", [None, [CONFIG]], ids=["constructed-whole", "constructed-named"])
 @pytest.mark.parametrize("where", ["renamed", "other-root"], ids=lambda w: f"constructed-{w}")
 def test_constructed_foreign_snapshot_without_into_is_refused_naming_the_option(
@@ -771,7 +761,6 @@ def test_constructed_foreign_snapshot_without_into_is_refused_naming_the_option(
     assert (target.path / CONFIG).read_bytes() == source_files()[CONFIG]
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "wrong", ["another-flavor", "another-root", "not-a-target"], ids=lambda w: f"constructed-{w}"
 )
@@ -812,7 +801,6 @@ def test_constructed_into_must_name_the_transactions_own_flavor(
 # ─── the target's own pre-write snapshot ─────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_constructed_target_gets_its_own_pre_write_snapshot(
     guard: Any, tmp_path: Path, store: SnapshotStore, idle: None
 ) -> None:
@@ -851,7 +839,6 @@ def test_constructed_target_gets_its_own_pre_write_snapshot(
     assert (target.path / CONFIG).read_bytes() == target_before[CONFIG]
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_constructed_dry_run_into_a_target_plans_target_paths_and_writes_nothing(
     guard: Any, two_roots: tuple[Path, Flavor, Flavor, str], store: SnapshotStore, idle: None
 ) -> None:
@@ -885,7 +872,6 @@ FORGED: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     ("hostile_rel", "raw"), [pytest.param(rel, raw, id=name) for name, rel, raw in FORGED]
 )
@@ -930,7 +916,6 @@ LINK_CASES = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("case", LINK_CASES, ids=lambda c: f"constructed-{c}")
 def test_constructed_links_at_the_target_are_refused(
     guard: Any,
@@ -971,7 +956,6 @@ def test_constructed_links_at_the_target_are_refused(
     assert sorted(p.name for p in outside.iterdir()) == ["target.txt"]
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_constructed_restore_into_a_target_never_creates_a_link(
     guard: Any, two_roots: tuple[Path, Flavor, Flavor, str], store: SnapshotStore, idle: None
 ) -> None:
@@ -1009,7 +993,6 @@ def _target_running(kind: str, target: Flavor) -> FakeProcess:
     return FakeProcess(7203, name=DENIED, exe=DENIED, cmdline=DENIED)  # unknown
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "kind",
     [
@@ -1060,7 +1043,6 @@ def test_constructed_client_running_from_the_target_refuses_whatever_the_source_
 # ─── the target's lock, and the store against the target ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 def test_constructed_the_target_install_lock_is_held_through_the_restore(
     guard: Any,
     tmp_path: Path,
@@ -1085,7 +1067,6 @@ def test_constructed_the_target_install_lock_is_held_through_the_restore(
         pass
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize(
     "overlap", ["store-inside-the-target-root", "target-root-inside-the-store"],
     ids=lambda o: f"constructed-{o}",
@@ -1128,7 +1109,6 @@ def test_constructed_target_root_that_overlaps_the_store_is_refused(
 # ─── undo ────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-03 not implemented")
 @pytest.mark.parametrize("where", ["renamed", "other-root"], ids=lambda w: f"constructed-{w}")
 def test_constructed_undo_of_a_restore_into_another_target(
     guard: Any,

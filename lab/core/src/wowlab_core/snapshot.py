@@ -31,14 +31,15 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import sys
 import uuid
 import zlib
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePath, PurePosixPath
-from typing import Any, BinaryIO, Literal, NamedTuple
+from typing import Any, BinaryIO, Literal, NamedTuple, Protocol
 
 import platformdirs
 from pydantic import (
@@ -51,8 +52,10 @@ from pydantic import (
 )
 
 from wowlab_core import longpath
+from wowlab_core.errors import WowlabError
 
 __all__ = [
+    "IMPORT_CLOCK_ALLOWANCE",
     "MANIFEST_FORMAT",
     "OBJECTS_DIR_ENTRY",
     "Change",
@@ -63,6 +66,8 @@ __all__ = [
     "ManifestIntegrityError",
     "MissingObject",
     "ObjectCorruptError",
+    "ObjectSource",
+    "RecordedKind",
     "SnapshotDiff",
     "SnapshotError",
     "SnapshotExistsError",
@@ -70,11 +75,15 @@ __all__ = [
     "SnapshotListing",
     "SnapshotNotFoundError",
     "SnapshotStore",
+    "StoreExposure",
+    "StoreFullError",
     "StoreLocationError",
     "VerifyReport",
+    "check_foreign_manifest",
     "default_store_path",
     "kind_of",
     "manifest_bytes",
+    "parse_manifest",
     "resolve_reference",
     "tree_fingerprint",
 ]
@@ -86,18 +95,28 @@ OBJECTS_DIR_ENTRY = "objects/"
 link (M11-18). No object name or stray path under `objects/` ends in `/`."""
 
 _CHUNK = 1 << 20
-_ID_RE = re.compile(r"\A\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}\Z")
+_ID_RE = re.compile(r"\A[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8}\Z")  # ASCII digits only (M16-77)
 _ID_PREFIX_RE = re.compile(r"\A[0-9a-fTZ.\-]+\Z")
 _SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+# A full disk, and (where the platform has it) a full quota.
+_FULL_ERRNOS = frozenset(
+    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+)
 _MANIFEST_SUFFIX = ".json"
+_IMPORTED_DIR = "imported"
 _ON_WINDOWS = sys.platform == "win32"
 _REPARSE_NAME_SURROGATE = 0x20000000
 """The bit in a Windows reparse tag that says "this names another path"
 (symlink, junction, WCI link, ...); cloud placeholders and dedup lack it."""
 
 
-class SnapshotError(Exception):
+class SnapshotError(WowlabError):
     """Base class for every error this module raises."""
+
+
+class StoreFullError(SnapshotError):
+    """The disk (or the quota) that holds the store has no room for what
+    `create` was writing: the store is full, not the install unreadable."""
 
 
 class StoreLocationError(SnapshotError):
@@ -220,22 +239,261 @@ def open_regular_file(
     return fd, st
 
 
+def not_read_through(what: str) -> str:
+    """The words every refusal of a link ends with (M16-65): the rule, then
+    what the player can do. `what` is what the link stands in place of
+    ("folder", "file", "one")."""
+    return (
+        f"wowlab does not read through links, so it reads this only when the real {what} is there"
+    )
+
+
+CHANGED_WHILE_READ = "became a link while wowlab read it; run the command again"
+"""Said of the folder (or file) a listing had just found behind no link and
+the read then met as one (M16-65)."""
+
+
+def _shown(path: Path, within: Path | None) -> str:
+    """`path` as the player reads it: relative to `within` (the flavor
+    folder) with `/` between parts when it lies under it, else in full.
+    The flavor folder itself is named by its own name, never "." (M16-81)."""
+    if within is not None:
+        with contextlib.suppress(ValueError):
+            shown = path.relative_to(within).as_posix()
+            return within.name if shown == "." else shown
+    return str(path)
+
+
+def linked_folder_words(subject: object, folder: object) -> str:
+    """`subject` reached through the linked folder `folder`, in the one
+    sentence the readers and `sv dump` use (M16-65)."""
+    return f"{subject} is reached through a linked folder, {folder}; {not_read_through('folder')}"
+
+
+class LinkedPathError(UnsafeReadError):
+    """A file asked for under an install root is reached through a link: a
+    folder on the way that is a link (`folder` names it, `final` is False),
+    or the file itself (`folder` is the file, `final` is True). Nothing
+    behind the link was read (M16-49). `changed` is set when a listing had
+    found the file behind no link just before (`changed_while_read`,
+    M16-65)."""
+
+    def __init__(
+        self,
+        path: Path,
+        folder: Path,
+        *,
+        final: bool,
+        changed: bool = False,
+        within: Path | None = None,
+        subject: str | None = None,
+    ) -> None:
+        self.path = path
+        self.folder = folder
+        self.final = final
+        self.changed = changed
+        name = subject if subject is not None else _shown(path, within)
+        where = _shown(folder, within)
+        if changed and final:
+            text = f"{name} {CHANGED_WHILE_READ}"
+        elif changed:
+            text = f"{name} is reached through a linked folder: {where} {CHANGED_WHILE_READ}"
+        elif final:
+            text = f"{name} is a link; {not_read_through('file')}"
+        else:
+            text = linked_folder_words(name, folder if within is None else where)
+        super().__init__(text)
+
+    def changed_while_read(
+        self, within: Path | None = None, *, subject: str | None = None
+    ) -> LinkedPathError:
+        """The refusal for a caller that had just listed the file behind no
+        link: the folder (or file) became a link while wowlab read it, so the
+        way on is to run the command again. Paths under `within` (the flavor
+        folder) are named relative to it; `subject`, when given, names the
+        file instead ("the file", where the line already names it)."""
+        return LinkedPathError(
+            self.path, self.folder, final=self.final, changed=True, within=within, subject=subject
+        )
+
+
+_OPEN_BY_DIR_FD = hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
+"""Whether `os.open` takes a `dir_fd` here (POSIX). Decided at import, while
+`os.open` is the real one; whether the walk uses it is decided at each call,
+from `_O_NOFOLLOW` (`open_regular_file_from_root`)."""
+
+_LINK_REFUSAL_ERRNOS = frozenset({errno.ELOOP, errno.ENOTDIR, errno.EMLINK})
+"""What an `O_NOFOLLOW` open of a link gives: `ELOOP` (Linux, macOS), or
+`ENOTDIR` / `EMLINK` (BSDs) when `O_DIRECTORY` is also asked."""
+
+
+def _components_under(path: Path, root: Path) -> tuple[str, ...]:
+    """The components of `path` below `root`, compared by `pathlib`'s parts
+    (so with case on POSIX, without on Windows), both made absolute first
+    without resolving anything. Refused (`UnsafeReadError`) when `path` is
+    not under `root`, is `root` itself, or holds a `..` below it."""
+    full, base = path.absolute(), root.absolute()
+    n = len(base.parts)
+    if len(full.parts) <= n or type(base)(*full.parts[:n]) != base:
+        raise UnsafeReadError(f"{path} is not inside {root}")
+    rest = full.parts[n:]
+    if ".." in rest:
+        raise UnsafeReadError(
+            f"{path} has '..' in it, and wowlab reads a file in an install only by a path "
+            "without '..'"
+        )
+    return rest
+
+
+def _refused_as_link(exc: OSError, name: str, dir_fd: int) -> bool:
+    """Whether `exc`, from an `O_NOFOLLOW` open of `name` in `dir_fd`, was a
+    refusal of a link (as against a missing or wrong-kind entry)."""
+    if exc.errno not in _LINK_REFUSAL_ERRNOS:
+        return False
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return _is_link_stat(st)
+
+
+def open_regular_file_from_root(path: Path, root: Path) -> tuple[int, os.stat_result]:
+    """Open `path`, a file under the install root `root`, as
+    `open_regular_file` opens it, but from `root` one component at a time,
+    so no link anywhere between the root and the file is followed (M16-49).
+
+    `path` is the full path; its components below `root` are compared as
+    `pathlib` spells them. A path not under `root`, or one with a `..`
+    below it, is refused with `UnsafeReadError` before anything is opened.
+    What is above `root` (a link to the games folder, say) is the caller's
+    choice; the walk starts at `root`.
+
+    With `O_NOFOLLOW` (read from `_O_NOFOLLOW` at each call, POSIX): `root`
+    is opened once by path, then each folder by name relative to the
+    descriptor before it with `O_DIRECTORY | O_NOFOLLOW`, then the file by
+    name relative to the last folder's descriptor. Each descriptor is held
+    until the next is open, so a folder swapped for a link mid-walk is
+    either refused or the original is read. A link met is refused with
+    `LinkedPathError`, which names it.
+
+    Without `O_NOFOLLOW` (Windows) `os.open` takes no `dir_fd`: each folder
+    is checked by `lstat` (a link or junction refused), the file is opened
+    by its path as `open_regular_file` does, and each folder's `lstat` is
+    checked again after the open against the first. A folder swapped for a
+    link and back between those checks is not seen: that window remains.
+
+    The caller owns the descriptor returned; on any error every descriptor
+    opened here is closed."""
+    path, root = Path(path), Path(root)
+    rest = _components_under(path, root)
+    if _O_NOFOLLOW and _OPEN_BY_DIR_FD:
+        return _open_by_dir_fd(path, root, rest)
+    return _open_by_lstat(path, root, rest)
+
+
+def _open_by_dir_fd(path: Path, root: Path, rest: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    held = os.open(root, dir_flags)
+    try:
+        at = root
+        for name in rest[:-1]:
+            at = at / name
+            try:
+                fd = os.open(name, dir_flags | _O_NOFOLLOW, dir_fd=held)
+            except OSError as exc:
+                if _refused_as_link(exc, name, held):
+                    raise LinkedPathError(path, at, final=False) from exc
+                exc.filename = os.fspath(at)  # the path the caller knows
+                raise
+            os.close(held)
+            held = fd
+        name = rest[-1]
+        try:
+            return open_regular_file(Path(name), dir_fd=held)
+        except UnsafeReadError as exc:
+            # With a dir_fd, O_NOFOLLOW and no `expect`, the one refusal
+            # left is the fstat's; said with the whole path.
+            raise UnsafeReadError(f"{path} is not a regular file") from exc
+        except OSError as exc:
+            if _refused_as_link(exc, name, held):
+                raise LinkedPathError(path, path, final=True) from exc
+            exc.filename = os.fspath(path)
+            raise
+    finally:
+        os.close(held)
+
+
+def _open_by_lstat(path: Path, root: Path, rest: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    folders = [root.joinpath(*rest[: i + 1]) for i in range(len(rest) - 1)]
+    seen: list[tuple[int, int]] = []
+    for folder in folders:
+        st = _lstat_at(folder, None)
+        if _is_link_stat(st):
+            raise LinkedPathError(path, folder, final=False)
+        if not stat.S_ISDIR(st.st_mode):
+            raise UnsafeReadError(f"{folder} is not a folder")
+        seen.append(_file_identity(st))
+    try:
+        fd, st = open_regular_file(path)
+    except UnsafeReadError as exc:
+        if exc.__class__ is UnsafeReadError and _is_link_path(path):
+            raise LinkedPathError(path, path, final=True) from exc
+        raise
+    try:
+        for folder, identity in zip(folders, seen, strict=True):
+            after = _lstat_at(folder, None)
+            if _is_link_stat(after):
+                raise LinkedPathError(path, folder, final=False)
+            if _file_identity(after) != identity:
+                raise UnsafeReadError(f"{folder} changed as {path} was opened")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, st
+
+
+def _is_link_path(path: Path) -> bool:
+    try:
+        return _is_link_stat(_lstat_at(path, None))
+    except OSError:
+        return False
+
+
 def read_regular_file(
     path: Path,
     *,
     limit: int | None = None,
     expect: os.stat_result | None = None,
     dir_fd: int | None = None,
+    root: Path | None = None,
 ) -> bytes:
     """The bytes of `path`, opened as `open_regular_file` opens it (relative
-    to `dir_fd` when one is given).
+    to `dir_fd` when one is given), or from the install root `root` one
+    component at a time when one is given (`open_regular_file_from_root`;
+    not with `dir_fd`). `expect`, an earlier `lstat` of the path, holds with
+    either: the file opened must be that same file by device and inode, else
+    `UnsafeReadError` (with `root` since M16-65).
 
     With a `limit`, a file whose `fstat` size is over it is refused before
     any read, and at most `limit + 1` bytes are read, so one that grows past
     it while being read is refused too (`UnsafeReadError`). The descriptor is
     closed on every path.
     """
-    fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
+    if root is not None:
+        if dir_fd is not None:
+            raise ValueError("root is not combined with dir_fd")
+        fd, st = open_regular_file_from_root(path, root)
+        if expect is not None and _file_identity(st) != _file_identity(expect):
+            os.close(fd)
+            raise UnsafeReadError(f"{path} was replaced before it was opened")
+    else:
+        fd, st = open_regular_file(path, expect=expect, dir_fd=dir_fd)
+    return _read_opened(fd, st, path, limit)
+
+
+def _read_opened(fd: int, st: os.stat_result, path: Path, limit: int | None) -> bytes:
+    """Read the open descriptor `fd` (`st` its `fstat`) within `limit`, and
+    close it on every path."""
     try:
         if limit is not None and st.st_size > limit:
             raise UnsafeReadError(f"{path} holds {st.st_size} bytes, more than {limit}")
@@ -329,6 +587,300 @@ a link and checked against its `lstat` (M11-18): POSIX. `os.replace` is
 `os.rename`'s twin and shares its `dir_fd` support (the set names only
 `rename`). Elsewhere (Windows) each of those directories is checked by
 `lstat` just before it is used, and one that is a link is refused."""
+
+
+_STAGE_FLAGS = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_EXCL
+    | _O_NOFOLLOW
+    | getattr(os, "O_BINARY", 0)
+    | getattr(os, "O_NOCTTY", 0)
+)
+"""How a staged file under `tmp/` is created: new, exclusively, never through a link."""
+
+
+# -- the store at rest (M16-41) ----------------------------------------------
+#
+# The store holds copies of the player's settings, macros and saved data, so
+# no other account on the machine should be able to read it. Every directory
+# the store makes is 0700 and every file 0600, whatever the umask: each is
+# created with that mode and then set to it exactly with `fchmod`, since a
+# umask can only take bits away. A store made by an older version (0755 and
+# 0644 under the usual umask 0022) is fixed on its next write: whenever a
+# write opens the store root, the root is set private, the store's own
+# entries directly below it (guard's `lock` and `journal/` included) lose
+# their group and other bits, and every directory that had any of those bits
+# is walked the same way, through descriptors that never follow a link. A
+# store already private costs one `fstat` and one listing of the root per
+# write.
+#
+# Modes are a POSIX matter. On Windows, a folder under the user's profile is
+# private through its inherited access list, and none of this applies: the
+# store makes no change and `exposure` reports that it did not check.
+
+_PRIVATE_DIR_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+_OTHERS_BITS = 0o077
+_PRIVATE_MODES = os.name == "posix" and hasattr(os, "fchmod")
+"""True where the store sets and checks modes: POSIX."""
+
+_STORE_DIRS = frozenset({"objects", "manifests", "tmp", _IMPORTED_DIR, "journal"})
+"""The directories directly below the store root that the store and guard
+make (`journal/` is guard's). Only these are walked to fix or judge modes."""
+
+_STORE_FILES = frozenset({"lock"})
+"""The files directly below the store root that guard makes (its store
+lock). With `_STORE_DIRS`, the only entries there whose modes a write fixes."""
+
+_MKDIR_MODE = _PRIVATE_DIR_MODE if _PRIVATE_MODES else 0o777
+"""The mode a store directory is made with: 0700 on POSIX. Elsewhere the
+default, so that on Windows the folder keeps the access it inherits (from
+CPython 3.12.4, a mode of 0700 there sets a protected access list)."""
+
+
+# -- the user data directory is private (M16-78) -----------------------------
+#
+# LAB_PLAN §6.10, amended 2026-11-11 (b): every folder wowlab creates under
+# the user data directory is made 0700 in the `mkdir` itself, whatever the
+# umask, and so is every parent made on the way to a store given explicitly
+# outside it. `Path.mkdir(parents=True)` will not do: it makes the parents at
+# the default mode whatever `mode=` says, so each missing folder is made here
+# by its own `mkdir`, top-down.
+
+
+def user_data_dir() -> Path:
+    """`<platform data dir>/wowlab`, read at call time (§6.9)."""
+    return platformdirs.user_data_path("wowlab")
+
+
+def _within_dir(path: Path, folder: Path) -> bool:
+    return path == folder or folder in path.parents
+
+
+def _resolved_or(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):  # a link loop: the lexical spelling only
+        return path
+
+
+def _new_dir_mode(
+    path: Path,
+    user_data: Path,
+    user_data_resolved: Path,
+    *,
+    is_target: bool,
+    outside: bool,
+    private_on_windows: bool,
+) -> int:
+    """The mode the `mkdir` of the missing folder `path` asks for."""
+    if not _PRIVATE_MODES:
+        return _PRIVATE_DIR_MODE if is_target and private_on_windows else _MKDIR_MODE
+    resolved = _resolved_or(path)
+    # Only a parent made on the way may be a folder that holds the user data
+    # directory; the folder asked for is wowlab's own, wherever it is.
+    holds_user_data = path in user_data.parents or resolved in user_data_resolved.parents
+    if not is_target and holds_user_data:
+        return 0o777  # the platform's data directory (or above): not wowlab's
+    if outside or _within_dir(path, user_data) or _within_dir(resolved, user_data_resolved):
+        return _PRIVATE_DIR_MODE
+    return 0o777
+
+
+def make_private_dirs(
+    path: Path, *, outside: bool = False, private_on_windows: bool = False
+) -> None:
+    """Make `path` and every missing folder above it, top-down, one `mkdir`
+    per missing folder, as `Path.mkdir(parents=True, exist_ok=True)` does
+    otherwise: an existing directory at `path` is fine; anything else there,
+    or a folder above it that is not a directory (a file, or a link to
+    nothing), raises `FileExistsError` or `NotADirectoryError` before
+    anything is made.
+
+    A folder made at or below the user data directory is made 0700 by its
+    `mkdir`. A umask can only take bits away, so group and other never get
+    any; one that took owner bits is given them back through a descriptor
+    that does not follow a link (best effort: the folder is no wider for
+    it). With `outside`, a folder made outside the user data directory is
+    made 0700 too (a store given explicitly and its parents); without it,
+    such a folder (an output folder the player named) gets the default
+    mode. A parent that holds the user data directory (the platform's data
+    directory, such as `~/.local/share`) is not wowlab's: when missing, it
+    is made at the default mode. `path` itself never counts as one.
+
+    Off POSIX every folder is made at the default mode, as `_MKDIR_MODE`
+    explains, except `path` itself with `private_on_windows` (guard's store
+    root and `journal/`, made with mode 0700 before M16-78)."""
+    target = Path(path).absolute()
+    user_data = user_data_dir().absolute()
+    user_data_resolved = _resolved_or(user_data)
+    for folder in (*reversed(target.parents), target):
+        if os.path.lexists(folder):
+            if folder != target and not folder.is_dir():
+                if folder.exists():  # a file in the way, as `mkdir` below it says
+                    raise NotADirectoryError(errno.ENOTDIR, "not a directory", str(folder))
+                # A link to nothing: what `Path.mkdir(parents=True)` says.
+                raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(folder))
+            continue
+        mode = _new_dir_mode(
+            folder,
+            user_data,
+            user_data_resolved,
+            is_target=folder == target,
+            outside=outside,
+            private_on_windows=private_on_windows,
+        )
+        try:
+            folder.mkdir(mode)  # this folder only: never `parents=True`
+        except FileExistsError:
+            continue  # made meanwhile by someone else; judged by the caller
+        if mode == _PRIVATE_DIR_MODE and _PRIVATE_MODES:
+            _owner_bits_back(folder)
+    if not target.is_dir():
+        raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(target))
+
+
+def _owner_bits_back(folder: Path) -> None:
+    """Set the folder just made 0700 to exactly 0700, when a umask took owner
+    bits from it; never through a link."""
+    with contextlib.suppress(OSError):
+        st = os.lstat(folder)
+        if not stat.S_ISDIR(st.st_mode) or stat.S_IMODE(st.st_mode) == _PRIVATE_DIR_MODE:
+            return
+        fd = os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW)
+        try:
+            _set_private(fd, exact=True)
+        finally:
+            os.close(fd)
+
+
+_EXPOSED_SHOWN = 10
+"""How many exposed entries `exposure` names; it counts them all."""
+
+_CLASS_BITS = (
+    (stat.S_IRGRP | stat.S_IWGRP, stat.S_IXGRP),
+    (stat.S_IROTH | stat.S_IWOTH, stat.S_IXOTH),
+)
+"""(read or write bits, search bit) for the group and for everyone else."""
+
+
+def _set_private(fd: int, st: os.stat_result | None = None, *, exact: bool) -> bool:
+    """Give the file or directory open on `fd` no group or other bits; with
+    `exact`, set it to 0700 (a directory) or 0600 (anything else) outright,
+    as for something the store has just made. True when the mode had group
+    or other bits before. A no-op off POSIX."""
+    if not _PRIVATE_MODES:
+        return False
+    st = os.fstat(fd) if st is None else st
+    mode = stat.S_IMODE(st.st_mode)
+    if exact:
+        want = _PRIVATE_DIR_MODE if stat.S_ISDIR(st.st_mode) else _PRIVATE_FILE_MODE
+    else:
+        want = mode & ~_OTHERS_BITS
+    if mode != want:
+        os.fchmod(fd, want)
+    return bool(mode & _OTHERS_BITS)
+
+
+def _privatize_below(root_fd: int) -> None:
+    """Take the group and other bits off the store's own entries directly
+    below the store root open on `root_fd` (`_STORE_DIRS` and `_STORE_FILES`;
+    anything else the caller keeps beside them is left alone), then off
+    everything below each of those directories that had any, and so on down
+    (an older version's store: every directory 0755).
+
+    Depth first, one descriptor per level: a directory is opened when the
+    walk reaches it, and its children are walked before its next sibling is
+    opened, so an older store's 256 object shards never hold 256
+    descriptors at once (fix round 1: macOS's default soft limit is 256).
+
+    Links are never followed nor changed, and a regular file with more than
+    one link is left alone: it may be a hard link to a file outside the
+    store, such as an install's, whose mode is not the store's to change
+    (fix round 1). An entry that cannot be opened, or that changes between
+    its `lstat` and its open, is left as it is; `exposure` still reports
+    it. Raises nothing: an `OSError` never fails the write that triggered it."""
+    try:
+        first = os.dup(root_fd)
+    except OSError:
+        return
+    # Each frame: a directory's descriptor and the names below it still to walk.
+    frames: list[tuple[int, Iterator[str]]] = []
+    try:
+        try:
+            names = os.listdir(first)  # noqa: PTH208 - by descriptor
+        except OSError:
+            names = []
+        frames.append((first, iter(n for n in names if n in _STORE_DIRS or n in _STORE_FILES)))
+        while frames:
+            dir_fd, pending = frames[-1]
+            name = next(pending, None)
+            if name is None:
+                frames.pop()
+                os.close(dir_fd)
+                continue
+            child = _private_child(dir_fd, name)
+            if child is None:
+                continue
+            try:
+                below = os.listdir(child)  # noqa: PTH208 - by descriptor
+            except OSError:
+                below = []
+            frames.append((child, iter(below)))
+    finally:
+        for dir_fd, _ in frames:
+            with contextlib.suppress(OSError):
+                os.close(dir_fd)
+
+
+def _private_child(dir_fd: int, name: str) -> int | None:
+    """`_privatize_below` for one entry: fix its mode, and return a
+    descriptor on it to walk when it is a directory that was not private."""
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    is_dir = stat.S_ISDIR(st.st_mode)
+    if not (is_dir or stat.S_ISREG(st.st_mode)) or not st.st_mode & _OTHERS_BITS:
+        return None  # a link, a FIFO, a device, ...; or private already
+    if not is_dir and st.st_nlink > 1:
+        return None  # a hard link may be a file outside the store
+    flags = os.O_RDONLY | _O_NOFOLLOW | getattr(os, "O_NOCTTY", 0)
+    flags |= os.O_DIRECTORY if is_dir else getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        now = os.fstat(fd)
+        if (
+            _file_identity(now) != _file_identity(st)
+            or stat.S_IFMT(now.st_mode) != stat.S_IFMT(st.st_mode)
+            or (not is_dir and now.st_nlink > 1)  # judged again on what was opened
+        ):
+            os.close(fd)
+            return None
+        _set_private(fd, now, exact=False)
+    except OSError:
+        os.close(fd)
+        return None
+    if is_dir:
+        return fd
+    os.close(fd)
+    return None
+
+
+def _make_store_private(root_fd: int) -> None:
+    """On every write that opens the store root (M16-41): the root set to
+    0700, then `_privatize_below`. Best effort, so a store on a filesystem
+    that keeps no modes still takes the write; `exposure` reports what is
+    left. A no-op off POSIX."""
+    if not _PRIVATE_MODES:
+        return
+    with contextlib.suppress(OSError):
+        _set_private(root_fd, exact=True)
+    _privatize_below(root_fd)
 
 
 class _StoreDir(NamedTuple):
@@ -477,11 +1029,22 @@ class Entry(_Frozen):
         return value
 
 
-SnapshotKind = Literal["user", "first-run", "profile", "pre-write"]
-"""Who took a snapshot and why (M16-09, `docs/LAB_PLAN.md` §18.1 item 3):
-`user` (`snap create`, or a library caller that does not say), `first-run`
-(doctor's first run), `profile` (`profiles.save`) or `pre-write` (the copy
-the write gate takes before every change)."""
+RecordedKind = Literal["user", "first-run", "profile", "pre-write"]
+"""Who took a snapshot and why, as its manifest records it (M16-09,
+`docs/LAB_PLAN.md` §18.1 item 3): `user` (`snap create`, or a library caller
+that does not say), `first-run` (doctor's first run), `profile`
+(`profiles.save`) or `pre-write` (the copy the write gate takes before every
+change)."""
+
+SnapshotKind = Literal["user", "first-run", "profile", "pre-write", "imported"]
+"""What a snapshot is to this store (`kind_of`): a `RecordedKind`, or
+`imported` for one `add_snapshot` added from elsewhere (M16-04). `create`
+never writes that one: the store records an import beside its manifest
+(`SnapshotStore.imported_ids`), so whatever kind an imported manifest
+claims, it is never taken for one this computer's player took. A
+`Manifest` accepts it so `snap show --json` can report the effective kind
+(and a manifest that claims it is only ever taken at its word for being
+imported)."""
 
 
 # The `Manifest.__dict__` key of its path index (`Manifest.entry`).
@@ -595,6 +1158,25 @@ class SnapshotListing(_Frozen):
         return not self.invalid
 
 
+class StoreExposure(_Frozen):
+    """Who besides its owner can open the store (M16-41): `SnapshotStore.exposure`."""
+
+    checked: bool
+    """False where modes are not checked (Windows); then nothing is listed."""
+    count: int
+    """How many entries another account on the machine can read or change:
+    entries granting the group or everyone else read or write, reached
+    through directories that let that same class search them. The store
+    root counts as reached; the folders above it are not judged."""
+    entries: tuple[str, ...]
+    """The first `_EXPOSED_SHOWN` of them, as store-relative POSIX paths in
+    walk order (`.` is the store itself)."""
+
+    @property
+    def readable_by_others(self) -> bool:
+        return self.count > 0
+
+
 class VerifyReport(_Frozen):
     objects_checked: int
     manifests_checked: int
@@ -604,6 +1186,9 @@ class VerifyReport(_Frozen):
     nothing under it was checked (M11-18; it was `"."` before)."""
     missing_objects: tuple[MissingObject, ...]
     invalid_manifests: tuple[InvalidManifest, ...]
+    exposure: StoreExposure
+    """Who else can open the store (M16-41). A warning, not a failure: it
+    does not change `ok`."""
 
     @property
     def ok(self) -> bool:
@@ -636,12 +1221,18 @@ def default_store_path() -> Path:
     return platformdirs.user_data_path("wowlab") / "store"
 
 
-def kind_of(manifest: Manifest, pre_write_ids: Collection[str] = ()) -> SnapshotKind:
-    """What `manifest` is (M16-09): the kind it records, else, for one
+def kind_of(
+    manifest: Manifest, pre_write_ids: Collection[str] = (), imported_ids: Collection[str] = ()
+) -> SnapshotKind:
+    """What `manifest` is (M16-09): `imported` when its id is one the store
+    records as added from elsewhere (`imported_ids`, M16-04), whatever the
+    manifest itself claims; else the kind it records, else, for one
     written before kinds existed, `pre-write` when its id is the snapshot a
     journal record names (`pre_write_ids`), `profile` when it carries
     `purpose="profile"`, and `user` otherwise. A label that merely reads like
     the write gate's own says nothing: only the journal does."""
+    if manifest.id in imported_ids:
+        return "imported"
     if manifest.kind is not None:
         return manifest.kind
     if manifest.id in pre_write_ids:
@@ -669,6 +1260,126 @@ def manifest_bytes(manifest: Manifest) -> bytes:
         ensure_ascii=True,
     )
     return text.encode("ascii") + b"\n"
+
+
+def parse_manifest(data: bytes) -> Manifest:
+    """Manifest file bytes from anywhere (an archive, say: M16-04), held to
+    everything a manifest in the store is held to: it loads, its id is a
+    snapshot id, its fingerprint matches its entries, and its format is
+    this one. It must also be in the one canonical encoding
+    (`manifest_bytes`), so storing it writes what `create` would have.
+    Raises `ManifestIntegrityError`."""
+    try:
+        claimed = json.loads(data)
+    except (ValueError, RecursionError) as exc:
+        raise ManifestIntegrityError(f"the manifest does not load: {exc}") from exc
+    snapshot_id = claimed.get("id") if isinstance(claimed, dict) else None
+    if not isinstance(snapshot_id, str) or not _ID_RE.match(snapshot_id):
+        raise ManifestIntegrityError("the manifest carries no snapshot id")
+    manifest = SnapshotStore._parse(snapshot_id, data)
+    if manifest_bytes(manifest) != data:
+        raise ManifestIntegrityError(
+            f"manifest {snapshot_id} is not in the store's canonical encoding"
+        )
+    return manifest
+
+
+IMPORT_CLOCK_ALLOWANCE = timedelta(minutes=10)
+"""How far past this computer's clock an imported snapshot's date may be
+(two computers' clocks differ a little); a later one is refused (M16-04)."""
+
+# ASCII digits only (M16-77): `int()` reads any Unicode digit, and a date in
+# other digits would sort after every real one.
+_CREATED_AT_RE = re.compile(
+    r"\A([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{6})Z\Z"
+)
+
+
+def _one_component(value: str) -> bool:
+    return value not in ("", ".", "..") and "/" not in value and "\x00" not in value
+
+
+def _dated_as_its_id(manifest: Manifest) -> datetime:
+    """The moment `manifest.created_at` names, held to its id: well formed
+    (ASCII digits only) and the moment the id carries, as `create` writes
+    it. `created_at` is outside the fingerprint, and `latest`, `~N` and
+    `explain` order snapshots by it, so a manifest whose date is not its
+    id's could sort newest for ever (M16-77). Raises
+    `ManifestIntegrityError`."""
+    sid = manifest.id
+    match = _CREATED_AT_RE.match(manifest.created_at)
+    try:
+        if match is None:
+            when = None
+        else:
+            year, month, day, hour, minute, second, micro = (int(g) for g in match.groups())
+            when = datetime(year, month, day, hour, minute, second, micro, tzinfo=UTC)
+    except ValueError:
+        when = None
+    if when is None:
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at!r} is malformed"
+        )
+    if sid[: len("YYYYmmddTHHMMSS.ffffffZ")] != f"{when:%Y%m%dT%H%M%S}.{when.microsecond:06d}Z":
+        raise ManifestIntegrityError(
+            f"manifest {sid}: its date {manifest.created_at} is not the moment its id carries"
+        )
+    return when
+
+
+def check_foreign_manifest(manifest: Manifest, *, now: datetime | None = None) -> None:
+    """Hold a manifest from elsewhere (`add_snapshot`, M16-04) to what
+    `create` always writes, beyond what `parse_manifest` checks:
+
+    - `created_at` is well formed, is the moment the id carries, and is no
+      later than `now` (default: this computer's clock) plus
+      `IMPORT_CLOCK_ALLOWANCE`, so a snapshot dated in the future cannot
+      stay the newest (`latest`, `~N`) for ever;
+    - `flavor_folder` is one folder name, and every subtree and every
+      excluded path keeps the `Entry.path` rule and is that folder or under
+      it, so a manifest cannot name `../../../etc` or the install's own
+      files;
+    - every entry is under a subtree and under no excluded path, as `create`
+      walks them.
+
+    Raises `ManifestIntegrityError`."""
+    sid = manifest.id
+    when = _dated_as_its_id(manifest)
+    clock = datetime.now(UTC) if now is None else now.astimezone(UTC)
+    if when > clock + IMPORT_CLOCK_ALLOWANCE:
+        raise ManifestIntegrityError(
+            f"manifest {sid}: it is dated {manifest.created_at}, later than this computer's "
+            "clock; a snapshot from the future is refused"
+        )
+    folder = manifest.flavor_folder
+    if folder is None or not _one_component(folder):
+        raise ManifestIntegrityError(f"manifest {sid}: it names no single flavor folder")
+    for what, paths in (("subtree", manifest.subtrees), ("excluded path", manifest.excluded)):
+        for path in paths:
+            parts = path.split("/")
+            if "\x00" in path or any(part in ("", ".", "..") for part in parts):
+                raise ManifestIntegrityError(f"manifest {sid}: the {what} {path!r} is not relative")
+            if parts[0] != folder:
+                raise ManifestIntegrityError(
+                    f"manifest {sid}: the {what} {path!r} is outside its flavor folder"
+                )
+    if not manifest.subtrees:
+        raise ManifestIntegrityError(f"manifest {sid}: it names no subtree")
+    for entry in manifest.entries:
+        if not any(_is_under(entry.path, s) for s in manifest.subtrees) or any(
+            _is_under(entry.path, x) for x in manifest.excluded
+        ):
+            raise ManifestIntegrityError(
+                f"manifest {sid}: the entry {entry.path!r} is outside what it captured"
+            )
+
+
+class ObjectSource(Protocol):
+    """What `SnapshotStore.add_snapshot` reads one object's bytes from."""
+
+    def read(self, size: int, /) -> bytes: ...
+
+    def close(self) -> None: ...
 
 
 def tree_fingerprint(
@@ -820,6 +1531,11 @@ class SnapshotStore:
         self.path: Path = Path(path) if path is not None else default_store_path()
         self._held: dict[tuple[str, ...], tuple[int, os.stat_result]] | None = None
         """Directory descriptors held during one `create` (`_holding_dirs`)."""
+        self._root_private = False
+        """True once `_private_root` has run within the current `_holding_dirs`."""
+        self._root_pinned = False
+        """True while `put_object` writes into the root it checked (M16-68):
+        a held root its path no longer names is refused, not reopened."""
 
     # -- layout ------------------------------------------------------------
 
@@ -858,7 +1574,7 @@ class SnapshotStore:
         flavor_version: str | None = None,
         client_running: bool | None = None,
         purpose: Literal["profile"] | None = None,
-        kind: SnapshotKind | None = None,
+        kind: RecordedKind | None = None,
         now: datetime | None = None,
     ) -> Manifest:
         """Capture `subtrees` of `root` and return the new manifest.
@@ -1082,6 +1798,20 @@ class SnapshotStore:
         except guard.GuardError as exc:
             raise StoreLocationError(str(exc)) from exc
 
+    def _recheck_inside_any_install(self) -> None:
+        """`_refuse_inside_any_install` again, after the store's folder was
+        opened or created (M16-68 fix round 1). A refusal here says that the
+        second check caught it, and names the folder: it may have been
+        created inside the install, and is left as it is."""
+        try:
+            self._refuse_inside_any_install()
+        except StoreLocationError as exc:
+            raise StoreLocationError(
+                f"{exc} (found by the second check, after the store folder {self.path} "
+                "was opened or created and before anything was written; nothing was "
+                "removed, so check that folder)"
+            ) from exc.__cause__
+
     @staticmethod
     def _refuse_symlinked_parent(root: Path, subtree: str) -> None:
         """`lstat` protects only the last component; check the ones before it."""
@@ -1106,9 +1836,16 @@ class SnapshotStore:
                 )
 
     def _walk(
-        self, root: Path, subtree: str, excluded: Sequence[str]
+        self,
+        root: Path,
+        subtree: str,
+        excluded: Sequence[str],
+        entries: Callable[[Path], Sequence[os.DirEntry[str]]] | None = None,
     ) -> Iterator[tuple[str, Path]]:
-        """Yield `(relative posix path, absolute path)` for every non-directory."""
+        """Yield `(relative posix path, absolute path)` for every non-directory.
+        `entries` lists one directory; None means `longpath.entries`, looked
+        up at call time, unless a caller that already holds the listing
+        passes its own."""
         if any(_is_under(subtree, x) for x in excluded):
             return
         self._refuse_symlinked_parent(root, subtree)
@@ -1127,7 +1864,8 @@ class SnapshotStore:
         while stack:
             rel_dir, abs_dir = stack.pop()
             try:
-                children = sorted(longpath.entries(abs_dir), key=lambda d: d.name)
+                listed = longpath.entries(abs_dir) if entries is None else entries(abs_dir)
+                children = sorted(listed, key=lambda d: d.name)
             except FileNotFoundError:
                 _confirm_gone(abs_dir)
                 continue  # removed while we walked
@@ -1217,27 +1955,59 @@ class SnapshotStore:
             return digest, size
 
         stream.seek(0)
-        # `manifests/` exists before any object does, so a store holding
-        # objects without it is broken, and `gc` refuses it (M11-15).
-        with self._store_dir(("manifests",), create=True):
-            pass
-        hasher = hashlib.sha256()
-        size = 0
-        compressor = zlib.compressobj(6)
-        with self._staged("obj") as staged:
-            while chunk := stream.read(_CHUNK):
-                hasher.update(chunk)
-                size += len(chunk)
-                staged.out.write(compressor.compress(chunk))
-            staged.out.write(compressor.flush())
-            digest = hasher.hexdigest()
-            # The file may have changed between the passes, so ask again.
-            if not self._reusable(digest, verified):
-                with self._store_dir(("objects", digest[:2]), create=True) as shard:
-                    assert shard is not None
-                    self._publish(staged, shard, digest[2:])  # new, or healing a damaged one
-                verified.add(digest)
+        # Pass two reads the install file and writes the store in turn. An
+        # error reading is the caller's ("cannot read" that file); a full
+        # disk while writing is the store's, and is said as such (M16-19).
+        # Any other store error is raised as it was.
+        read_error: OSError | None = None
+        try:
+            # `manifests/` exists before any object does, so a store holding
+            # objects without it is broken, and `gc` refuses it (M11-15).
+            with self._store_dir(("manifests",), create=True):
+                pass
+            hasher = hashlib.sha256()
+            size = 0
+            compressor = zlib.compressobj(6)
+            with self._staged("obj") as staged:
+                while True:
+                    try:
+                        chunk = stream.read(_CHUNK)
+                    except OSError as exc:
+                        read_error = exc
+                        raise
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    size += len(chunk)
+                    staged.out.write(compressor.compress(chunk))
+                staged.out.write(compressor.flush())
+                digest = hasher.hexdigest()
+                # The file may have changed between the passes, so ask again.
+                if not self._reusable(digest, verified):
+                    with self._store_dir(("objects", digest[:2]), create=True) as shard:
+                        assert shard is not None
+                        self._publish(staged, shard, digest[2:])  # new, or healing a damaged one
+                    verified.add(digest)
+        except OSError as exc:
+            if exc is read_error or exc.errno not in _FULL_ERRNOS:
+                raise
+            raise self._store_full_error(exc) from exc
         return digest, size
+
+    def _store_full_error(self, exc: OSError) -> StoreFullError:
+        """A full disk or quota under the store, in words (M16-19): the
+        store and the room left on its disk, when that can be read."""
+        why = exc.strerror or str(exc)
+        # The store, or the nearest folder above it that exists yet.
+        where = next((p for p in (self.path, *self.path.parents) if p.exists()), self.path)
+        try:
+            free = f"{shutil.disk_usage(where).free:,} bytes free"
+        except OSError:
+            free = "its free space could not be read"
+        return StoreFullError(
+            f"the snapshot store at {self.path} is full ({free}): {why}; "
+            "free some space on that disk and try again"
+        )
 
     def _reusable(self, digest: str, verified: set[str]) -> bool:
         """True when a sound object for `digest` is already in the store.
@@ -1326,9 +2096,14 @@ class SnapshotStore:
     def _write_manifest(self, manifests: _StoreDir, name: str, data: bytes) -> None:
         """Write `data` as the manifest file `name` in the checked `manifests/`:
         staged under `tmp/` and moved into place in one rename (M11-18)."""
-        with self._staged("manifest") as staged:
-            staged.out.write(data)
-            self._publish(staged, manifests, name)
+        try:
+            with self._staged("manifest") as staged:
+                staged.out.write(data)
+                self._publish(staged, manifests, name)
+        except OSError as exc:
+            if exc.errno not in _FULL_ERRNOS:
+                raise
+            raise self._store_full_error(exc) from exc
 
     # -- writing into the store's own directories (M11-18) ------------------
     #
@@ -1423,8 +2198,15 @@ class SnapshotStore:
             fd, st = held.pop(key)
             if self._still_there(key, parent_fd, st):
                 held[key] = (fd, st)
+                self._private_root(key, fd, create=create)
                 return fd
             os.close(fd)  # gone or replaced: open afresh, which refuses a link
+            if not key and self._root_pinned:
+                raise StoreLocationError(
+                    f"the store {self.path} no longer names the folder that was checked "
+                    "(a folder on its path was replaced after the check); "
+                    "nothing was written, and nothing was removed"
+                )
         if parent_fd is None:
             fresh = self._open_root(create=create)
         else:
@@ -1435,7 +2217,18 @@ class SnapshotStore:
             held[key] = (fresh, os.fstat(fresh))
         else:
             opened.append(fresh)
+        self._private_root(key, fresh, create=create)
         return fresh
+
+    def _private_root(self, key: tuple[str, ...], fd: int, *, create: bool) -> None:
+        """`_make_store_private` on the root for a write (`create`): once per
+        `_holding_dirs`, else on every open (M16-41). The root may have been
+        opened, and held, by a check that writes nothing before the write."""
+        if key or not create or self._root_private:
+            return
+        _make_store_private(fd)
+        if self._held is not None:
+            self._root_private = True
 
     def _still_there(self, key: tuple[str, ...], parent_fd: int | None, st: os.stat_result) -> bool:
         """The held directory `st` is still what its path names: for the root,
@@ -1458,14 +2251,17 @@ class SnapshotStore:
         """A descriptor on the store root, opened as named (see above)."""
         try:
             if create:
-                self.path.mkdir(parents=True, exist_ok=True)
-            return os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+                make_private_dirs(self.path, outside=True)  # 0700, parents too (M16-78)
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             if create:
                 raise SnapshotError(f"the store {self.path} vanished as it was created") from None
             return None
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for the store's folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot open the store {self.path}: {exc}") from exc
+        return fd
 
     @contextlib.contextmanager
     def _holding_dirs(self) -> Iterator[None]:
@@ -1481,29 +2277,32 @@ class SnapshotStore:
             yield
             return
         self._held = {}
+        self._root_private = False
         try:
             yield
         finally:
+            self._root_private = False
             held, self._held = self._held, None
             for fd, _ in held.values():
                 with contextlib.suppress(OSError):
                     os.close(fd)
 
-    @staticmethod
-    def _open_child_dir(parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:
+    def _open_child_dir(self, parent_fd: int, name: str, path: Path, *, create: bool) -> int | None:
         """A descriptor on the directory `name` of `parent_fd`, opened with
         `O_DIRECTORY | O_NOFOLLOW` and holding the device and inode its
         `lstat` showed; see `_store_dir`."""
         try:
             if create:
                 with contextlib.suppress(FileExistsError):
-                    os.mkdir(name, dir_fd=parent_fd)  # never follows a link at `name`
+                    os.mkdir(name, _MKDIR_MODE, dir_fd=parent_fd)  # never follows a link
             st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             if create:
                 raise SnapshotError(f"{path} vanished as it was created") from None
             return None
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for a new folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
         if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
             raise _linked_store_dir(path)
@@ -1518,6 +2317,9 @@ class SnapshotStore:
         if _file_identity(os.fstat(fd)) != _file_identity(st):
             os.close(fd)
             raise _linked_store_dir(path)
+        if create:
+            with contextlib.suppress(OSError):  # best effort, as `_make_store_private`
+                _set_private(fd, exact=True)  # 0700 whatever the umask (M16-41)
         return fd
 
     def _checked_dir_path(self, parts: Sequence[str], *, create: bool) -> _StoreDir | None:
@@ -1527,7 +2329,7 @@ class SnapshotStore:
         checked: list[tuple[Path, os.stat_result]] = []
         try:
             if create:
-                path.mkdir(parents=True, exist_ok=True)
+                make_private_dirs(path, outside=True)
             elif not path.is_dir():
                 return None
             for part in parts:
@@ -1545,6 +2347,8 @@ class SnapshotStore:
                     raise _linked_store_dir(path)
                 checked.append((path, st))
         except OSError as exc:
+            if exc.errno in _FULL_ERRNOS:  # no room for a new folder (M16-19)
+                raise self._store_full_error(exc) from exc
             raise SnapshotError(f"cannot inspect {path}: {exc}") from exc
         return _StoreDir(path, None, tuple(checked))
 
@@ -1565,10 +2369,14 @@ class SnapshotStore:
                 | getattr(os, "O_NOCTTY", 0)
             )
             try:
-                fd = os.open(tmp.at(name), flags, 0o666, dir_fd=tmp.fd)
+                fd = os.open(tmp.at(name), flags, _PRIVATE_FILE_MODE, dir_fd=tmp.fd)
             except OSError as exc:
+                if exc.errno in _FULL_ERRNOS:
+                    raise self._store_full_error(exc) from exc
                 raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
             try:
+                with contextlib.suppress(OSError):  # best effort, as `_make_store_private`
+                    _set_private(fd, exact=True)  # 0600 whatever the umask (M16-41)
                 out = os.fdopen(fd, "wb")
             except BaseException:
                 os.close(fd)
@@ -1648,6 +2456,7 @@ class SnapshotStore:
             )
         if manifest.id != name or not _ID_RE.match(manifest.id):
             raise ManifestIntegrityError(f"manifest {path.name} carries id {manifest.id!r}")
+        _dated_as_its_id(manifest)  # its date is its id's moment (M16-77)
         actual = tree_fingerprint(manifest.subtrees, manifest.excluded, manifest.entries)
         if actual != manifest.fingerprint:
             raise ManifestIntegrityError(
@@ -1762,13 +2571,35 @@ class SnapshotStore:
 
         Any `OSError` on the way (M11-31), such as a directory planted at the
         object's path, is raised as `SnapshotError` naming that path; the
-        staged copy is removed and nothing is written in its place."""
+        staged copy is removed and nothing is written in its place.
+
+        A store inside any install is refused (`StoreLocationError`) before
+        anything is created, by `create`'s rule (L1; M16-68). The rule runs
+        again once the store's folder is opened (or created), before the
+        first byte is written, as `guard`'s `take_store` does after its
+        mkdir (§6.10, defence in depth): a parent swapped for a link into an
+        install in between is refused too. That refusal removes nothing,
+        and names the folder it may have created. From then on the write is
+        pinned to the root that was checked (fix round 2): where directory
+        descriptors are held (POSIX), a store path that no longer names that
+        held root is refused with `StoreLocationError` rather than opened
+        afresh. Where they are not (Windows), the store is walked by path,
+        and a same-user swap after the second check is the window §6.10
+        (amended 2026-09-28) leaves out of scope."""
         if not isinstance(data, bytes):
             raise SnapshotError(f"an object is bytes, not {type(data).__name__}")
+        self._refuse_inside_any_install()
         try:
             with self._holding_dirs():
                 self._refuse_linked_store_dirs()
-                digest, _ = self._store_stream(io.BytesIO(data), set())
+                with self._store_dir((), create=True):
+                    pass  # the root, made and (with descriptors) held
+                self._recheck_inside_any_install()
+                self._root_pinned = True
+                try:
+                    digest, _ = self._store_stream(io.BytesIO(data), set())
+                finally:
+                    self._root_pinned = False
         except OSError as exc:
             planned = hashlib.sha256(data).hexdigest()
             raise SnapshotError(self._cannot_store(planned, exc)) from exc
@@ -1839,6 +2670,7 @@ class SnapshotStore:
         subtrees: Iterable[str | PurePath],
         *,
         exclude: Iterable[str | PurePath] = (),
+        entries: Callable[[Path], Sequence[os.DirEntry[str]]] | None = None,
     ) -> tuple[tuple[str, Literal["file", "symlink", "other"]], ...]:
         """Every path `create` would walk under `subtrees` of `root`, less
         `exclude`, sorted, each with its kind by `lstat`: a regular `file`, a
@@ -1851,13 +2683,18 @@ class SnapshotStore:
         a link below the root is refused as `create` refuses it. Added
         2026-09-28 (M11-08) so `profiles` can find the files added under a
         profile's subtrees since it was saved without taking a snapshot.
+
+        `entries` lists one directory, as `longpath.entries` does (the
+        default); `guard` passes its per-transaction listing memo (M16-23)
+        so a whole restore lists each directory once. An `OSError` it raises
+        is handled as one from `longpath.entries` is.
         """
         root = _plain_root(root)
         wanted = sorted({_normalize_rel(s, "subtree") for s in subtrees})
         excluded = sorted({_normalize_rel(x, "exclude") for x in exclude})
         found: dict[str, Literal["file", "symlink", "other"]] = {}
         for subtree in wanted:
-            for rel, abs_path in self._walk(root, subtree, excluded):
+            for rel, abs_path in self._walk(root, subtree, excluded, entries):
                 if rel in found:
                     continue
                 try:
@@ -1897,11 +2734,229 @@ class SnapshotStore:
             raise ManifestIntegrityError("label write would change another field")
         data = manifest_bytes(updated)
         self._check_publishable(updated, data)
+        # L1 (M16-75): no write into a store inside any install, even
+        # when called directly rather than under `guard.store_lock`.
+        self._refuse_inside_any_install()
         with self._store_dir(("manifests",), create=False) as manifests:
             if manifests is None:
                 raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
             self._write_manifest(manifests, path.name, data)
         return updated
+
+    # -- adding a snapshot from elsewhere (M16-04) ----------------------------
+
+    def add_snapshot(
+        self,
+        data: bytes,
+        open_object: Callable[[str], ObjectSource],
+        *,
+        now: datetime | None = None,
+    ) -> tuple[Manifest, bool]:
+        """Add the snapshot whose manifest file is `data`, reading each
+        object it needs through `open_object(sha256)`; return the manifest
+        and whether anything was added.
+
+        `data` is held to everything a manifest in the store is held to
+        (`parse_manifest`): it loads, its fingerprint matches its entries,
+        and it is in the one canonical encoding, so the file written is
+        byte for byte what `create` would have written. Every file entry
+        names an object by SHA-256; two entries naming the same object must
+        agree on its size. A manifest not already in the store is also held
+        to `check_foreign_manifest` (its date against `now`, its folders),
+        and is recorded as imported (`imported_ids`) before its manifest is
+        written.
+
+        Nothing is added until every object has been read and checked:
+        each is streamed, at most its recorded size plus one byte, into a
+        staged file under `tmp/` while it is hashed and compressed. A
+        stream longer or shorter than the recorded size, or one that does
+        not hash to its name, raises `ObjectCorruptError`, and every staged
+        file is removed: the store is as it was. Only then is each object
+        moved into its shard (one already in the store and sound is kept,
+        and its staged copy dropped) and the manifest written last, as
+        `create` writes it, never through a link (M11-18).
+
+        An id already in the store with these exact bytes adds nothing and
+        returns `(manifest, False)`; with other bytes (a relabelled copy,
+        say) it raises `SnapshotExistsError` before any object is read.
+        Callers that may race with `gc` hold the store lock, as `wowlab
+        snap import` does.
+        """
+        manifest = parse_manifest(data)
+        wanted: dict[str, int] = {}
+        for entry in manifest.entries:
+            if entry.kind != "file":
+                continue
+            if entry.sha256 is None or not _SHA_RE.match(entry.sha256):
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: the file entry {entry.path!r} names no object"
+                )
+            if entry.size < 0:
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: the file entry {entry.path!r} has a negative size"
+                )
+            if wanted.setdefault(entry.sha256, entry.size) != entry.size:
+                raise ManifestIntegrityError(
+                    f"manifest {manifest.id}: object {entry.sha256} is given two sizes"
+                )
+        name = manifest.id + _MANIFEST_SUFFIX
+        staged: dict[str, str] = {}  # sha256 -> staged name under tmp/
+        # L1 (M16-75): refused before anything is created, as `put_object`.
+        self._refuse_inside_any_install()
+        with self._holding_dirs():
+            self._refuse_linked_store_dirs()
+            try:
+                if self._existing_manifest(name, data, manifest.id):
+                    return manifest, False  # already here, as these very bytes
+                check_foreign_manifest(manifest, now=now)
+                # `manifests/` exists before any object does (M11-15).
+                with self._store_dir(("manifests",), create=True):
+                    pass
+                for digest in sorted(wanted):
+                    staged[digest] = self._stage_verified(
+                        open_object(digest), digest, wanted[digest]
+                    )
+                verified: set[str] = set()
+                for digest in sorted(staged):
+                    if self._reusable(digest, verified):
+                        continue  # sound already; the staged copy is dropped below
+                    with (
+                        self._store_dir(("tmp",), create=True) as tmp,
+                        self._store_dir(("objects", digest[:2]), create=True) as shard,
+                    ):
+                        assert tmp is not None and shard is not None
+                        for where in (tmp, shard):
+                            if not where.still_checked():
+                                raise _linked_store_dir(where.path)
+                        os.replace(
+                            tmp.at(staged[digest]),
+                            shard.at(digest[2:]),
+                            src_dir_fd=tmp.fd,
+                            dst_dir_fd=shard.fd,
+                        )
+                    del staged[digest]
+                    verified.add(digest)
+                # Recorded as imported before its manifest exists, so the
+                # store never holds it unmarked (`imported_ids`).
+                with (
+                    self._store_dir((_IMPORTED_DIR,), create=True) as imported,
+                    self._staged("imported") as marker,
+                ):
+                    assert imported is not None
+                    self._publish(marker, imported, manifest.id)
+                with self._store_dir(("manifests",), create=True) as manifests:
+                    assert manifests is not None
+                    if self._existing_manifest(name, data, manifest.id):
+                        return manifest, False
+                    self._write_manifest(manifests, name, data)
+            except OSError as exc:
+                raise SnapshotError(f"cannot add snapshot {manifest.id}: {exc}") from exc
+            finally:
+                self._drop_staged(staged.values())
+        return manifest, True
+
+    def imported_ids(self) -> frozenset[str]:
+        """The ids `add_snapshot` added from elsewhere (M16-04): the names
+        of the empty files under `imported/`, each written before its
+        manifest. Listed by `lstat`; a link or anything not a regular file
+        is not a record. Reads only; no store, no records."""
+        folder = self.path / _IMPORTED_DIR
+        try:
+            listing = list(os.scandir(folder))
+        except (FileNotFoundError, NotADirectoryError):
+            return frozenset()
+        except OSError as exc:
+            raise SnapshotError(f"cannot list {folder}: {exc}") from exc
+        return frozenset(
+            item.name
+            for item in listing
+            if _ID_RE.match(item.name) and item.is_file(follow_symlinks=False)
+        )
+
+    def _existing_manifest(self, name: str, data: bytes, snapshot_id: str) -> bool:
+        """True when `manifests/<name>` holds exactly `data`; False when there
+        is none; `SnapshotExistsError` when it holds anything else. Read as
+        `create` reads the manifest already at an id (M11-11, M11-18)."""
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                return False
+            try:
+                existing = read_regular_file(
+                    manifests.at(name), limit=len(data), dir_fd=manifests.fd
+                )
+            except FileNotFoundError:
+                return False
+            except OSError as exc:
+                raise SnapshotExistsError(
+                    f"a different snapshot {snapshot_id} is already in the store ({exc}); "
+                    "nothing was added"
+                ) from exc
+        if existing != data:
+            raise SnapshotExistsError(
+                f"a different snapshot {snapshot_id} is already in the store (its label or "
+                "contents differ); nothing was added"
+            )
+        return True
+
+    def _stage_verified(self, source: ObjectSource, digest: str, size: int) -> str:
+        """Stream `source` into a new compressed file under `tmp/`, reading at
+        most `size + 1` bytes, and return its name once it is exactly `size`
+        bytes hashing to `digest`; else `ObjectCorruptError`, with the staged
+        file removed. `source` is closed on every path."""
+        hasher = hashlib.sha256()
+        compressor = zlib.compressobj(6)
+        total = 0
+        try:
+            with self._store_dir(("tmp",), create=True) as tmp:
+                assert tmp is not None
+                name = f"import-{uuid.uuid4().hex}"
+                try:
+                    fd = os.open(tmp.at(name), _STAGE_FLAGS, _PRIVATE_FILE_MODE, dir_fd=tmp.fd)
+                except OSError as exc:
+                    raise SnapshotError(f"cannot write in {tmp.path}: {exc}") from exc
+                try:
+                    with os.fdopen(fd, "wb") as out:
+                        with contextlib.suppress(OSError):  # best effort
+                            _set_private(out.fileno(), exact=True)  # 0600 whatever the umask
+                        while total <= size:
+                            chunk = source.read(min(_CHUNK, size + 1 - total))
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > size:
+                                raise ObjectCorruptError(
+                                    f"object {digest} holds more than its recorded {size} bytes"
+                                )
+                            hasher.update(chunk)
+                            out.write(compressor.compress(chunk))
+                        if total != size:
+                            raise ObjectCorruptError(
+                                f"object {digest} holds {total} bytes, not its recorded {size}"
+                            )
+                        if hasher.hexdigest() != digest:
+                            raise ObjectCorruptError(f"object {digest} does not hash to its name")
+                        out.write(compressor.flush())
+                        out.flush()
+                        os.fsync(out.fileno())
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp.at(name), dir_fd=tmp.fd)
+                    raise
+        finally:
+            source.close()
+        return name
+
+    def _drop_staged(self, names: Iterable[str]) -> None:
+        """Remove staged files under `tmp/` by name, never through a link."""
+        names = list(names)
+        if not names:
+            return
+        with self._store_dir(("tmp",), create=False) as tmp:
+            if tmp is None:
+                return
+            for name in names:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp.at(name), dir_fd=tmp.fd)
 
     # -- health ------------------------------------------------------------
 
@@ -2006,7 +3061,56 @@ class SnapshotStore:
             corrupt_objects=tuple(sorted(corrupt)),
             missing_objects=tuple(missing),
             invalid_manifests=tuple(invalid),
+            exposure=self.exposure(),
         )
+
+    def exposure(self) -> StoreExposure:
+        """Which entries of the store another account on this machine can
+        read or change (M16-41), judged by `lstat`; nothing is followed or
+        changed. An entry counts when it grants the group, or everyone else,
+        read or write, and every directory from the store root down to it
+        lets that same class search it. A link is not judged (its target is
+        not the store's). A store that does not exist exposes nothing. Off
+        POSIX nothing is checked (`checked` is False)."""
+        if not _PRIVATE_MODES:
+            return StoreExposure(checked=False, count=0, entries=())
+        shown: list[str] = []
+        count = 0
+        # (path, store-relative name, the classes that can reach it, walk below it)
+        stack: list[tuple[Path, str, tuple[int, ...], bool]] = [
+            (self.path, ".", tuple(range(len(_CLASS_BITS))), True)
+        ]
+        while stack:
+            path, rel, reach, walk = stack.pop()
+            try:
+                # The root as named, as a write opens it; below it, nothing is followed.
+                st = path.stat() if rel == "." else path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            mode = stat.S_IMODE(st.st_mode)
+            if any(mode & _CLASS_BITS[c][0] for c in reach):
+                count += 1
+                if len(shown) < _EXPOSED_SHOWN:
+                    shown.append(rel)
+            if not walk or not stat.S_ISDIR(st.st_mode):
+                continue
+            inner = tuple(c for c in reach if mode & _CLASS_BITS[c][1])
+            if not inner:
+                continue  # no one else can reach anything below it
+            try:
+                names = sorted((p.name for p in path.iterdir()), reverse=True)
+            except OSError:
+                continue
+            for name in names:
+                if rel == ".":
+                    # Below the root only the store's own directories are
+                    # walked; anything else there is judged, not walked.
+                    stack.append((path / name, name, inner, name in _STORE_DIRS))
+                else:
+                    stack.append((path / name, f"{rel}/{name}", inner, True))
+        return StoreExposure(checked=True, count=count, entries=tuple(shown))
 
     def gc(
         self, *, dry_run: bool = True, grace_seconds: float = 0.0, keep: Iterable[str] = ()
@@ -2044,6 +3148,10 @@ class SnapshotStore:
         link (on Windows also a junction) or not a directory, or is missing
         while `objects/` holds anything: a dangling link or an unmounted
         volume would otherwise make every object look unreferenced.
+
+        Unless `dry_run`, a store inside any install is refused
+        (`StoreLocationError`) before anything is listed or removed, by
+        `create`'s rule (L1; M16-68). A dry run only reads, and is allowed.
         """
         if isinstance(keep, str | bytes):
             raise SnapshotError("keep is an iterable of SHA-256 digests, not a single string")
@@ -2052,6 +3160,8 @@ class SnapshotStore:
             if not isinstance(digest, str) or not _SHA_RE.match(digest):
                 raise SnapshotError(f"not a SHA-256 hex digest: {digest!r}")
             referenced.add(digest)
+        if not dry_run:
+            self._refuse_inside_any_install()
         self._refuse_gc_without_manifests()
         for manifest in self.list():  # raises ManifestIntegrityError
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
@@ -2073,6 +3183,7 @@ class SnapshotStore:
         removed: list[str] = []
         removed_bytes = 0
         if not dry_run:
+            self._privatize_existing()  # a write, so the store is fixed (M16-41)
             for name, obj in candidates:
                 if self._remove_object(obj):
                     removed.append(name)
@@ -2087,6 +3198,21 @@ class SnapshotStore:
             removed_bytes=removed_bytes,
             skipped=tuple(sorted(skipped)),
         )
+
+    def _privatize_existing(self) -> None:
+        """`_make_store_private` on the store root, opened as named, when it
+        exists (M16-41); for a write that makes no directory, such as `gc`.
+        Best effort, and a no-op off POSIX."""
+        if not _PRIVATE_MODES:
+            return
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            return
+        try:
+            _make_store_private(fd)
+        finally:
+            os.close(fd)
 
     def _remove_object(self, obj: _ObjectFile) -> bool:
         """Delete one listed object without following any link on the way;
@@ -2214,7 +3340,7 @@ class SnapshotStore:
         """The store's `tmp/`, created if needed, when it is a directory and
         not a link; else None."""
         try:
-            self.tmp_dir.mkdir(parents=True, exist_ok=True)
+            make_private_dirs(self.tmp_dir, outside=True)
             st = os.lstat(self.tmp_dir)
         except OSError:
             return None
@@ -2297,7 +3423,8 @@ def resolve_reference(
     if reference in ("latest", "latest-user") or reference.startswith("~"):
         ordered = sorted(store.list(), key=lambda m: (m.created_at, m.id))
         if reference == "latest-user":
-            ordered = [m for m in ordered if kind_of(m, pre_write_ids) == "user"]
+            imported = store.imported_ids()
+            ordered = [m for m in ordered if kind_of(m, pre_write_ids, imported) == "user"]
             if not ordered:
                 raise SnapshotNotFoundError("no snapshot you took yourself is in the store")
             return ordered[-1].id

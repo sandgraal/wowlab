@@ -11,7 +11,11 @@
 //   decides whether the plan may be confirmed, by handing back a one-time
 //   token, and Confirm sends that token with the plan's own command and
 //   parameters; a confirmed run shows the server's note (its journal record
-//   and the `wowlab undo` hint) and never another Confirm;
+//   and the `wowlab undo` hint) and never another Confirm. The plan's lines,
+//   Confirm's words and how each run ended (its exit code in words) are the
+//   server's too (M16-21): the page puts the plan above Confirm, keeps the
+//   report behind a closed "Details", and moves focus to the plan's heading,
+//   then after Confirm to the sentence that says how it ended;
 // - the character (M14-08, M14-09): a picker from `char list --json`, and
 //   for the one picked its gear from `char gear --json`, its keys from
 //   `char binds --json` and its macros from `char macros --json`;
@@ -160,12 +164,13 @@
     } catch (error) {
       return { error: "The request failed: " + error };
     }
-    if (!reply.ok) return { error: "Refused: " + (result.error || reply.status) };
+    if (!reply.ok) return { error: "The server refused this request: " + (result.error || reply.status) };
     if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit." };
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
       const text = String(result.stderr || "").trim();
-      const error = text || "wowlab " + command.join(" ") + " ended with exit code " + result.exit_code + ".";
+      const ended = result.outcome && typeof result.outcome.text === "string" ? result.outcome.text : "";
+      const error = text || "wowlab " + command.join(" ") + (ended ? ": " + ended : " ended without a message.");
       if (partial) {
         try {
           const data = JSON.parse(result.stdout);
@@ -718,9 +723,12 @@
     const target = node.path ? report.install_root + sep + node.path.split("/").join(sep) : report.install_root;
     const params = { path: target, root: report.install_root };
     if (node.flavor) params.flavor = node.flavor;
-    const reply = await runJson(["explain"], params);
+    // Partial: `explain` exits 1 for a path that matches nothing (M16-18),
+    // and its report still says why. Any other error prints an error report
+    // (no `result`) in place of it: the pane shows the error then.
+    const reply = await runJson(["explain"], params, true);
     if (seq !== explorer.explainSeq) return;
-    if (reply.error) {
+    if (reply.error && !(reply.data && reply.data.result)) {
       explainSay(shown(reply.error), true);
       return;
     }
@@ -1088,7 +1096,10 @@
   // ─── the character tab (M14-08, §16.3) ───
   // A picker from `char list --json --brief` (no records: the picker needs
   // none), latest-written first, and for the
-  // character picked, a header and its gear from `char gear --json`. Every
+  // character picked, a header and its gear from `char gear --json`. The
+  // header's class, race and spec names are the report's `names`, read by
+  // the CLI from game tables already cached for the client; this script
+  // holds none, and shows the id when a name is missing. Every
   // name and colour comes from the report: a slot's name is its `slot_name`,
   // an item's is its `name`, and its colour is a class built from its
   // `colour` code (`colourClass`) that the server's stylesheet paints from
@@ -1150,18 +1161,23 @@
     );
   }
 
-  // Latest-written first; rows with no time last; ties by account and folder.
+  // Latest-written first; rows with no time last; a tie in time by the
+  // newest record schema (`record_schema`; rows without one after it), then
+  // by account and folder.
   function latestFirst(entries) {
-    const time = (e) => (typeof e.mtime_ns === "number" ? e.mtime_ns : null);
+    const num = (v) => (typeof v === "number" ? v : null);
     const path = (e) => String(e.account) + "/" + String(e.realm_folder) + "/" + String(e.label);
+    const newestFirst = (x, y) => {
+      if (x === y) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return y - x;
+    };
     return entries.slice().sort((a, b) => {
-      const ta = time(a);
-      const tb = time(b);
-      if (ta !== tb) {
-        if (ta === null) return 1;
-        if (tb === null) return -1;
-        return tb - ta;
-      }
+      const byTime = newestFirst(num(a.mtime_ns), num(b.mtime_ns));
+      if (byTime) return byTime;
+      const bySchema = newestFirst(num(a.record_schema), num(b.record_schema));
+      if (bySchema) return bySchema;
       return path(a) < path(b) ? -1 : path(a) > path(b) ? 1 : 0;
     });
   }
@@ -1290,13 +1306,42 @@
     drawDressing(report.dressing);
   }
 
-  function charFact(list, label, value) {
+  // One fact; `title`, when given, is the exact value behind the one shown.
+  function charFact(list, label, value, title) {
     list.appendChild(make("dt", label));
-    list.appendChild(make("dd", value));
+    const dd = make("dd", value);
+    if (typeof title === "string" && title) dd.title = title;
+    list.appendChild(dd);
   }
 
   function numberWords(value) {
     return typeof value === "number" ? String(value) : "not returned";
+  }
+
+  // An average item level to one decimal, the client's exact figure as the title.
+  function averageFact(list, label, value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      charFact(list, label, value.toFixed(1), "rounded to one decimal; exact: " + String(value));
+    } else {
+      charFact(list, label, numberWords(value));
+    }
+  }
+
+  // A value the record does not hold, with the record's reason when it
+  // gives one, as `char gear` prints it.
+  function notRecorded(absent) {
+    return typeof absent === "string" && absent ? "not recorded: " + visible(absent) : "not recorded";
+  }
+
+  // A class, race or spec: its name from the game tables wowlab already
+  // downloaded for this client (`names`), with the id as the title (and
+  // `more` after it); else the id; with no id, the record's reason.
+  function namedFact(list, label, name, id, absent, more) {
+    const idWords = typeof id === "number" ? label.toLowerCase() + " id " + id : "";
+    const title = idWords && more ? idWords + "; " + more : idWords;
+    if (idWords && typeof name === "string" && name) charFact(list, label, visible(name), title);
+    else if (idWords) charFact(list, label, idWords, more || "");
+    else charFact(list, label, notRecorded(absent));
   }
 
   function drawCharHeader(entry, report) {
@@ -1304,17 +1349,31 @@
     header.replaceChildren(make("h2", visible(entry.label)));
     const facts = make("dl");
     facts.className = "char-facts";
-    charFact(facts, "Character folder", visible(String(report.character)));
-    const spec = report.spec && typeof report.spec === "object" ? report.spec : {};
-    if (typeof spec.absent === "string") charFact(facts, "Spec", visible(spec.absent));
-    else charFact(facts, "Spec id", numberWords(spec.id));
-    const average = report.average && typeof report.average === "object" ? report.average : {};
+    const obj = (v) => (v && typeof v === "object" ? v : {});
+    const identity = obj(report.identity);
+    const names = obj(report.names);
+    const spec = obj(report.spec);
+    charFact(facts, "Level", typeof report.level === "number" ? String(report.level) : notRecorded(report.level_absent));
+    // Without a cached name, the class's file name as the client gave it ("MAGE").
+    const classWords = typeof names.class_name === "string" && names.class_name ? names.class_name : identity.class_file;
+    namedFact(facts, "Class", classWords, identity.class_id, identity.class_id_absent);
+    // One reason said once: a race missing for the class's reason says so.
+    const raceAbsent =
+      typeof identity.class_id !== "number" && typeof identity.race_id_absent === "string" &&
+      identity.race_id_absent === identity.class_id_absent
+        ? "as for Class"
+        : identity.race_id_absent;
+    namedFact(facts, "Race", names.race, identity.race_id, raceAbsent);
+    // What the client calls the specialization, whatever its name reads.
+    namedFact(facts, "Spec", names.spec, spec.id, spec.absent, "the client's specialization, not the talent points spent");
+    const average = obj(report.average);
     if (typeof average.absent === "string") {
       charFact(facts, "Average item level", "absent (" + visible(average.absent) + ")");
     } else {
-      charFact(facts, "Average item level, equipped", numberWords(average.equipped));
-      charFact(facts, "Average item level, overall", numberWords(average.overall));
+      averageFact(facts, "Average item level, equipped", average.equipped);
+      averageFact(facts, "Average item level, overall", average.overall);
     }
+    charFact(facts, "Character folder", visible(String(report.character)));
     charFact(facts, "File", shown(String(report.file)));
     charFact(facts, "Written", localTime(report.mtime_ns) + " (the file's modification time)");
     header.appendChild(facts);
@@ -1902,7 +1961,7 @@
   byId("char-macros-findings").addEventListener("change", () => filterMacros());
 
   // ─── the looks tab (M14-04, §16.3) ───
-  // "Write the page" runs `looks page` (no parameters: its default place
+  // "Download tables and write the page" runs `looks page` (no parameters: its default place
   // under the data folder's pages/, never `--out`), then reads that file
   // from /api/looks-page, whose path the server builds itself, and puts the
   // text in #looks-frame as its document. The frame is sandboxed with
@@ -1965,7 +2024,7 @@
     // own, so a failure is never drawn above an older page.
     frame.hidden = true;
     try {
-      looksSay("Writing the looks page…", false);
+      looksSay("Downloading the tables wowlab does not have yet and writing the looks page…", false);
       // Exit 1 with a report: the page was written, and some look files
       // are damaged (the CLI names them on stderr).
       const reply = await runJson(["looks", "page"], {}, true);
@@ -2036,7 +2095,13 @@
     } else {
       input = make("input");
       input.type = "text";
-      if (param.required) input.required = true;
+    }
+    // A field the command declares required is marked in its label, which
+    // is its accessible name, and as `required`, which a screen reader
+    // announces; it is checked before Run (`missing`).
+    if (param.required && param.kind !== "flag") {
+      input.required = true;
+      label.appendChild(make("span", " (required)"));
     }
     input.id = id;
     box.appendChild(label);
@@ -2068,15 +2133,21 @@
     confirmNoteSeq += 1;
     byId("confirm-box").hidden = true;
     byId("confirm-note").textContent = "";
+    byId("plan-box").hidden = true;
+    byId("plan-lines").textContent = "";
+    byId("plan-lines").hidden = true;
     const button = byId("confirm");
     button.hidden = true;
     button.disabled = true;
+    button.textContent = "Confirm";
     for (const { box } of inputs) box.classList.remove("needed");
   }
 
-  // What the server said about a plan run: its note, a Confirm when it
-  // minted a token, and the field to fill when it named one. The page adds
-  // no rule of its own: no token, no Confirm.
+  // What the server said about a plan run: its note, and when it minted a
+  // token, the plan under its heading, then Confirm named by the server's
+  // label; the field to fill when it named one. The page adds no rule of its
+  // own: no token, no plan heading and no Confirm. Focus goes to the plan's
+  // heading, or to the field to fill.
   function showOffer(offer, command, params) {
     if (!offer || offer.stage !== "plan") return;
     const note = typeof offer.note === "string" ? offer.note : "";
@@ -2085,9 +2156,18 @@
     confirmSay(shown(note));
     if (token) {
       pending = { command: command, params: params, token: token };
+      const lines = Array.isArray(offer.plan_lines)
+        ? offer.plan_lines.filter((line) => typeof line === "string")
+        : [];
+      const planLines = byId("plan-lines");
+      planLines.textContent = lines.map(shown).join("\n");
+      planLines.hidden = lines.length === 0;
+      byId("plan-box").hidden = false;
       const button = byId("confirm");
+      if (typeof offer.label === "string" && offer.label) button.textContent = offer.label;
       button.hidden = false;
       button.disabled = false;
+      byId("plan-heading").focus();
     }
     if (typeof offer.needs === "string") {
       for (const { param, input, box } of inputs) {
@@ -2143,8 +2223,23 @@
     return params;
   }
 
+  // The first field the command declares required that is empty, or null.
+  function missing() {
+    for (const entry of inputs) {
+      const { param, input } = entry;
+      if (!param.required || param.kind === "flag") continue;
+      const empty = param.multiple
+        ? input.value.split("\n").every((line) => line === "")
+        : input.value === "";
+      if (empty) return entry;
+    }
+    return null;
+  }
+
   // One run from the form, or, with `confirming`, the confirmed run of the
   // plan the server offered: the same command and parameters, and its token.
+  // A form with a required field left empty is not run: the field is marked
+  // and focused, and the status line says which.
   async function run(confirming) {
     if (current === null) return;
     const command = current;
@@ -2153,6 +2248,14 @@
       if (pending === null || pending.command !== command) return;
       body = { command: command.path, params: pending.params, confirm: pending.token };
     } else {
+      const empty = missing();
+      if (empty !== null) {
+        for (const { box } of inputs) box.classList.remove("needed");
+        empty.box.classList.add("needed");
+        say(empty.param.label + " is required: fill it in first.", true);
+        empty.input.focus();
+        return;
+      }
       body = { command: command.path, params: collect() };
     }
     clearConfirm();
@@ -2174,17 +2277,20 @@
       const result = await reply.json();
       if (seq !== runSeq) return;
       if (!reply.ok) {
-        say("Refused: " + (result.error || reply.status), true);
+        say("The server refused this request: " + (result.error || reply.status), true);
         return;
       }
-      showResult(result.stdout);
+      // A failed run's error report repeats the error line shown below it,
+      // and names a class: it is not drawn.
+      // A run of the confirm step keeps its report behind a closed
+      // "Details": the plan above Confirm is what it shows first.
+      showResult(errorReport(result) ? null : result.stdout, !result.confirm);
       byId("stderr").textContent = result.stderr;
-      const notes = [];
-      if (result.timed_out) notes.push("stopped at its time limit");
-      if (result.truncated) notes.push("output cut at its size limit");
       const stage = result.confirm && result.confirm.stage;
-      const head = stage === "plan" ? "Plan, nothing was changed: exit code " : stage === "confirmed" ? "Confirmed: exit code " : "Exit code ";
-      say(head + result.exit_code + (notes.length ? " (" + notes.join(", ") + ")" : ""), result.exit_code !== 0);
+      // How the run ended, in the server's words (exit codes as words, and
+      // "Plan" only for a plan that ended with its marker).
+      const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+      say(outcome ? outcome.text : "", Boolean(outcome && outcome.alert));
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
       if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
@@ -2199,7 +2305,12 @@
     } catch (error) {
       if (seq === runSeq) say("The request failed: " + error, true);
     } finally {
-      if (seq === runSeq) button.disabled = false;
+      if (seq === runSeq) {
+        button.disabled = false;
+        // After Confirm (which is gone now), focus goes to the sentence
+        // that says how it ended, a refusal included.
+        if (confirming) byId("status").focus();
+      }
     }
   }
 
@@ -2383,15 +2494,34 @@
     return node;
   }
 
-  // Shows one run's stdout: a tree when it is one JSON document, else the
-  // text as printed. null clears the result.
-  function showResult(stdout) {
+  // Whether a failed run printed only its error report on stdout: an object
+  // with exactly `kind`, `message` and `exit_code`, the run's own exit code.
+  function errorReport(result) {
+    if (result.exit_code === 0 || typeof result.stdout !== "string") return false;
+    let value;
+    try {
+      value = JSON.parse(result.stdout);
+    } catch (_) {
+      return false;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const keys = Object.keys(value).sort().join(",");
+    return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
+  }
+
+  // Shows one run's stdout under "Details": a tree when it is one JSON
+  // document, else the text as printed. "Details" is open when `open`, else
+  // closed (a run of the confirm step). null clears the result.
+  function showResult(stdout, open) {
+    const details = byId("result-details");
     const tree = byId("result-tree");
     const raw = byId("result-raw");
     tree.replaceChildren();
     tree.hidden = true;
     raw.hidden = true;
     raw.open = false;
+    details.hidden = !stdout;
+    details.open = Boolean(open);
     byId("stdout").textContent = stdout || "";
     if (!stdout) return;
     let value;

@@ -631,15 +631,19 @@ _JS_IDS_BEFORE = frozenset(
     ]
 )
 _SIGIL_CLASSES = frozenset({"sigil", "ring", "tick", "core", "fissure"})
+# What M16-21 added after the redesign: the plan above Confirm, and the
+# report behind "Details".
+_M16_21_CLASSES = frozenset({"plan-lines", "result-details"})
+_M16_21_IDS = frozenset({"plan-box", "plan-heading", "plan-lines", "result-details"})
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
     html_classes, html_ids = _html_names(_template("page.html"))
-    assert html_classes == (_HTML_CLASSES_BEFORE - {"crest"}) | _SIGIL_CLASSES
-    assert html_ids == _HTML_IDS_BEFORE
+    assert html_classes == (_HTML_CLASSES_BEFORE - {"crest"}) | _SIGIL_CLASSES | _M16_21_CLASSES
+    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS
     js_classes, js_ids = _js_names(_template("page.js"))
     assert js_classes == _JS_CLASSES_BEFORE
-    assert js_ids == _JS_IDS_BEFORE
+    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -729,7 +733,9 @@ _WORDS_BEFORE = (
     "[aria-label] Commands",
     "Pick a command",
     "Run",
+    "Plan",  # the plan's heading above Confirm (M16-21)
     "Confirm",
+    "Details",  # the report behind a closed "Details" (M16-21)
     "Output as printed",
     "Character",
     "One character as the lab-addon last saved it: the file it wrote at logout or",
@@ -759,10 +765,10 @@ _WORDS_BEFORE = (
     "Looks",
     "The page",
     "wowlab looks page",
-    "writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Write the page runs that command, which writes",
+    "writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Download tables and write the page runs that command. It downloads the build's public game tables from wago.tools when wowlab does not have them yet, sending your game version, then writes",
     "pages/looks.html",
-    "in wowlab's own data folder and never touches your game folder, then shows that file here. It runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.",
-    "Write the page",
+    "in wowlab's own data folder, never touching your game folder, and shows that file here. The page itself runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.",
+    "Download tables and write the page",
     "[title] The looks page",
 )
 

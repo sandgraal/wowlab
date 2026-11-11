@@ -88,6 +88,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from wowlab_core.gamedata import GameData, MalformedTable
 from wowlab_core.install import BUILD_INFO, FLAVOR_INFO
+from wowlab_core.snapshot import make_private_dirs
 
 if TYPE_CHECKING:
     from hashlib import _Hash
@@ -349,7 +350,7 @@ def _prepare_dir(path: Path) -> None:
     again after it (a symlink along the way resolves differently once the
     directory exists)."""
     _refuse_install(path)
-    path.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(path)  # 0700 under the user data directory (M16-78)
     _refuse_install(path)
 
 

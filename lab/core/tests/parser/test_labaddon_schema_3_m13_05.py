@@ -616,6 +616,56 @@ def test_constructed_binding_counts_that_cannot_happen_are_refused() -> None:
     assert isinstance(_v3(raw).bindings, labaddon.Bindings)
 
 
+def _bars_with(first: int, last: int, slots: list[int]) -> dict[str, Any]:
+    raw = _base_v3()
+    raw["actionbars"]["first_slot"] = first
+    raw["actionbars"]["last_slot"] = last
+    raw["actionbars"]["slots"] = [{"slot": s, "type": "spell", "id": 6603} for s in slots]
+    return raw
+
+
+def test_constructed_action_slot_listed_twice_is_refused() -> None:
+    """M13-70: the addon walks each slot once, so a slot listed twice is a
+    file it cannot have written; refused, so no tool on the slots has to
+    pick which entry counts."""
+    message = _refused(
+        _bars_with(1, 180, [1, 2, 2]),
+        "WowLabCharDB.actionbars",
+        "slot 2 is listed more than once",
+    )
+    assert "schema-3" in message
+
+
+@pytest.mark.parametrize("slot", [0, 181, -1])
+def test_constructed_action_slot_outside_the_walk_is_refused(slot: int) -> None:
+    """M13-70: every listed slot lies in `first_slot`..`last_slot`."""
+    _refused(
+        _bars_with(1, 180, [1, slot]),
+        "WowLabCharDB.actionbars",
+        f"slot {slot} is outside the slots walked (1 to 180)",
+    )
+
+
+def test_constructed_action_range_that_runs_backwards_is_refused() -> None:
+    """M13-70: `first_slot` after `last_slot` is refused, with or without
+    slots listed."""
+    _refused(_bars_with(180, 1, []), "WowLabCharDB.actionbars", "first_slot is after last_slot")
+    _refused(_bars_with(180, 1, [5]), "first_slot is after last_slot")
+
+
+def test_constructed_action_slots_at_the_bounds_are_read() -> None:
+    """M13-70: the bounds are inclusive; a one-slot walk and an empty list
+    read."""
+    bars = _v3(_bars_with(1, 180, [1, 180])).actionbars
+    assert isinstance(bars, labaddon.ActionBars)
+    assert [s.slot for s in bars.slots] == [1, 180]
+    bars = _v3(_bars_with(7, 7, [7])).actionbars
+    assert isinstance(bars, labaddon.ActionBars)
+    assert [s.slot for s in bars.slots] == [7]
+    bars = _v3(_bars_with(7, 7, [])).actionbars
+    assert isinstance(bars, labaddon.ActionBars) and bars.slots == []
+
+
 @pytest.mark.parametrize("field", ["spell_name", "subtext"])
 def test_constructed_spell_text_is_capped_in_bytes(field: str) -> None:
     """The addon's `#value <= 255` counts bytes: 255 bytes of UTF-8 read,

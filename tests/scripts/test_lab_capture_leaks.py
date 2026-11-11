@@ -306,7 +306,11 @@ def test_constructed_embedded_count_reaches_the_refusal_and_no_row(
     character = install.joinpath(*RETAIL_ACCOUNT, REALM, MAIN)
     _write(character / "layout-local.txt", f"Frame: {guild}sBank {guild}sVault {guild}\n")
     out = tmp_path / "incoming"
-    args = ("--flavor", "_retail_", "--sv", "Words.lua", "--sv", "Guild.lua", "--extra-name", guild)
+    # `Guild.lua` names a free-text word since M16-44, so it is confirmed too.
+    args = (
+        *("--flavor", "_retail_", "--sv", "Words.lua", "--sv", "Guild.lua"),
+        *("--confirm-free-text", "Guild.lua", "--extra-name", guild),
+    )
     assert capture(install, out, *args) == 1
     stdout = capsys.readouterr().out
     refused = sorted(line for line in stdout.splitlines() if line.startswith("REFUSED"))
