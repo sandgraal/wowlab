@@ -93,6 +93,7 @@ __all__ = [
     "discover",
     "folder_note",
     "is_link",
+    "name_the_install_lines",
     "not_taken_why",
     "parse_build_info",
     "parse_flavor_info",
@@ -108,9 +109,17 @@ ENV_ROOT = "WOWLAB_WOW_ROOT"
 # product, flavor). It names no flavor; an owner who chose another name or
 # parent is reached only through the explicit root or `WOWLAB_WOW_ROOT`.
 _INSTALL_DIR = "World of Warcraft"
-_MACOS_PARENTS = ("/Applications",)
+# macOS, searched in this order (LAB_PLAN §6.1, amendment of 2026-11-11):
+# the folders outside the home, then the home's own (`~`, skipped when there
+# is no home), then `/Users/Shared`, then every volume under `/Volumes`.
+_MACOS_PARENTS = ("/Applications", "/Applications/Games", "/Games")
+_MACOS_HOME_PARENTS = ("Applications", "Games")
+_MACOS_SHARED_PARENTS = ("/Users/Shared",)
+_MACOS_VOLUMES = "/Volumes"
+# Under each volume, in this order ("" is the volume itself).
+_MACOS_VOLUME_PARENTS = ("", "Applications", "Games")
 # Probed on every drive, in this order, under the drive root ("" is the root).
-_WINDOWS_PARENTS = ("", "Program Files (x86)", "Program Files")
+_WINDOWS_PARENTS = ("", "Program Files (x86)", "Program Files", "Games")
 _SYSTEM_DRIVE_VAR = "SystemDrive"
 _SYSTEM_DRIVE_FALLBACK = "C:"
 
@@ -172,6 +181,21 @@ NOT_TAKEN_LINK = "wowlab reads a flavor only from a real folder in the install"
 NO_READABLE_FLAVOR = "has no flavor folder wowlab can read (a real folder named _..._ holding a regular .flavor.info)"
 
 
+def name_the_install_lines(platform: str | None = None) -> tuple[str, ...]:
+    """How to name an install that discovery did not find, as lines to copy
+    (LAB_PLAN §6.1, amendment of 2026-11-11): `--root`, then the line that
+    sets `WOWLAB_WOW_ROOT` on `platform` (`sys.platform` by default;
+    `set` on Windows, `export` elsewhere)."""
+    platform = sys.platform if platform is None else platform
+    env_line = f"set {ENV_ROOT}=<path>" if platform == "win32" else f'export {ENV_ROOT}="<path>"'
+    return (
+        f"to name the install, use the folder that holds {BUILD_INFO} (not a flavor folder "
+        "named like _name_ inside it), for one command or for every command:",
+        '  --root "<path>"',
+        f"  {env_line}",
+    )
+
+
 # ─── errors ──────────────────────────────────────────────────────────────────
 
 
@@ -224,7 +248,14 @@ class InstallNotFoundError(InstallError):
     `unchecked` are the defaults that could not be checked: something that
     is not a directory is there, or looking raised an error (a drive that is
     not ready, a refusal); `unchecked_reasons` says why, in the same order.
-    A location is in one list or the other, never both.
+    A location is in one list or the other, never both. `checked` is every
+    location in the order it was looked at (LAB_PLAN §6.1, amendment of
+    2026-11-11); without it, `searched` then `unchecked`.
+
+    The message is one line. The notes (`add_note`, which tracebacks and the
+    CLI print one line each after it) list every location checked, in order,
+    then how to name the install: `--root "<path>"`, and the line that sets
+    `WOWLAB_WOW_ROOT` on `platform` (`sys.platform` by default).
     """
 
     def __init__(
@@ -232,11 +263,15 @@ class InstallNotFoundError(InstallError):
         searched: Sequence[Path],
         unchecked: Sequence[Path] = (),
         unchecked_reasons: Sequence[str] = (),
+        *,
+        checked: Sequence[Path] | None = None,
+        platform: str | None = None,
     ) -> None:
         self.searched = tuple(searched)
         self.unchecked = tuple(unchecked)
         reasons = tuple(unchecked_reasons)
         self.unchecked_reasons = reasons + ("",) * (len(self.unchecked) - len(reasons))
+        self.checked = self.searched + self.unchecked if checked is None else tuple(checked)
         if self.searched:
             where = ", ".join(str(p) for p in self.searched)
         elif self.unchecked:
@@ -255,6 +290,18 @@ class InstallNotFoundError(InstallError):
             f"{not_checked}); pass the install folder (the one that holds {BUILD_INFO}) "
             f"or set {ENV_ROOT}"
         )
+        why = dict(zip(reversed(self.unchecked), reversed(self.unchecked_reasons), strict=True))
+        for path in self.checked:
+            if path in why:
+                self.add_note(
+                    f"could not check: {path} ({why[path]})"
+                    if why[path]
+                    else f"could not check: {path}"
+                )
+            else:
+                self.add_note(f"searched, no install there: {path}")
+        for line in name_the_install_lines(platform):
+            self.add_note(line)
 
 
 # ─── models ──────────────────────────────────────────────────────────────────
@@ -514,27 +561,75 @@ def _drive_root(drive: str) -> str:
     return drive.rstrip("\\/").upper() + "\\"
 
 
+def _home_dir() -> PurePath | None:
+    """The current user's home directory, or None when it cannot be found."""
+    try:
+        home = Path.home()
+    except (RuntimeError, KeyError, OSError):
+        return None
+    return home if home.is_absolute() else None
+
+
+def _volume_names(volumes: Path) -> list[str]:
+    """The entries directly under `volumes` that are searched, sorted by
+    name: an entry that is a link (`is_link`, the boot volume's link back to
+    `/` among them) is skipped, and so is one that cannot be listed (not a
+    directory, refused, gone). `volumes` itself missing or unreadable is no
+    entries; nothing here raises."""
+    try:
+        names = sorted(entry.name for entry in os.scandir(volumes))
+    except OSError:
+        return []
+    kept: list[str] = []
+    for name in names:
+        entry = volumes / name
+        try:
+            st = os.lstat(entry)
+            if is_link(entry, st):
+                continue
+            with os.scandir(entry):
+                pass
+        except OSError:
+            continue
+        kept.append(name)
+    return kept
+
+
 def default_roots(
     platform: str | None = None,
     drives: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
+    *,
+    home: PurePath | str | None = None,
+    volumes: Path | str | None = None,
 ) -> tuple[PurePath, ...]:
-    """Locations searched when no root is given, in order (LAB_PLAN §6.1).
+    """Locations searched when no root is given, in order (LAB_PLAN §6.1 and
+    its amendment of 2026-11-11). Each is a `World of Warcraft` folder.
 
-    macOS: `/Applications/World of Warcraft`. Windows: on every drive,
-    `<drive>\\World of Warcraft`, then `<drive>\\Program Files (x86)\\World of
-    Warcraft`, then `<drive>\\Program Files\\World of Warcraft`; the system
-    drive (`%SystemDrive%`, else `C:`) first, then every other drive in the
-    order `drives` lists them. Anything else: none (use the explicit root).
+    macOS, under: `/Applications`, `/Applications/Games`, `/Games`,
+    `~/Applications`, `~/Games`, `/Users/Shared`, then for each entry
+    directly under `/Volumes`, sorted by name: the volume itself, its
+    `Applications` and its `Games`. A `/Volumes` entry that is a link
+    (`is_link`; the boot volume's link back to `/`) or that cannot be listed
+    is skipped.
 
-    `drives` defaults to `os.listdrives()` on Windows. Every listed drive is
-    probed: telling fixed drives from removable or network ones needs a Win32
-    call, which is out of scope for this package. `environ` defaults to
-    `os.environ`.
+    Windows: on every drive, `<drive>\\`, then `<drive>\\Program Files (x86)`,
+    then `<drive>\\Program Files`, then `<drive>\\Games`; the system drive
+    (`%SystemDrive%`, else `C:`) first, then every other drive in the order
+    `drives` lists them. Anything else: none (use the explicit root).
+
+    Every input is injectable, so this is testable without the real
+    filesystem. `platform` defaults to `sys.platform`. `home` defaults to
+    the current user's home directory; `""` means there is none, and the two
+    `~` locations are skipped. `volumes` is the folder listed for volumes,
+    `/Volumes` by default. `drives` defaults to `os.listdrives()` on
+    Windows. Every listed drive is probed: telling fixed drives from
+    removable or network ones needs a Win32 call, which is out of scope for
+    this package. `environ` defaults to `os.environ`.
     """
     platform = sys.platform if platform is None else platform
     if platform == "darwin":
-        return tuple(PurePosixPath(parent, _INSTALL_DIR) for parent in _MACOS_PARENTS)
+        return _macos_roots(home, volumes)
     if platform != "win32":
         return ()
     env = os.environ if environ is None else environ
@@ -552,6 +647,19 @@ def default_roots(
         for drive in ordered
         for parent in _WINDOWS_PARENTS
     )
+
+
+def _macos_roots(home: PurePath | str | None, volumes: Path | str | None) -> tuple[PurePath, ...]:
+    """`default_roots` on macOS."""
+    parents: list[PurePosixPath] = [PurePosixPath(p) for p in _MACOS_PARENTS]
+    found_home = _home_dir() if home is None else (PurePosixPath(home) if str(home) else None)
+    if found_home is not None:
+        parents.extend(PurePosixPath(found_home, p) for p in _MACOS_HOME_PARENTS)
+    parents.extend(PurePosixPath(p) for p in _MACOS_SHARED_PARENTS)
+    listed = Path(_MACOS_VOLUMES if volumes is None else volumes)
+    for name in _volume_names(listed):
+        parents.extend(PurePosixPath(str(listed), name, p) for p in _MACOS_VOLUME_PARENTS)
+    return tuple(PurePosixPath(parent, _INSTALL_DIR) for parent in parents)
 
 
 def _as_path(value: Path | str) -> Path:
@@ -717,7 +825,7 @@ def _resolve(
                 continue
             raise  # present but not usable: say so rather than skip it
         return candidate.absolute(), "default"
-    raise InstallNotFoundError(searched, unchecked, reasons)
+    raise InstallNotFoundError(searched, unchecked, reasons, checked=candidates)
 
 
 def resolve_root(

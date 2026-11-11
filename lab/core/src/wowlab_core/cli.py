@@ -1269,23 +1269,28 @@ def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> s
     """Why there is no install to read, then how to name one (`how`): every
     such error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
     if isinstance(exc, install.InstallNotFoundError):
-        looked = []
-        if exc.searched:
-            looked.append("searched: " + ", ".join(str(p) for p in exc.searched))
-        if exc.unchecked:
-            looked.append(
-                "could not check: "
-                + ", ".join(
-                    f"{p} ({why})" if why else str(p)
-                    for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True)
-                )
+        # The locations are the error's notes, one line each after this one
+        # (`_fail`): a dozen paths on one line could not be read (M16-112).
+        n = len(exc.checked)
+        if n:
+            places = "1 location" if n == 1 else f"{n} locations"
+            found = (
+                f"no WoW install found where the game installs by default "
+                f"({places} checked, listed below)"
             )
-        if looked:
-            found = f"no WoW install found where the game installs by default ({'; '.join(looked)})"
         else:
             found = "no WoW install found: wowlab knows no default install location on this system"
         return f"{found}; {how}"
     return f"{exc}; {how}"
+
+
+def _keep_notes(err: CliError, exc: BaseException) -> CliError:
+    """`err` with the notes of `exc`, the error it words: an install not
+    found carries the locations checked and the lines that name the install
+    as notes, and `_fail` prints a `CliError`'s notes, not its cause's."""
+    for line in getattr(exc, "__notes__", ()):
+        err.add_note(line)
+    return err
 
 
 # The command that lists what a command of each group names (M16-19): a
@@ -3019,14 +3024,9 @@ def install_show(root: RootOpt = None, json_out: JsonOpt = False) -> None:
 
     \f
     JSON: install.Install."""
-    try:
-        inst, found_by = _discover(root)
-    except install.InstallNotFoundError as exc:
-        for p in exc.searched:
-            _note("searched, no install there: {}", p)
-        for p, why in zip(exc.unchecked, exc.unchecked_reasons, strict=True):
-            _note("could not check: {} ({})", p, why)
-        raise
+    # No install found: the error's notes list every location checked
+    # (`_fail`), in the order they were checked (M16-112).
+    inst, found_by = _discover(root)
     if json_out:
         _emit(inst)
         return
@@ -5543,7 +5543,7 @@ def _sv_inside_install(
     except install.InstallError as exc:
         # --root cannot help here, given or not: only the variable can.
         words = _install_words(exc, _NAME_THE_INSTALL_BY_ITSELF)
-        raise CliError(f"refused: {words}", EXIT_REFUSED) from exc
+        raise _keep_notes(CliError(f"refused: {words}", EXIT_REFUSED), exc) from exc
     try:
         home = longpath.realpath(found.root)
         if root is not None and longpath.realpath(_discover(root)[0].root) != home:
@@ -5553,7 +5553,7 @@ def _sv_inside_install(
             )
         target = _sv_file(file, root, flavor, account, character)
     except install.InstallError as exc:
-        raise CliError(f"refused: {_install_words(exc)}", EXIT_REFUSED) from exc
+        raise _keep_notes(CliError(f"refused: {_install_words(exc)}", EXIT_REFUSED), exc) from exc
     try:
         real = Path(longpath.realpath(target))
         inside = real.is_relative_to(home)
@@ -12753,9 +12753,12 @@ def _looks_build(
                 "customization tables are cached (--build chooses another)."
             ]
         have = f" (cached: {', '.join(cached)})" if cached else ""
-        raise CliError(
-            f"{_install_words(exc)}. Without an install, pass --build with a full "
-            f"version string{have}"
+        raise _keep_notes(
+            CliError(
+                f"{_install_words(exc)}. Without an install, pass --build with a full "
+                f"version string{have}"
+            ),
+            exc,
         ) from exc
 
 
