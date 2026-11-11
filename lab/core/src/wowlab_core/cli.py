@@ -10452,7 +10452,7 @@ def profile_apply(
     )
     if profiles.MACROS_NOTE in plan.notes:
         _say(profiles.MACROS_NOTE)
-    _say(profiles.LOGIN_NOTE)
+    # The login note was shown with the plan, before the prompt; it is not repeated here.
 
 
 # ─── addon ───────────────────────────────────────────────────────────────────
