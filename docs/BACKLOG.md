@@ -2478,7 +2478,7 @@ The store line prints the raw journal state (`open`, `rollback_incomplete`) in t
 
 # M16 follow-ups found in review (filed 2026-11-10, fourth batch)
 
-## [ ] M16-86 — `undo`'s plan for an unfinished rollback says what it will do
+## [x] M16-86 — `undo`'s plan for an unfinished rollback says what it will do
 **Size:** S · **Depends on:** M16-85 · **Sources:** the M16-71 code review (#441); the M16-85 implementer report
 
 For a `rollback_incomplete` record, `undo --expect <id>`'s plan has two problems:
@@ -2539,7 +2539,7 @@ A probe showed that main's `guard.history()` returns whatever strings a record o
 
 **Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-91 — `tree` link notes: a combat log is a file, and "real one" reads plainly
+## [x] M16-91 — `tree` link notes: a combat log is a file, and "real one" reads plainly
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-80 domain re-check (#452)
 
 Two polish items:
