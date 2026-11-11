@@ -9829,7 +9829,14 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan: only the steps the undo will take. A path whose
+    """`undo`'s text plan (`_undo_plan`, without its listed paths)."""
+    return _undo_plan(last)[0]
+
+
+def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
+    """`undo`'s text plan, and the paths it lists: the result's login note
+    is decided from those same paths, so the plan and the result agree on it
+    (M16-102). The text plan: only the steps the undo will take. A path whose
     disk already holds what was there before that transaction (a file a
     rollback already put back or removed) is skipped by the undo, so it is
     not listed; one wowlab cannot read is listed. Under each file, what the
@@ -9879,7 +9886,7 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         unfinished = last.state in ("open", "rollback_incomplete")
         lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
-    return lines
+    return lines, listed
 
 
 @app.command(short_help="Undo the last change wowlab made to your game files.")
@@ -9930,7 +9937,6 @@ def undo(
     last = records[-1]
 
     def report(*, applied: bool, transaction: str | None = None) -> UndoReport:
-        touched = [p.path for p in last.paths]
         return UndoReport(
             undone=last.id,
             label=last.label,
@@ -9941,18 +9947,20 @@ def undo(
             created_dirs=list(last.created_dirs),
             applied=applied,
             transaction=transaction,
-            notes=_relogin_notes(touched) if applied else [],
+            # From the paths the plan listed, as its footer is (M16-102).
+            notes=_relogin_notes(listed) if applied else [],
             plan_lines=[_safe(line) for line in plan_lines],
         )
 
     plan_lines: list[str] = []
+    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    plan_lines = _undo_lines(last)
+    plan_lines, listed = _undo_plan(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
