@@ -8,8 +8,10 @@ and the problem names each one, relative to the flavor folder and with the
 flavor folder named once, grouped by what the file holds as doctor reads it
 now: still wowlab's change, changed by another program since, already what
 was there before, unknown, or never written by wowlab (a refused path,
-which undo leaves alone). Names are escaped as they print, after `--redact`
-has seen them as stored; `wowlab undo --expect <id>` stays last.
+which undo leaves alone), and whether it is there at all. Names are escaped
+as they print, after `--redact` has seen them as stored; `wowlab undo
+--expect <id>` stays last, except for a change that wrote nothing, where
+the problem says there is nothing for undo to put back.
 
 The install is the captured tree copied into `tmp_path` as `test_cli.py`
 builds it, the user data directory is redirected and the process table is a
@@ -54,15 +56,17 @@ CHANGED = b"constructed by wowlab\n"
 OTHER = b"constructed by another program\n"
 OTHER_AGAIN = b"constructed by another program, again\n"
 
-CAUSE = "another program, such as the game, at logout or /reload"
+THE_GAME = "such as the game when it saves your settings or addon data"
+CAUSE = f"another program, {THE_GAME}"
 LEAD = "the last change wowlab made failed, and putting the files back did not finish"
 TAIL = (
     "To put back what was there before the change, close the game and run this; it puts "
-    "back every file the change wrote, including anything the game has saved to them since, "
-    "but the undo keeps a copy and running wowlab undo again next, before you play, brings "
-    "them back: "
-    "wowlab undo --expect "
+    "back every file the change wrote or deleted, including anything the game has saved to "
+    "them since, but the undo keeps a copy and running wowlab undo again next, before you "
+    "play, brings them back: wowlab undo --expect "
 )
+NOTHING_LEAD = "the last change wowlab made failed before it changed any file"
+NOTHING = "wowlab changed no file, so there is nothing for undo to put back."
 
 # A file name holding U+202E, which reverses the text after it: the gate
 # allows it (a real file may be named so), so it must print escaped.
@@ -116,42 +120,59 @@ def _fail_leaving(root: Path, flavor: Path, *rels: str) -> str:
     return record_id
 
 
-def _fail_refused_rollback(root: Path, flavor: Path, rel: str, *others: str) -> str:
-    """A change that wrote `rel` (and `others`, which another program then
-    rewrote) and failed; the system refused the rollback's replace of `rel`,
-    so it still holds the change. The record's id."""
+def _fail_refused_rollback(
+    root: Path, flavor: Path, rel: str, *others: str, delete: bool = False
+) -> str:
+    """A change that wrote (or, with `delete`, deleted) `rel`, and wrote
+    `others`, which another program then rewrote, and failed; the system
+    refused the rollback's replace (or create) of `rel`, so it still holds
+    the change. The record's id."""
     target = flavor / rel
-    real_replace = os.replace
+    real_replace, real_rename = os.replace, os.rename
 
     def refusing(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
         if Path(os.fspath(dst)) == target:
             raise PermissionError(13, "constructed: permission denied", str(target))
         real_replace(src, dst, *args, **kwargs)
 
+    def refusing_rename(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        # How the gate creates a missing file on Windows.
+        if Path(os.fspath(dst)) == target:
+            raise PermissionError(13, "constructed: permission denied", str(target))
+        real_rename(src, dst, *args, **kwargs)
+
     with pytest.MonkeyPatch.context() as patched:  # noqa: SIM117 - the exit is what rolls back
         with pytest.raises(_StopError):
             with guard.transaction(_discovered(root), label="constructed: fails") as tx:
-                tx.write(rel, CHANGED)
+                if delete:
+                    tx.delete(rel)
+                else:
+                    tx.write(rel, CHANGED)
                 for other in others:
                     tx.write(other, CHANGED)
                     (flavor / other).write_bytes(OTHER)
                 patched.setattr(os, "replace", refusing)
+                patched.setattr(os, "rename", refusing_rename)
                 raise _StopError
-    assert target.read_bytes() == CHANGED, "positive control: the rollback was refused"
+    if delete:
+        assert not target.exists(), "positive control: the rollback was refused"
+    else:
+        assert target.read_bytes() == CHANGED, "positive control: the rollback was refused"
     last = guard.history()[-1]
     assert last.state == "rollback_incomplete"
     return last.id
 
 
-def _fail_with_a_refused_write(root: Path, flavor: Path) -> str:
-    """The change writes Config.wtf's neighbour; another program changes
-    Config.wtf after the pre-write snapshot, so the gate refuses to write
-    it; the program changes it again before the exit. wowlab never wrote
-    Config.wtf. The record's id."""
+def _fail_with_a_refused_write(root: Path, flavor: Path, *, also: bool = True) -> str:
+    """The change writes Config.wtf's neighbour (unless not `also`); another
+    program changes Config.wtf after the pre-write snapshot, so the gate
+    refuses to write it; the program changes it again before the exit.
+    wowlab never wrote Config.wtf. The record's id."""
     config = flavor / CONFIG
     with pytest.raises(guard.GuardError):  # noqa: SIM117 - the exit is what rolls back
         with guard.transaction(_discovered(root), label="constructed: refused") as tx:
-            tx.write(SAVED, CHANGED)
+            if also:
+                tx.write(SAVED, CHANGED)
             config.write_bytes(OTHER)
             with pytest.raises(guard.ChangedSinceSnapshotError):
                 tx.write(CONFIG, CHANGED)
@@ -177,13 +198,15 @@ def _json(*args: str) -> dict[str, Any]:
 
 
 def _json_problem(record_id: str, data: dict[str, Any]) -> str:
-    (problem,) = [p for p in data["problems"] if f"--expect {record_id}" in p]
+    (problem,) = [p for p in data["problems"] if f"(record {record_id})" in p]
     assert isinstance(problem, str)
     return problem
 
 
-def _left(data: dict[str, Any]) -> list[tuple[str, str]]:
-    return [(p["path"], p["now"]) for p in data["store"]["last_transaction"]["paths_left"]]
+def _left(data: dict[str, Any]) -> list[tuple[str, str, bool | None]]:
+    return [
+        (p["path"], p["now"], p["exists"]) for p in data["store"]["last_transaction"]["paths_left"]
+    ]
 
 
 def _both(record_id: str) -> tuple[str, str]:
@@ -193,30 +216,63 @@ def _both(record_id: str) -> tuple[str, str]:
     return _problem(text.stdout), _json_problem(record_id, _json())
 
 
+def _holds_non_utf8_names(where: Path) -> str | None:
+    """None when the file system under `where` keeps a name holding the
+    byte 0xFF as given; else why it does not (APFS refuses one, Windows
+    names are UTF-16). A real probe: one file is created and listed."""
+    folder = os.fsencode(where)
+    probe = os.path.join(folder, b"probe-\xff")  # noqa: PTH118 - a bytes name
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except (OSError, UnicodeError) as exc:
+        return f"this file system cannot hold a non-UTF-8 name ({type(exc).__name__})"
+    os.close(fd)
+    try:
+        if b"probe-\xff" not in os.listdir(folder):  # noqa: PTH208 - bytes names
+            return "this file system stores a non-UTF-8 name under another name"
+    finally:
+        os.unlink(probe)  # noqa: PTH108 - a bytes name
+    return None
+
+
 # ─── the sentences ───────────────────────────────────────────────────────────
 
 
 def test_a_file_another_program_changed_since_constructed(root: Path, flavor: Path) -> None:
     record_id = _fail_leaving(root, flavor, CONFIG)
     expected = (
-        f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf has been changed since "
-        f"wowlab wrote it by {CAUSE}. {TAIL}{record_id}"
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has changed WTF/Config.wtf "
+        f"since wowlab wrote it. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     data = _json()
-    assert _left(data) == [(CONFIG, "changed_since")]
+    assert _left(data) == [(CONFIG, "changed_since", True)]
     assert data["store"]["last_transaction"]["flavor_folder"] == FLAVOR
 
 
 def test_two_files_another_program_changed_since_constructed(root: Path, flavor: Path) -> None:
     record_id = _fail_leaving(root, flavor, SAVED, CONFIG)
     expected = (
-        f"{LEAD} (record {record_id}): in {FLAVOR}, {SAVED} and {CONFIG} have been changed "
-        f"since wowlab wrote them by {CAUSE}. {TAIL}{record_id}"
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has changed {SAVED} and {CONFIG} "
+        f"since wowlab wrote them. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     # Sorted, so the same record always prints the same line.
-    assert _left(_json()) == [(SAVED, "changed_since"), (CONFIG, "changed_since")]
+    assert _left(_json()) == [(SAVED, "changed_since", True), (CONFIG, "changed_since", True)]
+
+
+def test_a_file_another_program_deleted_since_constructed(root: Path, flavor: Path) -> None:
+    def body(tx: Any) -> None:
+        tx.write(CONFIG, CHANGED)
+        (flavor / CONFIG).unlink()  # another program, mid-change
+
+    record_id = _fail(root, body)
+    expected = (
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has deleted WTF/Config.wtf "
+        f"since wowlab wrote it. {TAIL}{record_id}"
+    )
+    assert _both(record_id) == (expected, expected)
+    assert _left(_json()) == [(CONFIG, "changed_since", False)]
 
 
 def test_a_file_the_system_refused_to_put_back_still_holds_the_change_constructed(
@@ -228,7 +284,19 @@ def test_a_file_the_system_refused_to_put_back_still_holds_the_change_constructe
         f"change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
-    assert _left(_json()) == [(CONFIG, "wowlab_change")]
+    assert _left(_json()) == [(CONFIG, "wowlab_change", True)]
+
+
+def test_a_deleted_file_the_system_refused_to_put_back_is_still_deleted_constructed(
+    root: Path, flavor: Path
+) -> None:
+    record_id = _fail_refused_rollback(root, flavor, CONFIG, delete=True)
+    expected = (
+        f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf is still deleted, as "
+        f"wowlab's change left it. {TAIL}{record_id}"
+    )
+    assert _both(record_id) == (expected, expected)
+    assert _left(_json()) == [(CONFIG, "wowlab_change", False)]
 
 
 def test_files_in_different_states_are_named_in_groups_constructed(
@@ -237,7 +305,7 @@ def test_files_in_different_states_are_named_in_groups_constructed(
     record_id = _fail_refused_rollback(root, flavor, CONFIG, SAVED)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf still holds wowlab's "
-        f"change; {SAVED} has been changed since wowlab wrote it by {CAUSE}. {TAIL}{record_id}"
+        f"change; {CAUSE}, has changed {SAVED} since wowlab wrote it. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
 
@@ -251,7 +319,20 @@ def test_a_file_already_back_as_before_constructed(root: Path, flavor: Path) -> 
         f"there before the change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
-    assert _left(_json()) == [(CONFIG, "before_change")]
+    assert _left(_json()) == [(CONFIG, "before_change", True)]
+
+
+def test_a_created_file_since_removed_is_gone_again_constructed(root: Path, flavor: Path) -> None:
+    """wowlab created the file; another program changed it, so the rollback
+    left it; then the file was removed: it is gone again, as before."""
+    record_id = _fail_leaving(root, flavor, SAVED)
+    (flavor / SAVED).unlink()
+    expected = (
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {SAVED} is gone again, as before the "
+        f"change. {TAIL}{record_id}"
+    )
+    assert _both(record_id) == (expected, expected)
+    assert _left(_json()) == [(SAVED, "before_change", False)]
 
 
 def test_a_file_doctor_cannot_read_constructed(
@@ -265,7 +346,7 @@ def test_a_file_doctor_cannot_read_constructed(
         f"{TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
-    assert _left(_json()) == [(CONFIG, "unknown")]
+    assert _left(_json()) == [(CONFIG, "unknown", None)]
 
 
 def test_a_record_of_a_flavor_doctor_did_not_find_is_not_read_constructed(
@@ -283,7 +364,7 @@ def test_a_record_of_a_flavor_doctor_did_not_find_is_not_read_constructed(
 
     monkeypatch.setattr(guard, "history", elsewhere)
     monkeypatch.setattr(cli, "_hash_now", lambda root, path: pytest.fail("read the install"))
-    assert _left(_json()) == [(CONFIG, "unknown")]
+    assert _left(_json()) == [(CONFIG, "unknown", None)]
     assert "wowlab could not put back WTF/Config.wtf" in _json_problem(record_id, _json())
 
 
@@ -299,8 +380,8 @@ def test_an_install_named_through_a_link_is_still_read_constructed(
     monkeypatch.setenv(install.ENV_ROOT, str(link))
     record_id = _fail_leaving(link, link / FLAVOR, CONFIG)
     assert guard.history()[-1].flavor_path == str(flavor.resolve())
-    assert _left(_json()) == [(CONFIG, "changed_since")]
-    assert "WTF/Config.wtf has been changed" in _json_problem(record_id, _json())
+    assert _left(_json()) == [(CONFIG, "changed_since", True)]
+    assert "has changed WTF/Config.wtf" in _json_problem(record_id, _json())
 
 
 def test_a_file_wowlab_never_wrote_is_left_by_undo_constructed(root: Path, flavor: Path) -> None:
@@ -309,35 +390,110 @@ def test_a_file_wowlab_never_wrote_is_left_by_undo_constructed(root: Path, flavo
     problem says wowlab did not write it and undo leaves it, and undo does."""
     record_id = _fail_with_a_refused_write(root, flavor)
     expected = (
-        f"{LEAD} (record {record_id}): in {FLAVOR}, wowlab did not write WTF/Config.wtf; "
-        "another program changed it while wowlab was working, and undo leaves it as it is. "
+        f"{LEAD} (record {record_id}): in {FLAVOR}, wowlab did not write WTF/Config.wtf, "
+        "which another program changed while wowlab was working, and undo leaves it as it is. "
         f"{TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
-    assert _left(_json()) == [(CONFIG, "not_written")]
-    assert "still holds wowlab's change" not in expected
+    assert _left(_json()) == [(CONFIG, "not_written", None)]
 
     ok("undo", "--expect", record_id, "--yes")
     assert (flavor / CONFIG).read_bytes() == OTHER_AGAIN, "undo left it as it is"
 
 
+def test_a_change_that_wrote_nothing_offers_no_undo_constructed(root: Path, flavor: Path) -> None:
+    """The change's only write was refused: it wrote nothing, so the problem
+    says there is nothing for undo to put back instead of the command."""
+    record_id = _fail_with_a_refused_write(root, flavor, also=False)
+    assert guard.history()[-1].paths == ()
+    expected = (
+        f"{NOTHING_LEAD} (record {record_id}): in {FLAVOR}, wowlab did not write "
+        "WTF/Config.wtf, which another program changed while wowlab was working, and undo "
+        f"leaves it as it is. {NOTHING}"
+    )
+    assert _both(record_id) == (expected, expected)
+    assert "wowlab undo" not in expected
+    data = _json()
+    assert data["store"]["last_transaction"]["paths"] == 0
+    assert _left(data) == [(CONFIG, "not_written", None)]
+
+
+def test_a_change_that_wrote_nothing_and_names_no_file_constructed() -> None:
+    problem = cli._rollback_unfinished("00000001-0123abcd", [], "_x_", paths=0)
+    assert problem == (
+        f"{NOTHING_LEAD} (record 00000001-0123abcd): another program, {THE_GAME}, changed a "
+        f"file while wowlab was working. {NOTHING}"
+    )
+
+
+def _left_path(path: str, now: str, exists: bool | None) -> Any:
+    return cli.LeftPath.model_validate({"path": path, "now": now, "exists": exists})
+
+
 def test_three_files_are_listed_with_commas_constructed() -> None:
-    left = [cli.LeftPath(path=p, now="changed_since") for p in ("WTF/a", "WTF/b", "WTF/c")]
+    left = [_left_path(p, "changed_since", True) for p in ("WTF/a", "WTF/b", "WTF/c")]
     problem = cli._rollback_unfinished("00000001-0123abcd", left, "_x_")
-    assert (
-        f"in _x_, WTF/a, WTF/b and WTF/c have been changed since wowlab wrote them by {CAUSE}."
-        in problem
+    assert f"in _x_, {CAUSE}, has changed WTF/a, WTF/b and WTF/c since wowlab wrote them." in (
+        problem
     )
     assert problem.endswith(": wowlab undo --expect 00000001-0123abcd")
 
 
-def test_two_files_never_written_are_said_in_the_plural_constructed() -> None:
-    left = [cli.LeftPath(path=p, now="not_written") for p in ("WTF/a", "WTF/b")]
+@pytest.mark.parametrize(
+    ("now", "exists", "said"),
+    [
+        pytest.param(
+            "wowlab_change",
+            True,
+            "WTF/a and WTF/b still hold wowlab's change",
+            id="constructed-still-holds",
+        ),
+        pytest.param(
+            "wowlab_change",
+            False,
+            "WTF/a and WTF/b are still deleted, as wowlab's change left them",
+            id="constructed-still-deleted",
+        ),
+        pytest.param(
+            "changed_since",
+            False,
+            f"{CAUSE}, has deleted WTF/a and WTF/b since wowlab wrote them",
+            id="constructed-deleted-since",
+        ),
+        pytest.param(
+            "before_change",
+            True,
+            "WTF/a and WTF/b already hold what was there before the change",
+            id="constructed-already-back",
+        ),
+        pytest.param(
+            "before_change",
+            False,
+            "WTF/a and WTF/b are gone again, as before the change",
+            id="constructed-gone-again",
+        ),
+        pytest.param(
+            "unknown",
+            None,
+            "wowlab could not put back WTF/a and WTF/b, which hold either wowlab's change or "
+            f"what {CAUSE}, has written to them since",
+            id="constructed-unknown",
+        ),
+        pytest.param(
+            "not_written",
+            None,
+            "wowlab did not write WTF/a and WTF/b, which another program changed while wowlab "
+            "was working, and undo leaves them as they are",
+            id="constructed-not-written",
+        ),
+    ],
+)
+def test_two_files_are_said_in_the_plural_constructed(
+    now: str, exists: bool | None, said: str
+) -> None:
+    left = [_left_path(p, now, exists) for p in ("WTF/a", "WTF/b")]
     problem = cli._rollback_unfinished("00000001-0123abcd", left, "_x_")
-    assert (
-        "wowlab did not write WTF/a and WTF/b; another program changed them while wowlab was "
-        "working, and undo leaves them as they are." in problem
-    )
+    assert f"(record 00000001-0123abcd): in _x_, {said}. " in problem
 
 
 def test_a_record_that_lists_no_file_keeps_a_sentence_without_names_constructed() -> None:
@@ -347,11 +503,25 @@ def test_a_record_that_lists_no_file_keeps_a_sentence_without_names_constructed(
     problem = cli._rollback_unfinished(record_id)
     assert problem == cli._rollback_unfinished(record_id, [], "_x_")
     assert problem == (
-        f"{LEAD} (record {record_id}): a file may have been changed while wowlab was writing "
-        f"or since by {CAUSE}, or may still hold wowlab's change. "
-        f"{TAIL}{record_id}"
+        f"{LEAD} (record {record_id}): {CAUSE}, may have changed a file while wowlab was "
+        f"writing or since, or a file may still hold wowlab's change. {TAIL}{record_id}"
     )
     assert "brings it back" not in problem
+
+
+def test_no_timing_that_holds_for_only_some_files_is_stated_constructed() -> None:
+    """SavedVariables are written at logout or /reload, Config.wtf on exit
+    and on some setting changes: the problem names neither timing."""
+    every = [
+        cli._rollback_unfinished("00000001-0123abcd"),
+        cli._rollback_unfinished("00000001-0123abcd", [], "", paths=0),
+        *(
+            cli._rollback_unfinished("00000001-0123abcd", [_left_path("WTF/a", n, e)], "_x_")
+            for n, e in (("changed_since", True), ("changed_since", False), ("unknown", None))
+        ),
+    ]
+    for problem in every:
+        assert "logout" not in problem and "/reload" not in problem, problem
 
 
 # ─── escaped as printed ──────────────────────────────────────────────────────
@@ -365,15 +535,15 @@ def test_a_bidi_mark_in_a_left_file_name_prints_escaped_constructed(
     text = run("doctor")
     assert "\u202e" not in text.stdout
     problem = _problem(text.stdout)
-    assert f"in {FLAVOR}, {BIDI_PRINTED} has been changed" in problem
+    assert f"has changed {BIDI_PRINTED} since" in problem
     assert problem.endswith(f": wowlab undo --expect {record_id}")
 
     result = run("doctor", "--json")
     assert "\u202e" not in result.stdout, "--json is ASCII"
     report = json.loads(result.stdout)
     # The model holds the name as stored; the output escapes it.
-    assert f"in {FLAVOR}, {BIDI} has been changed" in _json_problem(record_id, report)
-    assert _left(report) == [(BIDI, "changed_since")]
+    assert f"has changed {BIDI} since" in _json_problem(record_id, report)
+    assert _left(report) == [(BIDI, "changed_since", True)]
 
 
 @pytest.mark.parametrize(
@@ -391,7 +561,7 @@ def test_control_and_format_characters_in_a_name_are_escaped_as_printed_construc
     """The journal never holds a control character (the gate refuses one
     in a path); the printed line escapes them anyway."""
     problem = cli._rollback_unfinished(
-        "00000001-0123abcd", [cli.LeftPath(path=name, now="unknown")], "_x_"
+        "00000001-0123abcd", [_left_path(name, "unknown", None)], "_x_"
     )
     cli._say(problem)
     printed = capsys.readouterr().out
@@ -410,15 +580,15 @@ def test_redact_hides_the_account_in_a_left_file_constructed(root: Path, flavor:
     assert text.exit_code == 1, text.output
     assert ACCOUNT not in text.stdout
     problem = _problem(text.stdout)
-    assert f"in {FLAVOR}, {redacted_path} has been changed" in problem
+    assert f"in {FLAVOR}, {CAUSE}, has changed {redacted_path} since" in problem
     # The record id names nobody and stays: the command is still the line's end.
     assert problem.endswith(f": wowlab undo --expect {record_id}")
 
     result = run("doctor", "--json", "--redact")
     assert ACCOUNT not in result.stdout
     report = json.loads(result.stdout)
-    assert _left(report) == [(redacted_path, "changed_since")]
-    assert f"{redacted_path} has been changed" in _json_problem(record_id, report)
+    assert _left(report) == [(redacted_path, "changed_since", True)]
+    assert f"has changed {redacted_path} since" in _json_problem(record_id, report)
 
 
 def test_redact_hides_names_only_the_journal_holds_constructed(root: Path, flavor: Path) -> None:
@@ -445,19 +615,26 @@ def test_redact_hides_names_only_the_journal_holds_constructed(root: Path, flavo
 
 
 @pytest.mark.parametrize(
-    "account",
+    "raw",
     [
         # U+200E, which `_safe` escapes: redaction must see the name as stored.
-        pytest.param("Labmarkacct\u200eone", id="constructed-lrm-in-the-name"),
-        # A byte that is not UTF-8, carried as a lone surrogate.
-        pytest.param("Labbyteacct" + os.fsdecode(b"\xff") + "one", id="constructed-not-utf8"),
+        # Every file system holds it.
+        pytest.param("Labmarkacct\u200eone".encode(), id="constructed-lrm-in-the-name"),
+        # A byte that is not UTF-8, carried as a lone surrogate; only where
+        # the file system holds such a name (probed, not assumed).
+        pytest.param(b"Labbyteacct\xffone", id="constructed-not-utf8"),
     ],
 )
 def test_redact_hides_an_account_whose_name_prints_escaped_constructed(
-    root: Path, flavor: Path, account: str, monkeypatch: pytest.MonkeyPatch
+    root: Path, flavor: Path, tmp_path: Path, raw: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if os.name == "nt" and "\udcff" in account:
-        pytest.skip("Windows file names are UTF-16; a non-UTF-8 byte cannot be one")
+    try:
+        account = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        why = _holds_non_utf8_names(tmp_path)
+        if why is not None:
+            pytest.skip(why)
+        account = os.fsdecode(raw)
     # The gate logs the path it left; a lone surrogate in a captured log
     # line cannot cross to the pytest-xdist controller, so the library's log
     # stays out of pytest's capture here.
@@ -472,10 +649,10 @@ def test_redact_hides_an_account_whose_name_prints_escaped_constructed(
 
     text = run("doctor", "--redact")
     assert stem.casefold() not in text.stdout.casefold(), text.stdout
-    assert f"in {FLAVOR}, {redacted_path} has been changed" in _problem(text.stdout)
+    assert f"has changed {redacted_path} since" in _problem(text.stdout)
 
     result = run("doctor", "--json", "--redact")
     assert stem.casefold() not in result.stdout.casefold()
     report = json.loads(result.stdout)
-    assert _left(report) == [(redacted_path, "changed_since")]
+    assert _left(report) == [(redacted_path, "changed_since", True)]
     assert redacted_path in _json_problem(record_id, report)

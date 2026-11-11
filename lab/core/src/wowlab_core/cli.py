@@ -1708,6 +1708,9 @@ LeftNow = Literal["wowlab_change", "before_change", "changed_since", "unknown", 
 class LeftPath(_Out):
     path: str
     now: LeftNow
+    # Whether the file is there now; None when doctor did not read it
+    # (`unknown`, `not_written`).
+    exists: bool | None
 
 
 class LastTransaction(_Out):
@@ -1872,6 +1875,7 @@ def _left_paths(r: guard.HistoryRecord, inst: install.Install | None) -> list[Le
     for rel in sorted(r.paths_left):
         change = written.get(rel)
         now: LeftNow
+        exists: bool | None = None
         if change is None:
             now = "not_written"
         elif folder is None:
@@ -1880,13 +1884,15 @@ def _left_paths(r: guard.HistoryRecord, inst: install.Install | None) -> list[Le
             read, digest = _hash_now(folder[0], folder[0] / folder[1] / rel)
             if not read:
                 now = "unknown"
-            elif digest == change.after:
-                now = "wowlab_change"
-            elif digest == change.before:
-                now = "before_change"
             else:
-                now = "changed_since"
-        out.append(LeftPath(path=rel, now=now))
+                exists = digest is not None
+                if digest == change.after:
+                    now = "wowlab_change"
+                elif digest == change.before:
+                    now = "before_change"
+                else:
+                    now = "changed_since"
+        out.append(LeftPath(path=rel, now=now, exists=exists))
     return out
 
 
@@ -2067,7 +2073,7 @@ def _doctor(
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
         t = store.last_transaction
-        problems.append(_rollback_unfinished(t.id, t.paths_left, t.flavor_folder))
+        problems.append(_rollback_unfinished(t.id, t.paths_left, t.flavor_folder, paths=t.paths))
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -2108,83 +2114,107 @@ def _interrupted(record_id: str) -> str:
 
 
 def _rollback_unfinished(
-    record_id: str, left: Sequence[LeftPath] = (), flavor_folder: str = ""
+    record_id: str, left: Sequence[LeftPath] = (), flavor_folder: str = "", *, paths: int = 1
 ) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
-    could not put every file back. Usually another program (the game)
-    changed a file mid-change, and the gate left that program's bytes in
-    place; a file may also still hold the change. The undo puts back every
-    file the change wrote (its journaled paths), the game's later saves
-    included, but takes a snapshot of the files first, so a second undo
-    (which undoes the undo) brings them back.
+    could not put every file back. Usually another program (the game, when
+    it saves settings or addon data) changed a file mid-change, and the gate
+    left that program's bytes in place; a file may also still hold the
+    change. The undo puts back every file the change wrote or deleted (its
+    `paths`, M16-86), the game's later saves included, but takes a snapshot
+    of the files first, so undoing the undo next, before the player plays,
+    brings them back (the wording of undo's own plan, M16-92).
 
     With `left` (M16-84) the problem names each file the rollback left, in
-    `flavor_folder`, grouped by what doctor read there now (`LeftPath.now`).
-    A file the change never wrote (its only operation was refused) is said
-    to be left alone by undo, which acts only on what the change wrote.
-    Names are kept as stored: the text output escapes them as it prints
-    (`_say`), `--json` as ASCII, and `--redact` sees them unescaped. A
-    record that lists no file gets the sentence without names. The command
-    stays last (M16-71)."""
+    `flavor_folder`, grouped by what doctor read there now (`LeftPath`). A
+    file the change never wrote (its only operation was refused) is said to
+    be left alone by undo, which acts only on `paths`. With `paths == 0`
+    the change wrote nothing, so undo has nothing to put back: the problem
+    says so instead of offering the command (the one exception to "the
+    command stays last"). Names are kept as stored: the text output escapes
+    them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
+    unescaped. A record that lists no file gets the sentence without names."""
+    groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
+    for p in left:
+        groups.setdefault((p.now, p.exists), []).append(p.path)
+    said = [_left_clause(key, groups[key]) for key in _LEFT_ORDER if key in groups]
+    where = f"in {flavor_folder}, " if flavor_folder else ""
+    if paths == 0:
+        lead = (
+            f"the last change wowlab made failed before it changed any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said)
+            if said
+            else f"another program, {_THE_GAME}, changed a file while wowlab was working"
+        )
+        return lead + named + ". wowlab changed no file, so there is nothing for undo to put back."
     lead = (
         "the last change wowlab made failed, and putting the files back did not finish "
         f"(record {record_id}): "
     )
     tail = (
         "To put back what was there before the change, close the game and run this; it puts "
-        "back every file the change wrote, including anything the game has saved to them "
-        "since, but the undo keeps a copy and running wowlab undo again next, before you "
-        "play, brings them back: "
-        f"wowlab undo --expect {record_id}"
+        "back every file the change wrote or deleted, including anything the game has saved "
+        "to them since, but the undo keeps a copy and running wowlab undo again next, before "
+        f"you play, brings them back: wowlab undo --expect {record_id}"
     )
-    clauses = [_left_clause(now, [p.path for p in left if p.now == now]) for now in _LEFT_ORDER]
-    said = [c for c in clauses if c]
     if not said:
         return (
-            lead + "a file may have been changed while wowlab was writing or since by another "
-            "program, such as the game, at logout or /reload, or may still hold wowlab's "
-            "change. " + tail
+            lead + f"another program, {_THE_GAME}, may have changed a file while wowlab was "
+            "writing or since, or a file may still hold wowlab's change. " + tail
         )
-    where = f"in {flavor_folder}, " if flavor_folder else ""
     return lead + where + "; ".join(said) + ". " + tail
 
 
-# The order the problem names the files in, by what doctor read there.
-_LEFT_ORDER: tuple[LeftNow, ...] = (
-    "wowlab_change",
-    "changed_since",
-    "unknown",
-    "before_change",
-    "not_written",
+# Who else writes these files, without a timing that holds for only some of
+# them (SavedVariables at logout or /reload, Config.wtf on exit and on some
+# setting changes).
+_THE_GAME = "such as the game when it saves your settings or addon data"
+
+# The order the problem names the files in: what doctor read there, and
+# whether the file is there at all (None: not read).
+_LEFT_ORDER: tuple[tuple[LeftNow, bool | None], ...] = (
+    ("wowlab_change", True),
+    ("wowlab_change", False),
+    ("changed_since", True),
+    ("changed_since", False),
+    ("unknown", None),
+    ("before_change", True),
+    ("before_change", False),
+    ("not_written", None),
 )
 
 
-def _left_clause(now: LeftNow, paths: Sequence[str]) -> str:
-    """One group of `_rollback_unfinished`: the files, then what they hold."""
-    if not paths:
-        return ""
+def _left_clause(key: tuple[LeftNow, bool | None], paths: Sequence[str]) -> str:
+    """One group of `_rollback_unfinished`: the files, then what they hold.
+    No semicolon inside one: the groups are joined with "; "."""
+    now, exists = key
     one = len(paths) == 1
     names = paths[0] if one else f"{', '.join(paths[:-1])} and {paths[-1]}"
     it = "it" if one else "them"
+    is_ = "is" if one else "are"
+    holds = "holds" if one else "hold"
     if now == "wowlab_change":
-        return f"{names} still {'holds' if one else 'hold'} wowlab's change"
+        if exists:
+            return f"{names} still {holds} wowlab's change"
+        return f"{names} {is_} still deleted, as wowlab's change left {it}"
     if now == "changed_since":
-        return (
-            f"{names} {'has' if one else 'have'} been changed since wowlab wrote {it} by "
-            "another program, such as the game, at logout or /reload"
-        )
+        did = "changed" if exists else "deleted"
+        return f"another program, {_THE_GAME}, has {did} {names} since wowlab wrote {it}"
     if now == "before_change":
-        return f"{names} already {'holds' if one else 'hold'} what was there before the change"
+        if exists:
+            return f"{names} already {holds} what was there before the change"
+        return f"{names} {is_} gone again, as before the change"
     if now == "not_written":
         return (
-            f"wowlab did not write {names}; another program changed {it} while wowlab was "
+            f"wowlab did not write {names}, which another program changed while wowlab was "
             f"working, and undo leaves {it} as {'it is' if one else 'they are'}"
         )
     return (
-        f"wowlab could not put back {names}, which {'holds' if one else 'hold'} either "
-        "wowlab's change or what another program, such as the game, at logout or /reload, "
-        f"has written to {it} since"
+        f"wowlab could not put back {names}, which {holds} either wowlab's change or what "
+        f"another program, {_THE_GAME}, has written to {it} since"
     )
 
 
