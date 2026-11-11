@@ -24,6 +24,9 @@ A write site is:
   (`tempfile`, `subprocess`, `sqlite3`, `zipfile`, `tarfile`, `shelve`, `dbm`,
   `logging.handlers`), and `logging.FileHandler`, `io.FileIO`, `extractall`,
   `unpack_archive` and `make_archive` referenced anywhere;
+- `make_private_dirs`, imported or referenced anywhere (M16-78): `snapshot`'s
+  folder maker, which creates folders wherever it is pointed, so each use
+  outside the exempt modules needs its own reason here;
 - `.replace(target)` or `.rename(target)` with one argument, positional or
   keyword (Path's forms; `str.replace` takes two);
 - the same `os` writers reached through `posix` or `nt` (what `os`
@@ -154,13 +157,32 @@ ALLOWED: dict[tuple[str, str], str] = {
         "stdout once its reader has gone; it is a device, never a file in an install"
     ),
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
-    (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,
-    (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
+    (_DB2LAKE, "from wowlab_core.snapshot import make_private_dirs"): _LAKE_DIR
+    + "; imports the folder maker for the lake directory only (M16-78)",
+    (_DB2LAKE, "make_private_dirs(path)  # 0700 under the user data directory (M16-78)"): (
+        _LAKE_DIR + "; the lake directory and its missing parents (M16-78: 0700 under the "
+        "user data directory, the default mode elsewhere)"
+    ),
+    (_LOOKSTORE, "from wowlab_core.snapshot import make_private_dirs"): _LOOKS_DIR
+    + "; imports the folder maker for LookStore.root only (M16-78)",
+    (
+        _LOOKSTORE,
+        "make_private_dirs(self._root)  # 0700 under the user data directory (M16-78)",
+    ): _LOOKS_DIR + "; LookStore.root and its missing parents (M16-78: 0700 under the user "
+    "data directory, the default mode elsewhere)",
+    (_LOOKSPAGE, "from wowlab_core.snapshot import default_store_path, make_private_dirs"): (
+        _PAGE_FILE + "; imports the folder maker for the page's folder only (M16-78)"
+    ),
+    (
+        _LOOKSPAGE,
+        "make_private_dirs(folder)  # 0700 only under the user data directory (M16-78)",
+    ): _PAGE_FILE + "; the page's folder and its missing parents, which for --out may be "
+    "anywhere the player names outside an install (M16-78: 0700 under the user data "
+    "directory, the default mode elsewhere)",
     (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
     (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",
     (_LOOKSTORE, "tmp.unlink(missing_ok=True)"): _LOOKS_DIR + "; its own temp file",
     (_LOOKSTORE, "final.hardlink_to(tmp)"): _LOOKS_DIR + "; publishes without replacing",
-    (_LOOKSPAGE, "folder.mkdir(parents=True, exist_ok=True)"): _PAGE_FILE,
     (_LOOKSPAGE, 'with tmp.open("xb") as handle:'): _PAGE_FILE
     + "; a new temp name beside the page (x mode)",
     (_LOOKSPAGE, "tmp.replace(final)"): _PAGE_FILE + "; the temp file onto the page, whole",
@@ -248,8 +270,11 @@ WRITING_MODULES = frozenset(
 )
 # Builtins that run code built at run time, which no scanner can read.
 CODE_RUNNERS = frozenset({"exec", "eval", "compile"})
-# Names that write wherever they appear.
-WRITING_NAMES = frozenset({"FileHandler", "FileIO", "extractall", "unpack_archive", "make_archive"})
+# Names that write wherever they appear; `make_private_dirs` is `snapshot`'s
+# folder maker (M16-78), a `mkdir` by another name.
+WRITING_NAMES = frozenset(
+    {"FileHandler", "FileIO", "extractall", "unpack_archive", "make_archive", "make_private_dirs"}
+)
 HIDING_OWNERS = (*OS_OWNERS, "shutil", "io", "builtins")
 
 
@@ -471,6 +496,13 @@ CONSTRUCTED_WRITERS: tuple[tuple[str, str], ...] = (
     ("path-rename", "tmp.rename(target)\n"),
     ("path-touch", "p.touch()\n"),
     ("path-mkdir", "p.mkdir(parents=True)\n"),
+    (
+        "make-private-dirs",
+        "from wowlab_core.snapshot import make_private_dirs\n"
+        "make_private_dirs(install / 'Interface' / 'AddOns' / 'x')\n",
+    ),
+    ("make-private-dirs-import", "from wowlab_core.snapshot import make_private_dirs\n"),
+    ("make-private-dirs-attribute", "snapshot.make_private_dirs(p)\n"),
     ("path-symlink-to", "p.symlink_to(q)\n"),
     ("import-os-as", "import os as o\no.replace(a, b)\n"),
     ("import-shutil-as", "import shutil as sh\n"),
