@@ -8623,10 +8623,17 @@ def _stored(store: snapshot.SnapshotStore, sha: str | None, size: int | None = N
         return _UNREAD
 
 
+# What the undo does to a file someone changed after the change it undoes:
+# it writes over it, but its own transaction snapshots the file before it
+# writes, so a second undo puts those changes back. Said in every state.
+_UNDO_REPLACES = (
+    "undo replaces {whose} changes, but keeps a copy first, and running wowlab undo again "
+    "brings them back"
+)
 _CHANGED_SINCE = (
     f"{_DETAIL_INDENT}(changed since that transaction, probably by the client at logout: "
     "the lines below compare what is on disk now with what undo puts back, and include "
-    "those later changes)"
+    "those later changes; " + _UNDO_REPLACES.format(whose="those") + ")"
 )
 
 
@@ -8634,9 +8641,9 @@ _CHANGED_SINCE = (
 # program changed while the change ran as that program left it.
 _CHANGED_DURING = (
     f"{_DETAIL_INDENT}(changed by another program, such as the game, while that change ran, "
-    "or since: the lines below compare what is on disk now with what undo puts back; undo "
-    "replaces that program's changes, but keeps a copy first, and running wowlab undo again "
-    "brings them back)"
+    "or since: the lines below compare what is on disk now with what undo puts back; "
+    + _UNDO_REPLACES.format(whose="that program's")
+    + ")"
 )
 # Every journaled path already holds its pre-transaction bytes and no folder
 # it created is left: the undo changes nothing on disk. For a change that did
@@ -9528,7 +9535,9 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     holds what that transaction wrote, a line says the comparison includes
     those later changes and who probably made them: for a change whose
     rollback did not finish, another program while it ran (or since);
-    otherwise the client at logout."""
+    otherwise the client at logout. In every state it also says that the
+    undo replaces those changes, that its own snapshot keeps a copy of them
+    first, and that a second undo brings them back."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
     changed = _CHANGED_DURING if last.state == "rollback_incomplete" else _CHANGED_SINCE

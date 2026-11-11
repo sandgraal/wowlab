@@ -64,7 +64,8 @@ SCOPE = (
 CHANGED_SINCE = (
     "      (changed since that transaction, probably by the client at logout: the lines "
     "below compare what is on disk now with what undo puts back, and include those later "
-    "changes)"
+    "changes; undo replaces those changes, but keeps a copy first, and running wowlab undo "
+    "again brings them back)"
 )
 GLOBAL_CVAR = '      CVar useTargetFPS: "0" -> "1"'
 
