@@ -166,7 +166,6 @@ class FailingUnlink:
 @pytest.mark.parametrize(
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "undo")]
 )
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_the_pre_write_snapshot_holds_no_removed_leftover(
     guard: Any,
     tmp_path: Path,
@@ -206,7 +205,6 @@ def test_constructed_the_pre_write_snapshot_holds_no_removed_leftover(
 # ─── snapshots stay lossless: only the removed leftovers are missing ─────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_the_snapshot_still_holds_what_the_cleanup_leaves_on_disk(
     guard: Any,
     tmp_path: Path,
@@ -251,7 +249,6 @@ def test_constructed_the_snapshot_still_holds_what_the_cleanup_leaves_on_disk(
 # ─── a whole restore brings no removed leftover back ─────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_whole_restore_of_the_cleaning_snapshot_brings_no_leftover_back(
     guard: Any,
     tmp_path: Path,

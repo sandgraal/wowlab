@@ -490,7 +490,6 @@ def problem_naming(report: dict[str, Any], record_id: str) -> str:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_kill_between_cleanup_and_snapshot_leaves_a_record_that_touched_nothing(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -505,7 +504,6 @@ def test_constructed_a_kill_between_cleanup_and_snapshot_leaves_a_record_that_to
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anything(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -518,7 +516,6 @@ def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anyth
 
 
 @pytest.mark.parametrize("route", ROUTES[:1])
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -553,7 +550,6 @@ def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after
 
 
 @pytest.mark.parametrize("route", ROUTES[1:])
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_cli_undo_closes_a_killed_undo_and_doctor_reports_the_change_it_was_undoing(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -692,7 +688,6 @@ def commit(flavor: Path, store: Path, label: str, rel: str, data: bytes) -> Any:
 
 
 @pytest.mark.parametrize("route", ROUTES[1:])
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_killed_undo_and_the_record_that_closes_it_name_what_they_undo(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -716,7 +711,6 @@ def test_constructed_a_killed_undo_and_the_record_that_closes_it_name_what_they_
         assert later.paths == () and later.created_dirs == (), "closing K changed no file"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_completed_undo_that_changed_no_file_is_not_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path
 ) -> None:
@@ -755,7 +749,6 @@ def test_constructed_a_completed_undo_that_changed_no_file_is_not_passed_over(
 
 
 @pytest.mark.parametrize("route", ROUTES[1:])
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -776,7 +769,6 @@ def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_o
     assert tree(root) == before and journal(c.store) == recorded, "a mismatch changes nothing"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_an_undo_killed_after_its_snapshot_is_never_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path
 ) -> None:
@@ -848,7 +840,6 @@ ID = re.compile(r"[0-9]{8}-[0-9a-f]{8}")
         pytest.param("list", id="constructed-undoes-is-a-list"),
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, names: str
 ) -> None:
@@ -917,7 +908,6 @@ def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_doctor_tells_a_change_killed_before_its_snapshot_from_one_killed_mid_write(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
