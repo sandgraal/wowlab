@@ -147,7 +147,9 @@ as unclassified. (Added 2026-09-22, M10-06.)
   says the client reads it when it starts, which fits graphics, language and
   the last account used being set before any login. No capture settles it
   yet, so player-facing text should not state either timing for it as fact;
-  "the client reads it again when it next starts or logs in" is safe. Today
+  "restart the client so it reads it again" is safe under both, since a
+  start always comes before a login (logging out and back in may not be
+  enough, and the client may save over the file on exit). Today
   `profiles.LOGIN_NOTE` and `cli._RELOGIN` each state one; M16-97 (#468)
   rewords both.
 - On Windows the client can hold files open; a read can fail with a sharing
