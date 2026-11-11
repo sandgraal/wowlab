@@ -209,13 +209,16 @@ class FileMapEntry(BaseModel):
     def names_the_file(self, parts: Sequence[str]) -> bool:
         """Whether the path matches one of this entry's file patterns whose
         last segment is a name spelled out (`WTF/Account/*/macros-cache.txt`),
-        not a wildcard or a token (M16-95)."""
+        not a wildcard or a token (M16-95). `<wowlab-temp>` is a token here
+        too: it stands for many names, so a link named like a gate temp
+        file is not taken for that one file."""
         path = tuple(parts)
         if any(_match(_segments(p), path) for p in self.exclude):
             return False
         return any(
             p != _SELF
             and not p.endswith("/")
+            and _segments(p)[-1] != _WOWLAB_TEMP
             and _literal(_segments(p)[-1])
             and _match(_segments(p), path)
             for p in self.match

@@ -116,6 +116,13 @@ def test_a_client_savedvariables_file_follows_the_not_an_account_check_construct
         pytest.param(f"{ACCT}/Constructed Realm", "folder", id="constructed-realm-folder"),
         pytest.param(f"{ACCT}/12345", "folder", id="constructed-numeric-folder"),
         pytest.param(f"{ACCT}/SavedVariables", "folder", id="constructed-sv-folder"),
+        # A gate temp name: the `wowlab-temp` row's `<wowlab-temp>` token
+        # spells out no one name, so the map cannot tell.
+        pytest.param(
+            f"{ACCT}/.wowlab-0123456789abcdef0123456789abcdef.tmp",
+            "one",
+            id="constructed-gate-temp-name",
+        ),
         # One row for both kinds below the folder it hangs from: unchanged.
         pytest.param("Fonts/FRIZQT__.TTF", "one", id="constructed-font-file"),
         pytest.param(
