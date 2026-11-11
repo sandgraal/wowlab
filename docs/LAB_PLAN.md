@@ -1498,7 +1498,7 @@ The command's clause says what `undo()` does: it puts back every file in the rec
 
 `--json` gains `store.last_transaction.flavor_folder` and `store.last_transaction.paths_left`, a list of `{path, now, exists}`: `now` is one of `wowlab_change`, `before_change`, `changed_since`, `unknown` or `not_written`, and `exists` is whether the file is there now (null when it was not read). The problem and the list hold names as stored, and only the output escapes them. The text output escapes control, format and separator characters as `\xNN` (a real file name may hold a bidi mark), and `--json` is ASCII. So `--redact` sees each name unescaped and replaces account, realm and character folders in those paths like any other. Those names come from the install, the snapshots and the paths of every journal record, since a folder the transaction created is in no snapshot.
 
-*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78, M16-90, M16-100T):*
+*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78, M16-90, M16-100T, M16-108T):*
 
 (a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
 
@@ -1513,6 +1513,25 @@ The command's clause says what `undo()` does: it puts back every file in the rec
 - **The undo target replaces "the most recent record".** The target is the newest record that is not passed over. This replaces "the most recent transaction" and "the most recent record" for `undo()` in this section's opening sentence ("`guard.undo()` restores the pre-write snapshot of the most recent transaction"), in item 1, in the "refuses a most recent record whose…" rule and in the "well defined" sentence above. It does the same for `undo` in §16 ("undoes the newest journal record at run time"). It also replaces the record that 2026-11-10 (c) has `doctor` report.
 - **`--expect` keeps its protection.** It must name the target's id. Any record newer than the target that is not passed over is a mismatch and raises, as in the 2026-09-28 amendment.
 - **`doctor`** reports D as the change to undo, and K as interrupted before it changed anything.
+
+(a2) **Every closed record that never took a snapshot is passed over.** *Owner decision, 2026-11-11 (M16-69 review, M16-108T): "Skip it" and "Skip all, show D".* This widens (a1)'s "Which records are passed over": the first condition, "it has `undoes` set", is dropped. A record K is now passed over when both of these hold:
+- no pre-write snapshot of it was ever taken;
+- it has been closed.
+
+It does not matter how K came to be closed:
+- K may be a `transaction` or an `undo` killed between its cleanup and its snapshot (amendment (a)), and later closed by `undo`.
+- The pre-write snapshot may have failed in the same run (for example a full disk or an unreadable file), and the gate then closed K itself.
+
+Such a record changed no player file: at most it removed leftover temps. So skipping it hides no change, and it never locks `undo` out of the changes before it. If closing K appends a record, that record names K in `undoes`, changes no file, and is passed over with K, as in (a1).
+
+What follows from this:
+- **A killed transaction.** After its record K is closed, the target is the newest record before K that is not passed over. If that record D is still `open` or `rollback_incomplete`, `doctor` reports D as (a1) describes for a killed undo. It gives D's own `wowlab undo --expect <D id>` line, names K as stopped before it changed anything, and exits 1 until D is undone. If D is settled, `doctor` has no problem.
+- **A failed snapshot.** The change before it stays the target, as when a failed snapshot journaled nothing.
+- **What is unchanged:**
+  - a K that is still `open` is the target, until `undo` closes it;
+  - a record that took a pre-write snapshot is never passed over;
+  - an undo that completed normally is never passed over;
+  - `--expect` must name the target.
 
 (b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
 
