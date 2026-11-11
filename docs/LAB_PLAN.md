@@ -1469,6 +1469,12 @@ A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FI
 
 (d) **`doctor`.** The `rollback_incomplete` problem (M16-71) names each file in `paths_left`, sorted, relative to the flavor folder, with control, format and separator characters escaped as `\xNN` (a real file name may hold a bidi mark), in the text and in `--json`; `wowlab undo --expect <id>` stays last. `--json` also gains `store.last_transaction.paths_left`. Under `--redact`, account, realm and character folders in those paths are replaced like any other; the names come from the install, the snapshots, and the paths of every journal record, since a folder the transaction created is in no snapshot. A record that lists no file keeps the M16-71 sentence.
 
+*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78):*
+
+(a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
+
+(b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -5002,6 +5008,11 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    per-transaction directory-listing memo, keyed by the directory's
    identity (dev, ino, mtime_ns) and invalidated by the transaction's own
    writes. The commit-time re-check is unchanged.
+   *Amended 2026-11-11 (owner decision; M16-94):* the key also holds the
+   directory's ctime_ns. On POSIX a change to the directory that leaves
+   its mtime where it was still changes its ctime, so the memo is not
+   reused. On Windows `st_ctime_ns` is the creation time and does not move,
+   so the extra field adds nothing there and the Windows memo is unchanged.
    - Target: a whole-restore check of 20,000 files with nothing to change
      takes at most 5 s on the reference runner (GitHub's `ubuntu-latest`,
      as M16-27's nightly job measures it; the PR path checks scaling only).
