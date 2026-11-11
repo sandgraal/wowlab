@@ -325,9 +325,6 @@ DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
 DRESSING_PARSE = "parsed = new URL(value);"
 
 
-BOOT_FETCH = 'fetch("/api/session?boot=" + encodeURIComponent(boot), {'
-
-
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     # M16-51 (ADR-0035): `url(`, `@font-face` and `data:font` appear only in
@@ -343,10 +340,9 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
         assert marker not in body, marker
     # Every request the script makes goes to the server's own API, by path.
     script = _script()
-    # The one exception is the boot exchange (M16-42), which has no session
-    # key yet and sends the one-time boot key instead.
-    assert script.count(BOOT_FETCH) == 1
-    assert script.count("fetch(") == script.count('fetch(api("/api/') + 1
+    # M16-113: no exception any more; the session cookie goes with each.
+    assert "/api/session" not in script
+    assert script.count("fetch(") == script.count('fetch(api("/api/')
     assert set(re.findall(r'fetch\(api\("([^"]+)"\)', script)) == {
         "/api/commands",
         "/api/run",
@@ -548,9 +544,9 @@ def test_a_request_without_the_token_is_refused(server: Any) -> None:
         connection.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
         response = connection.getresponse()
         assert response.status == 403
-        # M16-42: `/` with no query (a reload) answers the player a sentence.
+        # `/` with no session answers the player a sentence (M16-113).
         assert response.getheader("Content-Type") == "text/plain; charset=utf-8"
-        assert b"already used" in response.read()
+        assert b"start it again" in response.read()
     finally:
         connection.close()
 
@@ -766,22 +762,15 @@ function canon(v) {
   if (v && typeof v === "object") return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
   return JSON.stringify(v);
 }
-// What the page did first (M16-42): history.replaceState and every fetch, in
-// order. The boot exchange answers the scenario's session key, or the spent
-// refusal; it is kept out of `requests`.
+// What the page did first (M16-42, M16-113): history.replaceState and every
+// fetch, in order.
 const events = [];
 const fetchStub = async (url, opts) => {
   events.push("fetch " + String(url));
-  if (String(url).startsWith("/api/session?")) {
-    if (scenario.session === "spent") {
-      return { ok: false, status: 403, json: async () => ({ error: "boot_spent" }) };
-    }
-    return answer({ token: scenario.session_key || "t" });
-  }
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   requests.push({ url: String(url), body: body });
-  if (String(url).startsWith("/api/commands?")) return answer(scenario.commands);
-  if (!String(url).startsWith("/api/run?")) return answer({ error: "unknown" }, false);
+  if (String(url).startsWith("/api/commands")) return answer(scenario.commands);
+  if (!String(url).startsWith("/api/run")) return answer({ error: "unknown" }, false);
   const key = body.command.join(" ");
   const params = body.params || {};
   let stdout = null;
@@ -1894,35 +1883,22 @@ def test_the_level_choices_are_not_written_into_the_page(server: Any) -> None:
     assert 'value=""' in select.group(1)
 
 
-# ─── the boot exchange under Node (M16-42) ───────────────────────────────────
+# ─── the session under Node (M16-42, M16-113) ────────────────────────────────
 
 
-def test_the_page_drops_its_query_then_trades_the_boot_key(
+def test_the_page_drops_its_query_and_sends_no_key(
     server: Any, install: Path, tmp_path: Path
 ) -> None:
     """The page opened on `?boot=k` calls `history.replaceState` before any
-    request, exchanges the key once at `/api/session`, and every later
-    request carries the session key the exchange answered."""
+    request, and no request carries a key in its URL or asks for one: the
+    session cookie the server set goes with each (M16-113)."""
     scenario, _ = _scenario(server, [], [])
-    key = "from-the-exchange"  # constructed
-    scenario["session_key"] = key
     out = _drive(tmp_path / "node", scenario)
     events = out["events"]
     assert events[0] == "replaceState /", events
-    assert events[1] == "fetch /api/session?boot=k", events
-    assert sum(e.startswith("fetch /api/session") for e in events) == 1
-    assert out["requests"], "the page went on after the exchange"
+    assert events[1] == "fetch /api/commands", events
+    assert not any("/api/session" in e for e in events), events
+    assert out["requests"], "the page went on"
     for request in out["requests"]:
-        assert request["url"].endswith("?token=" + key), request["url"]
-
-
-def test_a_page_that_lost_the_exchange_says_the_link_was_used(
-    server: Any, install: Path, tmp_path: Path
-) -> None:
-    scenario, _ = _scenario(server, [], [])
-    scenario["session"] = "spent"
-    out = _drive(tmp_path / "node", scenario)
-    assert out["events"] == ["replaceState /", "fetch /api/session?boot=k"]
-    assert out["requests"] == []
-    assert "already used" in out["pageStatus"]
-    assert "already used" in out["first"]["status"]
+        assert "?" not in request["url"], request["url"]
+        assert "token" not in request["url"] and "boot" not in request["url"]

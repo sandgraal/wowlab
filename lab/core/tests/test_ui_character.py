@@ -115,7 +115,7 @@ function charView() {
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (body && String(url).startsWith("/api/run?")) {
+  if (body && String(url).startsWith("/api/run")) {
     for (const held of scenario.held || []) {
       if (canon(held.command) === canon(body.command) && canon(held.params) === canon(body.params || {})) {
         requests.push({ url: String(url), body: body });
@@ -489,7 +489,7 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
     # anyway (the command list, the explorer's tree) or one of the four.
     for request in out["requests"]:
         if request["body"] is None:
-            assert request["url"].startswith("/api/commands?"), request
+            assert request["url"].startswith("/api/commands"), request
         else:
             assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
     # All four are read commands the server offers, not excluded and not a

@@ -49,10 +49,10 @@ The seam (the docs leave these names open; M13-24 builds to them)
 - The server object has ``token: str`` (``secrets.token_urlsafe(32)``),
   ``url: str``, exactly ``http://127.0.0.1:<port>/?token=<token>``, the URL
   ``wowlab ui`` opens, and ``wowlab_argv: Sequence[str]``, the resolved prefix.
-  *Amended by M16-42:* ``url`` is ``http://127.0.0.1:<port>/?boot=<boot>``,
-  ``boot`` a one-time key the page exchanges once, at ``POST /api/session``,
-  for ``token``, which is in that one response body and nowhere else
-  (``test_ui_local_exposure.py``).
+  *Amended by M16-42 and M16-113:* ``url`` is
+  ``http://127.0.0.1:<port>/?boot=<boot>``; the shell served for ``boot``
+  sets an ``HttpOnly``, ``SameSite=Strict`` session cookie accepted in place
+  of ``token``, which is in no response (``test_ui_local_exposure.py``).
 - A run is stopped with its whole process tree (grandchildren included) when
   it passes ``timeout_s``, when its output passes ``output_cap_bytes`` (read
   as a stream: the cap bounds memory, and the process is killed there), and
@@ -77,8 +77,9 @@ exit 0, as ``log tail --follow`` does, after ``server_close()``.
 The HTTP surface:
 
 - The token travels as the query parameter ``token`` on every request. It
-  appears in no response body or header, no response sets a cookie, and no
-  run gets it in its argv or environment.
+  appears in no response body or header, no response sets a cookie (since
+  M16-113, but the shell served for the boot key, which sets the session
+  cookie), and no run gets it in its argv or environment.
 - ``Host`` must be ``127.0.0.1:<port>`` or ``localhost:<port>``. An
   ``Origin``, when present, must equal ``"http://" + Host``.
 - ``GET /api/commands`` returns ``{"commands": [{"path": [str, ...], ...}]}``.
