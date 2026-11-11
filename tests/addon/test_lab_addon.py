@@ -560,27 +560,28 @@ def test_m16_45_click_button_part_is_a_mouse_name_or_on_the_bar_list() -> None:
     assert mouse == ("LeftButton", "RightButton", "MiddleButton")
 
 
-@pytest.mark.parametrize(
-    ("command", "kept"),
-    [
-        ("CLICK BT4Button13:LeftButton", "BT4Button13"),
-        ("CLICK BT4Button13:RightButton", "BT4Button13"),
-        ("CLICK BT4Button13:MiddleButton", "BT4Button13"),
-        ("CLICK BT4Button13:Button4", "BT4Button13"),
-        ("CLICK BT4Button13:Button" + "9" * 26, "BT4Button13"),
-        ("CLICK BT4Button13:Button" + "9" * 27, None),  # over 32 bytes
-        ("CLICK BT4Button13:Button", None),  # no digits
-        ("CLICK BT4Button13:button4", None),
-        ("CLICK BT4Button13:LeftButton2", None),
-        ("CLICK BT4Button13:Keybind", None),
-        ("CLICK BT4Button13:Left_Button", None),
-    ],
-    ids=lambda v: str(v)[:40],
-)
-def test_m16_45_constructed_click_button_parts(command: str, kept: str | None) -> None:
+# Constructed boundary cases for the button part (a list, not parameters:
+# the review probes call this file's tests with no arguments).
+_CLICK_BUTTON_CASES: list[tuple[str, str | None]] = [
+    ("CLICK BT4Button13:LeftButton", "BT4Button13"),
+    ("CLICK BT4Button13:RightButton", "BT4Button13"),
+    ("CLICK BT4Button13:MiddleButton", "BT4Button13"),
+    ("CLICK BT4Button13:Button4", "BT4Button13"),
+    ("CLICK BT4Button13:Button" + "9" * 26, "BT4Button13"),
+    ("CLICK BT4Button13:Button" + "9" * 27, None),  # over 32 bytes
+    ("CLICK BT4Button13:Button", None),  # no digits
+    ("CLICK BT4Button13:button4", None),
+    ("CLICK BT4Button13:LeftButton2", None),
+    ("CLICK BT4Button13:Keybind", None),
+    ("CLICK BT4Button13:Left_Button", None),
+]
+
+
+def test_m16_45_constructed_click_button_parts() -> None:
     """Constructed boundary cases for the button part, through the addon's
     own patterns."""
-    assert _clicks_kept_frame(command) == kept
+    got = [(command, _clicks_kept_frame(command)) for command, _ in _CLICK_BUTTON_CASES]
+    assert got == _CLICK_BUTTON_CASES
 
 
 def test_m16_45_constructed_set_binding_click_with_a_made_up_word_stores_nothing() -> None:
