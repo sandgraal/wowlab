@@ -43,11 +43,23 @@ first leaves two leftover temps the way a crash does: a real transaction
 whose first rename is refused and whose temp unlink is ignored, and which
 dies (`os._exit`) inside its second rename. A second child then enters again,
 through `transaction()` or `undo()`, and dies (`os._exit`) at the first
-sign of the pre-write snapshot landing: a call to `SnapshotStore.create`,
-`add_snapshot` or `put_object`, or any write-open, rename, replace or link
-into the store's `objects/` or `manifests/`. That is the moment between the
-cleanup and the snapshot; no internal order of `guard.py` is read to find it.
-Nothing reads or writes a real install.
+sign of the pre-write snapshot landing. The file-level seam is any
+write-open, rename, replace or link into the store's `objects/` or
+`manifests/`. So that it sees them on every platform, the child sets
+`snapshot._WRITE_BY_DIR_FD = False`: the store, which on POSIX otherwise
+decides at import to write through descriptors, writes by path as it does on
+Windows. The seam also resolves a `dir_fd` / `dst_dir_fd` it is handed
+(through `/proc/self/fd` or `F_GETPATH`). A call to `SnapshotStore.create`,
+`add_snapshot` or `put_object` is a second net. That is the moment between
+the cleanup and the snapshot; no internal order of `guard.py` is read to
+find it. The review probe
+`review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` checks that
+the file-level seam fires without the method patches.
+
+Before the second kill a player file (`WTF/Config.wtf`) is changed outside
+guard, as the client does at logout, so the install no longer matches any
+stored snapshot: an undo that restored a stale snapshot would show in the
+bytes, not only in the journal. Nothing reads or writes a real install.
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
@@ -82,6 +94,7 @@ CONFIG = "WTF/Config.wtf"
 STRANDED_BYTES = b"constructed: Syndicator bytes whose rename was refused\n"
 DYING_BYTES = b"constructed: Config.wtf bytes the dead change never renamed into place\n"
 CRASHED_BYTES = b"constructed: what the change killed at its snapshot meant to write\n"
+PLAYER_BYTES = b"constructed: Config.wtf as the client wrote it at logout, after the dead change\n"
 
 TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
 DIED_IN_RENAME = 17
@@ -158,11 +171,32 @@ if mode == "die-in-rename":
 landing = [os.path.realpath(store / "objects"), os.path.realpath(store / "manifests")]
 
 
-def lands(path):
+def fd_path(fd):
+    """The directory an open descriptor names, or None where it cannot be told."""
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")  # Linux
+    except OSError:
+        pass
+    try:
+        import fcntl
+
+        got = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH"), b"\0" * 1024)  # macOS
+        return os.fsdecode(got.split(b"\0", 1)[0])
+    except (ImportError, AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def lands(path, dir_fd=None):
     if isinstance(path, int):
         return False
     try:
-        where = os.path.realpath(os.fsdecode(path))
+        name = os.fsdecode(path)
+        if dir_fd is not None and not os.path.isabs(name):
+            base = fd_path(dir_fd)
+            if base is None:
+                return False
+            name = os.path.join(base, name)
+        where = os.path.realpath(name)
     except (TypeError, ValueError):
         return False
     return any(where == d or where.startswith(d + os.sep) for d in landing)
@@ -175,13 +209,19 @@ def die(*a, **k):
 for name in ("create", "add_snapshot", "put_object"):
     setattr(snapshot.SnapshotStore, name, die)
 
+# The store decides at import whether it writes through descriptors (POSIX)
+# or by path (Windows). Path writes are what the file-level seam sees on every
+# platform, so the store is made to use them here; the seam also resolves a
+# `dir_fd` / `dst_dir_fd` it is handed, as a second net.
+snapshot._WRITE_BY_DIR_FD = False
+
 real_os_open = os.open
 real_open = builtins.open
 WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
 
 def os_open(path, flags, *a, **k):
-    if flags & WRITE_FLAGS and k.get("dir_fd") is None and lands(path):
+    if flags & WRITE_FLAGS and lands(path, k.get("dir_fd")):
         die()
     return real_os_open(path, flags, *a, **k)
 
@@ -194,7 +234,7 @@ def py_open(file, mode="r", *a, **k):
 
 def moving_in(real):
     def call(src, dst, *a, **k):
-        if lands(dst):
+        if lands(dst, k.get("dst_dir_fd")):
             die()
         return real(src, dst, *a, **k)
 
@@ -333,9 +373,18 @@ def kill_between_cleanup_and_snapshot(
     temps = leave_two_temps(tmp_path, user_data, flavor, store)
     dead = guard.history(store=store)[-1]
     assert dead.label == "child-died" and dead.state == "open", "positive control"
-    before = tree(root)
     manifests = manifest_ids(store)
     assert manifests, "positive control: the dead change's own pre-write snapshot is stored"
+    # Constructed: the player's file changes outside guard, as the client
+    # writes at logout, so no stored snapshot matches the install any more and
+    # a stale restore would show in the bytes.
+    (flavor / CONFIG).write_bytes(PLAYER_BYTES)
+    for manifest in SnapshotStore(store).list():
+        held = [e for e in manifest.entries if e.path.endswith("/" + CONFIG)]
+        assert held and all(e.sha256 != sha(PLAYER_BYTES) for e in held), (
+            f"positive control: snapshot {manifest.id} holds an older {CONFIG}"
+        )
+    before = tree(root)
 
     killed = child(
         tmp_path,
@@ -394,12 +443,17 @@ def assert_closed_without_restoring(c: Crashed, now: dict[str, bytes]) -> None:
     records = guard.history(store=c.store)
     ids = [r.id for r in records]
     assert c.record.id in ids and c.dead_id in ids, "the journal only grows"
+    killed = records[ids.index(c.record.id)]
+    assert killed.paths == () and killed.created_dirs == (), (
+        "the killed record, read again after the undo, still names no path"
+    )
+    assert (c.flavor / CONFIG).read_bytes() == PLAYER_BYTES, "the player's later bytes stay"
     assert records[-1].state != "open", "undo closed the killed record"
     for later in records[ids.index(c.record.id) + 1 :]:
         assert later.paths == () and later.created_dirs == (), (
             f"record {later.id} after the killed one restores nothing"
         )
-        assert later.state == "committed"
+        assert later.state != "open"
         assert not set(later.temps_removed) & set(c.temps), (
             "a removed temp is gone, not removed again"
         )
