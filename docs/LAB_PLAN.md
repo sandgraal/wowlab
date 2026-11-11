@@ -1510,7 +1510,7 @@ The command's clause says what `undo()` does: it puts back every file in the rec
   - it has been closed.
 
   If closing K appends a record, that record names K in `undoes`, changes no file, and is passed over with K. An undo that completed normally, with or without changing files, is never passed over. That rule is what stops `undo` from offering D again after D was really undone.
-- **The undo target replaces "the most recent record".** The target is the newest record that is not passed over. This replaces "the most recent transaction" and "the most recent record" for `undo()` in this section's item 1, in the "refuses a most recent record whose…" rule and in the "well defined" sentence above. It does the same for `undo` near the end of §18 ("undoes the newest journal record at run time"). It also replaces the record that 2026-11-10 (c) has `doctor` report.
+- **The undo target replaces "the most recent record".** The target is the newest record that is not passed over. This replaces "the most recent transaction" and "the most recent record" for `undo()` in this section's opening sentence ("`guard.undo()` restores the pre-write snapshot of the most recent transaction"), in item 1, in the "refuses a most recent record whose…" rule and in the "well defined" sentence above. It does the same for `undo` in §16 ("undoes the newest journal record at run time"). It also replaces the record that 2026-11-10 (c) has `doctor` report.
 - **`--expect` keeps its protection.** It must name the target's id. Any record newer than the target that is not passed over is a mismatch and raises, as in the 2026-09-28 amendment.
 - **`doctor`** reports D as the change to undo, and K as interrupted before it changed anything.
 
