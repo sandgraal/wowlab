@@ -276,3 +276,54 @@ def test_a_file_in_the_way_raises_as_path_mkdir_does_constructed(user_data: Path
         make_private_dirs(user_data / "looks")
     with pytest.raises(NotADirectoryError):
         make_private_dirs(user_data / "looks" / "below")
+
+
+@pytest.mark.parametrize("mask", MASKS, ids=oct)
+def test_a_store_that_holds_the_user_data_dir_is_still_0700_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mask: int
+) -> None:
+    """A store given explicitly at a path that holds the user data directory
+    (XDG_DATA_HOME=<store>/share) is wowlab's own folder, not the platform's
+    data directory: it is made 0700 (#474 security review). A parent made on
+    the way to it also holds the user data directory, and keeps the default
+    mode, as the platform's data directory would."""
+    store = tmp_path / "mine" / "store"
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: store / "share" / "wowlab")
+    with umask(mask), watching() as made:
+        SnapshotStore(store).put_object(b"constructed object\n")
+    assert_private(made, [store])
+    assert mode(tmp_path / "mine") == 0o777 & ~mask
+
+
+def test_a_dangling_link_above_the_folder_raises_as_path_mkdir_does_constructed(
+    user_data: Path, tmp_path: Path
+) -> None:
+    """`Path.mkdir(parents=True, exist_ok=True)` says FileExistsError for a
+    link to nothing on the way; so does the folder maker, and makes nothing."""
+    dangling = tmp_path / "dang"
+    dangling.symlink_to(tmp_path / "nowhere")
+    with pytest.raises(FileExistsError):
+        make_private_dirs(dangling / "store", outside=True)
+    assert not (tmp_path / "nowhere").exists()
+
+
+@pytest.mark.parametrize("private_on_windows", [False, True])
+def test_off_posix_only_the_target_asked_for_gets_mode_0700_simulated_constructed(
+    user_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, private_on_windows: bool
+) -> None:
+    """Windows, simulated on POSIX by turning the mode handling off: every
+    folder is made at the default mode (it inherits its access list), except
+    the target of a call that asks `private_on_windows` (guard's store root
+    and `journal/`, mode 0700 as before M16-78)."""
+    monkeypatch.setattr(snapshot, "_PRIVATE_MODES", False)
+    monkeypatch.setattr(snapshot, "_MKDIR_MODE", 0o777)
+    store = tmp_path / "elsewhere" / "store"
+    with watching() as made:
+        make_private_dirs(store, outside=True, private_on_windows=private_on_windows)
+        make_private_dirs(user_data / "locks")
+    assert made == {
+        str(tmp_path / "elsewhere"): 0o777,
+        str(store): 0o700 if private_on_windows else 0o777,
+        str(user_data): 0o777,
+        str(user_data / "locks"): 0o777,
+    }

@@ -640,7 +640,7 @@ def write_page(page: str, out: Path) -> Path:
     final = check_target(out)
     folder = final.parent
     refuse_install(folder, _WHAT)
-    make_private_dirs(folder)  # 0700 under the user data directory (M16-78)
+    make_private_dirs(folder)  # 0700 only under the user data directory (M16-78)
     refuse_install(folder, _WHAT)
     tmp = folder / f".{final.name}.{uuid.uuid4().hex}.tmp"
     try:

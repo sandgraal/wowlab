@@ -665,47 +665,77 @@ def _resolved_or(path: Path) -> Path:
         return path
 
 
-def _new_dir_mode(path: Path, user_data: Path, user_data_resolved: Path, *, outside: bool) -> int:
+def _new_dir_mode(
+    path: Path,
+    user_data: Path,
+    user_data_resolved: Path,
+    *,
+    is_target: bool,
+    outside: bool,
+    private_on_windows: bool,
+) -> int:
     """The mode the `mkdir` of the missing folder `path` asks for."""
     if not _PRIVATE_MODES:
-        return _MKDIR_MODE
+        return _PRIVATE_DIR_MODE if is_target and private_on_windows else _MKDIR_MODE
     resolved = _resolved_or(path)
-    if path in user_data.parents or resolved in user_data_resolved.parents:
-        return 0o777  # a folder that holds the user data directory is not wowlab's
+    # Only a parent made on the way may be a folder that holds the user data
+    # directory; the folder asked for is wowlab's own, wherever it is.
+    holds_user_data = path in user_data.parents or resolved in user_data_resolved.parents
+    if not is_target and holds_user_data:
+        return 0o777  # the platform's data directory (or above): not wowlab's
     if outside or _within_dir(path, user_data) or _within_dir(resolved, user_data_resolved):
         return _PRIVATE_DIR_MODE
     return 0o777
 
 
-def make_private_dirs(path: Path, *, outside: bool = False) -> None:
+def make_private_dirs(
+    path: Path, *, outside: bool = False, private_on_windows: bool = False
+) -> None:
     """Make `path` and every missing folder above it, top-down, one `mkdir`
     per missing folder, as `Path.mkdir(parents=True, exist_ok=True)` does
-    otherwise (an existing directory at `path` is fine, anything else there
-    raises `FileExistsError`).
+    otherwise: an existing directory at `path` is fine; anything else there,
+    or a folder above it that is not a directory (a file, or a link to
+    nothing), raises `FileExistsError` or `NotADirectoryError` before
+    anything is made.
 
     A folder made at or below the user data directory is made 0700 by its
     `mkdir`. A umask can only take bits away, so group and other never get
     any; one that took owner bits is given them back through a descriptor
     that does not follow a link (best effort: the folder is no wider for
     it). With `outside`, a folder made outside the user data directory is
-    made 0700 too (the parents of a store given explicitly); without it,
+    made 0700 too (a store given explicitly and its parents); without it,
     such a folder (an output folder the player named) gets the default
-    mode. A folder that holds the user data directory (the platform's data
+    mode. A parent that holds the user data directory (the platform's data
     directory, such as `~/.local/share`) is not wowlab's: when missing, it
-    is made at the default mode. Off POSIX every folder is made at the
-    default mode, as `_MKDIR_MODE` explains."""
+    is made at the default mode. `path` itself never counts as one.
+
+    Off POSIX every folder is made at the default mode, as `_MKDIR_MODE`
+    explains, except `path` itself with `private_on_windows` (guard's store
+    root and `journal/`, made with mode 0700 before M16-78)."""
     target = Path(path).absolute()
     user_data = user_data_dir().absolute()
     user_data_resolved = _resolved_or(user_data)
     for folder in (*reversed(target.parents), target):
         if os.path.lexists(folder):
+            if folder != target and not folder.is_dir():
+                if folder.exists():  # a file in the way, as `mkdir` below it says
+                    raise NotADirectoryError(errno.ENOTDIR, "not a directory", str(folder))
+                # A link to nothing: what `Path.mkdir(parents=True)` says.
+                raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(folder))
             continue
-        mode = _new_dir_mode(folder, user_data, user_data_resolved, outside=outside)
+        mode = _new_dir_mode(
+            folder,
+            user_data,
+            user_data_resolved,
+            is_target=folder == target,
+            outside=outside,
+            private_on_windows=private_on_windows,
+        )
         try:
             folder.mkdir(mode)  # this folder only: never `parents=True`
         except FileExistsError:
             continue  # made meanwhile by someone else; judged by the caller
-        if mode == _PRIVATE_DIR_MODE:
+        if mode == _PRIVATE_DIR_MODE and _PRIVATE_MODES:
             _owner_bits_back(folder)
     if not target.is_dir():
         raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(target))

@@ -664,7 +664,8 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
-        _snapshots.make_private_dirs(directory, outside=True)  # 0700 (M16-66, M16-78)
+        # 0700 (M16-66, M16-78); mode 0700 on Windows too, as before M16-78.
+        _snapshots.make_private_dirs(directory, outside=True, private_on_windows=True)
         tmp = directory / f".{record.id}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, 0o600)
@@ -1018,7 +1019,7 @@ class _Locks:
         if create:
             try:
                 # The store and every missing parent 0700, top-down (M16-78).
-                _snapshots.make_private_dirs(resolved, outside=True)
+                _snapshots.make_private_dirs(resolved, outside=True, private_on_windows=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
             _refuse_inside_any_install(store_path, "the store")
