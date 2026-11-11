@@ -2595,7 +2595,7 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 # M16 follow-ups found in review (filed 2026-11-11, sixth batch)
 
 ## [ ] M16-96 — CLI `undo` closes any open record that names no file
-**Size:** XS · **Depends on:** nothing · **Sources:** the M16-93T code review (#462)
+**Size:** XS · **Depends on:** M16-69 · **Sources:** the M16-93T code review (#462)
 
 `cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
 
