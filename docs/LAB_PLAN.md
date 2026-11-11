@@ -1461,7 +1461,7 @@ A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FI
 
 *Amended 2026-11-11 (owner decisions in session; M16-69, M16-78):*
 
-(a) **A change killed between the temp cleanup and its snapshot changed nothing.** Leftover `.wowlab-*.tmp` files are removed before the pre-write snapshot is taken, each removal journaled and fsynced before its unlink (item 2). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
+(a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
 
 (b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). This extends 2026-11-10 (b) to every module.
 
@@ -4999,8 +4999,10 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    identity (dev, ino, mtime_ns) and invalidated by the transaction's own
    writes. The commit-time re-check is unchanged.
    *Amended 2026-11-11 (owner decision; M16-94):* the key also holds the
-   directory's ctime_ns. A change to the directory that leaves its mtime
-   where it was still changes its ctime, so the memo is not reused.
+   directory's ctime_ns. On POSIX a change to the directory that leaves
+   its mtime where it was still changes its ctime, so the memo is not
+   reused. On Windows `st_ctime_ns` is the creation time and does not move,
+   so the extra field adds nothing there and the Windows memo is unchanged.
    - Target: a whole-restore check of 20,000 files with nothing to change
      takes at most 5 s on the reference runner (GitHub's `ubuntu-latest`,
      as M16-27's nightly job measures it; the PR path checks scaling only).

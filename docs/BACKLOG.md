@@ -2576,7 +2576,7 @@ Strict-xfail graders: `<user data dir>/locks/` and every parent `guard` makes on
 ## [ ] M16-94T — [TEST] The listing memo's key holds the directory's ctime
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-23T review (owner topic); the owner's answer of 2026-11-11; LAB_PLAN §18.1 item 6, amendment of 2026-11-11
 
-Strict-xfail graders for `guard.py`. A directory whose listing changes while its mtime is restored to the old value, but whose ctime moves, is listed again and not served from the memo.
+Strict-xfail graders for `guard.py`. A directory whose listing changes while its mtime is restored to the old value, but whose ctime moves, is listed again and not served from the memo. POSIX only, skipped on Windows with a reason: there `st_ctime_ns` is the creation time and does not move.
 
 **Acceptance:** strict xfail on `main`, activated by M16-94 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
