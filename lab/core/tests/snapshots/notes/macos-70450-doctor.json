@@ -52,7 +52,14 @@
           "name": "synchronizeConfig",
           "value": null
         }
-      ]
+      ],
+      "lab_addon": {
+        "status": "not_installed",
+        "installed": [],
+        "expected": 16001,
+        "version": null,
+        "detail": null
+      }
     }
   ],
   "other_dirs": [],
