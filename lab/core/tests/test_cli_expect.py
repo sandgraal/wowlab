@@ -123,8 +123,14 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on
         "notes",
     ]
     # M16-10 adds the text plan as `plan_lines`, and M16-105 the paths the
-    # undo wrote as `written_paths`, last (additive).
-    assert list(cli.UndoReport.model_fields) == [*undo_before, "plan_lines", "written_paths"]
+    # undo wrote as `written_paths` and those the plan did not list as
+    # `unlisted_written`, last (additive).
+    assert list(cli.UndoReport.model_fields) == [
+        *undo_before,
+        "plan_lines",
+        "written_paths",
+        "unlisted_written",
+    ]
     assert list(cli.SvMergeReport.model_fields) == [
         *merge_before,
         "target_sha256",

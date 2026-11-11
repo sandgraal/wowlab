@@ -16,6 +16,7 @@ nothing touches a real install.
 # ruff: noqa: F811
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -73,6 +74,7 @@ def test_a_cache_file_changed_at_the_prompt_is_in_json_written_paths_constructed
     assert done.applied and done.transaction == record.id
     assert done.written_paths == [p.path for p in record.paths]
     assert sorted(done.written_paths) == sorted([CONFIG_CACHE, SYNDICATOR])
+    assert done.unlisted_written == [CONFIG_CACHE]
     assert not any(CONFIG_CACHE in line for line in done.plan_lines)
     assert done.notes == [cli._RELOGIN]
 
@@ -93,6 +95,16 @@ def test_control_json_written_paths_are_the_listed_ones_constructed(
     done = cli.UndoReport.model_validate_json(ok("undo", "--yes", "--json").stdout)
     assert done.written_paths == [SYNDICATOR]
     assert done.written_paths == [p.path for p in guard.history()[-1].paths]
+    assert done.unlisted_written == []
+
+
+def test_control_json_a_listed_cache_file_is_not_unlisted_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _restored(flavor, put_cache_back=False)
+    done = cli.UndoReport.model_validate_json(ok("undo", "--yes", "--json").stdout)
+    assert CONFIG_CACHE in done.written_paths
+    assert done.unlisted_written == []
 
 
 def test_control_a_listed_cache_file_is_not_named_again_constructed(
@@ -109,3 +121,57 @@ def test_a_declined_undo_wrote_nothing_constructed(root: Path, flavor: Path) -> 
     shown = cli.UndoReport.model_validate_json(result.stdout[result.stdout.index("{") :])
     assert not shown.applied
     assert shown.written_paths == []
+    assert shown.unlisted_written == []
+
+
+CONFIG_WTF = "WTF/Config.wtf"
+
+
+def _restored_with_config(flavor: Path) -> None:
+    """The M16-102 repro with `Config.wtf` changed too: after the restore,
+    the cache file is put back by hand, so the undo plan lists the
+    SavedVariables file and `Config.wtf` and shows the restart sentence
+    only."""
+    snap = str(json.loads(ok("snap", "create", "-m", "constructed", "--json").stdout)["id"])
+    config = flavor / CONFIG_WTF
+    config.write_bytes(config.read_bytes() + b'SET constructedMachineCVar "1"\r\n')
+    sv = flavor / SYNDICATOR
+    sv.write_bytes(sv.read_bytes() + b"\n-- constructed\n")
+    cache = flavor / CONFIG_CACHE
+    changed = cache.read_bytes() + b'SET constructedCVar "1"\r\n'
+    cache.write_bytes(changed)
+    ok("snap", "restore", snap, "--yes")
+    cache.write_bytes(changed)
+
+
+def test_a_narrower_plan_caveat_widens_after_the_write_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `Config.wtf`-only caveat in the plan (`_RESTART`) becomes both
+    sentences (`_RESTART_RELOGIN`) after the write, when a cache file
+    changed after the plan read it; the file is named before it."""
+    _restored_with_config(flavor)
+    _cache_changes_at_the_prompt(flavor, monkeypatch)
+    result = run("undo", input="y\n")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    out = _plain(result.stdout).splitlines()
+    done = _undone_at(out)
+    assert cli._RESTART in out[:done], out
+    assert cli._RESTART_RELOGIN not in out[:done], out
+    after = out[done + 1 :]
+    named = next(i for i, x in enumerate(after) if CONFIG_CACHE in x)
+    assert after.count(cli._RESTART_RELOGIN) == 1, out
+    assert after.index(cli._RESTART_RELOGIN) > named
+    assert not any(CONFIG_WTF in line for line in after), out
+
+
+def test_a_narrower_plan_caveat_widens_in_json_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _restored_with_config(flavor)
+    _cache_changes_at_the_prompt(flavor, monkeypatch)
+    done = cli.UndoReport.model_validate_json(ok("undo", "--yes", "--json").stdout)
+    assert cli._RESTART in done.plan_lines
+    assert done.notes == [cli._RESTART_RELOGIN]
+    assert sorted(done.written_paths) == sorted([SYNDICATOR, CONFIG_WTF, CONFIG_CACHE])
+    assert done.unlisted_written == [CONFIG_CACHE]

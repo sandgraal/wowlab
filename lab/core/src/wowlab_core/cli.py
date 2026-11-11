@@ -9164,8 +9164,13 @@ class UndoReport(_Out):
     plan_lines: list[str] = Field(default_factory=list)
     # The paths the undo wrote (relative to `flavor_path`), from its own
     # journal record `transaction`: the listed ones, and any that changed
-    # while the prompt waited. Empty when nothing was undone (M16-105).
+    # after the plan read it. Empty when nothing was undone (M16-105).
     written_paths: list[str] = Field(default_factory=list)
+    # Those of `written_paths` the text plan did not list (`plan` is the
+    # whole record undone, so it cannot tell them apart): files that changed
+    # after the plan read them, which the text result names after "Undone."
+    # (M16-105).
+    unlisted_written: list[str] = Field(default_factory=list)
 
 
 def _client_managed(
@@ -9944,7 +9949,7 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
 
 def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str]) -> list[str]:
     """The result's lines for each file the undo wrote that its plan did not
-    list: it changed while the prompt waited, so the undo put it back too.
+    list: it changed after the plan read it, so the undo put it back too.
     Named once, after "Undone.", so the login caveat that may follow has a
     file on screen to point at (M16-105). `written` is the undo's own
     journal record, whose `before` is the disk the undo found."""
@@ -10027,14 +10032,16 @@ def undo(
             # From what the undo wrote (its own journal record), not every path
             # of the record undone: a file the disk already held as it was
             # before is skipped by the undo, so it is not listed in the plan
-            # and gets no note; one changed while the prompt waited is
+            # and gets no note; one changed after the plan read it is
             # rewritten, so it does (M16-102).
             notes=_relogin_notes(written) if applied else [],
             plan_lines=[_safe(line) for line in plan_lines],
             written_paths=list(written),
+            unlisted_written=[w for w in written if w not in set(listed)],
         )
 
     plan_lines: list[str] = []
+    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
@@ -10069,7 +10076,7 @@ def undo(
         return
     if not undone.paths:
         # Judged from the undo's own record, not the plan: a file rewritten
-        # while the prompt waited is put back and listed there. No file
+        # after the plan read it is put back and listed there. No file
         # changed, so no login note applies (`--json` keeps them).
         _say(
             "Undone; no file needed changing. This undo is journaled, but there is nothing "
