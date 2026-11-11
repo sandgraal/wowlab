@@ -2647,7 +2647,7 @@ The undo plan's footer decides on `_RELOGIN` from the listed paths: those whose 
 
 Make the result and its `notes` decide from the same paths the plan lists.
 
-*Ruling (2026-11-11, conductor, #477 fix round 1):* the result and `--json` `notes` decide from the paths the undo wrote (its own journal record), not from the paths the plan listed. With no change while the prompt waits, the two sets are the same. When a `Config.wtf` or `*-cache` file changes during the prompt and the undo rewrites it, the caveat appears after the write. This follows LAB_PLAN's rule that the caveat is "decided by the same rule the result uses after the write". M16-105 carries the LAB_PLAN amendment.
+*Ruling (2026-11-11, conductor, #477 fix round 1):* the result and `--json` `notes` decide from the paths the undo wrote (its own journal record), not from the paths the plan listed. With no change while the prompt waits, the two sets are the same. When a `Config.wtf` or `*-cache` file changes during the prompt and the undo rewrites it, the caveat appears after the write. M16-105 carries the LAB_PLAN amendment.
 
 **Acceptance:** a pinned test of that case in text and `--json`, with the plan and result agreeing. Reviewed by `code-reviewer` and `domain-reviewer`.
 
