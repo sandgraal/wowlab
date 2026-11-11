@@ -2647,6 +2647,8 @@ The undo plan's footer decides on `_RELOGIN` from the listed paths: those whose 
 
 Make the result and its `notes` decide from the same paths the plan lists.
 
+*Ruling (2026-11-11, conductor, #477 fix round 1):* the result and `--json` `notes` decide from the paths the undo wrote (its own journal record), not from the paths the plan listed. With no change while the prompt waits, the two sets are the same. When a `Config.wtf` or `*-cache` file changes during the prompt and the undo rewrites it, the caveat appears after the write. This follows LAB_PLAN's rule that the caveat is "decided by the same rule the result uses after the write". M16-105 carries the LAB_PLAN amendment.
+
 **Acceptance:** a pinned test of that case in text and `--json`, with the plan and result agreeing. Reviewed by `code-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-103 — The login notes lead with the files actually listed
@@ -2673,11 +2675,25 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 `tests/repo/test_bidi_controls.py` reads each tracked path from the checkout, and only when `path.is_file()` is true. For a symlink (git mode 120000), the bytes git commits are the link's target text. A broken link is skipped. A working link is followed, so its target file is scanned instead. Either way, a bidi control in a link's target text passes. On a docs-only PR, `docs/evil.md` can be such a link. Fix: list entries with `git ls-files -s -z`. For a mode-120000 entry, run the check on `os.readlink(path)`, or on the blob, and never follow the link.
 
-**Acceptance:** a constructed test with a broken symlink whose target holds U+202E, which the scan reports. The existing tests still pass. Reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:**
+- Two constructed tests, each reported by the scan:
+  - a broken symlink whose target text holds U+202E;
+  - a working symlink to a clean file whose target text holds a bidi control.
+- Where symlinks cannot be made (Windows, or `core.symlinks=false`), the tests skip with a stated reason.
+- The existing tests still pass.
+
+Reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-105 — `undo` names a file it put back that the plan did not list
 **Size:** XS · **Depends on:** M16-103 · **Sources:** the M16-102 domain re-review (#477)
 
-Since M16-102, the undo result gives the login caveat for every `Config.wtf` or `*-cache` file the undo wrote. Suppose such a file changed while the prompt waited, after the plan was shown, and the undo put it back. The text result then prints the caveat but does not name that file, so nothing on screen says why the caveat appears. The text result should name each file the undo wrote that the plan did not list. `--json` already has the undo's record.
+Since M16-102, the undo result gives the login caveat for every `Config.wtf` or `*-cache` file the undo wrote. Suppose such a file changed while the prompt waited, after the plan was shown, and the undo put it back. The text result then prints the caveat but does not name that file, so nothing on screen says why the caveat appears. The text result should name each file the undo wrote that the plan did not list. `--json` gives only the undo's record id, in `transaction`. Add a field listing the paths the undo wrote, so that a `--json` reader does not have to look the record up.
 
-**Acceptance:** a pinned test of that race in text output, where the extra file is named once, after "Undone.". Reviewed by `code-reviewer` and `domain-reviewer`.
+`docs/LAB_PLAN.md` (the plan-footer paragraph and its M16-97 amendment) still says `undo` does not repeat the caveat after the write and that the caveat follows the listed paths. Since #477 neither holds when a file changes during the prompt. The amendment below records the actual rule.
+
+**Acceptance:**
+- A pinned test of that race in text output: the extra file is named once, after "Undone.".
+- A `--json` test showing the new field holds the paths the undo wrote.
+- A dated LAB_PLAN amendment beside M16-97's, recording two rules: the result follows what the undo wrote, and a file written after the plan is named after the write.
+
+Reviewed by `code-reviewer` and `domain-reviewer`.
