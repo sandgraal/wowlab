@@ -51,6 +51,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import os
+import shutil
 import stat
 import sys
 import threading
@@ -366,3 +367,29 @@ def test_store_lock_create_on_the_default_store_makes_the_user_data_dir_0700_con
     with umask(mask), watching(parents) as watch, guard.store_lock(None, create=True):
         assert (store / "lock").is_file()  # control: the lock was taken
     assert_made_private(watch, parents)
+
+
+@posix_only
+@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
+@pytest.mark.parametrize("mask", MASKS, ids=oct)
+def test_undo_makes_the_user_data_dir_and_locks_0700_constructed(
+    guard: Any, flavor: Any, idle: None, tmp_path: Path, mask: int
+) -> None:
+    """`undo` takes the install lock itself (fix round 1, #460 security
+    review): with an explicit store and the user data directory gone since
+    the transaction it undoes, it makes the user data directory and
+    `locks/`, and must make them private, whatever route the fix takes."""
+    store_arg, store, judged = _setup(EXPLICIT_STORE_EXISTS, tmp_path)
+    with guard.transaction(flavor, label=LABEL, store=store_arg) as tx:
+        tx.write(CONFIG, NEW_CONFIG)
+    _assert_the_write_landed(guard, flavor, store)
+    shutil.rmtree(judged["user-data-dir"])
+    assert not judged["user-data-dir"].exists()
+    expected_id = guard.history(store=store)[-1].id
+    with umask(mask), watching(judged) as watch:
+        guard.undo(store=store, expected_id=expected_id)
+    labels = [r.label for r in guard.history(store=store)]
+    assert labels == [LABEL, f"undo: {LABEL}"], "control: the undo landed"
+    assert (flavor.path / CONFIG).read_bytes() != NEW_CONFIG  # control: restored
+    assert list(judged["locks"].glob("*.lock")), "control: the install lock is in locks/"
+    assert_made_private(watch, judged)
