@@ -17,7 +17,11 @@ What entering a transaction does, in this order, before the body runs:
    spelled in extended-length form (`\\\\?\\C:\\...`) is taken by its plain
    spelling, and one that resolves to anything but a local absolute path (a
    network path, a volume with no drive letter) is refused, since `undo()`
-   and restore could not reach it (M13-15).
+   and restore could not reach it (M13-15). So is one whose resolved path
+   (the `flavor_path` that would be journaled, install root included) holds
+   a C0 control, DEL, a C1 control, a character of the pinned table
+   `svmerge._FORMAT_CHARACTERS` or a lone surrogate (§6.10 as amended
+   2026-11-11, (e)); a dry run and `undo()` refuse it too.
 2. The store (a directory path; `None` means `snapshot.default_store_path()`)
    must not overlap the install in either direction (L1), and neither may
    the two lock files nor `locks/` (below), compared after resolving. None
@@ -192,8 +196,11 @@ is a closed record that changes no file and `undoes` a passed-over one. An
 undo that completed normally is never passed over. Every record `undo()`
 writes names the record it undoes in `undoes`; `history()` refuses, as
 damaged, an `undoes` that is not the id of an earlier record of the same
-flavor. A target that never took a snapshot changed no player file: `undo()`
-closes it in place (`rolled_back`, nothing restored, no record appended,
+flavor. It refuses as damaged, too, a record whose `paths`, `created_dirs`,
+`temps`, `temps_removed` or `temps_left` holds a path the write rules below
+refuse, or whose `flavor_path` holds a character the gate refuses in a
+flavor (M16-90), so it never hands on a planted path. A target that never
+took a snapshot changed no player file: `undo()` closes it in place (`rolled_back`, nothing restored, no record appended,
 no removed temp brought back), and does nothing for one already closed.
 
 `undo(expected_id=...)` compares the id of the record the caller approved
@@ -236,7 +243,7 @@ from typing import Literal, NoReturn, Protocol
 
 from pydantic import BaseModel, ConfigDict, StrictStr, field_validator, model_validator
 
-from wowlab_core import longpath, process
+from wowlab_core import longpath, process, svmerge
 from wowlab_core import snapshot as _snapshots
 from wowlab_core.snapshot import (
     Entry,
@@ -344,6 +351,18 @@ _RESERVED_NAMES = frozenset(
 # an alternate data stream, `\\` a separator), refused on every platform.
 _FORBIDDEN_CHARACTERS = frozenset('<>:"|?*\\\x7f') | frozenset(chr(n) for n in range(32))
 _MAX_NAME_BYTES = 255
+
+# What a flavor path may not hold (§6.10 as amended 2026-11-11, (e)): every
+# C0 control, DEL, every C1 control, the Unicode format and separator
+# characters of the one pinned table the CLI's escaping uses
+# (`svmerge._FORMAT_CHARACTERS`), and every lone surrogate. The gate refuses
+# such a flavor and `history()` such a record, from this one pattern, so
+# the two never disagree.
+_UNSAFE_FLAVOR_CHARACTER = re.compile(
+    "[\x00-\x1f\x7f-\x9f\ud800-\udfff"
+    + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in svmerge._FORMAT_CHARACTERS)
+    + "]"
+)
 
 # ─── the journal ─────────────────────────────────────────────────────────────
 
@@ -761,6 +780,7 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
             raise GuardError(f"journal record {path} is damaged: {exc}") from exc
         if record.id != name.removesuffix(".json"):
             raise GuardError(f"journal record {path} carries the id {record.id!r}")
+        _refuse_unplain_paths(record, path)
         undone = None if record.undoes is None else earlier.get(record.undoes)
         if record.undoes is not None and (undone is None or not _undoes_its_flavor(undone, record)):
             # Records are read oldest first, so `earlier` holds exactly the
@@ -772,6 +792,29 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
         records.append(record)
         earlier[record.id] = record
     return records
+
+
+def _refuse_unplain_paths(record: _JournalRecord, path: Path) -> None:
+    """M16-90: every flavor-relative path a record holds passes the write
+    rules (`_check_rel`; `created_dirs` as directories, so an allowlist root
+    is accepted), and its `flavor_path` holds no character the gate refuses
+    in a flavor (§6.10 as amended 2026-11-11, (e)). Otherwise the record is
+    damaged, never skipped."""
+    checks: list[tuple[str, str, bool]] = [("paths", p.path, False) for p in record.paths]
+    checks += [("created_dirs", rel, True) for rel in record.created_dirs]
+    for key in ("temps", "temps_removed", "temps_left"):
+        checks += [(key, rel, False) for rel in getattr(record, key)]
+    for key, rel, directory in checks:
+        try:
+            _check_rel(rel, directory=directory)
+        except PathNotAllowedError as exc:
+            raise GuardError(f"journal record {path} is damaged: {key}: {exc}") from None
+    unsafe = _unsafe_flavor_characters(record.flavor_path)
+    if unsafe:
+        raise GuardError(
+            f"journal record {path} is damaged: its flavor_path holds {', '.join(unsafe)}, "
+            "a control or format character"
+        )
 
 
 def _undoes_its_flavor(undone: _JournalRecord, record: _JournalRecord) -> bool:
@@ -1278,6 +1321,13 @@ def _refuse_unreachable(given: Path, path: Path) -> None:
         )
 
 
+def _unsafe_flavor_characters(text: str) -> list[str]:
+    """The characters of `text` a flavor path may not hold, each once, as
+    `U+XXXX`, in order of first appearance; empty when it holds none."""
+    found = dict.fromkeys(m.group() for m in _UNSAFE_FLAVOR_CHARACTER.finditer(text))
+    return [f"U+{ord(c):04X}" for c in found]
+
+
 def _place(path_value: object, version: object) -> _Place:
     """Validate a flavor path the way §6.1 defines a flavor. Raises GuardError."""
     if not isinstance(path_value, str | os.PathLike):
@@ -1311,6 +1361,15 @@ def _place(path_value: object, version: object) -> _Place:
         raise GuardError(f"not a flavor of an install: {given} ({exc})") from exc
     for resolved in (root, flavor_dir):
         _refuse_unreachable(given, resolved)
+    # The path that would be journaled, install root included, so a clean
+    # link to such a folder is refused too (§6.10 as amended 2026-11-11, (e)).
+    unsafe = _unsafe_flavor_characters(str(flavor_dir))
+    if unsafe:
+        raise GuardError(
+            f"the flavor {given} resolves to {str(flavor_dir)!r}, which holds "
+            f"{', '.join(unsafe)}: a control or format character; guard refuses such a "
+            "flavor before it writes or journals anything"
+        )
     if (
         _is_link(flavor_st)
         or not stat.S_ISDIR(flavor_st.st_mode)
