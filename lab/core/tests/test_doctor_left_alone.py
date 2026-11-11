@@ -26,6 +26,7 @@ caller's body raises. The journal is not edited.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from collections.abc import Callable
@@ -53,11 +54,13 @@ CHANGED = b"constructed by wowlab\n"
 OTHER = b"constructed by another program\n"
 OTHER_AGAIN = b"constructed by another program, again\n"
 
+CAUSE = "another program, such as the game, at logout or /reload"
 LEAD = "the last change wowlab made failed, and putting the files back did not finish"
 TAIL = (
     "To put back what was there before the change, close the game and run this; it puts "
     "back every file the change wrote, including anything the game has saved to them since, "
-    "but the undo keeps a copy and running wowlab undo again brings them back: "
+    "but the undo keeps a copy and running wowlab undo again next, before you play, brings "
+    "them back: "
     "wowlab undo --expect "
 )
 
@@ -196,8 +199,8 @@ def _both(record_id: str) -> tuple[str, str]:
 def test_a_file_another_program_changed_since_constructed(root: Path, flavor: Path) -> None:
     record_id = _fail_leaving(root, flavor, CONFIG)
     expected = (
-        f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf has been changed by another "
-        f"program, such as the game, since wowlab wrote it. {TAIL}{record_id}"
+        f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf has been changed since "
+        f"wowlab wrote it by {CAUSE}. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     data = _json()
@@ -208,8 +211,8 @@ def test_a_file_another_program_changed_since_constructed(root: Path, flavor: Pa
 def test_two_files_another_program_changed_since_constructed(root: Path, flavor: Path) -> None:
     record_id = _fail_leaving(root, flavor, SAVED, CONFIG)
     expected = (
-        f"{LEAD} (record {record_id}): in {FLAVOR}, {SAVED} and {CONFIG} have been changed by "
-        f"another program, such as the game, since wowlab wrote them. {TAIL}{record_id}"
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {SAVED} and {CONFIG} have been changed "
+        f"since wowlab wrote them by {CAUSE}. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     # Sorted, so the same record always prints the same line.
@@ -234,8 +237,7 @@ def test_files_in_different_states_are_named_in_groups_constructed(
     record_id = _fail_refused_rollback(root, flavor, CONFIG, SAVED)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf still holds wowlab's "
-        f"change; {SAVED} has been changed by another program, such as the game, since wowlab "
-        f"wrote it. {TAIL}{record_id}"
+        f"change; {SAVED} has been changed since wowlab wrote it by {CAUSE}. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
 
@@ -259,8 +261,8 @@ def test_a_file_doctor_cannot_read_constructed(
     monkeypatch.setattr(cli, "_hash_now", lambda root, path: (False, None))
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, wowlab could not put back WTF/Config.wtf, "
-        "which holds either wowlab's change or what another program, such as the game, has "
-        f"written to it since. {TAIL}{record_id}"
+        f"which holds either wowlab's change or what {CAUSE}, has written to it since. "
+        f"{TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     assert _left(_json()) == [(CONFIG, "unknown")]
@@ -322,7 +324,10 @@ def test_a_file_wowlab_never_wrote_is_left_by_undo_constructed(root: Path, flavo
 def test_three_files_are_listed_with_commas_constructed() -> None:
     left = [cli.LeftPath(path=p, now="changed_since") for p in ("WTF/a", "WTF/b", "WTF/c")]
     problem = cli._rollback_unfinished("00000001-0123abcd", left, "_x_")
-    assert "in _x_, WTF/a, WTF/b and WTF/c have been changed by another program" in problem
+    assert (
+        f"in _x_, WTF/a, WTF/b and WTF/c have been changed since wowlab wrote them by {CAUSE}."
+        in problem
+    )
     assert problem.endswith(": wowlab undo --expect 00000001-0123abcd")
 
 
@@ -342,8 +347,8 @@ def test_a_record_that_lists_no_file_keeps_a_sentence_without_names_constructed(
     problem = cli._rollback_unfinished(record_id)
     assert problem == cli._rollback_unfinished(record_id, [], "_x_")
     assert problem == (
-        f"{LEAD} (record {record_id}): a file may have been changed by another program, such "
-        "as the game, while wowlab was writing or since, or may still hold wowlab's change. "
+        f"{LEAD} (record {record_id}): a file may have been changed while wowlab was writing "
+        f"or since by {CAUSE}, or may still hold wowlab's change. "
         f"{TAIL}{record_id}"
     )
     assert "brings it back" not in problem
@@ -449,10 +454,14 @@ def test_redact_hides_names_only_the_journal_holds_constructed(root: Path, flavo
     ],
 )
 def test_redact_hides_an_account_whose_name_prints_escaped_constructed(
-    root: Path, flavor: Path, account: str
+    root: Path, flavor: Path, account: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if os.name == "nt" and "\udcff" in account:
         pytest.skip("Windows file names are UTF-16; a non-UTF-8 byte cannot be one")
+    # The gate logs the path it left; a lone surrogate in a captured log
+    # line cannot cross to the pytest-xdist controller, so the library's log
+    # stays out of pytest's capture here.
+    monkeypatch.setattr(logging.getLogger("wowlab_core"), "propagate", False)
     rel = f"WTF/Account/{account}/SavedVariables/Constructed.lua"
     record_id = _fail_leaving(root, flavor, rel)
     stem = account[:11]  # the ASCII part before the escaped character

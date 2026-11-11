@@ -2134,15 +2134,17 @@ def _rollback_unfinished(
     tail = (
         "To put back what was there before the change, close the game and run this; it puts "
         "back every file the change wrote, including anything the game has saved to them "
-        "since, but the undo keeps a copy and running wowlab undo again brings them back: "
+        "since, but the undo keeps a copy and running wowlab undo again next, before you "
+        "play, brings them back: "
         f"wowlab undo --expect {record_id}"
     )
     clauses = [_left_clause(now, [p.path for p in left if p.now == now]) for now in _LEFT_ORDER]
     said = [c for c in clauses if c]
     if not said:
         return (
-            lead + "a file may have been changed by another program, such as the game, while "
-            "wowlab was writing or since, or may still hold wowlab's change. " + tail
+            lead + "a file may have been changed while wowlab was writing or since by another "
+            "program, such as the game, at logout or /reload, or may still hold wowlab's "
+            "change. " + tail
         )
     where = f"in {flavor_folder}, " if flavor_folder else ""
     return lead + where + "; ".join(said) + ". " + tail
@@ -2169,8 +2171,8 @@ def _left_clause(now: LeftNow, paths: Sequence[str]) -> str:
         return f"{names} still {'holds' if one else 'hold'} wowlab's change"
     if now == "changed_since":
         return (
-            f"{names} {'has' if one else 'have'} been changed by another program, such as the "
-            f"game, since wowlab wrote {it}"
+            f"{names} {'has' if one else 'have'} been changed since wowlab wrote {it} by "
+            "another program, such as the game, at logout or /reload"
         )
     if now == "before_change":
         return f"{names} already {'holds' if one else 'hold'} what was there before the change"
@@ -2181,7 +2183,8 @@ def _left_clause(now: LeftNow, paths: Sequence[str]) -> str:
         )
     return (
         f"wowlab could not put back {names}, which {'holds' if one else 'hold'} either "
-        f"wowlab's change or what another program, such as the game, has written to {it} since"
+        "wowlab's change or what another program, such as the game, at logout or /reload, "
+        f"has written to {it} since"
     )
 
 
