@@ -146,7 +146,10 @@ as unclassified. (Added 2026-09-22, M10-06.)
   **[verify]**. This line says at login or `/reload`; `profiles.LOGIN_NOTE`
   says the client reads it when it starts, which fits graphics, language and
   the last account used being set before any login. No capture settles it
-  yet, so player-facing text should not claim either timing for it.
+  yet, so player-facing text should not state either timing for it as fact;
+  "the client reads it again when it next starts or logs in" is safe. Today
+  `profiles.LOGIN_NOTE` and `cli._RELOGIN` each state one; M16-97 (#468)
+  rewords both.
 - On Windows the client can hold files open; a read can fail with a sharing
   violation. Readers retry briefly and then report, they do not loop.
 - Macros and binds may be synced server-side depending on the
