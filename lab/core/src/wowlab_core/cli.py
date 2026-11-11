@@ -2130,9 +2130,10 @@ def _rollback_unfinished(
     `flavor_folder`, grouped by what doctor read there now (`LeftPath`). A
     file the change never wrote (its only operation was refused) is said to
     be left alone by undo, which acts only on `paths`. With `paths == 0`
-    the change wrote nothing, so undo has nothing to put back: the problem
-    says so instead of offering the command (the one exception to "the
-    command stays last"). Names are kept as stored: the text output escapes
+    the change wrote nothing, so undo has nothing to put back and records
+    nothing (`undo` returns before planning when a record has no paths and
+    no folders): the problem says so, and that the next change clears it,
+    and offers no command (the one exception to "the command stays last"). Names are kept as stored: the text output escapes
     them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
     unescaped. A record that lists no file gets the sentence without names."""
     groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
@@ -2149,7 +2150,13 @@ def _rollback_unfinished(
             if said
             else f"another program, {_THE_GAME}, changed a file while wowlab was working"
         )
-        return lead + named + ". wowlab changed no file, so there is nothing for undo to put back."
+        return (
+            lead
+            + named
+            + ". wowlab changed no file, so there is nothing for undo to put back, and undo "
+            "leaves this record as it is; wowlab doctor stops reporting it after wowlab's "
+            "next change."
+        )
     lead = (
         "the last change wowlab made failed, and putting the files back did not finish "
         f"(record {record_id}): "
@@ -2202,7 +2209,7 @@ def _left_clause(key: tuple[LeftNow, bool | None], paths: Sequence[str]) -> str:
         return f"{names} {is_} still deleted, as wowlab's change left {it}"
     if now == "changed_since":
         did = "changed" if exists else "deleted"
-        return f"another program, {_THE_GAME}, has {did} {names} since wowlab wrote {it}"
+        return f"another program, {_THE_GAME}, has {did} {names} since wowlab's change"
     if now == "before_change":
         if exists:
             return f"{names} already {holds} what was there before the change"

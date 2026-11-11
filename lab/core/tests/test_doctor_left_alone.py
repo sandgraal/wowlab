@@ -11,7 +11,8 @@ was there before, unknown, or never written by wowlab (a refused path,
 which undo leaves alone), and whether it is there at all. Names are escaped
 as they print, after `--redact` has seen them as stored; `wowlab undo
 --expect <id>` stays last, except for a change that wrote nothing, where
-the problem says there is nothing for undo to put back.
+the problem says there is nothing for undo to put back and that the
+next change clears it, with no command.
 
 The install is the captured tree copied into `tmp_path` as `test_cli.py`
 builds it, the user data directory is redirected and the process table is a
@@ -66,7 +67,10 @@ TAIL = (
     "play, brings them back: wowlab undo --expect "
 )
 NOTHING_LEAD = "the last change wowlab made failed before it changed any file"
-NOTHING = "wowlab changed no file, so there is nothing for undo to put back."
+NOTHING = (
+    "wowlab changed no file, so there is nothing for undo to put back, and undo leaves this "
+    "record as it is; wowlab doctor stops reporting it after wowlab's next change."
+)
 
 # A file name holding U+202E, which reverses the text after it: the gate
 # allows it (a real file may be named so), so it must print escaped.
@@ -242,7 +246,7 @@ def test_a_file_another_program_changed_since_constructed(root: Path, flavor: Pa
     record_id = _fail_leaving(root, flavor, CONFIG)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has changed WTF/Config.wtf "
-        f"since wowlab wrote it. {TAIL}{record_id}"
+        f"since wowlab's change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     data = _json()
@@ -254,11 +258,34 @@ def test_two_files_another_program_changed_since_constructed(root: Path, flavor:
     record_id = _fail_leaving(root, flavor, SAVED, CONFIG)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has changed {SAVED} and {CONFIG} "
-        f"since wowlab wrote them. {TAIL}{record_id}"
+        f"since wowlab's change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     # Sorted, so the same record always prints the same line.
     assert _left(_json()) == [(SAVED, "changed_since", True), (CONFIG, "changed_since", True)]
+
+
+def test_a_file_wowlab_deleted_and_another_program_recreated_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """wowlab deleted the file; another program then wrote it again with
+    other bytes, so the rollback left it. The sentence says "since wowlab's
+    change", not "since wowlab wrote it": wowlab wrote nothing there."""
+
+    def body(tx: Any) -> None:
+        tx.delete(CONFIG)
+        (flavor / CONFIG).write_bytes(OTHER)  # another program, mid-change
+
+    record_id = _fail(root, body)
+    (change,) = [p for p in guard.history()[-1].paths if p.path == CONFIG]
+    assert change.after is None, "positive control: the change deleted it"
+    expected = (
+        f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has changed WTF/Config.wtf "
+        f"since wowlab's change. {TAIL}{record_id}"
+    )
+    assert _both(record_id) == (expected, expected)
+    assert _left(_json()) == [(CONFIG, "changed_since", True)]
+    assert "wowlab wrote" not in expected
 
 
 def test_a_file_another_program_deleted_since_constructed(root: Path, flavor: Path) -> None:
@@ -269,7 +296,7 @@ def test_a_file_another_program_deleted_since_constructed(root: Path, flavor: Pa
     record_id = _fail(root, body)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, {CAUSE}, has deleted WTF/Config.wtf "
-        f"since wowlab wrote it. {TAIL}{record_id}"
+        f"since wowlab's change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
     assert _left(_json()) == [(CONFIG, "changed_since", False)]
@@ -305,7 +332,7 @@ def test_files_in_different_states_are_named_in_groups_constructed(
     record_id = _fail_refused_rollback(root, flavor, CONFIG, SAVED)
     expected = (
         f"{LEAD} (record {record_id}): in {FLAVOR}, WTF/Config.wtf still holds wowlab's "
-        f"change; {CAUSE}, has changed {SAVED} since wowlab wrote it. {TAIL}{record_id}"
+        f"change; {CAUSE}, has changed {SAVED} since wowlab's change. {TAIL}{record_id}"
     )
     assert _both(record_id) == (expected, expected)
 
@@ -401,9 +428,14 @@ def test_a_file_wowlab_never_wrote_is_left_by_undo_constructed(root: Path, flavo
     assert (flavor / CONFIG).read_bytes() == OTHER_AGAIN, "undo left it as it is"
 
 
-def test_a_change_that_wrote_nothing_offers_no_undo_constructed(root: Path, flavor: Path) -> None:
+def test_a_change_that_wrote_nothing_says_the_next_change_clears_it_constructed(
+    root: Path, flavor: Path
+) -> None:
     """The change's only write was refused: it wrote nothing, so the problem
-    says there is nothing for undo to put back instead of the command."""
+    says there is nothing for undo to put back and that wowlab's next change
+    clears it, and offers no command. Both halves are checked: `undo`
+    records nothing for such a record (doctor still reports it), and the
+    next change does clear it."""
     record_id = _fail_with_a_refused_write(root, flavor, also=False)
     assert guard.history()[-1].paths == ()
     expected = (
@@ -412,10 +444,22 @@ def test_a_change_that_wrote_nothing_offers_no_undo_constructed(root: Path, flav
         f"leaves it as it is. {NOTHING}"
     )
     assert _both(record_id) == (expected, expected)
-    assert "wowlab undo" not in expected
     data = _json()
     assert data["store"]["last_transaction"]["paths"] == 0
     assert _left(data) == [(CONFIG, "not_written", None)]
+
+    assert "wowlab undo" not in expected
+
+    ok("undo", "--expect", record_id, "--yes")
+    assert (flavor / CONFIG).read_bytes() == OTHER_AGAIN
+    assert guard.history()[-1].id == record_id, "undo recorded nothing"
+    assert _json_problem(record_id, _json()) == expected, "so doctor still reports it"
+
+    with guard.transaction(_discovered(root), label="constructed: next change") as tx:
+        tx.write(SAVED, CHANGED)
+    after = run("doctor", "--json")
+    assert after.exit_code == 0, after.output
+    assert not json.loads(after.stdout)["problems"]
 
 
 def test_a_change_that_wrote_nothing_and_names_no_file_constructed() -> None:
@@ -433,7 +477,7 @@ def _left_path(path: str, now: str, exists: bool | None) -> Any:
 def test_three_files_are_listed_with_commas_constructed() -> None:
     left = [_left_path(p, "changed_since", True) for p in ("WTF/a", "WTF/b", "WTF/c")]
     problem = cli._rollback_unfinished("00000001-0123abcd", left, "_x_")
-    assert f"in _x_, {CAUSE}, has changed WTF/a, WTF/b and WTF/c since wowlab wrote them." in (
+    assert f"in _x_, {CAUSE}, has changed WTF/a, WTF/b and WTF/c since wowlab's change." in (
         problem
     )
     assert problem.endswith(": wowlab undo --expect 00000001-0123abcd")
@@ -457,7 +501,7 @@ def test_three_files_are_listed_with_commas_constructed() -> None:
         pytest.param(
             "changed_since",
             False,
-            f"{CAUSE}, has deleted WTF/a and WTF/b since wowlab wrote them",
+            f"{CAUSE}, has deleted WTF/a and WTF/b since wowlab's change",
             id="constructed-deleted-since",
         ),
         pytest.param(
