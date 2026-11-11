@@ -9,7 +9,9 @@ character's `config-cache.wtf` and one-macro `macros-cache.txt` copied over
 the account's, and two real sessions' `WowLab.lua` (`macos-70425` and
 `macos-70450` rows). The bindings and `Config.wtf` edits, and a bindings
 file of 25 keys, are byte-level edits of the capture and the test names
-say `constructed` (L8). Nothing reads or writes a real install.
+say `constructed` (L8). So are the lines no parser reads by name, one per
+kind of file, and the line appended to the character's macros file that a
+change creates (M16-98). Nothing reads or writes a real install.
 """
 
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import typing
 from pathlib import Path
 
 from test_cli import (
@@ -34,7 +37,7 @@ from test_cli import (
     user_data,  # noqa: F401
 )
 
-from wowlab_core import cli
+from wowlab_core import cli, guard, install, wtfdiff
 from wowlab_core.snapshot import Manifest
 
 ACC = f"WTF/Account/{ACCOUNT}"
@@ -316,3 +319,61 @@ def test_a_saved_variables_only_undo_plan_has_no_scope_or_sync_line(
     lines = _plain(declined.stdout).splitlines()
     assert _under(lines, LAB_SV)[0].startswith("      values: ")
     assert SCOPE not in lines and cli._RELOGIN not in lines
+
+
+# ─── other lines, in the words of each kind of file (M16-98) ────────────────
+
+OTHER_LINES = {
+    "bindings": (
+        b"bind Q MULTIACTIONBAR1BUTTON1\r\n",
+        b"constructed other line\r\nbind Q MULTIACTIONBAR1BUTTON1\r\n",
+        "      other lines differ too (for example a binding mode or modifier line), which "
+        "wowlab does not read by name",
+    ),
+    "macros": (
+        b'VER 3 0000000000000001 " " "134400"\r\n/say constructed\r\nEND\r\n',
+        b'VER 3 0000000000000001 " " "134400"\r\n/say constructed\r\nEND\r\nconstructed\r\n',
+        "      other lines differ too (lines outside any macro wowlab can read), which "
+        "wowlab does not read by name",
+    ),
+    "cvars": (
+        b'SET useTargetFPS "0"\r\n',
+        # A setting typed in by hand: the client may read it, the parser does not.
+        b'SET useTargetFPS "0"\r\nset useTargetFPS 1\r\n',
+        "      other lines differ too (lines not in the game's usual setting form, such as a "
+        "setting typed in by hand), which wowlab does not read by name",
+    ),
+}
+
+
+def test_every_kind_names_its_own_other_lines_constructed() -> None:
+    """The example of a line wowlab does not read by name fits the file:
+    no binding under a macros or a CVar file."""
+    assert set(OTHER_LINES) == set(typing.get_args(wtfdiff.Kind))
+    for kind, (before, after, line) in OTHER_LINES.items():
+        assert cli._wtf_lines(kind, before, after, None) == [line], kind
+        if kind != "bindings":
+            assert "binding" not in line
+
+
+def test_undo_plan_of_a_created_character_macros_file_constructed(root: Path, flavor: Path) -> None:
+    """The case the M16-92 review saw: undo deletes a character
+    macros-cache.txt the change created; its plan lists the macro the file
+    holds and, for a line outside any macro, says so in macro terms. The
+    file is the real character capture with one line appended (constructed);
+    the capture's own copy is removed first so the change creates it."""
+    path = f"{CHAR}/macros-cache.txt"
+    real = (flavor / path).read_bytes()
+    (flavor / path).unlink()
+    (discovered,) = install.read_install(root).flavors
+    with guard.transaction(discovered, label="constructed: creates macros") as tx:
+        tx.write(path, real + b"constructed\r\n")
+
+    declined = run("undo", input="n\n")
+    assert declined.exit_code == 1, (declined.stdout, declined.stderr)
+    lines = _plain(declined.stdout).splitlines()
+    assert f"  delete     {path}  (created by that transaction)" in lines
+    assert _under(lines, path) == [
+        '      macro "PolyArc": removed',
+        OTHER_LINES["macros"][2],
+    ]
