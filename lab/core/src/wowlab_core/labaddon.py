@@ -1204,12 +1204,32 @@ class ActionSlot(_Record):
 
 class ActionBars(_Section):
     """`actionbars` (schema 3): slots `first_slot` to `last_slot` walked,
-    the filled ones listed, read out of combat."""
+    the filled ones listed, read out of combat. The addon walks each slot
+    of the range once, so a range that runs backwards, a slot listed twice
+    and a slot outside the range are refused (M13-70): each is a file the
+    addon cannot have written, and a reader that kept one would leave every
+    tool built on the slots to pick which entry counts."""
 
     first_slot: Int
     last_slot: Int
     slots: Lst[ActionSlot]
     probes: Lst[ApiProbe]
+
+    @model_validator(mode="after")
+    def _slots_walked_once(self) -> Self:
+        if self.first_slot > self.last_slot:
+            raise ValueError("first_slot is after last_slot")
+        seen: set[int] = set()
+        for slot in self.slots:
+            if not self.first_slot <= slot.slot <= self.last_slot:
+                raise ValueError(
+                    f"slot {slot.slot} is outside the slots walked "
+                    f"({self.first_slot} to {self.last_slot})"
+                )
+            if slot.slot in seen:
+                raise ValueError(f"slot {slot.slot} is listed more than once")
+            seen.add(slot.slot)
+        return self
 
 
 class Binding(_Record):
