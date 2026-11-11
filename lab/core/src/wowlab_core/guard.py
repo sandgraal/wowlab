@@ -596,13 +596,27 @@ class _JournalRecord(_Frozen):
     # every other record, never null. That it names an earlier record of the
     # same flavor is checked across the journal (`_load_journal`).
     undoes: StrictStr | None = None
+    # M16-69: on an undo's record only, and only when the record it undoes
+    # spells its install root and flavor path otherwise than this record
+    # (the install was moved and a link left at the old name): that record's
+    # spelling, `[install_root, flavor_path]`. Used for nothing but the
+    # same-flavor check on `undoes` (`_load_journal`); this record itself
+    # journals the place guard resolved, as every record does. Never null.
+    undone_as: tuple[StrictStr, StrictStr] | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _undoes_is_never_null(cls, data: object) -> object:
-        if isinstance(data, dict) and "undoes" in data and data["undoes"] is None:
-            raise ValueError("undoes is the id of a record, never null")
+        for key in ("undoes", "undone_as"):
+            if isinstance(data, dict) and key in data and data[key] is None:
+                raise ValueError(f"{key} is never null")
         return data
+
+    @model_validator(mode="after")
+    def _undone_as_only_with_undoes(self) -> _JournalRecord:
+        if self.undone_as is not None and self.undoes is None:
+            raise ValueError("undone_as is written only with undoes")
+        return self
 
     @field_validator("format")
     @classmethod
@@ -748,7 +762,7 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
         if record.id != name.removesuffix(".json"):
             raise GuardError(f"journal record {path} carries the id {record.id!r}")
         undone = None if record.undoes is None else earlier.get(record.undoes)
-        if record.undoes is not None and (undone is None or not _same_flavor(undone, record)):
+        if record.undoes is not None and (undone is None or not _undoes_its_flavor(undone, record)):
             # Records are read oldest first, so `earlier` holds exactly the
             # earlier ones (§6.10 as amended 2026-11-11, (a1)).
             raise GuardError(
@@ -758,6 +772,20 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
         records.append(record)
         earlier[record.id] = record
     return records
+
+
+def _undoes_its_flavor(undone: _JournalRecord, record: _JournalRecord) -> bool:
+    """Whether `record` names the flavor of the record it undoes: by its own
+    (resolved) spelling, or, after the install was moved behind a link, by
+    the undone record's spelling it keeps in `undone_as`."""
+    if _same_flavor(undone, record):
+        return True
+    if record.undone_as is None:
+        return False
+    root, flavor_path = record.undone_as
+    return _same_flavor(
+        undone, record.model_copy(update={"install_root": root, "flavor_path": flavor_path})
+    )
 
 
 def _same_flavor(a: _JournalRecord, b: _JournalRecord) -> bool:
@@ -798,8 +826,9 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
         if not raw[key]:
             del raw[key]
     # `undoes` only on a record `undo()` wrote (2026-11-11 (a1)): never null.
-    if raw["undoes"] is None:
-        del raw["undoes"]
+    for key in ("undoes", "undone_as"):
+        if raw[key] is None:
+            del raw[key]
     text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
@@ -1986,7 +2015,6 @@ class _Transaction:
         "_flavor",
         "_given_locks",
         "_journal",
-        "_journal_as",
         "_label",
         "_last",
         "_left_alone",
@@ -2008,6 +2036,7 @@ class _Transaction:
         "_temps_left",
         "_temps_removed",
         "_undoes",
+        "_undone_as",
     )
 
     def __init__(
@@ -2020,14 +2049,14 @@ class _Transaction:
         place: _Place | None = None,
         locks: _Locks | None = None,
         undoes: str | None = None,
-        journal_as: tuple[str, str] | None = None,
+        undone_as: tuple[str, str] | None = None,
     ) -> None:
         self._flavor = flavor
         # The record this one undoes (`undo()` only; 2026-11-11 (a1)).
         self._undoes = undoes
         # `undo()` only: the install root and flavor path the record undone
-        # journaled, written into this record as they are spelled there.
-        self._journal_as = journal_as
+        # journaled, kept when they are not spelled as this record's place.
+        self._undone_as = undone_as
         self._label = label
         self._store_path = store_path
         self._dry_run = dry_run
@@ -2246,10 +2275,8 @@ class _Transaction:
             created_at=_now(),
             label=self._label,
             snapshot_id="",
-            install_root=(
-                str(place.install_root) if self._journal_as is None else self._journal_as[0]
-            ),
-            flavor_path=str(place.flavor_dir) if self._journal_as is None else self._journal_as[1],
+            install_root=str(place.install_root),
+            flavor_path=str(place.flavor_dir),
             flavor_version=place.version,
             state="open",
             paths=(),
@@ -2260,6 +2287,14 @@ class _Transaction:
         if self._undoes is not None:
             # Only an undo's record has the key: never null (2026-11-11 (a1)).
             record = record.model_copy(update={"undoes": self._undoes})
+            if self._undone_as is not None and not _same_flavor(
+                record.model_copy(
+                    update={"install_root": self._undone_as[0], "flavor_path": self._undone_as[1]}
+                ),
+                record,
+            ):
+                # Written only when the spellings differ (a moved install).
+                record = record.model_copy(update={"undone_as": self._undone_as})
         if candidates:
             self._record = record
             _write_record(self._store_path, self._record)
@@ -3238,9 +3273,11 @@ def _last_record(store_path: Path, expected_id: str | None = None) -> _JournalRe
         raise GuardError(f"nothing to undo: the journal in {store_path} is empty{wanted}")
     i = _target_index(records)
     if i is None:
-        # Unreachable: a passed-over record undoes an earlier one, and the
-        # oldest record undoes nothing. Refused rather than guessed.
-        raise GuardError(f"nothing to undo: every record in {store_path} is passed over")
+        # Every record is passed over: each stopped before it changed any
+        # file and is closed (2026-11-11 (a2)), so there is nothing to undo.
+        raise GuardError(
+            f"nothing to undo: every record in {store_path} stopped before it changed any file"
+        )
     last = records[i]
     if expected_id is not None and last.id != expected_id:
         raise GuardError(
@@ -3320,10 +3357,10 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
         place=place,
         locks=locks,
         undoes=last.id,
-        # Journaled as `last` spells its flavor, so `history()` finds `last`
-        # in the same flavor even when the install now resolves elsewhere (a
-        # moved install behind a link); every write still goes to `place`.
-        journal_as=(last.install_root, last.flavor_path),
+        # The record journals `place`, as guard resolved it. When `last`
+        # spells its flavor otherwise (an install moved behind a link), that
+        # spelling is kept in `undone_as`, for `history()`'s check on `undoes`.
+        undone_as=(last.install_root, last.flavor_path),
     ) as tx:
         tx._undo(ops, created_dirs)
 
@@ -3349,8 +3386,9 @@ def _close_unsnapshotted(store_path: Path, record: _JournalRecord, place: _Place
         }
     )
     raw = closed.model_dump()
-    if raw["undoes"] is None:
-        del raw["undoes"]
+    for key in ("undoes", "undone_as"):
+        if raw[key] is None:
+            del raw[key]
     _write_record(store_path, _JournalRecord.model_validate(raw))
 
 

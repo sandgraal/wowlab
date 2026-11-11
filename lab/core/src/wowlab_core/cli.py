@@ -10399,7 +10399,13 @@ def undo(
         # Refused before any plan. Closing a record in place can move the
         # target, so this read is not final; `guard.undo` compares again
         # under its store lock, below.
-        newest = target.id if target is not None else "none: the journal is empty"
+        newest = (
+            target.id
+            if target is not None
+            else "none: nothing in the journal can be undone"
+            if records
+            else "none: the journal is empty"
+        )
         raise CliError(
             f"the change to undo is {newest}, not the expected {expect}: "
             "another change was journaled after the plan was made, so nothing was undone; "
@@ -10407,7 +10413,12 @@ def undo(
             EXIT_REFUSED,
         )
     if target is None:
-        raise CliError("nothing to undo: the write gate's journal is empty")
+        raise CliError(
+            "nothing to undo: every change in the write gate's journal stopped before it "
+            "changed any file"
+            if records
+            else "nothing to undo: the write gate's journal is empty"
+        )
     last = target
 
     def report(
