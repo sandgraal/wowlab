@@ -54,26 +54,38 @@ What entering a transaction does, in this order, before the body runs:
    root, the flavor folder and the executable names found in the flavor
    folder. `running`, `unknown`, and any exception count as running (§6.7 as
    amended).
-5. A pre-write snapshot of the flavor's `WTF/`, `Interface/` and `Fonts/` is
-   taken (§6.9 defaults; `Interface/` holds `AddOns/` and the loose overrides).
-6. A journal record naming that snapshot is written under the store, in
-   `journal/`, and fsynced (journal format 2; format-1 records still read).
-   The journal is first read in full, under the locks and before the
-   snapshot: one that cannot be (an I/O error, a damaged record) is a
+5. The journal is read in full, under the locks and before anything is
+   written: one that cannot be (an I/O error, a damaged record) is a
    `GuardError` with nothing written, since `undo()` could not reverse the
    change. A path read from a journal record or a manifest is looked up
    only when it is a local absolute path (absolute, not `\\\\` or `//`, a
-   drive letter on Windows); anything else names another install.
-7. Leftover temp files are cleaned up (item 2): the temp paths named by this
-   flavor's earlier records, from the most recent one whose cleanup finished
-   (that one included), are removed if the name is exactly guard's temp
-   pattern, the path passes the write rules below and the walk finds a
-   regular file there. A path that fails a lexical rule is never looked up.
-   Each removal is journaled and fsynced before the unlink; a path left
-   alone is listed in the record's `temps_left`; an absent one nowhere.
+   drive letter on Windows); anything else names another install. From it
+   come the leftover temp paths to consider (item 2): those named by this
+   flavor's earlier records, from the most recent one whose cleanup
+   finished, that one included.
+6. With no leftover to consider: a pre-write snapshot of the flavor's
+   `WTF/`, `Interface/` and `Fonts/` is taken (§6.9 defaults; `Interface/`
+   holds `AddOns/` and the loose overrides), then a journal record naming it
+   is written under the store, in `journal/`, and fsynced (journal format 2;
+   format-1 records still read).
+7. With leftovers (§6.10 as amended 2026-11-11, (a)): the journal record is
+   written first, naming no snapshot yet (`snapshot_id` is the empty
+   string), then the leftovers are cleaned up, then the pre-write snapshot
+   is taken and the record rewritten to name it. So the snapshot never holds
+   a leftover the cleanup removed; temp names are not filtered out of it. A
+   leftover is removed if the name is exactly guard's temp pattern, the path
+   passes the write rules below and the walk finds a regular file there. A
+   path that fails a lexical rule is never looked up. Each removal is
+   journaled and fsynced before the unlink; a path left alone is listed in
+   the record's `temps_left`; an absent one nowhere. A record whose
+   `snapshot_id` is empty changed no player file: the model refuses one
+   that journals a path, a folder or a temp of its own. If the snapshot
+   fails, the record is closed `rolled_back` (nothing was written) and the
+   transaction raises; if the process is killed first, the record stays
+   `open` until `undo()` closes it without restoring anything.
 
 A dry run takes the locks (the lock files and their directories are the only
-things it writes) and skips 5 to 7.
+things it writes) and skips 6 and 7.
 
 Each operation then checks the path lexically (the allowlist, executables,
 Windows spellings), walks it on disk without following any link, junction or
@@ -159,8 +171,8 @@ snapshot holds and this transaction did not write. The record says
 changing a path leaves the transaction unable to commit: it rolls back on
 exit even if the caller catches the error.
 
-`undo()` is itself a transaction, under the same two locks: it reads the most
-recent journal record without a lock only to find its flavor, takes the
+`undo()` is itself a transaction, under the same two locks: it reads the
+undo target without a lock only to find its flavor, takes the
 store lock (never creating the store), reads the journal again and plans only
 from that, takes the install lock of the flavor that record names, and then
 restores only the paths the record journaled from its pre-write snapshot. It
@@ -173,9 +185,22 @@ never gain permission bits: an existing file keeps no more than its current
 bits and the recorded bits; a recreated one gets its recorded bits less the
 umask and never an execute bit.
 
+`undo()` acts on the undo target (§6.10 as amended 2026-11-11, (a1)): the
+newest record that is not passed over. A record is passed over when it has
+`undoes`, never took a snapshot (`snapshot_id` empty) and is closed, and so
+is a closed record that changes no file and `undoes` a passed-over one. An
+undo that completed normally is never passed over. Every record `undo()`
+writes names the record it undoes in `undoes`; `history()` refuses, as
+damaged, an `undoes` that is not the id of an earlier record of the same
+flavor. A target that never took a snapshot changed no player file: `undo()`
+closes it in place (`rolled_back`, nothing restored, no record appended,
+no removed temp brought back), and does nothing for one already closed.
+
 `undo(expected_id=...)` compares the id of the record the caller approved
-with the most recent record it reads under the store lock, exactly, and
-refuses with nothing changed when they differ (§6.10 as amended 2026-09-28).
+with the undo target it reads under the store lock, exactly, and refuses
+with nothing changed when they differ (§6.10 as amended 2026-09-28): a
+newer record that is not passed over, or an id that names a passed-over
+record or none, is a mismatch.
 
 `store_lock()` takes the store lock alone, for a caller that must keep
 transactions off a store while it works on it. With `create=True` it makes a
@@ -433,6 +458,12 @@ class HistoryRecord(_Frozen):
     as `paths` spells them; empty unless `state` is `rollback_incomplete`,
     and empty for a record written before M16-84 (its note is not parsed).
     A directory the rollback could not remove is not listed."""
+    undoes: str | None = None
+    """For a record `undo()` wrote, the id of the record it undoes (§6.10 as
+    amended 2026-11-11, (a1)); None for every other record. `snapshot_id`
+    is the empty string for a record whose pre-write snapshot was never
+    taken (killed between the leftover cleanup and the snapshot, or the
+    snapshot failed): it changed no player file."""
 
 
 class PlanItem(_Frozen):
@@ -560,6 +591,32 @@ class _JournalRecord(_Frozen):
     # as they are. Written only when not empty (`_write_record`).
     paths_refused: tuple[StrictStr, ...] = ()
     paths_left: tuple[StrictStr, ...] = ()
+    # §6.10 as amended 2026-11-11 (a1): the id of the record an `undo()`
+    # record undoes. Written only by `undo()`, and then always; absent on
+    # every other record, never null. That it names an earlier record of the
+    # same flavor is checked across the journal (`_load_journal`).
+    undoes: StrictStr | None = None
+    # M16-69: on an undo's record only, and only when the record it undoes
+    # spells its install root and flavor path otherwise than this record
+    # (the install was moved and a link left at the old name): that record's
+    # spelling, `[install_root, flavor_path]`. Used for nothing but the
+    # same-flavor check on `undoes` (`_load_journal`); this record itself
+    # journals the place guard resolved, as every record does. Never null.
+    undone_as: tuple[StrictStr, StrictStr] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _undoes_is_never_null(cls, data: object) -> object:
+        for key in ("undoes", "undone_as"):
+            if isinstance(data, dict) and key in data and data[key] is None:
+                raise ValueError(f"{key} is never null")
+        return data
+
+    @model_validator(mode="after")
+    def _undone_as_only_with_undoes(self) -> _JournalRecord:
+        if self.undone_as is not None and self.undoes is None:
+            raise ValueError("undone_as is written only with undoes")
+        return self
 
     @field_validator("format")
     @classmethod
@@ -600,6 +657,74 @@ class _JournalRecord(_Frozen):
                 raise ValueError("paths_left names a path the record does not journal")
         return self
 
+    @model_validator(mode="after")
+    def _no_snapshot_changed_nothing(self) -> _JournalRecord:
+        """A record that names no snapshot was written before its pre-write
+        snapshot (§6.10 as amended 2026-11-11, (a)): it may journal the
+        leftover cleanup and nothing else. It changed no player file, made
+        no folder and no temp of its own, and it is `open` (killed, or
+        running) or closed `rolled_back` (its snapshot failed, or `undo()`
+        closed it)."""
+        if self.snapshot_id:
+            return self
+        if self.format == 1:
+            raise ValueError("a record that names no snapshot is format 2")
+        if self.paths or self.created_dirs or self.temps or self.paths_refused:
+            raise ValueError("a record that names no snapshot changed no file")
+        if self.state not in ("open", "rolled_back"):
+            raise ValueError(f"a record that names no snapshot is never {self.state}")
+        return self
+
+
+def _snapshot_taken(record: _JournalRecord | HistoryRecord) -> bool:
+    """Whether the record's pre-write snapshot was ever taken. The gate
+    writes the answer into the record itself: a record written before its
+    snapshot names none (`snapshot_id` is the empty string, §6.10 as amended
+    2026-11-11, (a)). A snapshot id whose manifest is missing from the store
+    counts as taken ((a2), "what never took a snapshot means")."""
+    return bool(record.snapshot_id)
+
+
+def _passed_over(records: Sequence[_JournalRecord | HistoryRecord]) -> frozenset[str]:
+    """The ids `undo()` passes over (§6.10 as amended 2026-11-11, (a1) as
+    widened by (a2)): every closed record that never took a pre-write
+    snapshot and lists no path and no created folder, with or without
+    `undoes`, however many in a row. Such a record changed no player file
+    (at most it removed leftover temps). A record that closes one is passed
+    over only on the same terms, so an undo that completed normally, which
+    always took a snapshot, never is."""
+    return frozenset(
+        r.id
+        for r in records
+        if r.state != "open" and not _snapshot_taken(r) and not r.paths and not r.created_dirs
+    )
+
+
+def _target_index(records: Sequence[_JournalRecord | HistoryRecord]) -> int | None:
+    """The index of the undo target: the newest record not passed over."""
+    passed = _passed_over(records)
+    for i in range(len(records) - 1, -1, -1):
+        if records[i].id not in passed:
+            return i
+    return None
+
+
+def _undo_target(records: Sequence[HistoryRecord]) -> HistoryRecord | None:
+    """The record `undo()` acts on, from `history()`: the newest one that is
+    not passed over (§6.10 as amended 2026-11-11, (a1), (a2)); None when
+    there is none."""
+    i = _target_index(records)
+    return None if i is None else records[i]
+
+
+def _passed_over_after_target(records: Sequence[HistoryRecord]) -> tuple[HistoryRecord, ...]:
+    """The records newer than the undo target, oldest first: each passed
+    over, so each stopped before it changed any file and is closed (killed
+    between its cleanup and its snapshot and closed by `undo`, or closed by
+    the gate when its snapshot failed). Empty when the target is the newest."""
+    i = _target_index(records)
+    return tuple(records[(-1 if i is None else i) + 1 :])
+
 
 def _journal_dir(store_path: Path) -> Path:
     return store_path / _JOURNAL_DIR
@@ -617,6 +742,7 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
     except OSError as exc:
         raise GuardError(f"cannot read the journal in {directory}: {exc}") from exc
     records: list[_JournalRecord] = []
+    earlier: dict[str, _JournalRecord] = {}
     for name in names:
         if not _RECORD_NAME.match(name):
             continue  # a temp file of an interrupted journal write
@@ -635,8 +761,45 @@ def _load_journal(store_path: Path) -> list[_JournalRecord]:
             raise GuardError(f"journal record {path} is damaged: {exc}") from exc
         if record.id != name.removesuffix(".json"):
             raise GuardError(f"journal record {path} carries the id {record.id!r}")
+        undone = None if record.undoes is None else earlier.get(record.undoes)
+        if record.undoes is not None and (undone is None or not _undoes_its_flavor(undone, record)):
+            # Records are read oldest first, so `earlier` holds exactly the
+            # earlier ones (§6.10 as amended 2026-11-11, (a1)).
+            raise GuardError(
+                f"journal record {path} is damaged: its undoes names no earlier record of "
+                "its flavor"
+            )
         records.append(record)
+        earlier[record.id] = record
     return records
+
+
+def _undoes_its_flavor(undone: _JournalRecord, record: _JournalRecord) -> bool:
+    """Whether `record` names the flavor of the record it undoes: by its own
+    (resolved) spelling, or, after the install was moved behind a link, by
+    the undone record's spelling it keeps in `undone_as`."""
+    if _same_flavor(undone, record):
+        return True
+    if record.undone_as is None:
+        return False
+    root, flavor_path = record.undone_as
+    return _same_flavor(
+        undone, record.model_copy(update={"install_root": root, "flavor_path": flavor_path})
+    )
+
+
+def _same_flavor(a: _JournalRecord, b: _JournalRecord) -> bool:
+    """Whether two records name the same flavor of the same install, as
+    journaled (guard writes the paths it resolved, so one flavor is one
+    spelling). Reads nothing from disk; a case or separator difference that
+    only the platform ignores is ignored too."""
+
+    def norm(text: str) -> str:
+        return os.path.normcase(os.path.normpath(text))
+
+    return norm(a.flavor_path) == norm(b.flavor_path) and norm(a.install_root) == norm(
+        b.install_root
+    )
 
 
 def _next_record_id(store_path: Path) -> str:
@@ -661,6 +824,10 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     # what a gate from before M16-84 reads.
     for key in ("paths_refused", "paths_left"):
         if not raw[key]:
+            del raw[key]
+    # `undoes` only on a record `undo()` wrote (2026-11-11 (a1)): never null.
+    for key in ("undoes", "undone_as"):
+        if raw[key] is None:
             del raw[key]
     text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
@@ -702,6 +869,7 @@ def _public(record: _JournalRecord) -> HistoryRecord:
         temps_removed=record.temps_removed,
         temps_left=record.temps_left,
         paths_left=record.paths_left,
+        undoes=record.undoes,
     )
 
 
@@ -1867,6 +2035,8 @@ class _Transaction:
         "_temps",
         "_temps_left",
         "_temps_removed",
+        "_undoes",
+        "_undone_as",
     )
 
     def __init__(
@@ -1878,8 +2048,15 @@ class _Transaction:
         dry_run: bool,
         place: _Place | None = None,
         locks: _Locks | None = None,
+        undoes: str | None = None,
+        undone_as: tuple[str, str] | None = None,
     ) -> None:
         self._flavor = flavor
+        # The record this one undoes (`undo()` only; 2026-11-11 (a1)).
+        self._undoes = undoes
+        # `undo()` only: the install root and flavor path the record undone
+        # journaled, kept when they are not spelled as this record's place.
+        self._undone_as = undone_as
         self._label = label
         self._store_path = store_path
         self._dry_run = dry_run
@@ -2077,10 +2254,71 @@ class _Transaction:
         return self
 
     def _open_record(self, place: _Place) -> None:
-        """Pre-write snapshot, journal record, then the leftover cleanup."""
+        """Journal record, leftover cleanup and pre-write snapshot.
+
+        With leftovers to consider, the record comes first (each removal is
+        journaled in it and fsynced before its unlink), naming no snapshot;
+        the cleanup runs; then the snapshot is taken, so it holds no removed
+        leftover, and the record is rewritten to name it (§6.10 as amended
+        2026-11-11, (a)). Killed before that, the record stays `open` and
+        names no snapshot: the change touched no player file, and `undo()`
+        closes it without restoring anything. With nothing to consider, the
+        snapshot is taken first and the record written once, naming it."""
         # Read under the store lock, so no other writer's record can appear
         # before this one is written.
         candidates = self._temp_candidates(place)
+        # With nothing to consider the cleanup is finished as the record is.
+        self._cleanup_finished = not candidates
+        record = _JournalRecord(
+            format=_JOURNAL_FORMAT,
+            id=_next_record_id(self._store_path),
+            created_at=_now(),
+            label=self._label,
+            snapshot_id="",
+            install_root=str(place.install_root),
+            flavor_path=str(place.flavor_dir),
+            flavor_version=place.version,
+            state="open",
+            paths=(),
+            created_dirs=(),
+            note=None,
+            cleanup_finished=self._cleanup_finished,
+        )
+        if self._undoes is not None:
+            # Only an undo's record has the key: never null (2026-11-11 (a1)).
+            record = record.model_copy(update={"undoes": self._undoes})
+            if self._undone_as is not None and not _same_flavor(
+                record.model_copy(
+                    update={"install_root": self._undone_as[0], "flavor_path": self._undone_as[1]}
+                ),
+                record,
+            ):
+                # Written only when the spellings differ (a moved install).
+                record = record.model_copy(update={"undone_as": self._undone_as})
+        if candidates:
+            self._record = record
+            _write_record(self._store_path, self._record)
+            self._clean_up(place, candidates)
+            try:
+                manifest = self._pre_write_snapshot(place)
+            except GuardError as exc:
+                # Nothing was written but the cleanup, which is journaled:
+                # the record is closed, so it is not left `open`.
+                try:
+                    self._journal_write("rolled_back", str(exc))
+                except GuardError:
+                    _log.exception("could not close the record of %r", self._label)
+                raise
+            self._record = self._record.model_copy(update={"snapshot_id": manifest.id})
+            self._journal_write("open")
+            return
+        manifest = self._pre_write_snapshot(place)
+        self._record = record.model_copy(update={"snapshot_id": manifest.id})
+        _write_record(self._store_path, self._record)
+
+    def _pre_write_snapshot(self, place: _Place) -> Manifest:
+        """Take the pre-write snapshot and keep its entries for the checks
+        each operation makes against it."""
         store = SnapshotStore(self._store_path)
         try:
             manifest = store.create(
@@ -2100,26 +2338,7 @@ class _Transaction:
             for e in manifest.entries
             if e.path.startswith(prefix)
         }
-        # With nothing to consider the cleanup is finished as the record is.
-        self._cleanup_finished = not candidates
-        self._record = _JournalRecord(
-            format=_JOURNAL_FORMAT,
-            id=_next_record_id(self._store_path),
-            created_at=_now(),
-            label=self._label,
-            snapshot_id=manifest.id,
-            install_root=str(place.install_root),
-            flavor_path=str(place.flavor_dir),
-            flavor_version=place.version,
-            state="open",
-            paths=(),
-            created_dirs=(),
-            note=None,
-            cleanup_finished=self._cleanup_finished,
-        )
-        _write_record(self._store_path, self._record)
-        if candidates:
-            self._clean_up(place, candidates)
+        return manifest
 
     def _temp_candidates(self, place: _Place) -> list[str]:
         """The temp paths item 2 considers: those named by this flavor's
@@ -2996,10 +3215,16 @@ def history(*, store: Path | None = None) -> tuple[HistoryRecord, ...]:
 
 
 def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
-    """Undo the most recent transaction, as a transaction of its own.
+    """Undo the undo target, as a transaction of its own.
 
-    Only the paths that transaction journaled are restored, from its pre-write
-    snapshot. Everything read from the store is checked first: the flavor it
+    The target is the newest record that is not passed over (§6.10 as
+    amended 2026-11-11, (a1); `_undo_target`): a closed undo that never took
+    its snapshot, and a closed record that only closes one, are skipped.
+    Only the paths the target journaled are restored, from its pre-write
+    snapshot. A target that never took its snapshot changed no player file:
+    it is closed in place (`rolled_back`, with a note), nothing is restored
+    and no record is appended; one already closed is left as it is. The
+    undo's own record names the target in `undoes`. Everything read from the store is checked first: the flavor it
     names, every path, and every snapshot entry against the journal's
     `before`. The undo is journaled like any transaction, so a second
     `undo()` undoes it. It holds the store lock from before it reads the
@@ -3009,17 +3234,19 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
 
     With `expected_id` (§6.10 as amended 2026-09-28), the id of the record
     the caller showed its user: once the store lock is held and the journal
-    re-read, a most recent record whose id is not exactly `expected_id`
-    (another transaction committed meanwhile, or the id names no record) is
-    a `GuardError` naming both ids, with nothing changed in the store or the
-    install. Without it, the most recent record is undone, whatever it is.
+    re-read, a target whose id is not exactly `expected_id` (another
+    transaction committed meanwhile, or the id names a passed-over record or
+    none) is a `GuardError` naming both ids, with nothing changed in the
+    store or the install. Without it, the target is undone, whatever it is.
     """
     if expected_id is not None and not isinstance(expected_id, str):
         raise GuardError(f"expected_id is a str, not {type(expected_id).__name__}")
     store_path = _store_path(store)
-    # Unlocked, only to find the flavor (and so which install to check). A
-    # mismatch here is already final: the journal only ever grows.
-    first = _last_record(store_path, expected_id)
+    # Unlocked, only to find the flavor (and so which install to check).
+    # `expected_id` is compared only under the store lock, below: closing a
+    # record in place can move the target (2026-11-11 (a2)), so a mismatch
+    # read without the lock is not final.
+    first = _last_record(store_path)
     place = _record_place(first)
     _refuse_store_overlap(store_path, place)
     locks = _Locks()
@@ -3037,18 +3264,26 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
 
 
 def _last_record(store_path: Path, expected_id: str | None = None) -> _JournalRecord:
-    """The journal's most recent record; with `expected_id`, it must have
-    exactly that id (a whole-string compare, nothing looser)."""
+    """The undo target (§6.10 as amended 2026-11-11, (a1)): the newest
+    record that is not passed over; with `expected_id`, it must have exactly
+    that id (a whole-string compare, nothing looser)."""
     records = _load_journal(store_path)
     if not records:
         wanted = "" if expected_id is None else f" (expected record {expected_id!r})"
         raise GuardError(f"nothing to undo: the journal in {store_path} is empty{wanted}")
-    last = records[-1]
+    i = _target_index(records)
+    if i is None:
+        # Every record is passed over: each stopped before it changed any
+        # file and is closed (2026-11-11 (a2)), so there is nothing to undo.
+        raise GuardError(
+            f"nothing to undo: every record in {store_path} stopped before it changed any file"
+        )
+    last = records[i]
     if expected_id is not None and last.id != expected_id:
         raise GuardError(
-            f"the most recent journal record is {last.id}, not the expected {expected_id!r}: "
-            "another change was journaled after it was read, or that id names no record; "
-            "nothing was undone. Look at the history again and retry"
+            f"the record to undo is {last.id}, not the expected {expected_id!r}: "
+            "another change was journaled after it was read, or that id names no record "
+            "to undo; nothing was undone. Look at the history again and retry"
         )
     return last
 
@@ -3071,14 +3306,21 @@ def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _
         )
     if install is not None and place.root_id != install.root_id:
         raise GuardError(
-            f"the most recent journal record changed to {record.id}, which belongs to "
+            f"the record to undo changed to {record.id}, which belongs to "
             f"{place.install_root}, not {install.install_root}; nothing was undone"
         )
     return place
 
 
 def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _Locks) -> None:
-    """Plan the undo of `last` and run it as a transaction, under `locks`."""
+    """Plan the undo of `last` and run it as a transaction, under `locks`.
+    A record that never took its snapshot is closed in place instead."""
+    if not _snapshot_taken(last) and not last.paths and not last.created_dirs:
+        # Passed over once closed ((a2)): the only record closed without
+        # restoring. Any other record whose snapshot cannot be read is
+        # refused below, as before.
+        _close_unsnapshotted(store_path, last, place)
+        return
     snapshots = SnapshotStore(store_path)
     try:
         manifest = snapshots.show(last.snapshot_id)
@@ -3114,8 +3356,40 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
         dry_run=False,
         place=place,
         locks=locks,
+        undoes=last.id,
+        # The record journals `place`, as guard resolved it. When `last`
+        # spells its flavor otherwise (an install moved behind a link), that
+        # spelling is kept in `undone_as`, for `history()`'s check on `undoes`.
+        undone_as=(last.install_root, last.flavor_path),
     ) as tx:
         tx._undo(ops, created_dirs)
+
+
+def _close_unsnapshotted(store_path: Path, record: _JournalRecord, place: _Place) -> None:
+    """Close a record that never took its pre-write snapshot (§6.10 as
+    amended 2026-11-11, (a)): it changed no player file, so nothing is
+    restored and no removed leftover is brought back. An `open` one (killed
+    between its cleanup and its snapshot) is rewritten `rolled_back` with a
+    note; a closed one is left as it is. Under the store and install locks,
+    so the process that wrote it is gone; the client check runs as for any
+    undo, though nothing in the install is written."""
+    if record.state != "open":
+        return
+    _refuse_if_client_running(place)
+    closed = record.model_copy(
+        update={
+            "state": "rolled_back",
+            "note": (
+                f"{record.note + '; ' if record.note else ''}stopped before its pre-write "
+                f"snapshot, so it changed no file; closed by undo at {_now()}"
+            ),
+        }
+    )
+    raw = closed.model_dump()
+    for key in ("undoes", "undone_as"):
+        if raw[key] is None:
+            del raw[key]
+    _write_record(store_path, _JournalRecord.model_validate(raw))
 
 
 @contextlib.contextmanager

@@ -1732,6 +1732,16 @@ class LastTransaction(_Out):
     # are, relative to the flavor folder, sorted (M16-84); empty otherwise,
     # and for a record written before the journal listed them.
     paths_left: list[LeftPath]
+    # False when the change stopped before its pre-write snapshot, so it
+    # changed no file (2026-11-11 (a)).
+    snapshot_taken: bool = True
+    # How many leftover temporary files of earlier changes it removed.
+    temps_removed: int = 0
+    # The ids of the newer records `undo` passes over, oldest first: changes
+    # that stopped before they changed any file and were closed (2026-11-11
+    # (a1), (a2)), so this record is the change to undo. Empty when this
+    # record is the newest.
+    passed_over: list[str] = Field(default_factory=list)
 
 
 class StoreReport(_Out):
@@ -1988,9 +1998,10 @@ def _read_left(store: StoreReport, inst: install.Install | None) -> StoreReport:
         records = guard.history()
     except guard.GuardError:
         return store
-    if not records or records[-1].id != t.id:
+    target = guard._undo_target(records)
+    if target is None or target.id != t.id:
         return store
-    left = _left_paths(records[-1], inst)
+    left = _left_paths(target, inst)
     return store.model_copy(update={"last_transaction": t.model_copy(update={"paths_left": left})})
 
 
@@ -2006,8 +2017,9 @@ def _store_report() -> StoreReport:
         journal_error = str(exc)
     else:
         transactions = len(records)
-        if records:
-            r = records[-1]
+        # The change `undo` acts on (2026-11-11 (a1)), not always the newest.
+        r = guard._undo_target(records)
+        if r is not None:
             last = LastTransaction(
                 id=r.id,
                 created_at=r.created_at,
@@ -2017,6 +2029,9 @@ def _store_report() -> StoreReport:
                 created_dirs=len(r.created_dirs),
                 flavor_folder=Path(r.flavor_path).name,
                 paths_left=_left_paths(r, None),
+                snapshot_taken=bool(r.snapshot_id),
+                temps_removed=len(r.temps_removed),
+                passed_over=[k.id for k in guard._passed_over_after_target(records)],
             )
     return StoreReport(
         path=str(store.path),
@@ -2119,14 +2134,24 @@ def _doctor(
     if store.journal_error:
         problems.append("the journal of the write gate cannot be read")
     elif store.last_transaction is not None and store.last_transaction.state == "open":
-        problems.append(_interrupted(store.last_transaction.id))
+        t = store.last_transaction
+        problems.append(
+            _interrupted(t.id, t.passed_over)
+            if t.snapshot_taken
+            else _stopped_before_any_file(t.id, removed=t.temps_removed > 0)
+        )
     elif (
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
         t = store.last_transaction
         problems.append(
             _rollback_unfinished(
-                t.id, t.paths_left, t.flavor_folder, paths=t.paths, created_dirs=t.created_dirs
+                t.id,
+                t.paths_left,
+                t.flavor_folder,
+                paths=t.paths,
+                created_dirs=t.created_dirs,
+                stopped=t.passed_over,
             )
         )
     return DoctorReport(
@@ -2390,16 +2415,52 @@ def _could_be_an_install(root: Path) -> bool:
         return False
 
 
-def _interrupted(record_id: str) -> str:
+def _interrupted(record_id: str, stopped: Sequence[str] = ()) -> str:
     """The `doctor` problem for a most recent journal record still `open`
     (M16-13): a change that was killed, or is running now, so some files
     may hold its new bytes and others not. `undo --expect` names exactly
-    that record, and refuses if another change is journaled first."""
+    that record, and refuses if another change is journaled first. With
+    `stopped`, the newer records that stopped before they changed any file
+    and were closed (2026-11-11 (a1), (a2)): it is no longer the newest
+    record, so it is named as the change before them."""
     return (
-        f"the last change wowlab made did not finish (record {record_id}): some files may "
+        f"{_subject(record_id, stopped)} did not finish (record {record_id}): some files may "
         "be changed and others not. To put back what was there before it, run: "
         f"wowlab undo --expect {record_id}"
     )
+
+
+def _subject(record_id: str, stopped: Sequence[str]) -> str:
+    """Who a doctor problem is about: the last change wowlab made, or, past
+    closed records that stopped before they changed any file (2026-11-11
+    (a1), (a2)), the change before them, with their record ids."""
+    if not stopped:
+        return "the last change wowlab made"
+    if len(stopped) == 1:
+        return (
+            f"a later change stopped before it changed any file (record {stopped[0]}), so "
+            "the change before it"
+        )
+    return (
+        f"later changes stopped before they changed any file (records {', '.join(stopped)}), "
+        "so the change before them"
+    )
+
+
+def _stopped_before_any_file(record_id: str, *, removed: bool = False) -> str:
+    """The `doctor` problem for a most recent `open` record that never took
+    its pre-write snapshot (2026-11-11 (a)): the change was stopped before
+    it changed any file. `removed`: it had removed leftover temporary files
+    of an earlier change first, which is said only then. Undo closes it and
+    restores nothing."""
+    if removed:
+        what = (
+            f"stopped before it changed any file (record {record_id}): it only removed "
+            "temporary files an earlier change left behind"
+        )
+    else:
+        what = f"stopped before it changed anything (record {record_id})"
+    return f"the last change wowlab made {what}. To close it, run: wowlab undo --expect {record_id}"
 
 
 def _rollback_unfinished(
@@ -2409,6 +2470,7 @@ def _rollback_unfinished(
     *,
     paths: int = 1,
     created_dirs: int = 0,
+    stopped: Sequence[str] = (),
 ) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
@@ -2431,7 +2493,10 @@ def _rollback_unfinished(
     command stays last"). With folders but no paths, undo removes the empty
     folders and records itself, so the command is offered, last. Names are kept as stored: the text output escapes
     them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
-    unescaped. A record that lists no file gets the sentence without names."""
+    unescaped. A record that lists no file gets the sentence without names.
+    With `stopped`, the record is the change undos that stopped before they
+    changed any file were undoing (2026-11-11 (a1)), and is named so."""
+    subject = _subject(record_id, stopped)
     groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
     for p in left:
         groups.setdefault((p.now, p.exists), []).append(p.path)
@@ -2442,7 +2507,7 @@ def _rollback_unfinished(
         # folders were made): undo removes them if empty and records itself,
         # so this record stops being the last (M16-86's plan says the same).
         lead = (
-            "the last change wowlab made failed after it created folders and before it changed "
+            f"{subject} failed after it created folders and before it changed "
             f"any file (record {record_id}): "
         )
         named = (
@@ -2456,9 +2521,7 @@ def _rollback_unfinished(
             f"wowlab undo --expect {record_id}"
         )
     if paths == 0:
-        lead = (
-            f"the last change wowlab made failed before it changed any file (record {record_id}): "
-        )
+        lead = f"{subject} failed before it changed any file (record {record_id}): "
         named = (
             where + "; ".join(said)
             if said
@@ -2471,10 +2534,7 @@ def _rollback_unfinished(
             "leaves this record as it is; wowlab doctor stops reporting it after wowlab's "
             "next change."
         )
-    lead = (
-        "the last change wowlab made failed, and putting the files back did not finish "
-        f"(record {record_id}): "
-    )
+    lead = f"{subject} failed, and putting the files back did not finish (record {record_id}): "
     tail = (
         "To put back what was there before the change, close the game and run this; it puts "
         "back every file the change wrote or deleted, including anything the game has saved "
@@ -2731,8 +2791,9 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"  journal: {store.journal_error}")
     elif store.last_transaction is not None:
         t = store.last_transaction
+        which = "to undo" if t.passed_over else "most recent"
         _say(
-            f"  {store.transactions} transaction(s) in the journal; most recent: {t.id} "
+            f"  {store.transactions} transaction(s) in the journal; {which}: {t.id} "
             f'({_journal_state_words(t.state)}; {t.paths} file(s)) "{t.label}"'
         )
     else:
@@ -9305,6 +9366,13 @@ _NOTHING_TO_PUT_BACK_UNFINISHED = (
     f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
     "reporting that change"
 )
+# A record that never took its pre-write snapshot (2026-11-11 (a)): the
+# change was stopped after it removed leftover temporary files and before
+# it changed any file. The undo closes it; nothing is put back.
+_STOPPED_BEFORE_ANY_FILE = (
+    "  that change stopped before it changed any file, so the undo changes no file; "
+    "answering yes closes it, and wowlab doctor stops reporting it"
+)
 
 
 def _read_detail(flavor_path: Path, rel: str) -> bytes:
@@ -10235,9 +10303,34 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
     lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
     if not listed and not folders:
         unfinished = last.state in ("open", "rollback_incomplete")
-        lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
+        if not last.snapshot_id:
+            lines.append(_STOPPED_BEFORE_ANY_FILE)
+        else:
+            lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
     return lines, listed
+
+
+def _closed_unsnapshotted(closed: guard.HistoryRecord, now: guard.HistoryRecord | None) -> str:
+    """What `undo` says after closing a change that stopped before it
+    changed any file (2026-11-11 (a)): no file changed, nothing to reverse.
+    When it was an undo itself, the change it was undoing is the next
+    target again, and the line names it with its own command (a1). When the
+    new target is a change that did not finish, the line names that (a2)."""
+    if closed.undoes is not None and now is not None and now.id == closed.undoes:
+        return (
+            "Closed; that undo stopped before it changed any file. The change it was "
+            f"undoing, {now.id}, is not undone yet: wowlab undo --expect {now.id}"
+        )
+    if now is not None and now.state in ("open", "rollback_incomplete"):
+        return (
+            "Closed; that change stopped before it changed any file. The change before it, "
+            f"{now.id}, did not finish: wowlab undo --expect {now.id}"
+        )
+    return (
+        "Closed; that change stopped before it changed any file, so there was nothing to put "
+        "back and nothing for `wowlab undo` to reverse."
+    )
 
 
 def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str]) -> list[str]:
@@ -10271,7 +10364,7 @@ def undo(
         typer.Option(
             "--expect",
             metavar="ID",
-            help="Undo only if the most recent journal record is this one (undone in an "
+            help="Undo only if the change to undo is this journal record (undone in an "
             "earlier run's --json): else refused, exit 3, nothing undone. For a plan shown "
             "by one run and confirmed by another.",
         ),
@@ -10292,22 +10385,41 @@ def undo(
     Only the change the plan shows is undone: if another change is recorded
     after the plan was shown, nothing is undone.
 
+    A change or undo that was stopped before it changed any file is closed
+    and then skipped: the next `wowlab undo` offers the change before it.
+
     \f
     JSON: UndoReport."""
     records = guard.history()
-    if expect is not None and (not records or records[-1].id != expect):
-        # The journal only grows, so a mismatch is final; `guard.undo` makes
-        # the same compare again under its store lock, below.
-        newest = records[-1].id if records else "none: the journal is empty"
+    # The undo target (2026-11-11 (a1), (a2)): the newest record that is not
+    # passed over, so a closed change that stopped before it changed any file
+    # is skipped.
+    target = guard._undo_target(records)
+    if expect is not None and (target is None or target.id != expect):
+        # Refused before any plan. Closing a record in place can move the
+        # target, so this read is not final; `guard.undo` compares again
+        # under its store lock, below.
+        newest = (
+            target.id
+            if target is not None
+            else "none: nothing in the journal can be undone"
+            if records
+            else "none: the journal is empty"
+        )
         raise CliError(
-            f"the most recent journal record is {newest}, not the expected {expect}: "
+            f"the change to undo is {newest}, not the expected {expect}: "
             "another change was journaled after the plan was made, so nothing was undone; "
             "run the command again to see the new plan",
             EXIT_REFUSED,
         )
-    if not records:
-        raise CliError("nothing to undo: the write gate's journal is empty")
-    last = records[-1]
+    if target is None:
+        raise CliError(
+            "nothing to undo: every change in the write gate's journal stopped before it "
+            "changed any file"
+            if records
+            else "nothing to undo: the write gate's journal is empty"
+        )
+    last = target
 
     def report(
         *, applied: bool, transaction: str | None = None, written: Sequence[str] = ()
@@ -10335,7 +10447,10 @@ def undo(
 
     plan_lines: list[str] = []
     listed: list[str] = []
-    if not last.paths and not last.created_dirs:
+    # An `open` record that names no file still needs closing (a change
+    # killed before it changed anything): it goes on to the plan and
+    # `guard.undo`, which closes it, so `doctor` stops reporting it.
+    if not last.paths and not last.created_dirs and last.state != "open":
         if json_out:
             _emit(report(applied=False))
         else:
@@ -10354,7 +10469,8 @@ def undo(
             _emit(report(applied=False))
         raise
     now = guard.history()
-    if not now or now[-1].id != last.id:
+    again = guard._undo_target(now)
+    if again is None or again.id != last.id:
         raise CliError(
             "the journal changed after the plan was shown; nothing was undone, run the "
             "command again to see the new plan",
@@ -10362,7 +10478,17 @@ def undo(
         )
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
-    undone = guard.history()[-1]
+    after = guard.history()
+    if len(after) == len(now):
+        # Closed in place: the change stopped before it changed any file, so
+        # the undo restored nothing and journaled no record of its own.
+        done = report(applied=True)
+        if json_out:
+            _emit(done)
+            return
+        _say(_closed_unsnapshotted(last, guard._undo_target(after)))
+        return
+    undone = after[-1]
     done = report(applied=True, transaction=undone.id, written=[p.path for p in undone.paths])
     if json_out:
         _emit(done)

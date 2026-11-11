@@ -523,7 +523,6 @@ def problem_naming(report: dict[str, Any], record_id: str) -> str:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_kill_between_cleanup_and_snapshot_leaves_a_record_that_touched_nothing(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -538,7 +537,6 @@ def test_constructed_a_kill_between_cleanup_and_snapshot_leaves_a_record_that_to
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anything(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -551,7 +549,6 @@ def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anyth
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_cli_undo_closes_a_killed_record_and_doctor_reports_the_change_before_it(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -703,7 +700,6 @@ def commit(flavor: Path, store: Path, label: str, rel: str, data: bytes) -> Any:
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_killed_record_and_the_record_that_closes_it_name_what_they_undo(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -730,7 +726,6 @@ def test_constructed_a_killed_record_and_the_record_that_closes_it_name_what_the
         assert later.paths == () and later.created_dirs == (), "closing K changed no file"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_completed_undo_that_changed_no_file_is_not_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path
 ) -> None:
@@ -770,7 +765,6 @@ def test_constructed_a_completed_undo_that_changed_no_file_is_not_passed_over(
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -795,7 +789,6 @@ def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_o
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_an_open_killed_record_stays_the_target_until_undo_closes_it(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -825,7 +818,6 @@ def test_constructed_an_open_killed_record_stays_the_target_until_undo_closes_it
     assert again["undone"] == c.dead_id, ("once K is closed, D is the target", again)
 
 
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_an_undo_killed_after_its_snapshot_is_never_passed_over(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path
 ) -> None:
@@ -898,7 +890,6 @@ ID = re.compile(r"[0-9]{8}-[0-9a-f]{8}")
         pytest.param("list", id="constructed-undoes-is-a-list"),
     ],
 )
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, names: str
 ) -> None:
@@ -967,7 +958,6 @@ def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
 
 
 @pytest.mark.parametrize("route", ROUTES)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_doctor_tells_a_change_killed_before_its_snapshot_from_one_killed_mid_write(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
@@ -1152,7 +1142,6 @@ CLEANUPS = [
     pytest.param(
         "leftover",
         id="constructed-the-snapshot-fails-after-a-cleanup",
-        marks=pytest.mark.xfail(strict=True, reason="M16-69 not implemented"),
     ),
     # Positive control: nothing to clean up. It holds on main, where the
     # snapshot comes first and a failure journals nothing, so it has no marker.
@@ -1409,7 +1398,6 @@ FORGED_PATHS = [
 
 
 @pytest.mark.parametrize("field", FORGED_PATHS)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_record_with_no_snapshot_that_lists_a_path_is_not_passed_over(
     tmp_path: Path,
     user_data: Path,
@@ -1474,7 +1462,6 @@ CLOSERS = [
 
 
 @pytest.mark.parametrize("shape", CLOSERS)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_a_record_naming_a_passed_over_record_is_passed_over_only_if_it_changed_nothing(
     tmp_path: Path,
     user_data: Path,
@@ -1543,7 +1530,6 @@ def put_the_file_back(flavor: Path, rel: str, data: bytes) -> None:
 
 
 @pytest.mark.parametrize("shape", IN_A_ROW)
-@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_passed_over_records_in_a_row_are_all_passed_over(
     tmp_path: Path,
     user_data: Path,
