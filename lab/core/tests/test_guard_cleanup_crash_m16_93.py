@@ -53,7 +53,8 @@ What the amendment fixes, as graded here:
 - (a2), "what never took a snapshot means" (2026-11-11, M16-108T round 2):
   a record whose manifest is missing is not passed over (the snapshot
   error stands); a record whose journal file is forged to list a path or
-  a folder is not passed over (or is refused as damaged); a record naming
+  a folder is not passed over (or is refused as damaged), and `undo` of it
+  fails and changes nothing (15e172b); a record naming
   a passed-over K in `undoes` that lists a path or took a snapshot is not
   passed over; two passed-over records in a row are both passed over; a
   transaction rolled back after its snapshot is never passed over. Every
@@ -1316,21 +1317,57 @@ def raw_record(store: Path, record_id: str) -> dict[str, Any]:
     return data
 
 
+MISSING_MANIFEST = [
+    pytest.param("pathless", id="constructed-rolled-back-before-any-write-manifest-missing"),
+    pytest.param("paths", id="constructed-wrote-config-manifest-missing"),
+]
+
+
+@pytest.mark.parametrize("shape", MISSING_MANIFEST)
 def test_constructed_a_record_whose_manifest_is_missing_is_not_passed_over(
-    tmp_path: Path, user_data: Path, root: Path, flavor: Path
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, shape: str
 ) -> None:
     """(a2), "what never took a snapshot means": a snapshot id that names no
-    manifest does not count. T completes and writes Config.wtf; its manifest
-    file is then removed from the store (constructed: deleted by hand). T is
-    still the target: `wowlab undo --json` offers T, `undo --expect T --yes`
-    refuses because T's snapshot cannot be read, and `--expect <T0 id>`, the
-    record before T, is a mismatch. Nothing changes.
+    manifest does not count, and `undo` closes a record without restoring
+    only when it would be passed over once closed (15e172b). T0 completes
+    and writes Config.wtf. Then a record T that took its snapshot:
+
+    - `pathless` (round 3, from the code review): a transaction rolled back
+      before any write, so T has no `paths` and no `created_dirs`, and only
+      the snapshot rule keeps it from being passed over;
+    - `paths`: a completed change that writes Syndicator.lua, which the path
+      rule protects as well.
+
+    T's manifest file is then removed from the store (constructed: deleted
+    by hand). T is still the target: `wowlab undo --json` offers T,
+    `guard.undo(expected_id=T)` refuses naming T's snapshot id, and
+    `--expect <T0 id>` is a mismatch. The CLI's `undo --expect T --yes`
+    refuses naming the snapshot id too, except that for the `pathless` T it
+    may give main's "changed no files" answer (exit 0, nothing applied; the
+    2026-11-10 (d) rule for a record with no paths and no created folders),
+    since 15e172b's "refused as before" does not say which. Either way
+    nothing changes (install, journal, manifests) and T stays the target, so
+    T is neither closed nor passed over.
 
     Holds on main (no record is passed over there), so it carries no marker;
-    it is here so that M16-69 cannot pass over a record by a missing manifest."""
+    it is here so that M16-69 cannot pass over, or close without restoring,
+    a record whose manifest is missing."""
     store = snapshot.default_store_path()
-    t0 = commit(flavor, store, "t0", SYNDICATOR, STRANDED_BYTES)
-    t = commit(flavor, store, "t", CONFIG, T1_BYTES)
+    t0 = commit(flavor, store, "t0", CONFIG, T1_BYTES)
+    if shape == "pathless":
+        ns = SimpleNamespace(path=flavor, version=None)
+        with (
+            pytest.raises(RuntimeError, match="constructed: the caller fails"),
+            guard.transaction(ns, label="rolled-back", store=store),
+        ):
+            raise RuntimeError("constructed: the caller fails before any write")
+        t = guard.history(store=store)[-1]
+        assert t.label == "rolled-back" and t.state != "open", t
+        assert t.paths == () and t.created_dirs == (), "positive control: T lists nothing"
+    else:
+        t = commit(flavor, store, "t", SYNDICATOR, STRANDED_BYTES)
+    assert t.id != t0.id
+    assert offered(store) == t.id, "positive control: with its manifest, T is the target"
     manifest = store / "manifests" / f"{t.snapshot_id}.json"
     assert manifest.is_file(), "positive control: T's manifest is where the store keeps it"
     manifest.unlink()
@@ -1340,19 +1377,27 @@ def test_constructed_a_record_whose_manifest_is_missing_is_not_passed_over(
     assert offered(store) == t.id, "a record whose manifest is missing is still the target"
     with pytest.raises((guard.GuardError, SnapshotError)) as raised:
         guard.undo(store=store, expected_id=t.id)
-    assert t.snapshot_id in str(raised.value) or any(
-        isinstance(e, SnapshotError) for e in errors_in(raised.value)
-    ), f"the undo of T is refused because its snapshot cannot be read: {raised.value!r}"
+    assert any(t.snapshot_id in str(e) for e in errors_in(raised.value)), (
+        f"the undo of T is refused because its snapshot cannot be read: {raised.value!r}"
+    )
     cli = run("undo", "--expect", t.id, "--yes", "--json")
-    assert cli.exit_code != 0, (cli.stdout, cli.stderr)
-    assert t.snapshot_id in json.loads(cli.stdout)["message"], (
-        "refused because T's snapshot cannot be read, not as a mismatch",
-        cli.stdout,
-    )
-    assert tree(root) == before and journal(store) == recorded and manifest_ids(store) == held, (
-        "a refused undo changes nothing"
-    )
-    assert (flavor / CONFIG).read_bytes() == T1_BYTES
+    answer = json.loads(cli.stdout)
+    if cli.exit_code != 0:
+        assert t.snapshot_id in answer["message"], (
+            "refused because T's snapshot cannot be read, not as a mismatch",
+            cli.stdout,
+        )
+    else:
+        # The CLI's "changed no files" answer for a record with no paths and
+        # no created folders (§6.10, 2026-11-10 (d)): nothing applied, and
+        # nothing journaled (checked below), so T is not closed.
+        assert shape == "pathless", ("T lists a path: its undo must be refused", cli.stdout)
+        assert answer["undone"] == t.id and answer["applied"] is False, answer
+        assert answer["plan"] == [] and answer["created_dirs"] == [], answer
+    assert tree(root) == before, "a refused undo changes no file"
+    assert journal(store) == recorded, "undo neither closes T nor journals"
+    assert manifest_ids(store) == held, "a refused undo stores no snapshot"
+    assert offered(store) == t.id, "T is still the target"
 
     assert_mismatch(root, store, t0.id)
 
@@ -1380,7 +1425,10 @@ def test_constructed_a_record_with_no_snapshot_that_lists_a_path_is_not_passed_o
     spec does not say whether that record is damaged, so either is accepted:
     `history()` refuses it with `GuardError`, or K is the target and
     `--expect <T1 id>` is a mismatch. Either way nothing changes, and T1 is
-    not offered behind it. The positive control: written back unchanged, K is
+    not offered behind it. When K is the target, `undo --expect <K id> --yes`
+    (library and CLI) fails and changes nothing: `undo` closes a record
+    without restoring only when it would be passed over once closed
+    (15e172b, from security review N1). The positive control: written back unchanged, K is
     still passed over."""
     store = snapshot.default_store_path()
     t1, failed = closed_by_the_gate(monkeypatch, flavor, store)
@@ -1405,6 +1453,18 @@ def test_constructed_a_record_with_no_snapshot_that_lists_a_path_is_not_passed_o
     assert getattr(reread, field), f"the forged {field} reads back"
     assert offered(store) == k.id, f"a record that lists {field} is never passed over"
     assert_mismatch(root, store, t1.id)
+
+    # 15e172b: `undo` closes without restoring only a record that would be
+    # passed over once closed. K lists a path or a folder and has no
+    # snapshot, so undo of K fails and changes nothing.
+    before, recorded, held = tree(root), journal(store), manifest_ids(store)
+    with pytest.raises((guard.GuardError, SnapshotError)):
+        guard.undo(store=store, expected_id=k.id)
+    cli = run("undo", "--expect", k.id, "--yes", "--json")
+    assert cli.exit_code != 0, ("undo of K is refused", cli.stdout, cli.stderr)
+    assert tree(root) == before, "a refused undo of K changes no file"
+    assert journal(store) == recorded, "a refused undo of K journals nothing"
+    assert manifest_ids(store) == held, "a refused undo of K stores no snapshot"
 
 
 CLOSERS = [
