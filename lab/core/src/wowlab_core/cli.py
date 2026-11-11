@@ -1894,17 +1894,18 @@ def _journaled_flavor(
     r: guard.HistoryRecord, inst: install.Install | None
 ) -> tuple[Path, str] | None:
     """The resolved install root and the flavor folder name of the flavor
-    `r` was written to, when it is one of `inst`'s; else None."""
+    `r` was written to, when it is one of `inst`'s (resolved as the write
+    gate resolves a flavor before it journals it); else None."""
     if inst is None:
-        return None
-    try:
-        root = inst.root.resolve()
-    except (OSError, RuntimeError):
         return None
     journaled = Path(r.flavor_path)
     for f in inst.flavors:
-        if root / f.folder == journaled:
-            return root, f.folder
+        try:
+            real = longpath.resolve(inst.root / f.folder, strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if real == journaled:
+            return real.parent, real.name
     return None
 
 

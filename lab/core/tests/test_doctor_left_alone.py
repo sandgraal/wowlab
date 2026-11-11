@@ -285,6 +285,22 @@ def test_a_record_of_a_flavor_doctor_did_not_find_is_not_read_constructed(
     assert "wowlab could not put back WTF/Config.wtf" in _json_problem(record_id, _json())
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a symbolic link needs a privilege on Windows")
+def test_an_install_named_through_a_link_is_still_read_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate journals the resolved flavor folder; doctor finds the
+    install by the name it was given (here a link to it, as a temp folder
+    is on macOS) and still reads the file."""
+    link = tmp_path / "linked install"
+    link.symlink_to(root, target_is_directory=True)
+    monkeypatch.setenv(install.ENV_ROOT, str(link))
+    record_id = _fail_leaving(link, link / FLAVOR, CONFIG)
+    assert guard.history()[-1].flavor_path == str(flavor.resolve())
+    assert _left(_json()) == [(CONFIG, "changed_since")]
+    assert "WTF/Config.wtf has been changed" in _json_problem(record_id, _json())
+
+
 def test_a_file_wowlab_never_wrote_is_left_by_undo_constructed(root: Path, flavor: Path) -> None:
     """The gate refused to write Config.wtf (another program changed it
     first), and the program changed it again: the record lists it, the
