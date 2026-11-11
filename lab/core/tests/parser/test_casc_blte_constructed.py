@@ -99,7 +99,7 @@ def test_an_e_block_is_refused_with_its_key_name_constructed() -> None:
     # The key name is stored little-endian; key lists print it as a number.
     assert caught.value.key_name == "50505078126ACB3E"
     assert (caught.value.block, caught.value.cipher) == (1, "S")
-    assert "ADR-0033" in str(caught.value)
+    assert "wowlab does not decrypt" in str(caught.value)
     assert isinstance(caught.value, casc.CascError)
 
 
@@ -564,6 +564,7 @@ def _audit(event: str, args: tuple[object, ...]) -> None:
 
 
 sys.addaudithook(_audit)
+_FOLDER = getattr(os, "O_DIRECTORY", 0)  # 0 on Windows: no folder is opened there
 _WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
 
@@ -631,7 +632,8 @@ def test_read_encoded_decodes_a_file_from_its_archive_constructed(
     opened.clear()
     key, plain = files["good"]
     assert casc.read_encoded(storage, key) == plain
-    assert [Path(p).name for p, _ in opened] == ["data.001"]
+    # The folders on the way are opened too, from the root (M16-79).
+    assert [Path(p).name for p, f in opened if not f & _FOLDER] == ["data.001"]
     assert all(flags & _WRITING == 0 for _, flags in opened)
     assert tree_state(root) == before
 

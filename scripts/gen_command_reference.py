@@ -411,7 +411,12 @@ def render(root: Any | None = None) -> str:
         "the command shows its plan and waits for an answer. What it changes differs by "
         "command, and its help says which: an install, through the write gate, or the "
         "Lab's own snapshot store. **`--json` output** names the model the command's "
-        "`--json` output validates against.",
+        "`--json` output validates against. A `--json` run that ends in an error reported "
+        "as one `wowlab: …` line also prints an `ErrorReport` (`kind`, `message`, "
+        "`exit_code`) on stdout, unless it already printed its own report; with "
+        "`log tail --follow` it is one line. The error line on stderr and the exit code "
+        "are the same as without `--json`. An `Error:` from the command line itself (an "
+        "unknown option, a missing argument; exit 2) prints no report.",
         "",
     ]
     for group_path, group in iter_groups(root):

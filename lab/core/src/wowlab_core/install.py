@@ -67,6 +67,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wowlab_core import longpath, snapshot
+from wowlab_core.errors import WowlabError
 from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
@@ -174,7 +175,7 @@ NO_READABLE_FLAVOR = "has no flavor folder wowlab can read (a real folder named 
 # ─── errors ──────────────────────────────────────────────────────────────────
 
 
-class InstallError(Exception):
+class InstallError(WowlabError):
     """Base class for everything this module raises on purpose."""
 
 
@@ -184,6 +185,8 @@ class NotAnInstallError(InstallError):
     `reason` is `missing`, `not_regular` (a directory, FIFO, device, ...) or
     `unreadable` (the operating system refused; `strerror` says why). A root
     that does not exist at all is `missing` with `root_exists=False`.
+    `hint` is the pointer appended to the message ("" for none): the root
+    looks like a flavor folder, or its parent is an install.
     """
 
     def __init__(
@@ -201,6 +204,7 @@ class NotAnInstallError(InstallError):
         self.reason = reason
         self.strerror = strerror
         self.root_exists = root_exists
+        self.hint = hint
         if not root_exists:
             super().__init__(f"{root} (from {source}) does not exist")
             return

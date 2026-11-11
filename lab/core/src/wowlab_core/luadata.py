@@ -1089,7 +1089,7 @@ def _resume_gc() -> None:
             gc.enable()
 
 
-def read(path: str | Path) -> LuaDocument:
+def read(path: str | Path, *, root: str | Path | None = None) -> LuaDocument:
     """Read and parse one file. Opens it read-only, reads it once and writes
     nothing anywhere (L1). The size bound is checked before reading, and at
     most `MAX_FILE_BYTES + 1` bytes are read.
@@ -1100,8 +1100,18 @@ def read(path: str | Path) -> LuaDocument:
     `snapshot.UnsafeReadError` (or an `OSError` with `ELOOP` from the open),
     raised as it is, never as a `LuaDataError`. The descriptor is closed on
     every path. A path past Windows' plain limit is opened by its
-    extended-length spelling (`longpath`, M13-15)."""
-    fd, st = snapshot.open_regular_file(Path(path))
+    extended-length spelling (`longpath`, M13-15).
+
+    With `root`, the install root `path` lies under, the open starts there
+    and takes one component at a time, so a link in any folder between the
+    root and the file is refused too (`snapshot.open_regular_file_from_root`,
+    M16-49), and a `path` not under `root`, or with a `..` below it, is
+    refused before anything is opened. Without it only the final component
+    is checked: for a caller that knows no install."""
+    if root is None:
+        fd, st = snapshot.open_regular_file(Path(path))
+    else:
+        fd, st = snapshot.open_regular_file_from_root(Path(path), Path(root))
     try:
         bound = MAX_FILE_BYTES
         if st.st_size > bound:

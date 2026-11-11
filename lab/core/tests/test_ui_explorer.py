@@ -97,7 +97,7 @@ import pytest
 import typer
 from test_ui_fonts import without_font_faces
 
-from wowlab_core import filemap, lookspage, ui
+from wowlab_core import cli, filemap, lookspage, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos"
@@ -785,8 +785,14 @@ const fetchStub = async (url, opts) => {
   const key = body.command.join(" ");
   const params = body.params || {};
   let stdout = null;
+  let code = 0;
+  let stderr = "";
   for (const run of scenario.runs || []) {
-    if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) stdout = run.stdout;
+    if (canon(run.command) === canon(body.command) && canon(run.params) === canon(params)) {
+      stdout = run.stdout;
+      code = run.exit_code || 0;
+      stderr = run.stderr || "";
+    }
   }
   if (stdout !== null) { /* an exact run the scenario holds */ }
   else if (key === "install show") stdout = scenario.install_show;
@@ -794,10 +800,13 @@ const fetchStub = async (url, opts) => {
   else if (key === "tree") stdout = scenario.trees[params.flavor || scenario.first_flavor];
   else if (key === "filemap gaps") stdout = scenario.gaps;
   else if (key === "explain") stdout = scenario.explains[norm(params.path)];
+  // The server's `outcome` for a plain run with this exit code (M16-21),
+  // as `_scenario` read it from the server's own code.
+  const outcome = (c) => (scenario.outcomes || {})[String(c)];
   if (typeof stdout !== "string") {
-    return answer({ exit_code: 2, timed_out: false, truncated: false, stdout: "", stderr: "harness: no reply for " + key });
+    return answer({ exit_code: 2, timed_out: false, truncated: false, outcome: outcome(2), stdout: "", stderr: "harness: no reply for " + key });
   }
-  return answer({ exit_code: 0, timed_out: false, truncated: false, stdout: stdout, stderr: "" });
+  return answer({ exit_code: code, timed_out: false, truncated: false, outcome: outcome(code), stdout: stdout, stderr: stderr });
 };
 const navigator = { clipboard: { writeText: async (t) => { clipboard.push(String(t)); } } };
 const documentStub = {
@@ -1139,6 +1148,10 @@ def _scenario(
         "explains": explains,
         "runs": [],
         "steps": steps,
+        # What the server says about a plain run that exits with each code.
+        "outcomes": {
+            str(code): ui._outcome(ui._Run(code, [], [], False, False), None) for code in range(4)
+        },
     }
     return scenario, first
 
@@ -1299,6 +1312,81 @@ def test_filter_to_no_and_by_text(server: Any, install: Path, tmp_path: Path) ->
     assert [r["path"] for r in out["steps"][1]["rows"]] == first_paths
     found = check(out["steps"][2], lambda i: "config.wtf" in i["path"].lower())
     assert "WTF/Config.wtf" in found
+
+
+def test_the_pane_says_why_a_path_gone_since_the_tree_is_unknown_constructed(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """M16-18: `explain` exits 1 for a path that matches nothing, with its
+    report on stdout. A file the tree listed and that is gone when it is
+    clicked (constructed: deleted after the tree was read) gets that
+    report, and the pane shows why it is unknown rather than only an exit
+    code. The file has no row once gone, as its own name is unknown."""
+    rel = "WTF/zz-gone-constructed.txt"
+    (install / FLAVOR / rel).write_bytes(b"constructed\n")
+    steps: list[dict[str, Any]] = [{"open_all": True}, {"click": rel}]
+    scenario, first = _scenario(server, [], steps)
+    # Spelled as the page spells it (page.js `select`): the install root,
+    # then every part joined with the platform's separator, so the recorded
+    # run below matches the page's request exactly on Windows too.
+    parts = [first["flavor_folder"], *rel.split("/")]
+    target = first["install_root"] + "".join(os.sep + part for part in parts)
+    (install / FLAVOR / rel).unlink()
+    params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
+    result = _run(server, ["explain"], params).json()
+    assert result["exit_code"] == 1, result
+    report = json.loads(result["stdout"])
+    assert report["absent"] is True
+    scenario["runs"] = [
+        {"command": ["explain"], "params": params, "stdout": result["stdout"], "exit_code": 1}
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    # The page asked for exactly the recorded run, so the stub answered it.
+    assert _asked(out, ["explain"]) == [params], (_asked(out, ["explain"]), params)
+    pane = out["steps"][1]
+    assert "missing" not in pane, pane
+    assert "Why it is unknown" in pane["facts"], pane
+    assert report["result"]["reason"] in pane["facts"], pane
+    assert "exit code" not in pane["status"], pane
+
+
+def test_the_pane_shows_the_error_when_explain_prints_an_error_report_constructed(
+    server: Any, install: Path, home: Path, tmp_path: Path
+) -> None:
+    """M16-22: an `explain --json` that fails prints an `ErrorReport` on
+    stdout, which has no `result`. The pane shows the error line, as it did
+    before there was a report, and draws no facts from it. Constructed: the
+    install's `.build.info` is removed after the tree was read, so the
+    install the page names is no install any more."""
+    rel = "WTF/Config.wtf"
+    steps: list[dict[str, Any]] = [{"open_all": True}, {"click": rel}]
+    scenario, first = _scenario(server, [], steps)
+    parts = [first["flavor_folder"], *rel.split("/")]
+    target = first["install_root"] + "".join(os.sep + part for part in parts)
+    (install / ".build.info").unlink()
+    params = {"path": target, "root": first["install_root"], "flavor": first["flavor_folder"]}
+    result = _run(server, ["explain"], params).json()
+    assert result["exit_code"] == 1, result
+    report = cli.ErrorReport.model_validate_json(result["stdout"])
+    assert f"wowlab: {report.message}" in result["stderr"].splitlines()
+    scenario["runs"] = [
+        {
+            "command": ["explain"],
+            "params": params,
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "exit_code": 1,
+        }
+    ]
+    out = _drive(tmp_path / "node", scenario)
+    assert _asked(out, ["explain"]) == [params], (_asked(out, ["explain"]), params)
+    pane = out["steps"][1]
+    assert "missing" not in pane, pane
+    assert "Why it is unknown" not in pane["facts"], pane
+    # The error line, as the page shows text (the home folder as "~").
+    assert pane["status"].startswith("wowlab: "), pane
+    assert "WOWLAB_WOW_ROOT" in pane["status"], pane
+    assert pane["facts"] == "", pane
 
 
 def test_the_detail_pane_shows_what_who_and_the_verdict(
@@ -1740,8 +1828,8 @@ def _declarations(css: str, selector: str) -> dict[str, str]:
 # "Verdicts"), with empty alternative text so the words are read once.
 _BADGES = {
     ".badge-gate": ("order", "\\25C6", "solid"),
-    ".badge-no": ("ruin", "\\2715", "solid"),
-    ".badge.badge-placeholder": ("ruin", "\\2715", "solid"),
+    ".badge-no": ("stone", "\\2715", "solid"),
+    ".badge.badge-placeholder": ("stone", "\\2715", "solid"),
     ".badge-unclassified": ("void", "?", "solid"),
     ".badge-folder": ("stone", "\\25AA", "solid"),
     ".badge-not_applicable": ("stone", "\\25AA", "solid"),

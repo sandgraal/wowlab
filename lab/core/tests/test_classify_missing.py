@@ -29,6 +29,7 @@ from typing import Any
 import platformdirs
 import psutil
 import pytest
+from _explain_exit import expected_exit
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap, install, layout
@@ -43,7 +44,7 @@ FIRST = "Labchard"  # a `<Realm>/<First>/` character folder in the capture
 NUMERIC_CHAR = "1/Labcharb-Labrealmd"  # a `<digits>/<First>-<Second>/` one
 SECOND = "_constructed_"  # a second flavor folder, a copy of the capture (constructed)
 NOT_FOUND = "not found; nothing is at this path"
-NO_ROW_LIKE = "no file-map row matches a name like this"
+NO_ROW_LIKE = "no file-map row matches this whole path"
 NOT_FOUND_REASON = f"{NOT_FOUND}, and {NO_ROW_LIKE}"
 AS_FOLDER = "end it with / to see what a folder by this name would be (/ works on Windows too)"
 NOT_FOUND_WORDS = NOT_FOUND_REASON
@@ -83,7 +84,9 @@ def flavor(root: Path) -> Path:
 
 def ok(*args: str) -> Any:
     result = runner.invoke(cli.app, list(args))
-    assert result.exit_code == 0, (args, result.stdout, result.stderr, result.exception)
+    # M16-18: a path that matches nothing exits 1.
+    code = expected_exit(args, result.stdout)
+    assert result.exit_code == code, (args, result.stdout, result.stderr, result.exception)
     return result
 
 
@@ -154,7 +157,7 @@ def test_a_missing_path_gets_its_row_or_not_found(
         else:
             assert isinstance(report.result, layout.Classified), typed
             assert report.result.entry.id == entry_id
-            assert f"  file-map row: {entry_id} " in text
+            assert f"  file-map row: {entry_id}" in text.splitlines()
             noun = "folder" if path.endswith("/") else "file"
             assert f"  on disk:      nothing at this path; this is what a {noun} here would be" in (
                 text

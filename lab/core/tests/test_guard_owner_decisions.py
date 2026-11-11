@@ -1755,8 +1755,9 @@ def test_constructed_temps_a_dead_transaction_left_are_removed_on_the_next_enter
     route: str,
 ) -> None:
     """Item 2: the next enter of the flavor removes the temp files an earlier
-    record names, after its pre-write snapshot (which therefore holds them)
-    and its own record, and lists them in `temps_removed`."""
+    record names and lists them in `temps_removed`. Whether its pre-write
+    snapshot holds them is M16-69's to change (cleanup before the snapshot):
+    graded in `test_guard_temp_cleanup_m16_69.py`, not here."""
     store = tmp_path / "store"
     lo = leave_temps(children, tmp_path, flavor, store)
     expected = content(world)
@@ -1776,9 +1777,6 @@ def test_constructed_temps_a_dead_transaction_left_are_removed_on_the_next_enter
     assert content(world) == expected
     assert set(record.temps_removed) == {lo.a_rel, lo.b_rel}
     assert record.temps_left == ()
-    pre = SnapshotStore(store).show(record.snapshot_id)
-    assert G.entry_for(pre, lo.a_rel).sha256 == sha(lo.a_bytes), "snapshot first, then cleanup"
-    assert G.entry_for(pre, lo.b_rel).sha256 == sha(lo.b_bytes)
 
 
 def test_constructed_a_temp_path_already_cleaned_is_not_considered_again(

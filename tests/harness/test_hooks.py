@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -176,17 +177,32 @@ def test_guard_bash_allows_ordinary_git_and_gh(command: str) -> None:
 
 # ─── guard_bash: destructive and shell writes ────────────────────────────────
 
+# Relative targets resolve against the payload's cwd, and anything under /tmp
+# is a scratch path the guard lets `rm -rf` clear. Grading the rule from a
+# checkout that itself sits under /tmp would then pass every relative case, so
+# these run from a fixed cwd that is never a scratch path (M16-60).
+NOT_SCRATCH_CWD = "/srv/wowlab-checkout"
+
 
 @pytest.mark.parametrize(
     ("command", "needle"),
     [
         ("rm -rf lab/src", "recursive+force"),
         ("cd lab && rm -r -f ../docs", "recursive+force"),
-        ("sudo rm --recursive --force /Volumes/x", "recursive+force"),
         ("rm -rf .venv/../lab", "recursive+force"),
         ("rm -rf lab/src/coverage_models", "recursive+force"),
         ("rm -rf node_modules", "recursive+force"),  # not a scratch dir in a Python-only repo
         ("find lab -name '*.py' -delete", "find -delete"),
+    ],
+)
+def test_guard_bash_blocks_destructive_relative_targets(command: str, needle: str) -> None:
+    assert_blocked(run_hook("guard_bash.py", bash(command, cwd=NOT_SCRATCH_CWD)), needle)
+
+
+@pytest.mark.parametrize(
+    ("command", "needle"),
+    [
+        ("sudo rm --recursive --force /Volumes/x", "recursive+force"),
         ("pkill -f pytest", "machine"),
         ("sudo pkill python", "machine"),
         ("killall pytest", "machine"),
@@ -580,6 +596,103 @@ def test_guard_bash_reads_a_graphql_query_file_for_mutations(tmp_path: Path) -> 
     assert_blocked(
         run_hook("guard_bash.py", bash(f"gh api graphql -F query=@{missing}")),
         "write the file first",
+    )
+
+
+def test_guard_bash_reads_a_graphql_input_body_for_mutations(tmp_path: Path) -> None:
+    """`gh api graphql --input <file>` is judged by the body's JSON `query` (M13-71, part 1)."""
+    blocked = tmp_path / "blocked.json"
+    blocked.write_text(
+        json.dumps(
+            {"query": 'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}'}
+        )
+    )
+    for spelling in (f"--input {blocked}", f"--input={blocked}"):
+        assert_blocked(
+            run_hook("guard_bash.py", bash(f"gh api graphql {spelling}")), "GraphQL mutations"
+        )
+    raw = tmp_path / "raw.graphql"
+    raw.write_text('mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}')
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql --input {raw}")), "GraphQL mutations"
+    )
+    allowed = tmp_path / "allowed.json"
+    allowed.write_text(
+        json.dumps(
+            {
+                "query": "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}",
+                "variables": {"t": "x"},
+            }
+        )
+    )
+    assert_allowed(run_hook("guard_bash.py", bash(f"gh api graphql --input {allowed}")))
+    read = tmp_path / "read.json"
+    read.write_text(json.dumps({"query": "query{viewer{login}}"}))
+    assert_allowed(run_hook("guard_bash.py", bash(f"gh api graphql --input {read}")))
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql --input {tmp_path / 'missing.json'}")),
+        "write the file first",
+    )
+    assert_blocked(run_hook("guard_bash.py", bash("gh api graphql --input -")), "cannot check")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # A name from the allowlist in a comment does not cover the mutation.
+        'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}} # resolveReviewThread',
+        # ...nor in a string argument.
+        'mutation{mergePullRequest(input:{pullRequestId:"resolveReviewThread"}){clientMutationId}}',
+        # ...nor as a selected sub-field or an alias.
+        "mutation{mergePullRequest(input:{}){resolveReviewThread:clientMutationId}}",
+        # Two fields: one allowed, one not.
+        'mutation{resolveReviewThread(input:{threadId:"x"}){thread{id}} '
+        'mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}',
+        # An alias that spells an allowed name over a forbidden field.
+        'mutation{resolveReviewThread: mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}',
+        # A named operation with variables and a directive.
+        "mutation Go($id:ID!) @x { deleteRef(input:{refId:$id}){clientMutationId} }",
+        # A selection that cannot be read is refused.
+        "mutation{",
+    ],
+    ids=["comment", "string", "subfield", "two-fields", "alias", "named", "unreadable"],
+)
+def test_guard_bash_graphql_allowlist_matches_mutation_fields_not_substrings(
+    tmp_path: Path, query: str
+) -> None:
+    """The allowlist is matched against the mutation's top-level fields (M13-71, part 2)."""
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql -f query={shlex.quote(query)}")),
+        "GraphQL mutations",
+    )
+    body = tmp_path / "body.json"
+    body.write_text(json.dumps({"query": query}))
+    assert_blocked(
+        run_hook("guard_bash.py", bash(f"gh api graphql --input {body}")), "GraphQL mutations"
+    )
+
+
+def test_guard_bash_allowed_name_in_another_argument_does_not_cover_a_mutation() -> None:
+    """An allowed name placed in any other argument no longer passes a mutation (M13-71)."""
+    assert_blocked(
+        run_hook(
+            "guard_bash.py",
+            bash(
+                'gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"})'
+                "{clientMutationId}}' -f note=resolveReviewThread"
+            ),
+        ),
+        "GraphQL mutations",
+    )
+    # An aliased allowed field is still allowed.
+    assert_allowed(
+        run_hook(
+            "guard_bash.py",
+            bash(
+                'gh api graphql -f query=\'mutation{done: resolveReviewThread(input:{threadId:"x"})'
+                "{thread{id}}}'"
+            ),
+        )
     )
 
 

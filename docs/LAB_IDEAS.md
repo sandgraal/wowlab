@@ -84,8 +84,8 @@ repository if the owner ever wants it.
 | **simc-bridge** | Export a character to a SimulationCraft profile and run a locally installed `simc` as a separate process, results stored beside the character. Depends on simc having data for the flavor | A | lab-addon, luadata | profile writer, process runner, result store | M |
 | **drill-cards** | Spaced-repetition cards from your own data: spellbook, talents, boss abilities from the encounter journal tables, and what killed you in your logs; ten a night, weighted toward recent deaths. "What killed you" needs combat-log event meaning, which the Wave 1 tokenizer does not provide | A | lab-addon, gamedata, combatlog | card generator, death analysis, scheduler | S |
 | **bag-triage** | Find dead weight across all characters: join Syndicator's inventory data with DB2 to find vendor trash, finished quest items, gear no alt can use and reagents no one on the account can craft with; says what to sell, delete or mail to which alt | A | luadata, db2lake, lab-addon (professions) | rules, per-alt advice | S–M |
-| **crew-book** | Remember the players you meet, good and bad: who you grouped with, their role and level, your note and rating; warns when they are near. *Owner interest, 2026-10-16: keep track of good and bad players met; local only, on the owner's machine.* **Stores other players' names, which ADR-0026 forbids for the lab-addon and the repository's privacy rules keep out of fixtures: it needs its own privacy ADR (opt-in, local only, never exported, never in test data) before it can be picked** | A | lab-addon, luadata, privacy ADR | contact store, proximity check | S |
-| **comp-builder** | Which groups are possible right now: from the online guild roster, propose viable dungeon groups by level band and role. **Same privacy ADR as crew-book (guild roster names)** | A | lab-addon, privacy ADR | group solver | S |
+| **crew-book** | Remember the players you meet, good and bad: who you grouped with, their role and level, your note and rating; warns when they are near. *Owner interest, 2026-10-16: keep track of good and bad players met; local only, on the owner's machine.* **Stores other players' names, which ADR-0026 forbids for the lab-addon; ADR-0036 (owner ruling of 2026-11-10, accepted 2026-11-11) allows it, local only and opt-in, with records kept out of the repository and out of shared output. Pickable since 2026-11-11** | A | lab-addon, luadata, privacy ADR | contact store, proximity check | S |
+| **comp-builder** | Which groups are possible right now: from the online guild roster, propose viable dungeon groups by level band and role. **Same privacy ADR as crew-book (guild roster names): ADR-0036** | A | lab-addon, privacy ADR | group solver | S |
 
 ## D. Bridges and live data
 
@@ -138,8 +138,8 @@ These are observations about dependencies, not a plan.
   it the hub of most later waves; **addon-audit**
   needs **api-types** first. **addon-manager** and **addon-provenance** need
   only Wave 1 plus network fetchers for the addon sites.
-- **crew-book** and **comp-builder** cannot be picked until a privacy ADR
-  settles how other players' names may be stored locally.
+- **crew-book** and **comp-builder** can be picked: the owner accepted
+  ADR-0036 (other players' names stored locally, opt-in) on 2026-11-11.
 - **keybind-coach** and **macro-doctor** need writers for the WTF text
   formats, which **wow-as-code** needs too; building those writers once serves
   all three.

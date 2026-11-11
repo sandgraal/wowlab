@@ -674,7 +674,8 @@ def test_a_bad_players_table_is_an_error_naming_the_file_constructed(
     path.write_text(text, encoding="utf-8")
     result = run("binds", "coach", "--character", CHARACTER, "--json")
     assert result.exit_code == 1
-    assert result.stdout == ""
+    # Under --json, the error alone as a report (M16-22).
+    assert f"wowlab: {cli.ErrorReport.model_validate_json(result.stdout).message}" in result.stderr
     assert f"the key-cost table cannot be used: {path}: " in result.stderr
     assert words in result.stderr
 
@@ -821,7 +822,7 @@ def test_unfollowed_page_in_text_constructed(
     flavor: Path, record: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rec = _with_slots(real_record(), {}, {73: 999004})
-    monkeypatch.setattr(labaddon, "read_char", lambda path: rec)
+    monkeypatch.setattr(labaddon, "read_char", lambda path, **kwargs: rec)
     put_log(flavor, HEADER, cast(999004, "Form Spell"))
     text = ok("binds", "coach", "--character", CHARACTER).stdout
     assert "Spells only on main-bar pages the coach does not follow: 1\n" in text

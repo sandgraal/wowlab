@@ -136,7 +136,12 @@ def test_paths_naming_an_executable_is_refused_with_what_to_do_constructed(
             f"wowlab: refused by the write gate: {rel!r} is an executable; guard never writes one"
         )
         assert err[1] == NOTE
-        assert result.stdout == ""
+        if "--json" in extra:  # the error alone as a report (M16-22)
+            report = cli.ErrorReport.model_validate_json(result.stdout)
+            assert (report.kind, report.exit_code) == ("PathNotAllowedError", 3)
+            assert f"wowlab: {report.message}" == err[0]
+        else:
+            assert result.stdout == ""
     assert guard.history() == ()
 
 
@@ -434,7 +439,12 @@ def test_a_mode_only_change_refuses_the_whole_restore_with_what_to_do_constructe
             "guard never writes one"
         )
         assert err[1] == NOTE
-        assert result.stdout == ""
+        if "--json" in extra:  # the error alone as a report (M16-22)
+            report = cli.ErrorReport.model_validate_json(result.stdout)
+            assert (report.kind, report.exit_code) == ("PathNotAllowedError", 3)
+            assert f"wowlab: {report.message}" == err[0]
+        else:
+            assert result.stdout == ""
     assert (flavor / TOC).read_bytes() == edited
     assert helper.read_bytes() == HELPER_BYTES
     assert helper.stat().st_mode & 0o777 == 0o755

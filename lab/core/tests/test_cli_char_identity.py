@@ -47,6 +47,9 @@ SHOW_FIELDS = [
     "customization_loads_ago",
     "unknown_keys",
     "notes",
+    "installed_version",  # M16-06
+    "older_client",  # M16-06
+    "lab_addon",  # M16-06
 ]
 
 runner = CliRunner()
@@ -94,7 +97,9 @@ def test_char_show_json_gains_exactly_identity(flavor: Path) -> None:
     report = cli.CharShowReport.model_validate(data)
     assert report.identity.class_file is None
     assert report.identity.class_file_absent is not None
-    assert report.identity.class_file_absent.startswith("the record is schema 3;")
+    assert report.identity.class_file_absent.startswith(
+        "this record predates the identity section;"
+    )
 
 
 def test_char_show_text_of_schema_3_has_no_identity_line(flavor: Path) -> None:

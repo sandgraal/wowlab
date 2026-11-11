@@ -37,8 +37,10 @@ from typing import Annotated, Literal
 import platformdirs
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
+from wowlab_core.errors import WowlabError
 from wowlab_core.install import BUILD_INFO, FLAVOR_INFO
 from wowlab_core.looks import Look
+from wowlab_core.snapshot import make_private_dirs
 
 __all__ = [
     "LOOKS_FORMAT",
@@ -82,7 +84,7 @@ VersionText = Annotated[
 ]
 
 
-class LookStoreError(Exception):
+class LookStoreError(WowlabError):
     """A saved look cannot be read or written."""
 
 
@@ -291,7 +293,7 @@ class LookStore:
                 "limit for a look; nothing was saved"
             )
         refuse_install(self._root)
-        self._root.mkdir(parents=True, exist_ok=True)
+        make_private_dirs(self._root)  # 0700 under the user data directory (M16-78)
         refuse_install(self._root)
         existing = self._existing(name)
         if existing is not None and not replace:

@@ -48,7 +48,26 @@ LX_SYMLINK = 0xA000001D  # IO_REPARSE_TAG_LX_SYMLINK (WSL `ln -s`): name surroga
 WSL_MODE = stat.S_IFREG | 0o644
 # `os.readlink` cannot read a WCI link or a WSL symlink (nor, here, a faked
 # junction), so nothing says where it points (M13-35 review).
-UNKNOWN_NOTE = "link (where it points is unknown), not followed"
+# M16-80: every link note ends in the readers' words (as `labaddon.NOT_FOLLOWED`
+# and `labaddon.LINKED_FILE` say it), "real folder" or "real file" by what the
+# file map has at the link's place.
+FOLDER_WORDS = (
+    "not followed; wowlab does not read through links, so it reads this only "
+    "when the real folder is there"
+)
+FILE_WORDS = (
+    "not followed; wowlab does not read through links, so it reads this only "
+    "when the real file is there"
+)
+UNKNOWN_NOTE = f"link (where it points is unknown), {FOLDER_WORDS}"
+# Where the file map cannot tell a folder from a file (no row, or one row for
+# both below the folder it hangs from): neither is named.
+ONE_WORDS = (
+    "not followed; wowlab does not read through links, so it reads this only "
+    "when the real one is there"
+)
+UNKNOWN_FILE_NOTE = f"link (where it points is unknown), {FILE_WORDS}"
+UNKNOWN_ONE_NOTE = f"link (where it points is unknown), {ONE_WORDS}"
 
 
 class _ReparseStat:
@@ -169,7 +188,8 @@ def _assert_a_link_not_walked(
     item = judged[key]
     assert item["kind"] == "symlink", rel
     assert item["size"] is None, rel  # nothing read through it
-    assert item["note"].startswith("link") and item["note"].endswith("not followed"), item
+    assert item["note"].startswith("link"), item
+    assert item["note"].endswith((FOLDER_WORDS, FILE_WORDS, ONE_WORDS)), item
     v = item["verdict"]
     assert (v["link"], v["placeholder"], v["restorable"]) == (True, False, None), rel
     assert v["label"] == verdict.LINK_LABEL, rel
@@ -226,7 +246,8 @@ def test_a_wsl_symlink_file_is_a_link_constructed(
     _fake(monkeypatch, [flavor / SYNDICATOR], LX_SYMLINK, mode=WSL_MODE)
     judged = _judged(root, install=install)
     _assert_a_link_not_walked(root, judged, SYNDICATOR, install)
-    assert judged[_key(SYNDICATOR, install)]["note"] == UNKNOWN_NOTE
+    # A SavedVariables file's place: the readers' words for a file (M16-80).
+    assert judged[_key(SYNDICATOR, install)]["note"] == UNKNOWN_FILE_NOTE
 
 
 @pytest.mark.parametrize("install", [False, True], ids=["tree", "tree-install"])
@@ -263,7 +284,7 @@ def test_a_link_at_the_top_has_one_item_in_text_constructed(
     lines = _run("tree", "--root", str(root)).splitlines()
     named = [line for line in lines if line.strip().startswith("Extras")]
     assert len(named) == 1, named
-    assert named[0].startswith("  Extras  (link ") and named[0].endswith("not followed)")
+    assert named[0].startswith("  Extras  (link ") and named[0].endswith(f"{ONE_WORDS})")
 
 
 FLAVOR_LINKS = [
@@ -298,7 +319,7 @@ def test_a_flavor_folder_that_is_a_link_is_no_flavor_and_never_walked(
     item = judged[FLAVOR]
     assert (item["kind"], item["base"], item["flavor_folder"]) == ("symlink", "root", None)
     assert item["size"] is None
-    assert item["note"] == f"{UNKNOWN_NOTE}; {gaps.NOT_A_FLAVOR_LINK}"
+    assert item["note"] == f"{UNKNOWN_ONE_NOTE}; {gaps.NOT_A_FLAVOR_LINK}"
     assert item["verdict"] == expected
     assert [i for i in report["items"] if i["flavor_folder"] is not None] == []
     assert ".build.info" in judged  # the install root is still listed
@@ -362,7 +383,10 @@ def test_a_flavor_folder_that_became_a_link_says_so_in_text_constructed(
     result = CliRunner().invoke(cli.app, ["tree", "--root", str(root)])
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == [f"{FLAVOR} in {root}"]
-    assert "is a link; wowlab does not follow it" in result.stderr
+    assert result.stderr == (
+        f"{FLAVOR} is a link; wowlab does not read through links, so it reads this "
+        "only when the real folder is there. Nothing in it is listed.\n"
+    )
 
 
 def test_gaps_uses_the_walks_link_test() -> None:
@@ -412,7 +436,7 @@ def test_a_link_at_the_install_root_reads_as_one_in_a_flavor_folder(
     (root / "rootlink").symlink_to(to, target_is_directory=True)
     (root / FLAVOR / "WTF" / "flavorlink").symlink_to(to, target_is_directory=True)
     judged = _by_path(_tree(root, "--install"), install=True)
-    expected = f"link to {to} ({where}), not followed"
+    expected = f"link to {to} ({where}), {ONE_WORDS}"
     assert judged["rootlink"]["note"] == expected
     assert judged[f"{FLAVOR}/WTF/flavorlink"]["note"] == expected
 
@@ -434,10 +458,10 @@ def test_a_two_link_loop_is_where_it_points_unknown_constructed(root: Path) -> N
     assert (links["WTF/loop-b"].target, links["WTF/loop-b"].inside_install) == ("loop-a", None)
     items = {i["path"]: i for i in _tree(root)["items"]}
     assert (
-        items["WTF/loop-a"]["note"] == "link to loop-b (where it points is unknown), not followed"
+        items["WTF/loop-a"]["note"] == f"link to loop-b (where it points is unknown), {ONE_WORDS}"
     )
     assert (
-        items["WTF/loop-b"]["note"] == "link to loop-a (where it points is unknown), not followed"
+        items["WTF/loop-b"]["note"] == f"link to loop-a (where it points is unknown), {ONE_WORDS}"
     )
     assert items["WTF/loop-a"]["kind"] == "symlink"
 
@@ -509,4 +533,4 @@ def test_a_relative_link_shows_its_text_as_stored_constructed(root: Path) -> Non
     except (OSError, NotImplementedError) as exc:  # Windows without the privilege
         pytest.skip(f"cannot create a symlink here: {exc}")
     items = {i["path"]: i for i in _tree(root)["items"]}
-    assert items["WTF/rellink"]["note"] == f"link to {text} (inside the install), not followed"
+    assert items["WTF/rellink"]["note"] == f"link to {text} (inside the install), {ONE_WORDS}"

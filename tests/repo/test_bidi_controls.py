@@ -20,8 +20,20 @@ at all, is Python too). The raw bytes and the decoded text are both
 searched: a NUL or a stray byte elsewhere in a file cannot hide a control,
 it fails the file. Every tracked file name is checked too.
 
+A symlink is scanned as what git commits for it, its target text (M16-104).
+The index is listed with `git ls-files -s`; for a mode-120000 entry the
+committed blob is read with `git cat-file --batch`, and the link on disk is
+never read or followed: a broken link is not skipped, a working one does
+not stand in for the file it points at, and an unstaged retarget does not
+hide the committed target. A regular entry is read from the working tree
+only when lstat finds a regular file there under real directories; where it
+is deleted, or replaced by a link or anything else, or a parent directory is
+a link, its committed blob is read instead. A gitlink (a submodule) has no
+content here, so only its name is checked.
+
 Nothing is skipped for its content or its size: pre-commit keeps every
-tracked file outside the fixtures under 512 KB, so each is read whole. Under
+tracked file outside the fixtures under 512 KB (cli.py under 1 MB), so each is
+read whole. Under
 lab/core/tests/fixtures/ only the real captures are left out, by type
 (`CAPTURE_SUFFIXES`): they are the client's bytes, and a capture may hold a
 control, or a byte that is not UTF-8, legitimately. Anything else there is
@@ -42,8 +54,10 @@ from __future__ import annotations
 
 import fnmatch
 import io
+import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tokenize
@@ -83,6 +97,10 @@ PINNED_FONTS = frozenset(
         "ibm-plex-mono-500-latin-ext",
     )
 )
+# The git index mode of a symlink, whose blob is the link's target text.
+SYMLINK = b"120000"
+# The mode of a gitlink (a submodule commit), which has no blob.
+GITLINK = b"160000"
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 PYTHON_ENCODINGS = frozenset({"utf-8", "utf-8-sig"})
 # PEP 263: a coding declaration on the first or second line.
@@ -138,14 +156,80 @@ def _problems(name: str, data: bytes) -> list[str]:
     return sorted(found) + out
 
 
-def _tracked() -> list[bytes]:
+def _git() -> str:
     git = shutil.which("git")
     if git is None:
         pytest.skip("git is not available")
-    done = subprocess.run([git, "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False)
+    return git
+
+
+def _run_git(
+    root: Path, *args: str, stdin: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    """git in `root`, with every GIT_* variable cleared so the repository is
+    the one found from `root`, never one named by the environment."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    return subprocess.run(
+        [_git(), *args], cwd=root, input=stdin, capture_output=True, check=False, env=env
+    )
+
+
+def _entries(root: Path) -> list[tuple[bytes, bytes, bytes]]:
+    """Each index entry of the checkout at `root` as (mode, blob id, name),
+    from `git ls-files -s -z` (M16-104: the mode says which entry is a
+    symlink)."""
+    done = _run_git(root, "ls-files", "-s", "-z")
     if done.returncode != 0:
         pytest.skip("not a git checkout")
-    return [name for name in done.stdout.split(b"\0") if name]
+    out = []
+    for record in done.stdout.split(b"\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition(b"\t")
+        mode, blob, _stage = meta.split(b" ")
+        out.append((mode, blob, name))
+    return out
+
+
+def _blobs(root: Path, ids: list[bytes]) -> dict[bytes, bytes]:
+    """The content of each blob id, from one `git cat-file --batch` call.
+    A missing blob fails loudly: nothing in the index goes unscanned."""
+    if not ids:
+        return {}
+    done = _run_git(root, "cat-file", "--batch", stdin=b"".join(i + b"\n" for i in ids))
+    assert done.returncode == 0, done.stderr
+    out: dict[bytes, bytes] = {}
+    data, pos = done.stdout, 0
+    for blob in ids:
+        end = data.index(b"\n", pos)
+        header = data[pos:end].split(b" ")
+        assert len(header) == 3 and header[:2] == [blob, b"blob"], data[pos:end]
+        size = int(header[2])
+        out[blob] = data[end + 1 : end + 1 + size]
+        pos = end + 1 + size + 1  # the content, then a newline
+    return out
+
+
+def _on_disk(root: Path, name: str, dirs: dict[Path, bool]) -> Path | None:
+    """The working-tree file for a regular entry, when it is one: a regular
+    file by lstat under real directories only, so no link, as the entry or as
+    any parent directory, is followed. None where the entry is deleted or
+    replaced; its committed blob is read instead. `dirs` caches the checks."""
+    path = root / name
+    for parent in reversed(path.relative_to(root).parents[:-1]):
+        where = root / parent
+        if where not in dirs:
+            try:
+                dirs[where] = stat.S_ISDIR(where.lstat().st_mode)
+            except OSError:
+                dirs[where] = False
+        if not dirs[where]:
+            return None
+    try:
+        regular = stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return None
+    return path if regular else None
 
 
 def _scanned(name: str) -> bool:
@@ -169,10 +253,18 @@ def _misplaced(name: str) -> bool:
     )
 
 
-def test_no_tracked_file_holds_a_bidi_control() -> None:
+def _scan_checkout(root: Path) -> tuple[int, dict[str, list[str]]]:
+    """Scan every index entry of the checkout at `root`: the number of
+    entries, and the findings by name. No link is ever followed (M16-104): a
+    symlink's committed blob, its target text, is scanned; so is the blob of
+    a regular entry that is deleted or no longer a regular file in the
+    working tree. A gitlink (a submodule) has no content here; only its name
+    is checked."""
     found: dict[str, list[str]] = {}
-    names = _tracked()
-    for raw in names:
+    entries = _entries(root)
+    from_blob: list[tuple[str, bytes, str]] = []
+    dirs: dict[Path, bool] = {}
+    for mode, blob, raw in entries:
         try:
             name = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -183,10 +275,30 @@ def test_no_tracked_file_holds_a_bidi_control() -> None:
         if _misplaced(name):
             found[repr(name)] = ["a Python, Markdown or test*.txt file among the captures"]
             continue
-        path = ROOT / name
-        if _scanned(name) and path.is_file() and (problems := _problems(name, path.read_bytes())):
+        if mode == GITLINK:
+            continue
+        if mode == SYMLINK:
+            # Its committed bytes are the target text, whatever its name or
+            # place: a symlink is never a capture or a pinned font.
+            from_blob.append((name, blob, " (symlink target)"))
+            continue
+        if not _scanned(name):
+            continue
+        path = _on_disk(root, name, dirs)
+        if path is None:
+            from_blob.append((name, blob, " (committed blob)"))
+        elif problems := _problems(name, path.read_bytes()):
             found[repr(name)] = problems
-    assert names, "git listed no tracked files"
+    contents = _blobs(root, sorted({blob for _, blob, _ in from_blob}))
+    for name, blob, label in from_blob:
+        if problems := _problems(name, contents[blob]):
+            found[repr(name) + label] = problems
+    return len(entries), found
+
+
+def test_no_tracked_file_holds_a_bidi_control() -> None:
+    count, found = _scan_checkout(ROOT)
+    assert count, "git listed no tracked files"
     assert not found, found
 
 
@@ -333,3 +445,148 @@ def test_pytest_never_collects_under_the_fixtures(tmp_path: Path) -> None:
     assert not any("fixtures" in line for line in items), items
     allowed = collected("-o", "norecursedirs=.venv")
     assert any("fixtures/wago/test_planted.txt" in line for line in allowed), allowed
+
+
+def _git_tree(root: Path, links: dict[str, str], files: dict[str, str] | None = None) -> None:
+    """A constructed git repository at `root` with the given symlinks (name
+    to target text) and regular files (name to text) added to its index, git
+    run with GIT_* cleared. Skips where symlinks cannot be made (Windows
+    without the privilege, or a file system without them) or git would not
+    record them as links (core.symlinks false)."""
+    assert _run_git(root, "init", "-q", str(root)).returncode == 0
+    if _run_git(root, "config", "--bool", "core.symlinks").stdout.strip() == b"false":
+        pytest.skip("git has core.symlinks false here, so it checks out no symlinks")
+    for name, text in (files or {}).items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    for name, target in links.items():
+        try:
+            (root / name).symlink_to(target)
+        except (OSError, NotImplementedError) as err:
+            pytest.skip(f"symlinks cannot be made here: {err}")
+    added = _run_git(root, "add", "--", *links, *(files or {}))
+    assert added.returncode == 0, added.stderr
+
+
+def test_constructed_broken_symlink_target_is_scanned(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): git commits a symlink's target text, so a
+    broken link whose target holds U+202E is reported (path.is_file() was
+    false for it, and the scan skipped it). Control: a broken link with a
+    clean target passes."""
+    _git_tree(tmp_path, {"notes.md": f"a{BIDI[4]}b.md", "clean.md": "missing.md"})
+    for name in ("notes.md", "clean.md"):
+        link = tmp_path / name
+        assert link.is_symlink() and not link.exists(), name  # the premise: broken
+    modes = {name: mode for mode, _, name in _entries(tmp_path)}
+    assert modes == {b"notes.md": SYMLINK, b"clean.md": SYMLINK}
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
+
+
+def test_constructed_working_symlink_to_a_clean_file_is_scanned(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): a working link to a clean file, whose
+    target text holds U+2069, is reported (the scan followed the link and
+    read only the clean file). Control: a working link with a clean target
+    text to the same file passes."""
+    clean = f"clean{BIDI[8]}.md"
+    assert BIDI[8] == chr(0x2069)
+    (tmp_path / clean).write_text("plain\n", encoding="utf-8")
+    (tmp_path / "plain.md").write_text("plain\n", encoding="utf-8")
+    _git_tree(tmp_path, {"notes.md": clean, "control.md": "plain.md"})
+    assert (tmp_path / "notes.md").is_file()  # the premise: it resolves
+    assert (tmp_path / "control.md").is_file()
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+2069"]})
+
+
+def test_constructed_working_symlink_is_not_followed(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): a working link is never followed. The file
+    it points at (untracked here) holds U+202E, and nothing is reported
+    through the link, whose target text is clean."""
+    (tmp_path / "target.md").write_text(f"x {BIDI[4]}\n", encoding="utf-8")
+    _git_tree(tmp_path, {"clean.md": "target.md"})
+    assert (tmp_path / "clean.md").read_text(encoding="utf-8") == f"x {BIDI[4]}\n"  # premise
+    assert _scan_checkout(tmp_path) == (1, {})
+
+
+def test_constructed_symlink_blob_is_read_without_a_link_on_disk(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): where the checkout holds no symlink for a
+    mode-120000 entry (core.symlinks false writes a plain file, or the entry
+    is deleted), the committed blob is read, never the file on disk."""
+    _git_tree(tmp_path, {"notes.md": f"a{BIDI[4]}b.md", "plain.md": "clean.md"})
+    (tmp_path / "notes.md").unlink()
+    (tmp_path / "plain.md").unlink()
+    (tmp_path / "plain.md").write_text(f"x {BIDI[4]}\n", encoding="utf-8")
+    assert _scan_checkout(tmp_path) == (2, {"'notes.md' (symlink target)": ["U+202E"]})
+
+
+def test_constructed_unstaged_retarget_still_scans_the_committed_target(tmp_path: Path) -> None:
+    """Constructed tree (M16-104, security review round 1): a link whose
+    committed target text holds U+202E, retargeted on disk to a clean name
+    without staging, is still reported: the blob is read, not the link."""
+    _git_tree(tmp_path, {"notes.md": f"a{BIDI[4]}b.md"})
+    link = tmp_path / "notes.md"
+    link.unlink()
+    link.symlink_to("clean.md")
+    assert _scan_checkout(tmp_path) == (1, {"'notes.md' (symlink target)": ["U+202E"]})
+
+
+def test_constructed_regular_file_read_from_the_working_tree(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): an unchanged regular file is read from the
+    working tree (control for the tests below), so an edit there counts."""
+    _git_tree(tmp_path, {}, {"a.md": f"x {BIDI[4]}\n"})
+    assert _scan_checkout(tmp_path) == (1, {"'a.md'": ["U+202E"]})
+    (tmp_path / "a.md").write_text("plain\n", encoding="utf-8")
+    assert _scan_checkout(tmp_path) == (1, {})
+
+
+def test_constructed_regular_file_replaced_by_a_link_scans_its_blob(tmp_path: Path) -> None:
+    """Constructed tree (M16-104, security review round 1): a regular file
+    whose blob holds U+202E, replaced in the working tree by a link to a
+    clean file, is reported from its blob; path.is_file() followed the link
+    and read the clean file."""
+    _git_tree(tmp_path, {}, {"a.md": f"x {BIDI[4]}\n"})
+    (tmp_path / "clean.md").write_text("plain\n", encoding="utf-8")
+    (tmp_path / "a.md").unlink()
+    (tmp_path / "a.md").symlink_to("clean.md")
+    assert (tmp_path / "a.md").is_file()  # the premise: is_file() follows it
+    assert _scan_checkout(tmp_path) == (1, {"'a.md' (committed blob)": ["U+202E"]})
+
+
+def test_constructed_deleted_regular_file_scans_its_blob(tmp_path: Path) -> None:
+    """Constructed tree (M16-104, security review round 1): a regular file
+    whose blob holds U+202E, deleted in the working tree, is reported from
+    its blob; path.is_file() was false and the scan skipped it."""
+    _git_tree(tmp_path, {}, {"a.md": f"x {BIDI[4]}\n", "b.md": "plain\n"})
+    (tmp_path / "a.md").unlink()
+    (tmp_path / "b.md").unlink()
+    assert _scan_checkout(tmp_path) == (2, {"'a.md' (committed blob)": ["U+202E"]})
+
+
+def test_constructed_parent_directory_link_is_not_followed(tmp_path: Path) -> None:
+    """Constructed tree (M16-104, security review round 1): a tracked
+    directory replaced by a link to a clean copy outside the repository is
+    not read through; the entry's blob, holding U+202E, is."""
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    _git_tree(repo, {}, {"docs/a.md": f"x {BIDI[4]}\n"})
+    (outside / "docs").mkdir(parents=True)
+    (outside / "docs" / "a.md").write_text("plain\n", encoding="utf-8")
+    (repo / "docs" / "a.md").unlink()
+    (repo / "docs").rmdir()
+    (repo / "docs").symlink_to(outside / "docs")
+    assert (repo / "docs" / "a.md").is_file()  # the premise: lstat alone follows the parent
+    assert _scan_checkout(repo) == (1, {"'docs/a.md' (committed blob)": ["U+202E"]})
+
+
+def test_constructed_gitlink_is_checked_by_name_only(tmp_path: Path) -> None:
+    """Constructed tree (M16-104): a gitlink (mode 160000) has no blob, so
+    only its name is checked; a control in the name is reported."""
+    _git_tree(tmp_path, {})
+    commit = "1" * 40
+    for name in ("sub", f"s{BIDI[4]}b"):
+        done = _run_git(tmp_path, "update-index", "--add", "--cacheinfo", f"160000,{commit},{name}")
+        assert done.returncode == 0, done.stderr
+    assert {mode for mode, _, _ in _entries(tmp_path)} == {GITLINK}
+    count, found = _scan_checkout(tmp_path)
+    assert count == 2
+    assert list(found.values()) == [["U+202E"]]
+    assert next(iter(found)).startswith("file name ")

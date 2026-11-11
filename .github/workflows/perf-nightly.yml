@@ -1,0 +1,53 @@
+name: Performance budget
+
+# Every night, off the PR path (docs/LAB_PLAN.md §6.12 and §18.1 item 6;
+# M16-27): `scripts/perf_budget.py` times five commands against a
+# calibration loop and fails when one costs more than 1.5 times its
+# baseline ratio, and checks the absolute target of §18.1: a no-op
+# whole-restore check of a constructed 20,000-file tree in at most 5 s.
+# The reference runner is GitHub's `ubuntu-latest`; the baselines were set
+# for it. Not a required check; a red run is a regression to file as a
+# ticket, or a baseline to re-set with `--record` and a reviewed change to
+# §6.12.
+#
+# The sandbox is the captured tree in lab/core/tests/fixtures/macos/ copied
+# into a temporary folder and grown with constructed files; the home and
+# user data directories point into it, so no real install and no real
+# snapshot store is read or written. No live call (ADR-0012), no secret, no
+# cache, a read-only token, every action pinned.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-nightly
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  budget:
+    name: Command-level performance budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Actions cache, restored or saved (M13-42; see the note in ci.yml).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install
+        run: uv sync --frozen
+      - name: Performance budget
+        run: uv run --frozen python scripts/perf_budget.py

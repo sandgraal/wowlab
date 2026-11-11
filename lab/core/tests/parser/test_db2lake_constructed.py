@@ -464,17 +464,36 @@ def test_constructed_200k_rows_load_within_the_cpu_budget(tmp_path: Path) -> Non
     assert elapsed < 10, f"{elapsed:.2f} {name} s for {rows} rows"
 
 
+# How many times each measured load is repeated; the smallest peak is kept.
+# tracemalloc counts every allocation the process makes while it traces, not
+# only the load's. A table the interpreter keeps for the whole process (the
+# interned-string table, for one) grows by doubling its storage when it
+# fills, and one such growth landing inside a window adds that new storage to
+# its peak. CI saw long text at 4,360,401 bytes for 1000 rows and 6,283,153
+# for 2000, and a wide table at 667,599 for 100 rows and 2,591,071 for 400:
+# both differences are a 131,072-slot string-keyed dict table to within a
+# few hundred bytes (4 * 131,072 + 87,381 * 16 = 1,922,384). A doubling fills
+# no sooner than tens of thousands of inserts later, so it cannot land in
+# two consecutive loads, while what the load itself holds is the same every
+# time: the minimum of two is the load's own peak.
+_PEAK_RUNS = 2
+
+
 def _peak_load_bytes(tmp_path: Path, rows: int, batch_rows: int) -> int:
     source = tmp_path / f"m12-03-{rows}.csv"
     _big_csv(source, rows)
-    with _warm_lake(tmp_path / f"lake-{rows}-{batch_rows}", source, batch_rows=batch_rows) as lake:
-        tracemalloc.start()
-        try:
-            lake.load(TABLE)
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-    return peak
+    peaks: list[int] = []
+    for run in range(_PEAK_RUNS):
+        where = tmp_path / f"lake-{rows}-{batch_rows}-{run}"
+        with _warm_lake(where, source, batch_rows=batch_rows) as lake:
+            tracemalloc.start()
+            try:
+                lake.load(TABLE)
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+        peaks.append(peak)
+    return min(peaks)
 
 
 def test_constructed_load_memory_follows_the_batch_not_the_file(tmp_path: Path) -> None:
@@ -493,16 +512,20 @@ def test_constructed_load_memory_follows_the_batch_not_the_file(tmp_path: Path) 
 
 
 def _peak_for(tmp_path: Path, body: bytes) -> int:
+    """The smallest of `_PEAK_RUNS` peaks, each a load into a fresh lake."""
     data = GameData(_Tables({TABLE: body}), cache_dir=tmp_path / "cache")
     data.table(TABLE, BUILD)
-    with Lake(BUILD, gamedata=data, lake_dir=tmp_path / "lake") as lake:
-        tracemalloc.start()
-        try:
-            lake.load(TABLE)
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-    return peak
+    peaks: list[int] = []
+    for run in range(_PEAK_RUNS):
+        with Lake(BUILD, gamedata=data, lake_dir=tmp_path / f"lake-{run}") as lake:
+            tracemalloc.start()
+            try:
+                lake.load(TABLE)
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+        peaks.append(peak)
+    return min(peaks)
 
 
 def _wide(rows: int) -> bytes:

@@ -393,6 +393,7 @@ def test_a_place_deeper_than_its_parent_keeps_its_own_path_constructed(
         base="flavor",
         doc_path="x",
         what="x, not described here yet",
+        notes="—",
         written_by="x",
         edit="no",
         tier="—",
@@ -442,7 +443,8 @@ def test_catch_all_rows_are_marked() -> None:
     the ones marked `catch_all`."""
     fm = filemap.load()
     marked = {e.id for e in fm.entries if e.catch_all}
-    said = {e.id for e in fm.entries if "not described here yet" in e.what}
+    # M16-17: the spec says so in the notes; the player's text in its own words
+    said = {e.id for e in fm.entries if "not described here yet" in e.notes}
     assert marked == said == {"cache-other", "logs-other"}
 
 
@@ -741,6 +743,7 @@ section = "s"
 base = "flavor"
 doc_path = "x"
 what = "x"
+notes = "—"
 written_by = "x"
 edit = "no"
 tier = "—"
@@ -789,7 +792,10 @@ def test_tree_install_text_and_explain(root: Path) -> None:
     out = ok("tree", "--install", "--explain").stdout.splitlines()
     assert out[0] == f"Install root {root}"
     assert "  .build.info  701 bytes" in out
-    assert "      [build-info] Installed products, versions, build keys" in out
+    assert (
+        "      [build-info] Which game versions this install holds, with each one's "
+        "version and build"
+    ) in out
     assert f"  {FLAVOR}/  (flavor folder)" in out
     assert f"{FLAVOR} in {root}" in out
     assert out.index(f"{FLAVOR} in {root}") > out.index("  .build.info  701 bytes")
@@ -821,7 +827,12 @@ def test_tree_install_names_a_root_link_without_following_it_constructed(
     (item,) = [i for i in report.items if i.path == "linked-constructed"]
     assert item.kind == "symlink"
     assert item.verdict.restorable is None
-    assert item.note is not None and item.note.endswith(", not followed")
+    # M16-80: the readers' words; a name at the install root that no row has
+    # is told neither a folder nor a file.
+    assert item.note is not None and item.note.endswith(
+        ", not followed; wowlab does not read through links, so it reads this only "
+        "when the real one is there"
+    )
 
 
 def test_tree_items_carry_base_and_flavor_folder(root: Path) -> None:

@@ -28,7 +28,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import DEFAULT_OFFSET
+from _lab_capture_offset import DEFAULT_OFFSET
 from test_lab_capture import build_install, capture, lab_capture, outputs
 
 Identity = lab_capture.Identity
@@ -37,7 +37,7 @@ UnitGuids = lab_capture.UnitGuids
 
 
 def _shifted(name: str) -> str:
-    """A log file name as a run under test writes it (conftest.DEFAULT_OFFSET)."""
+    """A log file name as a run under test writes it (_lab_capture_offset.DEFAULT_OFFSET)."""
     moved = lab_capture.TimeShift(DEFAULT_OFFSET).file_name(name)
     assert moved is not None
     return moved

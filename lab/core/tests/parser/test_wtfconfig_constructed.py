@@ -34,7 +34,8 @@ pytestmark = pytest.mark.parser
 def _round_trips(data: bytes) -> None:
     for parse in (parse_config, parse_bindings, parse_macros):
         doc = parse(data)
-        assert b"".join(line.raw for line in doc.lines) == data, parse.__name__
+        # A leading BOM is the document's own prefix token (M16-25).
+        assert doc.bom + b"".join(line.raw for line in doc.lines) == data, parse.__name__
         assert doc.to_bytes() == data, parse.__name__
         assert type(doc).model_validate(doc.model_dump()) == doc, parse.__name__
 

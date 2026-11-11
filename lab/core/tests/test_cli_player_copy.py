@@ -26,12 +26,14 @@ not ours, and is admitted.
 
 from __future__ import annotations
 
+import ast
 import gzip
 import importlib
 import inspect
 import pkgutil
 import re
 import shutil
+import struct
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -46,7 +48,7 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 import wowlab_core
-from wowlab_core import cli, install
+from wowlab_core import casc, cli, install
 from wowlab_core.gamedata import GameData, TableNotPublished
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -352,7 +354,12 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["explain", "Data"],
         ["explain", "Cache"],
         ["explain", "Screenshots"],
+        # M16-17: the tier, the reader and the row's path pattern
+        *[["explain", p, "--verbose"] for p in (".", "Data", "Cache", "WTF/Config.wtf")],
+        *[["explain", p, "--verbose"] for p in sv_files[:3]],
         ["sv", "list"],
+        ["sv", "list", "--orphans"],
+        ["sv", "list", "--orphans", "--notes"],
         *[["sv", "dump", p] for p in sv_files],
         ["cvar", "list"],
         ["cvar", "list", "--scope", "account"],
@@ -362,6 +369,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["macros", "list"],
         ["macros", "check"],
         ["addons", "list"],
+        ["addons", "check"],
+        ["addons", "check", "--notes"],
         ["log", "tail"],
         ["char", "list"],
         ["char", "show"],
@@ -399,6 +408,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
             for i, c in enumerate(chars)
         ],
         ["snap", "diff", "{A}", "{B}"],
+        # M16-04: the archive is written outside the install, then read back
+        # (the store already holds it, so the import adds nothing).
+        ["snap", "export", "{A}", str(tmp_path / "carried.zip")],
+        ["snap", "import", str(tmp_path / "carried.zip")],
     ]
     return cmds
 
@@ -614,3 +627,62 @@ def test_a_record_value_in_what_a_key_does_prints_as_read_constructed() -> None:
     assert "spell (L3) [verify]" in out
     assert out.count(CONFIRM) == 1
     cli._new_report()
+
+
+# ─── casc's messages (M16-63) ────────────────────────────────────────────────
+
+
+def _casc_strings() -> list[tuple[int, str]]:
+    """Every string literal in `casc.py` that is not a docstring, with its
+    line: the text its errors carry, f-string pieces included."""
+    tree = ast.parse(inspect.getsource(casc))
+    docs: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docs.add(id(first.value))
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs
+    ]
+
+
+def test_casc_message_strings_are_player_copy() -> None:
+    """No `[verify]`, ADR id, ticket id, invariant or doc path in any string
+    `casc` can put in front of a player."""
+    rules = ("[verify]", "ADR id", "ticket id", "doc path", "invariant")
+    found = [
+        (line, hit) for line, text in _casc_strings() for hit in hits(text) if hit.startswith(rules)
+    ]
+    assert found == []
+
+
+def _idx_with_extra_byte(bucket: int, extra: int) -> bytes:
+    """An `.idx` header (version 7, spec 4/5/9/30) whose extra byte is set."""
+    header = struct.pack("<HBBBBBBQ", 7, bucket, extra, 4, 5, 9, 30, 0xFFC0000000)
+    header += bytes(16 - len(header))
+    return struct.pack("<II", 16, casc.hashlittle(header)) + header + bytes(8)
+
+
+def test_casc_extra_byte_refusal_is_player_copy_constructed() -> None:
+    """Constructed: the refusal says the value is unknown in words, with no
+    marker for a predicate."""
+    with pytest.raises(casc.CascUnsupportedError) as caught:
+        casc.parse_index_file(_idx_with_extra_byte(6, 1), 6, 1, "0600000001.idx")
+    text = str(caught.value)
+    assert "extra byte 1" in text and "not known" in text
+    assert hits(text) == [], text
+
+
+def test_casc_encrypted_block_refusal_is_player_copy_constructed() -> None:
+    """Constructed: an `E` block's refusal names the key and says wowlab
+    does not decrypt, with no ADR id."""
+    body = b"E" + b"\x08" + bytes(range(8)) + b"\x08" + bytes(8) + b"S" + b"\xa5" * 40
+    data = b"BLTE" + struct.pack(">I", 0) + body
+    with pytest.raises(casc.EncryptedContent) as caught:
+        casc.decode_blte(data)
+    text = str(caught.value)
+    assert "wowlab does not decrypt" in text
+    assert hits(text) == [], text
