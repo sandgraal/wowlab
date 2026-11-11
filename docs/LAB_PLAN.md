@@ -453,7 +453,8 @@ folder strictly above the place, never from the place itself (the general
 row of the area). This covers `Logs/WoWCombatLog*.txt` and `Logs/*.log`
 (under `Logs/**`), and `Cache/ADB/<locale>/DBCache.bin` and
 `Cache/WDB/<locale>/*.wdb` (under `Cache/**`). Other pairs of different
-rows, and one row for both kinds, still say "real one".
+rows, and one row for both kinds below the folder it hangs from, still say
+"real one".
 
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
