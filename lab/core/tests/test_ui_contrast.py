@@ -768,7 +768,7 @@ def test_the_quality_word_is_drawn_beside_the_name() -> None:
 _REFLOW_JS = r"""
 "use strict";
 
-// One link per scheme: the link `wowlab ui` opens works once (M16-42).
+// One server, and its link, per scheme.
 const urls = { dark: process.argv[2], light: process.argv[3] };
 let playwright;
 try {
@@ -856,7 +856,7 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
         pytest.skip("node is not on PATH")
     script = tmp_path / "m16-30-reflow.js"
     script.write_text(_REFLOW_JS, encoding="utf-8")
-    # A second server for the second scheme: each opened link works once (M16-42).
+    # A second server for the second scheme, so each scheme has its own page.
     light = ui.make_server()
     thread = threading.Thread(target=light.serve_forever, args=(0.05,), daemon=True)
     thread.start()

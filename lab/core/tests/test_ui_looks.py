@@ -557,12 +557,12 @@ function looksView() {
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (String(url).startsWith("/api/looks-page?")) {
+  if (String(url).startsWith("/api/looks-page")) {
     requests.push({ url: String(url), body: body });
     const held = scenario.looks_page;
     return answer(held.body, held.ok);
   }
-  if (body && String(url).startsWith("/api/run?")) {
+  if (body && String(url).startsWith("/api/run")) {
     for (const held of scenario.held || []) {
       if (canon(held.command) === canon(body.command) && canon(held.params) === canon(body.params || {})) {
         requests.push({ url: String(url), body: body });

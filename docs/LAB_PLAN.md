@@ -370,6 +370,30 @@ raises `NotAnInstallError` with `reason` `unreadable` and the words "cannot
 read .build.info (it changed as it was read; run the command again)". The
 discovery output of an unchanged install is byte for byte what it was.
 
+*Amended 2026-11-11 (owner decision in session, M16-112): a wider default search.* The owner keeps his install outside `/Applications`, and discovery did not find it. When no explicit root and no `WOWLAB_WOW_ROOT` is given, the default search is now the following. In each folder listed, discovery looks for a `World of Warcraft` child.
+
+- **macOS**, in this order:
+  1. `/Applications`
+  2. `/Applications/Games`
+  3. `/Games`
+  4. `~/Applications`
+  5. `~/Games`
+  6. `/Users/Shared`
+  7. for each entry directly under `/Volumes`, sorted by name: `/Volumes/<name>`, `/Volumes/<name>/Applications` and `/Volumes/<name>/Games`. These are searched only after the first six have failed, so a stalled network share or a sleeping disk costs nothing when the install is found earlier. An entry under `/Volumes` that is a link by `is_link` is skipped, which covers the boot volume's link back to `/`. So is a name that starts with `.`. Each candidate is checked with one `stat`, and a failure is reported as "could not check" (domain review, 2026-11-11).
+
+  `~` is the current user's home directory. If the home cannot be found, the two `~` entries are skipped.
+- **Windows:** each drive's list gains `<drive>\Games\World of Warcraft`, after the three existing locations and in the same drive order.
+- **Unchanged:**
+  - the first location that is an install wins;
+  - the explicit root and `WOWLAB_WOW_ROOT` are final, as in amendment (2) of 2026-09-22;
+  - a location that is not a directory, or cannot be checked, is passed over;
+  - one that holds an unusable `.build.info` is reported, as before.
+
+  The output already names the root it used, so a player with two installs can see which one was taken.
+- **When nothing is found**, the error lists every location that was checked, in order. It ends with the two ways to name the install: `--root "<path>"`, and the variable for the current terminal window, `export WOWLAB_WOW_ROOT="<path>"` (macOS), or on Windows both `set WOWLAB_WOW_ROOT=<path>` (cmd) and `$env:WOWLAB_WOW_ROOT = "<path>"` (PowerShell). It also says the path to use is the folder that holds `.build.info`, not `_retail_`.
+- **Still out of scope:** reading Battle.net's own records of where it installed the game. That would need an ADR and a real capture.
+- **Linux:** still explicit root only.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
@@ -1498,7 +1522,7 @@ The command's clause says what `undo()` does: it puts back every file in the rec
 
 `--json` gains `store.last_transaction.flavor_folder` and `store.last_transaction.paths_left`, a list of `{path, now, exists}`: `now` is one of `wowlab_change`, `before_change`, `changed_since`, `unknown` or `not_written`, and `exists` is whether the file is there now (null when it was not read). The problem and the list hold names as stored, and only the output escapes them. The text output escapes control, format and separator characters as `\xNN` (a real file name may hold a bidi mark), and `--json` is ASCII. So `--redact` sees each name unescaped and replaces account, realm and character folders in those paths like any other. Those names come from the install, the snapshots and the paths of every journal record, since a folder the transaction created is in no snapshot.
 
-*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78, M16-90, M16-100T):*
+*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78, M16-90, M16-100T, M16-108T):*
 
 (a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
 
@@ -1513,6 +1537,32 @@ The command's clause says what `undo()` does: it puts back every file in the rec
 - **The undo target replaces "the most recent record".** The target is the newest record that is not passed over. This replaces "the most recent transaction" and "the most recent record" for `undo()` in this section's opening sentence ("`guard.undo()` restores the pre-write snapshot of the most recent transaction"), in item 1, in the "refuses a most recent record whose…" rule and in the "well defined" sentence above. It does the same for `undo` in §16 ("undoes the newest journal record at run time"). It also replaces the record that 2026-11-10 (c) has `doctor` report.
 - **`--expect` keeps its protection.** It must name the target's id. Any record newer than the target that is not passed over is a mismatch and raises, as in the 2026-09-28 amendment.
 - **`doctor`** reports D as the change to undo, and K as interrupted before it changed anything.
+
+(a2) **Every closed record that never took a snapshot is passed over.** *Owner decision, 2026-11-11 (M16-69 review, M16-108T): "Skip it" and "Skip all, show D".* This widens (a1)'s "Which records are passed over": the first condition, "it has `undoes` set", is dropped. A record K is now passed over when both of these hold:
+- no pre-write snapshot of it was ever taken;
+- it has been closed.
+
+It does not matter how K came to be closed:
+- K may be a `transaction` or an `undo` killed between its cleanup and its snapshot (amendment (a)), and later closed by `undo`.
+- The pre-write snapshot may have failed in the same run (for example a full disk or an unreadable file), and the gate then closed K itself.
+
+Such a record changed no player file: at most it removed leftover temps. So skipping it hides no change, and it never locks `undo` out of the changes before it. If closing K appends a record, that record names K in `undoes`, changes no file, and is passed over with K, as in (a1).
+
+*What "never took a snapshot" means (2026-11-11, from the M16-108T security review; this makes the owner's "changed no player file" exact):*
+- It is something the gate writes positively into the record: K's own field says that no pre-write snapshot was taken. A snapshot id that names no manifest in the store does not count. A record whose manifest has gone missing (deleted by hand, a damaged disk, a journal restored without `snapshots/`) is not passed over. `undo` keeps refusing it, as before, because its snapshot cannot be read.
+- K's `paths` and `created_dirs` must both be empty. A record that lists a path or a created folder is never passed over, whatever it says about snapshots.
+- A record that closes K is passed over only if it too has no `paths`, no `created_dirs` and no snapshot.
+- Any number of such records in a row are passed over.
+- `undo` closes a record without restoring anything only when that record would be passed over once closed: no snapshot, no `paths` and no `created_dirs`. Any other record without a readable snapshot is refused as before, and nothing changes.
+
+What follows from this:
+- **A killed transaction.** After its record K is closed, the target is the newest record before K that is not passed over. If that record D is still `open` or `rollback_incomplete`, `doctor` reports D as (a1) describes for a killed undo. It gives D's own `wowlab undo --expect <D id>` line, names K as stopped before it changed anything, and exits 1 until D is undone. If D is settled, `doctor` has no problem.
+- **A failed snapshot.** The change before it stays the target, as when a failed snapshot journaled nothing.
+- **What is unchanged:**
+  - a K that is still `open` is the target, until `undo` closes it;
+  - a record that took a pre-write snapshot is never passed over;
+  - an undo that completed normally is never passed over;
+  - `--expect` must name the target.
 
 (b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
 
@@ -4110,6 +4160,20 @@ with exit 3 and before reading it, a file whose real path is not in the
 install wowlab finds by itself, and a `--root` naming another install, so a
 refusal quotes none of its bytes and the page cannot plant an install around
 a file. The file read is the real path that was checked.
+
+*Amended 2026-11-11 (owner decision in session, M16-113; this supersedes the "works once" part of the 2026-10-27 amendment above):* the owner tested `wowlab ui`, and a reload showed "This wowlab ui link was already used". He ruled it too much: "get rid of this requirement". The link `wowlab ui` opens, and a reload of the page, now keep working for as long as that `wowlab ui` process runs.
+- **What stays:** the protection against other web pages and other local programs driving the server.
+  - The server is bound to `127.0.0.1` and checks its Host header as before.
+  - Every API request must still prove it comes from the browser that opened the link. The design is the implementer's. The default is an `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie set when the link is first opened, which the server accepts in place of the `token` parameter, so a reload or a second tab in that browser works.
+  - A request with neither the header nor a valid token is refused, as now.
+  - Accepted risk (owner, 2026-11-11): the link is in the browser's process arguments, which another account on the same computer can read, and it opens the session until Ctrl-C; this tool is used on single-user machines, and the risk is revisited before outside users are invited (ADR-0037).
+  - *Design chosen (2026-11-11, M16-113, after the owner's security ruling that a cookie on `127.0.0.1` reaches every port):* the cookie default was replaced. The page served for the link holds the session key in one `<meta>` element, which `page.js` removes, keeps in `localStorage` (per origin, port included) and sends in the `X-Wowlab-Session` header on every request; another site's page cannot send that header without a preflight, which is refused. A bare `GET /` serves the shell with no key in it, so a reload and a second tab get the page and send the stored key.
+  - Stopping `wowlab ui` (Ctrl-C) ends the session. A new `wowlab ui` makes a new link, and the old one stops working.
+- **What goes:**
+  - the one-time boot key, and its "already used" page and terminal notice;
+  - the rule that a reload needs a new `wowlab ui`.
+- **Security review** judges whether the chosen design still stops a cross-site request (CSRF), a DNS-rebinding page, and another local user's process. A finding there goes back to the owner rather than restoring the one-time link.
+
 
 **What stays in Wave 5 (M14).** The confirm flow for every command that declares
 `--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon

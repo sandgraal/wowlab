@@ -72,7 +72,7 @@ const noteWrites = [];
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (body && String(url).startsWith("/api/run?")) {
+  if (body && String(url).startsWith("/api/run")) {
     for (const held of scenario.held || []) {
       const path = String((body.params || {}).path || "").split(scenario.sep).join("/");
       if (canon(held.command) === canon(body.command)

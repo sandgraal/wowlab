@@ -1,12 +1,16 @@
-"""`wowlab ui`: the local exposure (M16-42; security:F3 and F4, EV-41).
+"""`wowlab ui`: the local exposure (M16-42; security:F3 and F4, EV-41; M16-113).
 
 F4: the URL `wowlab ui` opens is in the browser's argv, which other local
-accounts can read, and it stayed in the address bar. The opened URL now
-carries a one-time boot key (`/?boot=<key>`). The key opens the shell and
-the exchange, `POST /api/session`, which answers the session key once and
-spends the boot key. Every other request carries the session key as `token`,
-as before. `page.js` takes the query out of the address bar with
-`history.replaceState` before its first request.
+accounts can read, and it stayed in the address bar. The opened URL carries
+a boot key (`/?boot=<key>`), not the session key, and `page.js` takes the
+query out of the address bar with `history.replaceState` before its first
+request. M16-113 (owner, 2026-11-11) replaced the one-time exchange: the
+page served for the boot key holds the session key in one `<meta>` element;
+the page keeps it in `localStorage` (per origin, port included) and sends
+it in the `X-Wowlab-Session` header, so the link, a reload and a second tab
+keep working until the server stops. No cookie: a browser sends a cookie to
+every port of `127.0.0.1`. Host and Origin are still checked first, and a
+request with neither the header nor the token is refused.
 
 F3: `sv dump` reads any file it is named. From `/api/run` it always runs with
 `--install-only`, so a file whose real path is not in the resolved install is
@@ -20,6 +24,7 @@ reads or writes a real install.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import json
 import os
@@ -157,84 +162,146 @@ def _send(
         connection.close()
 
 
-def _exchange(server: Any, key: str | None = None, **kwargs: Any) -> _Reply:
-    key = server.boot if key is None else key
-    return _send(server, "POST", f"/api/session?boot={key}", **kwargs)
-
-
 def _run(server: Any, command: list[str], params: dict[str, Any]) -> _Reply:
     body = json.dumps({"command": command, "params": params}).encode("utf-8")
     return _send(server, "POST", f"/api/run?token={server.token}", body=body)
 
 
-# ─── F4: the boot key ────────────────────────────────────────────────────────
+def _open_link(server: Any, **kwargs: Any) -> _Reply:
+    """What the browser does with the link `wowlab ui` opened."""
+    return _send(server, "GET", f"/?boot={server.boot}", **kwargs)
 
 
-def test_the_opened_url_carries_the_boot_key_and_not_the_session_key(planted: Any) -> None:
+_META = re.compile(rb'<meta id="wowlab-session" content="([A-Za-z0-9_-]+)">')
+
+
+def _session(server: Any) -> dict[str, str]:
+    """The header the page sends, with the key the link's page handed it."""
+    reply = _open_link(server)
+    assert reply.status == 200
+    (key,) = _META.findall(reply.body)
+    return {"X-Wowlab-Session": key.decode("ascii")}
+
+
+# ─── F4 and M16-113: the link and the session ────────────────────────────────
+
+
+def test_the_opened_url_carries_the_boot_key_and_no_session_key(planted: Any) -> None:
     assert planted.url == f"http://127.0.0.1:{planted.port}/?boot={planted.boot}"
-    assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", planted.boot), "token_urlsafe(32)"
+    for key in (planted.boot, planted.token):
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43,}", key), "token_urlsafe(32)"
     assert planted.boot != planted.token
     assert planted.token not in planted.url
 
 
-def _assert_link_used(server: Any, reply: _Reply) -> None:
+def test_the_link_hands_the_page_the_session_key_and_sets_no_cookie(planted: Any) -> None:
+    reply = _open_link(planted)
+    assert reply.status == 200
+    assert _META.findall(reply.body) == [planted.token.encode()]
+    # The shell with that one element added, and nothing else changed.
+    shell = ui.static_files()["/"]
+    assert (
+        reply.body.replace(
+            b'\n<meta id="wowlab-session" content="' + planted.token.encode() + b'">', b""
+        )
+        == shell
+    )
+    assert planted.token.encode() not in shell
+    assert reply.headers.get_all("Set-Cookie") is None
+    assert reply.headers.get("Cache-Control") == "no-store"
+    assert reply.headers.get("Cross-Origin-Resource-Policy") == "same-origin"
+    assert not [k for k in reply.headers if k.lower().startswith("access-control-")]
+
+
+def test_the_link_keeps_working(planted: Any) -> None:
+    """M16-113: the link is not spent; it opens the page every time."""
+    for method in ("GET", "GET", "HEAD", "GET"):
+        reply = _send(planted, method, f"/?boot={planted.boot}")
+        assert reply.status == 200, (method, reply.body[:200])
+        if method == "GET":
+            assert _META.findall(reply.body) == [planted.token.encode()]
+
+
+def test_a_reload_works(planted: Any) -> None:
+    """A reload asks for `/` with no query: the shell, with no key in it; the
+    page's requests then carry the key it kept in the header."""
+    session = _session(planted)
+    for method in ("GET", "HEAD", "GET"):
+        reply = _send(planted, method, "/")
+        assert reply.status == 200, (method, reply.body[:200])
+    reply = _send(planted, "GET", "/")
+    assert reply.body == ui.static_files()["/"]
+    assert planted.token.encode() not in reply.body
+    reply = _send(planted, "GET", "/api/commands", headers=session)
+    assert reply.status == 200
+    assert [c["path"] for c in reply.json()["commands"]] == [["hello"], ["other"]]
+    body = json.dumps({"command": ["nope"], "params": {}}).encode()
+    reply = _send(planted, "POST", "/api/run", body=body, headers=session)
+    assert (reply.status, reply.error()) == (403, "not_a_command"), "past the session check"
+    reply = _send(planted, "GET", "/api/looks-page", headers=session)
+    assert reply.error() != "token"
+
+
+def test_a_second_tab_works(planted: Any) -> None:
+    """A second tab: the link again, or the bare address, and the same key
+    in the header, from the storage both tabs share."""
+    session = _session(planted)
+    assert _session(planted) == session, "the same session"
+    assert _send(planted, "GET", "/").status == 200
+    assert _open_link(planted).status == 200
+    assert _send(planted, "GET", "/api/commands", headers=session).status == 200
+
+
+def test_a_same_origin_request_without_the_header_is_refused(planted: Any) -> None:
+    """The page's own origin, but no key: refused. A cookie is not a key."""
+    origin = {"Origin": f"http://127.0.0.1:{planted.port}"}
+    body = json.dumps({"command": ["hello"], "params": {}}).encode()
+    for headers in (
+        origin,
+        {**origin, "Cookie": f"wowlab_ui_{planted.port}={planted.token}"},
+        {**origin, "Cookie": f"X-Wowlab-Session={planted.token}"},
+        {**origin, "X-Wowlab-Session": ""},
+        {**origin, "X-Wowlab-Boot": planted.boot},
+        {**origin, "X-Wowlab-Session": planted.boot},
+    ):
+        for method, target, payload in (
+            ("GET", "/api/commands", None),
+            ("GET", "/api/looks-page", None),
+            ("POST", "/api/run", body),
+        ):
+            reply = _send(planted, method, target, body=payload, headers=headers)
+            assert (reply.status, reply.error()) == (403, "token"), (headers, target)
+    reply = _send(planted, "GET", "/api/commands", headers={**origin, **_session(planted)})
+    assert reply.status == 200, "positive control"
+
+
+def test_a_request_with_no_session_is_refused(planted: Any) -> None:
+    for target in ("/api/commands", "/api/looks-page", "/nope", "/?token=wrong", "/?tok=x"):
+        reply = _send(planted, "GET", target)
+        assert (reply.status, reply.error()) == (403, "token"), target
+    body = json.dumps({"command": ["hello"], "params": {}}).encode()
+    for target in ("/api/run", "/"):
+        reply = _send(planted, "POST", target, body=body)
+        assert (reply.status, reply.error()) == (403, "token"), target
+    # A link that is not this server's: the player's sentence.
+    for target in ("/?boot=", f"/?boot={planted.token}", "/?boot=x"):
+        _assert_no_session_sentence(planted, _send(planted, "GET", target))
+
+
+def _assert_no_session_sentence(server: Any, reply: _Reply) -> None:
     """The player's sentence, as plain text, under the same headers as every
-    response, and with neither key in it."""
+    response, and with no key in it."""
     assert reply.status == 403
     assert reply.headers.get("Content-Type") == "text/plain; charset=utf-8"
     assert reply.headers.get("Cache-Control") == "no-store"
     assert reply.headers.get("Content-Security-Policy") == ui._shell()[1]
     text = reply.body.decode("utf-8")
-    assert "already used" in text and "Ctrl-C" in text, text
-    assert server.boot not in text and server.token not in text
+    assert "link wowlab ui opened" in text and "start it again" in text, text
+    assert "already used" not in text
+    for key in (server.boot, server.token):
+        assert key not in text
     # Player copy: no JSON, no code, no ticket.
-    assert "{" not in text and "M16" not in text and "boot_spent" not in text
-
-
-def test_the_boot_key_opens_the_shell_until_it_is_spent(planted: Any) -> None:
-    shell = ui.static_files()["/"]
-    for method in ("GET", "GET", "HEAD"):
-        reply = _send(planted, method, f"/?boot={planted.boot}")
-        assert reply.status == 200, (method, reply.body[:200])
-        if method == "GET":
-            assert reply.body == shell
-    assert _exchange(planted).status == 200
-    reply = _send(planted, "GET", f"/?boot={planted.boot}")
-    _assert_link_used(planted, reply)
-    # The session key still opens the shell.
-    assert _send(planted, "GET", f"/?token={planted.token}").status == 200
-
-
-def test_the_exchange_answers_the_session_key_once(planted: Any) -> None:
-    first = _exchange(planted)
-    assert first.status == 200
-    assert first.json() == {"token": planted.token}
-    assert first.headers.get("Cache-Control") == "no-store"
-    assert first.headers.get_all("Set-Cookie") is None
-    for _ in range(2):
-        again = _exchange(planted)
-        assert (again.status, again.error()) == (403, "boot_spent")
-        assert planted.token.encode() not in again.body
-
-
-def test_two_exchanges_racing_get_one_key(planted: Any) -> None:
-    replies: list[_Reply] = []
-    lock = threading.Lock()
-    gate = threading.Barrier(8)
-
-    def go() -> None:
-        gate.wait()
-        reply = _exchange(planted)
-        with lock:
-            replies.append(reply)
-
-    threads = [threading.Thread(target=go) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(30)
-    assert sorted(r.status for r in replies) == [200] + [403] * 7
-    assert sum(planted.token.encode() in r.body for r in replies) == 1
+    assert "{" not in text and "M16" not in text
 
 
 def _wrong(key: str) -> list[str]:
@@ -242,15 +309,39 @@ def _wrong(key: str) -> list[str]:
     return ["", "x", flipped, key[:-1], key + "x", key.upper()]
 
 
-def test_a_wrong_boot_key_opens_nothing_and_spends_nothing(planted: Any) -> None:
+def test_a_wrong_session_is_refused(planted: Any) -> None:
+    for wrong in _wrong(planted.token):
+        reply = _send(planted, "GET", "/api/commands", headers={"X-Wowlab-Session": wrong})
+        assert (reply.status, reply.error()) == (403, "token"), wrong
+    # The header twice is refused, even when one is right.
+    connection = http.client.HTTPConnection("127.0.0.1", planted.port, timeout=60)
+    try:
+        connection.putrequest("GET", "/api/commands", skip_host=True)
+        connection.putheader("Host", f"127.0.0.1:{planted.port}")
+        connection.putheader("X-Wowlab-Session", planted.token)
+        connection.putheader("X-Wowlab-Session", planted.token)
+        connection.endheaders()
+        response = connection.getresponse()
+        assert response.status == 403
+        assert json.loads(response.read()) == {"error": "token"}
+    finally:
+        connection.close()
+
+
+def test_a_token_that_is_given_decides_over_the_header(planted: Any) -> None:
+    session = _session(planted)
+    reply = _send(planted, "GET", "/api/commands?token=wrong", headers=session)
+    assert (reply.status, reply.error()) == (403, "token")
+    reply = _send(planted, "GET", f"/api/commands?token={planted.token}")
+    assert reply.status == 200
+
+
+def test_a_wrong_boot_key_hands_out_nothing(planted: Any) -> None:
     for wrong in _wrong(planted.boot):
         reply = _send(planted, "GET", f"/?boot={wrong}")
-        assert (reply.status, reply.error()) == (403, "token"), wrong
-        reply = _exchange(planted, wrong)
         assert reply.status == 403, wrong
         assert planted.token.encode() not in reply.body
-    # Positive control: the real key still works, once.
-    assert _exchange(planted).status == 200
+    assert _open_link(planted).status == 200, "positive control"
 
 
 @pytest.mark.parametrize(
@@ -259,18 +350,15 @@ def test_a_wrong_boot_key_opens_nothing_and_spends_nothing(planted: Any) -> None
         ("GET", "/api/commands"),
         ("GET", "/api/looks-page"),
         ("POST", "/api/run"),
+        ("POST", "/"),
         ("GET", "/no-such-page"),
     ],
 )
-def test_the_boot_key_opens_only_the_shell_and_the_exchange(
-    planted: Any, method: str, path: str
-) -> None:
+def test_the_boot_key_opens_only_the_shell(planted: Any, method: str, path: str) -> None:
     body = json.dumps({"command": ["hello"], "params": {}}).encode() if method == "POST" else None
     reply = _send(planted, method, f"{path}?boot={planted.boot}", body=body)
     assert (reply.status, reply.error()) == (403, "token")
-    # And spent, it opens them no more.
-    assert _exchange(planted).status == 200
-    reply = _send(planted, method, f"{path}?boot={planted.boot}", body=body)
+    reply = _send(planted, method, path, body=body, headers={"X-Wowlab-Session": planted.boot})
     assert (reply.status, reply.error()) == (403, "token")
 
 
@@ -280,120 +368,176 @@ def test_the_boot_key_must_be_the_whole_query(planted: Any) -> None:
         f"/?boot={planted.boot}&x=1",
         f"/?bootx={planted.boot}",
     ):
-        assert _send(planted, "GET", target).status == 403, target
-    reply = _send(planted, "POST", f"/api/session?boot={planted.boot}&x=1")
+        reply = _send(planted, "GET", target)
+        assert reply.status == 403, target
+        assert planted.token.encode() not in reply.body
+
+
+def test_the_one_time_exchange_is_gone(planted: Any) -> None:
+    """M16-113 removed `POST /api/session`."""
+    reply = _send(planted, "POST", f"/api/session?boot={planted.boot}")
     assert (reply.status, reply.error()) == (403, "token")
-    # The session key does not open the exchange, which would answer it.
-    reply = _send(planted, "POST", f"/api/session?token={planted.token}")
-    assert (reply.status, reply.error()) == (403, "token")
-    assert planted.token.encode() not in reply.body
-    assert _exchange(planted).status == 200
+    reply = _send(planted, "POST", "/api/session", headers=_session(planted))
+    assert (reply.status, reply.error()) == (404, "not_found")
 
 
-def test_host_and_origin_come_before_the_boot_key(planted: Any) -> None:
-    port = planted.port
-    for headers, code in (
-        ({"Host": "evil.example"}, "host"),
-        ({"Host": f"evil.example:{port}"}, "host"),
-        ({"Origin": "http://evil.example"}, "origin"),
-        ({"Origin": "null"}, "origin"),
-    ):
-        reply = _exchange(planted, headers=headers)
-        assert (reply.status, reply.error()) == (403, code), headers
-        reply = _send(planted, "GET", f"/?boot={planted.boot}", headers=headers)
-        assert (reply.status, reply.error()) == (403, code), headers
-    # None of them spent it; the page's own request carries its Origin.
-    reply = _exchange(planted, headers={"Origin": f"http://127.0.0.1:{port}"})
-    assert reply.status == 200
+_CROSS = [
+    ({"Host": "evil.example"}, "host"),
+    ({"Host": "evil.example:{port}"}, "host"),
+    ({"Origin": "http://evil.example"}, "origin"),
+    ({"Origin": "http://127.0.0.1:{other}"}, "origin"),
+    ({"Origin": "null"}, "origin"),
+]
 
 
-def test_get_on_the_exchange_is_not_allowed(planted: Any) -> None:
-    reply = _send(planted, "GET", f"/api/session?token={planted.token}")
-    assert (reply.status, reply.error()) == (405, "method_not_allowed")
-    assert _exchange(planted).status == 200
+def _cross(server: Any) -> list[tuple[dict[str, str], str]]:
+    port = server.port
+    return [
+        ({k: v.format(port=port, other=port + 1) for k, v in headers.items()}, code)
+        for headers, code in _CROSS
+    ]
 
 
-def test_neither_key_is_in_any_other_response(planted: Any) -> None:
-    """The boot key is in no response; the session key only in the one
-    exchange that answered it."""
+def test_a_cross_origin_request_is_refused_even_with_the_session(planted: Any) -> None:
+    """Another site's page (CSRF), another server on this machine, or a
+    DNS-rebinding page: its Origin or Host is not the server's own, and the
+    key does not help it; nor does the link."""
+    session = _session(planted)
+    body = json.dumps({"command": ["hello"], "params": {}}).encode()
+    for headers, code in _cross(planted):
+        sent = {**session, **headers}
+        for method, target, payload in (
+            ("GET", "/", None),
+            ("GET", "/api/commands", None),
+            ("GET", "/api/looks-page", None),
+            ("POST", "/api/run", body),
+            ("GET", f"/?boot={planted.boot}", None),
+        ):
+            reply = _send(planted, method, target, body=payload, headers=sent)
+            assert (reply.status, reply.error()) == (403, code), (headers, target)
+            assert planted.token.encode() not in reply.body
+
+
+def test_a_preflight_for_the_header_is_refused(planted: Any) -> None:
+    """A cross-origin page must preflight to send `X-Wowlab-Session`; the
+    preflight is refused and carries no CORS header, so the browser never
+    sends the request."""
+    for origin in ("http://evil.example", f"http://127.0.0.1:{planted.port + 1}", "null"):
+        reply = _send(
+            planted,
+            "OPTIONS",
+            "/api/run",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "x-wowlab-session,content-type",
+            },
+        )
+        assert reply.status == 403, origin
+        assert not [k for k in reply.headers if k.lower().startswith("access-control-")]
+
+
+def test_the_session_of_an_earlier_server_is_refused(home: Path) -> None:
+    """Ctrl-C ends the session: a new `wowlab ui` makes new keys, and the old
+    link and key open nothing."""
+    with _serving_planted() as old:
+        old_url, old_boot, old_token = old.url, old.boot, old.token
+        old_session = _session(old)
+        assert _send(old, "GET", "/api/commands", headers=old_session).status == 200
+    with _serving_planted() as new:
+        assert new.url != old_url
+        assert {new.boot, new.token}.isdisjoint({old_boot, old_token})
+        reply = _send(new, "GET", "/api/commands", headers=old_session)
+        assert (reply.status, reply.error()) == (403, "token")
+        _assert_no_session_sentence(new, _send(new, "GET", f"/?boot={old_boot}"))
+        reply = _send(new, "GET", f"/api/commands?token={old_token}")
+        assert (reply.status, reply.error()) == (403, "token")
+        assert _send(new, "GET", "/api/commands", headers=_session(new)).status == 200
+
+
+@contextlib.contextmanager
+def _serving_planted() -> Iterator[Any]:
+    served = _serve(ui.make_server(command=_planted_tree(), wowlab_argv=["/nonexistent"]))
+    server = next(served)
+    try:
+        yield server
+    finally:
+        for _ in served:
+            pass
+
+
+def test_no_key_is_in_any_response_but_the_links_page(planted: Any) -> None:
+    """The boot key is in no response, and the session key only in the body
+    of the page served for the link; no response sets a cookie."""
+    session = _session(planted)
     replies = [
-        _send(planted, "GET", f"/?boot={planted.boot}"),
         _send(planted, "GET", f"/?token={planted.token}"),
         _send(planted, "GET", f"/api/commands?token={planted.token}"),
+        _send(planted, "GET", "/api/commands", headers=session),
+        _send(planted, "GET", "/"),
+        _send(planted, "GET", "/", headers=session),
         _send(planted, "GET", f"/api/commands?boot={planted.boot}"),
         _send(planted, "GET", f"/nope?boot={planted.boot}"),
-        _exchange(planted, "wrong"),
+        _send(planted, "GET", "/nope", headers=session),
+        _send(planted, "GET", "/?boot=wrong"),
+        _send(planted, "GET", f"/?boot={planted.boot}", headers={"Host": "evil.example"}),
+        _send(planted, "GET", f"/?boot={planted.boot}", headers={"Origin": "http://evil.example"}),
     ]
-    answered = _exchange(planted)
-    replies += [_exchange(planted), _send(planted, "GET", f"/?boot={planted.boot}")]
-    for reply in [*replies, answered]:
+    linked = _open_link(planted)
+    for reply in [*replies, linked]:
         assert planted.boot.encode() not in reply.body
+        assert reply.headers.get_all("Set-Cookie") is None
         for name, value in reply.headers.items():
             assert planted.boot not in value and planted.token not in value, name
     for reply in replies:
         assert planted.token.encode() not in reply.body
-    assert answered.json() == {"token": planted.token}
+    assert planted.token.encode() in linked.body
+
+
+def test_the_cli_sets_no_notice_and_prints_the_link_without_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """M16-113: no "already used" notice, and the printed link is not
+    called one-time."""
+    from test_ui_server import _invoke_ui
+
+    run = _invoke_ui(monkeypatch, tmp_path, "false")
+    ((_, _, server),) = run.made
+    assert not hasattr(server, "notice")
+    assert "once" not in run.result.stderr
+    assert run.result.stdout.count(server.url) == 1
+    assert server.token not in run.result.stdout and server.token not in run.result.stderr
 
 
 # ─── F4: page.js ─────────────────────────────────────────────────────────────
-
-
-def test_a_reload_gets_the_sentence_and_api_refusals_stay_json(planted: Any) -> None:
-    """Review round 1: the page with no query (a reload, once the page took
-    the query out) answers the player in words; `/api/*` stays JSON."""
-    for method in ("GET", "HEAD"):
-        reply = _send(planted, method, "/")
-        assert reply.status == 403
-        assert reply.headers.get("Content-Type") == "text/plain; charset=utf-8"
-    _assert_link_used(planted, _send(planted, "GET", "/"))
-    for target in ("/api/commands", "/?token=wrong", "/?tok=x"):
-        reply = _send(planted, "GET", target)
-        assert (reply.status, reply.error()) == (403, "token"), target
-    reply = _send(planted, "GET", "/", headers={"Host": "evil.example"})
-    assert (reply.status, reply.error()) == (403, "host")
-
-
-def test_the_spent_link_presented_again_is_told_once(planted: Any) -> None:
-    """Security round 1: `notice` gets one line, with no key, the first time
-    the spent boot key comes back, at the shell or the exchange."""
-    lines: list[str] = []
-    planted.notice = lines.append
-    _send(planted, "GET", f"/?boot={planted.boot}")
-    assert _exchange(planted).status == 200
-    _exchange(planted, "wrong")
-    assert lines == [], "neither the player's own use nor a wrong key is a reuse"
-    _assert_link_used(planted, _send(planted, "GET", f"/?boot={planted.boot}"))
-    assert _exchange(planted).status == 403
-    assert len(lines) == 1
-    assert "second time" in lines[0]
-    assert planted.boot not in lines[0] and planted.token not in lines[0]
-
-
-def test_the_cli_prints_the_notice_on_stderr(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`wowlab ui` hands the server its own stderr line printer."""
-    from test_ui_server import _invoke_ui
-
-    run = _invoke_ui(monkeypatch, tmp_path, "opens")
-    ((_, _, server),) = run.made
-    assert server.notice is cli._say_err
 
 
 def _script() -> str:
     return (TEMPLATES / "page.js").read_text(encoding="utf-8")
 
 
-def test_the_page_drops_the_query_before_its_first_request() -> None:
+def test_the_page_keeps_the_key_per_origin_and_sends_it_in_a_header() -> None:
     script = _script()
     replace = script.index('window.history.replaceState(null, "", "/")')
     assert script.count("replaceState(") == 1
     assert replace < script.index("fetch(")
-    # The session key lives in the closure: no storage, no cookie, no URL.
-    for sink in ("sessionStorage", "localStorage", "document.cookie", "pushState"):
+    # The key comes from the page's own <meta>, which is removed, and lives
+    # in localStorage (per origin, port included); never a cookie or the URL.
+    assert 'document.getElementById("wowlab-session")' in script
+    assert "given.remove()" in script
+    assert script.count("localStorage.setItem(") == 1 and "sessionStorage" not in script
+    for sink in (
+        "document.cookie",
+        "pushState",
+        'get("token")',
+        "get('token')",
+        'get("boot")',
+        "/api/session",
+    ):
         assert sink not in script, sink
-    # Review round 1: the session key is never read from the page's own URL.
-    assert 'get("token")' not in script and "get('token')" not in script
+    # Every request sends the key in the header and no cookie.
+    assert script.count('credentials: "omit"') == script.count("fetch(")
+    assert script.count("headers: keyed(") == script.count("fetch(")
 
 
 _BOOT_JS = r"""
@@ -401,6 +545,7 @@ _BOOT_JS = r"""
 const playwright = require("playwright");
 (async () => {
   const url = process.argv[2];
+  const otherPort = process.argv[3];
   let browser;
   try {
     browser = await playwright.chromium.launch();
@@ -410,17 +555,38 @@ const playwright = require("playwright");
   }
   const out = {};
   try {
-    const page = await (await browser.newContext()).newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     const requests = [];
-    page.on("request", (r) => { const p = new URL(r.url()).pathname; if (p !== "/favicon.ico") requests.push(r.method() + " " + p); });
+    page.on("request", (r) => {
+      const u = new URL(r.url());
+      if (u.pathname !== "/favicon.ico") requests.push(r.method() + " " + u.pathname + u.search + " " + (r.headers()["x-wowlab-session"] ? "key" : "nokey"));
+    });
     out.first = (await page.goto(url)).status();
     await page.waitForSelector("#commands button", { state: "attached", timeout: 60000 });
     out.href = await page.evaluate(() => location.href);
-    out.requests = requests;
+    out.meta = await page.evaluate(() => document.getElementById("wowlab-session") === null);
+    out.cookies = (await context.cookies()).length;
+    out.requests = requests.slice();
+    const reloaded = await page.reload();
+    out.reload = reloaded.status();
+    await page.waitForSelector("#commands button", { state: "attached", timeout: 60000 });
+    out.reloadButtons = await page.locator("#commands button").count();
+    const tab = await context.newPage();
+    const second = await tab.goto(new URL("/", url).href);
+    out.tab = second.status();
+    await tab.waitForSelector("#commands button", { state: "attached", timeout: 60000 });
+    out.tabButtons = await tab.locator("#commands button").count();
+    out.linkAgain = (await (await context.newPage()).goto(url)).status();
+    // Another browser profile, no key: it gets the page, and the page says so.
     const other = await (await browser.newContext()).newPage();
-    const second = await other.goto(url);
-    out.second = second.status();
-    out.secondBody = await second.text();
+    out.stranger = (await other.goto(new URL("/", url).href)).status();
+    await other.waitForFunction(() => /link wowlab ui opened/.test(document.getElementById("status").textContent), null, { timeout: 60000 });
+    out.strangerButtons = await other.locator("#commands button").count();
+    // Another origin on this machine (another port) cannot read this one's key.
+    const elsewhere = await context.newPage();
+    await elsewhere.goto("http://127.0.0.1:" + otherPort + "/");
+    out.elsewhereKey = await elsewhere.evaluate(() => window.localStorage.getItem("wowlab-session"));
   } finally {
     await browser.close();
   }
@@ -429,26 +595,27 @@ const playwright = require("playwright");
 """
 
 
-def test_in_a_browser_the_link_works_once_and_leaves_the_address_bar(
-    tmp_path: Path, planted: Any
-) -> None:
-    """In Chromium through Playwright: the boot link opens the page, which
-    exchanges the key and shows its commands, the address bar is `/`, and the
-    same link opened again is refused. Skipped unless Node can load
-    Playwright and launch Chromium."""
+def test_in_a_browser_the_link_a_reload_and_a_second_tab_work(tmp_path: Path, planted: Any) -> None:
+    """In Chromium through Playwright: the link opens the page, which shows
+    its commands, the address bar is `/`, no cookie is set, a reload and a
+    second tab work, the link works again, another profile with no key gets
+    the sentence and no commands, and another server's origin on this
+    machine cannot read the key. Skipped unless Node can load Playwright and
+    launch Chromium."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not on PATH")
-    script = tmp_path / "m16-42-boot.js"
+    script = tmp_path / "m16-113-session.js"
     script.write_text(_BOOT_JS, encoding="utf-8")
-    done = subprocess.run(
-        [node, str(script), planted.url],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=300,
-        check=False,
-    )
+    with _serving_planted() as neighbour:
+        done = subprocess.run(
+            [node, str(script), planted.url, str(neighbour.port)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=300,
+            check=False,
+        )
     if "Cannot find module 'playwright'" in done.stderr:
         pytest.skip("Playwright is not installed for Node")
     assert done.returncode == 0, done.stderr
@@ -458,9 +625,17 @@ def test_in_a_browser_the_link_works_once_and_leaves_the_address_bar(
     assert "error" not in out, out["error"]
     assert out["first"] == 200
     assert out["href"] == f"http://127.0.0.1:{planted.port}/"
-    assert out["requests"][:3] == ["GET /", "POST /api/session", "GET /api/commands"]
-    assert out["second"] == 403
-    assert "already used" in out["secondBody"]
+    assert out["meta"] is True, "the page removed the element that held the key"
+    assert out["cookies"] == 0
+    assert out["requests"][0] == f"GET /?boot={planted.boot} nokey"
+    assert out["requests"][1] == "GET /api/commands key"
+    assert all(r.endswith(" key") for r in out["requests"][1:]), out["requests"]
+    assert not any("token" in r for r in out["requests"])
+    assert out["reload"] == 200 and out["reloadButtons"] == 2
+    assert out["tab"] == 200 and out["tabButtons"] == 2
+    assert out["linkAgain"] == 200
+    assert out["stranger"] == 200 and out["strangerButtons"] == 0
+    assert out["elsewhereKey"] is None
 
 
 # ─── F3: sv dump from the UI ─────────────────────────────────────────────────

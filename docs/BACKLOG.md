@@ -2331,13 +2331,15 @@ The archive holds the same settings and saved data as the store, but is created 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T · **Sources:** as M16-69T
+**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T, M16-107T, M16-108T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
 **Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T. Amendment (a1) and its undo-target rule also land here, graded by M16-100T: a killed undo leaves D visible, undo records carry `undoes`, and `undo` passes over the closed killed undo.
 
-**Acceptance:** M16-69T's, M16-93T's and M16-100T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+**Owner answers (2026-11-11, the #490 code review):** "Skip it", then "Skip all, show D". Every closed record that never took a snapshot is passed over (LAB_PLAN §6.10 (a2)), graded by M16-108T.
+
+**Acceptance:** M16-69T's, M16-93T's, M16-100T's, M16-107T's and M16-108T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
@@ -2813,11 +2815,67 @@ M16-113 changes `ui/__init__.py` and `page.js` at the same time, so keep to the 
 - **User-facing:** listed in the PR (wiki: ui, char, getting started).
 - **Reviews:** `code-reviewer`, `domain-reviewer` (flavors) and `security-reviewer` (ui).
 
+# M16 owner testing (filed 2026-11-11)
+
+## [ ] M16-112 — Discovery searches more folders for the install, and says where it looked
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 (install at `/Games/World of Warcraft` not found); LAB_PLAN §6.1, amendment of 2026-11-11
+
+Implement §6.1's amendment of 2026-11-11 in `install.default_roots` and in the error that discovery raises when it finds nothing.
+- **macOS search:** `/Applications`, `/Applications/Games`, `/Games`, `~/Applications`, `~/Games`, `/Users/Shared`, then `/Volumes/*` and each volume's `Applications/` and `Games/`. Links under `/Volumes` are skipped.
+- **Windows:** `<drive>\Games` is added after the existing three.
+- **The no-install error** lists every location checked, and gives the `--root` and `WOWLAB_WOW_ROOT` lines to copy.
+
+Keep `default_roots` testable without the real filesystem: the platform, the home directory, the `/Volumes` listing and the drives are all injectable, as `drives` and `environ` already are. Constructed tests only (L8 boundary: folder layouts, no game data).
+
+**Acceptance:**
+- **Order:** tests pin the order for macOS and Windows.
+- **Two locations:** with two installs present, the first in the order wins.
+- **`/Volumes`:** a link entry is skipped, and an unreadable entry is skipped without an error.
+- **No home:** the `~` entries are skipped.
+- **Error text:** the no-install error lists the checked locations and the two commands.
+- **Unchanged:** the explicit root and `WOWLAB_WOW_ROOT` are still final. Every existing discovery test passes unchanged.
+- **Docs:** the CLI `--root` help still reads true.
+- **User-facing:** listed in the PR (wiki: install, getting started).
+- **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
+
+## [ ] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 ("get rid of this requirement"); LAB_PLAN, `wowlab ui` amendment of 2026-11-11
+
+Replace the one-time boot key (M16-42) with a session that lasts as long as the `wowlab ui` process, as the amendment says:
+- the link `wowlab ui` opens works, and keeps working;
+- a reload works, and so does a second tab in the same browser;
+- other origins and processes are still refused;
+- Ctrl-C ends it.
+
+Remove the "already used" page, its terminal notice, and the `--help` and docs text that say a reload needs a new `wowlab ui`.
+
+**Acceptance:**
+- **Reload works:** a reload of the shell, and a second request without the query, are served when they carry the session.
+- **Refusals:** a request with no session and no token is refused. So is a request whose Origin or Host is not the server's own.
+- **New server, new session:** a request carrying the session of an earlier server is refused.
+- **Tests:** existing UI tests updated where they pinned the one-time behaviour. In this PR, name each test that changed and why.
+- **User-facing:** listed in the PR (wiki: ui).
+- **Reviews:** `code-reviewer` and `security-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
 **Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
 
 M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"), spelled out in LAB_PLAN §6.10 (a1):* `wowlab undo` passes over the closed killed undo K, which never took a snapshot, and any record that only closes K. The plan offered is D's, and `--expect <D id>` is accepted. `doctor` names both D and K. Undo records carry `undoes`. Also grade four further cases: a normally completed undo, even one that changed no file, is never passed over; `--expect` naming D while a record newer than D that is not passed over exists is a mismatch; `history()` refuses an `undoes` that names no earlier record; and the transaction route is unchanged. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
+
+**Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-107T — [TEST] The journal-keys grader expects `undoes` on an undo record
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (a1); the M16-69 implementer's report (2026-11-11)
+
+`test_guard_snapshot_kind.py::test_constructed_journal_record_is_unchanged` (M16-09T) pinned the exact key set of every journal record, the undo scenario's included, so no M16-69 could pass it and M16-100T's graders together. The undo case expects `JOURNAL_KEYS | {"undoes"}`, with `undoes` naming the record it undid, strict xfail "M16-69 not implemented". The other cases assert `undoes` is absent.
+
+**Acceptance:** strict xfail on main for the right reason; reviewed by `code-reviewer`. (PR #491.)
+
+## [ ] M16-108T — [TEST] Every closed record that never took a snapshot is passed over
+**Size:** XS · **Depends on:** M16-100T · **Sources:** the owner's answers of 2026-11-11 to the M16-69 code review (#490: "Skip it", then "Skip all, show D"); LAB_PLAN §6.10 amendment (a2)
+
+The #490 code review found that under (a1) a closed record that never took a snapshot locks `undo` out of every earlier change when it has no `undoes`. That happens when the gate closes a record itself after its pre-write snapshot fails, and when a killed transaction is closed by `undo`. (a2) passes over every such record. Change M16-93T's transaction-route grader so that, after the killed K is closed, the target is the interrupted change D before it, not K. `doctor` then reports D with D's own `wowlab undo --expect <D id>` line and names K, and exits 1. A further `wowlab undo --expect <D id> --yes` settles D and leaves `doctor` clean. Add graders for the failed-snapshot route: a change whose pre-write snapshot raises `SnapshotError` after a cleanup leaves the change before it as the target, so `--expect <earlier id>` is accepted and `doctor` reports nothing new. Also grade that an `open` K, still unclosed, stays the target. This is a `guard.py` grader change, with strict-xfail markers "M16-69 not implemented".
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
