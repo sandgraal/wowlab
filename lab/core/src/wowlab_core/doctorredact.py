@@ -363,6 +363,16 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     # Store-relative paths: object names and snapshot ids (M16-41).
     "store.exposure.entries": REDACT,
     "problems": REDACT,
+    # What to do next (M16-37): the item and its state are closed literals;
+    # the flavor folder, the reason and the fix (which can name the flavor
+    # folder and the caller's --root) are text.
+    "next_steps.item": AS_IS,
+    "next_steps.flavor_folder": REDACT,
+    "next_steps.state": AS_IS,
+    "next_steps.detail": REDACT,
+    # A command line: it holds the caller's --root, a path.
+    "next_steps.command": REDACT,
+    "next_steps.fix": REDACT,
     # The first run (M13-04) is skipped under --redact (conductor decision,
     # M13-09): no scan, no question, no snapshot. Dropped here as well, so
     # a first-run report can never reach a redacted one.

@@ -164,10 +164,13 @@ def test_a_copy_with_the_template_comment_is_replaced_on_reinstall_constructed(
 # ─── doctor ──────────────────────────────────────────────────────────────────
 
 
-def test_doctor_without_the_addon_says_nothing_about_it(flavor: Path) -> None:
+def test_doctor_without_the_addon_names_it_only_in_the_next_steps(flavor: Path) -> None:
     state = _lab_state()
     assert state.status == "not_installed" and state.expected == INTERFACE
-    assert "Lab-addon" not in _doctor_text()
+    # The flavor's lines say nothing about it; only the next steps (M16-37) do.
+    text = _doctor_text()
+    assert text.count("Lab-addon") == 1
+    assert f"Next steps: Lab-addon: not installed. Close the game, then run `{REINSTALL}`." in text
 
 
 def test_doctor_with_a_current_addon(flavor: Path) -> None:
