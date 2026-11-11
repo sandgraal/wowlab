@@ -2743,7 +2743,10 @@ def _link_stands_for(
     file, `logs-other`, which hangs from `Logs`, as a folder; likewise
     `Logs/*.log`, and `Cache/ADB/<locale>/DBCache.bin` and
     `Cache/WDB/<locale>/*.wdb` under `cache-other`, which hangs from
-    `Cache`; M16-91).
+    `Cache`; M16-91). "file", too, where a file there has a row that spells
+    out its name and a folder there only a row that takes a folder of any
+    name at this one place (`WTF/Account/<acct>/macros-cache.txt`:
+    `account-macros-cache` as a file, `realm-folder` as a folder; M16-95).
     Otherwise, one row for both kinds below that folder (a font file, an
     addon's `.toc`), other different rows, or none: "one", which says
     neither."""
@@ -2756,6 +2759,8 @@ def _link_stands_for(
         if not folder_row.heads_a_subtree(parts) and any(
             folder_row.heads_a_subtree(parts[:n]) for n in range(1, len(parts))
         ):
+            return "file"
+        if file_row.names_the_file(parts) and folder_row.takes_any_name_here(parts):
             return "file"
     if folder_row is not None and file_row is None:
         return "folder"

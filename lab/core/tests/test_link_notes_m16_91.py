@@ -64,9 +64,11 @@ def flavor_tree(tmp_path: Path) -> layout.Layout:
         pytest.param(
             "Interface/AddOns/Constructed/Constructed.toc", "one", id="constructed-addon-toc"
         ),
-        # A folder row that is not a general row above this place: neither.
+        # A folder row that is not a general row above this place. M16-95
+        # changed this pin from "one": the file row spells out the name, and
+        # the folder row (`realm-folder`) takes a folder of any name here.
         pytest.param(
-            "WTF/Account/90000001#1/macros-cache.txt", "one", id="constructed-macros-cache"
+            "WTF/Account/90000001#1/macros-cache.txt", "file", id="constructed-macros-cache"
         ),
     ],
 )
