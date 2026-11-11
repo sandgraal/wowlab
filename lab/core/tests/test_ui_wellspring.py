@@ -690,7 +690,7 @@ _WORDS_BEFORE = (
     "wowlab",
     "wowlab",
     "What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
-    "Flavor",  # the header's flavor picker's label (M16-114)
+    "Runs use flavor",  # the header's flavor picker's label (M16-114)
     "[aria-label] Views",
     "Explorer",
     "Gaps",

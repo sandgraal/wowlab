@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,12 @@ FLAVOR = "_classic_beta_"  # the provenance row's flavor folder; tests may name 
 EMPTY = "_forever_"  # constructed: a second flavor with no character
 ACCOUNT = "90000001#6"
 FIRST = "1/Labchard-Labrealmg"
+
+# The capture's version, from its .build.info row (what discovery reads).
+VERSION = "1.60.1.69913"
+ONLY = "the only flavor with character folders"
+USING = f"wowlab: using {FLAVOR} ({VERSION}), {ONLY} (--flavor picks another)"
+OTHER_ACCOUNT = "90000002#1"  # constructed
 
 runner = CliRunner()
 
@@ -67,9 +74,10 @@ def test_char_list_labels_rows_by_flavor_constructed() -> None:
     result = run("char", "list")
     assert result.exit_code == 0, (result.stdout, result.stderr)
     lines = result.stdout.splitlines()
-    assert f"Flavor {FLAVOR}" in lines
+    heading = f"Flavor {FLAVOR} ({VERSION})"
+    assert heading in lines
     assert f"Flavor {EMPTY}: no character folder" in lines
-    at = lines.index(f"Flavor {FLAVOR}")
+    at = lines.index(heading)
     assert lines[at + 1].startswith(f"Account {ACCOUNT}:")
     assert any(FIRST in line for line in lines[at + 1 :])
 
@@ -116,21 +124,21 @@ def test_char_list_account_in_one_flavor_constructed() -> None:
 def test_char_reads_use_the_only_flavor_with_characters_constructed(command: str) -> None:
     result = run("char", command, "--character", FIRST, "--json")
     assert result.exit_code in (0, 1), (result.stdout, result.stderr)
-    assert f"using {FLAVOR}, the only flavor with characters" in result.stderr
-    assert result.stderr.count("the only flavor with characters") == 1
+    assert USING in result.stderr
+    assert result.stderr.count(ONLY) == 1
 
 
 def test_char_show_says_which_flavor_constructed() -> None:
     result = run("char", "show", "--json")
     assert result.exit_code == 0, (result.stdout, result.stderr)
     assert json.loads(result.stdout)["flavor_folder"] == FLAVOR
-    assert f"using {FLAVOR}, the only flavor with characters" in result.stderr
+    assert USING in result.stderr
 
 
 def test_char_show_named_flavor_is_not_announced_constructed() -> None:
     result = run("char", "show", "--json", "--flavor", FLAVOR)
     assert result.exit_code == 0, (result.stdout, result.stderr)
-    assert "the only flavor with characters" not in result.stderr
+    assert ONLY not in result.stderr
 
 
 def test_char_show_with_characters_in_both_still_asks_constructed(two_flavors: Path) -> None:
@@ -144,7 +152,7 @@ def test_char_show_with_characters_in_both_still_asks_constructed(two_flavors: P
 def test_char_show_named_empty_flavor_is_used_constructed() -> None:
     result = run("char", "show", "--flavor", EMPTY)
     assert result.exit_code != 0
-    assert "the only flavor with characters" not in result.stderr
+    assert ONLY not in result.stderr
 
 
 # ─── writes never pick ───────────────────────────────────────────────────────
@@ -163,7 +171,7 @@ def test_write_without_flavor_lists_command_lines_constructed(args: tuple[str, .
     assert result.exit_code == 2, (result.stdout, result.stderr)
     for folder in (FLAVOR, EMPTY):
         assert f"`wowlab {' '.join(args)} --flavor {folder}`" in result.stderr
-    assert "the only flavor with characters" not in result.stderr
+    assert ONLY not in result.stderr
     assert install.ENV_FLAVOR in result.stderr
 
 
@@ -190,7 +198,7 @@ def test_env_flavor_is_used_constructed(monkeypatch: pytest.MonkeyPatch) -> None
     assert data["flavor_folder"] == FLAVOR
     result = run("char", "show", "--json")
     assert result.exit_code == 0
-    assert "the only flavor with characters" not in result.stderr
+    assert ONLY not in result.stderr
 
 
 def test_env_flavor_reaches_writes_constructed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,3 +232,68 @@ def test_blank_env_flavor_is_unset_constructed(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv(install.ENV_FLAVOR, "  ")
     data = json.loads(run("char", "list", "--json", "--brief").stdout)
     assert data["flavor_folder"] is None
+
+
+# ─── what counts as the only flavor with characters ──────────────────────────
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a symlink needs a privilege on Windows")
+def test_a_flavor_wowlab_cannot_look_inside_is_not_passed_over_constructed(
+    two_flavors: Path, tmp_path: Path
+) -> None:
+    """The second flavor's WTF/Account is a link, never followed: it may hold
+    characters, so nothing is picked and the several-flavors error stands."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (two_flavors / EMPTY / "WTF").mkdir()
+    (two_flavors / EMPTY / "WTF" / "Account").symlink_to(elsewhere, target_is_directory=True)
+    result = run("char", "show")
+    assert result.exit_code == 2, (result.stdout, result.stderr)
+    assert ONLY not in result.stderr
+    assert "choose one with --flavor" in result.stderr
+    listed = run("char", "list", "--json", "--brief")
+    data = json.loads(listed.stdout)
+    assert {n["flavor"] for n in data["not_looked_at"]} == {EMPTY}
+
+
+def _other_account(root: Path) -> None:
+    """The second flavor gets a copy of the capture's WTF/ under another
+    account folder name (constructed)."""
+    shutil.copytree(root / FLAVOR / "WTF", root / EMPTY / "WTF")
+    account = root / EMPTY / "WTF" / "Account"
+    (account / ACCOUNT).rename(account / OTHER_ACCOUNT)
+
+
+def test_account_picks_the_only_flavor_with_that_accounts_characters_constructed(
+    two_flavors: Path,
+) -> None:
+    _other_account(two_flavors)
+    assert run("char", "show").exit_code == 2  # characters in both
+    result = run("char", "show", "--account", ACCOUNT, "--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert USING in result.stderr
+    assert json.loads(result.stdout)["flavor_folder"] == FLAVOR
+    other = run("char", "show", "--account", OTHER_ACCOUNT, "--json")
+    assert other.exit_code == 0, (other.stdout, other.stderr)
+    assert json.loads(other.stdout)["flavor_folder"] == EMPTY
+    assert f"wowlab: using {EMPTY}, {ONLY}" in other.stderr
+
+
+def test_char_list_names_a_flavor_without_the_account_constructed(two_flavors: Path) -> None:
+    _other_account(two_flavors)
+    text = run("char", "list", "--account", OTHER_ACCOUNT).stdout.splitlines()
+    assert f"Flavor {FLAVOR} ({VERSION}): no account {OTHER_ACCOUNT}" in text
+    assert f"Flavor {EMPTY}" in text
+
+
+def test_char_gear_names_its_flavor_constructed() -> None:
+    result = run("char", "gear", "--character", FIRST, "--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert json.loads(result.stdout)["flavor_folder"] == FLAVOR
+    assert USING in result.stderr
+
+
+def test_suggested_lines_go_before_a_double_dash_constructed() -> None:
+    result = run("cvar", "get", "--", "x")
+    assert result.exit_code == 2
+    assert f"`wowlab cvar get --flavor {FLAVOR} -- x`" in result.stderr

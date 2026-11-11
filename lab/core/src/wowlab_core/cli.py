@@ -1515,7 +1515,9 @@ def _with_flavor_lines(inst: install.Install) -> str:
         args = ctx.command_path.split()[1:] if ctx is not None else []
     lines = []
     for f in inst.flavors:
-        argv = ["wowlab", *args, "--flavor", f.folder]
+        # Before a `--`: after it, --flavor would be read as an argument.
+        cut = args.index("--") if "--" in args else len(args)
+        argv = ["wowlab", *args[:cut], "--flavor", f.folder, *args[cut:]]
         lines.append(_powershell_join(argv) if _shell() == "powershell" else shlex.join(argv))
     return ", ".join(f"`{line}`" for line in lines)
 
@@ -1565,32 +1567,57 @@ def _select_flavor(inst: install.Install, name: str | None) -> install.Flavor:
     raise _several_flavors(inst)
 
 
-def _has_characters(inst: install.Install, f: install.Flavor) -> bool:
-    """Whether the flavor's WTF/Account/ holds any character folder, as the
-    layout lists them; a walk that fails counts as none."""
+def _characters_in(inst: install.Install, f: install.Flavor, account: str | None) -> bool | None:
+    """Whether the flavor holds any character folder (in the account
+    `account` names, when it names one), as `char list` finds them: True
+    when one was found; False when none was and every place that could
+    hold one was looked inside; None (unknown) when one could not be: a
+    folder that could not be listed, a link not followed, the walk's bound,
+    or an error reading the flavor (M16-114)."""
     try:
-        walk = layout.Layout.for_flavor(f, inst.root).wtf_walk()
+        lay = layout.Layout.for_flavor(f, inst.root)
+        acct: str | None = None
+        if account is not None:
+            try:
+                acct = _select_account(lay, account).folder
+            except CliError:
+                return None if _hidden_account(lay, account) else False
+        found = labaddon.survey(lay, account=acct, keep_records=False, every_folder=True)
     except (OSError, WowlabError):
-        return False
-    return any(r.characters for a in walk.accounts for r in a.realms)
+        return None
+    if any(not _first_name_folder(e) for e in found.characters):
+        return True
+    return None if found.not_looked_at else False
 
 
 def _open_char(
-    root: Path | None, flavor: str | None
+    root: Path | None, flavor: str | None, account: str | None = None
 ) -> tuple[install.Install, install.Flavor, layout.Layout]:
     """`_open` for the `char` commands that read one character (M16-114):
-    with several flavors and none named, the only flavor with any character
-    folder is used, and one line on stderr says so. These commands only
-    read; a write never picks a flavor."""
+    with several flavors and none named, the one flavor with character
+    folders (in `account`, when given) is used when every other flavor
+    could be read and has none, and one line on stderr says so; otherwise
+    the several-flavors refusal stands. These commands only read; a write
+    never picks a flavor."""
     inst, _ = _discover(root)
     if _given_flavor(flavor) is None and len(inst.flavors) > 1:
-        having = [f for f in inst.flavors if _has_characters(inst, f)]
-        if len(having) == 1:
+        seen = [(f, _characters_in(inst, f, account)) for f in inst.flavors]
+        having = [f for f, has in seen if has is True]
+        if len(having) == 1 and all(has is False for f, has in seen if f is not having[0]):
             chosen = having[0]
-            _note(
-                "wowlab: using {}, the only flavor with characters (--flavor picks another)",
-                chosen.folder,
-            )
+            if chosen.version:
+                _note(
+                    "wowlab: using {} ({}), the only flavor with character folders "
+                    "(--flavor picks another)",
+                    chosen.folder,
+                    chosen.version,
+                )
+            else:
+                _note(
+                    "wowlab: using {}, the only flavor with character folders "
+                    "(--flavor picks another)",
+                    chosen.folder,
+                )
             return inst, chosen, layout.Layout.for_flavor(chosen, inst.root)
     chosen = _select_flavor(inst, flavor)
     return inst, chosen, layout.Layout.for_flavor(chosen, inst.root)
@@ -2995,8 +3022,8 @@ def doctor(
         str | None,
         typer.Option(
             "--flavor",
-            help="On a first run, the flavor folder to snapshot. Implied when the "
-            "install has only one.",
+            help="On a first run, the flavor folder to snapshot. Default: $WOWLAB_FLAVOR; "
+            "implied when the install has only one.",
         ),
     ] = None,
     json_out: JsonOpt = False,
@@ -11248,7 +11275,7 @@ def char_show(
 
     \f
     JSON: CharShowReport."""
-    _, chosen, lay = _open_char(root, flavor)
+    _, chosen, lay = _open_char(root, flavor, account)
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
@@ -11591,6 +11618,8 @@ def char_list(
     blocks: list[tuple[install.Flavor, list[labaddon.CharacterFile]]] = []
     acct_folder: str | None = None
     missed: CliError | None = None
+    # Each flavor in order, with its rows, or None when it has no such account.
+    shown: list[tuple[install.Flavor, list[labaddon.CharacterFile] | None]] = []
     for chosen in chosen_ones:
         try:
             folder, mine, hidden = _char_list_flavor(
@@ -11602,6 +11631,7 @@ def char_list(
             if not every or exc.code != EXIT_USAGE:
                 raise
             missed = missed or exc
+            shown.append((chosen, None))
             continue
         acct_folder = folder if acct_folder is None else acct_folder
         mine = [e.model_copy(update={"flavor": chosen.folder}) for e in mine]
@@ -11609,6 +11639,7 @@ def char_list(
         entries += mine
         unseen += hidden
         blocks.append((chosen, mine))
+        shown.append((chosen, mine))
     if missed is not None and not blocks:
         raise missed
     # Rows of character folders, apart from the `<Realm>/<First>/` folders.
@@ -11647,14 +11678,18 @@ def char_list(
     else:
         names = {e.character: _safe(e.character) for e in entries}
         width = max(len(name) for name in names.values())
-        for chosen, mine_all in blocks:
+        for chosen, rows in shown:
             if every:
-                # Each flavor's rows under its folder's name (M16-114).
-                _say(
-                    f"Flavor {chosen.folder}"
-                    + (_player_copy(": no character folder") if not mine_all else "")
-                )
-            _char_list_rows(mine_all, names, width, chosen.version)
+                # Each flavor's rows under its folder's name and version (M16-114).
+                heading = f"Flavor {chosen.folder}"
+                if chosen.version:
+                    heading += f" ({chosen.version})"
+                if rows is None:
+                    heading += f": no account {account}"
+                elif not rows:
+                    heading += _player_copy(": no character folder")
+                _say(heading)
+            _char_list_rows(rows or [], names, width, chosen.version)
         # No install advice while a place went unseen: it may hold the files.
         if bare_rows and len(bare_rows) == len(folders) and not unseen:
             _say_note(
@@ -11801,6 +11836,9 @@ class CharGearReport(_Out):
     # The outside dressing room's address for this character, or the item ids
     # to paste into one when there is none (M15-02, `dressing.build`).
     dressing: dressing.DressingLink | dressing.DressingItems
+    # The flavor folder read, as the other `char` reports name it; last, so
+    # the fields before it keep their order (M16-114).
+    flavor_folder: str
 
 
 _GEAR_NAMES_NOTE = (
@@ -11981,7 +12019,7 @@ def char_gear(
 
     \f
     JSON: CharGearReport."""
-    _, chosen, lay = _open_char(root, flavor)
+    _, chosen, lay = _open_char(root, flavor, account)
     acct = _select_account(lay, account)
     files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
     target, how, tie = _lab_char_file(acct, files, character)
@@ -12010,6 +12048,7 @@ def char_gear(
     spec = gear.spec_of(record)
     level = dressing.level_of(record)
     report = CharGearReport(
+        flavor_folder=chosen.folder,
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
         mtime_ns=target.mtime_ns,
@@ -12179,7 +12218,7 @@ def char_binds(
 
     \f
     JSON: CharBindsReport."""
-    _, chosen, lay = _open_char(root, flavor)
+    _, chosen, lay = _open_char(root, flavor, account)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
     folder: tuple[str, str] | None = None
@@ -12501,7 +12540,7 @@ def char_macros(
 
     \f
     JSON: CharMacrosReport."""
-    _, chosen, lay = _open_char(root, flavor)
+    _, chosen, lay = _open_char(root, flavor, account)
     acct = _select_account(lay, account)
     target, how, record, record_error = _coach_record(lay, acct, character)
     folder: tuple[str, str] | None = None

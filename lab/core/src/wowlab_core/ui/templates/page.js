@@ -193,7 +193,7 @@
   // With several flavor folders, the header's picker names the flavor every
   // run passes as --flavor: each command that declares --flavor gets it,
   // unless its own field names one or it reads every flavor folder already
-  // (`tree --install`, `doctor --redact`, which refuse --flavor). The picker
+  // (`tree --install`, `doctor --redact` or `--redact-name`). The picker
   // starts on the only flavor that has characters, else on the first whose
   // .build.info row has a version, else on the first, as `char list --json`
   // reports them (on the one it listed, when $WOWLAB_FLAVOR named one), and
@@ -208,7 +208,10 @@
   runFlavor.ready = new Promise((resolve) => {
     runFlavor.settle = resolve;
   });
-  const EVERY_FLAVOR = ["whole_install", "redact"];
+  // A run with one of these set (a flag, or a list with a value) reads every
+  // flavor folder and refuses --flavor: `tree --install`, `doctor --redact`
+  // and `doctor --redact-name`, which implies `--redact`.
+  const EVERY_FLAVOR = ["whole_install", "redact", "redact_name"];
   // The tab shown (`showTab`): a new flavor rereads the Character tab only
   // while it is shown.
   let tabShown = "explorer";
@@ -227,7 +230,8 @@
     const given = params || {};
     if (!runFlavor.picked || !takesFlavor(path)) return given;
     if (typeof given.flavor === "string" && given.flavor !== "") return given;
-    if (EVERY_FLAVOR.some((name) => given[name] === true)) return given;
+    const set = (value) => value === true || (Array.isArray(value) && value.length > 0);
+    if (EVERY_FLAVOR.some((name) => set(given[name]))) return given;
     return Object.assign({}, given, { flavor: runFlavor.picked });
   }
 
@@ -239,7 +243,12 @@
       ? report.flavors.filter((f) => f && typeof f.folder === "string" && flavors.includes(f.folder))
       : [];
     const having = seen.filter((f) => typeof f.characters === "number" && f.characters > 0);
-    if (having.length === 1) return having[0].folder;
+    // A place in another flavor that `char list` could not look inside may
+    // hold characters too: then no flavor is "the only one with characters".
+    const blind = report && Array.isArray(report.not_looked_at)
+      ? report.not_looked_at.some((n) => n && n.flavor !== (having[0] && having[0].folder))
+      : false;
+    if (having.length === 1 && !blind) return having[0].folder;
     const versioned = flavors.find((folder) =>
       seen.some((f) => f.folder === folder && typeof f.version === "string" && f.version !== ""));
     return versioned || flavors[0];

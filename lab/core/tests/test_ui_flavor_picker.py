@@ -225,6 +225,29 @@ def test_no_characters_anywhere_starts_on_the_first_with_a_version_constructed(
     assert out["first"]["value"] == out["first"]["options"][0]
 
 
+def test_a_flavor_not_looked_inside_is_not_passed_over_constructed(
+    server: Any, two: Path, tmp_path: Path
+) -> None:
+    """When `char list` could not look inside a place in the other flavor,
+    that flavor may hold characters: the start falls to the first flavor
+    with a version (the constructed one, which sorts first). The place is
+    added to the real report's JSON (constructed)."""
+    scenario = _scenario(server, [], [])
+    report = json.loads(scenario["runs"][0]["stdout"])
+    report["not_looked_at"] = [
+        {"path": "WTF/Account", "reason": "a link, not followed", "account": None, "flavor": EMPTY}
+    ]
+    scenario["runs"][0]["stdout"] = json.dumps(report)
+    scenario["runs"][0]["exit_code"] = 1
+    out = _drive(tmp_path / "node", scenario)
+    assert out["first"]["value"] == EMPTY
+    # A place in the flavor with characters itself does not change the start.
+    report["not_looked_at"][0]["flavor"] = FLAVOR
+    scenario["runs"][0]["stdout"] = json.dumps(report)
+    out = _drive(tmp_path / "node2", scenario)
+    assert out["first"]["value"] == FLAVOR
+
+
 def test_every_run_carries_the_picked_flavor_constructed(
     server: Any, two: Path, tmp_path: Path
 ) -> None:
