@@ -8662,11 +8662,12 @@ def snap_import(
 
 # The login caveat leads with the files the plan lists (M16-103). Whether
 # the client reads Config.wtf again at login, or only when it starts, is
-# unconfirmed, so the note ties it to the next start; Config.wtf is not
-# synced, so its note names no server. The three sync CVars `doctor` shows
-# cover binds, macros and settings; which other *-cache files the server
-# replaces, and under which setting, is unconfirmed (docs/LAB_FILE_MAP.md,
-# its server sync note), so the note says so (M16-97).
+# unconfirmed, so the note ties it to the next start. The file map lists no
+# server replacement for Config.wtf (its row and the Timing rules; it holds
+# machine-scope settings), so its note names no server. The three sync CVars
+# `doctor` shows cover binds, macros and settings; which other *-cache files
+# the server replaces, and under which setting, is unconfirmed
+# (docs/LAB_FILE_MAP.md, its server sync note), so the note says so (M16-97).
 _RELOGIN = (
     "The client reads the *-cache files at login. The server may replace binds, macros and "
     "account or character settings at login when their sync setting is on (see wowlab "

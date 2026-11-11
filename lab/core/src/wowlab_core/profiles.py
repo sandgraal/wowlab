@@ -137,7 +137,9 @@ SERVER_DELETE_NOTE = (
 # The login note leads with the files the plan lists (M16-103). Whether the
 # client reads Config.wtf again at login, or only when it starts, is
 # unconfirmed (docs/LAB_FILE_MAP.md, its timing rules), so the notes tie it
-# to the next start; Config.wtf is not synced, so its note names no server.
+# to the next start. The file map lists no server replacement for Config.wtf
+# (its row and the Timing rules; it holds machine-scope settings), so its
+# note names no server.
 LOGIN_NOTE = (
     "The result is proven only by starting the client and logging in: it reads the *-cache "
     "files at login, and the server may replace them then."

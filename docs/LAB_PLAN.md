@@ -5029,8 +5029,9 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      caveat says the client reads them at login and the server may replace
      them, and says nothing of `Config.wtf`. When only `Config.wtf` is
      listed, it keeps only the restart sentence (the client reads it again
-     the next time it starts) and drops the server-sync sentence, since
-     `Config.wtf` is not synced. When both are listed, it keeps both
+     the next time it starts) and drops the server-sync sentence: the file
+     map lists no server replacement for `Config.wtf` (its row and the
+     Timing rules), which holds machine-scope settings. When both are listed, it keeps both
      sentences, as above. `profile apply`'s note, shown for every non-empty
      apply plan, follows the same three cases; when neither is listed (a
      SavedVariables-only or `AddOns.txt`-only apply) it keeps only that the

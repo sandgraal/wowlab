@@ -145,7 +145,10 @@ as unclassified. (Added 2026-09-22, M10-06.)
   *Amended 2026-11-11 (M16-97 domain review):* when `Config.wtf` is read is
   **[verify]**. This line says at login or `/reload`; `profiles.LOGIN_NOTE`
   says the client reads it when it starts, which fits graphics, language and
-  the last account used being set before any login. No capture settles it
+  the last account used being set before any login. (Since M16-103,
+  2026-11-11: `profiles.LOGIN_NOTE_CONFIG` and `profiles.LOGIN_NOTE_BOTH`
+  carry the `Config.wtf` sentence; `profiles.LOGIN_NOTE` is the
+  `*-cache`-only note.) No capture settles it
   yet, so player-facing text should not state either timing for it as fact;
   "restart the client so it reads it again" is safe under both, since a
   start always comes before a login (logging out and back in may not be
