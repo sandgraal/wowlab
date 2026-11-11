@@ -1498,11 +1498,33 @@ The command's clause says what `undo()` does: it puts back every file in the rec
 
 `--json` gains `store.last_transaction.flavor_folder` and `store.last_transaction.paths_left`, a list of `{path, now, exists}`: `now` is one of `wowlab_change`, `before_change`, `changed_since`, `unknown` or `not_written`, and `exists` is whether the file is there now (null when it was not read). The problem and the list hold names as stored, and only the output escapes them. The text output escapes control, format and separator characters as `\xNN` (a real file name may hold a bidi mark), and `--json` is ASCII. So `--redact` sees each name unescaped and replaces account, realm and character folders in those paths like any other. Those names come from the install, the snapshots and the paths of every journal record, since a folder the transaction created is in no snapshot.
 
-*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78):*
+*Amended 2026-11-11 (owner decisions in session; M16-69, M16-78, M16-90, M16-100T):*
 
 (a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
 
+(a1) **A killed undo leaves the change it was undoing visible.** *Owner decision, 2026-11-11.* If the change killed between the cleanup and its snapshot was itself an `undo` of an earlier record D (D `open` or `rollback_incomplete`), then closing the killed record does not settle D. After that close, `doctor` reports D again as it did before the undo started, with D's own `wowlab undo --expect <D id>` line, and exits 1 until D is undone. `wowlab undo` offers D again. Nothing about D is lost or hidden because an undo of it was interrupted. *Undo target (owner decision, 2026-11-11, "1 yes"):* `wowlab undo` passes over the closed record of a killed `undo` that changed no file and offers D. The rule is precise as follows.
+- **An undo names what it undoes.** Every record `undo()` writes carries a new field `undoes`, the id of the record it undoes. `history()` refuses, as a damaged record, an `undoes` that is not the id of an earlier record of the same flavor. The field is additive. Like M16-84's fields, an older gate that refuses unknown keys stops at it, which is accepted.
+- **Which records are passed over.** A record K is passed over when all of these hold:
+  - it has `undoes` set;
+  - it was killed between its cleanup and its pre-write snapshot, so no snapshot of it was ever taken (amendment (a));
+  - it has been closed.
+
+  If closing K appends a record, that record names K in `undoes`, changes no file, and is passed over with K. An undo that completed normally, with or without changing files, is never passed over. That rule is what stops `undo` from offering D again after D was really undone.
+- **The undo target replaces "the most recent record".** The target is the newest record that is not passed over. This replaces "the most recent transaction" and "the most recent record" for `undo()` in this section's opening sentence ("`guard.undo()` restores the pre-write snapshot of the most recent transaction"), in item 1, in the "refuses a most recent record whose…" rule and in the "well defined" sentence above. It does the same for `undo` in §16 ("undoes the newest journal record at run time"). It also replaces the record that 2026-11-10 (c) has `doctor` report.
+- **`--expect` keeps its protection.** It must name the target's id. Any record newer than the target that is not passed over is a mismatch and raises, as in the 2026-09-28 amendment.
+- **`doctor`** reports D as the change to undo, and K as interrupted before it changed anything.
+
 (b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
+
+(e) **A flavor path with a control or format character is refused.** *Owner decision, 2026-11-11 ("2 yes").* The forbidden characters are exactly the ones the CLI's output escaping covers:
+- C0 controls and DEL;
+- C1 controls;
+- the pinned table `svmerge._FORMAT_CHARACTERS` (Unicode format, line- and paragraph-separator characters as of Unicode 15.0, U+2065 included);
+- lone surrogates.
+
+The path checked is the one that would be journaled: the resolved `flavor_path`, which includes the install root. A clean symlink whose target holds such a character is refused too.
+
+`transaction()` (a dry run included) and `undo()` refuse a flavor whose resolved path holds any of them, with `GuardError`, before any snapshot, lock-held write or journal record. `history()` refuses a record whose `flavor_path` holds one, as a damaged record. The gate never writes a record that `history()` would refuse, so a player whose install path holds such a character gets the refusal at the first change, never a lockout after it. Relative paths inside the flavor are unchanged: a real file name may hold a bidi mark, and only the output escapes it (the M16-84 amendment of 2026-11-10, item (d)).
 
 ### 6.11 CLI — `wowlab` (M10-14)
 
@@ -5164,7 +5186,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    - Probes sit behind `/wowlab debug`.
    - Gathering is marked dirty, and done out of combat at most once every
      30 to 60 s and at logout.
-   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, Proposed):* only those whose frame is an action-slot button.
+   - `CLICK` binding commands are stored. *Narrowed 2026-10-22 (ADR-0026 amendment of that date, Accepted 2026-11-11):* only those whose frame is an action-slot button. *Narrowed again 2026-11-11 (ADR-0026 amendment of that date):* the button part is kept only when it is a mouse-button name or a listed bar-addon name.
    - A salted macro hash is added afterwards by M16-48, only if the launch
      session's macro-place answer needs it. `addon install` copies the salt
      from the user data directory into the installed addon; it is never in

@@ -2029,9 +2029,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 - The positive capture binds a key on bar 2 or higher of a bar addon that binds with `SetBindingClick` (Bartender4 preferred), confirmed in game with `/dump GetBindingAction`. An override binding, as ElvUI and Dominos often use, never appears in `GetBinding`. If `GetBinding` does not list `CLICK` at all, report that and do not build a key-by-key walk.
 - The reader, coach and CLI half of #379 (`labaddon`, `keymap`, `bindscoach`, `macrocheck`, `cli`) belongs to this ticket, as M16-55 assumes. So this ticket's user-facing surfaces also include `char show` and `binds coach`, text and `--json`. M16-46 keeps only the views' mapping of a kept `CLICK` to the button it presses.
 - The negative-case capture's `bindings-cache.wtf` holds a typed name and is never committed (#379's runbook).
-- **Owner, before merge:**
-  - accept ADR-0026's 2026-10-22 amendment, which is still Proposed;
-  - rule whether the `<button>` part of a kept `CLICK` is restricted to mouse-button names, plus bar-addon names seen in a capture, or kept as is with the leak stated in the ADR. A `/run SetBindingClick(key, "<bar button>", "<typed word>")` would otherwise store the typed word.
+- **Owner, 2026-11-11:** ADR-0026's 2026-10-22 amendment is accepted ("4 yes"). The `<button>` part is allowlisted ("3 yes"; ADR-0026 amendment of 2026-11-11): it is kept only when it is `LeftButton`, `RightButton`, `MiddleButton`, `Button[1-9][0-9]?`, or a bar-addon button name on the lab-addon's list (`lab/addon/README.md`), which starts empty and grows only by ticket once a capture has shown a name. Any other button part is counted as any failing `CLICK` (in `commands_left_out` and `clicks_left_out`). The acceptance adds negative cases, `Button` followed by many digits among them: `SetBindingClick(key, "<bar button>", "<made-up word>")` stores nothing of the word.
 
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
@@ -2096,7 +2094,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99, M16-100T
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2333,13 +2331,13 @@ The archive holds the same settings and saved data as the store, but is created 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T, M16-93T · **Sources:** as M16-69T
+**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
-**Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T.
+**Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T. Amendment (a1) and its undo-target rule also land here, graded by M16-100T: a killed undo leaves D visible, undo records carry `undoes`, and `undo` passes over the closed killed undo.
 
-**Acceptance:** M16-69T's and M16-93T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+**Acceptance:** M16-69T's, M16-93T's and M16-100T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
@@ -2543,9 +2541,11 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 
 A probe showed that main's `guard.history()` returns whatever strings a record on disk holds in `paths[].path`, `temps_left` and `created_dirs`, for example `../../etc/passwd` followed by an ESC sequence. `_public()` also copies `temps_removed` and `flavor_path` unchecked. The graders cover every path field `_public()` exposes: `paths[].path`, `created_dirs`, `temps_removed` and `temps_left` must pass `_check_rel`. `flavor_path` is absolute by design but must hold no control or bidi character, because `undo`'s plan header prints it. M16-84's `paths_left` is already graded by M16-84T. `_JournalRecord` checks only the hashes and the format, and `_load_journal` runs no `_check_rel` on any path field. `undo()` checks paths later; `history()` never does, so `doctor` and `undo`'s plan can show a planted path. This is `guard.py`, which is load-bearing (ADR-0013), so the graders land first. They cover a record whose path fields hold traversal, absolute, UNC, control-character and bidi values, and expect `history()` to raise `GuardError` ("a damaged record is an error, never skipped") with the install and the store unchanged.
 
+*Owner ruling (2026-11-11, "2 yes"):* the write gate refuses a flavor whose resolved path (the `flavor_path` it would journal, install root included) contains a forbidden character before it takes any snapshot or writes any journal record. The forbidden characters are C0 controls, DEL, C1 controls, and every Unicode format (Cf), line-separator (Zl) or paragraph-separator (Zp) character, the same set `cli._safe` escapes: `svmerge._FORMAT_CHARACTERS`, plus lone surrogates. `transaction()` (a dry run included) and `undo()` both refuse it with `GuardError`. `history()` refuses a record whose `flavor_path` holds any of those characters, so the gate and `history()` never disagree, and no record the gate wrote can later be called damaged. LAB_PLAN §6.10 records this in amendment (e) of 2026-11-11. Fix round 2 of #472 adds two things. It grades the full set for `flavor_path`, including U+200E, U+200F, U+061C, U+202A to U+202E and U+2066 to U+2069. It also adds graders for the gate's refusal: `transaction()`, a dry run and `undo()` refuse such a flavor, with the install and the store unchanged and no journal record written. One case reaches the flavor through a clean symlink whose target holds the character. The relative fields keep `_check_rel` as before; a real file name may still hold a bidi mark (§6.10, M16-84 amendment of 2026-11-10, item (d)).
+
 **Acceptance:** strict-xfail graders on main, activated by M16-90 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names
+## [ ] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names, and the gate refuses such a flavor
 **Size:** S · **Depends on:** M16-90T · **Sources:** as M16-90T
 
 **Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
@@ -2723,3 +2723,12 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 - The change listed as user-facing (a record error).
 
 Reviewed by `code-reviewer`.
+
+# M16 owner answer (filed 2026-11-11, seventh batch)
+
+## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
+**Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
+
+M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"), spelled out in LAB_PLAN §6.10 (a1):* `wowlab undo` passes over the closed killed undo K, which never took a snapshot, and any record that only closes K. The plan offered is D's, and `--expect <D id>` is accepted. `doctor` names both D and K. Undo records carry `undoes`. Also grade four further cases: a normally completed undo, even one that changed no file, is never passed over; `--expect` naming D while a record newer than D that is not passed over exists is a mismatch; `history()` refuses an `undoes` that names no earlier record; and the transaction route is unchanged. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
+
+**Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
