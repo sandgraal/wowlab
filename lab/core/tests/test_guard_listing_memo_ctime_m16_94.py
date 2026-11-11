@@ -172,7 +172,6 @@ def _mtime_put_back_ctime_moved(directory: Path, memoized: tuple[int, int, int, 
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, reason="M16-94 not implemented")
 def test_constructed_a_whole_restore_sees_a_file_added_with_the_mtime_put_back(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -209,7 +208,6 @@ def test_constructed_a_whole_restore_sees_a_file_added_with_the_mtime_put_back(
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, reason="M16-94 not implemented")
 def test_constructed_a_whole_restore_walks_a_folder_it_holds_no_file_in_again(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -258,7 +256,6 @@ def test_constructed_a_whole_restore_walks_a_folder_it_holds_no_file_in_again(
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, reason="M16-94 not implemented")
 def test_constructed_a_file_added_with_the_mtime_put_back_is_seen_by_the_next_lookup(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
@@ -294,7 +291,6 @@ def test_constructed_a_file_added_with_the_mtime_put_back_is_seen_by_the_next_lo
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
-@pytest.mark.xfail(strict=True, reason="M16-94 not implemented")
 def test_constructed_a_name_removed_with_the_mtime_put_back_is_free_for_the_next_lookup(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
 ) -> None:
