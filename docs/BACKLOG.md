@@ -2024,10 +2024,10 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 **Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
 
-*Pre-dispatch domain check (2026-11-11):* the premise was ruled on 2026-10-22, and that ruling excludes the GSE case. It can be dispatched as a continuation of draft #379. That draft is 100 commits behind main. It has a merge conflict in `labaddon.py` and must follow M16-16 and M16-22. Amendments:
+*Pre-dispatch domain check (2026-11-11):* the premise was ruled on 2026-10-22, and that ruling excludes the GSE case. It can be dispatched as a continuation of draft #379. That draft is about 100 commits behind main. It has a merge conflict in `labaddon.py`. The rebase must take on M16-16's `--notes` and M16-22's `--json` error conventions in `cli.py`. Amendments:
 - The stored `action` is the slot at gather time. On a paged or stance-aware bar it depends on the page, stance, form or vehicle. Neither the reader nor M16-46 presents it as fixed.
-- The positive capture binds a key on bar 2 or higher, confirmed in game with `/dump GetBindingAction`. An override binding (ElvUI, Dominos) never appears in `GetBinding`. If `GetBinding` does not list `CLICK` at all, report that and do not build a key-by-key walk.
-- The reader, coach and CLI half of #379 (`labaddon`, `keymap`, `bindscoach`, `macrocheck`, `cli`) belongs to this ticket, as M16-55 assumes.
+- The positive capture binds a key on bar 2 or higher of a bar addon that binds with `SetBindingClick` (Bartender4 preferred), confirmed in game with `/dump GetBindingAction`. An override binding, as ElvUI and Dominos often use, never appears in `GetBinding`. If `GetBinding` does not list `CLICK` at all, report that and do not build a key-by-key walk.
+- The reader, coach and CLI half of #379 (`labaddon`, `keymap`, `bindscoach`, `macrocheck`, `cli`) belongs to this ticket, as M16-55 assumes. So this ticket's user-facing surfaces also include `char show` and `binds coach`, text and `--json`. M16-46 keeps only the views' mapping of a kept `CLICK` to the button it presses.
 - The negative-case capture's `bindings-cache.wtf` holds a typed name and is never committed (#379's runbook).
 - **Owner, before merge:**
   - accept ADR-0026's 2026-10-22 amendment, which is still Proposed;
@@ -2040,7 +2040,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ## [ ] M16-46 — The reader for schema 5, and bar-addon binds in the keybind views
 **Size:** S · **Depends on:** M16-45 · **Sources:** raider:F4, addon-author:F10 (owner Q10)
 
-- `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says.
+- `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says. *(2026-11-11: delivered by M16-45 with #379's reader half; this ticket keeps the bullet below.)*
 - `char binds`, `binds list` and `binds coach` show `CLICK` binds as the addon button they press, named from the frame (no hard-coded addon names).
 
 **Acceptance:** graded on M16-45's capture and on the schema 1 to 4 fixtures, unchanged; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the keybind views and the Character tab.
