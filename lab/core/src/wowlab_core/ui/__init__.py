@@ -1149,13 +1149,16 @@ _PIN_CHECKS: Mapping[tuple[str, ...], str] = {
 # output cap) before it ended. M14-03 decides this case (§16.1): a `guard`
 # transaction cannot roll back in a process that was killed, but the lock is
 # the OS's and goes with the process, the journal record is written before
-# the first change, and the snapshot taken before it holds every file.
+# the first change, and the snapshot taken before it holds every file. The
+# plan's header says a record's state in `cli._journal_state_words`' words
+# (M16-86); "did not finish" is that function's text for `open`, written
+# out because this module imports `cli` only inside functions.
 _KILLED_NOTE = (
     "It was stopped before it finished, so it may have changed some files and not others. "
     "A change through the write gate releases its lock when its process ends, and the "
     "snapshot it took before its first change holds every file as it was: show the plan of "
-    "undo, and if the record it names is this command's (state open), Confirm there puts "
-    "back what it changed."
+    "undo, and if the record it names is this command's and says it did not finish, "
+    "Confirm there puts back what it changed."
 )
 # The same for a leaf of the step that changes only wowlab's own store and
 # never goes through the write gate: it takes no pre-write snapshot and

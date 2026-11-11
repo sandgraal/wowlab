@@ -8630,6 +8630,27 @@ _CHANGED_SINCE = (
 )
 
 
+# For a change whose rollback did not finish: the gate leaves a file another
+# program changed while the change ran as that program left it.
+_CHANGED_DURING = (
+    f"{_DETAIL_INDENT}(changed by another program, such as the game, while that change ran, "
+    "or since: the lines below compare what is on disk now with what undo puts back; undo "
+    "replaces that program's changes, but keeps a copy first, and running wowlab undo again "
+    "brings them back)"
+)
+# Every journaled path already holds its pre-transaction bytes and no folder
+# it created is left: the undo changes nothing on disk. For a change that did
+# not finish, or whose rollback did not, `doctor` reports it until it is
+# undone, so that line says what answering yes does.
+_NOTHING_TO_PUT_BACK = (
+    "  every file already holds what was there before that transaction, so the undo changes no file"
+)
+_NOTHING_TO_PUT_BACK_UNFINISHED = (
+    f"{_NOTHING_TO_PUT_BACK}; answering yes records the undo, and wowlab doctor stops "
+    "reporting that change"
+)
+
+
 def _read_detail(flavor_path: Path, rel: str) -> bytes:
     """The install's file at `rel` for a detail line, read-only through the
     guarded opener, from the install root (the flavor folder's parent, as
@@ -9496,21 +9517,35 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan. Under each file, what the undo changes by name:
-    from what the install holds at that path now (read read-only through
-    the guarded opener, whatever it holds) to what was there before that
-    transaction (in its pre-write snapshot), since the undo replaces the
-    file whatever is on disk. When the disk no longer holds what that
-    transaction wrote (the client rewrites these files at logout), a line
-    says the comparison includes those later changes."""
+    """`undo`'s text plan: only the steps the undo will take. A path whose
+    disk already holds what was there before that transaction (a file a
+    rollback already put back or removed) is skipped by the undo, so it is
+    not listed; one wowlab cannot read is listed. Under each file, what the
+    undo changes by name: from what the install holds at that path now
+    (read read-only through the guarded opener, whatever it holds) to what
+    was there before that transaction (in its pre-write snapshot), since the
+    undo replaces the file whatever is on disk. When the disk no longer
+    holds what that transaction wrote, a line says the comparison includes
+    those later changes and who probably made them: for a change whose
+    rollback did not finish, another program while it ran (or since);
+    otherwise the client at logout."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
+    changed = _CHANGED_DURING if last.state == "rollback_incomplete" else _CHANGED_SINCE
     lines = [
-        f'Undo {last.id} ("{last.label}", {last.state}, {last.created_at})',
+        f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
         f"  in {last.flavor_path}:",
     ]
     detailed = False
+    listed: list[str] = []
     for p in last.paths:
+        now = _disk_now(flavor_path, p.path)
+        now_sha = (
+            None if now is None or isinstance(now, _Unread) else hashlib.sha256(now).hexdigest()
+        )
+        if not isinstance(now, _Unread) and now_sha == p.before:
+            continue  # already as it was before: the undo leaves it alone
+        listed.append(p.path)
         if p.before is None:
             lines.append(f"  delete     {p.path}  (created by that transaction)")
         elif p.after is None:
@@ -9518,19 +9553,18 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         else:
             lines.append(f"  put back   {p.path}  (as it was before that transaction)")
         if _wants_detail(p.path):
-            now = _disk_now(flavor_path, p.path)
             back = _stored(store, p.before)
             detail = _detail_lines(p.path, now, back, limit=_DETAIL_PLAN_LIMIT)
-            if detail and not isinstance(now, _Unread):
-                now_sha = None if now is None else hashlib.sha256(now).hexdigest()
-                if now_sha != p.after:
-                    lines.append(_CHANGED_SINCE)
+            if detail and not isinstance(now, _Unread) and now_sha != p.after:
+                lines.append(changed)
             lines.extend(detail)
             detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
-    lines.extend(
-        f"  remove folder {d}  (created by that transaction, if empty)" for d in last.created_dirs
-    )
-    lines.extend(_plan_footer(detailed, [p.path for p in last.paths]))
+    folders = [d for d in last.created_dirs if os.path.lexists(flavor_path / d)]
+    lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
+    if not listed and not folders:
+        unfinished = last.state in ("open", "rollback_incomplete")
+        lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
+    lines.extend(_plan_footer(detailed, listed))
     return lines
 
 
@@ -9625,9 +9659,19 @@ def undo(
         )
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
-    done = report(applied=True, transaction=guard.history()[-1].id)
+    undone = guard.history()[-1]
+    done = report(applied=True, transaction=undone.id)
     if json_out:
         _emit(done)
+        return
+    if not undone.paths:
+        # Judged from the undo's own record, not the plan: a file rewritten
+        # while the prompt waited is put back and listed there. No file
+        # changed, so no login note applies (`--json` keeps them).
+        _say(
+            "Undone; no file needed changing. This undo is journaled, but there is nothing "
+            "for `wowlab undo` to reverse."
+        )
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
     for n in done.notes:
