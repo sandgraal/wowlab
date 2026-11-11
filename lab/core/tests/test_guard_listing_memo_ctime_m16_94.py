@@ -9,9 +9,11 @@ What the amendment asks for
 ---------------------------
 §18.1 item 6 keys guard's per-transaction directory-listing memo by the
 directory's identity (dev, ino, mtime_ns). The amendment of 2026-11-11
-(owner decision): "the key also holds the directory's ctime_ns. A change to
-the directory that leaves its mtime where it was still changes its ctime,
-so the memo is not reused."
+(owner decision): "the key also holds the directory's ctime_ns. On POSIX a
+change to the directory that leaves its mtime where it was still changes
+its ctime, so the memo is not reused. On Windows `st_ctime_ns` is the
+creation time and does not move, so the extra field adds nothing there and
+the Windows memo is unchanged."
 
 The scenario
 ------------
@@ -35,7 +37,11 @@ What is graded is guard's public verdict, which a stale listing gets wrong:
 - a second whole restore with nothing to change reports the file someone
   else added in `left_alone` (the public list of files the snapshot does
   not hold, added since it was taken), in a dry run and in a real
-  transaction, and still touches nothing; a stale listing reports nothing;
+  transaction, and still touches nothing; a stale listing reports nothing.
+  The same holds for a folder the snapshot holds no file in (`SV/Empty`):
+  no per-file lookup lists it, only the whole restore's walk of what it
+  leaves alone does, so a key checked only on per-file lookups is caught
+  there (security review of #461, round 1);
 - a name that differs only by case from the file someone else added is
   refused with `PathNotAllowedError` naming the path, and `SV` is listed
   again (the M16-23T listing seam). On a case-insensitive volume the stale
@@ -200,6 +206,52 @@ def test_constructed_a_whole_restore_sees_a_file_added_with_the_mtime_put_back(
             assert tx.plan == (), f"a whole restore never touches {added}: {tx.plan}"
             assert listings.calls[SV] >= 2, "the restore after the change did not list SV again"
     assert (directory / "Delta.lua").read_bytes() == EXTERNAL
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["constructed-dry-run", "constructed-real"])
+@pytest.mark.xfail(strict=True, reason="M16-94 not implemented")
+def test_constructed_a_whole_restore_walks_a_folder_it_holds_no_file_in_again(
+    guard: Any, tmp_path: Path, flavor: Flavor, idle: None, dry_run: bool
+) -> None:
+    """`SV/Empty` exists, with no file in it, when the snapshot is taken, so
+    no per-file lookup of the restore ever lists it: only the walk of what a
+    whole restore leaves alone does. The first whole restore lists it once
+    and leaves nothing alone there. Someone else adds `SV/Empty/Late.lua`
+    and puts `SV/Empty`'s mtime back; its ctime moves. The second whole
+    restore lists `SV/Empty` again and reports `Late.lua` in `left_alone`,
+    and changes nothing."""
+    _put(flavor, SV_FILES)
+    empty_rel = f"{SV}/Empty"
+    empty = flavor.path / empty_rel
+    empty.mkdir()
+    late = f"{empty_rel}/Late.lua"
+    store = tmp_path / "store"
+    seed = _seed_snapshot(guard, flavor, store) if dry_run else None
+    with guard.transaction(flavor, label="ctime-empty", store=store, dry_run=dry_run) as tx:
+        snapshot_id = seed if dry_run else _own_snapshot(guard, store, "ctime-empty")
+        assert snapshot_id is not None
+        with watching(flavor, empty_rel) as listings:
+            tx.restore(snapshot_id)
+            assert tx.plan == (), "positive control: the first restore had nothing to change"
+            assert not [p for p in tx.left_alone if p.startswith(empty_rel + "/")], tx.left_alone
+            assert listings.calls[empty_rel] == 1, (
+                f"positive control: the first whole restore lists {empty_rel} once, "
+                f"listed {listings.calls[empty_rel]} times"
+            )
+            memoized = _key(empty)
+            (empty / "Late.lua").write_bytes(EXTERNAL)
+            _mtime_put_back_ctime_moved(empty, memoized)
+            tx.restore(snapshot_id)
+            assert late in tx.left_alone, (
+                f"the whole restore's walk passed over {late}, which someone else added with "
+                f"{empty_rel}'s mtime put back; left_alone: {tx.left_alone}"
+            )
+            assert listings.calls[empty_rel] >= 2, (
+                f"{empty_rel} was not listed again by the second whole restore; the walk of "
+                "what it leaves alone served the old listing from the memo"
+            )
+            assert tx.plan == (), f"a whole restore never touches {late}: {tx.plan}"
+    assert (empty / "Late.lua").read_bytes() == EXTERNAL
 
 
 # ─── 2. a case variant of a file someone else added is refused ───────────────
