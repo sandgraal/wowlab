@@ -2791,6 +2791,29 @@ Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it wh
 - The 1 MB file-size hook entry for `cli.py` is moved or removed.
 - Reviewed by `code-reviewer`.
 
+# M16 owner testing (filed 2026-11-11)
+
+## [ ] M16-112 — Discovery searches more folders for the install, and says where it looked
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 (install at `/Games/World of Warcraft` not found); LAB_PLAN §6.1, amendment of 2026-11-11
+
+Implement §6.1's amendment of 2026-11-11 in `install.default_roots` and in the error that discovery raises when it finds nothing.
+- **macOS search:** `/Applications`, `/Applications/Games`, `/Games`, `~/Applications`, `~/Games`, `/Users/Shared`, then `/Volumes/*` and each volume's `Applications/` and `Games/`. Links under `/Volumes` are skipped.
+- **Windows:** `<drive>\Games` is added after the existing three.
+- **The no-install error** lists every location checked, and gives the `--root` and `WOWLAB_WOW_ROOT` lines to copy.
+
+Keep `default_roots` testable without the real filesystem: the platform, the home directory, the `/Volumes` listing and the drives are all injectable, as `drives` and `environ` already are. Constructed tests only (L8 boundary: folder layouts, no game data).
+
+**Acceptance:**
+- **Order:** tests pin the order for macOS and Windows.
+- **Two locations:** with two installs present, the first in the order wins.
+- **`/Volumes`:** a link entry is skipped, and an unreadable entry is skipped without an error.
+- **No home:** the `~` entries are skipped.
+- **Error text:** the no-install error lists the checked locations and the two commands.
+- **Unchanged:** the explicit root and `WOWLAB_WOW_ROOT` are still final. Every existing discovery test passes unchanged.
+- **Docs:** the CLI `--root` help still reads true.
+- **User-facing:** listed in the PR (wiki: install, getting started).
+- **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`

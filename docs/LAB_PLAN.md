@@ -370,6 +370,30 @@ raises `NotAnInstallError` with `reason` `unreadable` and the words "cannot
 read .build.info (it changed as it was read; run the command again)". The
 discovery output of an unchanged install is byte for byte what it was.
 
+*Amended 2026-11-11 (owner decision in session, M16-112): a wider default search.* The owner keeps his install outside `/Applications`, and discovery did not find it. When no explicit root and no `WOWLAB_WOW_ROOT` is given, the default search is now the following. In each folder listed, discovery looks for a `World of Warcraft` child.
+
+- **macOS**, in this order:
+  1. `/Applications`
+  2. `/Applications/Games`
+  3. `/Games`
+  4. `~/Applications`
+  5. `~/Games`
+  6. `/Users/Shared`
+  7. for each entry directly under `/Volumes`, sorted by name: `/Volumes/<name>`, `/Volumes/<name>/Applications` and `/Volumes/<name>/Games`. An entry under `/Volumes` that is a link by `is_link` is skipped, which covers the boot volume's link back to `/`. So is one that cannot be listed.
+
+  `~` is the current user's home directory. If the home cannot be found, the two `~` entries are skipped.
+- **Windows:** each drive's list gains `<drive>\Games\World of Warcraft`, after the three existing locations and in the same drive order.
+- **Unchanged:**
+  - the first location that is an install wins;
+  - the explicit root and `WOWLAB_WOW_ROOT` are final, as in amendment (2) of 2026-09-22;
+  - a location that is not a directory, or cannot be checked, is passed over;
+  - one that holds an unusable `.build.info` is reported, as before.
+
+  The output already names the root it used, so a player with two installs can see which one was taken.
+- **When nothing is found**, the error lists every location that was checked, in order. It ends with the two ways to name the install: `--root "<path>"`, and `export WOWLAB_WOW_ROOT="<path>"` (macOS) or `set WOWLAB_WOW_ROOT=<path>` (Windows). It also says the path to use is the folder that holds `.build.info`, not `_retail_`.
+- **Still out of scope:** reading Battle.net's own records of where it installed the game. That would need an ADR and a real capture.
+- **Linux:** still explicit root only.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
