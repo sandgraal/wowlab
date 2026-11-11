@@ -38,7 +38,7 @@ from test_cli import (
 )
 
 import wowlab_core
-from wowlab_core import addoninstall, cli, labaddon
+from wowlab_core import addoninstall, cli, install, labaddon, longpath
 from wowlab_core.toc import parse_toc
 
 REPO = Path(__file__).resolve().parents[3]
@@ -190,8 +190,12 @@ def test_doctor_names_the_reinstall_after_a_client_update_constructed(
     assert state.status == "stale"
     assert state.installed == (INTERFACE,) and state.expected == 16102
     text = _doctor_text()
-    assert "## Interface: 16001; this client is 16102" in text
-    assert f"`{REINSTALL}`" in text
+    assert (
+        "Lab-addon: made for another client version (## Interface: 16001; this client is "
+        "16102), so the game may list it as out of date and not load it (unless 'Load out "
+        "of date AddOns' is ticked), and no new records are saved. Close the game and run "
+        f"`{REINSTALL}` to update it."
+    ) in text
     # A stale addon is advice, not a problem: it does not make doctor fail.
     assert all("Lab-addon" not in p for p in _doctor_json().problems)
     # The advice works: after the reinstall doctor finds it current.
@@ -213,7 +217,53 @@ def test_doctor_an_unfilled_toc_is_stale_constructed(flavor: Path) -> None:
     (flavor / LAB / "WowLab.toc").write_bytes((SOURCE / "WowLab.toc").read_bytes())
     state = _lab_state()
     assert state.status == "stale" and state.installed == ()
-    assert f"`{REINSTALL}`" in _doctor_text()
+    text = _doctor_text()
+    assert "made for another client version" not in text
+    assert (
+        "Lab-addon: its WowLab.toc has no usable ## Interface: value, so the game may treat "
+        "it as out of date and not load it (unless 'Load out of date AddOns' is ticked), and "
+        f"no new records are saved. Close the game and run `{REINSTALL}`."
+    ) in text
+
+
+@pytest.mark.parametrize("with_main", [True, False], ids=["beside-WowLab.toc", "alone"])
+def test_doctor_a_suffixed_toc_makes_it_unknown_constructed(flavor: Path, with_main: bool) -> None:
+    """The client may load a suffixed `WowLab_<x>.toc` instead of
+    `WowLab.toc`, so doctor does not judge `WowLab.toc` alone."""
+    if with_main:
+        ok("addon", "install", "lab", "--yes")
+    else:
+        (flavor / LAB).mkdir(parents=True)
+    (flavor / LAB / "WowLab_Mainline.toc").write_bytes(b"## Interface: 1\n")
+    state = _lab_state()
+    assert state.status == "unknown"
+    assert state.installed == ((INTERFACE,) if with_main else ())
+    assert state.detail == (
+        f"{LAB}/ also holds WowLab_Mainline.toc, which the client may load instead of WowLab.toc"
+    )
+    assert "WowLab_Mainline.toc, which the client may load instead" in _doctor_text()
+
+
+def test_doctor_names_the_real_reason_it_could_not_look_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A permission error on the way to the folder is said as one, not as a
+    link (constructed: injected at `longpath.lstat`, as root ignores modes)."""
+    ok("addon", "install", "lab", "--yes")
+    real = longpath.lstat
+
+    def lstat(path: str | os.PathLike[str]) -> os.stat_result:
+        if Path(path).name == "AddOns":
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(longpath, "lstat", lstat)
+    (chosen,) = install.discover(flavor.parent).flavors
+    state = addoninstall.lab_addon_state(chosen)
+    assert state.status == "unknown"
+    assert (
+        state.detail == f"wowlab could not look at the way to {LAB}/WowLab.toc: Permission denied"
+    )
 
 
 def test_doctor_unknown_when_the_version_gives_no_interface_constructed(
@@ -337,9 +387,36 @@ def test_char_show_flags_a_record_an_older_client_saved_constructed(
     assert data["installed_version"] == "1.60.1.70010"
     assert data["older_client"] is True
     text = " ".join(ok("char", "show", "--character", FIRST).stdout.split())
+    # The lab-addon is not installed in the captured tree.
     assert (
-        "This record was saved by an older client than the installed 1.60.1.70010: log in "
-        "on this character, then log out or /reload, to save a fresh one."
+        "This record was saved by an older client than the installed 1.60.1.70010, and the "
+        f"lab-addon is not installed. Run `{REINSTALL}`, then, with the lab-addon enabled "
+        "for this character, log in on it, then log out or /reload, to save a fresh one."
+    ) in text
+
+
+def test_char_show_advice_with_a_current_addon_constructed(root: Path, flavor: Path) -> None:
+    ok("addon", "install", "lab", "--yes")
+    _set_version(root, "1.60.1.70010")  # a build-only update: the addon still fits
+    text = " ".join(ok("char", "show", "--character", FIRST).stdout.split())
+    assert (
+        "This record was saved by an older client than the installed 1.60.1.70010: with the "
+        "lab-addon enabled for this character, log in on it, then log out or /reload, to "
+        "save a fresh one."
+    ) in text
+    assert REINSTALL not in text
+
+
+def test_char_show_advice_with_a_stale_addon_constructed(root: Path, flavor: Path) -> None:
+    ok("addon", "install", "lab", "--yes")
+    _set_version(root, "1.61.2.70001")
+    text = " ".join(ok("char", "show", "--character", FIRST).stdout.split())
+    assert (
+        "This record was saved by an older client than the installed 1.61.2.70001, and the "
+        "installed lab-addon is out of date for this client, so the game may not load it "
+        f"(`wowlab doctor` says why). Close the game, run `{REINSTALL}`, then, with the "
+        "lab-addon enabled for this character, log in on it, then log out or /reload, to "
+        "save a fresh one."
     ) in text
 
 

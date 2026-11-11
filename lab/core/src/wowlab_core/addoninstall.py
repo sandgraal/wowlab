@@ -915,11 +915,23 @@ def remove(plan: RemovePlan, flavor: _FlavorLike, *, store: Path | None = None) 
 # ─── the installed copy against the client (M16-06) ──────────────────────────
 
 
+def _other_tocs(folder: Path) -> list[str]:
+    """Every `*.toc` in the addon folder other than `WowLab.toc`, by name,
+    from a listing that follows no link. `OSError` when it cannot be listed."""
+    return sorted(
+        e.name
+        for e in longpath.entries(folder)
+        if e.name.casefold().endswith(".toc") and e.name != TOC_NAME
+    )
+
+
 def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
     """The installed lab-addon's `## Interface:` against the one the
     flavor's discovered version gives (`interface_version`). Read only (L1):
-    the TOC is opened without following a link, and a link on the way to it
-    makes the answer `unknown`."""
+    the folder is listed and the TOC opened without following a link, and a
+    link on the way to it makes the answer `unknown`. So does any other
+    `*.toc` in the folder (a suffixed `WowLab_<x>.toc`), which the client may
+    load instead of `WowLab.toc` (M16-06, domain review)."""
     expected: int | None
     no_expected: str | None = None
     try:
@@ -929,23 +941,47 @@ def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
     toc = f"{ADDON_FOLDER}/{TOC_NAME}"
     try:
         folder = _addon_folder(flavor.path)
-    except AddonError:
-        return LabAddonState(
-            status="unknown",
-            expected=expected,
-            detail=f"the way to {toc} is a link or not a folder, so wowlab did not read it",
-        )
+    except AddonError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, OSError):
+            detail = f"wowlab could not look at the way to {toc}: {cause.strerror or cause}"
+        else:
+            detail = f"the way to {toc} is a link or not a folder, so wowlab did not read it"
+        return LabAddonState(status="unknown", expected=expected, detail=detail)
     if folder is None:
         return LabAddonState(status="not_installed", expected=expected)
     try:
+        others = _other_tocs(folder)
+    except OSError as exc:
+        return LabAddonState(
+            status="unknown",
+            expected=expected,
+            detail=f"wowlab could not list {ADDON_FOLDER}/: {exc.strerror or exc}",
+        )
+    installed: tuple[int, ...] = ()
+    version: str | None = None
+    try:
         data = _read_regular(folder / TOC_NAME, MAX_SOURCE_BYTES)
     except _UnreadableError as exc:
-        if isinstance(exc.__cause__, FileNotFoundError):
+        if not isinstance(exc.__cause__, FileNotFoundError):
+            return LabAddonState(status="unknown", expected=expected, detail=f"{toc} {exc}")
+        if not others:
             return LabAddonState(status="not_installed", expected=expected)
-        return LabAddonState(status="unknown", expected=expected, detail=f"{toc} {exc}")
-    doc = parse_toc(data)
-    installed = doc.interface.versions if doc.interface is not None else ()
-    version = doc.get(VERSION_KEY)
+    else:
+        doc = parse_toc(data)
+        installed = doc.interface.versions if doc.interface is not None else ()
+        version = doc.get(VERSION_KEY)
+    if others:
+        return LabAddonState(
+            status="unknown",
+            installed=installed,
+            expected=expected,
+            version=version,
+            detail=(
+                f"{ADDON_FOLDER}/ also holds {', '.join(others)}, which the client may load "
+                f"instead of {TOC_NAME}"
+            ),
+        )
     if expected is None:
         return LabAddonState(
             status="unknown", installed=installed, version=version, detail=no_expected

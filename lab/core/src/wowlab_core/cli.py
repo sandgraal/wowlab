@@ -2326,19 +2326,31 @@ def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
 
 
 _REINSTALL = f"wowlab addon install {addoninstall.LAB_ADDON}"
+_LOAD_OUT_OF_DATE = "Load out of date AddOns"
+# What an out-of-date lab-addon means for the player (M16-06, domain review).
+_STALE_EFFECT = (
+    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and no new records are saved"
+)
 
 
 def _lab_addon_line(state: addoninstall.LabAddonState) -> str | None:
     """The `doctor` line about the installed lab-addon (M16-06), or None
     when it is not installed."""
-    found = ", ".join(str(n) for n in state.installed) or "no value"
     if state.status == "current":
+        found = ", ".join(str(n) for n in state.installed)
         return f"  Lab-addon: installed, made for this client (## Interface: {found})"
+    if state.status == "stale" and not state.installed:
+        return (
+            f"  Lab-addon: its {addoninstall.TOC_NAME} has no usable ## Interface: value, so "
+            f"the game may treat it as out of date {_STALE_EFFECT}. Close the game and run "
+            f"`{_REINSTALL}`."
+        )
     if state.status == "stale":
+        found = ", ".join(str(n) for n in state.installed)
         return (
             f"  Lab-addon: made for another client version (## Interface: {found}; this "
-            f"client is {state.expected}), so the game may mark it out of date. Close the "
-            f"game and run `{_REINSTALL}` to update it."
+            f"client is {state.expected}), so the game may list it as out of date "
+            f"{_STALE_EFFECT}. Close the game and run `{_REINSTALL}` to update it."
         )
     if state.status == "unknown":
         return (
@@ -2378,7 +2390,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"  Game data: {_print_game_data(f.game_data)}")
         lab_line = _lab_addon_line(f.lab_addon)
         if lab_line is not None:
-            _say_prose(lab_line, hang="    ", keep=[_REINSTALL])
+            _say_prose(lab_line, hang="    ", keep=[_REINSTALL, _LOAD_OUT_OF_DATE])
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
             files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))
@@ -10842,11 +10854,7 @@ def char_show(
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
     if report.older_client:
-        _say_prose(
-            f"This record was saved by an older client than the installed {chosen.version}: "
-            "log in on this character, then log out or /reload, to save a fresh one.",
-            hang="  ",
-        )
+        _say_prose(_older_record_line(chosen), hang="  ", keep=[_REINSTALL])
     # describe() renders its own words with `_player_copy` before a value
     # read from the record goes in; the line then prints as it is.
     for line in labaddon.describe(record, render=_player_copy):
@@ -10859,6 +10867,28 @@ def char_show(
             _say(line)
     for note in _CHAR_NOTES:
         _say_note(note)
+
+
+def _older_record_line(chosen: install.Flavor) -> str:
+    """`char show`'s line for a record an older client saved (M16-06): how
+    to save a fresh one, and first, when the installed lab-addon is out of
+    date for this client or not installed, that it may not load (its state
+    as `doctor` reads it)."""
+    head = f"This record was saved by an older client than the installed {chosen.version}"
+    fresh = (
+        "with the lab-addon enabled for this character, log in on it, then log out or "
+        "/reload, to save a fresh one."
+    )
+    status = addoninstall.lab_addon_state(chosen).status
+    if status == "stale":
+        return (
+            f"{head}, and the installed lab-addon is out of date for this client, so the game "
+            f"may not load it (`wowlab doctor` says why). Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    if status == "not_installed":
+        return f"{head}, and the lab-addon is not installed. Run `{_REINSTALL}`, then, {fresh}"
+    return f"{head}: {fresh}"
 
 
 def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
