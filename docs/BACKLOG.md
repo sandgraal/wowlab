@@ -2398,7 +2398,7 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 
 **Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-78 — The user data directory's other folders are private
+## [x] M16-78 — The user data directory's other folders are private
 **Size:** S · **Depends on:** M16-78T · **Sources:** the M16-66T security review (#424)
 
 M16-66 (#432, merged) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
@@ -2518,7 +2518,7 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 
 **Acceptance:** `BASELINE` and §6.12 agree, and cite the runs used. `test_perf_budget.py` passes. Reviewed by `code-reviewer`.
 
-## [ ] M16-89 — A docs-only PR still checks for bidi controls
+## [x] M16-89 — A docs-only PR still checks for bidi controls
 **Size:** XS · **Depends on:** M16-83 · **Sources:** the M16-83 code review (#448)
 
 `tests/repo/test_bidi_controls.py` reads every tracked file through `git ls-files`, docs included. A docs-only PR skips it with the rest of the suite, so a doc can gain a bidi control that only the next code PR catches. Add a cheap bidi step that always runs in the docs-only branch of the `quality` job, or rule that docs are out of the bidi check's scope. This is a conductor-lane change (workflow YAML).
@@ -2580,7 +2580,7 @@ Strict-xfail graders for `guard.py`. A directory whose listing changes while its
 
 **Acceptance:** strict xfail on `main`, activated by M16-94 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-94 — [IMPL] The listing memo's key holds the directory's ctime
+## [x] M16-94 — [IMPL] The listing memo's key holds the directory's ctime
 **Size:** XS · **Depends on:** M16-94T · **Sources:** as M16-94T
 
 **Acceptance:** M16-94T's graders activated by marker deletion only. The full suite is green (`guard.py`), and the scaling grader and the M16-27 nightly budget still hold. Reviewed by `code-reviewer` and `security-reviewer`.
@@ -2624,7 +2624,7 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 **Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-101 — `profile apply` prints its login note once
+## [x] M16-101 — `profile apply` prints its login note once
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 code and domain reviews (#468); the batch-7 code review (#473)
 
 In text mode, `profile apply` prints `profiles.LOGIN_NOTE` twice when it writes. It prints the note in the plan, and then again, unconditionally, after the write. LAB_PLAN (the plan-footer paragraph and its M16-97 amendment) says plans "add the login caveat before the prompt and do not repeat it after the write". Keep the note in the plan, where it is also part of `ProfileApplyReport.plan_lines` and so of `--json`. Drop the print after the write.
@@ -2635,7 +2635,7 @@ In text mode, `profile apply` prints `profiles.LOGIN_NOTE` twice when it writes.
 
 Reviewed by `code-reviewer`.
 
-## [ ] M16-102 — `undo`'s plan and result agree on the login caveat
+## [x] M16-102 — `undo`'s plan and result agree on the login caveat
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 domain review (#468); reproduced in the batch-7 code review (#473)
 
 The undo plan's footer decides on `_RELOGIN` from the listed paths: those whose disk differs from `before`. The result decides from `UndoReport.notes = _relogin_notes([p.path for p in last.paths])`, which is every path of the record being undone, whether or not the undo changes it. `--json` `notes` comes from that same set. The mismatch was reproduced on main:
@@ -2665,3 +2665,19 @@ Keep the LAB_FILE_MAP **[verify]** rule: "restart the client" is safe; a claim o
 - The LAB_PLAN amendment.
 
 Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-11, eighth batch)
+
+## [ ] M16-104 — The bidi scan reads what git commits for a symlink
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-89 security review (#478, LOW, pre-existing)
+
+`tests/repo/test_bidi_controls.py` reads each tracked path from the checkout, and only when `path.is_file()` is true. For a symlink (git mode 120000), the bytes git commits are the link's target text. A broken link is skipped. A working link is followed, so its target file is scanned instead. Either way, a bidi control in a link's target text passes. On a docs-only PR, `docs/evil.md` can be such a link. Fix: list entries with `git ls-files -s -z`. For a mode-120000 entry, run the check on `os.readlink(path)`, or on the blob, and never follow the link.
+
+**Acceptance:** a constructed test with a broken symlink whose target holds U+202E, which the scan reports. The existing tests still pass. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-105 — `undo` names a file it put back that the plan did not list
+**Size:** XS · **Depends on:** M16-103 · **Sources:** the M16-102 domain re-review (#477)
+
+Since M16-102, the undo result gives the login caveat for every `Config.wtf` or `*-cache` file the undo wrote. Suppose such a file changed while the prompt waited, after the plan was shown, and the undo put it back. The text result then prints the caveat but does not name that file, so nothing on screen says why the caveat appears. The text result should name each file the undo wrote that the plan did not list. `--json` already has the undo's record.
+
+**Acceptance:** a pinned test of that race in text output, where the extra file is named once, after "Undone.". Reviewed by `code-reviewer` and `domain-reviewer`.
