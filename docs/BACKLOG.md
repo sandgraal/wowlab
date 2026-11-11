@@ -2499,14 +2499,14 @@ Its header also prints the raw journal state: `cli._undo_lines`, `Undo <id> ("<l
 **Acceptance:** a constructed test on a real `rollback_incomplete` record pins the plan lines and the header. No state constant appears in text output. `--json` is unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-87T — [TEST] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3)
+**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3) · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 A leftover `.wowlab-*.tmp` whose unlink failed stays on disk, in `temps_left`, and in that change's pre-write snapshot. Losslessness requires this (M16-69T grader 2). Suppose a later change removes it, and the player then restores the earlier snapshot whole. The file comes back, and no later cleanup considers it again. A whole restore should leave out any entry whose path an earlier record of the flavor lists in `temps` or `temps_left`, judged by the journal and not by the name. Or the restoring record lists such paths in its own `temps_left`. This touches `guard.py`, so the graders land first.
 
 **Acceptance:** strict-xfail graders on main for the scenario above, activated by M16-87 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-87 — [IMPL] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T
+**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 **Acceptance:** M16-87T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -2723,6 +2723,73 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 - The change listed as user-facing (a record error).
 
 Reviewed by `code-reviewer`.
+
+# M16 process and scope (filed 2026-11-11, owner decisions: ADR-0037 and the conductor's review)
+
+## [ ] M16-109 — `doctor`'s one answer for a failure wowlab cannot work out
+**Size:** S · **Depends on:** M16-69, M16-90 · **Sources:** ADR-0037 (accepted 2026-11-11)
+
+ADR-0037 freezes automatic crash recovery. Every compound failure then gets one generic answer instead of a rule of its own. Examples of a compound failure:
+- a damaged or hand-edited journal or snapshot store;
+- a record whose pre-write snapshot cannot be read;
+- a record `doctor` cannot classify with the written rules.
+
+The answer:
+- `undo` refuses and changes nothing, as today.
+- `doctor` reports one problem and exits 1. The problem says wowlab cannot work out safely what this change did, and that the snapshots are kept. It names the newest snapshot that `snap verify` finds whole, and ends with `wowlab snap restore <id> --dry-run`.
+- `--json` gains a problem kind for it.
+- The wording follows the `doctor` rules: no ticket or module ids, and the command last.
+
+This does not touch `guard.py`. `doctor` reads only. If the implementer finds a `guard.py` change is needed, stop and report.
+
+**Acceptance:**
+- Constructed tests (L8 boundary) for a damaged journal record and for a missing manifest. Each gives that one problem, exit 1 and the right snapshot id.
+- With no whole snapshot left, the problem says so and offers no command.
+- `doctor --redact` covers the snapshot id.
+- The change is listed as user-facing (wiki: doctor).
+- Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-110 — LAB_PLAN §6.10 as one current section
+**Size:** S · **Depends on:** M16-69, M16-90, M16-108T · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+§6.10 is the write gate's spec. It has grown into a base text followed by dated amendments, with (a), (a1) and (a2) alone covering one rule in three places, so a reader cannot tell what is true without reading all of it in order.
+- Rewrite §6.10 as one section that states only what is true on `main`. Do this after M16-69 and M16-90 merge.
+- Move the dated amendments, unchanged, to a new appendix with a one-line pointer from §6.10.
+- Every owner decision keeps its date and its words in the appendix. The section cites them by date where a rule came from one.
+- Change no rule. Anything that turns out ambiguous or contradictory is reported, not resolved.
+- Do the same for any other LAB_PLAN section with more than three dated amendments, listed in the report first and done only on the conductor's go.
+
+**Acceptance:**
+- The doc tests pass. Every `§6.10 (a…)` reference elsewhere in `docs/` and in test docstrings still resolves, to the appendix where needed.
+- A side-by-side table in the PR maps every rule in the old text to its place in the new one.
+- Reviewed by `code-reviewer` and `security-reviewer`; the gate's spec is security-relevant.
+
+## [ ] M16-111 — Split `cli.py` by command group
+**Size:** M · **Depends on:** M16-69 · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+`lab/core/src/wowlab_core/cli.py` is about 14,000 lines in one module. Split it into a package `wowlab_core/cli/` with one module per command group:
+- `snap`
+- `undo` and `doctor`
+- `char`
+- `binds`
+- `macros`
+- `sv`
+- `filemap`
+- `ui` launch
+- the shared helpers and error handling
+
+`wowlab_core.cli` stays the import path, and its public names (`app` and anything a test imports) are re-exported. This is a mechanical move:
+- no behaviour, help-text or output change;
+- no renamed option;
+- no new dependency.
+
+Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it when none is mid-review, or rebase them after.
+
+**Acceptance:**
+- `make ci` green with no test changed except import paths, if any. Name any test whose import changed.
+- `wowlab --help` and every subcommand's `--help` output is byte-identical before and after. Compare by script and paste the result in the PR.
+- The 1 MB file-size hook entry for `cli.py` is moved or removed.
+- Reviewed by `code-reviewer`.
 
 # M16 owner answer (filed 2026-11-11, seventh batch)
 

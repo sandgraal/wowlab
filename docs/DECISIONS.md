@@ -514,7 +514,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 ## ADR-0037 — Crash recovery is frozen at what M16-69 and M16-90 deliver
 
-**Status:** Proposed (2026-11-11)
+**Status:** Accepted (2026-11-11; proposed 2026-11-11). This is an owner decision. The owner said in session "draft the crash-recovery freeze ADR, no outside users for now but in future yes", then chose "Accept it now". The conductor made the status edit on the owner's explicit instruction.
 
 **Context:**
 - **What is built.** The write gate (ADR-0021, L2) already recovers from a single failure at any point in a change. A change is snapshotted before it writes, journaled, replaced atomically and undoable. `doctor` reports an interrupted change with the exact `wowlab undo --expect <id>` line.
