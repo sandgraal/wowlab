@@ -90,6 +90,8 @@
       "flavor_folder": "_classic_beta_",
       "state": "missing",
       "count": null,
+      "newest_mtime_ns": null,
+      "command": "wowlab addon install lab",
       "detail": null,
       "fix": "Close the game, then run `wowlab addon install lab`."
     },
@@ -98,7 +100,9 @@
       "flavor_folder": "_classic_beta_",
       "state": "ok",
       "count": 2,
-      "detail": null,
+      "newest_mtime_ns": null,
+      "command": "wowlab char list",
+      "detail": "they are not updated until the lab-addon above is fixed",
       "fix": null
     },
     {
@@ -106,6 +110,8 @@
       "flavor_folder": "_classic_beta_",
       "state": "ok",
       "count": 1,
+      "newest_mtime_ns": 1700000000000000000,
+      "command": null,
       "detail": null,
       "fix": null
     }

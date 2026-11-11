@@ -1764,7 +1764,14 @@ class NextStep(_Out):
     # `characters`: the character folders holding a lab-addon record;
     # `combat_log`: the combat logs under Logs/; None otherwise.
     count: int | None = None
-    # Why the state is `unknown`, in the player's words.
+    # `combat_log`: the newest log's modification time; None otherwise.
+    newest_mtime_ns: int | None = None
+    # The wowlab command the item names, quoted for this machine's shell,
+    # with the caller's --root and, on an install with several flavors,
+    # --flavor: the reinstall for `lab_addon`, `char list` for `characters`.
+    command: str | None = None
+    # What else the item says, in the player's words: why its state is
+    # `unknown` or `stale`, or what a missing lab-addon means for the records.
     detail: str | None = None
     # The one command or in-game action that fixes it, as the text says it;
     # None when there is nothing to do or nothing wowlab can name.
@@ -2074,6 +2081,9 @@ def _doctor(
     else:
         game = _game_data(inst.flavors, check_builds)
         several = len(inst.flavors) > 1
+        # The --root the player gave, as given, for the commands the next
+        # steps name; None when the install was found without one.
+        given_root = str(root) if root is not None and str(root) != "" else None
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -2094,7 +2104,7 @@ def _doctor(
                     lab_addon=lab_addon,
                 )
             )
-            steps += _flavor_steps(lay, f.folder, lab_addon, several)
+            steps += _flavor_steps(lay, f.folder, lab_addon, several, given_root)
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -2138,77 +2148,118 @@ def _doctor(
 # ─── doctor: next steps (M16-37) ─────────────────────────────────────────────
 
 _RECORD_HOW = (
-    "In game, with the lab-addon installed, log in on each character, then log out or "
-    "type /reload: the game saves the character's record then."
+    "In game, with the lab-addon installed and enabled for the character (AddOns at "
+    "character select), log in, then log out or type /reload."
 )
 _COMBATLOG_HOW = (
-    "In game, type /combatlog before you play: the game writes a combat log only while "
-    "combat logging is on."
+    "In game, type /combatlog once each time you log in (it switches logging on and off; "
+    "the chat window says which)."
 )
+# What a lab-addon that is missing or out of date means for the records.
+_RECORDS_WAIT = "they are not updated until the lab-addon above is fixed"
 
 
 def _install_step(build_info_missing: bool) -> NextStep:
-    """The one next step when no install was found: name it, or, for a game
-    folder that lost its .build.info, have the Battle.net app put it back."""
-    name_it = '`wowlab doctor --root "<that folder>"`'
+    """The one next step when no install was found. The how-to is the lines
+    above it in the text (`firstrun.pointing_lines`, the Scan and Repair
+    line), so this points there rather than saying it again."""
     if build_info_missing:
         fix = (
-            "If this is the game's folder, run Scan and Repair in the Battle.net app (choose "
-            "the game, then the gear beside Play); if not, name the folder that holds "
-            f".build.info: {name_it}."
+            "If this is the game's folder, run Scan and Repair as the lines above say; if "
+            "not, name the folder that holds .build.info, as they also say."
         )
     else:
-        fix = f"Name the folder that holds .build.info: {name_it}, or set {install.ENV_ROOT} to it."
+        fix = "Name the folder that holds .build.info, as the lines above say."
     return NextStep(item="install", flavor_folder=None, state="missing", fix=fix)
 
 
-def _lab_command(folder: str, several: bool) -> str:
-    """`wowlab addon install lab`, naming the flavor when the install has
-    several (the command asks for one then), quoted for this machine's shell."""
-    argv = ["wowlab", *_REINSTALL.split()[1:], *(["--flavor", folder] if several else [])]
+def _wowlab_command(args: Sequence[str], folder: str, several: bool, root: str | None) -> str:
+    """A wowlab command for this flavor, as a player would type it: the
+    caller's --root as given (only when one was given, as `labaddon.survey`
+    names it for `char show`; on Windows a `\\\\?\\` root by its plain
+    spelling), and --flavor when the install has several flavors, every
+    argument quoted for this machine's shell."""
+    argv = ["wowlab", *args]
+    if root is not None:
+        argv += ["--root", longpath.plain_text(root) if longpath.ON_WINDOWS else root]
+    if several:
+        argv += ["--flavor", folder]
     return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
 
 
-def _lab_addon_step(folder: str, state: addoninstall.LabAddonState, several: bool) -> NextStep:
-    fix = f"Close the game, then run `{_lab_command(folder, several)}`."
+def _lab_addon_step(
+    folder: str, state: addoninstall.LabAddonState, several: bool, root: str | None = None
+) -> NextStep:
+    command = _wowlab_command(_REINSTALL.split()[1:], folder, several, root)
+    fix = f"Close the game, then run `{command}`."
     if state.status == "current":
-        return NextStep(item="lab_addon", flavor_folder=folder, state="ok")
+        return NextStep(item="lab_addon", flavor_folder=folder, state="ok", command=command)
     if state.status == "not_installed":
-        return NextStep(item="lab_addon", flavor_folder=folder, state="missing", fix=fix)
-    if state.status == "stale":
-        return NextStep(item="lab_addon", flavor_folder=folder, state="stale", fix=fix)
-    return NextStep(item="lab_addon", flavor_folder=folder, state="unknown", detail=state.detail)
-
-
-def _characters_step(lay: layout.Layout, folder: str) -> NextStep:
-    """How many character folders hold a lab-addon record: from the listing
-    alone (`budget=0` opens no file), so doctor reads no record."""
-    found = labaddon.survey(lay, keep_records=False, budget=0)
-    count = sum(1 for e in found.characters if e.place == "file")
-    if count:
-        return NextStep(item="characters", flavor_folder=folder, state="ok", count=count)
-    if found.not_looked_at:
-        n = len(found.not_looked_at)
         return NextStep(
-            item="characters",
+            item="lab_addon", flavor_folder=folder, state="missing", command=command, fix=fix
+        )
+    if state.status == "stale":
+        detail = (
+            "made for another client version"
+            if state.installed
+            else "its ## Interface: line is missing or unusable"
+        )
+        return NextStep(
+            item="lab_addon",
             flavor_folder=folder,
-            state="unknown",
-            count=0,
-            detail=(
-                f"wowlab could not look inside {_plural(n, 'place')} where character folders "
-                "can be (wowlab char list names them)"
-            ),
+            state="stale",
+            command=command,
+            detail=detail,
+            fix=fix,
         )
     return NextStep(
-        item="characters", flavor_folder=folder, state="missing", count=0, fix=_RECORD_HOW
+        item="lab_addon",
+        flavor_folder=folder,
+        state="unknown",
+        command=command,
+        detail=state.detail,
+    )
+
+
+def _characters_step(
+    lay: layout.Layout, folder: str, several: bool, root: str | None, lab_ready: bool
+) -> NextStep:
+    """How many character folders hold a lab-addon record: from the listing
+    alone (`budget=0` opens no file), so doctor reads no record. A place
+    wowlab could not look inside, above the character folders or a
+    character's own folder or SavedVariables/, may hold more: then the
+    count is not the whole answer (`unknown`)."""
+    command = _wowlab_command(["char", "list"], folder, several, root)
+    found = labaddon.survey(lay, keep_records=False, budget=0)
+    count = sum(1 for e in found.characters if e.place == "file")
+    unseen = len(found.not_looked_at)
+    unseen += sum(1 for e in found.characters if e.place in _BLOCKED_PLACE)
+    notes: list[str] = []
+    if unseen:
+        it = "it" if unseen == 1 else "them"
+        notes.append(
+            f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
+        )
+    if count and not lab_ready:
+        notes.append(_RECORDS_WAIT)
+    state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
+    return NextStep(
+        item="characters",
+        flavor_folder=folder,
+        state=state,
+        count=count,
+        command=command,
+        detail="; ".join(notes) or None,
+        fix=_RECORD_HOW if state == "missing" else None,
     )
 
 
 def _combat_log_step(lay: layout.Layout, folder: str) -> NextStep:
-    """Whether Logs/ holds a combat log: a listing, no file opened."""
+    """Whether Logs/ holds a combat log, and when the newest was written: a
+    listing and one stat, no file opened."""
     try:
         logs_dir = _logs_dir(lay)
-        count = len(combatlog.find_logs(logs_dir)) if logs_dir is not None else 0
+        logs = combatlog.find_logs(logs_dir) if logs_dir is not None else []
     except OSError as exc:
         return NextStep(
             item="combat_log",
@@ -2216,58 +2267,83 @@ def _combat_log_step(lay: layout.Layout, folder: str) -> NextStep:
             state="unknown",
             detail=f"wowlab could not look in Logs/: {exc.strerror or exc}",
         )
-    if count:
-        return NextStep(item="combat_log", flavor_folder=folder, state="ok", count=count)
+    if not logs:
+        return NextStep(
+            item="combat_log", flavor_folder=folder, state="missing", count=0, fix=_COMBATLOG_HOW
+        )
+    try:
+        newest: int | None = longpath.lstat(logs[-1]).st_mtime_ns
+    except OSError:
+        newest = None  # gone since the listing
     return NextStep(
-        item="combat_log", flavor_folder=folder, state="missing", count=0, fix=_COMBATLOG_HOW
+        item="combat_log",
+        flavor_folder=folder,
+        state="ok",
+        count=len(logs),
+        newest_mtime_ns=newest,
     )
 
 
 def _flavor_steps(
-    lay: layout.Layout, folder: str, lab_addon: addoninstall.LabAddonState, several: bool
+    lay: layout.Layout,
+    folder: str,
+    lab_addon: addoninstall.LabAddonState,
+    several: bool,
+    root: str | None,
 ) -> list[NextStep]:
+    lab = _lab_addon_step(folder, lab_addon, several, root)
     return [
-        _lab_addon_step(folder, lab_addon, several),
-        _characters_step(lay, folder),
+        lab,
+        _characters_step(lay, folder, several, root, lab_ready=lab.state == "ok"),
         _combat_log_step(lay, folder),
     ]
 
 
 def _next_step_answer(step: NextStep) -> str:
-    """What an item of "Next steps" says before its fix."""
+    """What an item of "Next steps" says before its fix: its answer, then
+    its `detail` when it has one."""
     n = step.count or 0
+    records = "Character folders with a lab-addon record"
     match step.item, step.state:
         case "install", _:
-            return "Install: not found."
+            said = "Install: not found"
         case "lab_addon", "ok":
-            return "Lab-addon: installed, made for this client."
+            said = "Lab-addon: installed, made for this client"
         case "lab_addon", "missing":
-            return "Lab-addon: not installed."
+            said = "Lab-addon: not installed"
         case "lab_addon", "stale":
-            return "Lab-addon: not made for this client version."
+            said = "Lab-addon: out of date for this client"
         case "lab_addon", _:
-            return "Lab-addon: wowlab cannot tell whether it fits this client."
-        case "characters", "ok":
-            return f"Characters recorded: {n}."
+            said = "Lab-addon: wowlab cannot tell whether it fits this client"
         case "characters", "missing":
-            return "Characters recorded: none."
+            said = f"{records}: none"
         case "characters", _:
-            return f"Characters recorded: none found; {step.detail}."
+            said = (
+                f"{records}: {n} (each saved at that character's last logout; "
+                f"`{step.command}` reads them)"
+            )
         case "combat_log", "ok":
-            return f"Combat log: present ({n} under Logs/)."
+            said = f"Combat log: present ({n} under Logs/"
+            if step.newest_mtime_ns is not None:
+                said += f", the newest written {_local_time(step.newest_mtime_ns)}"
+            said += ")"
         case "combat_log", "missing":
-            return "Combat log: none under Logs/."
+            said = "Combat log: none under Logs/"
         case _:
-            return f"Combat log: unknown; {step.detail}."
+            said = "Combat log: wowlab cannot tell whether one is there"
+    if step.detail:
+        said += f"; {step.detail}"
+    return said + "."
 
 
 def _print_next_steps(steps: Sequence[NextStep]) -> None:
     """The "Next steps" block: each item's answer, then its fix. With
-    several flavors, the items are grouped under each flavor's name."""
+    several flavors, the items are grouped under each flavor's name. It
+    says "nothing to do" only when every item is `ok`."""
     if not steps:
         return
-    todo = any(s.fix is not None for s in steps)
-    _say("Next steps:" if todo else "Next steps: nothing to do.")
+    done = all(s.state == "ok" for s in steps)
+    _say("Next steps: nothing to do." if done else "Next steps:")
     grouped = len({s.flavor_folder for s in steps if s.flavor_folder is not None}) > 1
     heading: str | None = None
     for step in steps:
@@ -2280,14 +2356,16 @@ def _print_next_steps(steps: Sequence[NextStep]) -> None:
         text = _next_step_answer(step)
         if step.fix is not None:
             text += f" {step.fix}"
-        keep = [_command_in(step.fix)] if step.fix is not None else []
+        # Each command, and a time, is kept on one line.
+        keep = _commands_in(text)
+        if step.newest_mtime_ns is not None:
+            keep.append(_local_time(step.newest_mtime_ns))
         _say_prose(text, indent=indent, hang=indent + "  ", keep=keep)
 
 
-def _command_in(fix: str) -> str | None:
-    """The command between backticks in a fix, kept whole when wrapped."""
-    parts = fix.split("`")
-    return parts[1] if len(parts) >= 3 else None
+def _commands_in(text: str) -> list[str]:
+    """The commands between backticks in an item, each kept whole when wrapped."""
+    return text.split("`")[1::2]
 
 
 def _could_be_an_install(root: Path) -> bool:
@@ -2523,9 +2601,11 @@ _STALE_EFFECT = (
 )
 
 
-def _lab_addon_line(state: addoninstall.LabAddonState) -> str | None:
+def _lab_addon_line(state: addoninstall.LabAddonState, reinstall: str = _REINSTALL) -> str | None:
     """The `doctor` line about the installed lab-addon (M16-06), or None
-    when it is not installed."""
+    when it is not installed. `reinstall` is the command its next step
+    names (M16-37): with the caller's --root, and --flavor on an install
+    with several flavors."""
     if state.status == "current":
         found = ", ".join(str(n) for n in state.installed)
         return f"  Lab-addon: installed, made for this client (## Interface: {found})"
@@ -2533,14 +2613,14 @@ def _lab_addon_line(state: addoninstall.LabAddonState) -> str | None:
         return (
             f"  Lab-addon: its {addoninstall.TOC_NAME} has no usable ## Interface: value, so "
             f"the game may treat it as out of date {_STALE_EFFECT}. Close the game and run "
-            f"`{_REINSTALL}`."
+            f"`{reinstall}`."
         )
     if state.status == "stale":
         found = ", ".join(str(n) for n in state.installed)
         return (
             f"  Lab-addon: made for another client version (## Interface: {found}; this "
             f"client is {state.expected}), so the game may list it as out of date "
-            f"{_STALE_EFFECT}. Close the game and run `{_REINSTALL}` to update it."
+            f"{_STALE_EFFECT}. Close the game and run `{reinstall}` to update it."
         )
     if state.status == "unknown":
         return (
@@ -2578,9 +2658,17 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 "the first active one is shown"
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
-        lab_line = _lab_addon_line(f.lab_addon)
+        reinstall = next(
+            (
+                s.command
+                for s in report.next_steps
+                if s.item == "lab_addon" and s.flavor_folder == f.folder and s.command
+            ),
+            _REINSTALL,
+        )
+        lab_line = _lab_addon_line(f.lab_addon, reinstall)
         if lab_line is not None:
-            _say_prose(lab_line, hang="    ", keep=[_REINSTALL, _LOAD_OUT_OF_DATE])
+            _say_prose(lab_line, hang="    ", keep=[reinstall, _LOAD_OUT_OF_DATE])
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
             files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))

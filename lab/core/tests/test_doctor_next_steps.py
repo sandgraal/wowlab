@@ -20,6 +20,7 @@ several-flavor layout. Nothing here reads or writes a real install.
 # ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
 from __future__ import annotations
 
+import shlex
 import shutil
 from pathlib import Path
 
@@ -69,13 +70,24 @@ def _block(text: str) -> str:
 
 
 def _agrees(text: str, report: cli.DoctorReport) -> None:
-    """Every item of `--json` is said in the text block, fix and all."""
+    """Every item of `--json` is said in the text block: its answer, and
+    each of its `detail`, `fix` and count verbatim."""
     block = _block(text)
     for step in report.next_steps:
         said = cli._next_step_answer(step)
         if step.fix is not None:
             said += f" {step.fix}"
         assert _flat(said) in block, (said, block)
+        for part in (step.detail, step.fix):
+            if part is not None:
+                assert _flat(part) in said, (part, said)
+        if step.count:
+            assert str(step.count) in said, (step.count, said)
+
+
+def _joined(argv: list[str]) -> str:
+    """A command line as this machine's shell takes it (the CLI's own rule)."""
+    return cli._powershell_join(argv) if cli._shell() == "powershell" else shlex.join(argv)
 
 
 def _set_version(root: Path, version: str) -> None:
@@ -110,8 +122,12 @@ def test_text_block_says_what_json_says(flavor: Path) -> None:
     _agrees(text, _report())
     block = _block(text)
     assert block.startswith("Next steps: Lab-addon: not installed.")
-    assert "Characters recorded: 2." in block
-    assert "Combat log: present (1 under Logs/)." in block
+    assert (
+        "Character folders with a lab-addon record: 2 (each saved at that character's last "
+        "logout; `wowlab char list` reads them); they are not updated until the lab-addon "
+        "above is fixed."
+    ) in block
+    assert "Combat log: present (1 under Logs/, the newest written " in block
 
 
 def test_block_comes_after_the_problems_and_before_the_footer(flavor: Path) -> None:
@@ -148,6 +164,8 @@ def test_lab_addon_installed_is_ok_and_nothing_to_do_constructed(flavor: Path) -
     assert _block(text).startswith(
         "Next steps: nothing to do. Lab-addon: installed, made for this client."
     )
+    # With the lab-addon current, the records are not said to wait for it.
+    assert "until the lab-addon" not in _block(text)
     _agrees(text, _report())
 
 
@@ -158,9 +176,34 @@ def test_lab_addon_for_another_client_names_the_reinstall_constructed(
     _set_version(root, "1.60.2.70500")
     step = _steps()["lab_addon"]
     assert step.state == "stale"
+    assert step.detail == "made for another client version"
     assert step.fix == f"Close the game, then run `{REINSTALL}`."
     text = _text()
-    assert "Lab-addon: not made for this client version. Close the game, then run" in _block(text)
+    assert (
+        "Lab-addon: out of date for this client; made for another client version. "
+        "Close the game, then run"
+    ) in _block(text)
+    _agrees(text, _report())
+
+
+def test_lab_addon_with_no_usable_interface_says_so_constructed(flavor: Path) -> None:
+    lab = flavor / "Interface" / "AddOns" / "WowLab"
+    lab.mkdir(parents=True)
+    (lab / "WowLab.toc").write_bytes(b"## Title: WowLab\n")
+    step = _steps()["lab_addon"]
+    assert (step.state, step.detail) == ("stale", "its ## Interface: line is missing or unusable")
+    _agrees(_text(), _report())
+
+
+def test_lab_addon_unknown_prints_its_detail_constructed(flavor: Path) -> None:
+    lab = flavor / "Interface" / "AddOns" / "WowLab"
+    lab.mkdir(parents=True)
+    (lab / "WowLab_Mainline.toc").write_bytes(b"## Interface: 1\n")
+    step = _steps()["lab_addon"]
+    assert step.state == "unknown" and step.detail and step.fix is None
+    text = _text()
+    assert _flat(f"cannot tell whether it fits this client; {step.detail}") in _block(text)
+    assert _block(text).startswith("Next steps: Lab-addon")  # not "nothing to do"
     _agrees(text, _report())
 
 
@@ -170,9 +213,9 @@ def test_no_character_record_names_the_in_game_action_constructed(flavor: Path) 
     step = _steps()["characters"]
     assert (step.state, step.count) == ("missing", 0)
     assert step.fix is not None
-    assert "log in on each character" in step.fix and "/reload" in step.fix
+    assert "enabled for the character" in step.fix and "/reload" in step.fix
     text = _text()
-    assert "Characters recorded: none. In game," in _block(text)
+    assert "Character folders with a lab-addon record: none. In game," in _block(text)
     _agrees(text, _report())
 
 
@@ -196,7 +239,7 @@ def test_no_combat_log_names_slash_combatlog(flavor: Path, how: str) -> None:
     assert (step.state, step.count) == ("missing", 0)
     assert step.fix is not None and "/combatlog" in step.fix
     text = _text()
-    assert "Combat log: none under Logs/. In game, type /combatlog" in _block(text)
+    assert "Combat log: none under Logs/. In game, type /combatlog once each time" in _block(text)
     _agrees(text, _report())
 
 
@@ -239,6 +282,53 @@ def test_unseen_character_folders_are_unknown_not_none_constructed(
     _agrees(_text(), _report())
 
 
+def test_unseen_place_is_said_beside_a_count_constructed(
+    flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A character folder wowlab could not look inside is not hidden by the
+    records it did find."""
+    real = labaddon.survey
+
+    def with_a_blocked_folder(*a: object, **k: object) -> labaddon.AllCharacters:
+        found = real(*a, **k)  # type: ignore[arg-type]
+        blocked = found.characters[0].model_copy(update={"place": "character_folder"})
+        return found.model_copy(update={"characters": [*found.characters, blocked]})
+
+    monkeypatch.setattr(labaddon, "survey", with_a_blocked_folder)
+    step = _steps()["characters"]
+    assert (step.state, step.count) == ("unknown", 2)
+    assert step.detail is not None
+    assert step.detail.startswith(
+        "1 place wowlab could not look inside (`wowlab char list` names it)"
+    )
+    _agrees(_text(), _report())
+
+
+def test_commands_carry_the_root_given_constructed(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(install.ENV_ROOT)
+    report = _report("--root", str(root))
+    steps = {s.item: s for s in report.next_steps}
+    assert steps["lab_addon"].command == _joined([*REINSTALL.split(), "--root", str(root)])
+    assert steps["characters"].command == _joined(["wowlab", "char", "list", "--root", str(root)])
+    text = _text("--root", str(root))
+    _agrees(text, report)
+
+
+def test_m16_06_line_names_the_same_command_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok("addon", "install", "lab", "--yes")
+    _set_version(root, "1.60.2.70500")
+    monkeypatch.delenv(install.ENV_ROOT)
+    report = _report("--root", str(root))
+    (lab,) = [s for s in report.next_steps if s.item == "lab_addon"]
+    assert lab.command is not None and "--root" in lab.command
+    text = _flat(_text("--root", str(root)))
+    assert text.count(f"`{lab.command}`") == 2  # the flavor's line and the next step
+
+
 # ─── no install: the problem and the how-to first ────────────────────────────
 
 
@@ -257,6 +347,8 @@ def test_no_install_has_one_step_after_the_problem_and_how_to(
     lines = text.splitlines()
     assert lines[0].startswith("Install: ")  # the problem comes first
     how_to = next(i for i, ln in enumerate(lines) if "wowlab doctor --root" in ln)
+    # The how-to is said once, above; the step points to it.
+    assert _flat(text).count("wowlab doctor --root") == 1
     steps_at = next(i for i, ln in enumerate(lines) if ln.startswith("Next steps"))
     assert how_to < steps_at
     # The first run's intro, when there is one, follows the whole report.
@@ -265,14 +357,12 @@ def test_no_install_has_one_step_after_the_problem_and_how_to(
     _agrees(text, report)
 
 
-def test_no_install_fix_names_the_root_option_and_variable(
+def test_no_install_fix_points_to_the_how_to_above(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(install.ENV_ROOT, str(tmp_path / "missing"))
     (step,) = _report().next_steps
-    assert step.fix is not None
-    assert '`wowlab doctor --root "<that folder>"`' in step.fix
-    assert install.ENV_ROOT in step.fix
+    assert step.fix == "Name the folder that holds .build.info, as the lines above say."
 
 
 def test_lost_build_info_fix_names_scan_and_repair_constructed(
@@ -283,7 +373,7 @@ def test_lost_build_info_fix_names_scan_and_repair_constructed(
     assert report.build_info_missing
     (step,) = report.next_steps
     assert step.item == "install" and step.fix is not None
-    assert "Scan and Repair" in step.fix and "--root" in step.fix
+    assert "Scan and Repair" in step.fix and "lines above" in step.fix
     _agrees(_text(), report)
 
 
@@ -316,8 +406,10 @@ def test_several_flavors_name_the_flavor_in_the_command() -> None:
     state = cli.addoninstall.LabAddonState(status="not_installed")
     one = cli._lab_addon_step("_a_", state, several=False)
     two = cli._lab_addon_step("_a_", state, several=True)
+    three = cli._lab_addon_step("_a_", state, several=True, root="/w o w")
     assert one.fix == f"Close the game, then run `{REINSTALL}`."
     assert two.fix == f"Close the game, then run `{REINSTALL} --flavor _a_`."
+    assert three.command == _joined([*REINSTALL.split(), "--root", "/w o w", "--flavor", "_a_"])
 
 
 def test_several_flavors_group_the_items_constructed(capsys: pytest.CaptureFixture[str]) -> None:
