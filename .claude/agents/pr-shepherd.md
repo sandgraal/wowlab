@@ -109,6 +109,9 @@ it with `gh pr view <n> --json body` after every `gh pr edit`. On
 If `gh pr view --json number` fails, create it as a draft the moment you
 start (CI runs during review, not after):
 `gh pr create --draft --base main --title "type(scope): summary (M10-08)" --body-file <tmp>`.
+When the implementer's report names a `pr body:` file, start from it,
+check that its ticket id matches this branch, and complete it; otherwise
+write the body yourself.
 Body, from the reports the conductor gave you: ticket id; acceptance
 criteria with the command and one-line result that proved each; judgment
 calls flagged as claims for reviewers; `Reviewed by: code-reviewer

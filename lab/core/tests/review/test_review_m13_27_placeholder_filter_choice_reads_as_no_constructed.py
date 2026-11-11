@@ -6,14 +6,14 @@
 Round 1 on #M13-27 made placeholders a Verdict filter choice of their own
 (`filterKey` returns "placeholder"). `fillLevels` labels each choice with the
 first item's `label`, and Python labels a placeholder with `LABELS["no"]`,
-"wowlab won't touch" (`verdict.Verdict._fill_labels`). So on an install that
+"wowlab never changes it" (`verdict.Verdict._fill_labels`). So on an install that
 has both a `no` path and a placeholder (a Windows install under OneDrive, say),
-the filter lists "wowlab won't touch" twice, one choice showing `no` paths and
+the filter lists "wowlab never changes it" twice, one choice showing `no` paths and
 the other showing placeholders, and the player cannot tell which is which.
 
 Cases:
 - control: the capture as it is lists each choice's words once and includes
-  "wowlab won't touch" (so the capture has a `no` path);
+  "wowlab never changes it" (so the capture has a `no` path);
 - the probe: with Config.wtf's verdict swapped for Python's placeholder
   verdict, the choices' words are still each listed once (fails at 85634bc).
 """

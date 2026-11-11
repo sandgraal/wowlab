@@ -126,6 +126,7 @@ dropped writes before). Do not open the PR; `pr-shepherd` does.
 ```
 ticket: M10-08
 branch: m10/08-gamedata-client   pushed: <sha>
+pr body: <absolute path of the ticket-named body file /ship wrote, or n/a>
 acceptance:
   - <criterion> → <command> → <one-line result>
 files: <list>

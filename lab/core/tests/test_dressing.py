@@ -179,7 +179,8 @@ def test_no_identity_gives_the_item_ids() -> None:
     assert isinstance(built, dressing.DressingItems)
     assert built.items == [str(s.item_id) for s in slots]
     assert built.note.startswith("No dressing-room link: the room needs the race")
-    assert "schema 3" in built.note
+    # Why: the record is older than the identity section (worded so since M16-31).
+    assert "predates the identity section" in built.note
 
 
 @pytest.mark.parametrize(

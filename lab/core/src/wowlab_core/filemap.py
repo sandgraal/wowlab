@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 DATA_FILE = "filemap.toml"
-DOC_COLUMNS = ("Path", "What", "Written by / when", "Edit", "Tier", "Module")
+DOC_COLUMNS = ("Path", "What", "Notes", "Written by / when", "Edit", "Tier", "Module")
 
 Base = Literal["root", "flavor", "any"]
 # What is being classified: a directory, a file, or unknown (a symlink, which
@@ -60,6 +60,7 @@ Kind = Literal["file", "dir", "any"]
 _DIGITS = "<digits>"
 _NAME = "<name>"
 _EXECUTABLE = "<executable>"
+_WOWLAB_TEMP = "<wowlab-temp>"
 _ANY_DEPTH = "**"
 _SELF = "."
 _BEGIN = "<!-- filemap:begin {} -->"
@@ -69,6 +70,11 @@ _BLOCK = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+# A copy of `guard._TEMP_NAME`, compared with the name exactly as it is (in
+# letter case too), so the `<wowlab-temp>` segment matches only the names the
+# write gate makes and its cleanup removes (M16-13). A test fails when the
+# two drift.
+_TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
 
 # ─── the write gate's executable rule, copied ────────────────────────────────
 # A copy of `guard._is_executable`, so the `<executable>` segment matches
@@ -123,7 +129,13 @@ class Section(BaseModel):
 class FileMapEntry(BaseModel):
     """One row of the file map: what a path is, who writes it, whether the
     Lab may edit it, and which module reads it. The display fields are
-    Markdown exactly as rendered in the doc."""
+    Markdown exactly as rendered in the doc.
+
+    `what` is written for a player: `explain`, `tree --explain` and the
+    Explorer show it. `notes` is the spec's: the evidence, the dates, the
+    open questions and the pointers into the docs that `what` leaves out
+    (M16-17). It is rendered in the doc and carried in `--json`, never in
+    text output; "—" when there is nothing to add."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -132,6 +144,7 @@ class FileMapEntry(BaseModel):
     base: Base
     doc_path: str
     what: str
+    notes: str
     written_by: str
     # `gate` (through `guard` only, client closed), `no`, `n/a` or `—`,
     # sometimes with a note in parentheses; see the doc's Edit column key.
@@ -145,7 +158,7 @@ class FileMapEntry(BaseModel):
     # row matches (M13-22).
     catch_all: bool = False
 
-    @field_validator("doc_path", "what", "written_by", "edit", "tier", "module")
+    @field_validator("doc_path", "what", "notes", "written_by", "edit", "tier", "module")
     @classmethod
     def _one_table_cell(cls, value: str) -> str:
         if not value or "|" in value or "\n" in value or value != value.strip():
@@ -193,6 +206,42 @@ class FileMapEntry(BaseModel):
                 return True
         return False
 
+    def names_the_file(self, parts: Sequence[str]) -> bool:
+        """Whether the path matches one of this entry's file patterns whose
+        last segment is a name spelled out (`WTF/Account/*/macros-cache.txt`),
+        not a wildcard or a token (M16-95). `<wowlab-temp>` is a token here
+        too: it stands for many names, so a link named like a gate temp
+        file is not taken for that one file."""
+        path = tuple(parts)
+        if any(_match(_segments(p), path) for p in self.exclude):
+            return False
+        return any(
+            p != _SELF
+            and not p.endswith("/")
+            and _segments(p)[-1] != _WOWLAB_TEMP
+            and _literal(_segments(p)[-1])
+            and _match(_segments(p), path)
+            for p in self.match
+        )
+
+    def takes_any_name_here(self, parts: Sequence[str]) -> bool:
+        """Whether the path matches one of this entry's folder patterns with
+        no `**` whose last segment is a wildcard or a token, so the row takes
+        a folder of any name at this one place (`WTF/Account/*/<name>/`;
+        M16-95)."""
+        path = tuple(parts)
+        if any(_match(_segments(p), path) for p in self.exclude):
+            return False
+        for pattern in self.match:
+            if pattern == _SELF or not pattern.endswith("/"):
+                continue
+            segments = _segments(pattern)
+            if _ANY_DEPTH in segments or _literal(segments[-1]):
+                continue
+            if _match(segments, path):
+                return True
+        return False
+
 
 class FileMap(BaseModel):
     """Every section and entry, in file order."""
@@ -227,6 +276,33 @@ class FileMap(BaseModel):
         found = self.matches(parts, base, kind)
         return found[0] if found else None
 
+    def named(self, parts: Sequence[str]) -> tuple[FileMapEntry, ...]:
+        """Every entry, in file order, with a file pattern that ends in the
+        name `parts` ends in, spelled out (M16-18): `parts` are the last
+        segments of a path, and each matches the pattern's segment in the
+        same place from the end. A pattern whose last segment is a wildcard
+        (`*.lua`, `**`, `<digits>`) names no file, so a bare name never
+        matches it; nor does a pattern with `**` among the segments `parts`
+        would be compared with, or one shorter than `parts`. Excludes are
+        not applied: what is not on disk has no full path to test them on."""
+        tail = tuple(parts)
+        if not tail:
+            return ()
+        found: list[FileMapEntry] = []
+        for e in self.entries:
+            for pattern in e.match:
+                if pattern == _SELF or pattern.endswith("/"):
+                    continue
+                segments = _segments(pattern)
+                if len(segments) < len(tail) or not _literal(segments[-1]):
+                    continue
+                end = segments[-len(tail) :]
+                if _ANY_DEPTH in end or not _match(end, tail):
+                    continue
+                found.append(e)
+                break
+        return tuple(found)
+
     def covers(self, parts: Sequence[str], base: Literal["root", "flavor"]) -> bool:
         """Whether every path strictly below the folder `parts` has a row,
         whatever its name, depth or kind, so a walk looking for paths with
@@ -260,6 +336,20 @@ def _segments(pattern: str) -> tuple[str, ...]:
     return tuple(pattern.removesuffix("/").split("/"))
 
 
+def _literal(segment: str) -> bool:
+    """Whether a pattern segment is matched by its own text alone: no
+    wildcard, and none of the tokens that stand for any name (`<digits>`,
+    `<name>`, `<executable>`).
+
+    `<wowlab-temp>` passes, although it is a token: it matches only names of
+    the one shape the write gate gives its temp files, so a name of that
+    shape is enough to know the row. `FileMap.named` relies on this, and a
+    bare-name `explain` of a leftover `.wowlab-<32 hex>.tmp` finds the
+    `wowlab-temp` row (M16-98). `FileMapEntry.names_the_file`, which asks
+    whether a pattern names exactly one file, skips the token itself."""
+    return not any(c in segment for c in "*?[") and segment not in (_DIGITS, _NAME, _EXECUTABLE)
+
+
 def _matches_pattern(pattern: str, parts: Sequence[str], kind: Kind) -> bool:
     segments = _segments(pattern)
     if pattern == _SELF or pattern.endswith("/"):
@@ -278,6 +368,8 @@ def _segment(pattern: str, name: str) -> bool:
         return name.isascii() and name.isdigit()
     if pattern == _NAME:
         return not (name.isascii() and name.isdigit())
+    if pattern == _WOWLAB_TEMP:
+        return _TEMP_NAME.fullmatch(name) is not None
     if pattern == _EXECUTABLE:
         return _is_executable(name)
     return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())
@@ -364,7 +456,7 @@ def render_section(section_id: str, filemap: FileMap | None = None) -> str:
     ]
     for e in fm.entries:
         if e.section == section_id:
-            cells = (e.doc_path, e.what, e.written_by, e.edit, e.tier, e.module)
+            cells = (e.doc_path, e.what, e.notes, e.written_by, e.edit, e.tier, e.module)
             lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 

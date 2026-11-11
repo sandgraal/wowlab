@@ -157,7 +157,7 @@ def test_a_placeholder_folder_and_what_is_under_it_are_not_restorable(
         v = item["verdict"]
         assert v["placeholder"] is True, rel
         assert v["link"] is False, rel
-        assert v["label"] == verdict.LABELS["no"] == "wowlab won't touch", rel
+        assert v["label"] == verdict.LABELS["no"] == "wowlab never changes it", rel
         assert v["restorable"] is (None if item["kind"] == "folder" else False), rel
         # The same verdict `explain` gives for the same path, word for word.
         assert v == _explain(root, flavor / rel), rel
@@ -180,7 +180,11 @@ def test_a_placeholder_file_alone(
     _fake(monkeypatch, [flavor / SYNDICATOR], CLOUD_PLACEHOLDER)
     judged = _judged(root, install=install)
     v = judged[_key(SYNDICATOR, install)]["verdict"]
-    assert (v["placeholder"], v["restorable"], v["label"]) == (True, False, "wowlab won't touch")
+    assert (v["placeholder"], v["restorable"], v["label"]) == (
+        True,
+        False,
+        "wowlab never changes it",
+    )
     assert v == _explain(root, flavor / SYNDICATOR)
     assert judged[_key(SV_DIR, install)]["verdict"]["placeholder"] is False
 
@@ -210,7 +214,11 @@ def test_a_placeholder_entry_of_the_install_root(
 ) -> None:
     _fake(monkeypatch, [root / ".build.info"], CLOUD_PLACEHOLDER)
     v = _judged(root, install=True)[".build.info"]["verdict"]
-    assert (v["placeholder"], v["restorable"], v["label"]) == (True, False, "wowlab won't touch")
+    assert (v["placeholder"], v["restorable"], v["label"]) == (
+        True,
+        False,
+        "wowlab never changes it",
+    )
     assert v == _explain(root, root / ".build.info")
 
 

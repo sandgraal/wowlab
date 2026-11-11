@@ -20,6 +20,14 @@
     "class_file": "MAGE",
     "class_file_absent": null
   },
+  "level": 10,
+  "level_absent": null,
+  "names": {
+    "build": "1.60.1.69913",
+    "spec": null,
+    "race": null,
+    "class_name": null
+  },
   "average": {
     "equipped": 2.375,
     "overall": 2.375,

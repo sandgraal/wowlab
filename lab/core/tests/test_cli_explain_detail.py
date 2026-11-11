@@ -30,6 +30,7 @@ import platformdirs
 import psutil
 import pytest
 import typer.main
+from _explain_exit import expected_exit
 from typer.testing import CliRunner
 
 from wowlab_core import cli, filemap, install, pathfacts, snapshot
@@ -76,7 +77,9 @@ def flavor(root: Path) -> Path:
 
 def ok(*args: str) -> Any:
     result = runner.invoke(cli.app, list(args))
-    assert result.exit_code == 0, (args, result.stdout, result.stderr, result.exception)
+    # M16-18: a path that matches nothing exits 1.
+    code = expected_exit(args, result.stdout)
+    assert result.exit_code == code, (args, result.stdout, result.stderr, result.exception)
     return result
 
 
@@ -139,6 +142,11 @@ SAMPLES: dict[str, tuple[str, str, filemap.Kind]] = {
     "character-wtf-config": (
         "flavor",
         f"WTF/Account/{ACCOUNT}/{CHARACTER}/config-cache.wtf",
+        "file",
+    ),
+    "character-addons-txt": (
+        "flavor",
+        f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt",
         "file",
     ),
     "addons-folder": ("flavor", "Interface/AddOns", "dir"),
@@ -249,6 +257,7 @@ def test_each_view_decodes_the_captured_file(root: Path, flavor: Path) -> None:
         "Interface/AddOns/",
         "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc",
         "Logs/WoWCombatLog-040126_021630.txt",
+        f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt",
     ]
     seen = set()
     for path in paths:
@@ -469,17 +478,15 @@ def test_a_combat_log_gets_log_tail_only_when_it_is_the_newest(root: Path, flavo
 
 
 def test_a_file_no_command_reads_says_so(root: Path) -> None:
-    """Domain review 6 and 12: AddOns.txt, and a file in an addon that is not
-    a TOC, get no view and a note."""
+    """Domain review 6 and 12: a file in an addon that is not a TOC gets no
+    view and a note. AddOns.txt had none either until M16-34, whose
+    `addons check` reads it."""
     addons_txt = f"WTF/Account/{ACCOUNT}/Labrealmb Partb Partc Partd/Labchard/AddOns.txt"
     report = explained(addons_txt)
     assert isinstance(report.result, cli.layout.Classified)
     assert report.result.entry.id == "character-addons-txt"
-    assert (report.views, report.views_note) == ([], "no wowlab command shows this file's contents")
-    assert (
-        "  views:        no wowlab command shows this file's contents\n"
-        in ok("explain", addons_txt).stdout
-    )
+    assert [v.command for v in report.views] == [["addons", "check"]]
+    assert report.views_note is None
     # On disk: a path with nothing on it has its own note (M13-29).
     lua_rel = "Interface/AddOns/DBM-Brawlers/DBM-Brawlers.lua-constructed"
     (root / FLAVOR / lua_rel).write_bytes(b"")
@@ -587,12 +594,30 @@ def test_explain_hashes_only_the_named_path_and_writes_nothing(
     ok("snap", "create")
     opened: list[Path] = []
     real = snapshot.open_regular_file
+    walking: list[bool] = []  # inside the walk from the root: its own opens are not recorded
 
     def spy(path: Path, **kw: Any) -> Any:
-        opened.append(Path(path))
+        if not walking:
+            opened.append(Path(path))
         return real(path, **kw)
 
     monkeypatch.setattr(snapshot, "open_regular_file", spy)
+    # The hash opens the path from the install root (M16-79), so it is
+    # recorded once, by its full path, here. The walk's own last open (by
+    # name in a folder's descriptor on POSIX, by full path on the `lstat`
+    # walk Windows takes) goes through `open_regular_file` and is not
+    # recorded a second time.
+    real_from_root = snapshot.open_regular_file_from_root
+
+    def spy_from_root(path: Path, root_: Path) -> Any:
+        opened.append(Path(path))
+        walking.append(True)
+        try:
+            return real_from_root(path, root_)
+        finally:
+            walking.pop()
+
+    monkeypatch.setattr(snapshot, "open_regular_file_from_root", spy_from_root)
     before = _state(root)
     explained(SYNDICATOR)
     ok("explain", SYNDICATOR)
@@ -813,11 +838,10 @@ def _old_text(report: cli.ExplainReport) -> list[str]:
     return [
         f"{result.path or '.'} ({base})",
         f"  what:         {cli._player_copy(e.what.replace('**', ''))}",
-        f"  written by:   {e.written_by.replace('**', '')}",
+        f"  written by:   {cli._player_copy(e.written_by.replace('**', ''))}",
         f"  edit:         {report.verdict.words}",
-        f"  tier:         {cli.tier_words(e.tier)}",
-        f"  read by:      {cli._reader_words(e.module)}",
-        f"  file-map row: {e.id} ({e.doc_path})",
+        # M16-17: the tier, the reader and the row's path pattern are --verbose's
+        f"  file-map row: {e.id}",
     ]
 
 
@@ -1076,6 +1100,9 @@ class _Listed:
 
     def list_lenient(self) -> snapshot.SnapshotListing:
         return snapshot.SnapshotListing(manifests=self.manifests, invalid=())
+
+    def imported_ids(self) -> frozenset[str]:
+        return frozenset()  # M16-04: none imported
 
 
 def test_an_older_snapshot_named_for_an_unconfirmed_match_says_so(tmp_path: Path) -> None:

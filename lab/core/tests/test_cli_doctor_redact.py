@@ -147,7 +147,7 @@ def planted(root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     names = (
         f"{PLANTED_CHARACTER}-Area52 of {PLANTED_REALM} (area-52), thrallina, {HARVESTED_REALM} "
         f"{BATTLETAG} {PLAYER_GUID} {GUILD_GUID} {EMAIL} {NAMED_GUILD} "
-        f"Labcharb-Labrealmd and Labrealmb Partb Partc Partd, {LOGIN} on stormwind-pc"
+        f"Labcharb-Labrealmd and Labrealmb Partb Partc Partd, /srv/{LOGIN} on stormwind-pc"
     )
     paths = f"{WINDOWS_HOME} {LINUX_HOME}"
     (account / "config-cache.wtf").write_bytes(
@@ -664,3 +664,32 @@ def test_constructed_dict_keys_are_redacted_and_an_unlisted_field_is_replaced_wh
     assert out.counts == {redact.CHARACTER: 1}
     assert out.note == redact.TEXT
     assert out.listed == redact.CHARACTER
+
+
+# ─── M16-44: the login only inside a path-shaped token ───────────────────────
+
+
+def test_constructed_a_common_login_is_replaced_only_in_paths(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Login `root` (security:F10), and an install outside the home folder
+    whose path carries it: the path loses it, `$WOWLAB_WOW_ROOT` keeps it."""
+    login = "root"
+    for variable in ("USER", "USERNAME", "LOGNAME"):
+        monkeypatch.setenv(variable, login)
+    monkeypatch.setattr(getpass, "getuser", lambda: login)
+    root = tmp_path / "Games" / login / "World of Warcraft"
+    root.mkdir(parents=True)
+    shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
+    shutil.copytree(CAPTURE / "forever", root / FLAVOR)
+    monkeypatch.setenv(install.ENV_ROOT, str(root))
+    monkeypatch.chdir(tmp_path)
+    plain = _text()
+    assert f"{os.sep}{login}{os.sep}World of Warcraft" in plain
+    assert f"${install.ENV_ROOT}" in plain
+    text = _text("--redact")
+    assert f"{os.sep}{login}{os.sep}" not in text
+    assert f"{os.sep}{redact.USER}{os.sep}World of Warcraft" in text
+    # Not a path: the variable's name is printed as it is, not `$WOWLAB_WOW_<USER>`.
+    assert f"${install.ENV_ROOT}" in text
+    assert f"WOWLAB_WOW_{redact.USER}" not in text

@@ -844,7 +844,12 @@ def test_a_busy_refusal_is_shown_in_its_panel_constructed(
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]
     assert view["flight"]["busy"] == _pick_requests(PICKED)
-    assert view["gearErrors"] == view["keysErrors"] == view["macrosErrors"] == ["Refused: busy"]
+    assert (
+        view["gearErrors"]
+        == view["keysErrors"]
+        == view["macrosErrors"]
+        == ["The server refused this request: busy"]
+    )
     assert view["gearRows"] == 0 and view["keyRows"] == [] and view["macros"] == []
 
 
@@ -878,7 +883,10 @@ def test_a_refused_or_failed_panel_shows_the_cli_text_constructed(
     ]
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]
-    assert view["keysErrors"] == ["Refused: excluded"] and view["keyRows"] == []
+    assert (
+        view["keysErrors"] == ["The server refused this request: excluded"]
+        and view["keyRows"] == []
+    )
     assert view["macrosErrors"] == ["wowlab: m14-09 constructed failure"]
     assert view["macros"] == []
     # The gear is drawn all the same, and the status line is clear.
@@ -894,7 +902,10 @@ def test_a_char_binds_failure_on_a_real_run_is_the_cli_text_constructed(
     params = _gear_params(PICKED)
     for command in ("binds", "macros"):
         reply = _run(server, ["char", command], params).json()
-        assert reply["exit_code"] != 0 and reply["stdout"] == ""
+        assert reply["exit_code"] != 0
+        # The UI runs --json: the error alone as a report (M16-22).
+        report = cli.ErrorReport.model_validate_json(reply["stdout"])
+        assert f"wowlab: {report.message}" in reply["stderr"]
         scenario["held"].append({"command": ["char", command], "params": params, "reply": reply})
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][1]

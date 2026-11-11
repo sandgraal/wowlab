@@ -31,9 +31,12 @@ interpreter, or an editor cannot be inspected here.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -54,11 +57,229 @@ from _common import (
 
 EVENT = "PreToolUse"
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
+_GRAPHQL_REFUSAL = (
+    "GraphQL mutations change repo state without a prompt; only the "
+    "review-thread reply/resolve mutations pr-shepherd issues are allowed."
+)
+_NAME = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
 _RELEASE_SUBCOMMANDS = ("create", "edit", "upload", "delete", "delete-asset")
 _RELEASE_ONLY_OWNER = (
     "publishing a release (pushing a tag or `gh release …`) is the owner's action "
     "(ADR-0031, M13-11); ask the owner to run it."
 )
+
+
+def _body_query(text: str) -> str:
+    """The query a `gh api graphql --input` body sends: its JSON `query`, or,
+    when the body is not such JSON, the whole text (judged as a query)."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    query = data.get("query") if isinstance(data, dict) else None
+    return query if isinstance(query, str) else text
+
+
+def _strip_graphql(text: str) -> str:
+    """Comments and string literals blanked, so a name inside either is not read
+    as a field (M13-71)."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "#":
+            # GraphQL ends a comment at any line terminator, a lone CR included.
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+        if text.startswith('"""', i):
+            # In a block string `\"""` is an escaped quote, not its end.
+            i += 3
+            while i < n and not text.startswith('"""', i):
+                i += 4 if text.startswith('\\"""', i) else 1
+            i += 3
+            out.append('""')
+            continue
+        if c == '"':
+            i += 1
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            out.append('""')
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _skip_balanced(text: str, i: int, open_: str, close: str) -> int:
+    """The index after the bracket that closes the one at `i`, or -1."""
+    depth = 0
+    while i < len(text):
+        if text[i] == open_:
+            depth += 1
+        elif text[i] == close:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _mutation_fields(query: str) -> list[str] | None:
+    """The top-level field names of every `mutation` operation in `query`, or
+    None when a `mutation` keyword is there but its selection cannot be read
+    (the caller refuses then). An alias (`a: field`) yields the field."""
+    text = _strip_graphql(query)
+    fields: list[str] = []
+
+    def skip_ws(k: int) -> int:
+        while k < len(text) and (text[k].isspace() or text[k] == ","):
+            k += 1
+        return k
+
+    def skip_directives(k: int) -> int:
+        while k < len(text) and text[k] == "@":
+            m = _NAME.match(text, k + 1)
+            if not m:
+                return -1
+            k = skip_ws(m.end())
+            if k < len(text) and text[k] == "(":
+                k = _skip_balanced(text, k, "(", ")")
+                if k < 0:
+                    return -1
+                k = skip_ws(k)
+        return k
+
+    for m in re.finditer(r"(?<![_0-9A-Za-z])mutation(?![_0-9A-Za-z])", text):
+        k = skip_ws(m.end())
+        name = _NAME.match(text, k)
+        if name:
+            k = skip_ws(name.end())
+        if k < len(text) and text[k] == "(":
+            k = _skip_balanced(text, k, "(", ")")
+            if k < 0:
+                return None
+            k = skip_ws(k)
+        k = skip_directives(k)
+        if k < 0 or k >= len(text) or text[k] != "{":
+            return None
+        k = skip_ws(k + 1)
+        while True:
+            if k >= len(text):
+                return None
+            if text[k] == "}":
+                break
+            field = _NAME.match(text, k)
+            if not field:
+                return None
+            k = skip_ws(field.end())
+            if k < len(text) and text[k] == ":":
+                field = _NAME.match(text, skip_ws(k + 1))
+                if not field:
+                    return None
+                k = skip_ws(field.end())
+            fields.append(field.group(0))
+            if k < len(text) and text[k] == "(":
+                k = _skip_balanced(text, k, "(", ")")
+                if k < 0:
+                    return None
+                k = skip_ws(k)
+            k = skip_directives(k)
+            if k < 0:
+                return None
+            if k < len(text) and text[k] == "{":
+                k = _skip_balanced(text, k, "{", "}")
+                if k < 0:
+                    return None
+                k = skip_ws(k)
+    return fields
+
+
+# gh api's flags that take a value, by short letter and long name, mapped to
+# one canonical name. Every other flag is a switch.
+_GH_API_SHORT_VALUES = {
+    "X": "method",
+    "f": "field",
+    "F": "field",
+    "H": "header",
+    "q": "jq",
+    "t": "template",
+    "p": "preview",
+}
+_GH_API_LONG_VALUES = {
+    "method": "method",
+    "field": "field",
+    "raw-field": "field",
+    "header": "header",
+    "input": "input",
+    "jq": "jq",
+    "template": "template",
+    "hostname": "hostname",
+    "cache": "cache",
+    "preview": "preview",
+}
+
+
+def _parse_gh_api(args: list[str]) -> tuple[str, list[tuple[str, str]]]:
+    """The endpoint of `gh api …` and its valued options as (name, value), read
+    the way gh's flag parser (pflag) reads them: `--name value`,
+    `--name=value`, `-Xvalue`, `-X value` and short clusters such as
+    `-iX POST`, where the first value letter takes the rest of the token or
+    the next one (M13-71 review)."""
+    endpoint = ""
+    options: list[tuple[str, str]] = []
+    i = 0
+    only_args = False
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if only_args or not a.startswith("-") or a == "-":
+            if not endpoint:
+                endpoint = a
+            continue
+        if a == "--":
+            only_args = True
+            continue
+        if a.startswith("--"):
+            name, eq, value = a[2:].partition("=")
+            canonical = _GH_API_LONG_VALUES.get(name)
+            if canonical is None:
+                continue
+            if not eq:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            options.append((canonical, value))
+            continue
+        letters = a[1:]
+        for k, letter in enumerate(letters):
+            canonical = _GH_API_SHORT_VALUES.get(letter)
+            if canonical is None:
+                continue
+            value = letters[k + 1 :]
+            if value.startswith("="):
+                # pflag reads `-X=PUT` as `PUT`: one `=` is dropped.
+                value = value[1:]
+            elif not value:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            options.append((canonical, value))
+            break
+    return endpoint, options
+
+
+def _graphql_refusal(queries: list[str], joined: str) -> str | None:
+    """Refuse a `gh api graphql` call that sends any mutation field outside the
+    allowlist. The fields are read from the parsed query text, never matched as
+    substrings of the command (M13-71). A `mutation` keyword in the command with
+    no query text to read is refused too."""
+    if not queries:
+        return _GRAPHQL_REFUSAL if "mutation" in joined.lower() else None
+    for query in queries:
+        fields = _mutation_fields(query)
+        if fields is None or any(f not in _ALLOWED_MUTATIONS for f in fields):
+            return _GRAPHQL_REFUSAL
+    return None
 
 
 def _is_tag_ref(dst: str) -> bool:
@@ -135,58 +356,77 @@ def _check_gh(seg: list[str], cwd: str = "", written: frozenset[str] = frozenset
         return "--admin bypasses branch protection; satisfy the required checks and threads."
     if args[:1] == ["api"]:
         joined = " ".join(args)
-        # A query passed as `-F query=@<file>` (or `-f`) is read from that file
-        # and judged like an inline one, so the file route cannot carry a
-        # mutation past the allowlist. A file that cannot be read is refused:
-        # write it first, then run the call (2026-10-19, M14-02 notes).
-        for j, a in enumerate(args):
-            spec = ""
-            if a in ("-F", "-f", "--field", "--raw-field") and j + 1 < len(args):
-                spec = args[j + 1]
-            elif a.startswith(("-F", "-f")) and len(a) > 2 and not a.startswith("--"):
-                spec = a[2:]
-            elif a.startswith(("--field=", "--raw-field=")):
-                spec = a.split("=", 1)[1]
-            if spec.startswith("query=@"):
-                raw = spec[len("query=@") :]
-                expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
-                path = Path(expanded)
-                if cwd and not path.is_absolute():
-                    path = Path(cwd) / path
-                if not ok or os.path.normpath(str(path)) in written:
-                    return (
-                        "gh api graphql with query=@<file> is checked against the file as it is "
-                        "now; write the file in its own command, with a literal path, then run "
-                        "the call."
-                    )
-                try:
-                    joined += " " + path.read_text(encoding="utf-8")
-                except OSError:
-                    return (
-                        "gh api graphql with query=@<file> reads the file to check it for "
-                        "mutations; write the file first, then run the call."
-                    )
-        is_mutation = "graphql" in args and "mutation" in joined.lower()
-        if is_mutation and not any(m in joined for m in _ALLOWED_MUTATIONS):
+        # Every query text the call can send is collected and judged: an inline
+        # `-f query=...`, a `query=@<file>` (2026-10-19, M14-02 notes) and a JSON
+        # body given with `--input <file>` (M13-71). A file that cannot be read
+        # now is refused: write it first, then run the call.
+        # The GraphQL endpoint in any spelling gh accepts: `graphql`, `/graphql`
+        # or a full URL ending in `/graphql` (M13-71 review).
+        endpoint, options = _parse_gh_api(args[1:])
+        has_body = any(name in ("field", "input") for name, _ in options)
+        # Fail closed (M13-71 review): any endpoint spelling that names graphql,
+        # whatever its case, fragment, parameters or percent-encoding, is judged
+        # as GraphQL; an endpoint the shell has yet to expand is refused when
+        # the call sends anything.
+        if any(ch in endpoint for ch in "$`") and (has_body or "mutation" in joined.lower()):
             return (
-                "GraphQL mutations change repo state without a prompt; only the "
-                "review-thread reply/resolve mutations pr-shepherd issues are allowed."
+                "gh api with an endpoint the shell expands cannot be checked; "
+                "write the endpoint literally."
             )
-        method = ""
-        for j, a in enumerate(args):
-            if a in ("-X", "--method") and j + 1 < len(args):
-                method = args[j + 1]
-            elif a.startswith("-X") and len(a) > 2:
-                method = a[2:]
-            elif a.startswith("--method="):
-                method = a.split("=", 1)[1]
-        if method.upper() in ("PUT", "PATCH", "DELETE"):
+        plain = unquote(endpoint).lower()
+        is_graphql = "graphql" in plain
+        queries: list[str] = []
+        for name, value in options if is_graphql else ():
+            spec = value if name == "field" else ""
+            body = value if name == "input" else ""
+            if spec.startswith("query=") and not spec.startswith("query=@"):
+                queries.append(spec[len("query=") :])
+                continue
+            raw = spec[len("query=@") :] if spec.startswith("query=@") else body
+            if not raw:
+                continue
+            if raw == "-":
+                return (
+                    "gh api reads that body from stdin, which this guard cannot check; "
+                    "write it to a file first and pass the file."
+                )
+            expanded, ok = expand_vars(raw, cwd) if cwd else (raw, True)
+            path = Path(expanded)
+            if cwd and not path.is_absolute():
+                path = Path(cwd) / path
+            if not ok or os.path.normpath(str(path)) in written:
+                return (
+                    "gh api graphql with a query file is checked against the file as it is "
+                    "now; write the file in its own command, with a literal path, then run "
+                    "the call."
+                )
+            try:
+                # newline="": judge the bytes gh sends, a lone CR included.
+                with path.open(encoding="utf-8", newline="") as handle:
+                    text = handle.read()
+            except (OSError, UnicodeDecodeError):
+                return (
+                    "gh api graphql reads a query file to check it for mutations; "
+                    "write the file first, then run the call."
+                )
+            if body:
+                queries.append(_body_query(text))
+            else:
+                queries.append(text)
+        if is_graphql:
+            refusal = _graphql_refusal(queries, joined)
+            if refusal:
+                return refusal
+        methods = [value for name, value in options if name == "method"]
+        if any(m.upper() in ("PUT", "PATCH", "DELETE") for m in methods):
             return (
                 "gh api with a mutating method changes repo state; "
                 "repo settings go through scripts/bootstrap-github.sh, run by the conductor."
             )
-        has_body = any(a.startswith("-f") or a.startswith("-F") or a == "--input" for a in args)
-        if "repos/" in joined and "graphql" not in args and has_body:
+        # A body sent to a repo endpoint is refused whether or not the endpoint
+        # also names graphql: a real GraphQL endpoint never holds `repos/`
+        # (M13-71 review).
+        if ("repos/" in plain or (not is_graphql and "repos/" in joined)) and has_body:
             return "gh api POST against a repo endpoint is reserved for the bootstrap script."
     return None
 

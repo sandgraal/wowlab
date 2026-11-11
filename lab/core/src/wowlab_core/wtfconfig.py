@@ -1,11 +1,26 @@
-"""WTF text formats: ``Config.wtf``, ``config-cache.wtf``, ``bindings-cache.wtf``
-and ``macros-cache.txt`` (docs/LAB_PLAN.md §6.5, docs/LAB_FORMATS.md §5-§7).
+"""WTF text formats: ``Config.wtf``, ``config-cache.wtf``, ``bindings-cache.wtf``,
+``macros-cache.txt`` (docs/LAB_PLAN.md §6.5, docs/LAB_FORMATS.md §5-§7) and a
+character's ``AddOns.txt`` (M16-34; LAB_FORMATS amendment of 2026-09-22).
 
 Read-only and lossless (L1, L4). Every parser works on bytes and returns a
 document whose ``lines`` hold everything in the file, in order, each line
 typed or :class:`Unknown`, each keeping its own text and its own line ending.
-For any input, ``b"".join(line.raw for line in doc.lines) == data`` and
-``doc.to_bytes() == data``.
+For any input within the budget, ``doc.bom + b"".join(line.raw for line in
+doc.lines) == data`` and ``doc.to_bytes() == data``.
+
+A leading UTF-8 byte order mark (``EF BB BF``) is its own prefix token,
+``doc.bom`` (``b""`` when there is none), never part of line 1, so a ``SET``
+line right after it is typed and ``cvar get`` reports it as line 1. Only the
+first three bytes of the file can be the BOM; a second one is line 1's text.
+Whether the client ever writes a BOM into these files is not observed: no
+real capture has one **[verify]** (M16-25).
+
+Budgets (M16-25, docs/LAB_PLAN.md §6.5): each file type has a byte budget
+and a line budget (``CONFIG_BUDGET``, ``BINDINGS_BUDGET``,
+``MACROS_BUDGET``). A document over either is refused with
+:class:`WtfLimitError`, at the first byte or the first line past the
+budget, before any line model is built. The readers read at most the byte
+budget plus one byte, so refusing a giant file costs no more than that.
 
 Line model, from the real files (LAB_FORMATS amendments of 2026-09-22):
 
@@ -38,6 +53,12 @@ Grammars (anything that does not match exactly is ``Unknown``):
   (compared byte for byte: no case folding, no trimming). Lines outside a
   record are ``Unknown``. A record that reaches the end of the file without
   ``END`` is reported with ``complete=False``.
+- ``<addon>: <state>`` in ``AddOns.txt``: the addon name is a run of bytes
+  other than ``:``, CR and LF; one ``: `` follows; the state is a run of
+  bytes other than space, ``:``, CR and LF. Only ``enabled`` is observed;
+  ``disabled`` is **[verify]**, and any other word is kept as written. An
+  addon the file does not list is at the client's default, so a missing
+  name is not "disabled".
 
 Hand-edited lines that the client may still read (``set`` in lower case,
 extra spaces or tabs, an unquoted value) **[verify]** do not match these
@@ -61,6 +82,7 @@ trust the document stays well-formed.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator, Sequence
 from functools import cached_property
@@ -70,8 +92,17 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wowlab_core import snapshot
+from wowlab_core.errors import WowlabError
 
 __all__ = [
+    "BINDINGS_BUDGET",
+    "BOM",
+    "CONFIG_BUDGET",
+    "MACROS_BUDGET",
+    "MAX_ADDONS_TXT_BYTES",
+    "AddonState",
+    "AddonStateLine",
+    "AddonsDocument",
     "BindLine",
     "Binding",
     "BindingsDocument",
@@ -86,12 +117,16 @@ __all__ = [
     "MacrosDocument",
     "SetLine",
     "Unknown",
+    "WtfBudget",
+    "WtfLimitError",
     "count_cvar_names",
     "count_macro_records",
     "fold_name",
+    "parse_addons",
     "parse_bindings",
     "parse_config",
     "parse_macros",
+    "read_addons",
     "read_bindings",
     "read_config",
     "read_macros",
@@ -99,12 +134,21 @@ __all__ = [
 ]
 
 Ending = Literal[b"", b"\n", b"\r\n"]
+Bom = Literal[b"", b"\xef\xbb\xbf"]
+
+#: The UTF-8 byte order mark, a document's ``bom`` when the file starts with it.
+BOM: Bom = b"\xef\xbb\xbf"
+_MIB = 1024 * 1024
 
 _SET = re.compile(rb'SET ([^ \r\n]+) "([^"\r\n]*)"')
 _BIND = re.compile(rb"bind ([^ \r\n]+) ([^ \r\n][^\r\n]*)")
 _QUOTED_ACTION = re.compile(rb'"([^"]*)"')
 _VER = re.compile(rb'VER ([0-9]+) ([0-9A-Fa-f]+) "([^\r\n]*)" "([^" \r\n]*)"')
 _END = b"END"
+_ADDON_STATE = re.compile(rb"([^:\r\n]+): ([^ :\r\n]+)")
+MAX_ADDONS_TXT_BYTES = 1 << 20
+"""`read_addons` refuses a larger ``AddOns.txt``: the real one is 2 lines,
+and one line per installed addon stays far below this."""
 _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
@@ -133,6 +177,124 @@ def split_lines(data: bytes) -> Iterator[tuple[bytes, Ending]]:
         else:
             yield data[start:lf], b"\n"
         start = lf + 1
+
+
+# --------------------------------------------------------------------------
+# Budgets and the BOM (M16-25)
+
+
+class WtfBudget(BaseModel):
+    """The most one file of a type may hold: bytes (the whole file, BOM
+    included) and lines (the document's ``lines``; the BOM is not one)."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    max_bytes: int
+    max_lines: int
+
+
+# The real files are small: the Forever capture's `Config.wtf` is 3.7 KiB in
+# 130 lines, and every `config-cache.wtf`, `bindings-cache.wtf` and
+# `macros-cache.txt` in the corpus is under 1.1 KiB (fixtures/README.md). A
+# client's whole CVar set is a few thousand names and a full key map a few
+# thousand binds. A macros file holds one account's or one character's
+# macros (120 and 30 slots are believed **[verify]**), each body at most 255
+# characters, so a record is at most 258 lines (`VER`, 256 body lines of
+# breaks alone, `END`) and a full file at most about 38,700 lines.
+#
+# The budgets also bound what one parse holds. A line model costs about 0.4
+# to 0.7 KiB, and a two-line macro record also builds a `Macro` view entry.
+# The serial RSS probe (`tests/parser/test_wtfconfig_budget_rss_constructed.py`)
+# measures the densest shapes at each budget on Linux, the document and its
+# views: about 61 MiB for config (the worst case), 55 MiB for bindings,
+# 35 MiB for one long macro record and 55 MiB for 25,000 two-line macro
+# records. Every document at its budget stays under 100 MiB, and the probe
+# holds Linux to that. The macros line budget was 100,000 lines until review
+# (M16-25 round 1): 50,000 two-line records then grew RSS by about 117 MiB.
+
+#: `Config.wtf` and `config-cache.wtf` (`parse_config`, `read_config`).
+CONFIG_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
+#: `bindings-cache.wtf` (`parse_bindings`, `read_bindings`).
+BINDINGS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
+#: `macros-cache.txt` (`parse_macros`, `read_macros`).
+MACROS_BUDGET = WtfBudget(max_bytes=4 * _MIB, max_lines=50_000)
+
+
+class WtfLimitError(WowlabError, ValueError):
+    """A WTF file over its type's byte or line budget, refused before any
+    line model is built.
+
+    ``offset`` is the 0-based byte offset in the file of the first byte past
+    the budget (``kind == "bytes"``) or of the first byte of the first line
+    past it (``kind == "lines"``). ``line`` and ``column`` give the same
+    position, 1-based, in the document's terms: ``line`` is the index in
+    ``lines`` plus one, and ``column`` counts bytes from the start of that
+    line, a BOM not included. ``limit`` is the budget exceeded; ``size`` is
+    the file's size in bytes as far as it is known (a reader stops one byte
+    past the budget and reports the size the open file showed).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: Literal["bytes", "lines"],
+        limit: int,
+        size: int,
+        line: int,
+        column: int,
+        offset: int,
+    ) -> None:
+        self.message = message
+        self.kind = kind
+        self.limit = limit
+        self.size = size
+        self.line = line
+        self.column = column
+        self.offset = offset
+        super().__init__(f"line {line}, column {column}: {message}")
+
+
+def _split_bom(data: bytes) -> tuple[Bom, bytes]:
+    if data.startswith(BOM):
+        return BOM, data[len(BOM) :]
+    return b"", data
+
+
+def _check_budget(data: bytes, budget: WtfBudget, what: str, size: int | None) -> None:
+    """Refuse `data` (a whole file, or a reader's first `max_bytes + 1`
+    bytes of one) when it is over `budget`, at the first byte or line past
+    it. Counts at C speed and holds nothing per line."""
+    size = len(data) if size is None else max(size, len(data))
+    bom = len(BOM) if data.startswith(BOM) else 0
+    if len(data) > budget.max_bytes:
+        offset = budget.max_bytes
+        line_start = max(data.rfind(b"\n", 0, offset) + 1, bom)
+        raise WtfLimitError(
+            f"{what} is {size} bytes, over its {budget.max_bytes}-byte budget",
+            kind="bytes",
+            limit=budget.max_bytes,
+            size=size,
+            line=data.count(b"\n", 0, offset) + 1,
+            column=offset - line_start + 1,
+            offset=offset,
+        )
+    lines = data.count(b"\n")
+    if len(data) > bom and not data.endswith(b"\n"):
+        lines += 1  # a last line with no ending
+    if lines > budget.max_lines:
+        offset = bom
+        for _ in range(budget.max_lines):
+            offset = data.index(b"\n", offset) + 1
+        raise WtfLimitError(
+            f"{what} has {lines} lines, over its {budget.max_lines}-line budget",
+            kind="lines",
+            limit=budget.max_lines,
+            size=size,
+            line=budget.max_lines + 1,
+            column=1,
+            offset=offset,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -301,6 +463,36 @@ class MacroEndLine(_Line):
 
 ConfigLine = Annotated[SetLine | Unknown, Field(discriminator="kind")]
 BindingsLine = Annotated[BindLine | Unknown, Field(discriminator="kind")]
+
+
+class AddonStateLine(_Line):
+    """``<addon>: <state>`` in a character's ``AddOns.txt``."""
+
+    kind: Literal["addon-state"] = "addon-state"
+
+    @model_validator(mode="after")
+    def _matches(self) -> AddonStateLine:
+        if _ADDON_STATE.fullmatch(self.text) is None:
+            raise ValueError(f"not an addon state line: {self.text!r}")
+        return self
+
+    def _match(self) -> re.Match[bytes]:
+        match = _ADDON_STATE.fullmatch(self.text)
+        assert match is not None  # guaranteed by the validator
+        return match
+
+    @property
+    def name(self) -> str:
+        """The addon's name as written."""
+        return _text(self._match().group(1))
+
+    @property
+    def state(self) -> str:
+        """The state word as written (``enabled`` observed)."""
+        return _text(self._match().group(2))
+
+
+AddonsLine = Annotated[AddonStateLine | Unknown, Field(discriminator="kind")]
 MacrosLine = Annotated[
     MacroHeaderLine | MacroBodyLine | MacroEndLine | Unknown, Field(discriminator="kind")
 ]
@@ -328,6 +520,13 @@ def _check_line_sequence(lines: Sequence[_Line]) -> None:
             raise ValueError(f"line {i}: only the last line may have no ending")
     if lines and lines[-1].ending == b"" and lines[-1].text == b"":
         raise ValueError("an empty last line with no ending is not a line")
+
+
+def _check_bom_prefix(bom: Bom, lines: Sequence[_Line]) -> None:
+    """A document with no ``bom`` cannot start with one: its bytes would
+    parse with those three bytes as the BOM, not as line 0's text."""
+    if bom == b"" and lines and lines[0].text.startswith(BOM):
+        raise ValueError("line 0 starts with a BOM; a leading BOM is the document's bom")
 
 
 # --------------------------------------------------------------------------
@@ -370,15 +569,18 @@ class ConfigDocument(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     lines: tuple[ConfigLine, ...]
+    bom: Bom = b""
+    """``BOM`` when the file starts with one, else ``b""``; never part of line 1."""
 
     @model_validator(mode="after")
     def _line_sequence(self) -> ConfigDocument:
         _check_line_sequence(self.lines)
+        _check_bom_prefix(self.bom, self.lines)
         _reject_typed_text(self.lines, _SET, "SET")
         return self
 
     def to_bytes(self) -> bytes:
-        return _join(self.lines)
+        return self.bom + _join(self.lines)
 
     def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
         """``(index, text)`` for every ``Unknown`` line. These are not seen
@@ -442,13 +644,21 @@ class ConfigDocument(BaseModel):
 
 
 def parse_config(data: bytes) -> ConfigDocument:
+    """Parse a ``Config.wtf`` or ``config-cache.wtf``. Over
+    ``CONFIG_BUDGET``, raises :class:`WtfLimitError`."""
+    return _parse_config(data, None)
+
+
+def _parse_config(data: bytes, size: int | None) -> ConfigDocument:
+    _check_budget(data, CONFIG_BUDGET, "the config file", size)
+    bom, body = _split_bom(data)
     lines: list[SetLine | Unknown] = []
-    for text, ending in split_lines(data):
+    for text, ending in split_lines(body):
         if _SET.fullmatch(text) is not None:
             lines.append(SetLine(text=text, ending=ending))
         else:
             lines.append(Unknown(text=text, ending=ending))
-    return ConfigDocument(lines=tuple(lines))
+    return ConfigDocument(lines=tuple(lines), bom=bom)
 
 
 # --------------------------------------------------------------------------
@@ -482,15 +692,18 @@ class BindingsDocument(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     lines: tuple[BindingsLine, ...]
+    bom: Bom = b""
+    """``BOM`` when the file starts with one, else ``b""``; never part of line 1."""
 
     @model_validator(mode="after")
     def _line_sequence(self) -> BindingsDocument:
         _check_line_sequence(self.lines)
+        _check_bom_prefix(self.bom, self.lines)
         _reject_typed_text(self.lines, _BIND, "bind")
         return self
 
     def to_bytes(self) -> bytes:
-        return _join(self.lines)
+        return self.bom + _join(self.lines)
 
     def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
         """``(index, text)`` for every ``Unknown`` line (not in ``bindings``)."""
@@ -507,13 +720,21 @@ class BindingsDocument(BaseModel):
 
 
 def parse_bindings(data: bytes) -> BindingsDocument:
+    """Parse a ``bindings-cache.wtf``. Over ``BINDINGS_BUDGET``, raises
+    :class:`WtfLimitError`."""
+    return _parse_bindings(data, None)
+
+
+def _parse_bindings(data: bytes, size: int | None) -> BindingsDocument:
+    _check_budget(data, BINDINGS_BUDGET, "the bindings file", size)
+    bom, body = _split_bom(data)
     lines: list[BindLine | Unknown] = []
-    for text, ending in split_lines(data):
+    for text, ending in split_lines(body):
         if _BIND.fullmatch(text) is not None:
             lines.append(BindLine(text=text, ending=ending))
         else:
             lines.append(Unknown(text=text, ending=ending))
-    return BindingsDocument(lines=tuple(lines))
+    return BindingsDocument(lines=tuple(lines), bom=bom)
 
 
 # --------------------------------------------------------------------------
@@ -554,10 +775,13 @@ class MacrosDocument(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     lines: tuple[MacrosLine, ...]
+    bom: Bom = b""
+    """``BOM`` when the file starts with one, else ``b""``; never part of line 1."""
 
     @model_validator(mode="after")
     def _records_are_well_formed(self) -> MacrosDocument:
         _check_line_sequence(self.lines)
+        _check_bom_prefix(self.bom, self.lines)
         in_record = False
         for i, line in enumerate(self.lines):
             if isinstance(line, Unknown) and _VER.fullmatch(line.text) is not None:
@@ -575,7 +799,7 @@ class MacrosDocument(BaseModel):
         return self
 
     def to_bytes(self) -> bytes:
-        return _join(self.lines)
+        return self.bom + _join(self.lines)
 
     def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
         """``(index, text)`` for every ``Unknown`` line (outside any record)."""
@@ -618,9 +842,17 @@ class MacrosDocument(BaseModel):
 
 
 def parse_macros(data: bytes) -> MacrosDocument:
+    """Parse a ``macros-cache.txt``. Over ``MACROS_BUDGET``, raises
+    :class:`WtfLimitError`."""
+    return _parse_macros(data, None)
+
+
+def _parse_macros(data: bytes, size: int | None) -> MacrosDocument:
+    _check_budget(data, MACROS_BUDGET, "the macros file", size)
+    bom, body = _split_bom(data)
     lines: list[MacroHeaderLine | MacroBodyLine | MacroEndLine | Unknown] = []
     in_record = False
-    for text, ending in split_lines(data):
+    for text, ending in split_lines(body):
         if in_record:
             if text == _END:
                 lines.append(MacroEndLine(text=text, ending=ending))
@@ -632,7 +864,85 @@ def parse_macros(data: bytes) -> MacrosDocument:
             in_record = True
         else:
             lines.append(Unknown(text=text, ending=ending))
-    return MacrosDocument(lines=tuple(lines))
+    return MacrosDocument(lines=tuple(lines), bom=bom)
+
+
+# --------------------------------------------------------------------------
+# AddOns.txt
+
+
+class AddonState(BaseModel):
+    """One ``<addon>: <state>`` line, with its position in ``lines``.
+    ``enabled`` is True for ``enabled``, False for ``disabled`` (a word not
+    yet seen in a real file **[verify]**) and None for any other word."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    name: str
+    state: str
+    enabled: bool | None
+    index: int
+
+
+class AddonsDocument(BaseModel):
+    """A parsed ``AddOns.txt`` of a character folder: which addons are
+    enabled for that character. Which of a Forever character's two copies
+    the client reads, and whether it reads this file at all there, are
+    **[verify]** (LAB_FORMATS, amendment of 2026-09-22).
+
+    Frozen, and validated to equal ``parse_addons(self.to_bytes())``.
+    ``model_copy(update=...)`` skips validation and keeps the cached views,
+    so build a new document instead.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    lines: tuple[AddonsLine, ...]
+
+    @model_validator(mode="after")
+    def _line_sequence(self) -> AddonsDocument:
+        _check_line_sequence(self.lines)
+        _reject_typed_text(self.lines, _ADDON_STATE, "addon state")
+        return self
+
+    def to_bytes(self) -> bytes:
+        return _join(self.lines)
+
+    def unknown_lines(self) -> tuple[tuple[int, bytes], ...]:
+        """``(index, text)`` for every ``Unknown`` line (not in ``states``)."""
+        return _unknown_lines(self.lines)
+
+    @cached_property
+    def states(self) -> tuple[AddonState, ...]:
+        """Every ``<addon>: <state>`` line, in file order."""
+        out = []
+        for i, line in enumerate(self.lines):
+            if isinstance(line, AddonStateLine):
+                state = line.state
+                enabled = True if state == "enabled" else False if state == "disabled" else None
+                out.append(AddonState(name=line.name, state=state, enabled=enabled, index=i))
+        return tuple(out)
+
+    def state_of(self, addon: str) -> AddonState | None:
+        """The last line naming ``addon`` (ASCII case folded, as folder names
+        compare on the client's file systems **[verify]**), or None when the
+        file does not list it."""
+        return self.by_folded_name.get(fold_name(addon))
+
+    @cached_property
+    def by_folded_name(self) -> dict[str, AddonState]:
+        """Each folded name's last line, built once per document."""
+        return {fold_name(s.name): s for s in self.states}
+
+
+def parse_addons(data: bytes) -> AddonsDocument:
+    lines: list[AddonStateLine | Unknown] = []
+    for text, ending in split_lines(data):
+        if _ADDON_STATE.fullmatch(text) is not None:
+            lines.append(AddonStateLine(text=text, ending=ending))
+        else:
+            lines.append(Unknown(text=text, ending=ending))
+    return AddonsDocument(lines=tuple(lines))
 
 
 # --------------------------------------------------------------------------
@@ -642,9 +952,11 @@ def parse_macros(data: bytes) -> MacrosDocument:
 
 def count_cvar_names(data: bytes) -> int:
     """``len(parse_config(data).effective())``: the distinct CVar names
-    (``fold_name``) set on a ``SET`` line, without building the document."""
+    (``fold_name``) set on a ``SET`` line, without building the document. A
+    leading BOM is skipped as the parser skips it. No budget: it holds one
+    name per distinct CVar, and its caller bounds what it reads."""
     names: set[str] = set()
-    for text, _ending in split_lines(data):
+    for text, _ending in split_lines(_split_bom(data)[1]):
         match = _SET.fullmatch(text)
         if match is not None:
             names.add(fold_name(_text(match.group(1))))
@@ -654,10 +966,11 @@ def count_cvar_names(data: bytes) -> int:
 def count_macro_records(data: bytes) -> int:
     """``len(parse_macros(data).macros)``: the ``VER`` records, complete or
     not, read by `parse_macros`'s own state machine, without building the
-    document."""
+    document. A leading BOM is skipped as the parser skips it. No budget: it
+    holds nothing per line, and its caller bounds what it reads."""
     records = 0
     in_record = False
-    for text, _ending in split_lines(data):
+    for text, _ending in split_lines(_split_bom(data)[1]):
         if in_record:
             in_record = text != _END
         elif _VER.fullmatch(text) is not None:
@@ -672,15 +985,66 @@ def count_macro_records(data: bytes) -> int:
 # follow a final link, then an `fstat` that must show a regular file, so a
 # FIFO or a link is refused (`UnsafeReadError`, or `ELOOP`) instead of read.
 # A path past Windows' plain limit is opened by its extended-length spelling.
+# At most the type's byte budget plus one byte is read (M16-25), so a file
+# over it is refused at the first byte past the budget, whatever its size.
+
+_READ_CHUNK = 1024 * 1024
 
 
-def read_config(path: Path) -> ConfigDocument:
-    return parse_config(snapshot.read_regular_file(Path(path)))
+def _read(path: Path, budget: WtfBudget, root: Path | None) -> tuple[bytes, int]:
+    """At most the file's first `max_bytes + 1` bytes, and its size as the
+    open file's `fstat` showed it (or as far as it was read, if it grew).
+    With `root`, the open starts at that install root and takes one
+    component at a time, so a linked folder on the way is refused too."""
+    if root is None:
+        fd, st = snapshot.open_regular_file(Path(path))
+    else:
+        fd, st = snapshot.open_regular_file_from_root(Path(path), Path(root))
+    try:
+        cap = budget.max_bytes + 1
+        chunks: list[bytes] = []
+        total = 0
+        while total < cap:
+            # The first read asks for the whole file plus one byte, so the
+            # usual file arrives in one piece.
+            want = st.st_size + 1 if not chunks else _READ_CHUNK
+            chunk = os.read(fd, min(want, cap - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks), max(st.st_size, total)
 
 
-def read_bindings(path: Path) -> BindingsDocument:
-    return parse_bindings(snapshot.read_regular_file(Path(path)))
+# Each reader takes the install root `path` lies under as `root` (M16-49):
+# the open then starts there and refuses a link in any folder on the way, and
+# a path not under it. Without `root` only the final component is checked.
 
 
-def read_macros(path: Path) -> MacrosDocument:
-    return parse_macros(snapshot.read_regular_file(Path(path)))
+def read_config(path: Path | str, *, root: Path | str | None = None) -> ConfigDocument:
+    data, size = _read(Path(path), CONFIG_BUDGET, None if root is None else Path(root))
+    return _parse_config(data, size)
+
+
+def read_bindings(path: Path | str, *, root: Path | str | None = None) -> BindingsDocument:
+    data, size = _read(Path(path), BINDINGS_BUDGET, None if root is None else Path(root))
+    return _parse_bindings(data, size)
+
+
+def read_macros(path: Path | str, *, root: Path | str | None = None) -> MacrosDocument:
+    data, size = _read(Path(path), MACROS_BUDGET, None if root is None else Path(root))
+    return _parse_macros(data, size)
+
+
+def read_addons(
+    path: Path | str, *, limit: int = MAX_ADDONS_TXT_BYTES, root: Path | str | None = None
+) -> AddonsDocument:
+    """A character's ``AddOns.txt``; one over ``limit`` bytes is refused
+    (``UnsafeReadError``) before it is read."""
+    return parse_addons(
+        snapshot.read_regular_file(
+            Path(path), limit=limit, root=None if root is None else Path(root)
+        )
+    )

@@ -1,7 +1,7 @@
 exit 0
 Install: <tmp>/World of Warcraft (found by $WOWLAB_WOW_ROOT)
 Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
-  Game data: not checked (--offline)
+  Game data: not checked (--check-builds asks wago.tools)
   Server sync: the three sync settings wowlab reads are not set in
     WTF/Config.wtf or WTF/Account/90000001#6/config-cache.wtf (when on, the
     server can replace your bindings, macros or settings at login; not set is
@@ -10,6 +10,13 @@ Client: not running
 Snapshot store: <tmp>/userdata/wowlab/store
   1 snapshot(s) that load; none damaged
   no transactions in the journal
+Next steps:
+  Lab-addon: not installed. Close the game, then run `wowlab addon install lab`.
+  Character folders with a lab-addon record: 4 (each as of that character's last
+    logout or /reload with the lab-addon on; `wowlab char list` reads them);
+    they are not updated until the lab-addon above is fixed.
+  Combat log: present (1 under Logs/, the newest written
+    <local time>).
 Notes:
   - Which other *-cache files server sync replaces at login, besides key
     bindings, macros and settings, is not known.

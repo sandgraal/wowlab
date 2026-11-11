@@ -38,7 +38,7 @@ from test_cli_player_copy import Install, hits, sandbox
 from typer.testing import CliRunner
 
 import wowlab_core
-from wowlab_core import bindscoach, cli, gear
+from wowlab_core import bindscoach, cli, gear, snapshot
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots" / "notes"
 UPDATE = os.environ.get("WOWLAB_UPDATE_SNAPSHOTS") == "1"
@@ -97,6 +97,15 @@ def make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Pat
         config = tmp_path / "userconfig" / "wowlab"
         monkeypatch.setattr(platformdirs, "user_config_path", lambda *a, **k: config)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        # Who else can open the store depends on the platform (modes are
+        # POSIX's; Windows adds a note) and the umask: one answer, so each
+        # snapshot is the same on every machine. That check's own tests are
+        # in test_snapshot_store_modes.py (M16-41).
+        monkeypatch.setattr(
+            snapshot.SnapshotStore,
+            "exposure",
+            lambda self: snapshot.StoreExposure(checked=True, count=0, entries=()),
+        )
         return root
 
     return build
@@ -361,8 +370,9 @@ def test_doctor_with_problems_matches_its_snapshot_constructed(
     make: Callable[[str], Path], tmp_path: Path
 ) -> None:
     """Constructed (boundary): a manifest in the store that does not load.
-    The footer comes after the problems, the report's last lines (conductor's
-    ruling, 2026-11-06); doctor exits 1, as `problems` in --json says."""
+    The footer comes after the problems (conductor's ruling, 2026-11-06),
+    and after the next steps that end the report (M16-37, LAB_PLAN §18.1
+    item 5); doctor exits 1, as `problems` in --json says."""
     make("macos")
     _past_first_run(("doctor",))
     manifests = tmp_path / "userdata" / "wowlab" / "store" / "manifests"
@@ -371,7 +381,9 @@ def test_doctor_with_problems_matches_its_snapshot_constructed(
     assert result.exit_code == 1
     lines = result.stdout.splitlines()
     assert FOOTER.fullmatch(lines[-1])
-    assert lines[-3:-1] == ["Problems:", "  1 damaged snapshot manifest(s)"]
+    steps = lines.index("Next steps:")
+    assert lines[steps - 2 : steps] == ["Problems:", "  1 damaged snapshot manifest(s)"]
+    assert all(line.startswith("  ") for line in lines[steps + 1 : -1])
     _snapshot(
         "macos-doctor-problems-constructed.txt",
         # Why the manifest does not load is the JSON library's message, which
