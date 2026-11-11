@@ -2469,7 +2469,8 @@
   }
 
   // Whether a failed run printed only its error report on stdout: an object
-  // with exactly `kind`, `message` and `exit_code`, the run's own exit code.
+  // with exactly `kind`, `message` and `exit_code`, the run's own exit code,
+  // and optionally `notes`, an array (the lines after the error).
   function errorReport(result) {
     if (result.exit_code === 0 || typeof result.stdout !== "string") return false;
     let value;
@@ -2480,7 +2481,8 @@
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const keys = Object.keys(value).sort().join(",");
-    return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
+    const notes = keys === "exit_code,kind,message,notes" && Array.isArray(value.notes);
+    return (keys === "exit_code,kind,message" || notes) && value.exit_code === result.exit_code;
   }
 
   // Shows one run's stdout under "Details": a tree when it is one JSON

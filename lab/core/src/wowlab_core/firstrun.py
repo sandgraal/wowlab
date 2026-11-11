@@ -281,8 +281,8 @@ def pointing_lines() -> list[str]:
         '      macOS or Linux:  export WOWLAB_WOW_ROOT="<that folder>"',
         '      Windows PowerShell:  $env:WOWLAB_WOW_ROOT = "<that folder>"  (or setx '
         'WOWLAB_WOW_ROOT "<that folder>" to keep it, then open a new terminal)',
-        "  --root wins over WOWLAB_WOW_ROOT. Without either, wowlab looks only where the game "
-        "installs by default.",
+        "  --root wins over WOWLAB_WOW_ROOT. Without either, wowlab looks only in the usual "
+        "install folders.",
     ]
 
 

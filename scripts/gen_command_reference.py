@@ -413,7 +413,9 @@ def render(root: Any | None = None) -> str:
         "Lab's own snapshot store. **`--json` output** names the model the command's "
         "`--json` output validates against. A `--json` run that ends in an error reported "
         "as one `wowlab: …` line also prints an `ErrorReport` (`kind`, `message`, "
-        "`exit_code`) on stdout, unless it already printed its own report; with "
+        "`exit_code`, and `notes`: the lines printed on stderr after that line, such as "
+        "the folders searched when no install was found) on stdout, unless it already "
+        "printed its own report; with "
         "`log tail --follow` it is one line. The error line on stderr and the exit code "
         "are the same as without `--json`. An `Error:` from the command line itself (an "
         "unknown option, a missing argument; exit 2) prints no report.",

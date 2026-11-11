@@ -41,6 +41,10 @@ NAMES_THE_INSTALL = (
     "or set WOWLAB_WOW_ROOT to it"
 )
 
+# The variable's line in the notes that end a no-install error (M16-112):
+# `export` or, on Windows, `set` and `$env:`; each names the variable.
+ENV_LINE = "WOWLAB_WOW_ROOT"
+
 runner = CliRunner()
 
 
@@ -170,9 +174,14 @@ def test_no_install_found_names_root_and_the_variable(no_install: Path) -> None:
     result = run("cvar", "list")
     assert result.exit_code == cli.EXIT_ERROR
     assert _one_line(result.stderr) == (
-        "wowlab: no WoW install found where the game installs by default "
-        f"(searched: {no_install}); {NAMES_THE_INSTALL}; wowlab doctor says how"
+        "wowlab: no WoW install found in the folders wowlab searches "
+        "(1 checked, listed below); name the install as shown at the end "
+        "(wowlab doctor says more)"
     )
+    assert '  --root "<path>"' in result.stderr.splitlines()
+    assert any(ENV_LINE in line for line in result.stderr.splitlines())
+    # M16-112: the location, then the lines that name the install, one each.
+    assert f"searched, no install there: {no_install}" in result.stderr.splitlines()
 
 
 def test_no_default_location_names_root_and_the_variable(
@@ -180,9 +189,12 @@ def test_no_default_location_names_root_and_the_variable(
 ) -> None:
     monkeypatch.delenv(install.ENV_ROOT, raising=False)
     monkeypatch.setattr(install, "default_roots", lambda **k: ())
-    line = _one_line(run("sv", "list").stderr)
+    stderr = run("sv", "list").stderr
+    line = _one_line(stderr)
     assert "wowlab knows no default install location on this system" in line
-    assert NAMES_THE_INSTALL in line
+    assert line.endswith("; name the install as shown at the end (wowlab doctor says more)")
+    assert '  --root "<path>"' in stderr.splitlines()
+    assert any(ENV_LINE in out for out in stderr.splitlines())
 
 
 def test_could_not_check_names_root_and_the_variable(
@@ -192,9 +204,12 @@ def test_could_not_check_names_root_and_the_variable(
     a_file = tmp_path / "World of Warcraft"
     a_file.write_bytes(b"")  # constructed: not a directory
     monkeypatch.setattr(install, "default_roots", lambda **k: (a_file,))
-    line = _one_line(run("install", "show").stderr)
-    assert f"(could not check: {a_file} (not a directory))" in line
-    assert NAMES_THE_INSTALL in line
+    stderr = run("install", "show").stderr
+    line = _one_line(stderr)
+    assert "(1 checked, listed below)" in line
+    assert f"could not check: {a_file} (not a directory)" in stderr.splitlines()
+    assert '  --root "<path>"' in stderr.splitlines()
+    assert any(ENV_LINE in out for out in stderr.splitlines())
 
 
 @pytest.mark.parametrize("how", ["--root", "env"])
@@ -256,7 +271,9 @@ def test_looks_with_no_install_names_root_and_the_variable(
     result = run("looks", "options", "Human")
     assert result.exit_code == cli.EXIT_ERROR
     line = _one_line(result.stderr)
-    assert NAMES_THE_INSTALL in line
+    assert "name the install as shown at the end" in line
+    assert '  --root "<path>"' in result.stderr.splitlines()
+    assert any(ENV_LINE in out for out in result.stderr.splitlines())
     assert "Without an install, pass --build with a full version string" in line
 
 
