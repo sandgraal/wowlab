@@ -82,20 +82,21 @@ from one on disk, and refuses a name the file system resolves to something it
 does not list (an 8.3 short name). The directory listings that walk reads
 come from a per-transaction memo (§18.1 item 6, M16-23): a listing is kept
 under the directory's (dev, ino, mtime_ns), with its ctime_ns on POSIX
-(amended 2026-11-11), read before the listing and again after it, used only while a fresh `lstat` still shows that key, forgotten
-for every directory on the path of the transaction's own write, delete or
-directory removal, and never kept when the listing failed; the target itself
-is `lstat`ed on every lookup, and the re-checks below never use the memo, so
-a whole restore lists each directory once instead of once per file in it. A
-path whose disk state differs from what
-guard expects there is refused with `ChangedSinceSnapshotError` (item 3): at
-its first touch the pre-write snapshot's entry (content hash and kind, or
-absent against present), later guard's own record of the path (the hash of
-its last write there that landed, else the hash read at first touch). The
-path, its `before` hash and the name of the temp file about to be created are
-written to the journal and fsynced before the install is touched
-(write-ahead), so a process killed at any point can still be undone, and its
-temp file found, from the journal alone. The new bytes go to that temp file in
+(amended 2026-11-11), read before the listing and again after it, used only
+while a fresh `lstat` still shows that key, forgotten for every directory on
+the path of the transaction's own write, delete or directory removal, and
+never kept when the listing failed; the target itself is `lstat`ed on every
+lookup, and the re-checks below never use the memo, so a whole restore lists
+each directory once instead of once per file in it. A path whose disk state
+differs from what guard expects there is refused with
+`ChangedSinceSnapshotError` (item 3): at its first touch the pre-write
+snapshot's entry (content hash and kind, or absent against present), later
+guard's own record of the path (the hash of its last write there that
+landed, else the hash read at first touch). The path, its `before` hash
+and the name of the temp file about to be created are written to the journal
+and fsynced before the install is touched (write-ahead), so a process killed
+at any point can still be undone, and its temp file found, from the journal
+alone. The new bytes go to that temp file in
 the same directory, which is fsynced; the target is then read again and must
 still hash to what guard expects (for a create: still be absent), and as the
 last step before the call its identity, size and mtime (by `lstat`) must be
@@ -1414,9 +1415,13 @@ class _ListingMemo:
     the next lookup lists again. The memo answers only which names a
     directory lists; every target is still `lstat`ed per lookup, and the
     commit-time re-check (`_recheck`, `_verify`) never reads the memo.
-    Someone else's change within one tick of a coarse directory clock (on
-    POSIX, of both its mtime and its ctime clock) keeps the key as it was; that residual risk is accepted (the M16-23T graders'
-    docstring, 2026-10-22): it can let a case-variant sibling name through,
+    On POSIX, someone else's change within one tick of a coarse directory
+    clock (both its mtime and its ctime clock) keeps the key as it was. On
+    Windows, where the key holds no change time, a change whose mtime is
+    put back keeps the key for the rest of the transaction. That residual
+    risk is accepted (the M16-23T graders' docstring, 2026-10-22; §18.1
+    item 6, amended 2026-11-11): on either platform it can let a
+    case-variant sibling name through or leave a name out of the report,
     never a write outside the allowlist or past a link (each directory on a
     write's path is `lstat`ed and `_verify`ed, never taken from a kept
     listing). A stale entry never leads the walk of what a whole restore
