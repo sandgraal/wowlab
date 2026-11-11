@@ -4104,6 +4104,18 @@ install wowlab finds by itself, and a `--root` naming another install, so a
 refusal quotes none of its bytes and the page cannot plant an install around
 a file. The file read is the real path that was checked.
 
+*Amended 2026-11-11 (owner decision in session, M16-113; this supersedes the "works once" part of the 2026-10-27 amendment above):* the owner tested `wowlab ui`, and a reload showed "This wowlab ui link was already used". He ruled it too much: "get rid of this requirement". The link `wowlab ui` opens, and a reload of the page, now keep working for as long as that `wowlab ui` process runs.
+- **What stays:** the protection against other web pages and other local programs driving the server.
+  - The server is bound to `127.0.0.1` and checks its Host header as before.
+  - Every API request must still prove it comes from the browser that opened the link. The design is the implementer's. The default is an `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie set when the link is first opened, which the server accepts in place of the `token` parameter, so a reload or a second tab in that browser works.
+  - A request with neither the cookie nor a valid token is refused, as now.
+  - Stopping `wowlab ui` (Ctrl-C) ends the session. A new `wowlab ui` makes a new link, and the old one stops working.
+- **What goes:**
+  - the one-time boot key, and its "already used" page and terminal notice;
+  - the rule that a reload needs a new `wowlab ui`.
+- **Security review** judges whether the chosen design still stops a cross-site request (CSRF), a DNS-rebinding page, and another local user's process. A finding there goes back to the owner rather than restoring the one-time link.
+
+
 **What stays in Wave 5 (M14).** The confirm flow for every command that declares
 `--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon
 remove`, `sv merge`, `snap gc` and `doctor` on 2026-10-15), and the embedded
