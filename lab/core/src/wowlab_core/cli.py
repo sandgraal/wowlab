@@ -9162,6 +9162,15 @@ class UndoReport(_Out):
     # The text plan, line by line, as the terminal shows it before the
     # prompt, with keys, macros and CVars by name (M16-10).
     plan_lines: list[str] = Field(default_factory=list)
+    # The paths the undo wrote (relative to `flavor_path`), from its own
+    # journal record `transaction`: the listed ones, and any that changed
+    # after the plan read it. Empty when nothing was undone (M16-105).
+    written_paths: list[str] = Field(default_factory=list)
+    # Those of `written_paths` the text plan did not list (`plan` is the
+    # whole record undone, so it cannot tell them apart): files that changed
+    # after the plan read them, which the text result names after "Undone."
+    # (M16-105).
+    unlisted_written: list[str] = Field(default_factory=list)
 
 
 def _client_managed(
@@ -9880,7 +9889,12 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan: only the steps the undo will take. A path whose
+    """`undo`'s text plan (`_undo_plan`, its lines only)."""
+    return _undo_plan(last)[0]
+
+
+def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
+    """`undo`'s text plan, and the paths it lists: only the steps the undo will take. A path whose
     disk already holds what was there before that transaction (a file a
     rollback already put back or removed) is skipped by the undo, so it is
     not listed; one wowlab cannot read is listed. Under each file, what the
@@ -9930,6 +9944,28 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         unfinished = last.state in ("open", "rollback_incomplete")
         lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
+    return lines, listed
+
+
+def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str]) -> list[str]:
+    """The result's lines for each file the undo wrote that its plan did not
+    list: it changed after the plan read it, so the undo put it back too.
+    Named once, after "Undone.", so the login caveat that may follow has a
+    file on screen to point at (M16-105). `written` is the undo's own
+    journal record, whose `before` is the disk the undo found."""
+    shown = set(listed)
+    lines: list[str] = []
+    for p in written:
+        if p.path in shown:
+            continue
+        shown.add(p.path)
+        if p.after is None:
+            verb = "also deleted   "
+        elif p.before is None:
+            verb = "also recreated "
+        else:
+            verb = "also put back  "
+        lines.append(f"  {verb}{p.path}  (it changed after the plan was shown)")
     return lines
 
 
@@ -9996,20 +10032,23 @@ def undo(
             # From what the undo wrote (its own journal record), not every path
             # of the record undone: a file the disk already held as it was
             # before is skipped by the undo, so it is not listed in the plan
-            # and gets no note; one changed while the prompt waited is
+            # and gets no note; one changed after the plan read it is
             # rewritten, so it does (M16-102).
             notes=_relogin_notes(written) if applied else [],
             plan_lines=[_safe(line) for line in plan_lines],
+            written_paths=list(written),
+            unlisted_written=[w for w in written if w not in set(listed)],
         )
 
     plan_lines: list[str] = []
+    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    plan_lines = _undo_lines(last)
+    plan_lines, listed = _undo_plan(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
@@ -10037,7 +10076,7 @@ def undo(
         return
     if not undone.paths:
         # Judged from the undo's own record, not the plan: a file rewritten
-        # while the prompt waited is put back and listed there. No file
+        # after the plan read it is put back and listed there. No file
         # changed, so no login note applies (`--json` keeps them).
         _say(
             "Undone; no file needed changing. This undo is journaled, but there is nothing "
@@ -10045,6 +10084,8 @@ def undo(
         )
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
+    for line in _undone_unlisted(undone.paths, listed):
+        _say(line)
     for n in done.notes:
         if n not in plan_lines:  # the plan above already said it
             _say(n)
