@@ -1524,6 +1524,12 @@ It does not matter how K came to be closed:
 
 Such a record changed no player file: at most it removed leftover temps. So skipping it hides no change, and it never locks `undo` out of the changes before it. If closing K appends a record, that record names K in `undoes`, changes no file, and is passed over with K, as in (a1).
 
+*What "never took a snapshot" means (2026-11-11, from the M16-108T security review; this makes the owner's "changed no player file" exact):*
+- It is something the gate writes positively into the record: K's own field says that no pre-write snapshot was taken. A snapshot id that names no manifest in the store does not count. A record whose manifest has gone missing (deleted by hand, a damaged disk, a journal restored without `snapshots/`) is not passed over. `undo` keeps refusing it, as before, because its snapshot cannot be read.
+- K's `paths` and `created_dirs` must both be empty. A record that lists a path or a created folder is never passed over, whatever it says about snapshots.
+- A record that closes K is passed over only if it too has no `paths`, no `created_dirs` and no snapshot.
+- Any number of such records in a row are passed over.
+
 What follows from this:
 - **A killed transaction.** After its record K is closed, the target is the newest record before K that is not passed over. If that record D is still `open` or `rollback_incomplete`, `doctor` reports D as (a1) describes for a killed undo. It gives D's own `wowlab undo --expect <D id>` line, names K as stopped before it changed anything, and exits 1 until D is undone. If D is settled, `doctor` has no problem.
 - **A failed snapshot.** The change before it stays the target, as when a failed snapshot journaled nothing.
