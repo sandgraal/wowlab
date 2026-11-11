@@ -213,7 +213,7 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 When all three hold, the record keeps the command, the action slot number and the keys. When any fails, the command is counted in `commands_left_out` and in a new `clicks_left_out`, and nothing else is read from the frame. A button whose `type` is `action` presses one of the client's numbered action slots. Bar addons such as Bartender4, ElvUI and Dominos generate those buttons' names themselves; GSE, BindPad and `/run` targets are not of that type. A wrong guess therefore only leaves a button out, and no text the player typed is stored. Whether `GetBinding` lists `CLICK` commands at all is [verify]; the schema-5 capture settles it.
 
-**Amended by (2026-11-10, ADR-0036; Proposed with it):** the addon may record other players' character, realm and guild names, and the player's notes about them, only for a feature turned on under ADR-0036 and on its terms (local only, opt-in, deletable, never in the repository or in shared output). GUIDs, chat and whispers stay excluded. Every other rule here is unchanged.
+**Amended by (2026-11-10, ADR-0036; accepted with it on 2026-11-11):** the addon may record other players' character, realm and guild names, and the player's notes about them, only for a feature turned on under ADR-0036 and on its terms (local only, opt-in, deletable, never in the repository or in shared output). GUIDs, chat and whispers stay excluded. Every other rule here is unchanged.
 
 ---
 
@@ -502,7 +502,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 ## ADR-0036 — Other players' names may be stored on the player's own machine
 
-**Status:** Proposed (2026-11-10). The owner ruled in session on 2026-11-10: "other players' names can be stored." The rule itself is the owner's decision; the terms below are the conductor's draft, and the status flip is the owner's.
+**Status:** Accepted (2026-11-11; proposed 2026-11-10) — owner decision; the status edit was made by the conductor on the owner's explicit instruction. The owner ruled in session on 2026-11-10: "other players' names can be stored", and accepted this ADR, terms included, in session on 2026-11-11.
 
 **Context:** ADR-0026 says the lab-addon "stores no player names, realm names, GUIDs, guild names or chat of anyone". Two ideas in `docs/LAB_IDEAS.md` §C need other players' names and were marked unpickable until a privacy ADR settled how they may be kept: **crew-book** (remember the players you meet, with a note and rating; owner interest of 2026-10-16) and **comp-builder** (propose groups from the online guild roster). For the repository, ADR-0019's amendment of 2026-10-17 already allows character and realm names to appear as they are, because they are public in game; what stays scrubbed is what identifies an account. ADR-0019 and ADR-0031 forbid the Lab from uploading anything, with the one opt-in exception of ADR-0032 (`wowlab char advise --send`). ADR-0031's redaction rule keeps character, realm and guild names out of anything the Lab asks a player to share.
 
