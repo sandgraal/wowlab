@@ -2791,6 +2791,28 @@ Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it wh
 - The 1 MB file-size hook entry for `cli.py` is moved or removed.
 - Reviewed by `code-reviewer`.
 
+## [ ] M16-114 — With several flavors, characters are still found, and `wowlab ui` can pick a flavor
+**Size:** M · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11; LAB_PLAN §16 (CLI conventions), amendment of 2026-11-11
+
+Implement the amendment:
+- `WOWLAB_FLAVOR`;
+- `char list` across all flavors, with the one-flavor-with-characters rule for the other `char` commands;
+- write commands never pick a flavor, and their error lists each flavor with its command line;
+- the `wowlab ui` header flavor picker, passed as `--flavor` on every run.
+
+M16-113 changes `ui/__init__.py` and `page.js` at the same time, so keep to the header and run-argv code and leave the boot/session code alone. Whichever merges second rebases.
+
+**Acceptance:**
+- **Tests (constructed, L8 boundary)** on an install with two flavors, characters in one:
+  - `char list` labels its rows by flavor, and `--json` carries `flavor`;
+  - `char show` uses the one flavor with characters and says so;
+  - a write command with no flavor fails and lists the command lines;
+  - `WOWLAB_FLAVOR`, and `--flavor` winning over it;
+  - a bad `WOWLAB_FLAVOR` errors and lists the flavors.
+- **UI tests:** the picker appears only with several flavors, starts on the right flavor, and every run argv carries `--flavor`.
+- **User-facing:** listed in the PR (wiki: ui, char, getting started).
+- **Reviews:** `code-reviewer`, `domain-reviewer` (flavors) and `security-reviewer` (ui).
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
