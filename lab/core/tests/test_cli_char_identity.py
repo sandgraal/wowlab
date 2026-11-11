@@ -47,6 +47,8 @@ SHOW_FIELDS = [
     "customization_loads_ago",
     "unknown_keys",
     "notes",
+    "installed_version",  # M16-06
+    "older_client",  # M16-06
 ]
 
 runner = CliRunner()

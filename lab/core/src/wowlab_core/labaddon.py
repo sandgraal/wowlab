@@ -184,6 +184,7 @@ __all__ = [
     "SpellbookLine",
     "TalentsV3",
     "choose_lab_file",
+    "client_build",
     "clip_reason",
     "customization_import",
     "customization_loads_ago",
@@ -195,6 +196,7 @@ __all__ = [
     "level_absent_of",
     "load_account",
     "load_char",
+    "older_client",
     "parse_account",
     "parse_char",
     "read_account",
@@ -1710,6 +1712,13 @@ class CharacterFile(BaseModel):
     # The record's schema, set with `summary` (kept with --brief too): the
     # UI's picker breaks a file-time tie by the newest schema (M16-31).
     record_schema: int | None = None
+    # "<version>.<build>" from the record's client block, when both are
+    # there (`client_build`), set with `summary` (M16-06).
+    client_build: str | None = None
+    # Whether that client is older than the installed one (`older_client`),
+    # when `survey` was given the installed version; None when either side
+    # is unknown (M16-06).
+    older_client: bool | None = None
     record: CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | None = None
     error: str | None = None
     same_as: FsText | None = None
@@ -1835,6 +1844,7 @@ class _Read(NamedTuple):
     record: CharDB | None = None  # None unless the reader keeps records
     summary: str | None = None  # set when the file was read and parsed
     record_schema: int | None = None  # set with `summary`
+    client_build: str | None = None  # set with `summary`, when the record has one
     error: str | None = None
     same_as: str | None = None  # a hard link to the file read on this character's row
 
@@ -1850,8 +1860,12 @@ class _Reader:
         keep_records: bool,
         root: str | None,
         install_root: Path | None = None,
+        installed_version: str | None = None,
     ) -> None:
         self.flavor_path = flavor_path
+        # The installed client's version, which each row's client is
+        # compared with (M16-06); None: no comparison.
+        self.installed_version = installed_version
         # Where each read starts, one folder at a time (M16-65).
         self.install_root = install_root if install_root is not None else flavor_path.parent
         # The start of the `char show` command a refused row suggests: the
@@ -1965,6 +1979,7 @@ class _Reader:
             record=record if self.keep_records else None,
             summary=summary(record),
             record_schema=record.schema_,
+            client_build=client_build(record),
         )
 
 
@@ -2105,6 +2120,8 @@ class _Folder:
         record: CharDB | None = None,
         summary: str | None = None,
         record_schema: int | None = None,
+        client_build: str | None = None,
+        older_client: bool | None = None,
         error: str | None = None,
         same_as: str | None = None,
         no_lab_record: FolderFacts | None = None,
@@ -2119,6 +2136,8 @@ class _Folder:
             mtime_ns=mtime_ns,
             summary=summary,
             record_schema=record_schema,
+            client_build=client_build,
+            older_client=older_client,
             record=record,
             error=error,
             same_as=same_as,
@@ -2174,6 +2193,8 @@ class _Folder:
             record=got.record,
             summary=got.summary,
             record_schema=got.record_schema,
+            client_build=got.client_build,
+            older_client=older_client(got.client_build, reader.installed_version),
             error=got.error,
             same_as=got.same_as,
         )
@@ -2206,6 +2227,7 @@ def survey(
     budget: int = MAX_SURVEY_BYTES,
     root: str | None = None,
     every_folder: bool = False,
+    installed_version: str | None = None,
 ) -> AllCharacters:
     """Every character `WowLab.lua` in the flavor (§14.4, M12-09), from one
     walk of `WTF/` (`Layout.wtf_walk`).
@@ -2267,6 +2289,10 @@ def survey(
     bytes, no document built) and
     the addon files in its SavedVariables/. Without it (the default) such a
     folder gives no row and those files are never opened.
+
+    With `installed_version` (the flavor's version from `.build.info`,
+    M16-06) each read row's `older_client` says whether the client that
+    saved it is older (`older_client`); without it, it stays None.
 
     Read only (L1): each file is
     `lstat`ed, opened as `read_char` opens it (checked to be that same file)
@@ -2364,7 +2390,9 @@ def survey(
                 ),
             )
         )
-    reader = _Reader(lay.flavor_path, budget, keep_records, root, lay.install_root)
+    reader = _Reader(
+        lay.flavor_path, budget, keep_records, root, lay.install_root, installed_version
+    )
     entries = []
     for folder in sorted(folders.values(), key=_Folder.key):
         if account is not None and folder.account != account:
@@ -2598,12 +2626,7 @@ def customization_import(char: CharDB) -> CustomizationImport:
             without.append(entry.option)
         else:
             choices[entry.option] = entry.choice
-    client = char.client
-    build = (
-        f"{client.version}.{client.build}"
-        if isinstance(client, Client) and client.version is not None and client.build is not None
-        else None
-    )
+    build = client_build(char)
     return CustomizationImport(
         race_id=record.race_id,
         body_type=record.sex,
@@ -3505,6 +3528,37 @@ def describe_account(account: AccountDB) -> list[str]:
         f"{', '.join(extra)} (kept in --json; account data reflects whichever character "
         "logged out last)"
     ]
+
+
+def client_build(char: CharDB) -> str | None:
+    """`"<version>.<build>"` from the record's client block (`GetBuildInfo()`
+    at the save), or None when the block lacks either."""
+    client = char.client
+    if isinstance(client, Client) and client.version is not None and client.build is not None:
+        return f"{client.version}.{client.build}"
+    return None
+
+
+def _version_parts(version: str | None) -> tuple[int, ...] | None:
+    """`major.minor.patch.build` as four numbers, or None for anything else."""
+    if version is None:
+        return None
+    parts = version.split(".")
+    if len(parts) != 4 or not all(p.isascii() and p.isdecimal() and len(p) <= 9 for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def older_client(saved: str | None, installed: str | None) -> bool | None:
+    """Whether the client that saved a record (`client_build`) is older than
+    the installed one (the flavor's version from `.build.info`), both
+    `major.minor.patch.build` (M16-06). The whole version is compared, not
+    the build number alone, which is not unique across versions (GLOSSARY,
+    Build). None when either is missing or not that shape."""
+    a, b = _version_parts(saved), _version_parts(installed)
+    if a is None or b is None:
+        return None
+    return a < b
 
 
 def summary(char: CharDB) -> str:

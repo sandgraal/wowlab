@@ -12,6 +12,15 @@ The rule gave 16001 for 1.60.1, confirmed in game on 2026-09-22
 `GetBuildInfo()` returns. Nothing about a flavor is known here (L6): the
 version comes from `.build.info` through `install`.
 
+The installed TOC is the template with that line filled, a `## Version:`
+line holding the running wowlab's version added after it, and the
+template's own comment lines (`#` but not `##`) dropped, so the copy in the
+game says which wowlab installed it and nothing about how it was made
+(M16-06). `lab_addon_state` reads the installed TOC back, without following
+a link, and compares its `## Interface:` with the one the flavor's
+discovered version gives: that is how `wowlab doctor` says the installed
+copy is out of date for the client (M16-06).
+
 What is copied: `WowLab.toc` and every `*.lua` file directly in the source
 folder, nothing else (the README, the linter's configuration and its client
 definitions stay in the repository). The TOC must list exactly those `.lua`
@@ -65,11 +74,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import guard, longpath
+from wowlab_core import __version__, guard, longpath
 from wowlab_core.errors import WowlabError
 from wowlab_core.toc import parse_toc
 
@@ -83,6 +92,7 @@ __all__ = [
     "INTERFACE_LINE",
     "INTERFACE_PLACEHOLDER",
     "LAB_ADDON",
+    "LAB_ADDON_STATUSES",
     "LOAD_NOTE",
     "MAX_ENTRIES",
     "MAX_SOURCE_BYTES",
@@ -94,18 +104,22 @@ __all__ = [
     "STILL_INSTALLED_NOTE",
     "TOC_LEFT_NOTE",
     "TOC_NAME",
+    "VERSION_KEY",
     "AddonChangedError",
     "AddonError",
     "AddonSourceError",
     "AddonVersionError",
     "InstallPlan",
+    "LabAddonState",
     "LeftPath",
     "RemovePlan",
     "addon_files",
     "fill_toc",
     "find_source",
     "install",
+    "installed_toc",
     "interface_version",
+    "lab_addon_state",
     "plan_install",
     "plan_remove",
     "remove",
@@ -126,6 +140,10 @@ BUNDLE_PARTS = ("_addon", ADDON_NAME)
 INTERFACE_PLACEHOLDER = "@WOWLAB_INTERFACE@"
 INTERFACE_LINE = f"## Interface: {INTERFACE_PLACEHOLDER}"
 """The one TOC line install fills (ADR-0026: the repository holds no number)."""
+VERSION_KEY = "Version"
+"""The TOC directive install adds, holding the running wowlab's version (M16-06)."""
+MAX_ADDON_VERSION_CHARS = 64
+"""A wowlab version longer than this is not written into the TOC."""
 MAX_SOURCE_BYTES = 1 << 20
 """A source file larger than this is refused (the addon's files are a few KiB)."""
 MAX_ENTRIES = 1000
@@ -211,6 +229,7 @@ class InstallPlan(_Frozen):
     flavor_path: str
     flavor_version: str
     interface: int
+    addon_version: str  # what the installed TOC's ## Version: says (M16-06)
     source: str  # the source folder read
     files: tuple[str, ...]  # every file the addon consists of, flavor-relative
     plan: tuple[guard.PlanItem, ...]  # writes of new or changed files, then deletes
@@ -229,6 +248,31 @@ class RemovePlan(_Frozen):
     folder_exists: bool
     listed: tuple[str, ...]  # every entry the listing of the folder found (the re-check)
     notes: tuple[str, ...]
+
+
+LabAddonStatus = Literal["not_installed", "current", "stale", "unknown"]
+LAB_ADDON_STATUSES: tuple[LabAddonStatus, ...] = ("not_installed", "current", "stale", "unknown")
+
+
+class LabAddonState(_Frozen):
+    """The installed lab-addon's TOC against the client (M16-06).
+
+    `status`: `not_installed` when the flavor has no `WowLab.toc` in the
+    addon folder; `current` when its `## Interface:` lists the interface
+    version the flavor's discovered version gives; `stale` when it does not
+    (another client version's, or no usable value), which a reinstall
+    fixes; `unknown` when either side cannot be known (the flavor's version
+    gives no interface version, or the TOC cannot be read), with `detail`
+    saying why."""
+
+    status: LabAddonStatus
+    # The installed TOC's `## Interface:` values; empty when not read or absent.
+    installed: tuple[int, ...] = ()
+    # The interface version the flavor's discovered version gives, or None.
+    expected: int | None = None
+    # The installed TOC's `## Version:` (the wowlab that installed it), if any.
+    version: str | None = None
+    detail: str | None = None
 
 
 class _FlavorLike(Protocol):
@@ -484,10 +528,82 @@ def fill_toc(template: bytes, interface: int) -> bytes:
     return filled
 
 
-def addon_files(interface: int, source: Path | None = None) -> dict[str, bytes]:
+def _addon_version(version: str) -> str:
+    """`version` checked to be one line of printable ASCII a TOC can hold."""
+    if (
+        not version
+        or len(version) > MAX_ADDON_VERSION_CHARS
+        or not version.isascii()
+        or not version.isprintable()
+        or version != version.strip()
+    ):
+        raise AddonSourceError(
+            f"the wowlab version {version[:MAX_ADDON_VERSION_CHARS]!r} cannot be written as "
+            f"the TOC's ## {VERSION_KEY}:; nothing was changed"
+        )
+    return version
+
+
+def _is_comment(line: bytes) -> bool:
+    """A TOC comment: `#` but not a `##` directive."""
+    text = line.removesuffix(b"\r")
+    return text.startswith(b"#") and not text.startswith(b"##")
+
+
+def _blank(line: bytes) -> bool:
+    return not line.removesuffix(b"\r")
+
+
+def installed_toc(template: bytes, interface: int, version: str) -> bytes:
+    """The TOC as install writes it (M16-06): `fill_toc`'s, with the
+    template's comment lines (`#` but not `##`) dropped, along with a blank
+    line their removal would double, and `## Version: <version>` added after
+    the `## Interface:` line, with that line's ending. Every other byte is
+    kept."""
+    filled = fill_toc(template, interface)
+    version = _addon_version(version)
+    if parse_toc(template).get(VERSION_KEY) is not None:
+        raise AddonSourceError(
+            f"{TOC_NAME} already holds a ## {VERSION_KEY}: line; install writes that one"
+        )
+    wanted = f"## Interface: {interface}".encode("ascii")
+    kept: list[bytes] = []
+    dropped = False
+    for line in filled.split(b"\n"):
+        if _is_comment(line):
+            dropped = True
+            continue
+        if dropped and _blank(line) and kept and _blank(kept[-1]):
+            dropped = False
+            continue  # the blank line after the comment, when one is kept before it
+        dropped = False
+        kept.append(line)
+        if line.removesuffix(b"\r") == wanted:
+            ending = b"\r" if line.endswith(b"\r") else b""
+            kept.append(f"## {VERSION_KEY}: {version}".encode("ascii") + ending)
+    out = b"\n".join(kept)
+    doc = parse_toc(out)
+    found = doc.interface
+    if (
+        found is None
+        or found.versions != (interface,)
+        or not found.ok
+        or doc.get(VERSION_KEY) != version
+    ):
+        raise AddonSourceError(
+            f"{TOC_NAME} does not read back with ## Interface: {interface} and "
+            f"## {VERSION_KEY}: {version}"
+        )
+    return out
+
+
+def addon_files(
+    interface: int, source: Path | None = None, *, version: str = __version__
+) -> dict[str, bytes]:
     """Every file of the addon as install writes it: flavor-relative path to
-    bytes, the TOC first (filled with `interface`), then the `.lua` files in
-    the order the TOC lists them."""
+    bytes, the TOC first (`installed_toc`: filled with `interface`, with
+    `## Version: <version>`, the running wowlab's by default), then the
+    `.lua` files in the order the TOC lists them."""
     folder = find_source() if source is None else source
     try:
         names = sorted(e.name for e in longpath.entries(folder))
@@ -509,7 +625,7 @@ def addon_files(interface: int, source: Path | None = None) -> dict[str, bytes]:
             f"{TOC_NAME} must list every .lua file in {folder} once and nothing else "
             f"(listed: {', '.join(listed) or 'none'}; present: {', '.join(lua) or 'none'})"
         )
-    files = {f"{ADDON_FOLDER}/{TOC_NAME}": fill_toc(template, interface)}
+    files = {f"{ADDON_FOLDER}/{TOC_NAME}": installed_toc(template, interface, version)}
     for name in listed:
         files[f"{ADDON_FOLDER}/{name}"] = _read_source(folder / name)
     return files
@@ -518,17 +634,16 @@ def addon_files(interface: int, source: Path | None = None) -> dict[str, bytes]:
 # ─── what is installed ───────────────────────────────────────────────────────
 
 
-def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
-    """The regular files under the addon folder (flavor-relative, sorted),
-    the entries left alone, and whether the folder exists. Nothing is
-    followed through a link; a link on the way to the folder is refused."""
+def _addon_folder(flavor_dir: Path) -> Path | None:
+    """The addon folder, or None when it (or a folder on the way) is not
+    there. A link or a non-folder on the way raises `AddonError`."""
     current = flavor_dir
     for part in ADDON_FOLDER.split("/"):
         current = current / part
         try:
             st = longpath.lstat(current)  # extended-length past the plain limit (M13-44)
         except FileNotFoundError:
-            return [], [], False
+            return None
         except OSError as exc:
             raise AddonError(f"cannot look at {current}: {exc}") from exc
         rel = current.relative_to(flavor_dir).as_posix()
@@ -540,6 +655,17 @@ def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
             )
         if not stat.S_ISDIR(st.st_mode):
             raise AddonError(f"{rel} is not a folder; nothing was changed")
+    return current
+
+
+def _installed(flavor_dir: Path) -> tuple[list[str], list[LeftPath], bool]:
+    """The regular files under the addon folder (flavor-relative, sorted),
+    the entries left alone, and whether the folder exists. Nothing is
+    followed through a link; a link on the way to the folder is refused."""
+    found = _addon_folder(flavor_dir)
+    if found is None:
+        return [], [], False
+    current = found
     files: list[str] = []
     left: list[LeftPath] = []
     seen = 0
@@ -634,7 +760,8 @@ def plan_install(
     interface = interface_version(flavor.version)
     version = str(flavor.version)  # not None: interface_version refused that
     folder = find_source() if source is None else source
-    files = addon_files(interface, folder)
+    addon_version = _addon_version(__version__)
+    files = addon_files(interface, folder, version=addon_version)
     present, found_left, _ = _installed(flavor.path)
     left = list(found_left)
     extras = [p for p in present if p not in files]
@@ -650,6 +777,7 @@ def plan_install(
         flavor_path=str(flavor.path),
         flavor_version=version,
         interface=interface,
+        addon_version=addon_version,
         source=str(folder),
         files=tuple(files),
         plan=tuple(i for i in whole if i.before != i.after),
@@ -680,7 +808,9 @@ def install(plan: InstallPlan, flavor: _FlavorLike, *, store: Path | None = None
     listed again and every file the plan called up to date is read again;
     a difference, or a gate plan that differs from `plan`, raises
     `AddonChangedError` inside the transaction, so the gate rolls back."""
-    files: Mapping[str, bytes] = addon_files(plan.interface, Path(plan.source))
+    files: Mapping[str, bytes] = addon_files(
+        plan.interface, Path(plan.source), version=plan.addon_version
+    )
     for item in plan.plan:
         _in_folder(item.path)
     for rel in plan.unchanged:
@@ -780,3 +910,49 @@ def remove(plan: RemovePlan, flavor: _FlavorLike, *, store: Path | None = None) 
         _deletes(tx, (item.path for item in plan.plan), None)
         _checked(tx, plan.plan)
     return guard.history(store=store)[-1].id
+
+
+# ─── the installed copy against the client (M16-06) ──────────────────────────
+
+
+def lab_addon_state(flavor: _FlavorLike) -> LabAddonState:
+    """The installed lab-addon's `## Interface:` against the one the
+    flavor's discovered version gives (`interface_version`). Read only (L1):
+    the TOC is opened without following a link, and a link on the way to it
+    makes the answer `unknown`."""
+    expected: int | None
+    no_expected: str | None = None
+    try:
+        expected = interface_version(flavor.version)
+    except AddonVersionError as exc:
+        expected, no_expected = None, str(exc).removesuffix("; nothing was changed")
+    toc = f"{ADDON_FOLDER}/{TOC_NAME}"
+    try:
+        folder = _addon_folder(flavor.path)
+    except AddonError:
+        return LabAddonState(
+            status="unknown",
+            expected=expected,
+            detail=f"the way to {toc} is a link or not a folder, so wowlab did not read it",
+        )
+    if folder is None:
+        return LabAddonState(status="not_installed", expected=expected)
+    try:
+        data = _read_regular(folder / TOC_NAME, MAX_SOURCE_BYTES)
+    except _UnreadableError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return LabAddonState(status="not_installed", expected=expected)
+        return LabAddonState(status="unknown", expected=expected, detail=f"{toc} {exc}")
+    doc = parse_toc(data)
+    installed = doc.interface.versions if doc.interface is not None else ()
+    version = doc.get(VERSION_KEY)
+    if expected is None:
+        return LabAddonState(
+            status="unknown", installed=installed, version=version, detail=no_expected
+        )
+    return LabAddonState(
+        status="current" if expected in installed else "stale",
+        installed=installed,
+        expected=expected,
+        version=version,
+    )
