@@ -72,6 +72,7 @@ from wowlab_core.snapshot import _is_link_stat as _snapshot_link
 
 __all__ = [
     "BUILD_INFO",
+    "ENV_FLAVOR",
     "ENV_ROOT",
     "FLAVOR_INFO",
     "NOT_A_FLAVOR",
@@ -103,6 +104,10 @@ __all__ = [
 BUILD_INFO = ".build.info"
 FLAVOR_INFO = ".flavor.info"
 ENV_ROOT = "WOWLAB_WOW_ROOT"
+# The flavor folder the CLI uses when --flavor is not given (M16-114). Its
+# value comes from the player and names a folder discovery found; nothing
+# here knows a flavor.
+ENV_FLAVOR = "WOWLAB_FLAVOR"
 
 # Battle.net's default name for the shared install folder (GLOSSARY: Install,
 # product, flavor). It names no flavor; an owner who chose another name or

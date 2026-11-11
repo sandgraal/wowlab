@@ -635,15 +635,20 @@ _SIGIL_CLASSES = frozenset({"sigil", "ring", "tick", "core", "fissure"})
 # report behind "Details".
 _M16_21_CLASSES = frozenset({"plan-lines", "result-details"})
 _M16_21_IDS = frozenset({"plan-box", "plan-heading", "plan-lines", "result-details"})
+# What M16-114 added: the header's flavor picker, shown with several flavors.
+_M16_114_CLASSES = frozenset({"run-flavor"})
+_M16_114_IDS = frozenset({"run-flavor-box", "run-flavor"})
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
     html_classes, html_ids = _html_names(_template("page.html"))
-    assert html_classes == (_HTML_CLASSES_BEFORE - {"crest"}) | _SIGIL_CLASSES | _M16_21_CLASSES
-    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS
+    assert html_classes == (
+        (_HTML_CLASSES_BEFORE - {"crest"}) | _SIGIL_CLASSES | _M16_21_CLASSES | _M16_114_CLASSES
+    )
+    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS
     js_classes, js_ids = _js_names(_template("page.js"))
     assert js_classes == _JS_CLASSES_BEFORE
-    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS
+    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -685,6 +690,7 @@ _WORDS_BEFORE = (
     "wowlab",
     "wowlab",
     "What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
+    "Flavor",  # the header's flavor picker's label (M16-114)
     "[aria-label] Views",
     "Explorer",
     "Gaps",

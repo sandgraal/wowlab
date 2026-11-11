@@ -158,7 +158,7 @@
         cache: "no-store",
         credentials: "omit",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: command, params: params }),
+        body: JSON.stringify({ command: command, params: withFlavor(command, params) }),
       });
       result = await reply.json();
     } catch (error) {
@@ -186,6 +186,88 @@
     } catch (_) {
       return { error: "wowlab " + command.join(" ") + " did not print JSON." };
     }
+  }
+
+  // ─── the flavor every run uses (M16-114) ───
+
+  // With several flavor folders, the header's picker names the flavor every
+  // run passes as --flavor: each command that declares --flavor gets it,
+  // unless its own field names one or it reads every flavor folder already
+  // (`tree --install`, `doctor --redact`, which refuse --flavor). The picker
+  // starts on the only flavor that has characters, else on the first whose
+  // .build.info row has a version, else on the first, as `char list --json`
+  // reports them (on the one it listed, when $WOWLAB_FLAVOR named one), and
+  // keeps the choice while the page is open. With one flavor folder it is
+  // not shown and no run gets --flavor from it.
+  const runFlavor = {
+    picked: "", // the flavor folder picked; "" with one flavor folder or before the start
+    settle: null,
+    ready: null, // settled once the start is known; the Character tab waits for it
+    filled: false,
+  };
+  runFlavor.ready = new Promise((resolve) => {
+    runFlavor.settle = resolve;
+  });
+  const EVERY_FLAVOR = ["whole_install", "redact"];
+  // The tab shown (`showTab`): a new flavor rereads the Character tab only
+  // while it is shown.
+  let tabShown = "explorer";
+
+  function takesFlavor(path) {
+    const key = JSON.stringify(path);
+    const command = offeredCommands.find((c) => c && JSON.stringify(c.path) === key);
+    return (
+      Boolean(command) && Array.isArray(command.params) &&
+      command.params.some((p) => p && p.name === "flavor" && !p.refused)
+    );
+  }
+
+  // The parameters of one run, with the picked flavor added where it goes.
+  function withFlavor(path, params) {
+    const given = params || {};
+    if (!runFlavor.picked || !takesFlavor(path)) return given;
+    if (typeof given.flavor === "string" && given.flavor !== "") return given;
+    if (EVERY_FLAVOR.some((name) => given[name] === true)) return given;
+    return Object.assign({}, given, { flavor: runFlavor.picked });
+  }
+
+  function startFlavor(flavors, report) {
+    if (report && typeof report.flavor_folder === "string" && flavors.includes(report.flavor_folder)) {
+      return report.flavor_folder;
+    }
+    const seen = report && Array.isArray(report.flavors)
+      ? report.flavors.filter((f) => f && typeof f.folder === "string" && flavors.includes(f.folder))
+      : [];
+    const having = seen.filter((f) => typeof f.characters === "number" && f.characters > 0);
+    if (having.length === 1) return having[0].folder;
+    const versioned = flavors.find((folder) =>
+      seen.some((f) => f.folder === folder && typeof f.version === "string" && f.version !== ""));
+    return versioned || flavors[0];
+  }
+
+  async function fillRunFlavors(flavors) {
+    if (runFlavor.filled) return;
+    runFlavor.filled = true;
+    const box = byId("run-flavor-box");
+    if (flavors.length < 2) {
+      box.hidden = true;
+      runFlavor.settle();
+      return;
+    }
+    // Asked before any flavor is picked: every flavor's characters.
+    const reply = await runJson(["char", "list"], { brief: true }, true);
+    const start = startFlavor(flavors, reply.data);
+    const picker = byId("run-flavor");
+    picker.replaceChildren();
+    for (const folder of flavors) {
+      const option = make("option", visible(folder));
+      option.value = folder;
+      picker.appendChild(option);
+    }
+    picker.value = start;
+    runFlavor.picked = start;
+    box.hidden = false;
+    runFlavor.settle();
   }
 
   // ─── the explorer ───
@@ -513,11 +595,13 @@
     if (seq !== explorer.treeSeq) return;
     if (reply.error) {
       explorerSay(shown(reply.error), true);
+      runFlavor.settle();
       return;
     }
     const report = reply.data;
     if (!report || !Array.isArray(report.items) || !Array.isArray(report.flavor_folders)) {
       explorerSay("wowlab tree printed something this page does not know.", true);
+      runFlavor.settle();
       return;
     }
     explorer.report = report;
@@ -527,6 +611,7 @@
     explorer.closedWhileFiltering = new Set();
     byId("tree-root").textContent = shown(report.install_root);
     fillFlavors(explorer.flavors);
+    fillRunFlavors(explorer.flavors);
     fillLevels(report);
     drawTree();
     const notes = [];
@@ -1198,9 +1283,13 @@
 
   function loadCharacters() {
     if (!character.asked) {
-      character.asked = (async () => {
+      const asked = (async () => {
         charSay("Reading the lab-addon's files…", false);
+        // The header's flavor is known first, so the list is that flavor's.
+        await runFlavor.ready;
         const reply = await runJson(["char", "list"], { brief: true }, true);
+        // Another flavor was picked while this one was read.
+        if (character.asked !== asked) return;
         const report = reply.data;
         if (!report || !Array.isArray(report.characters)) {
           character.asked = null;
@@ -1210,6 +1299,7 @@
         character.note = reply.error ? shown(reply.error) : "";
         fillPicker(report);
       })();
+      character.asked = asked;
     }
     return character.asked;
   }
@@ -1251,6 +1341,30 @@
     pickCharacter(character.entries[first]);
   }
 
+  // Another flavor in the header: what was read or planned for the last one
+  // goes, and the Character tab, when it is shown, reads the new one.
+  byId("run-flavor").addEventListener("change", () => {
+    const folder = byId("run-flavor").value;
+    if (!explorer.flavors.includes(folder) || folder === runFlavor.picked) return;
+    runFlavor.picked = folder;
+    clearConfirm();
+    character.seq += 1;
+    character.asked = null;
+    character.entries = [];
+    character.flavor = null;
+    character.binds = null;
+    character.macros = null;
+    character.note = "";
+    byId("char-picker").replaceChildren();
+    byId("char-header").replaceChildren();
+    byId("char-gear").replaceChildren();
+    clearDressing();
+    byId("char-keys").replaceChildren();
+    byId("char-macros").replaceChildren();
+    charSay("", false);
+    if (tabShown === "character") loadCharacters();
+  });
+
   byId("char-picker").addEventListener("change", () => {
     const at = byId("char-picker").value;
     if (!/^[0-9]+$/.test(at)) return;
@@ -1276,7 +1390,9 @@
     charSay("Reading the gear, keys and macros of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
-    if (character.flavor) params.flavor = character.flavor;
+    // The flavor the list read, else (every flavor listed) the row's own.
+    const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
+    if (flavor) params.flavor = flavor;
     for (const load of [loadGear, loadKeys, loadMacros]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -2062,6 +2178,7 @@
   // ─── tabs ───
 
   function showTab(name) {
+    tabShown = name;
     for (const which of ["explorer", "gaps", "commands", "character", "looks"]) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
@@ -2256,7 +2373,7 @@
         empty.input.focus();
         return;
       }
-      body = { command: command.path, params: collect() };
+      body = { command: command.path, params: withFlavor(command.path, collect()) };
     }
     clearConfirm();
     const seq = ++runSeq;
@@ -2293,7 +2410,7 @@
       say(outcome ? outcome.text : "", Boolean(outcome && outcome.alert));
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
-      if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
+      if (stage === "plan" && JSON.stringify(withFlavor(command.path, collect())) === JSON.stringify(body.params)) {
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
         confirmSay("A field changed while the plan ran: show the plan again to be offered Confirm.");
