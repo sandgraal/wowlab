@@ -511,3 +511,55 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 **Decision:** A feature may record other players' character, realm and guild names, and the player's own note and rating about them, under these terms. (1) **Local only.** Records are written only on the player's own machine: in a SavedVariables file the lab-addon writes, and under the Lab's user data directory. Copies the snapshot store takes of those files are local storage under this term, and so is any local display of them (`sv dump`, `--json`, `wowlab ui`). Nothing uploads them: ADR-0019 and ADR-0031 are unchanged, and the `char advise --send` packet of ADR-0032 never carries a name recorded under this ADR. (2) **Opt-in per feature.** A feature that records names is off until the player turns it on, and its `--help` and the notice shown when it is turned on say what it keeps and where. The "What leaves your machine" block stays about network traffic only. (3) **Records stay out of the repository.** No fixture, test, capture, review probe or document holds a crew-book or comp-builder record taken from a real install, nor another player's name or note from one; tests of these features use constructed records, labelled as such (L8). This narrows nothing in ADR-0019's 2026-10-17 amendment for other files: the capture tool gains a rule that refuses, or empties, a record of these features before a capture is committed. (4) **Shared output.** `doctor --redact` and anything else the Lab asks a player to share leave these records out, always (ADR-0031). `snap export`, which the player runs to move their own snapshots between their own machines, includes them, and says so when it does. (5) **Visible and deletable.** The player can list what is stored and delete it, per player and all at once, through a command; deleting a SavedVariables-held record goes through `guard` (ADR-0021) like any other write. Deletion clears the live files only: earlier snapshots keep their copies until the player removes those snapshots and `snap gc` drops the unreferenced objects, and the delete command says so. GUIDs, chat text and whispers stay out of scope: this ADR covers names, roles and levels as the game shows them, and the player's own notes about them.
 
 **Consequences:** crew-book and comp-builder can be picked for a wave once this ADR is accepted. Each needs a lab-addon schema change recording what it adds, the capture-tool rule of term (3), the delete command, and the opt-in. ADR-0026 carries an "Amended by" line for this ADR. The capture review and `doctor --redact` take on one more kind of record to keep out, so a missed record in a capture is a leak (AGENTS.md "Stop and ask"). Nothing changes for features that do not record names.
+
+## ADR-0037 — Crash recovery is frozen at what M16-69 and M16-90 deliver
+
+**Status:** Accepted (2026-11-11; proposed 2026-11-11). This is an owner decision. The owner said in session "draft the crash-recovery freeze ADR, no outside users for now but in future yes", then chose "Accept it now". The conductor made the status edit on the owner's explicit instruction.
+
+**Context:**
+- **What is built.** The write gate (ADR-0021, L2) already recovers from a single failure at any point in a change. A change is snapshotted before it writes, journaled, replaced atomically and undoable. `doctor` reports an interrupted change with the exact `wowlab undo --expect <id>` line.
+- **Where recent work has gone.** The work since 2026-11-04 has gone mostly to compound failures:
+  - a change killed between the temp cleanup and its snapshot (LAB_PLAN §6.10 (a), M16-69, M16-93T);
+  - an undo killed while undoing an interrupted change (a1, M16-100T);
+  - a failed snapshot or a killed transaction closed on top of an interrupted change (a2, M16-108T, with M16-107T);
+  - a whole restore that would bring back a temp an earlier change left behind (M16-87T, M16-87).
+- **What that costs.** Each case added:
+  - a journal field or state;
+  - a `doctor` wording;
+  - an undo-target rule;
+  - two to four graders, under the separation that ADR-0013 imposes on `guard.py`;
+  - and often a second round when a reviewer found the rule incomplete.
+
+  On 2026-11-11 alone, §6.10 gained (a2) and its clarification, two [TEST] PRs (#491, #492) and an owner ruling given twice, all for failures that need two faults in a row.
+- **Who the tool is for.** It has one user today, the owner, and no outside users (owner, 2026-11-11). Outside users are wanted later.
+- **The risk.** The undo rules are becoming hard for anyone, reviewers included, to hold in their head. That is itself a safety risk: a rule nobody can reason about is where the next wrong restore comes from.
+
+**Decision:**
+- **The automatic recovery of the write gate is frozen** at what these tickets deliver: M16-69 (with M16-107T and M16-108T, as LAB_PLAN §6.10 (a), (a1) and (a2) specify) and M16-90.
+- **After them, a compound failure gets no new journal field, record state, undo-target rule or `doctor` wording of its own.** A compound failure is one that needs a second fault on top of an unsettled first. Examples:
+  - a kill or failure during the recovery of an earlier one;
+  - a damaged or hand-edited journal or snapshot store;
+  - a missing manifest;
+  - any record `doctor` cannot classify with the rules already written.
+- **Instead it gets one generic answer, built once, as an M16 ticket:**
+  - `undo` refuses and changes nothing, as it already does when it cannot be sure.
+  - `doctor` reports one problem. It says wowlab cannot work out safely what this change did. It says the snapshots are kept. It names the newest snapshot that `snap verify` finds whole, and it ends with `wowlab snap restore <id> --dry-run` for the player to inspect before restoring.
+- **What the freeze does not touch:**
+  - It limits recovery *automation* only, never safety. L1, L2, snapshot-before-write, the journal, atomic replace and "refuse when unsure" are unchanged.
+  - A bug in a case that is already handled is still fixed, and it is graded as before.
+  - A security finding in the gate is still fixed.
+- **M16-87T and M16-87 are deferred under this ADR.** They cover a temp brought back by a whole restore after a separate cleanup removed it. They stay in the backlog as unpicked and are re-entered only by the trigger below.
+- **The freeze is lifted for a specific case** by a new owner decision recorded as an amendment here, and only when one of these happens:
+  - a player, the owner or later an outside user, actually hits that case and reports it;
+  - outside users are invited. The owner wants that later, and the conductor then reviews the frozen cases with the owner before the invitation.
+
+**Consequences:**
+- **Easier:**
+  - the M16 wave can close after M16-69 and M16-90 without an open-ended tail of crash tickets;
+  - §6.10 stops growing, and can be rewritten as one current section with its amendment history moved to an appendix;
+  - reviewers no longer need to propose new compound cases as findings. A reviewer who finds one reports it as "frozen under ADR-0037", which the conductor records without a fix round.
+- **Harder:** a rare compound failure now ends in a manual `snap restore` rather than a one-line `undo`. The player must read a plan and choose, which is slower but never silently wrong.
+- **Must now be true:**
+  - the generic `doctor` answer exists before the freeze is cited to close any compound case;
+  - it is graded once, against a damaged-journal and a missing-manifest case (constructed, L8 boundary);
+  - its wording follows the existing `doctor` rules: no ticket or module ids, and the command last.

@@ -2331,13 +2331,15 @@ The archive holds the same settings and saved data as the store, but is created 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T · **Sources:** as M16-69T
+**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T, M16-107T, M16-108T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
 **Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T. Amendment (a1) and its undo-target rule also land here, graded by M16-100T: a killed undo leaves D visible, undo records carry `undoes`, and `undo` passes over the closed killed undo.
 
-**Acceptance:** M16-69T's, M16-93T's and M16-100T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+**Owner answers (2026-11-11, the #490 code review):** "Skip it", then "Skip all, show D". Every closed record that never took a snapshot is passed over (LAB_PLAN §6.10 (a2)), graded by M16-108T.
+
+**Acceptance:** M16-69T's, M16-93T's, M16-100T's, M16-107T's and M16-108T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
@@ -2499,14 +2501,14 @@ Its header also prints the raw journal state: `cli._undo_lines`, `Undo <id> ("<l
 **Acceptance:** a constructed test on a real `rollback_incomplete` record pins the plan lines and the header. No state constant appears in text output. `--json` is unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-87T — [TEST] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3)
+**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3) · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 A leftover `.wowlab-*.tmp` whose unlink failed stays on disk, in `temps_left`, and in that change's pre-write snapshot. Losslessness requires this (M16-69T grader 2). Suppose a later change removes it, and the player then restores the earlier snapshot whole. The file comes back, and no later cleanup considers it again. A whole restore should leave out any entry whose path an earlier record of the flavor lists in `temps` or `temps_left`, judged by the journal and not by the name. Or the restoring record lists such paths in its own `temps_left`. This touches `guard.py`, so the graders land first.
 
 **Acceptance:** strict-xfail graders on main for the scenario above, activated by M16-87 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-87 — [IMPL] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T
+**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 **Acceptance:** M16-87T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -2724,11 +2726,92 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 Reviewed by `code-reviewer`.
 
+# M16 process and scope (filed 2026-11-11, owner decisions: ADR-0037 and the conductor's review)
+
+## [ ] M16-109 — `doctor`'s one answer for a failure wowlab cannot work out
+**Size:** S · **Depends on:** M16-69, M16-90 · **Sources:** ADR-0037 (accepted 2026-11-11)
+
+ADR-0037 freezes automatic crash recovery. Every compound failure then gets one generic answer instead of a rule of its own. Examples of a compound failure:
+- a damaged or hand-edited journal or snapshot store;
+- a record whose pre-write snapshot cannot be read;
+- a record `doctor` cannot classify with the written rules.
+
+The answer:
+- `undo` refuses and changes nothing, as today.
+- `doctor` reports one problem and exits 1. The problem says wowlab cannot work out safely what this change did, and that the snapshots are kept. It names the newest snapshot that `snap verify` finds whole, and ends with `wowlab snap restore <id> --dry-run`.
+- `--json` gains a problem kind for it.
+- The wording follows the `doctor` rules: no ticket or module ids, and the command last.
+
+This does not touch `guard.py`. `doctor` reads only. If the implementer finds a `guard.py` change is needed, stop and report.
+
+**Acceptance:**
+- Constructed tests (L8 boundary) for a damaged journal record and for a missing manifest. Each gives that one problem, exit 1 and the right snapshot id.
+- With no whole snapshot left, the problem says so and offers no command.
+- `doctor --redact` covers the snapshot id.
+- The change is listed as user-facing (wiki: doctor).
+- Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-110 — LAB_PLAN §6.10 as one current section
+**Size:** S · **Depends on:** M16-69, M16-90, M16-108T · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+§6.10 is the write gate's spec. It has grown into a base text followed by dated amendments, with (a), (a1) and (a2) alone covering one rule in three places, so a reader cannot tell what is true without reading all of it in order.
+- Rewrite §6.10 as one section that states only what is true on `main`. Do this after M16-69 and M16-90 merge.
+- Move the dated amendments, unchanged, to a new appendix with a one-line pointer from §6.10.
+- Every owner decision keeps its date and its words in the appendix. The section cites them by date where a rule came from one.
+- Change no rule. Anything that turns out ambiguous or contradictory is reported, not resolved.
+- Do the same for any other LAB_PLAN section with more than three dated amendments, listed in the report first and done only on the conductor's go.
+
+**Acceptance:**
+- The doc tests pass. Every `§6.10 (a…)` reference elsewhere in `docs/` and in test docstrings still resolves, to the appendix where needed.
+- A side-by-side table in the PR maps every rule in the old text to its place in the new one.
+- Reviewed by `code-reviewer` and `security-reviewer`; the gate's spec is security-relevant.
+
+## [ ] M16-111 — Split `cli.py` by command group
+**Size:** M · **Depends on:** M16-69 · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+`lab/core/src/wowlab_core/cli.py` is about 14,000 lines in one module. Split it into a package `wowlab_core/cli/` with one module per command group:
+- `snap`
+- `undo` and `doctor`
+- `char`
+- `binds`
+- `macros`
+- `sv`
+- `filemap`
+- `ui` launch
+- the shared helpers and error handling
+
+`wowlab_core.cli` stays the import path, and its public names (`app` and anything a test imports) are re-exported. This is a mechanical move:
+- no behaviour, help-text or output change;
+- no renamed option;
+- no new dependency.
+
+Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it when none is mid-review, or rebase them after.
+
+**Acceptance:**
+- `make ci` green with no test changed except import paths, if any. Name any test whose import changed.
+- `wowlab --help` and every subcommand's `--help` output is byte-identical before and after. Compare by script and paste the result in the PR.
+- The 1 MB file-size hook entry for `cli.py` is moved or removed.
+- Reviewed by `code-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
 **Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
 
 M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"), spelled out in LAB_PLAN §6.10 (a1):* `wowlab undo` passes over the closed killed undo K, which never took a snapshot, and any record that only closes K. The plan offered is D's, and `--expect <D id>` is accepted. `doctor` names both D and K. Undo records carry `undoes`. Also grade four further cases: a normally completed undo, even one that changed no file, is never passed over; `--expect` naming D while a record newer than D that is not passed over exists is a mismatch; `history()` refuses an `undoes` that names no earlier record; and the transaction route is unchanged. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
+
+**Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-107T — [TEST] The journal-keys grader expects `undoes` on an undo record
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (a1); the M16-69 implementer's report (2026-11-11)
+
+`test_guard_snapshot_kind.py::test_constructed_journal_record_is_unchanged` (M16-09T) pinned the exact key set of every journal record, the undo scenario's included, so no M16-69 could pass it and M16-100T's graders together. The undo case expects `JOURNAL_KEYS | {"undoes"}`, with `undoes` naming the record it undid, strict xfail "M16-69 not implemented". The other cases assert `undoes` is absent.
+
+**Acceptance:** strict xfail on main for the right reason; reviewed by `code-reviewer`. (PR #491.)
+
+## [ ] M16-108T — [TEST] Every closed record that never took a snapshot is passed over
+**Size:** XS · **Depends on:** M16-100T · **Sources:** the owner's answers of 2026-11-11 to the M16-69 code review (#490: "Skip it", then "Skip all, show D"); LAB_PLAN §6.10 amendment (a2)
+
+The #490 code review found that under (a1) a closed record that never took a snapshot locks `undo` out of every earlier change when it has no `undoes`. That happens when the gate closes a record itself after its pre-write snapshot fails, and when a killed transaction is closed by `undo`. (a2) passes over every such record. Change M16-93T's transaction-route grader so that, after the killed K is closed, the target is the interrupted change D before it, not K. `doctor` then reports D with D's own `wowlab undo --expect <D id>` line and names K, and exits 1. A further `wowlab undo --expect <D id> --yes` settles D and leaves `doctor` clean. Add graders for the failed-snapshot route: a change whose pre-write snapshot raises `SnapshotError` after a cleanup leaves the change before it as the target, so `--expect <earlier id>` is accepted and `doctor` reports nothing new. Also grade that an `open` K, still unclosed, stays the target. This is a `guard.py` grader change, with strict-xfail markers "M16-69 not implemented".
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.

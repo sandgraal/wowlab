@@ -361,7 +361,7 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "store.last_transaction.paths_left.path": REDACT,
     "store.last_transaction.paths_left.now": AS_IS,
     # Journal record ids, as `store.last_transaction.id` (2026-11-11 (a1)).
-    "store.last_transaction.stopped_undos": REDACT,
+    "store.last_transaction.passed_over": REDACT,
     # Store-relative paths: object names and snapshot ids (M16-41).
     "store.exposure.entries": REDACT,
     "problems": REDACT,

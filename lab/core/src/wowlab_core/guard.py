@@ -663,25 +663,27 @@ class _JournalRecord(_Frozen):
 
 
 def _snapshot_taken(record: _JournalRecord | HistoryRecord) -> bool:
-    """Whether the record's pre-write snapshot was ever taken: a record
-    written before it names none (§6.10 as amended 2026-11-11, (a))."""
+    """Whether the record's pre-write snapshot was ever taken. The gate
+    writes the answer into the record itself: a record written before its
+    snapshot names none (`snapshot_id` is the empty string, §6.10 as amended
+    2026-11-11, (a)). A snapshot id whose manifest is missing from the store
+    counts as taken ((a2), "what never took a snapshot means")."""
     return bool(record.snapshot_id)
 
 
 def _passed_over(records: Sequence[_JournalRecord | HistoryRecord]) -> frozenset[str]:
-    """The ids `undo()` passes over (§6.10 as amended 2026-11-11, (a1)),
-    from a whole journal, oldest first: a closed undo record that never
-    took a snapshot (killed between its cleanup and its snapshot, or its
-    snapshot failed), and a closed record that changes no file and only
-    closes such a record. An undo that completed normally always took a
-    snapshot, so it is never passed over."""
-    passed: set[str] = set()
-    for r in records:
-        if r.undoes is None or r.state == "open":
-            continue
-        if not _snapshot_taken(r) or (r.undoes in passed and not r.paths and not r.created_dirs):
-            passed.add(r.id)
-    return frozenset(passed)
+    """The ids `undo()` passes over (§6.10 as amended 2026-11-11, (a1) as
+    widened by (a2)): every closed record that never took a pre-write
+    snapshot and lists no path and no created folder, with or without
+    `undoes`, however many in a row. Such a record changed no player file
+    (at most it removed leftover temps). A record that closes one is passed
+    over only on the same terms, so an undo that completed normally, which
+    always took a snapshot, never is."""
+    return frozenset(
+        r.id
+        for r in records
+        if r.state != "open" and not _snapshot_taken(r) and not r.paths and not r.created_dirs
+    )
 
 
 def _target_index(records: Sequence[_JournalRecord | HistoryRecord]) -> int | None:
@@ -695,20 +697,19 @@ def _target_index(records: Sequence[_JournalRecord | HistoryRecord]) -> int | No
 
 def _undo_target(records: Sequence[HistoryRecord]) -> HistoryRecord | None:
     """The record `undo()` acts on, from `history()`: the newest one that is
-    not passed over (§6.10 as amended 2026-11-11, (a1)); None when there is
-    none."""
+    not passed over (§6.10 as amended 2026-11-11, (a1), (a2)); None when
+    there is none."""
     i = _target_index(records)
     return None if i is None else records[i]
 
 
-def _stopped_undos(records: Sequence[HistoryRecord]) -> tuple[HistoryRecord, ...]:
-    """The passed-over undo records newer than the undo target that never
-    took a snapshot: undos killed between their cleanup and their snapshot
-    (or whose snapshot failed), each closed with no file changed. Oldest
-    first; empty when the target is the newest record."""
+def _passed_over_after_target(records: Sequence[HistoryRecord]) -> tuple[HistoryRecord, ...]:
+    """The records newer than the undo target, oldest first: each passed
+    over, so each stopped before it changed any file and is closed (killed
+    between its cleanup and its snapshot and closed by `undo`, or closed by
+    the gate when its snapshot failed). Empty when the target is the newest."""
     i = _target_index(records)
-    newer = records[(-1 if i is None else i) + 1 :]
-    return tuple(r for r in newer if r.undoes is not None and not _snapshot_taken(r))
+    return tuple(records[(-1 if i is None else i) + 1 :])
 
 
 def _journal_dir(store_path: Path) -> Path:
@@ -1985,6 +1986,7 @@ class _Transaction:
         "_flavor",
         "_given_locks",
         "_journal",
+        "_journal_as",
         "_label",
         "_last",
         "_left_alone",
@@ -2018,10 +2020,14 @@ class _Transaction:
         place: _Place | None = None,
         locks: _Locks | None = None,
         undoes: str | None = None,
+        journal_as: tuple[str, str] | None = None,
     ) -> None:
         self._flavor = flavor
         # The record this one undoes (`undo()` only; 2026-11-11 (a1)).
         self._undoes = undoes
+        # `undo()` only: the install root and flavor path the record undone
+        # journaled, written into this record as they are spelled there.
+        self._journal_as = journal_as
         self._label = label
         self._store_path = store_path
         self._dry_run = dry_run
@@ -2240,8 +2246,10 @@ class _Transaction:
             created_at=_now(),
             label=self._label,
             snapshot_id="",
-            install_root=str(place.install_root),
-            flavor_path=str(place.flavor_dir),
+            install_root=(
+                str(place.install_root) if self._journal_as is None else self._journal_as[0]
+            ),
+            flavor_path=str(place.flavor_dir) if self._journal_as is None else self._journal_as[1],
             flavor_version=place.version,
             state="open",
             paths=(),
@@ -3199,9 +3207,11 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
     if expected_id is not None and not isinstance(expected_id, str):
         raise GuardError(f"expected_id is a str, not {type(expected_id).__name__}")
     store_path = _store_path(store)
-    # Unlocked, only to find the flavor (and so which install to check). A
-    # mismatch here is already final: the journal only ever grows.
-    first = _last_record(store_path, expected_id)
+    # Unlocked, only to find the flavor (and so which install to check).
+    # `expected_id` is compared only under the store lock, below: closing a
+    # record in place can move the target (2026-11-11 (a2)), so a mismatch
+    # read without the lock is not final.
+    first = _last_record(store_path)
     place = _record_place(first)
     _refuse_store_overlap(store_path, place)
     locks = _Locks()
@@ -3268,16 +3278,12 @@ def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _
 def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _Locks) -> None:
     """Plan the undo of `last` and run it as a transaction, under `locks`.
     A record that never took its snapshot is closed in place instead."""
-    if not _snapshot_taken(last):
+    if not _snapshot_taken(last) and not last.paths and not last.created_dirs:
+        # Passed over once closed ((a2)): the only record closed without
+        # restoring. Any other record whose snapshot cannot be read is
+        # refused below, as before.
         _close_unsnapshotted(store_path, last, place)
         return
-    if not _same_flavor(_place_record(last, place), last):
-        # The undo's record must name `last`'s flavor as `last` spells it, or
-        # `history()` would refuse its `undoes`; refused before any write.
-        raise GuardError(
-            f"journal record {last.id} names its flavor as {last.flavor_path}, which now "
-            f"resolves to {place.flavor_dir}; nothing was undone"
-        )
     snapshots = SnapshotStore(store_path)
     try:
         manifest = snapshots.show(last.snapshot_id)
@@ -3314,16 +3320,12 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
         place=place,
         locks=locks,
         undoes=last.id,
+        # Journaled as `last` spells its flavor, so `history()` finds `last`
+        # in the same flavor even when the install now resolves elsewhere (a
+        # moved install behind a link); every write still goes to `place`.
+        journal_as=(last.install_root, last.flavor_path),
     ) as tx:
         tx._undo(ops, created_dirs)
-
-
-def _place_record(record: _JournalRecord, place: _Place) -> _JournalRecord:
-    """`record` with the flavor and install paths a record written for
-    `place` would carry: what `_same_flavor` compares."""
-    return record.model_copy(
-        update={"flavor_path": str(place.flavor_dir), "install_root": str(place.install_root)}
-    )
 
 
 def _close_unsnapshotted(store_path: Path, record: _JournalRecord, place: _Place) -> None:

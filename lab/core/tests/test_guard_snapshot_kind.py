@@ -23,7 +23,10 @@ What is graded
   dry run creating no manifest at all, and the store's layout: its root
   holds exactly today's entries and its directories only what the manifests
   and records name, so the kind is not kept in an index or a second copy
-  beside the manifests (security-reviewer finding, PR #333).
+  beside the manifests (security-reviewer finding, PR #333). One exception
+  to "nothing changes": under §6.10 (a1) the record of the undo scenario
+  also carries `undoes`, the id of the record it undoes. That case is graded
+  here as `xfail(strict)` until M16-69 activates it by deleting the marker.
 
 `snap create` recording `kind="user"` is graded through the CLI in
 `test_cli_snap_kind.py`.
@@ -102,7 +105,9 @@ MANIFEST_KEYS = frozenset(
 )
 MANIFEST_FORMAT_TODAY = 1
 
-# The keys of a journal record file (journal format 2). M16-09 changes none.
+# The keys of a journal record file (journal format 2) that is not an undo.
+# M16-09 changes none. A record `undo()` writes also carries `undoes`, the id
+# of the record it undoes; any other record omits that key (§6.10 (a1)).
 JOURNAL_KEYS = frozenset(
     {
         "format",
@@ -346,7 +351,19 @@ def test_constructed_pre_write_and_user_snapshot_of_one_tree_share_a_fingerprint
     assert pre_write.fingerprint == taken.fingerprint
 
 
-@pytest.mark.parametrize("scenario", SCENARIO_PARAMS)
+# Only the undo record gains a key (§6.10 (a1)); M16-69 makes guard write it.
+JOURNAL_SCENARIO_PARAMS = [
+    pytest.param(
+        name,
+        id=f"constructed-{name}",
+    )
+    if name == "undo"
+    else pytest.param(name, id=f"constructed-{name}")
+    for name in SCENARIOS
+]
+
+
+@pytest.mark.parametrize("scenario", JOURNAL_SCENARIO_PARAMS)
 def test_constructed_journal_record_is_unchanged(
     guard: Any, flavor: Flavor, store: SnapshotStore, idle: None, scenario: str
 ) -> None:
@@ -354,7 +371,18 @@ def test_constructed_journal_record_is_unchanged(
     record = _last_record(guard, store)
     raw = _raw_record(store, record.id)
 
-    assert set(raw) == JOURNAL_KEYS, sorted(set(raw) ^ JOURNAL_KEYS)
+    if scenario == "undo":
+        # The record the undo reversed is the one `_setup_earlier_write` wrote,
+        # the oldest in the journal.
+        undone_id = next(iter(guard.history(store=store.path))).id
+        assert undone_id != record.id
+        expected = JOURNAL_KEYS | {"undoes"}
+        assert set(raw) == expected, sorted(set(raw) ^ expected)
+        assert isinstance(raw["undoes"], str), raw["undoes"]
+        assert raw["undoes"] == undone_id
+    else:
+        assert "undoes" not in raw, "only a record undo() writes carries undoes"
+        assert set(raw) == JOURNAL_KEYS, sorted(set(raw) ^ JOURNAL_KEYS)
     assert raw["format"] == JOURNAL_FORMAT_TODAY
     assert raw["snapshot_id"] == snapshot_id
     assert raw["label"] == record.label

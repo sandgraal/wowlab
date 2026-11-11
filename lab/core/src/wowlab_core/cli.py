@@ -1735,10 +1735,13 @@ class LastTransaction(_Out):
     # False when the change stopped before its pre-write snapshot, so it
     # changed no file (2026-11-11 (a)).
     snapshot_taken: bool = True
-    # The ids of newer undo records that stopped before they changed any
-    # file and were closed, oldest first (2026-11-11 (a1)): this record is
-    # the change to undo again. Empty when this record is the newest.
-    stopped_undos: list[str] = Field(default_factory=list)
+    # How many leftover temporary files of earlier changes it removed.
+    temps_removed: int = 0
+    # The ids of the newer records `undo` passes over, oldest first: changes
+    # that stopped before they changed any file and were closed (2026-11-11
+    # (a1), (a2)), so this record is the change to undo. Empty when this
+    # record is the newest.
+    passed_over: list[str] = Field(default_factory=list)
 
 
 class StoreReport(_Out):
@@ -2027,7 +2030,8 @@ def _store_report() -> StoreReport:
                 flavor_folder=Path(r.flavor_path).name,
                 paths_left=_left_paths(r, None),
                 snapshot_taken=bool(r.snapshot_id),
-                stopped_undos=[k.id for k in guard._stopped_undos(records)],
+                temps_removed=len(r.temps_removed),
+                passed_over=[k.id for k in guard._passed_over_after_target(records)],
             )
     return StoreReport(
         path=str(store.path),
@@ -2132,9 +2136,9 @@ def _doctor(
     elif store.last_transaction is not None and store.last_transaction.state == "open":
         t = store.last_transaction
         problems.append(
-            _interrupted(t.id, t.stopped_undos)
+            _interrupted(t.id, t.passed_over)
             if t.snapshot_taken
-            else _stopped_before_any_file(t.id)
+            else _stopped_before_any_file(t.id, removed=t.temps_removed > 0)
         )
     elif (
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
@@ -2147,7 +2151,7 @@ def _doctor(
                 t.flavor_folder,
                 paths=t.paths,
                 created_dirs=t.created_dirs,
-                stopped=t.stopped_undos,
+                stopped=t.passed_over,
             )
         )
     return DoctorReport(
@@ -2416,9 +2420,9 @@ def _interrupted(record_id: str, stopped: Sequence[str] = ()) -> str:
     (M16-13): a change that was killed, or is running now, so some files
     may hold its new bytes and others not. `undo --expect` names exactly
     that record, and refuses if another change is journaled first. With
-    `stopped`, the undos of it that stopped before they changed any file
-    (2026-11-11 (a1)): it is no longer the newest record, so it is named as
-    the change those undos were undoing."""
+    `stopped`, the newer records that stopped before they changed any file
+    and were closed (2026-11-11 (a1), (a2)): it is no longer the newest
+    record, so it is named as the change before them."""
     return (
         f"{_subject(record_id, stopped)} did not finish (record {record_id}): some files may "
         "be changed and others not. To put back what was there before it, run: "
@@ -2428,27 +2432,35 @@ def _interrupted(record_id: str, stopped: Sequence[str] = ()) -> str:
 
 def _subject(record_id: str, stopped: Sequence[str]) -> str:
     """Who a doctor problem is about: the last change wowlab made, or, past
-    closed undos that stopped before they changed any file (2026-11-11
-    (a1)), the change they were undoing, with their record ids."""
+    closed records that stopped before they changed any file (2026-11-11
+    (a1), (a2)), the change before them, with their record ids."""
     if not stopped:
         return "the last change wowlab made"
-    which = ", ".join(stopped)
+    if len(stopped) == 1:
+        return (
+            f"a later change stopped before it changed any file (record {stopped[0]}), so "
+            "the change before it"
+        )
     return (
-        f"an undo was stopped before it changed any file (record {which}), so the change "
-        "it was undoing"
+        f"later changes stopped before they changed any file (records {', '.join(stopped)}), "
+        "so the change before them"
     )
 
 
-def _stopped_before_any_file(record_id: str) -> str:
+def _stopped_before_any_file(record_id: str, *, removed: bool = False) -> str:
     """The `doctor` problem for a most recent `open` record that never took
-    its pre-write snapshot (2026-11-11 (a)): the change was stopped after it
-    removed leftover temporary files of an earlier change and before it
-    changed any file. Undo closes it and restores nothing."""
-    return (
-        f"the last change wowlab made stopped before it changed any file (record {record_id}): "
-        "it only removed temporary files an earlier change left behind. To close it, run: "
-        f"wowlab undo --expect {record_id}"
-    )
+    its pre-write snapshot (2026-11-11 (a)): the change was stopped before
+    it changed any file. `removed`: it had removed leftover temporary files
+    of an earlier change first, which is said only then. Undo closes it and
+    restores nothing."""
+    if removed:
+        what = (
+            f"stopped before it changed any file (record {record_id}): it only removed "
+            "temporary files an earlier change left behind"
+        )
+    else:
+        what = f"stopped before it changed anything (record {record_id})"
+    return f"the last change wowlab made {what}. To close it, run: wowlab undo --expect {record_id}"
 
 
 def _rollback_unfinished(
@@ -2779,7 +2791,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say(f"  journal: {store.journal_error}")
     elif store.last_transaction is not None:
         t = store.last_transaction
-        which = "to undo" if t.stopped_undos else "most recent"
+        which = "to undo" if t.passed_over else "most recent"
         _say(
             f"  {store.transactions} transaction(s) in the journal; {which}: {t.id} "
             f'({_journal_state_words(t.state)}; {t.paths} file(s)) "{t.label}"'
@@ -10303,11 +10315,17 @@ def _closed_unsnapshotted(closed: guard.HistoryRecord, now: guard.HistoryRecord 
     """What `undo` says after closing a change that stopped before it
     changed any file (2026-11-11 (a)): no file changed, nothing to reverse.
     When it was an undo itself, the change it was undoing is the next
-    target again, and the line names it with its own command (a1)."""
+    target again, and the line names it with its own command (a1). When the
+    new target is a change that did not finish, the line names that (a2)."""
     if closed.undoes is not None and now is not None and now.id == closed.undoes:
         return (
             "Closed; that undo stopped before it changed any file. The change it was "
             f"undoing, {now.id}, is not undone yet: wowlab undo --expect {now.id}"
+        )
+    if now is not None and now.state in ("open", "rollback_incomplete"):
+        return (
+            "Closed; that change stopped before it changed any file. The change before it, "
+            f"{now.id}, did not finish: wowlab undo --expect {now.id}"
         )
     return (
         "Closed; that change stopped before it changed any file, so there was nothing to put "
@@ -10367,18 +10385,20 @@ def undo(
     Only the change the plan shows is undone: if another change is recorded
     after the plan was shown, nothing is undone.
 
-    An undo that was stopped before it changed any file is closed and then
-    skipped: the next `wowlab undo` offers the change it was undoing.
+    A change or undo that was stopped before it changed any file is closed
+    and then skipped: the next `wowlab undo` offers the change before it.
 
     \f
     JSON: UndoReport."""
     records = guard.history()
-    # The undo target (2026-11-11 (a1)): the newest record that is not passed
-    # over, so a closed undo that stopped before it changed any file is skipped.
+    # The undo target (2026-11-11 (a1), (a2)): the newest record that is not
+    # passed over, so a closed change that stopped before it changed any file
+    # is skipped.
     target = guard._undo_target(records)
     if expect is not None and (target is None or target.id != expect):
-        # A record is only appended or closed, so a mismatch is final;
-        # `guard.undo` makes the same compare again under its store lock, below.
+        # Refused before any plan. Closing a record in place can move the
+        # target, so this read is not final; `guard.undo` compares again
+        # under its store lock, below.
         newest = target.id if target is not None else "none: the journal is empty"
         raise CliError(
             f"the change to undo is {newest}, not the expected {expect}: "

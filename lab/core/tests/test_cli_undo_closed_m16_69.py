@@ -45,12 +45,23 @@ def test_constructed_closing_a_stopped_undo_names_the_change_it_was_undoing() ->
 
 
 def test_constructed_doctor_names_a_stopped_change_and_the_undo_that_stopped() -> None:
-    stopped = cli._stopped_before_any_file(K)
-    assert "stopped before it changed any file" in stopped
-    assert stopped.endswith(f"wowlab undo --expect {K}")
-    assert stopped.replace(K, "<id>") != cli._interrupted(K).replace(K, "<id>")
+    for removed in (True, False):
+        stopped = cli._stopped_before_any_file(K, removed=removed)
+        assert "stopped before it changed any" in stopped
+        assert ("removed temporary files" in stopped) is removed, stopped
+        assert stopped.endswith(f"wowlab undo --expect {K}")
+        assert stopped.replace(K, "<id>") != cli._interrupted(K).replace(K, "<id>")
 
     named = cli._interrupted(D, [K])
     assert K in named and named.endswith(f"wowlab undo --expect {D}")
     assert f"wowlab undo --expect {K}" not in named
     assert cli._interrupted(D) == cli._interrupted(D, ()), "no stopped undo: the wording as before"
+
+
+def test_constructed_closing_a_stopped_change_names_the_unfinished_change_before_it() -> None:
+    k = _record(K)
+    d = _record(D, state="open")
+    line = cli._closed_unsnapshotted(k, d)  # type: ignore[arg-type]
+    assert line.endswith(f"wowlab undo --expect {D}"), line
+    assert cli._subject(D, [K]).startswith("a later change stopped")
+    assert "records" in cli._subject(D, [K, "00000003-89abcdef"])
