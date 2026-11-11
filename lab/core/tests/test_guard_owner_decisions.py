@@ -2071,18 +2071,27 @@ def _assert_refused_as_damaged(
 ) -> None:
     """§6.10 (e1): the record naming `left` is damaged. `route` raises a
     plain `GuardError` naming it, before any lookup of `left`, any write,
-    snapshot or journal record."""
+    snapshot or journal record: no `SnapshotStore.create` call, and the
+    install and the store unchanged down to mtime and mode."""
     damaged = _damaged_record_file(store, left)
     watched: set[str] = set()
     if not left.startswith("//"):
         for base in (flavor.path, flavor.path.resolve()):
             watched.add(os.path.normpath(base / left))
     spy = LookupSpy(watched, "constructed-server", [world, world.resolve()])
-    install_before, store_before = content(world), content(store)
+    # mtime and mode too, so a write that was made and undone still shows.
+    install_before, store_before = strict_state(world), strict_state(store)
     journal_before = sorted(p.name for p in journal_files(store))
     wrote: list[str] = []
+    snapshots: list[str] = []
+    real_create = SnapshotStore.create
+
+    def create_spy(self: SnapshotStore, *args: Any, **kwargs: Any) -> Any:
+        snapshots.append(f"SnapshotStore.create{args!r}")
+        return real_create(self, *args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(SnapshotStore, "create", create_spy)
         spy.arm(patched)
         if route == "undo":
             exc = attempt(lambda: guard.undo(store=store))
@@ -2104,8 +2113,9 @@ def _assert_refused_as_damaged(
     assert damaged.name in text, f"the refusal names the damaged record {damaged.name}: {text}"
     assert "damaged" in text, f"the refusal says the record is damaged: {text}"
     assert wrote == [], "the transaction body never ran"
-    assert content(world) == install_before, "the refusal touched the install"
-    assert content(store) == store_before, "the refusal touched the journal or the store"
+    assert snapshots == [], "the refusal comes before any snapshot"
+    assert strict_state(world) == install_before, "the refusal touched the install"
+    assert strict_state(store) == store_before, "the refusal touched the journal or the store"
     assert sorted(p.name for p in journal_files(store)) == journal_before, "nothing was journaled"
 
 
