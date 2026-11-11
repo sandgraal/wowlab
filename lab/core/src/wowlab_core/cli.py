@@ -8532,11 +8532,12 @@ def _named_line(change: wtfdiff.NamedChange) -> str:
 
 
 # What a line `wtfdiff` does not read by name is, in each kind of file: the
-# lines its parser keeps as unknown (M16-98).
+# lines its parser keeps as unknown, said by their form, not their effect (the
+# client may still read a CVar line typed by hand; M16-98).
 _OTHER_LINES: dict[wtfdiff.Kind, str] = {
     "bindings": "for example a binding mode or modifier line",
-    "macros": "lines outside any macro",
-    "cvars": "lines that set no setting",
+    "macros": "lines outside any macro wowlab can read",
+    "cvars": "lines not in the game's usual setting form, such as a setting typed in by hand",
 }
 
 
@@ -8680,7 +8681,7 @@ _CHANGED_DURING = (
 # neither (M16-98).
 _CHANGED_UNKNOWN_STATE = (
     f"{_DETAIL_INDENT}(changed while that transaction ran or since; this version of wowlab "
-    f"cannot tell by what: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+    f"cannot tell what changed it: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
 )
 _CHANGED_LINE = {
     "committed": _CHANGED_SINCE,

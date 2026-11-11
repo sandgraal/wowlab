@@ -149,7 +149,7 @@ def test_every_state_is_pinned() -> None:
 
 CHANGED_UNKNOWN_STATE = (
     "      (changed while that transaction ran or since; this version of wowlab cannot tell "
-    "by what: the lines below compare what is on disk now with what undo puts back; undo "
+    "what changed it: the lines below compare what is on disk now with what undo puts back; undo "
     "replaces those changes, but keeps a copy first, and running wowlab undo again next, "
     "before you play, brings them back)"
 )

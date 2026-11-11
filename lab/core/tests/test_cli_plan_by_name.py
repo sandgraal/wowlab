@@ -333,14 +333,15 @@ OTHER_LINES = {
     "macros": (
         b'VER 3 0000000000000001 " " "134400"\r\n/say constructed\r\nEND\r\n',
         b'VER 3 0000000000000001 " " "134400"\r\n/say constructed\r\nEND\r\nconstructed\r\n',
-        "      other lines differ too (lines outside any macro), which wowlab does not read "
-        "by name",
+        "      other lines differ too (lines outside any macro wowlab can read), which "
+        "wowlab does not read by name",
     ),
     "cvars": (
         b'SET useTargetFPS "0"\r\n',
-        b'SET useTargetFPS "0"\r\nconstructed other line\r\n',
-        "      other lines differ too (lines that set no setting), which wowlab does not read "
-        "by name",
+        # A setting typed in by hand: the client may read it, the parser does not.
+        b'SET useTargetFPS "0"\r\nset useTargetFPS 1\r\n',
+        "      other lines differ too (lines not in the game's usual setting form, such as a "
+        "setting typed in by hand), which wowlab does not read by name",
     ),
 }
 
