@@ -88,9 +88,10 @@ def _plan(record: guard.HistoryRecord, flavor: Path) -> list[str]:
         'the account or the character file, as "Character Specific Key Bindings" sets; '
         "account and character macros are two separate sets; each CVar is read from the "
         "file of its own scope.",
-        "The client reads these files at its next login; with server sync on (see wowlab "
-        "doctor), the server may replace binds, macros, settings and other *-cache files "
-        "then.",
+        "The next time you start the client, it reads Config.wtf again; it reads the other "
+        "files at login. The server may replace binds, macros and account or character "
+        "settings at login when their sync setting is on (see wowlab doctor); it may also "
+        "replace other *-cache files then, and under which setting is not yet known.",
     ]
 
 

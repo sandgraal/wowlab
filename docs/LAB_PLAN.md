@@ -4992,7 +4992,21 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      file as "Character Specific Key Bindings" sets, account and character
      macros are two sets, and each CVar is read from the file of its own
      scope. `snap restore` and `undo` then add the login caveat before the
-     prompt and do not repeat it after the write. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     prompt and do not repeat it after the write. *Amended 2026-11-11
+     (M16-97):* the login caveat no longer waits on that condition. It
+     follows the listed paths: a plan that lists `Config.wtf` or a
+     `*-cache` file under `WTF/` (not in a SavedVariables folder) gets it,
+     whether or not a line names what changes in that file (a file wowlab
+     cannot compare, an empty one, a delete or a recreate), by the same
+     rule the result uses after the write. The scope line still needs a
+     named change. The caveat says the client reads `Config.wtf` again the
+     next time it starts (whether a login alone rereads it is unconfirmed,
+     and the client may save over it on exit, so a re-login is not
+     offered) and the other files at login; that the server may replace
+     binds, macros and account or character settings at login when their
+     sync setting is on; and that which other `*-cache` files it may
+     replace, and under which setting, is not yet known. `profile apply`'s
+     own login note says the same of `Config.wtf`. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
      `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
      text output), line by line as the terminal shows it (escaped), for the
      UI's confirm step (EV-20). Additive only.

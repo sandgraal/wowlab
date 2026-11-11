@@ -131,7 +131,8 @@ SERVER_DELETE_NOTE = (
 )
 LOGIN_NOTE = (
     "The result is proven only by starting the client and logging in: it reads Config.wtf "
-    "at start and the other files at login, and the server may replace *-cache files at login."
+    "again the next time you start it and the other files at login, and the server may "
+    "replace *-cache files at login."
 )
 SERVER_SIDE_NOTE = (
     "Action-bar contents and talents are not in these files (the server keeps them; not yet "

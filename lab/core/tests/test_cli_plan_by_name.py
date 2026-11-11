@@ -402,3 +402,48 @@ def test_profile_apply_plan_recreating_a_cache_file_has_the_login_caveat(
     assert SCOPE not in out
     report = _json(cli.ProfileApplyReport, "profile", "apply", "chat", "--dry-run")
     assert profiles.LOGIN_NOTE in report.plan_lines
+
+
+def test_the_login_caveat_text() -> None:
+    """Whether Config.wtf is read again at login or only at start is
+    unconfirmed, so both notes say the next start for it; sync is named only for binds, macros and settings, and the rest
+    is said to be not yet known. `profile apply`'s own note follows the
+    same rule for Config.wtf."""
+    assert cli._RELOGIN == (
+        "The next time you start the client, it reads Config.wtf again; it reads the other "
+        "files at login. The server may replace binds, macros and account or character "
+        "settings at login when their sync setting is on (see wowlab doctor); it may also "
+        "replace other *-cache files then, and under which setting is not yet known."
+    )
+    assert profiles.LOGIN_NOTE == (
+        "The result is proven only by starting the client and logging in: it reads Config.wtf "
+        "again the next time you start it and the other files at login, and the server may "
+        "replace *-cache files at login."
+    )
+
+
+def test_the_login_caveat_is_only_for_files_under_wtf_outside_saved_variables() -> None:
+    assert cli._relogin_notes(["Interface/AddOns/X/Foo-Cache.lua"]) == []
+    assert cli._relogin_notes([f"{CHAR}/SavedVariables/Foo-Cache.lua"]) == []
+    assert cli._relogin_notes([f"{ACC}/SavedVariables/Foo-Cache.lua"]) == []
+    assert cli._relogin_notes(["Interface/AddOns/X/Config.wtf"]) == []
+    assert cli._relogin_notes([GLOBAL]) == [cli._RELOGIN]
+    assert cli._relogin_notes([CHAT]) == [cli._RELOGIN]
+    assert cli._relogin_notes([BINDINGS.upper()]) == [cli._RELOGIN]  # any letter case
+
+
+def test_restore_plan_of_an_addon_cache_named_file_has_no_login_caveat_constructed(
+    root: Path, flavor: Path
+) -> None:
+    addon = flavor / "Interface/AddOns/X/Foo-Cache.lua"
+    addon.parent.mkdir(parents=True)
+    addon.write_bytes(b"-- constructed\n")
+    sv = flavor / CHAR / "SavedVariables/Foo-Cache.lua"
+    sv.parent.mkdir(parents=True, exist_ok=True)
+    sv.write_bytes(b"FooCache = {}\n")
+    a = _snapshot()
+    addon.write_bytes(b"-- constructed, changed\n")
+    sv.write_bytes(b"FooCache = { 1 }\n")
+    out = _plain(ok("snap", "restore", a.id, "--dry-run").stdout).splitlines()
+    assert any(ln.split("  (")[0].endswith("Foo-Cache.lua") for ln in out), out
+    assert cli._RELOGIN not in out, out
