@@ -29,6 +29,12 @@ What the amendment fixes, as graded here:
   undo as interrupted before it changed anything; `wowlab undo` skips the
   killed undo's closed record and offers D; D's own line then settles D and
   `doctor` is clean.
+- (a1) as made precise on 2026-11-11 (M16-100T rounds 1 and 2): every record
+  `undo()` writes carries `undoes`; `history()` refuses one that is not the
+  id of an earlier record of the same flavor; only a closed killed undo that
+  never took a snapshot (and the record that closes it) is passed over, never
+  a completed undo nor one killed after its snapshot; `--expect` must name
+  the target, so a passed-over id, or D behind a newer target, is refused.
 - No removed temp comes back: not on disk after the crash or the undo, and
   no manifest in the store holds one, by path or by bytes.
 - `doctor` on the killed record still reports it (exit 1, the exact undo
@@ -75,6 +81,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -165,6 +172,12 @@ if mode == "die-in-rename":
     os.rename = moving("rename")
     os.unlink = removing("unlink")
     os.remove = removing("remove")
+    if args.get("route") == "undo":
+        # An undo killed inside the rename of a file it restores: after its
+        # pre-write snapshot (M16-100T round 2).
+        guard.undo(store=store)
+        sys.stdout.write("survived\n")
+        sys.exit(3)
     with guard.transaction(flavor, label="child-died", store=store) as tx:
         for rel, data in args["writes"]:
             try:
@@ -523,6 +536,14 @@ def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after
     assert report["plan"] == [] and report["created_dirs"] == [], "nothing to restore"
     assert_closed_without_restoring(c, now)
 
+    # The target after the close is the killed record or its closer, never
+    # the change killed mid-write before it (M16-100T round 2).
+    ids = [r.id for r in guard.history(store=c.store)]
+    targets = set(ids[ids.index(c.record.id) :])
+    offered = run("undo", "--json")
+    target = json.loads(offered.stdout)["undone"]
+    assert target in targets and target != c.dead_id, (target, targets)
+
     after = run("doctor", "--json")
     assert after.exit_code == 0, after.stdout
     assert not json.loads(after.stdout)["problems"]
@@ -563,6 +584,21 @@ def test_constructed_cli_undo_closes_a_killed_undo_and_doctor_reports_the_change
     assert report["plan"] == [] and report["created_dirs"] == [], "nothing to restore"
     assert_closed_without_restoring(c, now)
     journal = [(r.id, r.state) for r in guard.history(store=c.store)]
+
+    # A stale `--expect`: K, and any record C appended to close it, are passed
+    # over, so neither is the target any more (M16-100T round 2).
+    ids = [i for i, _ in journal]
+    stale = ids[ids.index(c.record.id) :]
+    assert stale[0] == c.record.id
+    for gone in stale:
+        with pytest.raises(guard.GuardError):
+            guard.undo(store=c.store, expected_id=gone)
+        again = run("undo", "--expect", gone, "--yes", "--json")
+        assert again.exit_code == 3, (gone, again.stdout, again.stderr)
+        assert tree(c.root) == now, f"a stale --expect {gone} changes no file"
+        assert [(r.id, r.state) for r in guard.history(store=c.store)] == journal, (
+            f"a stale --expect {gone} journals nothing"
+        )
 
     # doctor: D again, with D's own line; the killed undo named, not offered.
     killed_line = f"wowlab undo --expect {c.record.id}"
@@ -740,39 +776,134 @@ def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_o
     assert tree(root) == before and journal(c.store) == recorded, "a mismatch changes nothing"
 
 
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_an_undo_killed_after_its_snapshot_is_never_passed_over(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path
+) -> None:
+    """D is killed mid-write; the player's Config.wtf then changes, so an
+    undo of D has a file to put back. That undo, U, is killed inside the
+    rename of Config.wtf: after its pre-write snapshot. U has `undoes` and is
+    then undone (which closes it), but it took a snapshot, so neither U nor
+    its closer is passed over: `wowlab undo` targets the closer, not D, and
+    `--expect <D id>` is a mismatch (exit 3)."""
+    store = snapshot.default_store_path()
+    leave_two_temps(tmp_path, user_data, flavor, store)
+    d = guard.history(store=store)[-1]
+    assert d.label == "child-died" and d.state == "open", "positive control"
+    (flavor / CONFIG).write_bytes(PLAYER_BYTES)
+    manifests = manifest_ids(store)
+
+    killed = child(
+        tmp_path,
+        user_data,
+        mode="die-in-rename",
+        route="undo",
+        writes=[],
+        strand=[],
+        die_on=Path(CONFIG).name,
+        flavor=str(flavor),
+        store=str(store),
+    )
+    assert killed.returncode == DIED_IN_RENAME, (killed.stdout, killed.stderr[-4000:])
+    locks_released(flavor, store)
+    u = guard.history(store=store)[-1]
+    assert u.id != d.id and u.state == "open", "the undo journaled itself and was killed"
+    assert u.snapshot_id in manifest_ids(store) - manifests, "U was killed after its snapshot"
+
+    guard.undo(store=store, expected_id=u.id)
+    records = guard.history(store=store)
+    closer = records[-1]
+    assert closer.id != u.id and closer.state != "open", "U is undone, by a record of its own"
+    before, recorded = tree(root), journal(store)
+
+    offered = run("undo", "--json")
+    assert json.loads(offered.stdout)["undone"] == closer.id, (
+        "an undo killed after its snapshot is not passed over, nor is its closer",
+        offered.stdout,
+    )
+    refused = run("undo", "--expect", d.id, "--yes", "--json")
+    assert refused.exit_code == REFUSED, (refused.stdout, refused.stderr)
+    with pytest.raises(guard.GuardError, match=re.escape(d.id)):
+        guard.undo(store=store, expected_id=d.id)
+    assert tree(root) == before and journal(store) == recorded, "a mismatch changes nothing"
+
+    assert undoes(records[[r.id for r in records].index(u.id)]) == d.id, "U names D"
+    assert undoes(closer) == u.id, "U's closer names U"
+
+
+ID = re.compile(r"[0-9]{8}-[0-9a-f]{8}")
+
+
 @pytest.mark.parametrize(
     "names",
     [
-        pytest.param("missing", id="constructed-undoes-names-no-record"),
+        pytest.param("absent", id="constructed-undoes-names-an-absent-earlier-id"),
+        pytest.param("malformed", id="constructed-undoes-names-a-malformed-id"),
         pytest.param("later", id="constructed-undoes-names-a-later-record"),
         pytest.param("itself", id="constructed-undoes-names-the-record-itself"),
+        pytest.param("other-flavor", id="constructed-undoes-names-another-flavors-record"),
+        pytest.param("empty", id="constructed-undoes-is-empty"),
+        pytest.param("int", id="constructed-undoes-is-an-int"),
+        pytest.param("null", id="constructed-undoes-is-null"),
+        pytest.param("list", id="constructed-undoes-is-a-list"),
     ],
 )
 @pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, names: str
 ) -> None:
-    """A real undo U of a real change D carries `undoes: <D id>` in its
-    journal file and reads back with it (the positive control). Rewritten on
-    disk to an id that is not an earlier record's, `history()` raises
-    `GuardError` (a damaged record) and changes nothing."""
+    """A change X in a second flavor folder (a constructed copy of the first,
+    a sibling under the same install), then a real change D and its real
+    undo U. U carries `undoes: <D id>` in its journal file and reads back
+    with it, also after the file is written back unchanged in the
+    serialization this test uses (the positive control: the rewrite alone is
+    not what is refused). Rewritten on disk to a value that is not the id of
+    an earlier record of U's flavor, `history()` raises `GuardError` (a
+    damaged record) and changes nothing."""
     store = snapshot.default_store_path()
+    other = root / f"{flavor.name}copy_"
+    shutil.copytree(flavor, other)
+    x = commit(other, store, "other-flavor", CONFIG, CRASHED_BYTES)
     d = commit(flavor, store, "changed", CONFIG, CRASHED_BYTES)
+    assert d.flavor_path != x.flavor_path, "positive control: X is in another flavor"
     guard.undo(store=store, expected_id=d.id)
     u = guard.history(store=store)[-1]
     later = commit(flavor, store, "later", SYNDICATOR, STRANDED_BYTES)
     assert u.id != d.id and later.id not in {u.id, d.id}
+    ids = [r.id for r in guard.history(store=store)]
+    assert ids.index(x.id) < ids.index(u.id) < ids.index(later.id)
 
     file = store / "journal" / f"{u.id}.json"
     raw = json.loads(file.read_bytes().decode("ascii"))
     assert raw.get(UNDOES) == d.id, f"the journal file carries {UNDOES!r}: {sorted(raw)}"
-    assert undoes(guard.history(store=store)[-2]) == d.id, "and reads back with it"
 
-    missing = "ffffffff-" + d.id.split("-", 1)[-1][::-1]
-    assert missing not in {r.id for r in guard.history(store=store)}
-    raw[UNDOES] = {"missing": missing, "later": later.id, "itself": u.id}[names]
-    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
-    file.write_bytes(text.encode("ascii"))
+    def rewrite(value: Any) -> None:
+        raw[UNDOES] = value
+        text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
+        file.write_bytes(text.encode("ascii"))
+
+    rewrite(d.id)
+    (reread,) = [r for r in guard.history(store=store) if r.id == u.id]
+    assert undoes(reread) == d.id, "written back unchanged, U still reads with `undoes == D`"
+
+    number, _, tail = d.id.partition("-")
+    absent = f"{number}-{''.join('0' if ch != '0' else '1' for ch in tail)}"
+    assert ID.fullmatch(absent) and absent not in ids and absent < u.id, absent
+    malformed = "ffffffff-" + tail[::-1]
+    assert not ID.fullmatch(malformed) and malformed not in ids
+    rewrite(
+        {
+            "absent": absent,
+            "malformed": malformed,
+            "later": later.id,
+            "itself": u.id,
+            "other-flavor": x.id,
+            "empty": "",
+            "int": 1,
+            "null": None,
+            "list": [d.id],
+        }[names]
+    )
     install_before = tree(root)
     store_before = tree(store)
 
