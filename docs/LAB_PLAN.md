@@ -4108,8 +4108,9 @@ a file. The file read is the real path that was checked.
 - **What stays:** the protection against other web pages and other local programs driving the server.
   - The server is bound to `127.0.0.1` and checks its Host header as before.
   - Every API request must still prove it comes from the browser that opened the link. The design is the implementer's. The default is an `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie set when the link is first opened, which the server accepts in place of the `token` parameter, so a reload or a second tab in that browser works.
-  - A request with neither the cookie nor a valid token is refused, as now.
+  - A request with neither the header nor a valid token is refused, as now.
   - Accepted risk (owner, 2026-11-11): the link is in the browser's process arguments, which another account on the same computer can read, and it opens the session until Ctrl-C; this tool is used on single-user machines, and the risk is revisited before outside users are invited (ADR-0037).
+  - *Design chosen (2026-11-11, M16-113, after the owner's security ruling that a cookie on `127.0.0.1` reaches every port):* the cookie default was replaced. The page served for the link holds the session key in one `<meta>` element, which `page.js` removes, keeps in `localStorage` (per origin, port included) and sends in the `X-Wowlab-Session` header on every request; another site's page cannot send that header without a preflight, which is refused. A bare `GET /` serves the shell with no key in it, so a reload and a second tab get the page and send the stored key.
   - Stopping `wowlab ui` (Ctrl-C) ends the session. A new `wowlab ui` makes a new link, and the old one stops working.
 - **What goes:**
   - the one-time boot key, and its "already used" page and terminal notice;
