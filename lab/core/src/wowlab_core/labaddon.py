@@ -639,11 +639,40 @@ class GearAverage(_Record):
     pvp: Number | None = None
 
 
+def _check_slots_walked_once(first: int, last: int, slots: list[int]) -> None:
+    """The addon walks `for slot = first, last` once and lists only the
+    slot it is on, so a range that runs backwards, a slot outside it and a
+    slot listed twice are each a file it cannot have written (M13-70 for
+    `actionbars`, M16-106 for `gear`). The messages carry only bounded
+    `Int` slot numbers, nothing else from the file."""
+    if first > last:
+        raise ValueError("first_slot is after last_slot")
+    seen: set[int] = set()
+    for slot in slots:
+        if not first <= slot <= last:
+            raise ValueError(f"slot {slot} is outside the slots walked ({first} to {last})")
+        if slot in seen:
+            raise ValueError(f"slot {slot} is listed more than once")
+        seen.add(slot)
+
+
 class Gear(_Section):
+    """`gear`: equipment slots `first_slot` to `last_slot` walked, the
+    filled ones listed. `Gear.lua` walks each slot of the range once, so a
+    range that runs backwards, a slot listed twice and a slot outside the
+    range are refused (M16-106, as M13-70 did for `actionbars`): kept, a
+    duplicate would print twice in `char gear` and give the dressing room
+    two items for one slot."""
+
     first_slot: Int
     last_slot: Int
     slots: Lst[GearSlot]
     average: Annotated[Annotated[GearAverage, Tag(_P)] | Annotated[AbsentRecord, Tag(_A)], _SPLIT]
+
+    @model_validator(mode="after")
+    def _slots_walked_once(self) -> Self:
+        _check_slots_walked_once(self.first_slot, self.last_slot, [s.slot for s in self.slots])
+        return self
 
 
 # ─── spec ────────────────────────────────────────────────────────────────────
@@ -1219,18 +1248,7 @@ class ActionBars(_Section):
 
     @model_validator(mode="after")
     def _slots_walked_once(self) -> Self:
-        if self.first_slot > self.last_slot:
-            raise ValueError("first_slot is after last_slot")
-        seen: set[int] = set()
-        for slot in self.slots:
-            if not self.first_slot <= slot.slot <= self.last_slot:
-                raise ValueError(
-                    f"slot {slot.slot} is outside the slots walked "
-                    f"({self.first_slot} to {self.last_slot})"
-                )
-            if slot.slot in seen:
-                raise ValueError(f"slot {slot.slot} is listed more than once")
-            seen.add(slot.slot)
+        _check_slots_walked_once(self.first_slot, self.last_slot, [s.slot for s in self.slots])
         return self
 
 
