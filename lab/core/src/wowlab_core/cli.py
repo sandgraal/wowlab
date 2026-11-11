@@ -11833,12 +11833,12 @@ class CharGearReport(_Out):
     slots: list[gear.GearSlot]
     empty_slots: list[gear.EmptySlot]
     notes: list[str]
+    # The flavor folder read, as the other `char` reports name it; just
+    # before `dressing`, which stays last (M16-114).
+    flavor_folder: str
     # The outside dressing room's address for this character, or the item ids
     # to paste into one when there is none (M15-02, `dressing.build`).
     dressing: dressing.DressingLink | dressing.DressingItems
-    # The flavor folder read, as the other `char` reports name it; last, so
-    # the fields before it keep their order (M16-114).
-    flavor_folder: str
 
 
 _GEAR_NAMES_NOTE = (

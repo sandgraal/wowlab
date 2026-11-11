@@ -275,10 +275,10 @@
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
   ],
+  "flavor_folder": "_classic_beta_",
   "dressing": {
     "url": "https://www.wowhead.com/forever/dressing-room#fM80R0a89c877Qz2L808zTO808zSo87czpEj808AK808558084K808LE808zHl87s",
     "site": "Wowhead",
     "note": "Opens Wowhead's forever dressing room in your browser when you click it; wowlab itself sends nothing. The address holds race 2, body type 0, class 8, level 10 (the record's), and the item ids of 9 equipped items, each with its bonus id when it has one. The look is the room's default for the race (the record's customization is not passed). Whether the room draws this client's items is [verify]."
-  },
-  "flavor_folder": "_classic_beta_"
+  }
 }

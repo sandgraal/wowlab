@@ -186,8 +186,8 @@ def test_char_gear_json_keys_are_the_plans(tmp_path: Path, monkeypatch: pytest.M
         "slots",
         "empty_slots",
         "notes",
+        "flavor_folder",  # M16-114: as the other `char` reports carry it
         "dressing",
-        "flavor_folder",  # M16-114: last, as the other `char` reports carry it
     ]
     assert list(data["slots"][0]) == [
         "slot",
