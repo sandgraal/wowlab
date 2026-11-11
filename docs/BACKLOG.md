@@ -2085,7 +2085,7 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 ---
 
 ## [ ] M16-47 — M16 review
-**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92
+**Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
 
@@ -2322,11 +2322,13 @@ The archive holds the same settings and saved data as the store, but is created 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T · **Sources:** as M16-69T
+**Size:** S · **Depends on:** M16-69T, M16-93T · **Sources:** as M16-69T
 
-**Owner question (2026-11-10), open:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
+**Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
-**Acceptance:** M16-69T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+**Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T.
+
+**Acceptance:** M16-69T's and M16-93T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
@@ -2397,13 +2399,15 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 **Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-78 — The user data directory's other folders are private
-**Size:** S · **Depends on:** nothing · **Sources:** the M16-66T security review (#424)
+**Size:** S · **Depends on:** M16-78T · **Sources:** the M16-66T security review (#424)
 
 M16-66 (#432, merged) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
 
 **User-facing:** the modes of the folders wowlab creates under the user data directory.
 
 **Acceptance:** the owner's answer is recorded here. If yes: every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, with a test per creating module. If no: the ticket is closed unbuilt, with the answer recorded.
+
+**Owner answer (2026-11-11):** yes. Every folder wowlab creates under the user data directory is private (LAB_PLAN §6.10, amendment of 2026-11-11 (b)). `locks/` and the store's parents are made in `guard.py`, which is load-bearing, so the graders for those land first as M16-78T. The tests for the other modules are the implementer's.
 
 ## [x] M16-79 — `pathfacts._compare` and the CASC reads open from the root
 **Size:** S · **Depends on:** M16-65 · **Sources:** the M16-65 security review (#429)
@@ -2552,3 +2556,38 @@ Also update the stale docstring of `review/test_m16_80_linked_font_file_says_rea
 M16-86 says, for an unfinished rollback, that undo replaces another program's changes, keeps a copy, and that a second undo brings them back. Other states keep `_CHANGED_SINCE` ("changed since that transaction, probably by the client at logout"), which does not say what undo does to those changes. Give them the same consequence.
 
 **Acceptance:** a pinned test per state. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 owner answers and review follow-ups (filed 2026-11-11)
+
+## [ ] M16-93T — [TEST] A change killed between the temp cleanup and its snapshot changed nothing
+**Size:** S · **Depends on:** M16-69T · **Sources:** the owner's answer of 2026-11-11 to M16-69's question; LAB_PLAN §6.10, amendment of 2026-11-11 (a)
+
+Strict-xfail crash graders for `guard.py`. A record with journaled temp removals but no pre-write snapshot, as left by a kill between the cleanup and the snapshot, is closed by `undo` without restoring anything, and no removed temp comes back. `doctor` says the change stopped before it touched anything. Use a constructed crash point (L8, boundary), not a real kill.
+
+**Acceptance:** strict xfail on `main`, activated by M16-69 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-78T — [TEST] The folders `guard` creates under the user data directory are private
+**Size:** XS · **Depends on:** nothing · **Sources:** M16-78; LAB_PLAN §6.10, amendment of 2026-11-11 (b)
+
+Strict-xfail graders: `<user data dir>/locks/` and every parent `guard` makes on the way to a missing store are created 0700 under a permissive umask (POSIX only, skipped on Windows with a reason). The store root and `journal/` graders already on main stay.
+
+**Acceptance:** strict xfail on `main`, activated by M16-78 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-94T — [TEST] The listing memo's key holds the directory's ctime
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-23T review (owner topic); the owner's answer of 2026-11-11; LAB_PLAN §18.1 item 6, amendment of 2026-11-11
+
+Strict-xfail graders for `guard.py`. A directory whose listing changes while its mtime is restored to the old value, but whose ctime moves, is listed again and not served from the memo. POSIX only, skipped on Windows with a reason: there `st_ctime_ns` is the creation time and does not move.
+
+**Acceptance:** strict xfail on `main`, activated by M16-94 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-94 — [IMPL] The listing memo's key holds the directory's ctime
+**Size:** XS · **Depends on:** M16-94T · **Sources:** as M16-94T
+
+**Acceptance:** M16-94T's graders activated by marker deletion only. The full suite is green (`guard.py`), and the scaling grader and the M16-27 nightly budget still hold. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-95 — `tree` says "real file" for the client's files in the account folder
+**Size:** XS · **Depends on:** M16-91 · **Sources:** the M16-91 domain review (#456)
+
+Under `WTF/Account/<acct>/`, a link at the place of a client-written file still reads "real one". Examples are `config-cache.wtf`, `bindings-cache.wtf`, `macros-cache.txt`, `SavedVariables.lua` and its `.bak`, the edit-mode, chat-frontend, flagged and TTS caches, and `character-list-order.txt`. The same applies to `WTF/Account/SavedVariables/<x>.lua` and `.bak`. A folder at the same place matches `realm-folder`, a one-star row at that place, so M16-91's rule leaves these alone. One option: when the file row names a fixed file name and the folder row is a one-star place, prefer the file row. Also confirm that `WTF/Account/SavedVariables/<x>.lua`, classified as a folder with nothing on disk, does not come out as `realm-folder` on a real walk (the M13-50 not-an-account check).
+
+**Acceptance:** pinned tests per row, with a dated LAB_PLAN amendment under M16-91's. Reviewed by `code-reviewer` and `domain-reviewer`.
