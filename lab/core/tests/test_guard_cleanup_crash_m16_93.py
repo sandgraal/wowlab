@@ -1,0 +1,583 @@
+"""Graders for LAB_PLAN §6.10, amendment of 2026-11-11 (a): a change killed
+between the temp cleanup and its snapshot changed nothing (M16-93T).
+
+Written before M16-69, from the M16-93T and M16-69 tickets in
+docs/BACKLOG.md (the owner's answer of 2026-11-11 to M16-69's question),
+docs/LAB_PLAN.md §6.10 (item 2 of the 2026-09-22 amendment: each removal is
+journaled and fsynced before its unlink; the 2026-11-10 amendment (c):
+`doctor` reports a most recent `open` record with exit 1 and the exact
+`wowlab undo --expect <id>` line; the 2026-11-11 amendment (a)) and
+ADR-0021. Every grader carries one marker line that M16-69 deletes; nothing
+else in this file is the implementer's to change.
+
+What the amendment fixes, as graded here:
+
+- Leftover temps are removed before the pre-write snapshot, so a kill after
+  the cleanup and before the snapshot leaves a journal record that is still
+  `open`, lists the removals in `temps_removed`, and names no snapshot the
+  store holds. The install then differs from before the killed change only
+  by the removed temps: the change touched no player file.
+- `undo` of that record (the library's `guard.undo` and the CLI's
+  `wowlab undo --expect <id> --yes`, exit 0) closes it without restoring
+  anything: every file's bytes are as they were before the undo, no later
+  record names a path or a created folder, the most recent record is no
+  longer `open`, and `doctor` afterwards has no problem (exit 0).
+- No removed temp comes back: not on disk after the crash or the undo, and
+  no manifest in the store holds one, by path or by bytes.
+- `doctor` on the killed record still reports it (exit 1, the exact undo
+  line), and says something other than what it says for a change killed
+  mid-write. The wording is not in the spec, so it is not pinned: the
+  grader compares the two problems with the record ids masked and requires
+  them to differ. `doctor` itself writes nothing.
+
+Which "close" means (a later record over it, as `test_doctor_interrupted.py`
+pins for an ordinary interrupted change, or a state change of the record
+itself) is not pinned: only that the most recent record is no longer `open`
+and nothing after the killed record names a path.
+
+Constructed (L8, boundary): the crash point. The install is the captured
+tree, copied into `tmp_path` as `test_cli.py` builds it, with the user data
+directory redirected and a fake process table (no client runs). A second
+Python process (`CRASH_SCRIPT`, same redirection, empty process table)
+first leaves two leftover temps the way a crash does: a real transaction
+whose first rename is refused and whose temp unlink is ignored, and which
+dies (`os._exit`) inside its second rename. A second child then enters again,
+through `transaction()` or `undo()`, and dies (`os._exit`) at the first
+sign of the pre-write snapshot landing. The file-level seam is any
+write-open, rename, replace or link into the store's `objects/` or
+`manifests/`. So that it sees them on every platform, the child sets
+`snapshot._WRITE_BY_DIR_FD = False`: the store, which on POSIX otherwise
+decides at import to write through descriptors, writes by path as it does on
+Windows. The seam also resolves a `dir_fd` / `dst_dir_fd` it is handed
+(through `/proc/self/fd` or `F_GETPATH`). A call to `SnapshotStore.create`,
+`add_snapshot` or `put_object` is a second net. That is the moment between
+the cleanup and the snapshot; no internal order of `guard.py` is read to
+find it. The review probe
+`review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` checks that
+the file-level seam fires without the method patches.
+
+Before the second kill a player file (`WTF/Config.wtf`) is changed outside
+guard, as the client does at logout, so the install no longer matches any
+stored snapshot: an undo that restored a stale snapshot would show in the
+bytes, not only in the journal. Nothing reads or writes a real install.
+"""
+
+# ruff: noqa: F811  (fixtures imported from test_cli are requested by name)
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from test_cli import (
+    SYNDICATOR,
+    flavor,  # noqa: F401
+    idle,  # noqa: F401  (autouse: no client in the process table)
+    replayed,  # noqa: F401  (autouse: recorded game data only)
+    root,  # noqa: F401
+    run,
+    user_data,  # noqa: F401  (autouse: the user data directory is redirected)
+)
+
+from wowlab_core import guard, snapshot
+from wowlab_core.snapshot import SnapshotStore
+
+CONFIG = "WTF/Config.wtf"
+STRANDED_BYTES = b"constructed: Syndicator bytes whose rename was refused\n"
+DYING_BYTES = b"constructed: Config.wtf bytes the dead change never renamed into place\n"
+CRASHED_BYTES = b"constructed: what the change killed at its snapshot meant to write\n"
+PLAYER_BYTES = b"constructed: Config.wtf as the client wrote it at logout, after the dead change\n"
+
+TEMP_NAME = re.compile(r"\.wowlab-[0-9a-f]{32}\.tmp")
+DIED_IN_RENAME = 17
+DIED_AT_SNAPSHOT = 19
+CHILD_TIMEOUT = 120.0
+
+ROUTES = [pytest.param(r, id=f"constructed-killed-in-{r}") for r in ("transaction", "undo")]
+
+CRASH_SCRIPT = r'''
+"""A wowlab process killed at a constructed point (M16-93T graders)."""
+import builtins
+import io
+import json
+import os
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import platformdirs
+import psutil
+
+args = json.loads(sys.argv[1])
+user_data = Path(args["user_data"])
+platformdirs.user_data_path = lambda *a, **k: user_data
+# Constructed: no game client, and the real process table is never listed.
+psutil.process_iter = lambda *a, **k: iter(())
+
+from wowlab_core import guard, snapshot  # noqa: E402
+
+flavor = SimpleNamespace(path=Path(args["flavor"]), version=None)
+store = Path(args["store"])
+mode = args["mode"]
+
+if mode == "die-in-rename":
+    strand = set(args["strand"])
+    die_on = args["die_on"]
+    stranded = set()
+    real = {name: getattr(os, name) for name in ("replace", "rename", "unlink", "remove")}
+
+    def moving(name):
+        def call(src, dst, *a, **k):
+            target = os.path.basename(os.fsdecode(dst))
+            if target == die_on:
+                os._exit(17)  # dies inside the rename: nothing after it runs
+            if target in strand:
+                stranded.add(os.path.basename(os.fsdecode(src)))
+                raise PermissionError(13, "constructed: the rename is refused")
+            return real[name](src, dst, *a, **k)
+
+        return call
+
+    def removing(name):
+        def call(path, *a, **k):
+            if os.path.basename(os.fsdecode(path)) in stranded:
+                return None  # the stranded temp file stays behind
+            return real[name](path, *a, **k)
+
+        return call
+
+    os.replace = moving("replace")
+    os.rename = moving("rename")
+    os.unlink = removing("unlink")
+    os.remove = removing("remove")
+    with guard.transaction(flavor, label="child-died", store=store) as tx:
+        for rel, data in args["writes"]:
+            try:
+                tx.write(rel, bytes.fromhex(data))
+            except guard.GuardError:
+                pass
+    sys.stdout.write("survived\n")
+    sys.exit(3)
+
+# mode "die-at-snapshot": killed the moment the pre-write snapshot starts to land.
+landing = [os.path.realpath(store / "objects"), os.path.realpath(store / "manifests")]
+
+
+def fd_path(fd):
+    """The directory an open descriptor names, or None where it cannot be told."""
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")  # Linux
+    except OSError:
+        pass
+    try:
+        import fcntl
+
+        got = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH"), b"\0" * 1024)  # macOS
+        return os.fsdecode(got.split(b"\0", 1)[0])
+    except (ImportError, AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def lands(path, dir_fd=None):
+    if isinstance(path, int):
+        return False
+    try:
+        name = os.fsdecode(path)
+        if dir_fd is not None and not os.path.isabs(name):
+            base = fd_path(dir_fd)
+            if base is None:
+                return False
+            name = os.path.join(base, name)
+        where = os.path.realpath(name)
+    except (TypeError, ValueError):
+        return False
+    return any(where == d or where.startswith(d + os.sep) for d in landing)
+
+
+def die(*a, **k):
+    os._exit(19)
+
+
+for name in ("create", "add_snapshot", "put_object"):
+    setattr(snapshot.SnapshotStore, name, die)
+
+# The store decides at import whether it writes through descriptors (POSIX)
+# or by path (Windows). Path writes are what the file-level seam sees on every
+# platform, so the store is made to use them here; the seam also resolves a
+# `dir_fd` / `dst_dir_fd` it is handed, as a second net.
+snapshot._WRITE_BY_DIR_FD = False
+
+real_os_open = os.open
+real_open = builtins.open
+WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+
+def os_open(path, flags, *a, **k):
+    if flags & WRITE_FLAGS and lands(path, k.get("dir_fd")):
+        die()
+    return real_os_open(path, flags, *a, **k)
+
+
+def py_open(file, mode="r", *a, **k):
+    if any(c in mode for c in "wax+") and lands(file):
+        die()
+    return real_open(file, mode, *a, **k)
+
+
+def moving_in(real):
+    def call(src, dst, *a, **k):
+        if lands(dst, k.get("dst_dir_fd")):
+            die()
+        return real(src, dst, *a, **k)
+
+    return call
+
+
+os.open = os_open
+builtins.open = py_open
+io.open = py_open
+os.replace = moving_in(os.replace)
+os.rename = moving_in(os.rename)
+os.link = moving_in(os.link)
+
+if args["route"] == "transaction":
+    with guard.transaction(flavor, label="killed-at-snapshot", store=store) as tx:
+        tx.write(args["write"][0], bytes.fromhex(args["write"][1]))
+else:
+    guard.undo(store=store)
+sys.stdout.write("survived\n")
+sys.exit(3)
+'''
+
+
+# ─── helpers ─────────────────────────────────────────────────────────────────
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def tree(root: Path) -> dict[str, bytes]:
+    """Every file under the install root with its bytes."""
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and not p.is_symlink()
+    }
+
+
+def listing(directory: Path) -> set[str]:
+    return {p.name for p in directory.iterdir()}
+
+
+def manifest_ids(store: Path) -> set[str]:
+    return {m.id for m in SnapshotStore(store).list()}
+
+
+def child(tmp_path: Path, user_data: Path, **args: Any) -> subprocess.CompletedProcess[str]:
+    script = tmp_path / "m16_93t_crash_child.py"
+    if not script.exists():
+        script.write_text(CRASH_SCRIPT, encoding="utf-8")
+    args["user_data"] = str(user_data)
+    return subprocess.run(
+        [sys.executable, str(script), json.dumps(args)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=CHILD_TIMEOUT,
+        check=False,
+    )
+
+
+def locks_released(flavor: Path, store: Path) -> None:
+    """On Windows the system may take a moment to drop a dead process's locks
+    (LockFileEx documentation); POSIX drops them with the process. A dry run
+    takes the same locks and writes nothing in the install."""
+    if sys.platform != "win32":
+        return
+    ns = SimpleNamespace(path=flavor, version=None)
+    deadline = time.monotonic() + 30.0
+    while True:
+        try:
+            with guard.transaction(ns, label="probe", store=store, dry_run=True):
+                return
+        except guard.GuardBusyError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+
+
+@dataclass(frozen=True)
+class Crashed:
+    root: Path
+    flavor: Path
+    store: Path
+    temps: dict[str, bytes]
+    """Flavor-relative path of each leftover temp, and its bytes."""
+    dead_id: str
+    """The change killed mid-write that left the temps."""
+    record: Any
+    """The record of the change killed between the cleanup and the snapshot."""
+    before: dict[str, bytes]
+    """The install right before the killed change, temps included."""
+    manifests: set[str]
+    """The snapshots the store held right before the killed change."""
+
+
+def leave_two_temps(tmp_path: Path, user_data: Path, flavor: Path, store: Path) -> dict[str, bytes]:
+    """A real transaction strands one temp (rename refused, unlink ignored)
+    and dies inside the rename of the second: two leftover temps."""
+    sv_dir = flavor / Path(SYNDICATOR).parent
+    wtf_dir = flavor / Path(CONFIG).parent
+    sv_before, wtf_before = listing(sv_dir), listing(wtf_dir)
+    config_bytes = (flavor / CONFIG).read_bytes()
+    syndicator_bytes = (flavor / SYNDICATOR).read_bytes()
+    died = child(
+        tmp_path,
+        user_data,
+        mode="die-in-rename",
+        writes=[[SYNDICATOR, STRANDED_BYTES.hex()], [CONFIG, DYING_BYTES.hex()]],
+        strand=[Path(SYNDICATOR).name],
+        die_on=Path(CONFIG).name,
+        flavor=str(flavor),
+        store=str(store),
+    )
+    assert died.returncode == DIED_IN_RENAME, died.stderr[-4000:]
+    locks_released(flavor, store)
+    (a,) = listing(sv_dir) - sv_before
+    (b,) = listing(wtf_dir) - wtf_before
+    for name in (a, b):
+        assert TEMP_NAME.fullmatch(name), f"guard's temp name {name!r} is §6.10's pattern"
+    assert (flavor / CONFIG).read_bytes() == config_bytes, "the death came before the rename"
+    assert (flavor / SYNDICATOR).read_bytes() == syndicator_bytes, "the stranded rename was refused"
+    rels = (f"{Path(SYNDICATOR).parent.as_posix()}/{a}", f"{Path(CONFIG).parent.as_posix()}/{b}")
+    temps = {rel: (flavor / rel).read_bytes() for rel in rels}
+    assert temps[rels[0]] == STRANDED_BYTES and temps[rels[1]] == DYING_BYTES
+    return temps
+
+
+def kill_between_cleanup_and_snapshot(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> Crashed:
+    """Leave two temps, then kill the next enter (by `route`) at its snapshot,
+    and check what the journal and the install hold afterwards."""
+    store = snapshot.default_store_path()
+    temps = leave_two_temps(tmp_path, user_data, flavor, store)
+    dead = guard.history(store=store)[-1]
+    assert dead.label == "child-died" and dead.state == "open", "positive control"
+    manifests = manifest_ids(store)
+    assert manifests, "positive control: the dead change's own pre-write snapshot is stored"
+    # Constructed: the player's file changes outside guard, as the client
+    # writes at logout, so no stored snapshot matches the install any more and
+    # a stale restore would show in the bytes.
+    (flavor / CONFIG).write_bytes(PLAYER_BYTES)
+    for manifest in SnapshotStore(store).list():
+        held = [e for e in manifest.entries if e.path.endswith("/" + CONFIG)]
+        assert held and all(e.sha256 != sha(PLAYER_BYTES) for e in held), (
+            f"positive control: snapshot {manifest.id} holds an older {CONFIG}"
+        )
+    before = tree(root)
+
+    killed = child(
+        tmp_path,
+        user_data,
+        mode="die-at-snapshot",
+        route=route,
+        write=[CONFIG, CRASHED_BYTES.hex()],
+        flavor=str(flavor),
+        store=str(store),
+    )
+    assert killed.returncode == DIED_AT_SNAPSHOT, (
+        "the second child dies at its pre-write snapshot",
+        killed.stdout,
+        killed.stderr[-4000:],
+    )
+    locks_released(flavor, store)
+
+    # Cleaning first: the record exists before its snapshot does.
+    record = guard.history(store=store)[-1]
+    assert record.id != dead.id, "the killed enter journaled a record of its own before it died"
+    assert record.state == "open", "killed: the record was never closed"
+    assert set(record.temps_removed) == set(temps), "the cleanup ran, and is journaled"
+    assert record.temps_left == ()
+    assert record.paths == () and record.created_dirs == (), "no player file was touched"
+    for rel in temps:
+        assert not (flavor / rel).exists(), f"the cleanup removed {rel} before the kill"
+    assert manifest_ids(store) == manifests, "the kill came before any snapshot landed"
+    assert record.snapshot_id not in manifests, "the record names no snapshot the store holds"
+
+    expected = {k: v for k, v in before.items() if k not in {f"{flavor.name}/{r}" for r in temps}}
+    assert len(expected) == len(before) - len(temps), "positive control: the temps were in it"
+    assert tree(root) == expected, "the killed change touched no player file"
+    return Crashed(root, flavor, store, temps, dead.id, record, before, manifests)
+
+
+def assert_no_manifest_holds_a_removed_temp(c: Crashed) -> None:
+    removed = {sha(data) for data in c.temps.values()}
+    for manifest in SnapshotStore(c.store).list():
+        for entry in manifest.entries:
+            assert not any(
+                entry.path == rel or entry.path.endswith("/" + rel) for rel in c.temps
+            ), f"snapshot {manifest.id} holds the removed temp {entry.path}"
+            assert entry.sha256 not in removed, (
+                f"snapshot {manifest.id} holds a removed temp's bytes as {entry.path}"
+            )
+
+
+def assert_closed_without_restoring(c: Crashed, now: dict[str, bytes]) -> None:
+    """After an undo of the killed record: nothing restored, no temp back, the
+    record no longer the open most recent one."""
+    assert tree(c.root) == now, "undo restored nothing: every file's bytes are as before it"
+    for rel in c.temps:
+        assert not (c.flavor / rel).exists(), f"the removed temp {rel} is not brought back"
+    assert_no_manifest_holds_a_removed_temp(c)
+
+    records = guard.history(store=c.store)
+    ids = [r.id for r in records]
+    assert c.record.id in ids and c.dead_id in ids, "the journal only grows"
+    killed = records[ids.index(c.record.id)]
+    assert killed.paths == () and killed.created_dirs == (), (
+        "the killed record, read again after the undo, still names no path"
+    )
+    assert (c.flavor / CONFIG).read_bytes() == PLAYER_BYTES, "the player's later bytes stay"
+    assert records[-1].state != "open", "undo closed the killed record"
+    for later in records[ids.index(c.record.id) + 1 :]:
+        assert later.paths == () and later.created_dirs == (), (
+            f"record {later.id} after the killed one restores nothing"
+        )
+        assert later.state != "open"
+        assert not set(later.temps_removed) & set(c.temps), (
+            "a removed temp is gone, not removed again"
+        )
+
+
+def problem_naming(report: dict[str, Any], record_id: str) -> str:
+    line = f"wowlab undo --expect {record_id}"
+    found = [p for p in report["problems"] if line in p]
+    assert len(found) == 1, (line, report["problems"])
+    return str(found[0])
+
+
+# ─── the journal after the kill ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_a_kill_between_cleanup_and_snapshot_leaves_a_record_that_touched_nothing(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """The record is `open`, journals both removals, names no stored
+    snapshot and no path; the install differs only by the removed temps, and
+    no snapshot in the store holds one."""
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    assert_no_manifest_holds_a_removed_temp(c)
+
+
+# ─── undo closes it without restoring anything ───────────────────────────────
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anything(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    now = tree(c.root)
+
+    guard.undo(store=c.store, expected_id=c.record.id)
+
+    assert_closed_without_restoring(c, now)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """The line `doctor` prints, run with `--yes`: exit 0, an empty plan,
+    nothing restored, no temp back; `doctor` afterwards exit 0, no problem."""
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    now = tree(c.root)
+
+    result = run("undo", "--expect", c.record.id, "--yes", "--json")
+
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    report = json.loads(result.stdout)
+    assert report["undone"] == c.record.id
+    assert report["plan"] == [] and report["created_dirs"] == [], "nothing to restore"
+    assert_closed_without_restoring(c, now)
+
+    after = run("doctor", "--json")
+    assert after.exit_code == 0, after.stdout
+    assert not json.loads(after.stdout)["problems"]
+    text = run("doctor")
+    assert text.exit_code == 0, text.stdout
+    assert "Problems:" not in text.stdout
+
+
+# ─── doctor says the change stopped before it touched anything ───────────────
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_doctor_tells_a_change_killed_before_its_snapshot_from_one_killed_mid_write(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """Both are an `open` most recent record: exit 1 and the exact undo line
+    (2026-11-10 (c)). The killed-before-snapshot one is reported differently
+    (2026-11-11 (a): it stopped before it touched anything); its wording is
+    not pinned, only that it is not the mid-write problem with the id
+    swapped. `doctor` writes nothing."""
+    store = snapshot.default_store_path()
+    leave_two_temps(tmp_path, user_data, flavor, store)
+    dead = guard.history(store=store)[-1]
+    mid = run("doctor", "--json")
+    assert mid.exit_code == 1, mid.stdout
+    mid_write = problem_naming(json.loads(mid.stdout), dead.id)
+
+    killed = child(
+        tmp_path,
+        user_data,
+        mode="die-at-snapshot",
+        route=route,
+        write=[CONFIG, CRASHED_BYTES.hex()],
+        flavor=str(flavor),
+        store=str(store),
+    )
+    assert killed.returncode == DIED_AT_SNAPSHOT, killed.stderr[-4000:]
+    locks_released(flavor, store)
+    record = guard.history(store=store)[-1]
+    assert record.id != dead.id and record.state == "open"
+    assert record.temps_removed, "the cleanup ran before the kill"
+    assert record.snapshot_id not in manifest_ids(store)
+
+    install_before = tree(root)
+    journal_before = [(r.id, r.state) for r in guard.history(store=store)]
+    manifests_before = manifest_ids(store)
+
+    data = run("doctor", "--json")
+    text = run("doctor")
+
+    assert data.exit_code == 1, data.stdout
+    assert text.exit_code == 1, text.stdout
+    report = json.loads(data.stdout)
+    assert report["store"]["last_transaction"]["state"] == "open"
+    stopped = problem_naming(report, record.id)
+    line = f"wowlab undo --expect {record.id}"
+    assert line in text.stdout.split("Problems:\n", 1)[-1]
+    assert stopped.replace(record.id, "<id>") != mid_write.replace(dead.id, "<id>"), (
+        "doctor tells a change that stopped before it touched anything from one killed "
+        "mid-write, which may have changed some files"
+    )
+
+    assert tree(root) == install_before, "doctor writes nothing in the install"
+    assert [(r.id, r.state) for r in guard.history(store=store)] == journal_before
+    assert manifest_ids(store) == manifests_before
