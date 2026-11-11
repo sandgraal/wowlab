@@ -95,13 +95,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # uv and the install run on a docs-only PR too: its bidi step below
+      # needs pytest (M16-89).
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       - name: Install
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv sync --frozen
       - name: Lua lint (selene, lab/addon)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
@@ -133,9 +133,16 @@ jobs:
       - name: wowlab --version
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen wowlab --version
-      - name: Doc-only PR — skipped
+      # A docs-only PR skips the suite, and with it the bidi scan, which reads
+      # every tracked file, docs included (M16-89). This runs that one file,
+      # so a doc cannot gain a bidi control until the next code PR. The full
+      # suite above runs it on every other PR.
+      - name: Doc-only PR — bidi controls
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
-        run: echo "doc-only PR — suite skipped"
+        run: uv run --frozen pytest -q tests/repo/test_bidi_controls.py
+      - name: Doc-only PR — suite skipped
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
+        run: echo "doc-only PR — suite skipped (bidi controls checked above)"
 
   parser-suite:
     name: Parser fixtures and round-trip
