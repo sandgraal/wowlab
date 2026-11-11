@@ -3,10 +3,13 @@
 `Logs/WoWCombatLog.txt` has its own row as a file (`combat-log`) and, as a
 folder, only the general row of the folder above it (`logs-other`, which
 hangs from `Logs`). M16-80 said "real one" for every pair of different rows;
-the link stands in place of a file, so the note says "real file". Where one
+the link stands in place of a file, so the note says "real file". The same
+holds for the diagnostic logs (`Logs/*.log`) and for the cache files with
+their own rows under `Cache/`'s general row (`cache-other`):
+`Cache/ADB/<locale>/DBCache.bin` and `Cache/WDB/<locale>/*.wdb`. Where one
 row covers files and folders alike below its folder (`Fonts/`, an addon's
-folder, the rest of `Logs/`), the note still says "real one", as M16-80
-ruled.
+folder, the rest of `Logs/` and `Cache/`), the note still says "real one",
+as M16-80 ruled.
 
 Constructed (L8, boundary): the unit cases classify places that do not exist
 on disk. The end-to-end run copies the captured tree (`fixtures/macos/`)
@@ -50,10 +53,13 @@ def flavor_tree(tmp_path: Path) -> layout.Layout:
             "Logs/WoWCombatLog-040126_021630.txt", "file", id="constructed-dated-combat-log"
         ),
         pytest.param("Logs/Client.log", "file", id="constructed-diagnostic-log"),
+        pytest.param("Cache/ADB/enUS/DBCache.bin", "file", id="constructed-hotfix-cache"),
+        pytest.param("Cache/WDB/enUS/creaturecache.wdb", "file", id="constructed-wdb-cache"),
         # Unchanged from M16-80: the folder the general row hangs from, and
         # one row for both kinds below it.
         pytest.param("Logs", "folder", id="constructed-logs-folder"),
         pytest.param("Logs/constructed.dat", "one", id="constructed-other-log"),
+        pytest.param("Cache/WDB/enUS", "one", id="constructed-wdb-locale-folder"),
         pytest.param("Fonts/FRIZQT__.TTF", "one", id="constructed-font-file"),
         pytest.param(
             "Interface/AddOns/Constructed/Constructed.toc", "one", id="constructed-addon-toc"

@@ -2740,7 +2740,10 @@ def _link_stands_for(
     subtree hangs from (`Fonts`, `Interface/AddOns/<addon>`). "file", too,
     where a file there has its own row and a folder there only the general
     row of a folder above it (`Logs/WoWCombatLog.txt`: `combat-log` as a
-    file, `logs-other`, which hangs from `Logs`, as a folder; M16-91).
+    file, `logs-other`, which hangs from `Logs`, as a folder; likewise
+    `Logs/*.log`, and `Cache/ADB/<locale>/DBCache.bin` and
+    `Cache/WDB/<locale>/*.wdb` under `cache-other`, which hangs from
+    `Cache`; M16-91).
     Otherwise, one row for both kinds below that folder (a font file, an
     addon's `.toc`), other different rows, or none: "one", which says
     neither."""
