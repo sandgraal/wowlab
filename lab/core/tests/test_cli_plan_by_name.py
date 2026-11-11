@@ -407,6 +407,23 @@ def test_profile_apply_plan_recreating_a_cache_file_has_the_login_caveat(
     assert profiles.LOGIN_NOTE in report.plan_lines
 
 
+def test_profile_apply_that_writes_prints_the_login_note_once_before_the_prompt(
+    root: Path, flavor: Path
+) -> None:
+    """The plan carries the login note; the result after the write does not
+    repeat it (M16-101)."""
+    ok("profile", "save", "chat", "--subtree", CHAT)
+    (flavor / CHAT).unlink()
+    applied = run("profile", "apply", "chat", input="y\n")
+    assert applied.exit_code == 0, (applied.stdout, applied.stderr)
+    assert "Apply these changes?" in _plain(applied.stderr)  # the prompt goes to stderr
+    lines = _plain(applied.stdout).splitlines()
+    assert lines.count(profiles.LOGIN_NOTE) == 1, lines
+    done = next(i for i, ln in enumerate(lines) if ln.startswith("Applied profile chat: "))
+    assert lines.index(profiles.LOGIN_NOTE) < done, lines  # in the plan, not the result
+    assert (flavor / CHAT).exists()
+
+
 def test_the_login_caveat_text() -> None:
     """Whether Config.wtf is read again at login or only at start is
     unconfirmed, so both notes say the next start for it; sync is named only for binds, macros and settings, and the rest
