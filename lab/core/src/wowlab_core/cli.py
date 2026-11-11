@@ -1995,7 +1995,7 @@ def _read_left(store: StoreReport, inst: install.Install | None) -> StoreReport:
         records = guard.history()
     except guard.GuardError:
         return store
-    target = guard.undo_target(records)
+    target = guard._undo_target(records)
     if target is None or target.id != t.id:
         return store
     left = _left_paths(target, inst)
@@ -2015,7 +2015,7 @@ def _store_report() -> StoreReport:
     else:
         transactions = len(records)
         # The change `undo` acts on (2026-11-11 (a1)), not always the newest.
-        r = guard.undo_target(records)
+        r = guard._undo_target(records)
         if r is not None:
             last = LastTransaction(
                 id=r.id,
@@ -2027,7 +2027,7 @@ def _store_report() -> StoreReport:
                 flavor_folder=Path(r.flavor_path).name,
                 paths_left=_left_paths(r, None),
                 snapshot_taken=bool(r.snapshot_id),
-                stopped_undos=[k.id for k in guard.stopped_undos(records)],
+                stopped_undos=[k.id for k in guard._stopped_undos(records)],
             )
     return StoreReport(
         path=str(store.path),
@@ -10375,7 +10375,7 @@ def undo(
     records = guard.history()
     # The undo target (2026-11-11 (a1)): the newest record that is not passed
     # over, so a closed undo that stopped before it changed any file is skipped.
-    target = guard.undo_target(records)
+    target = guard._undo_target(records)
     if expect is not None and (target is None or target.id != expect):
         # A record is only appended or closed, so a mismatch is final;
         # `guard.undo` makes the same compare again under its store lock, below.
@@ -10438,7 +10438,7 @@ def undo(
             _emit(report(applied=False))
         raise
     now = guard.history()
-    again = guard.undo_target(now)
+    again = guard._undo_target(now)
     if again is None or again.id != last.id:
         raise CliError(
             "the journal changed after the plan was shown; nothing was undone, run the "
@@ -10455,7 +10455,7 @@ def undo(
         if json_out:
             _emit(done)
             return
-        _say(_closed_unsnapshotted(last, guard.undo_target(after)))
+        _say(_closed_unsnapshotted(last, guard._undo_target(after)))
         return
     undone = after[-1]
     done = report(applied=True, transaction=undone.id, written=[p.path for p in undone.paths])

@@ -256,11 +256,9 @@ __all__ = [
     "PlanItem",
     "Target",
     "history",
-    "stopped_undos",
     "store_lock",
     "transaction",
     "undo",
-    "undo_target",
 ]
 
 _log = logging.getLogger(__name__)
@@ -695,7 +693,7 @@ def _target_index(records: Sequence[_JournalRecord | HistoryRecord]) -> int | No
     return None
 
 
-def undo_target(records: Sequence[HistoryRecord]) -> HistoryRecord | None:
+def _undo_target(records: Sequence[HistoryRecord]) -> HistoryRecord | None:
     """The record `undo()` acts on, from `history()`: the newest one that is
     not passed over (§6.10 as amended 2026-11-11, (a1)); None when there is
     none."""
@@ -703,7 +701,7 @@ def undo_target(records: Sequence[HistoryRecord]) -> HistoryRecord | None:
     return None if i is None else records[i]
 
 
-def stopped_undos(records: Sequence[HistoryRecord]) -> tuple[HistoryRecord, ...]:
+def _stopped_undos(records: Sequence[HistoryRecord]) -> tuple[HistoryRecord, ...]:
     """The passed-over undo records newer than the undo target that never
     took a snapshot: undos killed between their cleanup and their snapshot
     (or whose snapshot failed), each closed with no file changed. Oldest
@@ -3177,7 +3175,7 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
     """Undo the undo target, as a transaction of its own.
 
     The target is the newest record that is not passed over (§6.10 as
-    amended 2026-11-11, (a1); `undo_target`): a closed undo that never took
+    amended 2026-11-11, (a1); `_undo_target`): a closed undo that never took
     its snapshot, and a closed record that only closes one, are skipped.
     Only the paths the target journaled are restored, from its pre-write
     snapshot. A target that never took its snapshot changed no player file:
