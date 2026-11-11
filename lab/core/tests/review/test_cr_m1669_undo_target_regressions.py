@@ -19,7 +19,7 @@ holds in its positive control.
    it. `doctor` keeps offering the same undo line. Positive control: the
    same undo without the move.
 
-3. `doctor`'s problem for an `open` record that never took a snapshot says
+3. `doctor`'s problem (read through `cli._doctor`, round 2) for an `open` record that never took a snapshot says
    "it only removed temporary files an earlier change left behind" even
    when the record removed none (`temps_removed` empty). Positive control:
    a real leftover at the earlier record's temp path, which the killed
@@ -149,7 +149,7 @@ def test_doctor_says_temps_were_removed_only_when_they_were(
 ) -> None:
     from wowlab_core import cli
 
-    store = tmp_path / "store"
+    store = snapmod.default_store_path()  # `doctor` reads the default store
     with guard.transaction(flavor, label="t1", store=store) as tx:
         tx.write(CONFIG, b"constructed: t1\n")
     t1 = guard.history(store=store)[-1]
@@ -172,6 +172,10 @@ def test_doctor_says_temps_were_removed_only_when_they_were(
     assert k.state == "open" and not k.snapshot_id, "killed between cleanup and snapshot"
     assert bool(k.temps_removed) == leftover, "positive control: what the cleanup removed"
 
-    words = cli._stopped_before_any_file(k.id)
+    # Through `doctor` itself (round 2): the problem it reports for the record,
+    # read from the default store under the redirected user data directory.
+    report = cli._doctor(flavor.path.parent, False)
+    (words,) = [p for p in report.problems if k.id in p]
+    assert words.endswith(f"wowlab undo --expect {k.id}"), words
     claims = "removed temporary files" in words
     assert claims == bool(k.temps_removed), words
