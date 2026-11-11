@@ -5022,7 +5022,22 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      binds, macros and account or character settings at login when their
      sync setting is on; and that which other `*-cache` files it may
      replace, and under which setting, is not yet known. `profile apply`'s
-     own login note says the same of `Config.wtf`. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     own login note says the same of `Config.wtf`. *Amended 2026-11-11
+     (M16-103):* both notes now lead with the files the plan lists, by the
+     same rule (`Config.wtf` or a `*-cache` file under `WTF/`, not in a
+     SavedVariables folder). When only `*-cache` files are listed, the
+     caveat says the client reads them at login and the server may replace
+     them, and says nothing of `Config.wtf`. When only `Config.wtf` is
+     listed, it keeps only the restart sentence (the client reads it again
+     the next time it starts) and drops the server-sync sentence, since
+     `Config.wtf` is not synced. When both are listed, it keeps both
+     sentences, as above. `profile apply`'s note, shown for every non-empty
+     apply plan, follows the same three cases; when neither is listed (a
+     SavedVariables-only or `AddOns.txt`-only apply) it keeps only that the
+     result is proven by starting the client and logging in, naming neither
+     `Config.wtf` nor sync. No note states when `Config.wtf` is read beyond
+     the next start (`docs/LAB_FILE_MAP.md`, its timing rules, **[verify]**).
+     `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
      `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
      text output), line by line as the terminal shows it (escaped), for the
      UI's confirm step (EV-20). Additive only.

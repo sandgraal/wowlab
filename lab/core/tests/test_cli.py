@@ -1454,7 +1454,7 @@ def test_restore_json_carries_the_plan_and_the_result(root: Path, flavor: Path) 
     done = _json(cli.RestoreReport, "snap", "restore", a.id, "--yes")
     assert done.applied and done.plan == dry.plan
     assert done.transaction == guard.history()[-1].id
-    assert done.notes == [cli._RELOGIN], "Config.wtf was touched"
+    assert done.notes == [cli._RESTART], "Config.wtf was touched, and no *-cache file"
     text_undo = _json(cli.UndoReport, "undo", "--yes")
     assert text_undo.applied and text_undo.undone == done.transaction
     assert {p.path for p in text_undo.plan} == {SYNDICATOR, "WTF/Config.wtf"}
