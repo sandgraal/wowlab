@@ -446,6 +446,15 @@ one reads "<folder> is a link; wowlab does not read through links, so it
 reads this only when the real folder is there. Nothing in it is listed."
 `install.NotTaken.note`, `doctor` and the other "not followed" tags are
 unchanged.
+*Amended 2026-11-11 (M16-91):* one case of "different rows for each" now
+says "real file": a file at the link's place has its own row, and the row a
+folder there would get is a different one whose `**` subtree hangs from a
+folder strictly above the place, never from the place itself (the general
+row of the area). This covers `Logs/WoWCombatLog*.txt` and `Logs/*.log`
+(under `Logs/**`), and `Cache/ADB/<locale>/DBCache.bin` and
+`Cache/WDB/<locale>/*.wdb` (under `Cache/**`). Other pairs of different
+rows, and one row for both kinds below the folder it hangs from, still say
+"real one".
 
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
