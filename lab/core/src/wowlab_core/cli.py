@@ -8660,9 +8660,18 @@ def snap_import(
     )
 
 
+# Whether the client reads Config.wtf again at login, or only when it
+# starts, is unconfirmed, so the note says the next start; the other files
+# are read at login. The
+# three sync CVars `doctor` shows cover binds, macros and settings; which
+# other *-cache files the server replaces, and under which setting, is
+# unconfirmed (docs/LAB_FILE_MAP.md, its server sync note), so the note
+# says so (M16-97).
 _RELOGIN = (
-    "The client reads these files at its next login; with server sync on (see wowlab "
-    "doctor), the server may replace binds, macros, settings and other *-cache files then."
+    "The next time you start the client, it reads Config.wtf again; it reads the other "
+    "files at login. The server may replace binds, macros and account or character "
+    "settings at login when their sync setting is on (see wowlab doctor); it may also "
+    "replace other *-cache files then, and under which setting is not yet known."
 )
 
 
@@ -8671,9 +8680,15 @@ def _version(version: str | None) -> str:
 
 
 def _relogin_notes(paths: Sequence[str]) -> list[str]:
-    """The login caveat, when a change touches Config.wtf or a *-cache file."""
+    """The login caveat, when a change touches Config.wtf or a *-cache file
+    under `WTF/` (paths relative to the flavor folder). A file in a
+    SavedVariables folder, or outside `WTF/` (an addon's own file), is
+    neither, whatever its name (M16-97)."""
     for path in paths:
-        name = path.rsplit("/", 1)[-1].casefold()
+        parts = [p.casefold() for p in path.replace("\\", "/").split("/")]
+        if parts[0] != "wtf" or "savedvariables" in parts[:-1]:
+            continue
+        name = parts[-1]
         if name == "config.wtf" or "-cache" in name:
             return [_RELOGIN]
     return []
@@ -8726,13 +8741,14 @@ _SCOPE_LINE = (
 
 
 def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
-    """The lines a plan ends with before the prompt when it named a key,
-    macro or CVar change (`named`: a bindings, macros or CVar file got
-    detail lines): the scope line, and the login caveat when a path in it
-    is one the caveat is about. A SavedVariables-only plan gets neither."""
-    if not named:
-        return []
-    return [_SCOPE_LINE, *_relogin_notes(paths)]
+    """The lines a plan ends with before the prompt: the scope line when it
+    named a key, macro or CVar change (`named`: a bindings, macros or CVar
+    file got detail lines), and the login caveat whenever a listed path is
+    one the caveat is about, with or without detail lines under it (a file
+    wowlab cannot read, a delete or a recreate; M16-97). A
+    SavedVariables-only plan gets neither."""
+    scope = [_SCOPE_LINE] if named else []
+    return [*scope, *_relogin_notes(paths)]
 
 
 def _value_text(value: str | None, *, cvar: bool) -> str:
