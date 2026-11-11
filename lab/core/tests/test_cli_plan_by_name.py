@@ -175,7 +175,7 @@ def test_restore_plan_then_undo_plan_name_the_changes_constructed(root: Path, fl
     assert cvars[-1] == "      ... and 31 more (snap diff lists them all)"
 
     # Once per plan, before the prompt: the scope line and the login caveat.
-    assert out[-3:-1] == [SCOPE, cli._RELOGIN]
+    assert out[-3:-1] == [SCOPE, cli._RESTART_RELOGIN]  # Config.wtf and *-cache files
     assert out.count(SCOPE) == 1
 
     plan = _json(cli.RestoreReport, "snap", "restore", a.id, "--dry-run")
@@ -191,7 +191,7 @@ def test_restore_plan_then_undo_plan_name_the_changes_constructed(root: Path, fl
     assert _under(lines, MACROS) == [MACRO_ADDED]
     assert _under(lines, GLOBAL) == [GLOBAL_CVAR]
     assert CHANGED_SINCE not in lines  # the disk holds what the restore wrote
-    assert lines[-3:-1] == [SCOPE, cli._RELOGIN]  # then the echoed answer
+    assert lines[-3:-1] == [SCOPE, cli._RESTART_RELOGIN]  # then the echoed answer
     report = cli.UndoReport.model_validate_json(ok("undo", "--json", "--yes").stdout)
     assert report.applied
     assert report.plan_lines == lines[: len(report.plan_lines)]
@@ -303,7 +303,7 @@ def test_undo_yes_says_the_login_caveat_once_constructed(root: Path, flavor: Pat
     _change_wtf(flavor)
     ok("snap", "restore", a.id, "--yes")
     out = _plain(ok("undo", "--yes").stdout)
-    assert out.count(cli._RELOGIN) == 1, out
+    assert out.count(cli._RESTART_RELOGIN) == 1, out
     assert out.count(SCOPE) == 1, out
 
 
@@ -426,20 +426,167 @@ def test_profile_apply_that_writes_prints_the_login_note_once_before_the_prompt(
 
 def test_the_login_caveat_text() -> None:
     """Whether Config.wtf is read again at login or only at start is
-    unconfirmed, so both notes say the next start for it; sync is named only for binds, macros and settings, and the rest
-    is said to be not yet known. `profile apply`'s own note follows the
-    same rule for Config.wtf."""
+    unconfirmed, so both notes say the next start for it; sync is named only
+    for binds, macros and settings, and the rest is said to be not yet known.
+    `profile apply`'s own note follows the same rule for Config.wtf. Each
+    note names only the files the plan lists (M16-103): Config.wtf only when
+    it is listed, the server only when a *-cache file is."""
     assert cli._RELOGIN == (
+        "The client reads the *-cache files at login. The server may replace binds, macros "
+        "and account or character settings at login when their sync setting is on (see "
+        "wowlab doctor); it may also replace other *-cache files then, and under which "
+        "setting is not yet known."
+    )
+    assert cli._RESTART == "The next time you start the client, it reads Config.wtf again."
+    assert cli._RESTART_RELOGIN == (
         "The next time you start the client, it reads Config.wtf again; it reads the other "
         "files at login. The server may replace binds, macros and account or character "
         "settings at login when their sync setting is on (see wowlab doctor); it may also "
         "replace other *-cache files then, and under which setting is not yet known."
     )
     assert profiles.LOGIN_NOTE == (
+        "The result is proven only by starting the client and logging in: it reads the "
+        "*-cache files at login, and the server may replace them then."
+    )
+    assert profiles.LOGIN_NOTE_CONFIG == (
+        "The result is proven only by starting the client and logging in: it reads Config.wtf "
+        "again the next time you start it."
+    )
+    assert profiles.LOGIN_NOTE_BOTH == (
         "The result is proven only by starting the client and logging in: it reads Config.wtf "
         "again the next time you start it and the other files at login, and the server may "
         "replace *-cache files at login."
     )
+    assert profiles.LOGIN_NOTE_PLAIN == (
+        "The result is proven only by starting the client and logging in."
+    )
+    for cache_only in (cli._RELOGIN, profiles.LOGIN_NOTE):
+        assert "Config.wtf" not in cache_only
+    for config_only in (cli._RESTART, profiles.LOGIN_NOTE_CONFIG):
+        assert "server" not in config_only and "sync" not in config_only
+    assert "Config.wtf" not in profiles.LOGIN_NOTE_PLAIN
+    assert "server" not in profiles.LOGIN_NOTE_PLAIN and "sync" not in profiles.LOGIN_NOTE_PLAIN
+
+
+# ─── the login notes lead with the files listed (M16-103) ───────────────────
+#
+# Each set of listed files gets its own words: *-cache files only, Config.wtf
+# only, both, and (for `profile apply`'s note only) neither.
+
+CLI_CAVEATS = (cli._RELOGIN, cli._RESTART, cli._RESTART_RELOGIN)
+APPLY_NOTES = (
+    profiles.LOGIN_NOTE,
+    profiles.LOGIN_NOTE_CONFIG,
+    profiles.LOGIN_NOTE_BOTH,
+    profiles.LOGIN_NOTE_PLAIN,
+)
+SYNDICATOR = f"WTF/Account/{ACCOUNT}/SavedVariables/Syndicator.lua"
+
+
+def test_each_set_of_listed_files_picks_its_own_words() -> None:
+    sets = {
+        "cache": ([CHAT, BINDINGS, LAB_SV], [cli._RELOGIN], profiles.LOGIN_NOTE),
+        "config": ([GLOBAL, LAB_SV], [cli._RESTART], profiles.LOGIN_NOTE_CONFIG),
+        "both": ([CHAT, GLOBAL], [cli._RESTART_RELOGIN], profiles.LOGIN_NOTE_BOTH),
+        "neither": ([LAB_SV, "Interface/AddOns/X/Foo-Cache.lua"], [], profiles.LOGIN_NOTE_PLAIN),
+    }
+    for name, (paths, caveat, note) in sets.items():
+        assert cli._relogin_notes(paths) == caveat, name
+        assert profiles.login_note(paths) == note, name
+        assert profiles.login_note(reversed(paths)) == note, name  # order does not matter
+    assert profiles.login_note([]) == profiles.LOGIN_NOTE_PLAIN
+    assert profiles.login_note(["wtf/CONFIG.WTF"]) == profiles.LOGIN_NOTE_CONFIG  # any case
+
+
+def _restore_plan(flavor: Path, *paths: str) -> tuple[list[str], str]:
+    """The restore plan after deleting `paths` (each listed as a create),
+    and the snapshot's id."""
+    a = _snapshot()
+    for path in paths:
+        (flavor / path).unlink()
+    out = _plain(ok("snap", "restore", a.id, "--dry-run").stdout).splitlines()
+    for path in paths:
+        assert any(ln.startswith("  create") and ln.split("  (")[0].endswith(path) for ln in out)
+    return out, a.id
+
+
+def test_restore_plan_of_cache_files_only_names_no_config_wtf(root: Path, flavor: Path) -> None:
+    out, _ = _restore_plan(flavor, CHAT)
+    assert [ln for ln in out if ln in CLI_CAVEATS] == [cli._RELOGIN], out
+    assert not any("Config.wtf" in ln for ln in out), out
+
+
+def test_restore_plan_of_config_wtf_only_names_no_server_sync(root: Path, flavor: Path) -> None:
+    out, snap = _restore_plan(flavor, GLOBAL)
+    assert [ln for ln in out if ln in CLI_CAVEATS] == [cli._RESTART], out
+    assert not any("sync" in ln for ln in out), out
+    report = _json(cli.RestoreReport, "snap", "restore", snap, "--yes")
+    assert report.notes == [cli._RESTART]
+
+
+def test_restore_plan_of_both_keeps_both_sentences(root: Path, flavor: Path) -> None:
+    out, snap = _restore_plan(flavor, GLOBAL, CHAT)
+    assert [ln for ln in out if ln in CLI_CAVEATS] == [cli._RESTART_RELOGIN], out
+    report = _json(cli.RestoreReport, "snap", "restore", snap, "--yes")
+    assert report.notes == [cli._RESTART_RELOGIN]
+
+
+def test_undo_of_config_wtf_only_says_restart_in_plan_and_result(root: Path, flavor: Path) -> None:
+    a = _snapshot()
+    (flavor / GLOBAL).unlink()
+    ok("snap", "restore", a.id, "--yes")
+    lines = _plain(run("undo", input="n\n").stdout).splitlines()
+    assert [ln for ln in lines if ln in CLI_CAVEATS] == [cli._RESTART], lines
+    done = _json(cli.UndoReport, "undo", "--yes")
+    assert done.notes == [cli._RESTART]
+    assert [ln for ln in done.plan_lines if ln in CLI_CAVEATS] == [cli._RESTART]
+
+
+def _apply_plan(flavor: Path, *paths: str) -> tuple[list[str], cli.ProfileApplyReport]:
+    """`profile apply --dry-run` of a profile of `paths`, each deleted since."""
+    ok("profile", "save", "set", *(a for p in paths for a in ("--subtree", p)))
+    for path in paths:
+        (flavor / path).unlink()
+    out = _plain(ok("profile", "apply", "set", "--dry-run").stdout).splitlines()
+    for path in paths:
+        assert any(ln.startswith("  create") and ln.split("  (")[0].endswith(path) for ln in out)
+    report = _json(cli.ProfileApplyReport, "profile", "apply", "set", "--dry-run")
+    return out, report
+
+
+def _apply_notes(lines: typing.Iterable[str]) -> list[str]:
+    return [ln for ln in lines if ln in APPLY_NOTES]
+
+
+def test_profile_apply_of_cache_files_only_names_no_config_wtf(root: Path, flavor: Path) -> None:
+    out, report = _apply_plan(flavor, CHAT)
+    assert _apply_notes(out) == [profiles.LOGIN_NOTE], out
+    assert _apply_notes(report.plan_lines) == _apply_notes(report.notes) == [profiles.LOGIN_NOTE]
+    assert not any("Config.wtf" in ln for ln in out), out
+
+
+def test_profile_apply_of_config_wtf_only_names_no_server_sync(root: Path, flavor: Path) -> None:
+    out, report = _apply_plan(flavor, GLOBAL)
+    assert _apply_notes(out) == [profiles.LOGIN_NOTE_CONFIG], out
+    assert _apply_notes(report.plan_lines) == [profiles.LOGIN_NOTE_CONFIG]
+    assert _apply_notes(report.notes) == [profiles.LOGIN_NOTE_CONFIG]
+
+
+def test_profile_apply_of_both_keeps_both_sentences(root: Path, flavor: Path) -> None:
+    out, report = _apply_plan(flavor, GLOBAL, CHAT)
+    assert _apply_notes(out) == [profiles.LOGIN_NOTE_BOTH], out
+    assert _apply_notes(report.plan_lines) == [profiles.LOGIN_NOTE_BOTH]
+    assert _apply_notes(report.notes) == [profiles.LOGIN_NOTE_BOTH]
+
+
+def test_profile_apply_of_neither_says_only_how_the_result_is_proven(
+    root: Path, flavor: Path
+) -> None:
+    out, report = _apply_plan(flavor, SYNDICATOR)
+    assert _apply_notes(out) == [profiles.LOGIN_NOTE_PLAIN], out
+    assert _apply_notes(report.plan_lines) == [profiles.LOGIN_NOTE_PLAIN]
+    assert _apply_notes(report.notes) == [profiles.LOGIN_NOTE_PLAIN]
+    assert not any("Config.wtf" in ln or "sync" in ln for ln in out), out
 
 
 def test_the_login_caveat_is_only_for_files_under_wtf_outside_saved_variables() -> None:
@@ -447,7 +594,7 @@ def test_the_login_caveat_is_only_for_files_under_wtf_outside_saved_variables() 
     assert cli._relogin_notes([f"{CHAR}/SavedVariables/Foo-Cache.lua"]) == []
     assert cli._relogin_notes([f"{ACC}/SavedVariables/Foo-Cache.lua"]) == []
     assert cli._relogin_notes(["Interface/AddOns/X/Config.wtf"]) == []
-    assert cli._relogin_notes([GLOBAL]) == [cli._RELOGIN]
+    assert cli._relogin_notes([GLOBAL]) == [cli._RESTART]
     assert cli._relogin_notes([CHAT]) == [cli._RELOGIN]
     assert cli._relogin_notes([BINDINGS.upper()]) == [cli._RELOGIN]  # any letter case
 

@@ -8660,14 +8660,22 @@ def snap_import(
     )
 
 
-# Whether the client reads Config.wtf again at login, or only when it
-# starts, is unconfirmed, so the note says the next start; the other files
-# are read at login. The
-# three sync CVars `doctor` shows cover binds, macros and settings; which
-# other *-cache files the server replaces, and under which setting, is
-# unconfirmed (docs/LAB_FILE_MAP.md, its server sync note), so the note
-# says so (M16-97).
+# The login caveat leads with the files the plan lists (M16-103). Whether
+# the client reads Config.wtf again at login, or only when it starts, is
+# unconfirmed, so the note ties it to the next start. The file map lists no
+# server replacement for Config.wtf (its row and the Timing rules; it holds
+# machine-scope settings), so its note names no server. The three sync CVars
+# `doctor` shows cover binds, macros and settings; which other *-cache files
+# the server replaces, and under which setting, is unconfirmed
+# (docs/LAB_FILE_MAP.md, its server sync note), so the note says so (M16-97).
 _RELOGIN = (
+    "The client reads the *-cache files at login. The server may replace binds, macros and "
+    "account or character settings at login when their sync setting is on (see wowlab "
+    "doctor); it may also replace other *-cache files then, and under which setting is not "
+    "yet known."
+)
+_RESTART = "The next time you start the client, it reads Config.wtf again."
+_RESTART_RELOGIN = (
     "The next time you start the client, it reads Config.wtf again; it reads the other "
     "files at login. The server may replace binds, macros and account or character "
     "settings at login when their sync setting is on (see wowlab doctor); it may also "
@@ -8681,16 +8689,18 @@ def _version(version: str | None) -> str:
 
 def _relogin_notes(paths: Sequence[str]) -> list[str]:
     """The login caveat, when a change touches Config.wtf or a *-cache file
-    under `WTF/` (paths relative to the flavor folder). A file in a
+    under `WTF/` (paths relative to the flavor folder), in the words of the
+    files it touches: `_RELOGIN` for *-cache files only, `_RESTART` for
+    Config.wtf only, `_RESTART_RELOGIN` for both (M16-103). A file in a
     SavedVariables folder, or outside `WTF/` (an addon's own file), is
     neither, whatever its name (M16-97)."""
-    for path in paths:
-        parts = [p.casefold() for p in path.replace("\\", "/").split("/")]
-        if parts[0] != "wtf" or "savedvariables" in parts[:-1]:
-            continue
-        name = parts[-1]
-        if name == "config.wtf" or "-cache" in name:
-            return [_RELOGIN]
+    config, cache_file = profiles.login_files(paths)
+    if config and cache_file:
+        return [_RESTART_RELOGIN]
+    if config:
+        return [_RESTART]
+    if cache_file:
+        return [_RELOGIN]
     return []
 
 
@@ -10282,7 +10292,7 @@ def _apply_plan_lines(
         lines.extend(detail)
         detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
     if detailed:
-        # The login caveat is the command's own LOGIN_NOTE, shown after the plan.
+        # The login caveat is the command's own login note, shown after the plan.
         lines.append(_SCOPE_LINE)
     if plan.skipped:
         lines.append(
@@ -10383,11 +10393,12 @@ def profile_apply(
     into_report = None if target is None else _into_report(manifest, plan.accounts)
     prompting = json_out and not yes and not dry_run
     show = _say if not json_out else _say_err
+    login_note = profiles.login_note(i.path for i in plan.plan)
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
         notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
         if plan.plan:
-            notes.append(profiles.LOGIN_NOTE)
+            notes.append(login_note)
         return ProfileApplyReport(
             profile=name,
             snapshot_id=manifest.id,
@@ -10423,7 +10434,7 @@ def profile_apply(
             )
         plan_lines.extend(_apply_plan_lines(store, chosen.path, plan))
         if plan.plan:
-            plan_lines.append(profiles.LOGIN_NOTE)
+            plan_lines.append(login_note)
     if not json_out or (prompting and plan.plan):
         for line in plan_lines:
             show(line)
