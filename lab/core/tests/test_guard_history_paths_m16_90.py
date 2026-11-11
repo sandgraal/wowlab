@@ -16,11 +16,15 @@ What is graded
 - Every flavor-relative path field the public record exposes, read back from
   a journal file on disk, must pass the same lexical check the write gate
   applies to a path (`_check_rel`; `directory=True` for `created_dirs`):
-  `paths[].path`, `created_dirs`, `temps_removed` and `temps_left`. A record
-  that holds a traversal, an absolute path (POSIX, drive or one inside the
-  install), a UNC path in either spelling, an empty or `.` component, or a
-  C0 control character or DEL (a terminal escape included) in any of them is
-  damaged: `history()` raises `GuardError` and nothing in the install or the
+  `paths[].path`, `created_dirs`, `temps_removed` and `temps_left`, and the
+  journal-only `temps` (the next enter's cleanup reads it from every record
+  and copies a refused entry into its own `temps_left`; security review of
+  #472, F2). A record that holds a traversal, an absolute path (POSIX, drive
+  or one inside the install), a UNC path in either spelling, an empty or `.`
+  component, a C0 control character or DEL (a terminal escape included), or
+  a plain name the lexical check refuses all the same (`Data/`, `.build.info`,
+  an executable, a DOS device name, a trailing dot or space, a case-variant
+  allowlist root, a lone surrogate) in any of them is damaged: `history()` raises `GuardError` and nothing in the install or the
   store changes. `paths_left` and `paths_refused` are M16-84T's.
 - `flavor_path` is absolute by design and is not checked for that here. It
   must hold no control character (C0, DEL or C1) and no bidi control
@@ -31,7 +35,10 @@ What is graded
 - Positive controls: the record the gate itself wrote (one new file in two
   new folders, so `created_dirs` is not empty) reads back unchanged before
   each plant, and the same record with well-formed temp names planted in
-  `temps_removed` and `temps_left` still reads.
+  `temps_removed` and `temps_left` still reads. A record the gate wrote
+  after creating the allowlist roots `Interface` and `Interface/AddOns`
+  reads too: those are directories, refused as file paths, so `created_dirs`
+  must be checked with `directory=True`.
 
 Not graded (see the M16-90T report): bidi and C1 characters in the
 flavor-relative fields. The write gate on main commits a file named
@@ -50,6 +57,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -120,6 +128,7 @@ def gate_record(guard: Any, tmp_path: Path, flavor: Flavor) -> tuple[Path, Path,
     assert raw["created_dirs"] == list(NEW_DIRS), sorted(raw)
     assert raw["flavor_path"] == str(flavor.path), sorted(raw)
     assert raw["temps_removed"] == [] and raw["temps_left"] == [], sorted(raw)
+    assert len(raw["temps"]) == 1, f"the gate journals its one temp path: {raw.get('temps')!r}"
     return store, file, raw
 
 
@@ -140,8 +149,8 @@ def expand(value: str, world: Path, flavor: Flavor) -> str:
 def plant(raw: dict[str, Any], field: str, value: str) -> None:
     if field == "paths":
         raw["paths"][0]["path"] = value
-    elif field == "created_dirs":
-        raw["created_dirs"] = [*raw["created_dirs"], value]
+    elif field in ("created_dirs", "temps"):
+        raw[field] = [*raw[field], value]
     else:
         raw[field] = [value]
 
@@ -183,9 +192,22 @@ HOSTILE_RELATIVE: tuple[tuple[str, str], ...] = (
     ("tab", "WTF/Con\tfig.wtf"),
     ("nul", "WTF/Con\x00fig.wtf"),
     ("del", "WTF/Config\x7f.wtf"),
+    # Plain, with no traversal and no control character, yet refused by the
+    # lexical check all the same (security review of #472, F3): checked on
+    # main with `_check_rel` in both modes before they were added here.
+    ("data", "Data/x"),
+    ("build-info", ".build.info"),
+    ("client-executable", "Wow.exe"),
+    ("executable-under-wtf", "WTF/x.exe"),
+    ("dos-device-name", "WTF/CON"),
+    ("trailing-dot", "WTF/x."),
+    ("trailing-space", "WTF/x "),
+    ("case-variant-wtf", "wtf/Config.wtf"),
+    ("case-variant-addons", "Interface/addons/x"),
+    ("lone-surrogate", "WTF/\ud800x.lua"),
 )
 
-RELATIVE_FIELDS = ("paths", "created_dirs", "temps_removed", "temps_left")
+RELATIVE_FIELDS = ("paths", "created_dirs", "temps", "temps_removed", "temps_left")
 
 
 @pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
@@ -308,4 +330,27 @@ def test_constructed_well_formed_temp_names_still_read(
     assert [p.path for p in record.paths] == [NEW_FILE]
     assert tuple(record.created_dirs) == NEW_DIRS
     assert Path(record.flavor_path) == flavor.path
+    assert G.content(world) == install_before
+
+
+def test_constructed_created_allowlist_roots_still_read(
+    guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
+) -> None:
+    """Control: with `Interface/` missing, the gate creates `Interface` and
+    `Interface/AddOns` (allowlist roots, which the lexical check refuses as
+    file paths) and journals them in `created_dirs`; the record reads back
+    with them. An implementation that checks `created_dirs` as files fails
+    here."""
+    store = tmp_path / "store"
+    shutil.rmtree(flavor.path / "Interface")
+    with guard.transaction(flavor, label="roots", store=store) as tx:
+        tx.write("Interface/AddOns/NewThing/NewThing.toc", b"## Interface: 1\n")
+    install_before = G.content(world)
+    record = record_for(guard, SnapshotStore(store), "roots")
+    assert record.state == "committed"
+    assert tuple(record.created_dirs) == (
+        "Interface",
+        "Interface/AddOns",
+        "Interface/AddOns/NewThing",
+    )
     assert G.content(world) == install_before
