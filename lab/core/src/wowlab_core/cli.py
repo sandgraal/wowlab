@@ -8481,13 +8481,14 @@ _SCOPE_LINE = (
 
 
 def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
-    """The lines a plan ends with before the prompt when it named a key,
-    macro or CVar change (`named`: a bindings, macros or CVar file got
-    detail lines): the scope line, and the login caveat when a path in it
-    is one the caveat is about. A SavedVariables-only plan gets neither."""
-    if not named:
-        return []
-    return [_SCOPE_LINE, *_relogin_notes(paths)]
+    """The lines a plan ends with before the prompt: the scope line when it
+    named a key, macro or CVar change (`named`: a bindings, macros or CVar
+    file got detail lines), and the login caveat whenever a listed path is
+    one the caveat is about, with or without detail lines under it (a file
+    wowlab cannot read, a delete or a recreate; M16-97). A
+    SavedVariables-only plan gets neither."""
+    scope = [_SCOPE_LINE] if named else []
+    return [*scope, *_relogin_notes(paths)]
 
 
 def _value_text(value: str | None, *, cvar: bool) -> str:
