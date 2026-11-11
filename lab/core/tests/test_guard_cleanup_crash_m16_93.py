@@ -628,6 +628,160 @@ def test_constructed_cli_undo_closes_a_killed_undo_and_doctor_reports_the_change
     assert "Problems:" not in clean.stdout
 
 
+# ─── (a1) made precise: `undoes`, and which records are passed over ──────────
+
+
+REFUSED = 3  # the CLI's exit for a refused `--expect` (2026-09-28 amendment)
+UNDOES = "undoes"
+
+
+def undoes(record: Any) -> Any:
+    """A record's `undoes`, or a marker that it has no such field yet."""
+    return getattr(record, UNDOES, "<no undoes field>")
+
+
+def journal(store: Path) -> list[tuple[str, str]]:
+    return [(r.id, r.state) for r in guard.history(store=store)]
+
+
+def commit(flavor: Path, store: Path, label: str, rel: str, data: bytes) -> Any:
+    """A change that completes normally, through the gate, in this process
+    (no client in the process table); its record."""
+    ns = SimpleNamespace(path=flavor, version=None)
+    with guard.transaction(ns, label=label, store=store) as tx:
+        tx.write(rel, data)
+    record = guard.history(store=store)[-1]
+    assert record.label == label and record.state != "open" and record.paths, "positive control"
+    return record
+
+
+@pytest.mark.parametrize("route", ROUTES[1:])
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_a_killed_undo_and_the_record_that_closes_it_name_what_they_undo(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """Every record `undo()` writes carries `undoes`. The killed undo K names
+    D, before and after it is closed; a record appended to close K names K
+    and changes no file."""
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    assert undoes(c.record) == c.dead_id, "the killed undo K names D, which it was undoing"
+
+    guard.undo(store=c.store, expected_id=c.record.id)
+
+    records = guard.history(store=c.store)
+    ids = [r.id for r in records]
+    k = records[ids.index(c.record.id)]
+    assert k.state != "open", "K is closed"
+    assert undoes(k) == c.dead_id, "K, read again after it is closed, still names D"
+    for later in records[ids.index(c.record.id) + 1 :]:
+        assert undoes(later) == c.record.id, (
+            f"record {later.id}, appended to close K, names K in `undoes`"
+        )
+        assert later.paths == () and later.created_dirs == (), "closing K changed no file"
+
+
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_a_completed_undo_that_changed_no_file_is_not_passed_over(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path
+) -> None:
+    """D completes; Config.wtf is then put back outside guard (constructed:
+    as a player or another program might), so `undo` of D completes normally
+    and changes no file. That undo U is not passed over: it is the target,
+    `--expect <D id>` is a mismatch, and U names D in `undoes`."""
+    store = snapshot.default_store_path()
+    original = (flavor / CONFIG).read_bytes()
+    assert original != CRASHED_BYTES, "positive control"
+    d = commit(flavor, store, "changed", CONFIG, CRASHED_BYTES)
+    (flavor / CONFIG).write_bytes(original)
+
+    guard.undo(store=store, expected_id=d.id)
+
+    u = guard.history(store=store)[-1]
+    assert u.id != d.id, "the completed undo is journaled"
+    assert u.state != "open" and u.paths == () and u.created_dirs == (), (
+        "the undo completed and changed no file: the disk already matched"
+    )
+    assert (flavor / CONFIG).read_bytes() == original
+    before, recorded = tree(root), journal(store)
+
+    offered = run("undo", "--json")
+    assert offered.exit_code == 0, (offered.stdout, offered.stderr)
+    assert json.loads(offered.stdout)["undone"] == u.id, (
+        "a normally completed undo is never passed over, even one that changed nothing"
+    )
+    with pytest.raises(guard.GuardError, match=re.escape(d.id)):
+        guard.undo(store=store, expected_id=d.id)
+    refused = run("undo", "--expect", d.id, "--yes", "--json")
+    assert refused.exit_code == REFUSED, (refused.stdout, refused.stderr)
+    assert tree(root) == before and journal(store) == recorded, "a mismatch changes nothing"
+
+    assert undoes(u) == d.id, "the completed undo names D in `undoes`"
+
+
+@pytest.mark.parametrize("route", ROUTES[1:])
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_expect_d_is_a_mismatch_while_a_newer_record_is_not_passed_over(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """After K is closed, a fresh change T completes. T is not passed over,
+    so it is the target: `--expect <D id>` raises (library) and is refused
+    with exit 3 (CLI), and nothing changes."""
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    guard.undo(store=c.store, expected_id=c.record.id)
+    t = commit(flavor, c.store, "fresh", SYNDICATOR, STRANDED_BYTES)
+    before, recorded = tree(root), journal(c.store)
+
+    offered = run("undo", "--json")
+    assert json.loads(offered.stdout)["undone"] == t.id, "positive control: T is the target"
+    with pytest.raises(guard.GuardError, match=re.escape(c.dead_id)):
+        guard.undo(store=c.store, expected_id=c.dead_id)
+    refused = run("undo", "--expect", c.dead_id, "--yes", "--json")
+    assert refused.exit_code == REFUSED, (refused.stdout, refused.stderr)
+    assert tree(root) == before and journal(c.store) == recorded, "a mismatch changes nothing"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        pytest.param("missing", id="constructed-undoes-names-no-record"),
+        pytest.param("later", id="constructed-undoes-names-a-later-record"),
+        pytest.param("itself", id="constructed-undoes-names-the-record-itself"),
+    ],
+)
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_history_refuses_an_undoes_that_names_no_earlier_record(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, names: str
+) -> None:
+    """A real undo U of a real change D carries `undoes: <D id>` in its
+    journal file and reads back with it (the positive control). Rewritten on
+    disk to an id that is not an earlier record's, `history()` raises
+    `GuardError` (a damaged record) and changes nothing."""
+    store = snapshot.default_store_path()
+    d = commit(flavor, store, "changed", CONFIG, CRASHED_BYTES)
+    guard.undo(store=store, expected_id=d.id)
+    u = guard.history(store=store)[-1]
+    later = commit(flavor, store, "later", SYNDICATOR, STRANDED_BYTES)
+    assert u.id != d.id and later.id not in {u.id, d.id}
+
+    file = store / "journal" / f"{u.id}.json"
+    raw = json.loads(file.read_bytes().decode("ascii"))
+    assert raw.get(UNDOES) == d.id, f"the journal file carries {UNDOES!r}: {sorted(raw)}"
+    assert undoes(guard.history(store=store)[-2]) == d.id, "and reads back with it"
+
+    missing = "ffffffff-" + d.id.split("-", 1)[-1][::-1]
+    assert missing not in {r.id for r in guard.history(store=store)}
+    raw[UNDOES] = {"missing": missing, "later": later.id, "itself": u.id}[names]
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
+    file.write_bytes(text.encode("ascii"))
+    install_before = tree(root)
+    store_before = tree(store)
+
+    with pytest.raises(guard.GuardError):
+        guard.history(store=store)
+    assert tree(root) == install_before, "reading a damaged record touched the install"
+    assert tree(store) == store_before, "reading a damaged record touched the store"
+
+
 # ─── doctor says the change stopped before it touched anything ───────────────
 
 
