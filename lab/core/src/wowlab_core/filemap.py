@@ -337,7 +337,16 @@ def _segments(pattern: str) -> tuple[str, ...]:
 
 
 def _literal(segment: str) -> bool:
-    """Whether a pattern segment names one name (no wildcard, no token)."""
+    """Whether a pattern segment is matched by its own text alone: no
+    wildcard, and none of the tokens that stand for any name (`<digits>`,
+    `<name>`, `<executable>`).
+
+    `<wowlab-temp>` passes, although it is a token: it matches only names of
+    the one shape the write gate gives its temp files, so a name of that
+    shape is enough to know the row. `FileMap.named` relies on this, and a
+    bare-name `explain` of a leftover `.wowlab-<32 hex>.tmp` finds the
+    `wowlab-temp` row (M16-98). `FileMapEntry.names_the_file`, which asks
+    whether a pattern names exactly one file, skips the token itself."""
     return not any(c in segment for c in "*?[") and segment not in (_DIGITS, _NAME, _EXECUTABLE)
 
 

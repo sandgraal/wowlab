@@ -206,6 +206,19 @@ def test_filemap_named_needs_a_spelled_out_last_segment() -> None:
     assert fm.named(["Interface", "Config.wtf"]) == ()
 
 
+def test_filemap_named_finds_the_gate_temp_row_by_its_name_constructed() -> None:
+    """M16-98: `<wowlab-temp>` matches only the write gate's temp-file names,
+    so a bare name of that shape finds its row, and nothing else does. With
+    a folder in front, the `**` in `WTF/**/<wowlab-temp>` stops the match,
+    as for every `**` pattern."""
+    fm = filemap.load()
+    temp = ".wowlab-0123456789abcdef0123456789abcdef.tmp"  # constructed
+    assert [e.id for e in fm.named([temp])] == ["wowlab-temp"]
+    assert fm.named([".wowlab-0123.tmp"]) == ()
+    assert fm.named([temp.upper()]) == ()
+    assert fm.named(["WTF", temp]) == ()
+
+
 def test_named_paths_reads_only_and_never_follows_a_link_constructed(
     root: Path, tmp_path: Path
 ) -> None:

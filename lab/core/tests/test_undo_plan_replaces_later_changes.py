@@ -147,6 +147,29 @@ def test_every_state_is_pinned() -> None:
     assert set(MAKE) == set(LINE) == set(STATES)
 
 
+CHANGED_UNKNOWN_STATE = (
+    "      (changed while that transaction ran or since; this version of wowlab cannot tell "
+    "by what: the lines below compare what is on disk now with what undo puts back; undo "
+    "replaces those changes, but keeps a copy first, and running wowlab undo again next, "
+    "before you play, brings them back)"
+)
+
+
+def test_a_state_this_version_does_not_know_guesses_no_one_constructed(
+    root: Path, flavor: Path
+) -> None:
+    """M16-98: a record in a state this version does not know (a journal a
+    later version wrote; constructed by changing the committed record's
+    state, given to the plan alone) gets a neutral line, not the finished
+    change's guess that the game changed the file."""
+    record = _committed(root, flavor).model_copy(update={"state": "constructed_later"})
+    lines = cli._undo_lines(record)
+    at = lines.index(f"  put back   {CONFIG}  (as it was before that transaction)")
+    assert lines[at + 1] == CHANGED_UNKNOWN_STATE, lines
+    assert "probably" not in lines[at + 1] and "the game" not in lines[at + 1]
+    assert sum(ln.endswith(CONSEQUENCE) for ln in lines) == 1, lines
+
+
 @pytest.mark.parametrize("state", STATES)
 def test_the_plan_says_the_undo_replaces_later_changes_constructed(
     root: Path, flavor: Path, state: str
