@@ -5038,6 +5038,18 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      result is proven by starting the client and logging in, naming neither
      `Config.wtf` nor sync. No note states when `Config.wtf` is read beyond
      the next start (`docs/LAB_FILE_MAP.md`, its timing rules, **[verify]**).
+     *Amended 2026-11-11 (M16-105):* for `undo`, the result follows what
+     the undo wrote (its own journal record), not the paths the plan
+     listed (M16-102's ruling). The two are the same unless a file changes
+     while the prompt waits: the undo then puts it back too, and when it is
+     `Config.wtf` or a `*-cache` file the caveat appears after the write
+     even though the plan had none, so "do not repeat it after the write"
+     holds only for a caveat the plan already showed. A file the undo wrote
+     that the plan did not list is named once, after "Undone.", before any
+     caveat (`also put back`, `also deleted` or `also recreated`, with
+     "it changed after the plan was shown"). `UndoReport` gains
+     `written_paths`: the paths the undo wrote, from that record (empty when
+     nothing was undone). Additive only.
      `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
      `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
      text output), line by line as the terminal shows it (escaped), for the
