@@ -9829,14 +9829,7 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan (`_undo_plan`, without its listed paths)."""
-    return _undo_plan(last)[0]
-
-
-def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
-    """`undo`'s text plan, and the paths it lists: the result's login note
-    is decided from those same paths, so the plan and the result agree on it
-    (M16-102). The text plan: only the steps the undo will take. A path whose
+    """`undo`'s text plan: only the steps the undo will take. A path whose
     disk already holds what was there before that transaction (a file a
     rollback already put back or removed) is skipped by the undo, so it is
     not listed; one wowlab cannot read is listed. Under each file, what the
@@ -9886,7 +9879,7 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
         unfinished = last.state in ("open", "rollback_incomplete")
         lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
-    return lines, listed
+    return lines
 
 
 @app.command(short_help="Undo the last change wowlab made to your game files.")
@@ -9936,7 +9929,9 @@ def undo(
         raise CliError("nothing to undo: the write gate's journal is empty")
     last = records[-1]
 
-    def report(*, applied: bool, transaction: str | None = None) -> UndoReport:
+    def report(
+        *, applied: bool, transaction: str | None = None, written: Sequence[str] = ()
+    ) -> UndoReport:
         return UndoReport(
             undone=last.id,
             label=last.label,
@@ -9947,20 +9942,23 @@ def undo(
             created_dirs=list(last.created_dirs),
             applied=applied,
             transaction=transaction,
-            # From the paths the plan listed, as its footer is (M16-102).
-            notes=_relogin_notes(listed) if applied else [],
+            # From what the undo wrote (its own journal record), not every path
+            # of the record undone: a file the disk already held as it was
+            # before is skipped by the undo, so it is not listed in the plan
+            # and gets no note; one changed while the prompt waited is
+            # rewritten, so it does (M16-102).
+            notes=_relogin_notes(written) if applied else [],
             plan_lines=[_safe(line) for line in plan_lines],
         )
 
     plan_lines: list[str] = []
-    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    plan_lines, listed = _undo_plan(last)
+    plan_lines = _undo_lines(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
@@ -9982,7 +9980,7 @@ def undo(
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
     undone = guard.history()[-1]
-    done = report(applied=True, transaction=undone.id)
+    done = report(applied=True, transaction=undone.id, written=[p.path for p in undone.paths])
     if json_out:
         _emit(done)
         return

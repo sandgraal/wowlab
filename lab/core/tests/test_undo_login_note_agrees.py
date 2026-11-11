@@ -13,6 +13,10 @@ the plan, yet the result printed it. The repro from the ticket:
 5. the undo plan lists only the SavedVariables file and has no caveat; the
    result must not have it either.
 
+The result decides from what the undo wrote (its own journal record): a
+cache file changed while the prompt waits is rewritten by the undo, so the
+result carries the caveat even though the plan did not.
+
 Constructed (L8 boundary case): one appended line in each captured file.
 Nothing touches a real install.
 """
@@ -23,6 +27,8 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -39,7 +45,7 @@ from test_cli import (
     user_data,  # noqa: F401
 )
 
-from wowlab_core import cli
+from wowlab_core import cli, guard
 
 CONFIG_CACHE = f"WTF/Account/{ACCOUNT}/config-cache.wtf"
 
@@ -118,4 +124,43 @@ def test_control_json_notes_carry_the_caveat_the_plan_shows_constructed(
     _restored(flavor, put_cache_back=False)
     done = cli.UndoReport.model_validate_json(ok("undo", "--yes", "--json").stdout)
     assert cli._RELOGIN in done.plan_lines
+    assert done.notes == [cli._RELOGIN]
+
+
+def _cache_changes_at_the_prompt(flavor: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """While the prompt waits, something rewrites the cache file the plan
+    skipped; the undo then puts it back too."""
+    cache = flavor / CONFIG_CACHE
+    real = cli._confirm
+
+    def confirm(question: str, yes: bool) -> None:
+        cache.write_bytes(cache.read_bytes() + b'SET otherCVar "2"\r\n')
+        real(question, yes)
+
+    monkeypatch.setattr(cli, "_confirm", confirm)
+
+
+def test_a_cache_file_changed_at_the_prompt_gets_the_caveat_in_the_text_result_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _restored(flavor, put_cache_back=True)
+    _cache_changes_at_the_prompt(flavor, monkeypatch)
+    result = run("undo", input="y\n")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert CONFIG_CACHE in [p.path for p in guard.history()[-1].paths]
+    out = _plain(result.stdout).splitlines()
+    done = next(i for i, line in enumerate(out) if line.startswith("Undone."))
+    assert cli._RELOGIN not in out[:done]  # the plan did not list the file
+    assert out[done + 1 :].count(cli._RELOGIN) == 1, out
+
+
+def test_a_cache_file_changed_at_the_prompt_gets_the_caveat_in_json_notes_constructed(
+    root: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _restored(flavor, put_cache_back=True)
+    _cache_changes_at_the_prompt(flavor, monkeypatch)
+    done = cli.UndoReport.model_validate_json(ok("undo", "--yes", "--json").stdout)
+    assert done.applied
+    assert CONFIG_CACHE in [p.path for p in guard.history()[-1].paths]
+    assert cli._RELOGIN not in done.plan_lines
     assert done.notes == [cli._RELOGIN]
