@@ -2652,15 +2652,16 @@ Make the result and its `notes` decide from the same paths the plan lists.
 ## [ ] M16-103 — The login notes lead with the files actually listed
 **Size:** XS · **Depends on:** M16-101 · **Sources:** the M16-97 merge (#468), conductor note; the batch-7 code review (#473)
 
-`cli._RELOGIN` and `profiles.LOGIN_NOTE` both open with what the client does with `Config.wtf` at its next start. They do so even when the plan lists only `*-cache` files, where that sentence is about a file the plan does not touch. Change the wording to fit the set:
+`cli._RELOGIN` and `profiles.LOGIN_NOTE` both state what the client does with `Config.wtf` at its next start. They do so even when the plan lists only `*-cache` files, where that sentence is about a file the plan does not touch. Change the wording to fit the set:
 - When only `*-cache` files are listed: say they are read at login and the server may replace them. Say nothing about `Config.wtf`.
 - When only `Config.wtf` is listed: keep the restart sentence. Drop the server-sync sentence, because `Config.wtf` is not synced.
 - When both are listed: keep both sentences.
+- `profiles.LOGIN_NOTE` only, when neither is listed (it shows for every non-empty apply plan, for example a SavedVariables-only or `AddOns.txt`-only one): keep only the clause that the result is proven by starting the client and logging in. Name neither `Config.wtf` nor sync.
 
 Keep the LAB_FILE_MAP **[verify]** rule: "restart the client" is safe; a claim of when `Config.wtf` is read is not. This changes the wording that LAB_PLAN's M16-97 amendment fixes, so the PR adds a dated LAB_PLAN amendment beside it.
 
 **Acceptance:**
-- Pinned tests for the three sets, for both notes.
+- Pinned tests for each set, for both notes. The neither-listed case applies to `LOGIN_NOTE` only.
 - The LAB_PLAN amendment.
 
 Reviewed by `code-reviewer` and `domain-reviewer`.
