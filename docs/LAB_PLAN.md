@@ -455,6 +455,20 @@ row of the area). This covers `Logs/WoWCombatLog*.txt` and `Logs/*.log`
 `Cache/WDB/<locale>/*.wdb` (under `Cache/**`). Other pairs of different
 rows, and one row for both kinds below the folder it hangs from, still say
 "real one".
+*Amended 2026-11-11 (M16-95):* a second case of "different rows for each"
+says "real file": the file at the link's place has a row that spells out
+its name, and the row a folder there would get takes a folder of any name
+at that one place (a folder pattern with no `**` whose last segment is a
+wildcard or token). This covers the client's files in an account folder,
+`WTF/Account/<ACCOUNT>/` `config-cache.wtf`, `bindings-cache.wtf`,
+`macros-cache.txt`, `SavedVariables.lua` and its `.bak`,
+`edit-mode-cache-account.txt` and `.old`, `chat-frontend-cache.txt`,
+`flagged-cache-account.txt`, `tts-cache-account.txt` and
+`character-list-order.txt`, whose folder row is `realm-folder`.
+`WTF/Account/SavedVariables/<Addon>.lua` and `.lua.bak` name no fixed file
+and are left to the M13-50 check: on a walk that folder is no account
+folder, so no folder row applies there and the note says "real file";
+classified with nothing on disk to judge, it stays "real one".
 
 *Amended 2026-09-22 (M10-06 reviews):* (1) **Symlinks and junctions are never
 followed**, whether they point inside the install or outside it. Each is
