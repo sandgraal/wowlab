@@ -2835,6 +2835,13 @@ Remove the "already used" page, its terminal notice, and the `--help` and docs t
 - **User-facing:** listed in the PR (wiki: ui).
 - **Reviews:** `code-reviewer` and `security-reviewer`.
 
+## [ ] M16-115T — [TEST] A record naming a temp outside the flavor is damaged (item 2 amended)
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (e1); the owner's answer of 2026-11-11 ("A") to the M16-90 implementer's block
+
+In `lab/core/tests/test_guard_owner_decisions.py`, `test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist` covers the `NEVER_LOOKED_UP` cases: outside the allowlist, at the install root, under `Data/`, another flavor folder, outside the install, absolute, UNC. For those cases only, expect the forged record to be refused as damaged. Both routes (`transaction()` and `undo()`) raise `GuardError` naming the damaged record, before any write, snapshot or lookup of the forged path. The install, the journal and the store are left unchanged. Keep every other case exactly as it is. The amended cases are strict xfail "M16-90 not implemented", activated by M16-90 by marker deletion.
+
+**Acceptance:** strict xfail on main for the right reason; the other cases unchanged and passing. Reviewed by `code-reviewer` and `security-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
