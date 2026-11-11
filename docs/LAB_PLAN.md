@@ -2506,12 +2506,13 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `schema = 5`, and schema 5 is schema 4, quieter, with one more kind of
   binding (`lab/addon/README.md`, "Schema 5"):
   - The first-pass chat line prints only when the file's `announced` is not
-    this addon's schema, or `probe.lost` is set. `announced` is written by
-    the addon's own logout write, and only when the first pass ran in that
-    session; at `ADDON_LOADED` it is removed from the table in memory until
-    that write puts it back. So the line prints once per schema (each new
-    lab-addon format), and after a session in which the client saved the
-    file but the addon's logout write did not finish. A crash cannot be
+    this addon's schema, or `probe.lost` is set. `announced` is set by the
+    addon's own write of its tables, at logout or by `/wowlab save`, and
+    only when the first pass ran in that session; at `ADDON_LOADED` it is
+    removed from the table in memory until that write puts it back. So the
+    line prints once per schema (each new lab-addon format) on each
+    character, and after a session in which the client saved the file but
+    neither the logout write nor a `/wowlab save` set it. A crash cannot be
     detected: a crash writes nothing, so the file is as the last session
     that saved it left it, and one that already wrote `announced` gives a
     quiet next login. The 15 s window itself is unchanged.

@@ -1569,6 +1569,10 @@ class BindingsV5(Bindings):
 DROPPED_NOT_RECORDED = "whether any value was dropped is not recorded"
 
 
+# The probes whose counts are not dropped values (Actions.lua NOT_DROPPED).
+NOT_DROPPED: frozenset[str] = frozenset({"issecretvalue", "GetAttribute"})
+
+
 def dropped_words(
     section: Spellbook | ActionBars | Bindings, needs: frozenset[str] = frozenset()
 ) -> list[str]:
@@ -1581,9 +1585,13 @@ def dropped_words(
     probes: list[ApiProbe] | None = section.probes  # None in schema 5 outside debug
     out: list[str] = []
     if probes is not None:
-        # A CLICK frame's GetAttribute (schema 5) is left out: a CLICK command
-        # it fails is counted in clicks_left_out, not dropped (M16-45 round 2).
-        counted = [p for p in probes if p.api not in LOOKED_UP and p.api != "GetAttribute"]
+        # Left out as the addon's `dropped` leaves them out (Actions.lua
+        # NOT_DROPPED; M16-45 rounds 2 and 3), so a debug session judges a
+        # gather as a normal session does: a CLICK frame's GetAttribute (a
+        # CLICK command it fails is counted in clicks_left_out, not dropped),
+        # and issecretvalue's own errors (the value it could not test is
+        # already counted as secret on the asking API's probe).
+        counted = [p for p in probes if p.api not in LOOKED_UP and p.api not in NOT_DROPPED]
         errors = sum(p.errors for p in counted)
         secret = sum(p.secret for p in counted)
         if errors or secret:

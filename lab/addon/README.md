@@ -629,12 +629,15 @@ first login. The chat line is
 `WowLab: recording in 15 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
 Since schema 5 (M16-45) it prints only when the file's `announced` is not
 this addon's schema, or the probe was lost (`probe.lost`). `announced` is
-written by the addon's own logout write, and only when the first pass ran
-in that session; at `ADDON_LOADED` it is removed from the table in memory
-until that write puts it back. So the line prints once per schema (each
-new lab-addon format), and again after a session in which the client saved
-the file but the addon's logout write did not finish (the file then keeps
-no `announced`), or one that ended before its first pass on a new schema.
+set by the addon's own write of its tables, at logout or by `/wowlab save`
+(which the client saves at the next `/reload` or logout), and only when the
+first pass ran in that session; at `ADDON_LOADED` it is removed from the
+table in memory until that write puts it back. `WowLabCharDB` is per
+character, so the line prints once per schema (each new lab-addon format)
+on each character, and again on that character after a session in which
+the client saved the file but neither the addon's logout write nor a
+`/wowlab save` set it (the file then keeps no `announced`), or one that
+ended before its first pass on a new schema.
 A crash cannot be detected: a crash writes nothing, so the file stays as
 the last session that saved it left it, and after one that already wrote
 `announced` the next login is quiet. The window is still there, and
