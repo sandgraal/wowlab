@@ -8547,6 +8547,16 @@ def _named_line(change: wtfdiff.NamedChange) -> str:
     )
 
 
+# What a line `wtfdiff` does not read by name is, in each kind of file: the
+# lines its parser keeps as unknown, said by their form, not their effect (the
+# client may still read a CVar line typed by hand; M16-98).
+_OTHER_LINES: dict[wtfdiff.Kind, str] = {
+    "bindings": "for example a binding mode or modifier line",
+    "macros": "lines outside any macro wowlab can read",
+    "cvars": "lines not in the game's usual setting form, such as a setting typed in by hand",
+}
+
+
 def _wtf_lines(
     kind: wtfdiff.Kind, before: bytes | None, after: bytes | None, limit: int | None
 ) -> list[str]:
@@ -8565,8 +8575,8 @@ def _wtf_lines(
         )
     if diff.other_lines_differ:
         lines.append(
-            f"{_DETAIL_INDENT}other lines differ too (for example a binding mode or modifier "
-            "line), which wowlab does not read by name"
+            f"{_DETAIL_INDENT}other lines differ too ({_OTHER_LINES[kind]}), which wowlab "
+            "does not read by name"
         )
     elif not diff.changes and before is not None and after is not None:
         if kind == "macros":
@@ -8682,7 +8692,15 @@ _CHANGED_DURING = (
     f"while that change ran, or since: {_COMPARE}; undo replaces that program's changes, "
     f"but {_KEEPS_A_COPY})"
 )
+# A state this version does not know (a journal written by a later one): the
+# record cannot be read for who changed the file or when, so the line guesses
+# neither (M16-98).
+_CHANGED_UNKNOWN_STATE = (
+    f"{_DETAIL_INDENT}(changed while that transaction ran or since; this version of wowlab "
+    f"cannot tell what changed it: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
 _CHANGED_LINE = {
+    "committed": _CHANGED_SINCE,
     "open": _CHANGED_UNFINISHED,
     "rolled_back": _CHANGED_AFTER_ROLLBACK,
     "rollback_incomplete": _CHANGED_DURING,
@@ -9576,13 +9594,13 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     undo replaces the file whatever is on disk. When the disk no longer
     holds what that transaction wrote, a line says the comparison includes
     those later changes and who probably made them, by the record's state
-    (`_CHANGED_LINE`; a finished change and a state this version does not
-    know get `_CHANGED_SINCE`). In every state it also says that the undo
+    (`_CHANGED_LINE`; a state this version does not know gets
+    `_CHANGED_UNKNOWN_STATE`, which guesses no one). In every state it also says that the undo
     replaces those changes, that its own snapshot keeps a copy of them
     first, and that a second undo, run next, brings them back."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
-    changed = _CHANGED_LINE.get(last.state, _CHANGED_SINCE)
+    changed = _CHANGED_LINE.get(last.state, _CHANGED_UNKNOWN_STATE)
     lines = [
         f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
         f"  in {last.flavor_path}:",
