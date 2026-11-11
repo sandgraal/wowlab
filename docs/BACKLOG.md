@@ -2462,7 +2462,7 @@ For a `rollback_incomplete` record, the gate writes the paths it could not put b
 
 **Acceptance:** strict-xfail graders on main, activated by M16-84 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-84 — [IMPL] `doctor` names the file a rollback left alone
+## [x] M16-84 — [IMPL] `doctor` names the file a rollback left alone
 **Size:** S · **Depends on:** M16-84T · **Sources:** as M16-84T
 
 Implement M16-84T in `guard.py`: record the left-alone paths structurally, not only in the note, and expose them on `HistoryRecord`. Then have `doctor`'s rollback problem (M16-71) name each one instead of "some files".
@@ -2599,16 +2599,22 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 `cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
 
-**Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
+*Widened 2026-11-11 (the M16-84 review, #457):* the same early return also catches a `rollback_incomplete` record whose `paths` is empty but whose `created_dirs` is not. `doctor` tells the player to run `wowlab undo --expect <id>` for it, so that command must be able to finish it.
 
-## [ ] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
+**Acceptance:**
+- A constructed `open` record with no paths: `undo --expect <id> --yes` closes it, and `doctor` then exits 0.
+- The same holds for a constructed `rollback_incomplete` record with no paths and one created folder; the folder is removed if it is empty.
+
+Reviewed by `code-reviewer`.
+
+## [x] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
 
 `_plan_footer` adds `_RELOGIN` only when a listed file got detail lines. That note says the client reads these files at its next login and the server may replace synced `*-cache` files then. So a listed `config-cache.wtf`, `bindings-cache.wtf` or `macros-cache.txt` with no detail lines gets no note. Examples are a file wowlab cannot read, or a delete or recreate. The same rule applies to the undo, restore and apply plans.
 
 **Acceptance:** a pinned test for each plan kind that lists a `*-cache` file with no detail. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-98 — Small wording and docstring follow-ups
+## [x] M16-98 — Small wording and docstring follow-ups
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-95 code review (#463); the M16-92 domain and code reviews (#465)
 
 - `filemap._literal`'s docstring says "no wildcard, no token", but it does not exclude `<wowlab-temp>`, and `rows_named` relies on that. Either correct the docstring or rule that bare-name lookup should skip the token.
@@ -2617,9 +2623,30 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 **Acceptance:** each item pinned or explained in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-99 — The M16-93T crash-seam probe exercises descriptor writes again
+## [x] M16-99 — The M16-93T crash-seam probe exercises descriptor writes again
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-93T code re-check (#462)
 
 `review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` reuses `CRASH_SCRIPT`, which now sets `snapshot._WRITE_BY_DIR_FD = False`. So its non-control case no longer takes the descriptor-write route and repeats the control. Add a new review probe, as a new file, that forces `_WRITE_BY_DIR_FD = True` and checks that the seam still fires through `dir_fd`. The reviewers checked this by hand.
 
 **Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-101 — `profile apply` prints its login note once
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 code and domain reviews (#468)
+
+In text mode, `profile apply` prints `profiles.LOGIN_NOTE` in its plan and then again, unconditionally, after it writes. Print it once. Choose either place and say why in the PR. `--json` output is unchanged.
+
+**Acceptance:** a pinned text-mode test of an apply that writes, with the note printed exactly once. Reviewed by `code-reviewer`.
+
+## [ ] M16-102 — `undo`'s plan and result agree on the login caveat
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 domain review (#468)
+
+The undo plan's footer decides on `_RELOGIN` from the listed paths only. The result's notes decide from every path the undo touched. Suppose the undo touches a `*-cache` file that needs no change and lists a file that is not a cache file. Then the plan shows no caveat and the result prints one. The reviewer found this by reading the code and did not run it. Reproduce it first, then make both decide from the same set of paths.
+
+**Acceptance:** a pinned test of that case, whose plan and result agree, or a PR note showing the case cannot occur. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-103 — The relogin note leads with the files actually listed
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 merge (#468), conductor note
+
+`_RELOGIN` always opens with "The next time you start the client, it reads Config.wtf again". When the plan lists only `*-cache` files, that first sentence is about a file the plan does not touch. Open with the sentence for the files that are listed. Keep the LAB_FILE_MAP **[verify]** wording: say "restart the client"; do not state when `Config.wtf` is read.
+
+**Acceptance:** pinned tests for a plan with only `Config.wtf`, only cache files, and both. Reviewed by `code-reviewer` and `domain-reviewer`.
