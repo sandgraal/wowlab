@@ -1926,7 +1926,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-37 — `doctor`: next steps
+## [x] M16-37 — `doctor`: next steps
 **Size:** S · **Depends on:** M16-06 · **Sources:** product:F9, newcomer:F7 (EV-34)
 
 - A "Next steps" block covers whether the lab-addon is installed and current, how many characters are recorded, and whether a combat log is present. Each item comes with the one command or in-game action that fixes it.
@@ -2695,7 +2695,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-105 — `undo` names a file it put back that the plan did not list
+## [x] M16-105 — `undo` names a file it put back that the plan did not list
 **Size:** XS · **Depends on:** M16-103 · **Sources:** the M16-102 domain re-review (#477)
 
 Since M16-102, the undo result gives the login caveat for every `Config.wtf` or `*-cache` file the undo wrote. Suppose such a file changed while the prompt waited, after the plan was shown, and the undo put it back. The text result then prints the caveat but does not name that file, so nothing on screen says why the caveat appears. The text result should name each file the undo wrote that the plan did not list. `--json` gives only the undo's record id, in `transaction`. Add a field listing the paths the undo wrote, so that a `--json` reader does not have to look the record up.
@@ -2711,7 +2711,7 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 # M16 follow-ups found in review (filed 2026-11-11, ninth batch)
 
-## [ ] M16-106 — `labaddon.Gear` refuses duplicate and out-of-range slots
+## [x] M16-106 — `labaddon.Gear` refuses duplicate and out-of-range slots
 **Size:** XS · **Depends on:** nothing · **Sources:** the M13-70 code review (#482)
 
 `labaddon.Gear` (`labaddon.py` near line 640) has the same unchecked `first_slot`, `last_slot` and `slots` that M13-70 closed for `ActionBars`. `Gear.lua` walks `for slot = first, last` once, appending only the slot it is on, so a real file never holds a duplicate. A hand-edited one would print a duplicated slot twice in `char gear`, text and `--json`, and would give the dressing-room builder two items for one slot. Apply the same refusal as M13-70.
