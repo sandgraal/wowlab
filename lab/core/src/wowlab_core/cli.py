@@ -1695,6 +1695,8 @@ class DoctorFlavor(_Out):
     matching_rows: int
     game_data: GameDataReport
     sync_cvars: list[SyncCVar]
+    # The installed lab-addon's ## Interface: against this client's (M16-06).
+    lab_addon: addoninstall.LabAddonState
 
 
 # What a file the rollback left holds as `doctor` reads it now (M16-84):
@@ -2056,6 +2058,7 @@ def _doctor(
                     matching_rows=f.matching_rows,
                     game_data=game[f.folder],
                     sync_cvars=sync,
+                    lab_addon=addoninstall.lab_addon_state(f),
                 )
             )
         if not inst.flavors:
@@ -2322,6 +2325,41 @@ def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
     )
 
 
+_REINSTALL = f"wowlab addon install {addoninstall.LAB_ADDON}"
+_LOAD_OUT_OF_DATE = "Load out of date AddOns"
+# What an out-of-date lab-addon means for the player (M16-06, domain review).
+_STALE_EFFECT = (
+    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and then no new records are saved"
+)
+
+
+def _lab_addon_line(state: addoninstall.LabAddonState) -> str | None:
+    """The `doctor` line about the installed lab-addon (M16-06), or None
+    when it is not installed."""
+    if state.status == "current":
+        found = ", ".join(str(n) for n in state.installed)
+        return f"  Lab-addon: installed, made for this client (## Interface: {found})"
+    if state.status == "stale" and not state.installed:
+        return (
+            f"  Lab-addon: its {addoninstall.TOC_NAME} has no usable ## Interface: value, so "
+            f"the game may treat it as out of date {_STALE_EFFECT}. Close the game and run "
+            f"`{_REINSTALL}`."
+        )
+    if state.status == "stale":
+        found = ", ".join(str(n) for n in state.installed)
+        return (
+            f"  Lab-addon: made for another client version (## Interface: {found}; this "
+            f"client is {state.expected}), so the game may list it as out of date "
+            f"{_STALE_EFFECT}. Close the game and run `{_REINSTALL}` to update it."
+        )
+    if state.status == "unknown":
+        return (
+            "  Lab-addon: installed; wowlab cannot tell whether it fits this client "
+            f"({state.detail})"
+        )
+    return None
+
+
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     """The doctor report as text, its problems last, then its standing
     notes behind --notes (`_say_notes`). The first run's section, said only
@@ -2350,6 +2388,9 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 "the first active one is shown"
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
+        lab_line = _lab_addon_line(f.lab_addon)
+        if lab_line is not None:
+            _say_prose(lab_line, hang="    ", keep=[_REINSTALL, _LOAD_OUT_OF_DATE])
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
             files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))
@@ -10482,6 +10523,7 @@ class AddonInstallReport(_Out):
     flavor_path: str
     flavor_version: str  # the discovered version the interface was derived from
     interface: int  # what the installed TOC's ## Interface: says
+    addon_version: str  # what the installed TOC's ## Version: says: this wowlab's (M16-06)
     source: str  # the source folder read
     files: list[str]  # every file of the addon, relative to the flavor folder
     plan: list[guard.PlanItem]  # new or changed files, then deletes of files not in the sources
@@ -10549,7 +10591,8 @@ def addon_install(
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
     patch-number rule; after a client update that changes the first three parts of
-    the version, run this again. Only WowLab.toc and the .lua files it lists are
+    the version, run this again (`wowlab doctor` says when). Its ## Version: is this
+    wowlab's version. Only WowLab.toc and the .lua files it lists are
     copied. Over an existing copy only changed files are written, and files not in
     the sources are deleted.
 
@@ -10569,6 +10612,7 @@ def addon_install(
             flavor_path=str(chosen.path),
             flavor_version=plan.flavor_version,
             interface=plan.interface,
+            addon_version=plan.addon_version,
             source=plan.source,
             files=list(plan.files),
             plan=list(plan.plan),
@@ -10584,7 +10628,7 @@ def addon_install(
     if not json_out or (prompting and plan.plan):
         show(
             f"Install the lab-addon into {chosen.path / target}: {len(plan.plan)} change(s), "
-            f"## Interface: {plan.interface}"
+            f"## Interface: {plan.interface}, ## Version: {plan.addon_version}"
         )
         show(f"  from {plan.source}")
         for item in plan.plan:
@@ -10745,6 +10789,13 @@ class CharShowReport(_Out):
     customization_loads_ago: int | None
     unknown_keys: list[str]
     notes: list[str]
+    # The installed client's version from .build.info, and whether the client
+    # that saved the record is older (M16-06; None when either is unknown).
+    installed_version: str | None = None
+    older_client: bool | None = None
+    # The installed lab-addon against this client, as `doctor` reads it
+    # (M16-06): what the text's advice for an older record rests on.
+    lab_addon: addoninstall.LabAddonState | None = None
 
 
 def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
@@ -10796,6 +10847,9 @@ def char_show(
         customization_loads_ago=labaddon.customization_loads_ago(record),
         unknown_keys=labaddon.unknown_keys(record),
         notes=_CHAR_NOTES,
+        installed_version=chosen.version,
+        older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
+        lab_addon=addoninstall.lab_addon_state(chosen),
     )
     if json_out:
         _emit(report)
@@ -10803,6 +10857,10 @@ def char_show(
     _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    if report.older_client:
+        _say_prose(
+            _older_record_line(chosen.version, report.lab_addon), hang="  ", keep=[_REINSTALL]
+        )
     # describe() renders its own words with `_player_copy` before a value
     # read from the record goes in; the line then prints as it is.
     for line in labaddon.describe(record, render=_player_copy):
@@ -10815,6 +10873,31 @@ def char_show(
             _say(line)
     for note in _CHAR_NOTES:
         _say_note(note)
+
+
+def _older_record_line(installed: str | None, state: addoninstall.LabAddonState | None) -> str:
+    """`char show`'s line for a record an older client saved (M16-06): how
+    to save a fresh one, and first, when the installed lab-addon is out of
+    date for this client or not installed, that it may not load (its state
+    as `doctor` reads it)."""
+    head = f"This record was saved by an older client than the installed {installed}"
+    fresh = (
+        "with the lab-addon enabled for this character, log in on it, then log out or "
+        "/reload, to save a fresh one."
+    )
+    status = state.status if state is not None else None
+    if status == "stale":
+        return (
+            f"{head}, and the installed lab-addon is out of date for this client, so the game "
+            f"may not load it (`wowlab doctor` says why). Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    if status == "not_installed":
+        return (
+            f"{head}, and the lab-addon is not installed. Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    return f"{head}: {fresh}"
 
 
 def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
@@ -10919,6 +11002,9 @@ class CharListReport(_Out):
     characters: list[labaddon.CharacterFile]
     not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
+    # The installed client's version from .build.info, which each row's
+    # `older_client` compares with (M16-06).
+    installed_version: str | None = None
 
 
 _CHAR_LIST_NOTES = [
@@ -10991,10 +11077,13 @@ def _bare_words(facts: labaddon.FolderFacts) -> str:
     return words
 
 
-def _row_words(e: labaddon.CharacterFile) -> str:
+def _row_words(e: labaddon.CharacterFile, installed: str | None = None) -> str:
     if e.no_lab_record is not None:
         return _bare_words(e.no_lab_record)
     if e.summary is not None:
+        if e.older_client:
+            # The summary names the saving client; this says it is the older one (M16-06).
+            return f"{e.summary}; older than the installed client {installed}"
         return e.summary
     if e.place in _BLOCKED_PLACE:
         return f"not read: could not look inside {_BLOCKED_PLACE[e.place]} ({e.error})"
@@ -11076,6 +11165,7 @@ def char_list(
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
             every_folder=True,
+            installed_version=chosen.version,
         )
         entries, unseen = found.characters, found.not_looked_at
     # Rows of character folders, apart from the `<Realm>/<First>/` folders.
@@ -11089,6 +11179,7 @@ def char_list(
         characters=entries,
         not_looked_at=unseen,
         notes=notes,
+        installed_version=chosen.version,
     )
     if json_out:
         _emit(report)
@@ -11127,7 +11218,8 @@ def char_list(
                     when = "time unknown"
                 else:
                     when = f"written {_local_time(e.mtime_ns)}"
-                _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+                row = _row_words(e, chosen.version)
+                _say(f"  {names[e.character]:<{width}}  {when}  {row}")
         # No install advice while a place went unseen: it may hold the files.
         if bare_rows and len(bare_rows) == len(folders) and not unseen:
             _say_note(

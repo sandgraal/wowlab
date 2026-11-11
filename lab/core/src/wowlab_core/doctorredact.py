@@ -323,6 +323,11 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "flavors.sync_cvars.account": REDACT,
     "flavors.sync_cvars.name": REDACT,
     "flavors.sync_cvars.value": REDACT,
+    # The installed lab-addon against the client (M16-06): the status is a
+    # closed literal; the TOC's ## Version: and the reason are text.
+    "flavors.lab_addon.status": AS_IS,
+    "flavors.lab_addon.version": REDACT,
+    "flavors.lab_addon.detail": REDACT,
     "other_dirs": REDACT,
     "not_taken.name": REDACT,
     "not_taken.reason": AS_IS,
