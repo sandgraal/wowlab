@@ -453,9 +453,15 @@ def _ast_hits(source: str) -> list[tuple[int, str]]:
             ):
                 # Path.replace / Path.rename take one argument; str.replace takes two.
                 hits.append((node.lineno, f".{func.attr}(target)"))
-            elif func.attr in ("touch", "mkdir", "rmdir", "symlink_to", "hardlink_to", "chmod"):
-                if owner not in ("os",):
-                    hits.append((node.lineno, f".{func.attr}()"))
+            elif func.attr in (
+                "touch",
+                "mkdir",
+                "rmdir",
+                "symlink_to",
+                "hardlink_to",
+                "chmod",
+            ) and owner not in ("os",):
+                hits.append((node.lineno, f".{func.attr}()"))
     return hits
 
 
