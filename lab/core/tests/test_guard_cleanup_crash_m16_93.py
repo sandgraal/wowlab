@@ -6,8 +6,8 @@ docs/BACKLOG.md (the owner's answer of 2026-11-11 to M16-69's question),
 docs/LAB_PLAN.md §6.10 (item 2 of the 2026-09-22 amendment: each removal is
 journaled and fsynced before its unlink; the 2026-11-10 amendment (c):
 `doctor` reports a most recent `open` record with exit 1 and the exact
-`wowlab undo --expect <id>` line; the 2026-11-11 amendment (a)) and
-ADR-0021. Every grader carries one marker line that M16-69 deletes; nothing
+`wowlab undo --expect <id>` line; the 2026-11-11 amendment (a), and (a1)
+for the undo route, from M16-100T) and ADR-0021. Every grader carries one marker line that M16-69 deletes; nothing
 else in this file is the implementer's to change.
 
 What the amendment fixes, as graded here:
@@ -21,7 +21,14 @@ What the amendment fixes, as graded here:
   `wowlab undo --expect <id> --yes`, exit 0) closes it without restoring
   anything: every file's bytes are as they were before the undo, no later
   record names a path or a created folder, the most recent record is no
-  longer `open`, and `doctor` afterwards has no problem (exit 0).
+  longer `open`. When the killed change was a `transaction`, `doctor`
+  afterwards has no problem (exit 0). When it was an `undo` of the
+  interrupted change D (amendment (a1) and its undo-target ruling, both
+  2026-11-11; graders changed by M16-100T), closing it does not settle D:
+  `doctor` exits 1, reports D with D's own undo line and names the killed
+  undo as interrupted before it changed anything; `wowlab undo` skips the
+  killed undo's closed record and offers D; D's own line then settles D and
+  `doctor` is clean.
 - No removed temp comes back: not on disk after the crash or the undo, and
   no manifest in the store holds one, by path or by bytes.
 - `doctor` on the killed record still reports it (exit 1, the exact undo
@@ -497,12 +504,13 @@ def test_constructed_guard_undo_closes_the_killed_record_without_restoring_anyth
     assert_closed_without_restoring(c, now)
 
 
-@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("route", ROUTES[:1])
 @pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
 def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after(
     tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
 ) -> None:
-    """The line `doctor` prints, run with `--yes`: exit 0, an empty plan,
+    """Transaction route only; the undo route is graded below (2026-11-11
+    (a1)). The line `doctor` prints, run with `--yes`: exit 0, an empty plan,
     nothing restored, no temp back; `doctor` afterwards exit 0, no problem."""
     c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
     now = tree(c.root)
@@ -521,6 +529,103 @@ def test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after
     text = run("doctor")
     assert text.exit_code == 0, text.stdout
     assert "Problems:" not in text.stdout
+
+
+@pytest.mark.parametrize("route", ROUTES[1:])
+@pytest.mark.xfail(strict=True, reason="M16-69 not implemented")
+def test_constructed_cli_undo_closes_a_killed_undo_and_doctor_reports_the_change_it_was_undoing(
+    tmp_path: Path, user_data: Path, root: Path, flavor: Path, route: str
+) -> None:
+    """Undo route (2026-11-11 (a1), and its undo-target ruling, "1 yes"). The
+    killed change was an `undo` of the interrupted change D. Closing the
+    killed record (the line `doctor` prints, with `--yes`) restores nothing,
+    but does not settle D:
+
+    - `doctor` exits 1 and reports D with D's own `wowlab undo --expect <D id>`
+      line, and names the killed undo (its wording is not pinned) without an
+      undo line of its own;
+    - `wowlab undo` skips the killed undo's closed record, which changed no
+      file, and offers D (the plan only: `--json` never asks);
+    - `wowlab undo --expect <D id> --yes` settles D, and `doctor` is clean."""
+    c = kill_between_cleanup_and_snapshot(tmp_path, user_data, root, flavor, route)
+    (dead,) = [r for r in guard.history(store=c.store) if r.id == c.dead_id]
+    assert dead.state == "open" and dead.paths, (
+        "positive control: D is an interrupted change that journaled a file, so an undo "
+        "of it has something to put back"
+    )
+    now = tree(c.root)
+
+    closed = run("undo", "--expect", c.record.id, "--yes", "--json")
+
+    assert closed.exit_code == 0, (closed.stdout, closed.stderr)
+    report = json.loads(closed.stdout)
+    assert report["undone"] == c.record.id
+    assert report["plan"] == [] and report["created_dirs"] == [], "nothing to restore"
+    assert_closed_without_restoring(c, now)
+    journal = [(r.id, r.state) for r in guard.history(store=c.store)]
+
+    # doctor: D again, with D's own line; the killed undo named, not offered.
+    killed_line = f"wowlab undo --expect {c.record.id}"
+    data = run("doctor", "--json")
+    assert data.exit_code == 1, (
+        "closing a killed undo does not settle the change it was undoing",
+        data.stdout,
+    )
+    problems = [str(p) for p in json.loads(data.stdout)["problems"]]
+    problem_naming({"problems": problems}, c.dead_id)
+    assert any(c.record.id in p for p in problems), (
+        "doctor names the killed undo as interrupted before it changed anything",
+        problems,
+    )
+    assert not any(killed_line in p for p in problems), (
+        "the killed undo, already closed, is not offered to undo again",
+        problems,
+    )
+    text = run("doctor")
+    assert text.exit_code == 1, text.stdout
+    shown = text.stdout.split("Problems:\n", 1)
+    assert len(shown) == 2, text.stdout
+    assert f"wowlab undo --expect {c.dead_id}" in shown[1], text.stdout
+    assert c.record.id in shown[1], text.stdout
+    assert killed_line not in text.stdout
+
+    # `wowlab undo` picks D, not the killed undo's closed record.
+    offered = run("undo", "--json")
+    assert offered.exit_code == 1, ("--json without --yes shows the plan only", offered.stdout)
+    plan = json.loads(offered.stdout)
+    assert plan["undone"] == c.dead_id, (
+        "the closed record of a killed undo that changed no file is skipped as the target",
+        plan,
+    )
+    assert plan["applied"] is False and plan["plan"], plan
+    asked = run("undo")
+    assert asked.exit_code == 1, ("no answer is not a yes", asked.stdout)
+    assert "changed no files" not in asked.stdout, (
+        "the plan offered is D's, not the killed undo's empty one",
+        asked.stdout,
+    )
+    assert tree(c.root) == now, "neither doctor nor an unconfirmed undo writes"
+    assert [(r.id, r.state) for r in guard.history(store=c.store)] == journal
+
+    # D's own line settles D.
+    settled = run("undo", "--expect", c.dead_id, "--yes", "--json")
+
+    assert settled.exit_code == 0, (settled.stdout, settled.stderr)
+    done = json.loads(settled.stdout)
+    assert done["undone"] == c.dead_id and done["applied"] is True, done
+    records = guard.history(store=c.store)
+    assert [(r.id, r.state) for r in records[: len(journal)]] == journal, "the journal only grows"
+    assert len(records) > len(journal) and records[-1].state != "open"
+    for rel in c.temps:
+        assert not (c.flavor / rel).exists(), f"the removed temp {rel} is not brought back"
+    assert_no_manifest_holds_a_removed_temp(c)
+
+    after = run("doctor", "--json")
+    assert after.exit_code == 0, after.stdout
+    assert not json.loads(after.stdout)["problems"]
+    clean = run("doctor")
+    assert clean.exit_code == 0, clean.stdout
+    assert "Problems:" not in clean.stdout
 
 
 # ─── doctor says the change stopped before it touched anything ───────────────
