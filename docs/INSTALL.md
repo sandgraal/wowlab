@@ -137,12 +137,12 @@ its settings menu and pick "Show in Finder" (macOS) or "Show in Explorer"
 (Windows). On a Mac `.build.info` is a hidden file: press Cmd-Shift-. in
 Finder to show hidden files.
 
-Without help, wowlab looks only where the game installs by default:
+Without help, wowlab looks in these folders:
 
 - macOS: `World of Warcraft` in `/Applications`, `/Applications/Games`,
   `/Games`, `~/Applications`, `~/Games` and `/Users/Shared`, then on each
-  volume under `/Volumes` (by name): at its top, in its `Applications` and
-  in its `Games`
+  volume under `/Volumes` (by name, and only when none of those holds it):
+  at its top, in its `Applications` and in its `Games`
 - Windows: `World of Warcraft` at the top of each drive, then under
   `Program Files (x86)`, `Program Files` and `Games`, the system drive first
 

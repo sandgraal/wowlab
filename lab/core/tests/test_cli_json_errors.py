@@ -220,7 +220,7 @@ def test_the_kind_skips_private_classes() -> None:
 
 def test_no_install_is_an_error_report(no_install: Path) -> None:
     report = _check(*_both(("cvar", "list")), kind="InstallNotFoundError", code=cli.EXIT_ERROR)
-    assert report.message.startswith("no WoW install found where the game installs by default")
+    assert report.message.startswith("no WoW install found in the folders wowlab searches")
     assert "WOWLAB_WOW_ROOT" in report.message
 
 

@@ -1265,30 +1265,43 @@ _NAME_THE_INSTALL_BY_ITSELF = (
 )
 
 
-def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> str:
+def _install_words(
+    exc: install.InstallError, how: str = _NAME_THE_INSTALL, *, listed: bool = True
+) -> str:
     """Why there is no install to read, then how to name one (`how`): every
     such error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
     if isinstance(exc, install.InstallNotFoundError):
         # The locations are the error's notes, one line each after this one
         # (`_fail`): a dozen paths on one line could not be read (M16-112).
+        # The lines that name the install end the notes: the default advice
+        # points there rather than saying it twice.
+        if how == _NAME_THE_INSTALL:
+            how = "name the install as shown at the end"
         n = len(exc.checked)
         if n:
-            places = "1 location" if n == 1 else f"{n} locations"
-            found = (
-                f"no WoW install found where the game installs by default "
-                f"({places} checked, listed below)"
-            )
+            # `listed` is False for a `--json` report, which lists nothing.
+            below = ", listed below" if listed else ""
+            found = f"no WoW install found in the folders wowlab searches ({n} checked{below})"
         else:
             found = "no WoW install found: wowlab knows no default install location on this system"
         return f"{found}; {how}"
     return f"{exc}; {how}"
 
 
-def _keep_notes(err: CliError, exc: BaseException) -> CliError:
+def _keep_notes(err: CliError, exc: BaseException, *, root: bool = True) -> CliError:
     """`err` with the notes of `exc`, the error it words: an install not
     found carries the locations checked and the lines that name the install
-    as notes, and `_fail` prints a `CliError`'s notes, not its cause's."""
-    for line in getattr(exc, "__notes__", ()):
+    as notes, and `_fail` prints a `CliError`'s notes, not its cause's.
+    Without `root` (`--root` does not choose the install there), the
+    naming lines offer only the variable."""
+    if not root and isinstance(exc, install.InstallNotFoundError):
+        lines = [
+            *exc.location_lines(),
+            *install.name_the_install_lines(exc.platform, root=False),
+        ]
+    else:
+        lines = list(getattr(exc, "__notes__", ()))
+    for line in lines:
         err.add_note(line)
     return err
 
@@ -1364,7 +1377,7 @@ def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
             return f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR
         return _lua_refusal_words(exc), EXIT_ERROR
     if isinstance(exc, install.InstallError):
-        return _install_words(exc), EXIT_ERROR
+        return _install_words(exc, listed=not json_out), EXIT_ERROR
     if isinstance(exc, OSError):
         return _os_error_words(exc), EXIT_ERROR
     if isinstance(exc, WowlabError):
@@ -5543,7 +5556,7 @@ def _sv_inside_install(
     except install.InstallError as exc:
         # --root cannot help here, given or not: only the variable can.
         words = _install_words(exc, _NAME_THE_INSTALL_BY_ITSELF)
-        raise _keep_notes(CliError(f"refused: {words}", EXIT_REFUSED), exc) from exc
+        raise _keep_notes(CliError(f"refused: {words}", EXIT_REFUSED), exc, root=False) from exc
     try:
         home = longpath.realpath(found.root)
         if root is not None and longpath.realpath(_discover(root)[0].root) != home:

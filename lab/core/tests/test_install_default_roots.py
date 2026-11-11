@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -128,57 +127,115 @@ def test_volumes_link_entry_is_skipped_constructed(tmp_path: Path) -> None:
     ]
 
 
-def test_volumes_entry_that_is_not_a_folder_is_skipped_constructed(tmp_path: Path) -> None:
+def test_volumes_hidden_entry_is_skipped_constructed(tmp_path: Path) -> None:
+    volumes = tmp_path / "Volumes"
+    (volumes / "Data").mkdir(parents=True)
+    (volumes / ".timemachine").mkdir()
+
+    got = _mac("/Users/someone", volumes)
+
+    assert not any(".timemachine" in str(p) for p in got)
+    assert _p(volumes, "Data") in got
+
+
+def test_volumes_entries_are_not_opened_only_listed_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Domain review, 2026-11-11: no trial listing of a volume. A file there,
+    or one whose `lstat` fails, is not known to be a link: its locations are
+    kept, and the one `stat` each candidate gets says what they are."""
     volumes = tmp_path / "Volumes"
     (volumes / "Data").mkdir(parents=True)
     (volumes / "a-file").write_bytes(b"")
-
-    got = _mac("/Users/someone", volumes)
-
-    assert _p(volumes, "a-file") not in got
-    assert _p(volumes, "Data") in got
-
-
-@pytest.mark.skipif(
-    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-    reason="needs POSIX permission bits and a non-root user",
-)
-def test_volumes_entry_that_cannot_be_listed_is_skipped_without_error_constructed(
-    tmp_path: Path,
-) -> None:
-    volumes = tmp_path / "Volumes"
-    (volumes / "Data").mkdir(parents=True)
-    locked = volumes / "Locked"
-    locked.mkdir()
-    locked.chmod(0)
-    try:
-        got = _mac("/Users/someone", volumes)
-    finally:
-        locked.chmod(stat.S_IRWXU)
-
-    assert _p(volumes, "Locked") not in got
-    assert _p(volumes, "Data") in got
-
-
-def test_volumes_entry_whose_listing_is_refused_is_skipped_constructed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The same refusal, injected, so it runs as root and on every OS."""
-    volumes = tmp_path / "Volumes"
-    (volumes / "Data").mkdir(parents=True)
-    (volumes / "Locked").mkdir()
+    (volumes / "Gone").mkdir()
+    listed: list[str] = []
     real_scandir = os.scandir
+    real_lstat = os.lstat
 
-    def refusing(path: object = ".") -> object:
-        if Path(str(path)).name == "Locked":
-            raise PermissionError(13, "Permission denied", str(path))
+    def recording(path: object = ".") -> object:
+        listed.append(str(path))
         return real_scandir(path)  # type: ignore[call-overload]
 
-    monkeypatch.setattr(install.os, "scandir", refusing)
+    def failing(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        if Path(str(path)).name == "Gone":
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(install.os, "scandir", recording)
+    monkeypatch.setattr(install.os, "lstat", failing)
     got = _mac("/Users/someone", volumes)
 
-    assert _p(volumes, "Locked") not in got
+    assert listed == [str(volumes)], "only /Volumes itself is listed"
+    assert _p(volumes, "a-file") in got
+    assert _p(volumes, "Gone") in got
     assert _p(volumes, "Data") in got
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS paths built as POSIX paths")
+def test_volume_that_cannot_be_checked_is_reported_not_raised_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = tmp_path / "Volumes"
+    locked = volumes / "Locked"
+    locked.mkdir(parents=True)
+    real_stat = Path.stat
+
+    def refusing(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if locked in self.parents:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "stat", refusing)
+    defaults = _under(_mac("", volumes), tmp_path)
+    with pytest.raises(InstallNotFoundError) as caught:
+        discover(environ={}, defaults=defaults)
+
+    assert caught.value.unchecked == tuple(defaults)
+    assert set(caught.value.unchecked_reasons) == {"Permission denied"}
+
+
+# ─── /Volumes is listed last, and only when needed ──────────────────────────
+
+
+def test_lazy_roots_do_not_list_volumes_before_the_fixed_six_are_taken_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = tmp_path / "Volumes"
+    (volumes / "Data").mkdir(parents=True)
+    listed: list[str] = []
+    real_scandir = os.scandir
+
+    def recording(path: object = ".") -> object:
+        listed.append(str(path))
+        return real_scandir(path)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(install.os, "scandir", recording)
+    roots = default_roots("darwin", home="/Users/someone", volumes=volumes, lazy=True)
+    first_six = [next(roots) for _ in range(6)]
+
+    assert first_six[-1] == _p("/Users/Shared")
+    assert listed == []
+    assert next(roots) == _p(volumes, "Data")
+    assert listed == [str(volumes)]
+
+
+def test_discovery_stops_taking_locations_at_the_first_install_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery asks for the defaults lazily and takes none past the hit,
+    so the volumes listed last are not touched when the install is found."""
+    first = _install(tmp_path / "first")
+    seen: list[object] = []
+
+    def fake_default_roots(**kwargs: object) -> object:
+        seen.append(kwargs.get("lazy"))
+        yield first
+        raise AssertionError("a location past the install was asked for")
+
+    monkeypatch.setattr(install, "default_roots", fake_default_roots)
+
+    assert discover(environ={}).root == first
+    assert seen == [True]
 
 
 def test_unreadable_volumes_folder_gives_no_volumes_constructed(
@@ -231,7 +288,8 @@ def test_home_found_by_default_is_searched_constructed(
     monkeypatch.setattr(install.Path, "home", staticmethod(lambda: tmp_path / "me"))
     got = default_roots("darwin", volumes=tmp_path / "absent")
 
-    assert got[3:5] == (_p(tmp_path / "me", "Applications"), _p(tmp_path / "me", "Games"))
+    me = (tmp_path / "me").as_posix()  # the code builds POSIX paths, on Windows too
+    assert got[3:5] == (_p(me, "Applications"), _p(me, "Games"))
 
 
 # ─── two installs: the first in the order wins ──────────────────────────────
@@ -302,19 +360,26 @@ def test_not_found_notes_list_every_location_in_order_then_the_two_commands(
         f"searched, no install there: {absent}",
         f"could not check: {a_file} (not a directory)",
         f"searched, no install there: {empty}",
-        "to name the install, use the folder that holds .build.info (not a flavor folder "
-        "named like _name_ inside it), for one command or for every command:",
+        "to name the install, use the folder that holds .build.info (not one of the _..._ "
+        "folders inside it), for one command or for every command in this terminal window:",
         '  --root "<path>"',
         '  export WOWLAB_WOW_ROOT="<path>"',
     ]
 
 
-def test_the_variable_line_is_set_on_windows_and_export_elsewhere() -> None:
-    assert name_the_install_lines("win32")[-1] == "  set WOWLAB_WOW_ROOT=<path>"
+def test_the_variable_lines_are_cmd_and_powershell_on_windows_and_export_elsewhere() -> None:
+    assert name_the_install_lines("win32")[-2:] == (
+        "  cmd: set WOWLAB_WOW_ROOT=<path>",
+        '  PowerShell: $env:WOWLAB_WOW_ROOT = "<path>"',
+    )
     assert name_the_install_lines("darwin")[-1] == '  export WOWLAB_WOW_ROOT="<path>"'
     assert name_the_install_lines("linux")[-1] == '  export WOWLAB_WOW_ROOT="<path>"'
     error = InstallNotFoundError([], platform="win32")
-    assert error.__notes__[-2:] == ['  --root "<path>"', "  set WOWLAB_WOW_ROOT=<path>"]
+    assert error.__notes__[-3:] == [
+        '  --root "<path>"',
+        "  cmd: set WOWLAB_WOW_ROOT=<path>",
+        '  PowerShell: $env:WOWLAB_WOW_ROOT = "<path>"',
+    ]
 
 
 def test_cli_prints_the_error_then_every_location_then_the_commands_constructed(
@@ -332,13 +397,12 @@ def test_cli_prints_the_error_then_every_location_then_the_commands_constructed(
 
     assert result.exit_code == cli.EXIT_ERROR
     assert result.stderr.splitlines() == [
-        "wowlab: no WoW install found where the game installs by default (2 locations "
-        "checked, listed below); name the install folder (the one that holds .build.info) "
-        "with --root, or set WOWLAB_WOW_ROOT to it; wowlab doctor says how",
+        "wowlab: no WoW install found in the folders wowlab searches (2 checked, listed "
+        "below); name the install as shown at the end",
         f"searched, no install there: {first}",
         f"searched, no install there: {second}",
-        "to name the install, use the folder that holds .build.info (not a flavor folder "
-        "named like _name_ inside it), for one command or for every command:",
+        "to name the install, use the folder that holds .build.info (not one of the _..._ "
+        "folders inside it), for one command or for every command in this terminal window:",
         '  --root "<path>"',
         '  export WOWLAB_WOW_ROOT="<path>"',
     ]
