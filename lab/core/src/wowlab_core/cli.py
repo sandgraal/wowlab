@@ -1265,9 +1265,7 @@ _NAME_THE_INSTALL_BY_ITSELF = (
 )
 
 
-def _install_words(
-    exc: install.InstallError, how: str = _NAME_THE_INSTALL, *, listed: bool = True
-) -> str:
+def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> str:
     """Why there is no install to read, then how to name one (`how`): every
     such error names `--root` and `WOWLAB_WOW_ROOT` (M16-19)."""
     if isinstance(exc, install.InstallNotFoundError):
@@ -1279,9 +1277,11 @@ def _install_words(
             how = "name the install as shown at the end"
         n = len(exc.checked)
         if n:
-            # `listed` is False for a `--json` report, which lists nothing.
-            below = ", listed below" if listed else ""
-            found = f"no WoW install found in the folders wowlab searches ({n} checked{below})"
+            # Listed in the notes: on stderr after this line, in an
+            # `ErrorReport`'s `notes`.
+            found = (
+                f"no WoW install found in the folders wowlab searches ({n} checked, listed below)"
+            )
         else:
             found = "no WoW install found: wowlab knows no default install location on this system"
         return f"{found}; {how}"
@@ -1377,7 +1377,7 @@ def _error_words(exc: Exception, json_out: bool) -> tuple[str, int]:
             return f"not SavedVariables data the parser accepts: {exc}", EXIT_ERROR
         return _lua_refusal_words(exc), EXIT_ERROR
     if isinstance(exc, install.InstallError):
-        return _install_words(exc, listed=not json_out), EXIT_ERROR
+        return _install_words(exc), EXIT_ERROR
     if isinstance(exc, OSError):
         return _os_error_words(exc), EXIT_ERROR
     if isinstance(exc, WowlabError):
@@ -1409,7 +1409,12 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         except _HANDLED_ERRORS as exc:
             message, code = _error_words(exc, json_out)
             if json_out and not _Report.printed:
-                report = ErrorReport(kind=_error_kind(exc), message=message, exit_code=code)
+                report = ErrorReport(
+                    kind=_error_kind(exc),
+                    message=message,
+                    exit_code=code,
+                    notes=[str(n) for n in getattr(exc, "__notes__", ())],
+                )
                 if _Report.lines:
                     _emit_line(report)
                 else:
@@ -1430,11 +1435,15 @@ class ErrorReport(_Out):
     there (as one line in a line-delimited run, `log tail --follow`); the
     stderr line and the exit code are as without `--json`. `kind` is the
     bare class name (`_error_kind`), not a stable enum: it changes if a class
-    is renamed, and a new error class adds a value."""
+    is renamed, and a new error class adds a value. `notes` are the lines
+    printed on stderr after that line, in order (M16-112: an install not
+    found lists there every location checked and how to name the install),
+    empty for most errors."""
 
     kind: str
     message: str
     exit_code: int
+    notes: list[str] = Field(default_factory=list)
 
 
 # ─── install, flavor, account, character ────────────────────────────────────

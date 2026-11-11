@@ -270,7 +270,9 @@ def test_looks_with_no_install_names_root_and_the_variable(
     result = run("looks", "options", "Human")
     assert result.exit_code == cli.EXIT_ERROR
     line = _one_line(result.stderr)
-    assert NAMES_THE_INSTALL in line
+    assert "name the install as shown at the end" in line
+    assert '  --root "<path>"' in result.stderr.splitlines()
+    assert any(ENV_LINE in out for out in result.stderr.splitlines())
     assert "Without an install, pass --build with a full version string" in line
 
 

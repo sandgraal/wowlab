@@ -416,3 +416,47 @@ def test_a_reworded_not_found_keeps_its_notes(tmp_path: Path) -> None:
     assert kept.__notes__ == error.__notes__
     with pytest.raises(typer.Exit):
         cli._fail("x", 1, kept)
+
+
+@pytest.mark.parametrize("home", ["", PurePosixPath(""), "relative/home", Path()])
+def test_an_empty_or_relative_home_is_no_home_constructed(tmp_path: Path, home: object) -> None:
+    got = default_roots("darwin", home=home, volumes=tmp_path / "absent")  # type: ignore[call-overload]
+    assert got == (
+        _p("/Applications"),
+        _p("/Applications/Games"),
+        _p("/Games"),
+        _p("/Users/Shared"),
+    )
+
+
+def test_tilde_home_is_kept_for_the_wiki_check(tmp_path: Path) -> None:
+    got = default_roots("darwin", home="~", volumes=tmp_path / "absent")
+    assert got[3:5] == (_p("~", "Applications"), _p("~", "Games"))
+
+
+def test_without_root_the_naming_lines_offer_only_the_variable() -> None:
+    lines = name_the_install_lines("darwin", root=False)
+    assert lines == (
+        "to name the install, use the folder that holds .build.info (not one of the _..._ "
+        "folders inside it), for every command in this terminal window:",
+        '  export WOWLAB_WOW_ROOT="<path>"',
+    )
+    assert '  --root "<path>"' not in name_the_install_lines("win32", root=False)
+
+
+def test_json_error_report_carries_the_listed_locations_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The message says "listed below"; in `--json` they are the notes."""
+    monkeypatch.delenv(install.ENV_ROOT, raising=False)
+    monkeypatch.setattr(install.sys, "platform", "darwin")
+    absent = tmp_path / "a" / WOW
+    monkeypatch.setattr(install, "default_roots", lambda **k: (absent,))
+    result = CliRunner().invoke(cli.app, ["install", "show", "--json"])
+    report = cli.ErrorReport.model_validate_json(result.stdout)
+    assert report.message.startswith("no WoW install found in the folders wowlab searches")
+    assert report.notes == [
+        f"searched, no install there: {absent}",
+        *name_the_install_lines("darwin"),
+    ]
+    assert result.stderr.splitlines()[1:] == report.notes

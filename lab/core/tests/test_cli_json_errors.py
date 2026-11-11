@@ -221,7 +221,8 @@ def test_the_kind_skips_private_classes() -> None:
 def test_no_install_is_an_error_report(no_install: Path) -> None:
     report = _check(*_both(("cvar", "list")), kind="InstallNotFoundError", code=cli.EXIT_ERROR)
     assert report.message.startswith("no WoW install found in the folders wowlab searches")
-    assert "WOWLAB_WOW_ROOT" in report.message
+    # M16-112: the locations and the lines that name the install are notes.
+    assert any("WOWLAB_WOW_ROOT" in note for note in report.notes)
 
 
 def test_a_file_the_parser_refuses_is_an_error_report_constructed(root: Path) -> None:
