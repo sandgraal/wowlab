@@ -1482,13 +1482,36 @@ The target root must not overlap the snapshot store in either direction (L1). A 
 
 A `.wowlab-<32 hex>.tmp` file is explained by its own file-map row (`docs/LAB_FILE_MAP.md`).
 
+*Amended 2026-11-10 (M16-84T, M16-84; #453):* **The files a rollback left alone.**
+
+(a) **On the record.** `HistoryRecord.paths_left: tuple[str, ...]` lists the files the rollback of a `rollback_incomplete` record left as they are (item 3 as clarified 2026-09-22): a path changed by another program, a path the system refused to put back, and a refused path whose disk moved since guard read it. Each is relative to the flavor folder and spelled as `paths[].path` spells it, once; order is not part of the contract. A directory the rollback could not remove is not listed (it stays in the note). The list is empty for every other state, and for a record written before M16-84: the note is never parsed.
+
+(b) **In the journal.** The record file carries the list under `paths_left`, and the paths whose only operation was refused (which `paths` does not name) under `paths_refused`. On read, each entry of either must pass the allowlist's lexical check, appear once, and, for `paths_left`, be one of the record's `paths` or `paths_refused`, on a `rollback_incomplete` record only. Anything else is a damaged record: `history()` raises `GuardError`.
+
+(c) **The format stays 2.** Both keys are written only when they are not empty, so a record with nothing left alone or refused is what the M16-71 gate wrote. A gate from before M16-84 forbids unknown keys, so it refuses a record that carries either key as damaged rather than reading it without the list. A format-1 record carries neither.
+
+(d) **`doctor`.** The `rollback_incomplete` problem (M16-71) names each file in `paths_left`, sorted and relative to the flavor folder, and names that folder once (the last component of the record's `flavor_path`, never a constant). It groups the files by what doctor reads there now. That read is read-only and is made only when the record's flavor is one of the install's discovered flavors, the way a snapshot reads (no link followed); the journal's own path is never opened.
+
+A file in `paths` holds the change's `after` ("still holds wowlab's change", or "is still deleted, as wowlab's change left it" when the change deleted it), its `before` ("already holds what was there before the change", or "is gone again, as before the change" when the change created it), something else ("another program, such as the game when it saves your settings or addon data, has changed X since wowlab's change", or "has deleted X since wowlab's change"; the wording holds whether the change wrote or deleted X), or could not be read ("wowlab could not put back X, which holds either wowlab's change or what another program, such as the game when it saves your settings or addon data, has written to it since"). No timing is stated: SavedVariables are written at logout or /reload, `Config.wtf` on exit and on some setting changes. A file in `paths_left` but not in `paths` was never written by the change, because its only operation was refused: "wowlab did not write X, which another program changed while wowlab was working, and undo leaves it as it is". Groups are joined with "; ", and no group holds a semicolon of its own.
+
+The command's clause says what `undo()` does: it puts back every file in the record's `paths` (every file the change wrote or deleted) whose bytes differ from the pre-change bytes, including what the game has saved to them since the failure. It keeps a copy, so running undo again next, before the player plays, brings them back (the wording M16-92 gives undo's plan). `wowlab undo --expect <id>` stays last, with one exception. A record whose `paths` and `created_dirs` are both empty (its only operations were refused before any folder was made) wrote nothing, and `undo` of it records nothing either (it says the change "changed no files" and returns), so offering the command would not clear the problem. Its problem opens "the last change wowlab made failed before it changed any file" and ends "wowlab changed no file, so there is nothing for undo to put back, and undo leaves this record as it is; wowlab doctor stops reporting it after wowlab's next change.", with no command. A record with no `paths` but with `created_dirs` (a write refused after the gate made its folders, whose removal another program's file then blocks) is not that exception: `undo` removes those folders if they are empty and records itself, as M16-86's plan says. Its problem opens "the last change wowlab made failed after it created folders and before it changed any file", names the files as above, and ends "undo removes the folders it created if they are empty and records the undo, and wowlab doctor stops reporting this change: wowlab undo --expect <id>". `--json` gains `store.last_transaction.created_dirs`, a count. A record that lists no file gets the same clauses without names.
+
+`--json` gains `store.last_transaction.flavor_folder` and `store.last_transaction.paths_left`, a list of `{path, now, exists}`: `now` is one of `wowlab_change`, `before_change`, `changed_since`, `unknown` or `not_written`, and `exists` is whether the file is there now (null when it was not read). The problem and the list hold names as stored, and only the output escapes them. The text output escapes control, format and separator characters as `\xNN` (a real file name may hold a bidi mark), and `--json` is ASCII. So `--redact` sees each name unescaped and replaces account, realm and character folders in those paths like any other. Those names come from the install, the snapshots and the paths of every journal record, since a folder the transaction created is in no snapshot.
+
 *Amended 2026-11-11 (owner decisions in session; M16-69, M16-78):*
 
 (a) **A change killed between the temp cleanup and its snapshot changed nothing.** Item 2's order changes: "after the pre-write snapshot and the new journal record are written" now reads "after the new journal record is written and before the pre-write snapshot is taken". The record still comes first, because each removal is journaled in it and fsynced before its unlink; how a record names a snapshot that does not exist yet is the implementer's to design (M16-69). If wowlab is killed after that cleanup and before the snapshot exists, the record means that the change touched no player file. `undo` closes the record without restoring anything and never brings a removed temp back. `doctor` says the change stopped before it touched anything. Snapshots stay lossless: a temp is left out of a snapshot because it was removed before the snapshot was taken, never by a name filter.
 
-(a1) **A killed undo leaves the change it was undoing visible.** *Owner decision, 2026-11-11.* If the change killed between the cleanup and its snapshot was itself an `undo` of an earlier record D (D `open` or `rollback_incomplete`), then closing the killed record does not settle D. After that close, `doctor` reports D again as it did before the undo started, with D's own `wowlab undo --expect <D id>` line, and exits 1 until D is undone. `wowlab undo` offers D again. Nothing about D is lost or hidden because an undo of it was interrupted.
+(a1) **A killed undo leaves the change it was undoing visible.** *Owner decision, 2026-11-11.* If the change killed between the cleanup and its snapshot was itself an `undo` of an earlier record D (D `open` or `rollback_incomplete`), then closing the killed record does not settle D. After that close, `doctor` reports D again as it did before the undo started, with D's own `wowlab undo --expect <D id>` line, and exits 1 until D is undone. `wowlab undo` offers D again. Nothing about D is lost or hidden because an undo of it was interrupted. *Undo target (owner decision, 2026-11-11, "1 yes"):* the closed record of a killed `undo` that changed no file is skipped when `wowlab undo` picks its target. The next `wowlab undo` offers D, and `--expect <D id>` names D. `doctor` names both: D as the change to undo, and the killed undo as interrupted before it changed anything.
 
 (b) **The whole user data directory is private.** Every folder wowlab creates under the user data directory is made 0700 in the `mkdir` itself, whatever the umask. That covers the store root and `journal/` (2026-11-10, (b)), the parents made on the way to a missing store, `locks/`, and each module's folder (`gamedata/`, `looks/`, `pages/`, `db2lake/`). The parents wowlab makes on the way to a store given explicitly outside the user data directory are made 0700 too. A system folder above the user data directory (such as `~/.local/share`) is not wowlab's, and this rule does not set its mode. This extends 2026-11-10 (b) to every module.
+
+(e) **A flavor path with a control or format character is refused.** *Owner decision, 2026-11-11 ("2 yes").* The forbidden characters are:
+- C0 controls and DEL;
+- C1 controls;
+- every Unicode format (Cf), line-separator (Zl) or paragraph-separator (Zp) character, the same set the CLI's output escaping covers.
+
+`transaction()` and `undo()` refuse a flavor whose absolute path holds any of them, with `GuardError`, before any snapshot, lock-held write or journal record. `history()` refuses a record whose `flavor_path` holds one, as a damaged record. The gate never writes a record that `history()` would refuse, so a player whose install path holds such a character gets the refusal at the first change, never a lockout after it. Relative paths inside the flavor are unchanged: a real file name may hold a bidi mark, and only the output escapes it (2026-11-10, (d)).
 
 ### 6.11 CLI — `wowlab` (M10-14)
 
@@ -4994,7 +5017,54 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
      file as "Character Specific Key Bindings" sets, account and character
      macros are two sets, and each CVar is read from the file of its own
      scope. `snap restore` and `undo` then add the login caveat before the
-     prompt and do not repeat it after the write. `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
+     prompt and do not repeat it after the write. *Amended 2026-11-11
+     (M16-97):* the login caveat no longer waits on that condition. It
+     follows the listed paths: a plan that lists `Config.wtf` or a
+     `*-cache` file under `WTF/` (not in a SavedVariables folder) gets it,
+     whether or not a line names what changes in that file (a file wowlab
+     cannot compare, an empty one, a delete or a recreate), by the same
+     rule the result uses after the write. The scope line still needs a
+     named change. The caveat says the client reads `Config.wtf` again the
+     next time it starts (whether a login alone rereads it is unconfirmed,
+     and the client may save over it on exit, so a re-login is not
+     offered) and the other files at login; that the server may replace
+     binds, macros and account or character settings at login when their
+     sync setting is on; and that which other `*-cache` files it may
+     replace, and under which setting, is not yet known. `profile apply`'s
+     own login note says the same of `Config.wtf`. *Amended 2026-11-11
+     (M16-103):* both notes now lead with the files the plan lists, by the
+     same rule (`Config.wtf` or a `*-cache` file under `WTF/`, not in a
+     SavedVariables folder). When only `*-cache` files are listed, the
+     caveat says the client reads them at login and the server may replace
+     them, and says nothing of `Config.wtf`. When only `Config.wtf` is
+     listed, it keeps only the restart sentence (the client reads it again
+     the next time it starts) and drops the server-sync sentence: the file
+     map lists no server replacement for `Config.wtf` (its row and the
+     Timing rules), which holds machine-scope settings. When both are listed, it keeps both
+     sentences, as above. `profile apply`'s note, shown for every non-empty
+     apply plan, follows the same three cases; when neither is listed (a
+     SavedVariables-only or `AddOns.txt`-only apply) it keeps only that the
+     result is proven by starting the client and logging in, naming neither
+     `Config.wtf` nor sync. No note states when `Config.wtf` is read beyond
+     the next start (`docs/LAB_FILE_MAP.md`, its timing rules, **[verify]**).
+     *Amended 2026-11-11 (M16-105):* for `undo`, the result follows what
+     the undo wrote (its own journal record), not the paths the plan
+     listed (M16-102's ruling). The two are the same unless a file changes
+     after the plan read it (while the prompt waits, or between the plan
+     and the write under `--yes`): the undo then puts it back too, and when
+     it is `Config.wtf` or a `*-cache` file the caveat appears after the
+     write even when the plan had none, or showed a narrower one (M16-103's
+     sets: a `Config.wtf`-only plan's restart sentence becomes both
+     sentences when a `*-cache` file is written too). So "do not repeat it
+     after the write" holds only for a caveat the plan already showed. A
+     file the undo wrote that the plan did not list is named once, after
+     "Undone.", before any caveat (`also put back`, `also deleted` or
+     `also recreated`, with "it changed after the plan was shown").
+     `UndoReport` gains `written_paths`, the paths the undo wrote, from
+     that record, and `unlisted_written`, those of them the plan did not
+     list (`plan` is the whole record undone, so it cannot tell them
+     apart); both are empty when nothing was undone. Additive only.
+     `RestoreReport`, `ProfileApplyReport`, `UndoReport` and
      `DiffReport` gain `plan_lines`: the text plan (for `snap diff`, its
      text output), line by line as the terminal shows it (escaped), for the
      UI's confirm step (EV-20). Additive only.

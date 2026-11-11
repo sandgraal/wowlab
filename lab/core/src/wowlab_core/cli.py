@@ -1695,6 +1695,24 @@ class DoctorFlavor(_Out):
     matching_rows: int
     game_data: GameDataReport
     sync_cvars: list[SyncCVar]
+    # The installed lab-addon's ## Interface: against this client's (M16-06).
+    lab_addon: addoninstall.LabAddonState
+
+
+# What a file the rollback left holds as `doctor` reads it now (M16-84):
+# the change's own bytes (`after`), what was there before it (`before`),
+# anything else, or unknown (the record's flavor is not one doctor found, or
+# the file could not be read). `not_written`: the change never wrote it (its
+# only operation was refused), so undo leaves it as it is.
+LeftNow = Literal["wowlab_change", "before_change", "changed_since", "unknown", "not_written"]
+
+
+class LeftPath(_Out):
+    path: str
+    now: LeftNow
+    # Whether the file is there now; None when doctor did not read it
+    # (`unknown`, `not_written`).
+    exists: bool | None
 
 
 class LastTransaction(_Out):
@@ -1705,6 +1723,15 @@ class LastTransaction(_Out):
     # as-is: a state names nobody (M16-85).
     state: guard._State
     paths: int
+    # How many folders the change created (M16-84): with no `paths`, undo
+    # still has those to remove, and records itself.
+    created_dirs: int
+    # The last name of the record's flavor folder, as journaled (M16-84).
+    flavor_folder: str
+    # The files the rollback of a `rollback_incomplete` record left as they
+    # are, relative to the flavor folder, sorted (M16-84); empty otherwise,
+    # and for a record written before the journal listed them.
+    paths_left: list[LeftPath]
 
 
 class StoreReport(_Out):
@@ -1717,6 +1744,38 @@ class StoreReport(_Out):
     journal_error: str | None
     # Who besides the player can open the store (M16-41); not checked on Windows.
     exposure: snapshot.StoreExposure
+
+
+# What each "Next steps" item of `doctor` is about (M16-37).
+NextStepItem = Literal["install", "lab_addon", "characters", "combat_log"]
+# `ok`: nothing to do; `missing`: not there yet; `stale`: the lab-addon is
+# made for another client version; `unknown`: wowlab cannot tell.
+NextStepState = Literal["ok", "missing", "stale", "unknown"]
+
+
+class NextStep(_Out):
+    """One item of `doctor`'s "Next steps" (M16-37). The text output says
+    each item from these fields, so the two never disagree."""
+
+    item: NextStepItem
+    # The flavor folder the item is about; None for `install`.
+    flavor_folder: str | None
+    state: NextStepState
+    # `characters`: the character folders holding a lab-addon record;
+    # `combat_log`: the combat logs under Logs/; None otherwise.
+    count: int | None = None
+    # `combat_log`: the newest log's modification time; None otherwise.
+    newest_mtime_ns: int | None = None
+    # The wowlab command the item names, quoted for this machine's shell,
+    # with the caller's --root and, on an install with several flavors,
+    # --flavor: the reinstall for `lab_addon`, `char list` for `characters`.
+    command: str | None = None
+    # What else the item says, in the player's words: why its state is
+    # `unknown` or `stale`, or what a missing lab-addon means for the records.
+    detail: str | None = None
+    # The one command or in-game action that fixes it, as the text says it;
+    # None when there is nothing to do or nothing wowlab can name.
+    fix: str | None = None
 
 
 class DoctorReport(_Out):
@@ -1742,6 +1801,9 @@ class DoctorReport(_Out):
     # names the Battle.net app's Scan and Repair (M16-13). Left out of the
     # JSON when false.
     build_info_missing: bool = Field(default=False, exclude_if=lambda v: not v)
+    # What to do next (M16-37): the install when none was found, else for
+    # each flavor the lab-addon, the characters recorded and a combat log.
+    next_steps: list[NextStep] = Field(default_factory=list)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -1843,6 +1905,95 @@ def _client_report(inst: install.Install) -> ClientReport:
     return ClientReport(state=state, processes=list(clients), error=None)
 
 
+def _left_paths(r: guard.HistoryRecord, inst: install.Install | None) -> list[LeftPath]:
+    """Each file the rollback of `r` left, with what it holds now. Reads
+    only, and only inside the install doctor found, when the record's flavor
+    folder is one of its flavors; the journal's own path is never opened."""
+    written = {p.path: p for p in r.paths}
+    folder = _journaled_flavor(r, inst)
+    out: list[LeftPath] = []
+    for rel in sorted(r.paths_left):
+        change = written.get(rel)
+        now: LeftNow
+        exists: bool | None = None
+        if change is None:
+            now = "not_written"
+        elif folder is None:
+            now = "unknown"
+        else:
+            read, digest = _hash_now(folder[0], folder[0] / folder[1] / rel)
+            if not read:
+                now = "unknown"
+            else:
+                exists = digest is not None
+                if digest == change.after:
+                    now = "wowlab_change"
+                elif digest == change.before:
+                    now = "before_change"
+                else:
+                    now = "changed_since"
+        out.append(LeftPath(path=rel, now=now, exists=exists))
+    return out
+
+
+def _journaled_flavor(
+    r: guard.HistoryRecord, inst: install.Install | None
+) -> tuple[Path, str] | None:
+    """The resolved install root and the flavor folder name of the flavor
+    `r` was written to, when it is one of `inst`'s (resolved as the write
+    gate resolves a flavor before it journals it); else None."""
+    if inst is None:
+        return None
+    journaled = Path(r.flavor_path)
+    for f in inst.flavors:
+        try:
+            real = longpath.resolve(inst.root / f.folder, strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if real == journaled:
+            return real.parent, real.name
+    return None
+
+
+def _hash_now(root: Path, path: Path) -> tuple[bool, str | None]:
+    """(read, SHA-256 hex or None for absent) of `path` under `root`,
+    opened as the snapshot reads an install (no link followed, regular file
+    only); (False, None) when it cannot be read."""
+    try:
+        fd, _ = snapshot.open_regular_file_from_root(path, root)
+    except FileNotFoundError:
+        return True, None
+    except (OSError, ValueError):
+        return False, None
+    try:
+        hasher = hashlib.sha256()
+        while chunk := os.read(fd, 1 << 20):
+            hasher.update(chunk)
+    except OSError:
+        return False, None
+    finally:
+        os.close(fd)
+    return True, hasher.hexdigest()
+
+
+def _read_left(store: StoreReport, inst: install.Install | None) -> StoreReport:
+    """`store` with what each file its last record's rollback left holds
+    now, read in the install doctor found (M16-84). `_store_report` knows no
+    install, so it says those it wrote as `unknown`; the journal is read
+    again, and a record that is no longer the last one is left as it was."""
+    t = store.last_transaction
+    if t is None or not t.paths_left or inst is None:
+        return store
+    try:
+        records = guard.history()
+    except guard.GuardError:
+        return store
+    if not records or records[-1].id != t.id:
+        return store
+    left = _left_paths(records[-1], inst)
+    return store.model_copy(update={"last_transaction": t.model_copy(update={"paths_left": left})})
+
+
 def _store_report() -> StoreReport:
     store = snapshot.SnapshotStore()
     listing = store.list_lenient()
@@ -1858,7 +2009,14 @@ def _store_report() -> StoreReport:
         if records:
             r = records[-1]
             last = LastTransaction(
-                id=r.id, created_at=r.created_at, label=r.label, state=r.state, paths=len(r.paths)
+                id=r.id,
+                created_at=r.created_at,
+                label=r.label,
+                state=r.state,
+                paths=len(r.paths),
+                created_dirs=len(r.created_dirs),
+                flavor_folder=Path(r.flavor_path).name,
+                paths_left=_left_paths(r, None),
             )
     return StoreReport(
         path=str(store.path),
@@ -1917,8 +2075,15 @@ def _doctor(
 
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
-    if inst is not None:
+    steps: list[NextStep] = []
+    if inst is None:
+        steps.append(_install_step(build_info_missing))
+    else:
         game = _game_data(inst.flavors, check_builds)
+        several = len(inst.flavors) > 1
+        # The --root the player gave, as given, for the commands the next
+        # steps name; None when the install was found without one.
+        given_root = str(root) if root is not None and str(root) != "" else None
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -1926,6 +2091,7 @@ def _doctor(
             except (OSError, wtfconfig.WtfLimitError) as exc:
                 problems.append(f"{f.folder}: cannot read the config files: {exc}")
                 sync = []
+            lab_addon = addoninstall.lab_addon_state(f)
             flavors.append(
                 DoctorFlavor(
                     folder=f.folder,
@@ -1935,8 +2101,10 @@ def _doctor(
                     matching_rows=f.matching_rows,
                     game_data=game[f.folder],
                     sync_cvars=sync,
+                    lab_addon=lab_addon,
                 )
             )
+            steps += _flavor_steps(lay, f.folder, lab_addon, several, given_root)
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -1945,7 +2113,7 @@ def _doctor(
             )
         client = _client_report(inst)
 
-    store = _store_report()
+    store = _read_left(_store_report(), inst)
     if store.damaged:
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     if store.journal_error:
@@ -1955,7 +2123,12 @@ def _doctor(
     elif (
         store.last_transaction is not None and store.last_transaction.state == "rollback_incomplete"
     ):
-        problems.append(_rollback_unfinished(store.last_transaction.id))
+        t = store.last_transaction
+        problems.append(
+            _rollback_unfinished(
+                t.id, t.paths_left, t.flavor_folder, paths=t.paths, created_dirs=t.created_dirs
+            )
+        )
     return DoctorReport(
         install_root=str(inst.root) if inst is not None else None,
         found_by=found_by,
@@ -1968,7 +2141,241 @@ def _doctor(
         problems=problems,
         not_taken=list(inst.not_taken) if inst is not None else [],
         build_info_missing=build_info_missing,
+        next_steps=steps,
     )
+
+
+# ─── doctor: next steps (M16-37) ─────────────────────────────────────────────
+
+_RECORD_HOW = (
+    "In game, with the lab-addon installed and enabled for the character (AddOns at "
+    "character select), log in, then log out or type /reload."
+)
+_COMBATLOG_HOW = (
+    "In game, type /combatlog to turn combat logging on; the game writes a log only while it is on."
+)
+# What a missing or out-of-date lab-addon means for the records: none
+# while it is missing; an out-of-date one may still load ('Load out of date
+# AddOns'), so that is hedged; and nothing when wowlab cannot tell.
+_RECORDS_WAIT = {
+    "missing": "they are not updated until the lab-addon above is fixed",
+    "stale": "they may not be updated until the lab-addon above is fixed",
+}
+
+
+def _install_step(build_info_missing: bool) -> NextStep:
+    """The one next step when no install was found. The how-to is the lines
+    above it in the text (`firstrun.pointing_lines`, the Scan and Repair
+    line), so this points there rather than saying it again."""
+    if build_info_missing:
+        fix = (
+            "If this is the game's folder, run Scan and Repair as the lines above say; if "
+            "not, name the folder that holds .build.info, as they also say."
+        )
+    else:
+        fix = "Name the folder that holds .build.info, as the lines above say."
+    return NextStep(item="install", flavor_folder=None, state="missing", fix=fix)
+
+
+def _wowlab_command(args: Sequence[str], folder: str, several: bool, root: str | None) -> str:
+    """A wowlab command for this flavor, as a player would type it: the
+    caller's --root as given (only when one was given, as `labaddon.survey`
+    names it for `char show`; on Windows a `\\\\?\\` root by its plain
+    spelling), and --flavor when the install has several flavors, every
+    argument quoted for this machine's shell."""
+    argv = ["wowlab", *args]
+    if root is not None:
+        argv += ["--root", longpath.plain_text(root) if longpath.ON_WINDOWS else root]
+    if several:
+        argv += ["--flavor", folder]
+    return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
+
+
+def _lab_addon_step(
+    folder: str, state: addoninstall.LabAddonState, several: bool, root: str | None = None
+) -> NextStep:
+    command = _wowlab_command(_REINSTALL.split()[1:], folder, several, root)
+    fix = f"Close the game, then run `{command}`."
+    if state.status == "current":
+        return NextStep(item="lab_addon", flavor_folder=folder, state="ok", command=command)
+    if state.status == "not_installed":
+        return NextStep(
+            item="lab_addon", flavor_folder=folder, state="missing", command=command, fix=fix
+        )
+    if state.status == "stale":
+        detail = (
+            "made for another client version"
+            if state.installed
+            else "its ## Interface: line is missing or unusable"
+        )
+        return NextStep(
+            item="lab_addon",
+            flavor_folder=folder,
+            state="stale",
+            command=command,
+            detail=detail,
+            fix=fix,
+        )
+    return NextStep(
+        item="lab_addon",
+        flavor_folder=folder,
+        state="unknown",
+        command=command,
+        detail=state.detail,
+    )
+
+
+def _characters_step(
+    lay: layout.Layout,
+    folder: str,
+    several: bool,
+    root: str | None,
+    lab_state: NextStepState,
+) -> NextStep:
+    """How many character folders hold a lab-addon record: from the listing
+    alone (`budget=0` opens no file), so doctor reads no record. A place
+    wowlab could not look inside, above the character folders or a
+    character's own folder or SavedVariables/, may hold more: then the
+    count is not the whole answer (`unknown`)."""
+    command = _wowlab_command(["char", "list"], folder, several, root)
+    found = labaddon.survey(lay, keep_records=False, budget=0)
+    count = sum(1 for e in found.characters if e.place == "file")
+    unseen = len(found.not_looked_at)
+    unseen += sum(1 for e in found.characters if e.place in _BLOCKED_PLACE)
+    notes: list[str] = []
+    if unseen:
+        it = "it" if unseen == 1 else "them"
+        notes.append(
+            f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
+        )
+    if count and lab_state in _RECORDS_WAIT:
+        notes.append(_RECORDS_WAIT[lab_state])
+    state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
+    return NextStep(
+        item="characters",
+        flavor_folder=folder,
+        state=state,
+        count=count,
+        command=command,
+        detail="; ".join(notes) or None,
+        fix=_RECORD_HOW if state == "missing" else None,
+    )
+
+
+def _combat_log_step(lay: layout.Layout, folder: str) -> NextStep:
+    """Whether Logs/ holds a combat log, and when the newest was written: a
+    listing and one stat, no file opened."""
+    try:
+        logs_dir = _logs_dir(lay)
+        logs = combatlog.find_logs(logs_dir) if logs_dir is not None else []
+    except OSError as exc:
+        return NextStep(
+            item="combat_log",
+            flavor_folder=folder,
+            state="unknown",
+            detail=f"wowlab could not look in Logs/: {exc.strerror or exc}",
+        )
+    if not logs:
+        return NextStep(
+            item="combat_log", flavor_folder=folder, state="missing", count=0, fix=_COMBATLOG_HOW
+        )
+    try:
+        newest: int | None = longpath.lstat(logs[-1]).st_mtime_ns
+    except OSError:
+        newest = None  # gone since the listing
+    return NextStep(
+        item="combat_log",
+        flavor_folder=folder,
+        state="ok",
+        count=len(logs),
+        newest_mtime_ns=newest,
+    )
+
+
+def _flavor_steps(
+    lay: layout.Layout,
+    folder: str,
+    lab_addon: addoninstall.LabAddonState,
+    several: bool,
+    root: str | None,
+) -> list[NextStep]:
+    lab = _lab_addon_step(folder, lab_addon, several, root)
+    return [
+        lab,
+        _characters_step(lay, folder, several, root, lab_state=lab.state),
+        _combat_log_step(lay, folder),
+    ]
+
+
+def _next_step_answer(step: NextStep) -> str:
+    """What an item of "Next steps" says before its fix: its answer, then
+    its `detail` when it has one."""
+    n = step.count or 0
+    records = "Character folders with a lab-addon record"
+    match step.item, step.state:
+        case "install", _:
+            said = "Install: not found"
+        case "lab_addon", "ok":
+            said = "Lab-addon: installed, made for this client"
+        case "lab_addon", "missing":
+            said = "Lab-addon: not installed"
+        case "lab_addon", "stale":
+            said = "Lab-addon: out of date for this client"
+        case "lab_addon", _:
+            said = "Lab-addon: wowlab cannot tell whether it fits this client"
+        case "characters", "missing":
+            said = f"{records}: none"
+        case "characters", "unknown" if n == 0:
+            said = f"{records}: none found"
+        case "characters", _:
+            said = (
+                f"{records}: {n} (each as of that character's last logout or /reload with "
+                f"the lab-addon on; `{step.command}` reads them)"
+            )
+        case "combat_log", "ok":
+            said = f"Combat log: present ({n} under Logs/"
+            if step.newest_mtime_ns is not None:
+                said += f", the newest written {_local_time(step.newest_mtime_ns)}"
+            said += ")"
+        case "combat_log", "missing":
+            said = "Combat log: none under Logs/"
+        case _:
+            said = "Combat log: wowlab cannot tell whether one is there"
+    if step.detail:
+        said += f"; {step.detail}"
+    return said + "."
+
+
+def _print_next_steps(steps: Sequence[NextStep]) -> None:
+    """The "Next steps" block: each item's answer, then its fix. With
+    several flavors, the items are grouped under each flavor's name. It
+    says "nothing to do" only when every item is `ok`."""
+    if not steps:
+        return
+    done = all(s.state == "ok" for s in steps)
+    _say("Next steps: nothing to do." if done else "Next steps:")
+    grouped = len({s.flavor_folder for s in steps if s.flavor_folder is not None}) > 1
+    heading: str | None = None
+    for step in steps:
+        indent = "  "
+        if grouped and step.flavor_folder is not None:
+            if step.flavor_folder != heading:
+                heading = step.flavor_folder
+                _say(f"  {heading}:")
+            indent = "    "
+        text = _next_step_answer(step)
+        if step.fix is not None:
+            text += f" {step.fix}"
+        # Each command, and a time, is kept on one line.
+        keep = _commands_in(text)
+        if step.newest_mtime_ns is not None:
+            keep.append(_local_time(step.newest_mtime_ns))
+        _say_prose(text, indent=indent, hang=indent + "  ", keep=keep)
+
+
+def _commands_in(text: str) -> list[str]:
+    """The commands between backticks in an item, each kept whole when wrapped."""
+    return text.split("`")[1::2]
 
 
 def _could_be_an_install(root: Path) -> bool:
@@ -1995,21 +2402,140 @@ def _interrupted(record_id: str) -> str:
     )
 
 
-def _rollback_unfinished(record_id: str) -> str:
+def _rollback_unfinished(
+    record_id: str,
+    left: Sequence[LeftPath] = (),
+    flavor_folder: str = "",
+    *,
+    paths: int = 1,
+    created_dirs: int = 0,
+) -> str:
     """The `doctor` problem for a most recent journal record in
     `rollback_incomplete` (M16-71): the change failed and the write gate
-    could not put every file back. Usually another program (the game)
-    changed a file mid-change, and the gate left that program's bytes in
-    place; a file may also still hold the change. The undo replaces those
-    newer bytes, but takes a snapshot of the files first, so a second undo
-    (which undoes the undo) brings them back."""
-    return (
+    could not put every file back. Usually another program (the game, when
+    it saves settings or addon data) changed a file mid-change, and the gate
+    left that program's bytes in place; a file may also still hold the
+    change. The undo puts back every file the change wrote or deleted (its
+    `paths`, M16-86), the game's later saves included, but takes a snapshot
+    of the files first, so undoing the undo next, before the player plays,
+    brings them back (the wording of undo's own plan, M16-92).
+
+    With `left` (M16-84) the problem names each file the rollback left, in
+    `flavor_folder`, grouped by what doctor read there now (`LeftPath`). A
+    file the change never wrote (its only operation was refused) is said to
+    be left alone by undo, which acts only on `paths`. With `paths == 0`
+    the change wrote nothing, and with `created_dirs == 0` too undo has
+    nothing to do and records nothing (`undo` returns before planning when a
+    record has no paths and no folders): the problem says so, and that the
+    next change clears it, and offers no command (the one exception to "the
+    command stays last"). With folders but no paths, undo removes the empty
+    folders and records itself, so the command is offered, last. Names are kept as stored: the text output escapes
+    them as it prints (`_say`), `--json` is ASCII, and `--redact` sees them
+    unescaped. A record that lists no file gets the sentence without names."""
+    groups: dict[tuple[LeftNow, bool | None], list[str]] = {}
+    for p in left:
+        groups.setdefault((p.now, p.exists), []).append(p.path)
+    said = [_left_clause(key, groups[key]) for key in _LEFT_ORDER if key in groups]
+    where = f"in {flavor_folder}, " if flavor_folder else ""
+    if paths == 0 and created_dirs:
+        # No file journaled, but folders created (a write refused after its
+        # folders were made): undo removes them if empty and records itself,
+        # so this record stops being the last (M16-86's plan says the same).
+        lead = (
+            "the last change wowlab made failed after it created folders and before it changed "
+            f"any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said) if said else "wowlab could not remove every folder it created"
+        )
+        return (
+            lead
+            + named
+            + ". undo removes the folders it created if they are empty and records the undo, "
+            "and wowlab doctor stops reporting this change: "
+            f"wowlab undo --expect {record_id}"
+        )
+    if paths == 0:
+        lead = (
+            f"the last change wowlab made failed before it changed any file (record {record_id}): "
+        )
+        named = (
+            where + "; ".join(said)
+            if said
+            else f"another program, {_THE_GAME}, changed a file while wowlab was working"
+        )
+        return (
+            lead
+            + named
+            + ". wowlab changed no file, so there is nothing for undo to put back, and undo "
+            "leaves this record as it is; wowlab doctor stops reporting it after wowlab's "
+            "next change."
+        )
+    lead = (
         "the last change wowlab made failed, and putting the files back did not finish "
-        f"(record {record_id}): a file may have been changed by another program, such as "
-        "the game, while wowlab was writing, or may still hold wowlab's change. To put back "
-        "what was there before the change, run this; it replaces what is in those files "
-        "now, but the undo keeps a copy and running wowlab undo again brings it back: "
-        f"wowlab undo --expect {record_id}"
+        f"(record {record_id}): "
+    )
+    tail = (
+        "To put back what was there before the change, close the game and run this; it puts "
+        "back every file the change wrote or deleted, including anything the game has saved "
+        "to them since, but the undo keeps a copy and running wowlab undo again next, before "
+        f"you play, brings them back: wowlab undo --expect {record_id}"
+    )
+    if not said:
+        return (
+            lead + f"another program, {_THE_GAME}, may have changed a file while wowlab was "
+            "writing or since, or a file may still hold wowlab's change. " + tail
+        )
+    return lead + where + "; ".join(said) + ". " + tail
+
+
+# Who else writes these files, without a timing that holds for only some of
+# them (SavedVariables at logout or /reload, Config.wtf on exit and on some
+# setting changes).
+_THE_GAME = "such as the game when it saves your settings or addon data"
+
+# The order the problem names the files in: what doctor read there, and
+# whether the file is there at all (None: not read).
+_LEFT_ORDER: tuple[tuple[LeftNow, bool | None], ...] = (
+    ("wowlab_change", True),
+    ("wowlab_change", False),
+    ("changed_since", True),
+    ("changed_since", False),
+    ("unknown", None),
+    ("before_change", True),
+    ("before_change", False),
+    ("not_written", None),
+)
+
+
+def _left_clause(key: tuple[LeftNow, bool | None], paths: Sequence[str]) -> str:
+    """One group of `_rollback_unfinished`: the files, then what they hold.
+    No semicolon inside one: the groups are joined with "; "."""
+    now, exists = key
+    one = len(paths) == 1
+    names = paths[0] if one else f"{', '.join(paths[:-1])} and {paths[-1]}"
+    it = "it" if one else "them"
+    is_ = "is" if one else "are"
+    holds = "holds" if one else "hold"
+    if now == "wowlab_change":
+        if exists:
+            return f"{names} still {holds} wowlab's change"
+        return f"{names} {is_} still deleted, as wowlab's change left {it}"
+    if now == "changed_since":
+        did = "changed" if exists else "deleted"
+        return f"another program, {_THE_GAME}, has {did} {names} since wowlab's change"
+    if now == "before_change":
+        if exists:
+            return f"{names} already {holds} what was there before the change"
+        return f"{names} {is_} gone again, as before the change"
+    if now == "not_written":
+        return (
+            f"wowlab did not write {names}, which another program changed while wowlab was "
+            f"working, and undo leaves {it} as {'it is' if one else 'they are'}"
+        )
+    return (
+        f"wowlab could not put back {names}, which {holds} either wowlab's change or what "
+        f"another program, {_THE_GAME}, has written to {it} since"
     )
 
 
@@ -2077,9 +2603,46 @@ def _exposure_line(exposure: snapshot.StoreExposure) -> str | None:
     )
 
 
+_REINSTALL = f"wowlab addon install {addoninstall.LAB_ADDON}"
+_LOAD_OUT_OF_DATE = "Load out of date AddOns"
+# What an out-of-date lab-addon means for the player (M16-06, domain review).
+_STALE_EFFECT = (
+    f"and not load it (unless '{_LOAD_OUT_OF_DATE}' is ticked), and then no new records are saved"
+)
+
+
+def _lab_addon_line(state: addoninstall.LabAddonState, reinstall: str = _REINSTALL) -> str | None:
+    """The `doctor` line about the installed lab-addon (M16-06), or None
+    when it is not installed. `reinstall` is the command its next step
+    names (M16-37): with the caller's --root, and --flavor on an install
+    with several flavors."""
+    if state.status == "current":
+        found = ", ".join(str(n) for n in state.installed)
+        return f"  Lab-addon: installed, made for this client (## Interface: {found})"
+    if state.status == "stale" and not state.installed:
+        return (
+            f"  Lab-addon: its {addoninstall.TOC_NAME} has no usable ## Interface: value, so "
+            f"the game may treat it as out of date {_STALE_EFFECT}. Close the game and run "
+            f"`{reinstall}`."
+        )
+    if state.status == "stale":
+        found = ", ".join(str(n) for n in state.installed)
+        return (
+            f"  Lab-addon: made for another client version (## Interface: {found}; this "
+            f"client is {state.expected}), so the game may list it as out of date "
+            f"{_STALE_EFFECT}. Close the game and run `{reinstall}` to update it."
+        )
+    if state.status == "unknown":
+        return (
+            "  Lab-addon: installed; wowlab cannot tell whether it fits this client "
+            f"({state.detail})"
+        )
+    return None
+
+
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
-    """The doctor report as text, its problems last, then its standing
-    notes behind --notes (`_say_notes`). The first run's section, said only
+    """The doctor report as text, its problems and then its next steps
+    last (M16-37), then its standing notes behind --notes (`_say_notes`). The first run's section, said only
     once, comes after it."""
     notes: list[str] = []
     if report.install_root is not None:
@@ -2105,6 +2668,17 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 "the first active one is shown"
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
+        reinstall = next(
+            (
+                s.command
+                for s in report.next_steps
+                if s.item == "lab_addon" and s.flavor_folder == f.folder and s.command
+            ),
+            _REINSTALL,
+        )
+        lab_line = _lab_addon_line(f.lab_addon, reinstall)
+        if lab_line is not None:
+            _say_prose(lab_line, hang="    ", keep=[reinstall, _LOAD_OUT_OF_DATE])
         if f.sync_cvars and all(sync.value is None for sync in f.sync_cvars):
             # Six lines saying "not set" were one fact (M16-16).
             files = list(dict.fromkeys(sync.file for sync in f.sync_cvars))
@@ -2179,6 +2753,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         _say("Problems:")
         for problem in report.problems:
             _say(f"  {problem}")
+    # What to do next ends the report's answer (M16-37), before the footer.
+    _print_next_steps(report.next_steps)
     # The footer ends the report (conductor's ruling, 2026-11-06): after the
     # problems, before the first run's one-time section.
     _say_notes(notes, show_notes)
@@ -2350,6 +2926,9 @@ def doctor(
     notes: NotesOpt = False,
 ) -> None:
     """Install, flavors, versions, whether the client runs, store health.
+    It ends with next steps: whether the lab-addon is installed and made for
+    this client, how many characters it has recorded, and whether a combat
+    log is there, each with the command or in-game action that fixes it.
 
     On a first run (the snapshot store holds no snapshot of this install) it
     also says what wowlab will and will not do, shows what a first snapshot
@@ -8415,9 +8994,26 @@ def snap_import(
     )
 
 
+# The login caveat leads with the files the plan lists (M16-103). Whether
+# the client reads Config.wtf again at login, or only when it starts, is
+# unconfirmed, so the note ties it to the next start. The file map lists no
+# server replacement for Config.wtf (its row and the Timing rules; it holds
+# machine-scope settings), so its note names no server. The three sync CVars
+# `doctor` shows cover binds, macros and settings; which other *-cache files
+# the server replaces, and under which setting, is unconfirmed
+# (docs/LAB_FILE_MAP.md, its server sync note), so the note says so (M16-97).
 _RELOGIN = (
-    "The client reads these files at its next login; with server sync on (see wowlab "
-    "doctor), the server may replace binds, macros, settings and other *-cache files then."
+    "The client reads the *-cache files at login. The server may replace binds, macros and "
+    "account or character settings at login when their sync setting is on (see wowlab "
+    "doctor); it may also replace other *-cache files then, and under which setting is not "
+    "yet known."
+)
+_RESTART = "The next time you start the client, it reads Config.wtf again."
+_RESTART_RELOGIN = (
+    "The next time you start the client, it reads Config.wtf again; it reads the other "
+    "files at login. The server may replace binds, macros and account or character "
+    "settings at login when their sync setting is on (see wowlab doctor); it may also "
+    "replace other *-cache files then, and under which setting is not yet known."
 )
 
 
@@ -8426,11 +9022,19 @@ def _version(version: str | None) -> str:
 
 
 def _relogin_notes(paths: Sequence[str]) -> list[str]:
-    """The login caveat, when a change touches Config.wtf or a *-cache file."""
-    for path in paths:
-        name = path.rsplit("/", 1)[-1].casefold()
-        if name == "config.wtf" or "-cache" in name:
-            return [_RELOGIN]
+    """The login caveat, when a change touches Config.wtf or a *-cache file
+    under `WTF/` (paths relative to the flavor folder), in the words of the
+    files it touches: `_RELOGIN` for *-cache files only, `_RESTART` for
+    Config.wtf only, `_RESTART_RELOGIN` for both (M16-103). A file in a
+    SavedVariables folder, or outside `WTF/` (an addon's own file), is
+    neither, whatever its name (M16-97)."""
+    config, cache_file = profiles.login_files(paths)
+    if config and cache_file:
+        return [_RESTART_RELOGIN]
+    if config:
+        return [_RESTART]
+    if cache_file:
+        return [_RELOGIN]
     return []
 
 
@@ -8481,13 +9085,14 @@ _SCOPE_LINE = (
 
 
 def _plan_footer(named: bool, paths: Sequence[str]) -> list[str]:
-    """The lines a plan ends with before the prompt when it named a key,
-    macro or CVar change (`named`: a bindings, macros or CVar file got
-    detail lines): the scope line, and the login caveat when a path in it
-    is one the caveat is about. A SavedVariables-only plan gets neither."""
-    if not named:
-        return []
-    return [_SCOPE_LINE, *_relogin_notes(paths)]
+    """The lines a plan ends with before the prompt: the scope line when it
+    named a key, macro or CVar change (`named`: a bindings, macros or CVar
+    file got detail lines), and the login caveat whenever a listed path is
+    one the caveat is about, with or without detail lines under it (a file
+    wowlab cannot read, a delete or a recreate; M16-97). A
+    SavedVariables-only plan gets neither."""
+    scope = [_SCOPE_LINE] if named else []
+    return [*scope, *_relogin_notes(paths)]
 
 
 def _value_text(value: str | None, *, cvar: bool) -> str:
@@ -8531,6 +9136,16 @@ def _named_line(change: wtfdiff.NamedChange) -> str:
     )
 
 
+# What a line `wtfdiff` does not read by name is, in each kind of file: the
+# lines its parser keeps as unknown, said by their form, not their effect (the
+# client may still read a CVar line typed by hand; M16-98).
+_OTHER_LINES: dict[wtfdiff.Kind, str] = {
+    "bindings": "for example a binding mode or modifier line",
+    "macros": "lines outside any macro wowlab can read",
+    "cvars": "lines not in the game's usual setting form, such as a setting typed in by hand",
+}
+
+
 def _wtf_lines(
     kind: wtfdiff.Kind, before: bytes | None, after: bytes | None, limit: int | None
 ) -> list[str]:
@@ -8549,8 +9164,8 @@ def _wtf_lines(
         )
     if diff.other_lines_differ:
         lines.append(
-            f"{_DETAIL_INDENT}other lines differ too (for example a binding mode or modifier "
-            "line), which wowlab does not read by name"
+            f"{_DETAIL_INDENT}other lines differ too ({_OTHER_LINES[kind]}), which wowlab "
+            "does not read by name"
         )
     elif not diff.changes and before is not None and after is not None:
         if kind == "macros":
@@ -8666,7 +9281,15 @@ _CHANGED_DURING = (
     f"while that change ran, or since: {_COMPARE}; undo replaces that program's changes, "
     f"but {_KEEPS_A_COPY})"
 )
+# A state this version does not know (a journal written by a later one): the
+# record cannot be read for who changed the file or when, so the line guesses
+# neither (M16-98).
+_CHANGED_UNKNOWN_STATE = (
+    f"{_DETAIL_INDENT}(changed while that transaction ran or since; this version of wowlab "
+    f"cannot tell what changed it: {_COMPARE}; undo replaces those changes, but {_KEEPS_A_COPY})"
+)
 _CHANGED_LINE = {
+    "committed": _CHANGED_SINCE,
     "open": _CHANGED_UNFINISHED,
     "rolled_back": _CHANGED_AFTER_ROLLBACK,
     "rollback_incomplete": _CHANGED_DURING,
@@ -8832,6 +9455,15 @@ class UndoReport(_Out):
     # The text plan, line by line, as the terminal shows it before the
     # prompt, with keys, macros and CVars by name (M16-10).
     plan_lines: list[str] = Field(default_factory=list)
+    # The paths the undo wrote (relative to `flavor_path`), from its own
+    # journal record `transaction`: the listed ones, and any that changed
+    # after the plan read it. Empty when nothing was undone (M16-105).
+    written_paths: list[str] = Field(default_factory=list)
+    # Those of `written_paths` the text plan did not list (`plan` is the
+    # whole record undone, so it cannot tell them apart): files that changed
+    # after the plan read them, which the text result names after "Undone."
+    # (M16-105).
+    unlisted_written: list[str] = Field(default_factory=list)
 
 
 def _client_managed(
@@ -9550,7 +10182,12 @@ def snap_restore(
 
 
 def _undo_lines(last: guard.HistoryRecord) -> list[str]:
-    """`undo`'s text plan: only the steps the undo will take. A path whose
+    """`undo`'s text plan (`_undo_plan`, its lines only)."""
+    return _undo_plan(last)[0]
+
+
+def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
+    """`undo`'s text plan, and the paths it lists: only the steps the undo will take. A path whose
     disk already holds what was there before that transaction (a file a
     rollback already put back or removed) is skipped by the undo, so it is
     not listed; one wowlab cannot read is listed. Under each file, what the
@@ -9560,13 +10197,13 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
     undo replaces the file whatever is on disk. When the disk no longer
     holds what that transaction wrote, a line says the comparison includes
     those later changes and who probably made them, by the record's state
-    (`_CHANGED_LINE`; a finished change and a state this version does not
-    know get `_CHANGED_SINCE`). In every state it also says that the undo
+    (`_CHANGED_LINE`; a state this version does not know gets
+    `_CHANGED_UNKNOWN_STATE`, which guesses no one). In every state it also says that the undo
     replaces those changes, that its own snapshot keeps a copy of them
     first, and that a second undo, run next, brings them back."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
-    changed = _CHANGED_LINE.get(last.state, _CHANGED_SINCE)
+    changed = _CHANGED_LINE.get(last.state, _CHANGED_UNKNOWN_STATE)
     lines = [
         f'Undo {last.id} ("{last.label}", {last.created_at}; {_journal_state_words(last.state)})',
         f"  in {last.flavor_path}:",
@@ -9600,6 +10237,28 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
         unfinished = last.state in ("open", "rollback_incomplete")
         lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
+    return lines, listed
+
+
+def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str]) -> list[str]:
+    """The result's lines for each file the undo wrote that its plan did not
+    list: it changed after the plan read it, so the undo put it back too.
+    Named once, after "Undone.", so the login caveat that may follow has a
+    file on screen to point at (M16-105). `written` is the undo's own
+    journal record, whose `before` is the disk the undo found."""
+    shown = set(listed)
+    lines: list[str] = []
+    for p in written:
+        if p.path in shown:
+            continue
+        shown.add(p.path)
+        if p.after is None:
+            verb = "also deleted   "
+        elif p.before is None:
+            verb = "also recreated "
+        else:
+            verb = "also put back  "
+        lines.append(f"  {verb}{p.path}  (it changed after the plan was shown)")
     return lines
 
 
@@ -9650,8 +10309,9 @@ def undo(
         raise CliError("nothing to undo: the write gate's journal is empty")
     last = records[-1]
 
-    def report(*, applied: bool, transaction: str | None = None) -> UndoReport:
-        touched = [p.path for p in last.paths]
+    def report(
+        *, applied: bool, transaction: str | None = None, written: Sequence[str] = ()
+    ) -> UndoReport:
         return UndoReport(
             undone=last.id,
             label=last.label,
@@ -9662,18 +10322,26 @@ def undo(
             created_dirs=list(last.created_dirs),
             applied=applied,
             transaction=transaction,
-            notes=_relogin_notes(touched) if applied else [],
+            # From what the undo wrote (its own journal record), not every path
+            # of the record undone: a file the disk already held as it was
+            # before is skipped by the undo, so it is not listed in the plan
+            # and gets no note; one changed after the plan read it is
+            # rewritten, so it does (M16-102).
+            notes=_relogin_notes(written) if applied else [],
             plan_lines=[_safe(line) for line in plan_lines],
+            written_paths=list(written),
+            unlisted_written=[w for w in written if w not in set(listed)],
         )
 
     plan_lines: list[str] = []
+    listed: list[str] = []
     if not last.paths and not last.created_dirs:
         if json_out:
             _emit(report(applied=False))
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    plan_lines = _undo_lines(last)
+    plan_lines, listed = _undo_plan(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
@@ -9695,13 +10363,13 @@ def undo(
     # With --expect, `last.id` is `expect` (checked above).
     guard.undo(expected_id=last.id)
     undone = guard.history()[-1]
-    done = report(applied=True, transaction=undone.id)
+    done = report(applied=True, transaction=undone.id, written=[p.path for p in undone.paths])
     if json_out:
         _emit(done)
         return
     if not undone.paths:
         # Judged from the undo's own record, not the plan: a file rewritten
-        # while the prompt waited is put back and listed there. No file
+        # after the plan read it is put back and listed there. No file
         # changed, so no login note applies (`--json` keeps them).
         _say(
             "Undone; no file needed changing. This undo is journaled, but there is nothing "
@@ -9709,6 +10377,8 @@ def undo(
         )
         return
     _say("Undone. This undo is journaled too: `wowlab undo` again reverses it.")
+    for line in _undone_unlisted(undone.paths, listed):
+        _say(line)
     for n in done.notes:
         if n not in plan_lines:  # the plan above already said it
             _say(n)
@@ -9997,7 +10667,7 @@ def _apply_plan_lines(
         lines.extend(detail)
         detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
     if detailed:
-        # The login caveat is the command's own LOGIN_NOTE, shown after the plan.
+        # The login caveat is the command's own login note, shown after the plan.
         lines.append(_SCOPE_LINE)
     if plan.skipped:
         lines.append(
@@ -10098,11 +10768,12 @@ def profile_apply(
     into_report = None if target is None else _into_report(manifest, plan.accounts)
     prompting = json_out and not yes and not dry_run
     show = _say if not json_out else _say_err
+    login_note = profiles.login_note(i.path for i in plan.plan)
 
     def report(*, applied: bool, transaction: str | None = None) -> ProfileApplyReport:
         notes = [profiles.SERVER_SIDE_NOTE, *plan.notes]
         if plan.plan:
-            notes.append(profiles.LOGIN_NOTE)
+            notes.append(login_note)
         return ProfileApplyReport(
             profile=name,
             snapshot_id=manifest.id,
@@ -10138,7 +10809,7 @@ def profile_apply(
             )
         plan_lines.extend(_apply_plan_lines(store, chosen.path, plan))
         if plan.plan:
-            plan_lines.append(profiles.LOGIN_NOTE)
+            plan_lines.append(login_note)
     if not json_out or (prompting and plan.plan):
         for line in plan_lines:
             show(line)
@@ -10173,7 +10844,7 @@ def profile_apply(
     )
     if profiles.MACROS_NOTE in plan.notes:
         _say(profiles.MACROS_NOTE)
-    _say(profiles.LOGIN_NOTE)
+    # The login note was shown with the plan, before the prompt; it is not repeated here.
 
 
 # ─── addon ───────────────────────────────────────────────────────────────────
@@ -10186,6 +10857,7 @@ class AddonInstallReport(_Out):
     flavor_path: str
     flavor_version: str  # the discovered version the interface was derived from
     interface: int  # what the installed TOC's ## Interface: says
+    addon_version: str  # what the installed TOC's ## Version: says: this wowlab's (M16-06)
     source: str  # the source folder read
     files: list[str]  # every file of the addon, relative to the flavor folder
     plan: list[guard.PlanItem]  # new or changed files, then deletes of files not in the sources
@@ -10253,7 +10925,8 @@ def addon_install(
 
     The TOC's ## Interface: is filled from the flavor's discovered version by the
     patch-number rule; after a client update that changes the first three parts of
-    the version, run this again. Only WowLab.toc and the .lua files it lists are
+    the version, run this again (`wowlab doctor` says when). Its ## Version: is this
+    wowlab's version. Only WowLab.toc and the .lua files it lists are
     copied. Over an existing copy only changed files are written, and files not in
     the sources are deleted.
 
@@ -10273,6 +10946,7 @@ def addon_install(
             flavor_path=str(chosen.path),
             flavor_version=plan.flavor_version,
             interface=plan.interface,
+            addon_version=plan.addon_version,
             source=plan.source,
             files=list(plan.files),
             plan=list(plan.plan),
@@ -10288,7 +10962,7 @@ def addon_install(
     if not json_out or (prompting and plan.plan):
         show(
             f"Install the lab-addon into {chosen.path / target}: {len(plan.plan)} change(s), "
-            f"## Interface: {plan.interface}"
+            f"## Interface: {plan.interface}, ## Version: {plan.addon_version}"
         )
         show(f"  from {plan.source}")
         for item in plan.plan:
@@ -10449,6 +11123,13 @@ class CharShowReport(_Out):
     customization_loads_ago: int | None
     unknown_keys: list[str]
     notes: list[str]
+    # The installed client's version from .build.info, and whether the client
+    # that saved the record is older (M16-06; None when either is unknown).
+    installed_version: str | None = None
+    older_client: bool | None = None
+    # The installed lab-addon against this client, as `doctor` reads it
+    # (M16-06): what the text's advice for an older record rests on.
+    lab_addon: addoninstall.LabAddonState | None = None
 
 
 def _is_lab_file(f: layout.SavedVariablesFile) -> bool:
@@ -10500,6 +11181,9 @@ def char_show(
         customization_loads_ago=labaddon.customization_loads_ago(record),
         unknown_keys=labaddon.unknown_keys(record),
         notes=_CHAR_NOTES,
+        installed_version=chosen.version,
+        older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
+        lab_addon=addoninstall.lab_addon_state(chosen),
     )
     if json_out:
         _emit(report)
@@ -10507,6 +11191,10 @@ def char_show(
     _say(f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}")
     _say(f"File: {target.path}")
     _say(f"Written: {_local_time(target.mtime_ns)} (the file's modification time)")
+    if report.older_client:
+        _say_prose(
+            _older_record_line(chosen.version, report.lab_addon), hang="  ", keep=[_REINSTALL]
+        )
     # describe() renders its own words with `_player_copy` before a value
     # read from the record goes in; the line then prints as it is.
     for line in labaddon.describe(record, render=_player_copy):
@@ -10519,6 +11207,31 @@ def char_show(
             _say(line)
     for note in _CHAR_NOTES:
         _say_note(note)
+
+
+def _older_record_line(installed: str | None, state: addoninstall.LabAddonState | None) -> str:
+    """`char show`'s line for a record an older client saved (M16-06): how
+    to save a fresh one, and first, when the installed lab-addon is out of
+    date for this client or not installed, that it may not load (its state
+    as `doctor` reads it)."""
+    head = f"This record was saved by an older client than the installed {installed}"
+    fresh = (
+        "with the lab-addon enabled for this character, log in on it, then log out or "
+        "/reload, to save a fresh one."
+    )
+    status = state.status if state is not None else None
+    if status == "stale":
+        return (
+            f"{head}, and the installed lab-addon is out of date for this client, so the game "
+            f"may not load it (`wowlab doctor` says why). Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    if status == "not_installed":
+        return (
+            f"{head}, and the lab-addon is not installed. Close the game, run `{_REINSTALL}`, "
+            f"then, {fresh}"
+        )
+    return f"{head}: {fresh}"
 
 
 def _picked_words(how: Literal["--character", "latest"], tie: str) -> str:
@@ -10623,6 +11336,9 @@ class CharListReport(_Out):
     characters: list[labaddon.CharacterFile]
     not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
+    # The installed client's version from .build.info, which each row's
+    # `older_client` compares with (M16-06).
+    installed_version: str | None = None
 
 
 _CHAR_LIST_NOTES = [
@@ -10695,10 +11411,13 @@ def _bare_words(facts: labaddon.FolderFacts) -> str:
     return words
 
 
-def _row_words(e: labaddon.CharacterFile) -> str:
+def _row_words(e: labaddon.CharacterFile, installed: str | None = None) -> str:
     if e.no_lab_record is not None:
         return _bare_words(e.no_lab_record)
     if e.summary is not None:
+        if e.older_client:
+            # The summary names the saving client; this says it is the older one (M16-06).
+            return f"{e.summary}; older than the installed client {installed}"
         return e.summary
     if e.place in _BLOCKED_PLACE:
         return f"not read: could not look inside {_BLOCKED_PLACE[e.place]} ({e.error})"
@@ -10780,6 +11499,7 @@ def char_list(
             keep_records=json_out and not brief,
             root=None if root is None else str(root),
             every_folder=True,
+            installed_version=chosen.version,
         )
         entries, unseen = found.characters, found.not_looked_at
     # Rows of character folders, apart from the `<Realm>/<First>/` folders.
@@ -10793,6 +11513,7 @@ def char_list(
         characters=entries,
         not_looked_at=unseen,
         notes=notes,
+        installed_version=chosen.version,
     )
     if json_out:
         _emit(report)
@@ -10831,7 +11552,8 @@ def char_list(
                     when = "time unknown"
                 else:
                     when = f"written {_local_time(e.mtime_ns)}"
-                _say(f"  {names[e.character]:<{width}}  {when}  {_row_words(e)}")
+                row = _row_words(e, chosen.version)
+                _say(f"  {names[e.character]:<{width}}  {when}  {row}")
         # No install advice while a place went unseen: it may hold the files.
         if bare_rows and len(bare_rows) == len(folders) and not unseen:
             _say_note(

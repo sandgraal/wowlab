@@ -227,7 +227,11 @@ def test_char_list_json_validates(flavor: Path) -> None:
     assert report.notes == [*cli._CHAR_LIST_NOTES, cli._BARE_NOTE]
     assert report.not_looked_at == []
     assert [e.character for e in report.characters] == [BARE[0][0], SECOND, FIRST, BARE[1][0]]
-    assert _lab_entries(report) == labaddon.read_all(Layout(flavor))
+    # `read_all` is given no installed version, so its rows leave
+    # `older_client` None; `char list` compares with the installed one (M16-06).
+    assert [e.model_copy(update={"older_client": None}) for e in _lab_entries(report)] == (
+        labaddon.read_all(Layout(flavor))
+    )
     assert {e.shape for e in _lab_entries(report)} == {"numeric_folder"}
     assert '"shape": "numeric_folder"' in result.stdout
     for entry in _lab_entries(report):

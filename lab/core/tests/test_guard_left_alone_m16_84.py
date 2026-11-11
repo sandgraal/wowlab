@@ -216,7 +216,6 @@ class RefuseAt:
 # ─── an empty list when nothing was left alone ───────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_committed_record_names_no_path_left_alone(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -229,7 +228,6 @@ def test_constructed_a_committed_record_names_no_path_left_alone(
     assert_left_alone(record, [], flavor)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_complete_rollback_names_no_path_left_alone(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -270,7 +268,6 @@ OTHER_PROGRAM_CASES = (
     ("rel", "op", "change"),
     [pytest.param(r, o, c, id=f"constructed-{n}") for n, r, o, c in OTHER_PROGRAM_CASES],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_another_program_changed_one_of_two_files(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, rel: str, op: str, change: str
 ) -> None:
@@ -296,7 +293,6 @@ def test_constructed_another_program_changed_one_of_two_files(
     assert_left_alone(record, [rel], flavor)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_another_program_changed_both_files(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -314,7 +310,6 @@ def test_constructed_another_program_changed_both_files(
     assert_left_alone(record, [ICON, CONFIG], flavor)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_another_program_changed_a_file_while_the_rollback_ran(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -348,7 +343,6 @@ def test_constructed_another_program_changed_a_file_while_the_rollback_ran(
     "moved_again",
     [pytest.param(m, id=f"constructed-{'moved' if m else 'kept'}") for m in (True, False)],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_refused_path_is_listed_only_if_the_disk_moved_after_guard_read_it(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, moved_again: bool
 ) -> None:
@@ -398,7 +392,6 @@ SYSTEM_REFUSED_CASES = (
     ("rel", "op"),
     [pytest.param(r, o, id=f"constructed-{n}") for n, r, o in SYSTEM_REFUSED_CASES],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_rollback_the_system_refused_names_the_path(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None, rel: str, op: str
 ) -> None:
@@ -427,7 +420,6 @@ def test_constructed_a_rollback_the_system_refused_names_the_path(
     assert_left_alone(record, [rel], flavor)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_refused_rollback_and_another_programs_change_are_both_named(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -454,7 +446,6 @@ def test_constructed_a_refused_rollback_and_another_programs_change_are_both_nam
 # ─── undo is a transaction too ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_an_undo_that_ends_rollback_incomplete_names_the_path(
     guard: Any, tmp_path: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -495,7 +486,6 @@ HOSTILE_NOTE = "../../etc/passwd: x; \x1b[31mWTF/Config.wtf\u202e: y"  # constru
         pytest.param(HOSTILE_NOTE, id="constructed-hostile-note"),
     ],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_format_2_records_without_the_list_still_read(
     guard: Any, tmp_path: Path, install_root: Path, flavor: Flavor, idle: None, note: str
 ) -> None:
@@ -587,7 +577,6 @@ HOSTILE_LISTS: tuple[tuple[str, object, str, str | None], ...] = (
     ("hostile", "state", "note"),
     [pytest.param(v, st, nt, id=f"constructed-{n}") for n, v, st, nt in HOSTILE_LISTS],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
     guard: Any,
     tmp_path: Path,
@@ -638,7 +627,6 @@ def test_constructed_a_damaged_left_alone_list_on_disk_is_a_damaged_record(
     assert G.content(store) == store_before, "reading a damaged record touched the store"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="M16-84 not implemented")
 def test_constructed_a_refused_records_list_vouches_only_for_its_own_refused_path(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:

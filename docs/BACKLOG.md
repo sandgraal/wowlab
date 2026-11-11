@@ -1049,10 +1049,12 @@ Found 2026-10-18 in the code review of #280 (M13-50). `gaps.py` and `Symlink.ent
 
 ---
 
-## [ ] M13-70 — `labaddon.ActionBars` admits duplicate and out-of-range slots
+## [x] M13-70 — `labaddon.ActionBars` admits duplicate and out-of-range slots
 **Size:** XS · **Depends on:** nothing
 
 Found 2026-10-19 in the code review of #287 (M14-06), on `main` before it. `labaddon.ActionBars` (`labaddon.py` ~1174) accepts duplicate slot numbers, slots outside `first_slot..last_slot`, and `first_slot > last_slot`; code built on it silently keeps the last duplicate (`bindscoach.py` ~529 on `main`, the keep-the-last dict at ~536; and `keymap.join`'s `filled` dict once #287 merges). No real capture has shown one. Decide whether the reader should refuse these (a record error, the section marked unread with the reason) or keep them with a note; labelled constructed tests either way; the fixtures' reads byte-identical.
+
+*Decision (2026-11-11, #482):* refuse. A duplicate slot, a slot outside `first_slot..last_slot`, or `first_slot > last_slot` makes the whole record a `LabAddonError`. The reader shows it as the character's record error, with the reason. This follows the reader's pattern for every rule the addon guarantees. `Actions.lua` walks each slot once, so a real file never trips the check. `Gear` has the same gap; M16-106 covers it.
 
 **Acceptance:** the decision stated in the report and recorded here by the conductor; the tests pass; byte-identity on the fixtures; `make ci` green; reviewed by `code-reviewer`.
 
@@ -1503,7 +1505,7 @@ The same session runs the binding and macro persistence tests (`docs/handoffs/M1
 
 ---
 
-## [ ] M16-06 — The lab-addon's staleness is visible
+## [x] M16-06 — The lab-addon's staleness is visible
 **Size:** S · **Depends on:** nothing · **Sources:** addon-author:F5, F11 (EV-04)
 
 - `doctor` compares the installed `WowLab.toc` interface with the one derived from discovery. When they differ, it names `wowlab addon install lab`.
@@ -1924,7 +1926,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-37 — `doctor`: next steps
+## [x] M16-37 — `doctor`: next steps
 **Size:** S · **Depends on:** M16-06 · **Sources:** product:F9, newcomer:F7 (EV-34)
 
 - A "Next steps" block covers whether the lab-addon is installed and current, how many characters are recorded, and whether a combat log is present. Each item comes with the one command or in-game action that fixes it.
@@ -2022,6 +2024,13 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 **Ruled 2026-10-22.** The check found the premise false (GSE) and the fallback unbuildable, and the owner ruled again in session. A `CLICK` command is stored only under the rule in ADR-0026's 2026-10-22 amendment: a bounded identifier pair, a frame whose `type` attribute is `"action"`, and a numeric `action` attribute. Every other `CLICK` is counted in `commands_left_out` and in a new `clicks_left_out`. Whether `GetBinding` lists `CLICK` commands at all is [verify]. If the capture shows it does not, the implementer reports it and does not build a key-by-key walk. The schema-5 capture includes one action-bar addon (Bartender4, ElvUI or Dominos) with at least one `CLICK` keybind, the positive case. Where possible it also includes a GSE sequence keybind or a `SetBindingClick` to a non-action button, the negative case: it is counted, and its name is absent from `WowLab.lua` by grep. Any player-typed name in a provenance row is a pseudonym.
 
+*Pre-dispatch domain check (2026-11-11):* the premise was ruled on 2026-10-22, and that ruling excludes the GSE case. It can be dispatched as a continuation of draft #379. That draft is about 100 commits behind main. It has a merge conflict in `labaddon.py`. The rebase must take on M16-16's `--notes` and M16-22's `--json` error conventions in `cli.py`. Amendments:
+- The stored `action` is the slot at gather time. On a paged or stance-aware bar it depends on the page, stance, form or vehicle. Neither the reader nor M16-46 presents it as fixed.
+- The positive capture binds a key on bar 2 or higher of a bar addon that binds with `SetBindingClick` (Bartender4 preferred), confirmed in game with `/dump GetBindingAction`. An override binding, as ElvUI and Dominos often use, never appears in `GetBinding`. If `GetBinding` does not list `CLICK` at all, report that and do not build a key-by-key walk.
+- The reader, coach and CLI half of #379 (`labaddon`, `keymap`, `bindscoach`, `macrocheck`, `cli`) belongs to this ticket, as M16-55 assumes. So this ticket's user-facing surfaces also include `char show` and `binds coach`, text and `--json`. M16-46 keeps only the views' mapping of a kept `CLICK` to the button it presses.
+- The negative-case capture's `bindings-cache.wtf` holds a typed name and is never committed (#379's runbook).
+- **Owner, 2026-11-11:** ADR-0026's 2026-10-22 amendment is accepted ("4 yes"). The `<button>` part is allowlisted ("3 yes"; ADR-0026 amendment of 2026-11-11): it is kept only when it is `LeftButton`, `RightButton`, `MiddleButton`, `Button<digits>`, or a bar-addon button name on the lab-addon's list (`lab/addon/README.md`), which starts empty and grows only by ticket once a capture has shown a name. Any other button part is counted in `clicks_left_out`. The acceptance adds a negative case: `SetBindingClick(key, "<bar button>", "<made-up word>")` stores nothing of the word.
+
 **Acceptance:** the static Lua tests and selene pass. One owner capture at schema 5 is added, with provenance rows. `make ci` is green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: in-game chat, and `/wowlab debug`.
 
 ---
@@ -2029,7 +2038,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ## [ ] M16-46 — The reader for schema 5, and bar-addon binds in the keybind views
 **Size:** S · **Depends on:** M16-45 · **Sources:** raider:F4, addon-author:F10 (owner Q10)
 
-- `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says.
+- `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says. *(2026-11-11: delivered by M16-45 with #379's reader half; this ticket keeps the bullet below.)*
 - `char binds`, `binds list` and `binds coach` show `CLICK` binds as the addon button they press, named from the frame (no hard-coded addon names).
 
 **Acceptance:** graded on M16-45's capture and on the schema 1 to 4 fixtures, unchanged; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the keybind views and the Character tab.
@@ -2398,7 +2407,7 @@ The Windows descriptor-leak check in `lab/core/tests/parser/test_parser_reads_fr
 
 **Acceptance:** a manifest whose id is spelled in non-ASCII digits (constructed: Arabic-Indic, fullwidth, mixed) is not listed, resolved or offered by `snap` commands, and `explain`'s snapshot facts (`pathfacts._newer`) do not treat a manifest file named with non-ASCII digits as carrying an id; the tests fail without the fix; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-78 — The user data directory's other folders are private
+## [x] M16-78 — The user data directory's other folders are private
 **Size:** S · **Depends on:** M16-78T · **Sources:** the M16-66T security review (#424)
 
 M16-66 (#432, merged) creates the store root and `journal/` 0700. The parents made on the way to a missing store, `<user data dir>/locks/` (it holds `<sha256(dev:inode)>.lock` files) and the other module folders under the user data directory (`gamedata/`, `looks/`, `pages/`, `db2lake/`) are created with the default mode. What leaks is low: that wowlab is in use, and a hash of an install's identity. This needs one rule across modules, so the ticket first asks the owner whether the whole user data directory should be private.
@@ -2462,7 +2471,7 @@ For a `rollback_incomplete` record, the gate writes the paths it could not put b
 
 **Acceptance:** strict-xfail graders on main, activated by M16-84 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-84 — [IMPL] `doctor` names the file a rollback left alone
+## [x] M16-84 — [IMPL] `doctor` names the file a rollback left alone
 **Size:** S · **Depends on:** M16-84T · **Sources:** as M16-84T
 
 Implement M16-84T in `guard.py`: record the left-alone paths structurally, not only in the note, and expose them on `HistoryRecord`. Then have `doctor`'s rollback problem (M16-71) name each one instead of "some files".
@@ -2518,7 +2527,7 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 
 **Acceptance:** `BASELINE` and §6.12 agree, and cite the runs used. `test_perf_budget.py` passes. Reviewed by `code-reviewer`.
 
-## [ ] M16-89 — A docs-only PR still checks for bidi controls
+## [x] M16-89 — A docs-only PR still checks for bidi controls
 **Size:** XS · **Depends on:** M16-83 · **Sources:** the M16-83 code review (#448)
 
 `tests/repo/test_bidi_controls.py` reads every tracked file through `git ls-files`, docs included. A docs-only PR skips it with the rest of the suite, so a doc can gain a bidi control that only the next code PR catches. Add a cheap bidi step that always runs in the docs-only branch of the `quality` job, or rule that docs are out of the bidi check's scope. This is a conductor-lane change (workflow YAML).
@@ -2531,6 +2540,8 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 **Size:** S · **Depends on:** M16-84 · **Sources:** the M16-84T security review (#453); the #455 review
 
 A probe showed that main's `guard.history()` returns whatever strings a record on disk holds in `paths[].path`, `temps_left` and `created_dirs`, for example `../../etc/passwd` followed by an ESC sequence. `_public()` also copies `temps_removed` and `flavor_path` unchecked. The graders cover every path field `_public()` exposes: `paths[].path`, `created_dirs`, `temps_removed` and `temps_left` must pass `_check_rel`. `flavor_path` is absolute by design but must hold no control or bidi character, because `undo`'s plan header prints it. M16-84's `paths_left` is already graded by M16-84T. `_JournalRecord` checks only the hashes and the format, and `_load_journal` runs no `_check_rel` on any path field. `undo()` checks paths later; `history()` never does, so `doctor` and `undo`'s plan can show a planted path. This is `guard.py`, which is load-bearing (ADR-0013), so the graders land first. They cover a record whose path fields hold traversal, absolute, UNC, control-character and bidi values, and expect `history()` to raise `GuardError` ("a damaged record is an error, never skipped") with the install and the store unchanged.
+
+*Owner ruling (2026-11-11, "2 yes"):* the write gate refuses a flavor whose absolute path contains a forbidden character before it takes any snapshot or writes any journal record. The forbidden characters are C0 controls, DEL, C1 controls, and every Unicode format (Cf), line-separator (Zl) or paragraph-separator (Zp) character, the same set `cli._safe` escapes (`svmerge._FORMAT_CHARACTERS`). `transaction()` and `undo()` both refuse it with `GuardError`. `history()` refuses a record whose `flavor_path` holds any of those characters, so the gate and `history()` never disagree, and no record the gate wrote can later be called damaged. LAB_PLAN §6.10 records this in amendment (e) of 2026-11-11. Fix round 2 of #472 adds two things. It grades the full set for `flavor_path`, including U+200E, U+200F, U+061C, U+202A to U+202E and U+2066 to U+2069. It also adds graders for the gate's refusal: `transaction()` and `undo()` refuse such a flavor, with the install and the store unchanged and no journal record written. The relative fields keep `_check_rel` as before; a real file name may still hold a bidi mark (§6.10 (d)).
 
 **Acceptance:** strict-xfail graders on main, activated by M16-90 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -2580,7 +2591,7 @@ Strict-xfail graders for `guard.py`. A directory whose listing changes while its
 
 **Acceptance:** strict xfail on `main`, activated by M16-94 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-94 — [IMPL] The listing memo's key holds the directory's ctime
+## [x] M16-94 — [IMPL] The listing memo's key holds the directory's ctime
 **Size:** XS · **Depends on:** M16-94T · **Sources:** as M16-94T
 
 **Acceptance:** M16-94T's graders activated by marker deletion only. The full suite is green (`guard.py`), and the scaling grader and the M16-27 nightly budget still hold. Reviewed by `code-reviewer` and `security-reviewer`.
@@ -2601,14 +2612,14 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 **Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
 
-## [ ] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
+## [x] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
 
 `_plan_footer` adds `_RELOGIN` only when a listed file got detail lines. That note says the client reads these files at its next login and the server may replace synced `*-cache` files then. So a listed `config-cache.wtf`, `bindings-cache.wtf` or `macros-cache.txt` with no detail lines gets no note. Examples are a file wowlab cannot read, or a delete or recreate. The same rule applies to the undo, restore and apply plans.
 
 **Acceptance:** a pinned test for each plan kind that lists a `*-cache` file with no detail. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-98 — Small wording and docstring follow-ups
+## [x] M16-98 — Small wording and docstring follow-ups
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-95 code review (#463); the M16-92 domain and code reviews (#465)
 
 - `filemap._literal`'s docstring says "no wildcard, no token", but it does not exclude `<wowlab-temp>`, and `rows_named` relies on that. Either correct the docstring or rule that bare-name lookup should skip the token.
@@ -2617,18 +2628,107 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 **Acceptance:** each item pinned or explained in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-99 — The M16-93T crash-seam probe exercises descriptor writes again
+## [x] M16-99 — The M16-93T crash-seam probe exercises descriptor writes again
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-93T code re-check (#462)
 
 `review/test_m16_93t_crash_seam_misses_dir_fd_store_writes.py` reuses `CRASH_SCRIPT`, which now sets `snapshot._WRITE_BY_DIR_FD = False`. So its non-control case no longer takes the descriptor-write route and repeats the control. Add a new review probe, as a new file, that forces `_WRITE_BY_DIR_FD = True` and checks that the seam still fires through `dir_fd`. The reviewers checked this by hand.
 
 **Acceptance:** the new probe passes on main. Reviewed by `code-reviewer` and `security-reviewer`.
 
+## [x] M16-101 — `profile apply` prints its login note once
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 code and domain reviews (#468); the batch-7 code review (#473)
+
+In text mode, `profile apply` prints `profiles.LOGIN_NOTE` twice when it writes. It prints the note in the plan, and then again, unconditionally, after the write. LAB_PLAN (the plan-footer paragraph and its M16-97 amendment) says plans "add the login caveat before the prompt and do not repeat it after the write". Keep the note in the plan, where it is also part of `ProfileApplyReport.plan_lines` and so of `--json`. Drop the print after the write.
+
+**Acceptance:**
+- A pinned text-mode test of an apply that writes, with the note printed exactly once, before the prompt.
+- `test_profile_apply_plan_recreating_a_cache_file_has_the_login_caveat` still passes, unchanged.
+
+Reviewed by `code-reviewer`.
+
+## [x] M16-102 — `undo`'s plan and result agree on the login caveat
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-97 domain review (#468); reproduced in the batch-7 code review (#473)
+
+The undo plan's footer decides on `_RELOGIN` from the listed paths: those whose disk differs from `before`. The result decides from `UndoReport.notes = _relogin_notes([p.path for p in last.paths])`, which is every path of the record being undone, whether or not the undo changes it. `--json` `notes` comes from that same set. The mismatch was reproduced on main:
+1. Take a snapshot.
+2. Change a SavedVariables file and the account's `config-cache.wtf`.
+3. Run `snap restore --yes`.
+4. Write `config-cache.wtf` back to its pre-restore bytes.
+5. Now the undo plan lists only the SavedVariables file and shows no caveat, but `undo --yes` prints `_RELOGIN`.
+
+Make the result and its `notes` decide from the same paths the plan lists.
+
+*Ruling (2026-11-11, conductor, #477 fix round 1):* the result and `--json` `notes` decide from the paths the undo wrote (its own journal record), not from the paths the plan listed. With no change while the prompt waits, the two sets are the same. When a `Config.wtf` or `*-cache` file changes during the prompt and the undo rewrites it, the caveat appears after the write. M16-105 carries the LAB_PLAN amendment.
+
+**Acceptance:** a pinned test of that case in text and `--json`, with the plan and result agreeing. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [x] M16-103 — The login notes lead with the files actually listed
+**Size:** XS · **Depends on:** M16-101 · **Sources:** the M16-97 merge (#468), conductor note; the batch-7 code review (#473)
+
+`cli._RELOGIN` and `profiles.LOGIN_NOTE` both state what the client does with `Config.wtf` at its next start. They do so even when the plan lists only `*-cache` files, where that sentence is about a file the plan does not touch. Change the wording to fit the set:
+- When only `*-cache` files are listed: say they are read at login and the server may replace them. Say nothing about `Config.wtf`.
+- When only `Config.wtf` is listed: keep the restart sentence. Drop the server-sync sentence, because `Config.wtf` is not synced.
+- When both are listed: keep both sentences.
+- `profiles.LOGIN_NOTE` only, when neither is listed (it shows for every non-empty apply plan, for example a SavedVariables-only or `AddOns.txt`-only one): keep only the clause that the result is proven by starting the client and logging in. Name neither `Config.wtf` nor sync.
+
+Keep the LAB_FILE_MAP **[verify]** rule: "restart the client" is safe; a claim of when `Config.wtf` is read is not. This changes the wording that LAB_PLAN's M16-97 amendment fixes, so the PR adds a dated LAB_PLAN amendment beside it.
+
+**Acceptance:**
+- Pinned tests for each set, for both notes. The neither-listed case applies to `LOGIN_NOTE` only.
+- The LAB_PLAN amendment.
+
+Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-11, eighth batch)
+
+## [x] M16-104 — The bidi scan reads what git commits for a symlink
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-89 security review (#478, LOW, pre-existing)
+
+`tests/repo/test_bidi_controls.py` reads each tracked path from the checkout, and only when `path.is_file()` is true. For a symlink (git mode 120000), the bytes git commits are the link's target text. A broken link is skipped. A working link is followed, so its target file is scanned instead. Either way, a bidi control in a link's target text passes. On a docs-only PR, `docs/evil.md` can be such a link. Fix: list entries with `git ls-files -s -z`. For a mode-120000 entry, run the check on `os.readlink(path)`, or on the blob, and never follow the link.
+
+**Acceptance:**
+- Two constructed tests, each reported by the scan:
+  - a broken symlink whose target text holds U+202E;
+  - a working symlink to a clean file whose target text holds a bidi control.
+- Where symlinks cannot be made (Windows, or `core.symlinks=false`), the tests skip with a stated reason.
+- The existing tests still pass.
+
+Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [x] M16-105 — `undo` names a file it put back that the plan did not list
+**Size:** XS · **Depends on:** M16-103 · **Sources:** the M16-102 domain re-review (#477)
+
+Since M16-102, the undo result gives the login caveat for every `Config.wtf` or `*-cache` file the undo wrote. Suppose such a file changed while the prompt waited, after the plan was shown, and the undo put it back. The text result then prints the caveat but does not name that file, so nothing on screen says why the caveat appears. The text result should name each file the undo wrote that the plan did not list. `--json` gives only the undo's record id, in `transaction`. Add a field listing the paths the undo wrote, so that a `--json` reader does not have to look the record up.
+
+`docs/LAB_PLAN.md` (the plan-footer paragraph and its M16-97 amendment) still says `undo` does not repeat the caveat after the write and that the caveat follows the listed paths. Since #477 neither holds when a file changes during the prompt. The amendment below records the actual rule.
+
+**Acceptance:**
+- A pinned test of that race in text output: the extra file is named once, after "Undone.".
+- A `--json` test showing the new field holds the paths the undo wrote.
+- A dated LAB_PLAN amendment beside M16-97's, recording two rules: the result follows what the undo wrote, and a file written after the plan is named after the write.
+
+Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups found in review (filed 2026-11-11, ninth batch)
+
+## [x] M16-106 — `labaddon.Gear` refuses duplicate and out-of-range slots
+**Size:** XS · **Depends on:** nothing · **Sources:** the M13-70 code review (#482)
+
+`labaddon.Gear` (`labaddon.py` near line 640) has the same unchecked `first_slot`, `last_slot` and `slots` that M13-70 closed for `ActionBars`. `Gear.lua` walks `for slot = first, last` once, appending only the slot it is on, so a real file never holds a duplicate. A hand-edited one would print a duplicated slot twice in `char gear`, text and `--json`, and would give the dressing-room builder two items for one slot. Apply the same refusal as M13-70.
+
+**Acceptance:**
+- Labelled constructed tests: a duplicate, a slot outside the walk, and a backwards range.
+- Real-fixture reads byte-identical before and after.
+- `make ci` green.
+- The change listed as user-facing (a record error).
+
+Reviewed by `code-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
 **Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
 
-M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
+M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"):* `wowlab undo` skips the closed record of the killed undo, which changed no file, when it picks its target, so the plan offered is D's. `doctor` names both: D as the change to undo, and the killed undo as interrupted before it changed anything. Grade both. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.

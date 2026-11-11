@@ -81,21 +81,22 @@ other reparse point, refuses a name that differs only in case or Unicode form
 from one on disk, and refuses a name the file system resolves to something it
 does not list (an 8.3 short name). The directory listings that walk reads
 come from a per-transaction memo (§18.1 item 6, M16-23): a listing is kept
-under the directory's (dev, ino, mtime_ns), read before the listing and again
-after it, used only while a fresh `lstat` still shows that key, forgotten
-for every directory on the path of the transaction's own write, delete or
-directory removal, and never kept when the listing failed; the target itself
-is `lstat`ed on every lookup, and the re-checks below never use the memo, so
-a whole restore lists each directory once instead of once per file in it. A
-path whose disk state differs from what
-guard expects there is refused with `ChangedSinceSnapshotError` (item 3): at
-its first touch the pre-write snapshot's entry (content hash and kind, or
-absent against present), later guard's own record of the path (the hash of
-its last write there that landed, else the hash read at first touch). The
-path, its `before` hash and the name of the temp file about to be created are
-written to the journal and fsynced before the install is touched
-(write-ahead), so a process killed at any point can still be undone, and its
-temp file found, from the journal alone. The new bytes go to that temp file in
+under the directory's (dev, ino, mtime_ns), with its ctime_ns on POSIX
+(amended 2026-11-11), read before the listing and again after it, used only
+while a fresh `lstat` still shows that key, forgotten for every directory on
+the path of the transaction's own write, delete or directory removal, and
+never kept when the listing failed; the target itself is `lstat`ed on every
+lookup, and the re-checks below never use the memo, so a whole restore lists
+each directory once instead of once per file in it. A path whose disk state
+differs from what guard expects there is refused with
+`ChangedSinceSnapshotError` (item 3): at its first touch the pre-write
+snapshot's entry (content hash and kind, or absent against present), later
+guard's own record of the path (the hash of its last write there that
+landed, else the hash read at first touch). The path, its `before` hash
+and the name of the temp file about to be created are written to the journal
+and fsynced before the install is touched (write-ahead), so a process killed
+at any point can still be undone, and its temp file found, from the journal
+alone. The new bytes go to that temp file in
 the same directory, which is fsynced; the target is then read again and must
 still hash to what guard expects (for a create: still be absent), and as the
 last step before the call its identity, size and mtime (by `lstat`) must be
@@ -146,7 +147,13 @@ store, looked up by that hash (the store checks content against the name, so
 a manifest cannot substitute other bytes). A path that already holds its
 pre-transaction bytes needs nothing; a path someone else changed is left as
 it is, named in the record's note and in the error, and the record ends
-`rollback_incomplete`. Rollback therefore never overwrites content that no
+`rollback_incomplete`. The record also lists those paths in `paths_left`
+(M16-84), flavor-relative and spelled as `paths` spells them: a path the
+rollback could not put back, or a refused path whose disk moved since guard
+read it; never a directory it could not remove. Paths whose only operation
+was refused are journaled under `paths_refused`, so a `paths_left` entry
+that `paths` does not name is vouched for by that key alone, never by the
+note, which is not parsed. Rollback therefore never overwrites content that no
 snapshot holds and this transaction did not write. The record says
 `rolled_back` only if all of that succeeded. A `restore` that fails after
 changing a path leaves the transaction unable to commit: it rolls back on
@@ -202,7 +209,7 @@ from pathlib import Path, PureWindowsPath
 from types import TracebackType
 from typing import Literal, NoReturn, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator, model_validator
 
 from wowlab_core import longpath, process
 from wowlab_core import snapshot as _snapshots
@@ -318,6 +325,11 @@ _MAX_NAME_BYTES = 255
 _JOURNAL_DIR = "journal"
 _JOURNAL_FORMAT = 2
 # Format 1 is what the M10-11 gate wrote: no temp paths, no cleanup.
+# Format 2 gained `paths_left` and `paths_refused` (M16-84) without a new
+# number: each is written only when it is not empty, so a record with nothing
+# left alone or refused is byte for byte what the M16-71 gate wrote, and a
+# gate from before M16-84 refuses a record that carries either key as damaged
+# (its records forbid unknown keys) rather than reading it without the list.
 _READABLE_FORMATS = frozenset({1, _JOURNAL_FORMAT})
 _RECORD_NAME = re.compile(r"\A([0-9]{8})-[0-9a-f]{8}\.json\Z")
 _MAX_RECORD_BYTES = 64 << 20
@@ -414,6 +426,13 @@ class HistoryRecord(_Frozen):
     temps_left: tuple[str, ...]
     """Temp paths earlier records name that this one left alone: they failed a
     check, or their removal failed."""
+    paths_left: tuple[str, ...] = ()
+    """Files the rollback of this record left as they are (M16-84): changed
+    by another program, refused by the system, or refused before anything
+    was written and changed since guard read them. Flavor-relative, spelled
+    as `paths` spells them; empty unless `state` is `rollback_incomplete`,
+    and empty for a record written before M16-84 (its note is not parsed).
+    A directory the rollback could not remove is not listed."""
 
 
 class PlanItem(_Frozen):
@@ -536,6 +555,11 @@ class _JournalRecord(_Frozen):
     temps_removed: tuple[str, ...] = ()
     temps_left: tuple[str, ...] = ()
     cleanup_finished: bool = False
+    # M16-84, format 2. `paths_refused` names each path whose only operation
+    # was refused (not in `paths`); `paths_left` the paths the rollback left
+    # as they are. Written only when not empty (`_write_record`).
+    paths_refused: tuple[StrictStr, ...] = ()
+    paths_left: tuple[StrictStr, ...] = ()
 
     @field_validator("format")
     @classmethod
@@ -550,6 +574,30 @@ class _JournalRecord(_Frozen):
             self.temps or self.temps_removed or self.temps_left or self.cleanup_finished
         ):
             raise ValueError("a format-1 record names no temp paths and ran no cleanup")
+        return self
+
+    @model_validator(mode="after")
+    def _left_alone_is_journaled(self) -> _JournalRecord:
+        """`paths_refused` and `paths_left` hold plain allowlisted paths, each
+        once; `paths_left` only on a `rollback_incomplete` record, and only
+        paths the record journals (`paths` or `paths_refused`). The note
+        vouches for nothing."""
+        if self.format == 1 and (self.paths_refused or self.paths_left):
+            raise ValueError("a format-1 record names no refused or left-alone paths")
+        for key, values in (("paths_refused", self.paths_refused), ("paths_left", self.paths_left)):
+            if len(set(values)) != len(values):
+                raise ValueError(f"{key} names a path twice")
+            for rel in values:
+                try:
+                    _check_rel(rel)
+                except PathNotAllowedError as exc:
+                    raise ValueError(f"{key}: {exc}") from None
+        if self.paths_left:
+            if self.state != "rollback_incomplete":
+                raise ValueError("only a rollback_incomplete record names paths left alone")
+            journaled = {p.path for p in self.paths} | set(self.paths_refused)
+            if not set(self.paths_left) <= journaled:
+                raise ValueError("paths_left names a path the record does not journal")
         return self
 
 
@@ -608,10 +656,17 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     """Replace the record's file atomically; the bytes are fsynced before the
     rename and the directory after it, so what the journal says is on disk."""
     directory = _journal_dir(store_path)
-    text = json.dumps(record.model_dump(), ensure_ascii=True, sort_keys=True, indent=1)
+    raw = record.model_dump()
+    # M16-84's keys only when they say something: a record with neither is
+    # what a gate from before M16-84 reads.
+    for key in ("paths_refused", "paths_left"):
+        if not raw[key]:
+            del raw[key]
+    text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # 0700 (M16-66, M16-78); mode 0700 on Windows too, as before M16-78.
+        _snapshots.make_private_dirs(directory, outside=True, private_on_windows=True)
         tmp = directory / f".{record.id}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, 0o600)
@@ -646,6 +701,7 @@ def _public(record: _JournalRecord) -> HistoryRecord:
         created_dirs=record.created_dirs,
         temps_removed=record.temps_removed,
         temps_left=record.temps_left,
+        paths_left=record.paths_left,
     )
 
 
@@ -807,11 +863,13 @@ class _HeldLock:
     """The process that took it: a forked child never unlocks the parent's lock."""
 
 
-def _plain_dir(path: Path, *, parents: bool) -> None:
-    """Make `path` if it is missing, then require a real directory there: not
-    a symbolic link, not a junction or any other reparse point."""
+def _plain_dir(path: Path) -> None:
+    """Make `path` and any missing folder above it, each 0700 in its own
+    `mkdir` (LAB_PLAN §6.10, amended 2026-11-11 (b); M16-78), then require a
+    real directory there: not a symbolic link, not a junction or any other
+    reparse point."""
     try:
-        path.mkdir(parents=parents, exist_ok=True)
+        _snapshots.make_private_dirs(path)
         st = path.lstat()
         junction = path.is_junction()
     except OSError as exc:
@@ -961,7 +1019,8 @@ class _Locks:
         _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
-                resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
+                # The store and every missing parent 0700, top-down (M16-78).
+                _snapshots.make_private_dirs(resolved, outside=True, private_on_windows=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
             _refuse_inside_any_install(store_path, "the store")
@@ -972,8 +1031,8 @@ class _Locks:
         path = _install_lock_path(place)
         _refuse_inside_any_install(path.parent, "the lock directory")
         _refuse_inside_any_install(path, "the install lock")
-        _plain_dir(path.parent.parent, parents=True)
-        _plain_dir(path.parent, parents=False)
+        _plain_dir(path.parent.parent)
+        _plain_dir(path.parent)
         self._held.append(_take_lock(path, "the install lock"))
 
     def cover(self, store_path: Path, place: _Place) -> bool:
@@ -1298,17 +1357,26 @@ def _verify_after(chain: Iterable[tuple[Path, _Identity]], rel: str) -> None:
         raise _ChangedUnderneathError(f"{exc}; the change may have landed elsewhere") from exc
 
 
-_ListingKey = tuple[int, int, int]
+_ListingKey = tuple[int, int, int, int]
 
 
 def _listing_key(directory: Path) -> _ListingKey | None:
     """What a memoized listing of `directory` is held to: its (dev, ino,
-    mtime_ns) by `lstat`. None for a link or anything not a directory, whose
-    listing is never kept. An `OSError` from the `lstat` propagates."""
+    mtime_ns, ctime_ns) by `lstat`. None for a link or anything not a
+    directory, whose listing is never kept. An `OSError` from the `lstat`
+    propagates.
+
+    ctime_ns is part of the key on POSIX only (§18.1 item 6, amended
+    2026-11-11): there any change to the directory moves it, an mtime put
+    back with `utime` included, and user space cannot set it. On Windows
+    `st_ctime_ns` is the creation time, which does not move when the
+    listing changes, so the field is held at 0 there and the Windows memo
+    is the (dev, ino, mtime_ns) one."""
     st = longpath.lstat(directory)
     if _is_link(st) or not stat.S_ISDIR(st.st_mode):
         return None
-    return (st.st_dev, st.st_ino, st.st_mtime_ns)
+    ctime_ns = st.st_ctime_ns if os.name == "posix" else 0
+    return (st.st_dev, st.st_ino, st.st_mtime_ns, ctime_ns)
 
 
 @dataclass
@@ -1339,16 +1407,21 @@ class _ListingMemo:
     change that lands while or right after a directory is listed is never
     kept under the new key. Every lookup reads the key again and lists again
     when it differs: someone else's file added or removed moves the
-    directory's mtime, and a directory replaced by another has another
+    directory's mtime (and, on POSIX, its ctime, even when the mtime is
+    put back afterwards), and a directory replaced by another has another
     inode. The transaction's own writes, directory creations, deletes and
     removals forget every directory on their path (`forget`), whatever the
     clock did. A listing that fails is never kept: the error propagates and
     the next lookup lists again. The memo answers only which names a
     directory lists; every target is still `lstat`ed per lookup, and the
     commit-time re-check (`_recheck`, `_verify`) never reads the memo.
-    Someone else's change within one tick of a coarse directory clock keeps
-    the key as it was; that residual risk is accepted (the M16-23T graders'
-    docstring, 2026-10-22): it can let a case-variant sibling name through,
+    On POSIX, someone else's change within one tick of a coarse directory
+    clock (both its mtime and its ctime clock) keeps the key as it was. On
+    Windows, where the key holds no change time, a change whose mtime is
+    put back keeps the key for the rest of the transaction. That residual
+    risk is accepted (the M16-23T graders' docstring, 2026-10-22; §18.1
+    item 6, amended 2026-11-11): on either platform it can let a
+    case-variant sibling name through or leave a name out of the report,
     never a write outside the allowlist or past a link (each directory on a
     write's path is `lstat`ed and `_verify`ed, never taken from a kept
     listing). A stale entry never leads the walk of what a whole restore
@@ -1781,6 +1854,7 @@ class _Transaction:
         "_order",
         "_overlay",
         "_own_locks",
+        "_paths_left",
         "_pid",
         "_place",
         "_plan",
@@ -1831,6 +1905,8 @@ class _Transaction:
         self._last: dict[str, tuple[str | None, ...]] = {}
         # Paths whose only operation was refused, with what guard read there.
         self._refused: dict[str, str | None] = {}
+        # What the rollback left as it is (M16-84): set once, at exit.
+        self._paths_left: tuple[str, ...] = ()
         # The pre-write snapshot's entries: flavor-relative path to (kind, hash).
         self._pre_entries: dict[str, tuple[str, str | None]] = {}
         self._created: list[str] = []
@@ -2136,7 +2212,8 @@ class _Transaction:
         if exc is None and self._broken is None:
             self._journal_write("committed")
             return False
-        problems = self._rollback()
+        problems, left = self._rollback()
+        self._paths_left = tuple(dict.fromkeys(left))
         state: _State = "rollback_incomplete" if problems else "rolled_back"
         note = "; ".join(problems) if problems else None
         if problems:
@@ -2187,6 +2264,8 @@ class _Transaction:
                 "temps_removed": tuple(self._temps_removed),
                 "temps_left": tuple(self._temps_left),
                 "cleanup_finished": self._cleanup_finished,
+                "paths_refused": tuple(self._refused),
+                "paths_left": self._paths_left if state == "rollback_incomplete" else (),
             }
         )
         _write_record(self._store_path, self._record)
@@ -2489,13 +2568,16 @@ class _Transaction:
                 self._broken = f"a restore stopped part way ({type(exc).__name__}: {exc})"
             raise
 
-    def _rollback(self) -> list[str]:
+    def _rollback(self) -> tuple[list[str], list[str]]:
         """Put every touched path back to its pre-transaction bytes (from the
         pre-write snapshot, by hash) where the disk still holds guard's own
         record of it; leave any path someone else changed, and say so; remove
-        the directories this transaction created."""
+        the directories this transaction created. Returns the problems (the
+        note) and the file paths left as they are (`paths_left`, M16-84): a
+        directory that could not be removed is a problem, not a path left."""
         assert self._place is not None
         problems: list[str] = []
+        left: list[str] = []
         store = SnapshotStore(self._store_path)
         for rel in reversed(self._order):
             before, mode, size = self._before[rel]
@@ -2511,6 +2593,7 @@ class _Transaction:
                         f"{rel}: changed by something else after this transaction last wrote "
                         "it; left as it is"
                     )
+                    left.append(rel)
                     continue
                 data = None if before is None else _fetch(store, before, size, rel)
                 tmp_name = None
@@ -2530,6 +2613,7 @@ class _Transaction:
                 )
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel, read in self._refused.items():
             # Refused before anything landed: kept as it is, but a disk that
             # moved since guard read it is not "rolled back".
@@ -2540,14 +2624,16 @@ class _Transaction:
                         f"{rel}: changed by something else while this transaction ran; "
                         "left as it is"
                     )
+                    left.append(rel)
             except Exception as exc:
                 problems.append(f"{rel}: {exc}")
+                left.append(rel)
         for rel_dir in reversed(self._created):
             try:
                 _remove_dir(self._place, rel_dir, self._listings)
             except Exception as exc:
                 problems.append(f"{rel_dir}/: {exc}")
-        return problems
+        return problems, left
 
     def _undo(self, ops: Sequence[_Op], created_dirs: Sequence[str]) -> None:
         store = SnapshotStore(self._store_path)

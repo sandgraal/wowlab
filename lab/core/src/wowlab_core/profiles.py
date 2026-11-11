@@ -62,6 +62,9 @@ __all__ = [
     "LAB_ADDON_REASON",
     "LINKED_ROOT_NOTE",
     "LOGIN_NOTE",
+    "LOGIN_NOTE_BOTH",
+    "LOGIN_NOTE_CONFIG",
+    "LOGIN_NOTE_PLAIN",
     "MACROS_NOTE",
     "MAX_DELETES",
     "PRESETS_FILE",
@@ -97,6 +100,8 @@ __all__ = [
     "linked_root_notes",
     "linked_roots",
     "listing",
+    "login_files",
+    "login_note",
     "parse_label",
     "parse_presets",
     "plan_apply",
@@ -129,9 +134,27 @@ SERVER_DELETE_NOTE = (
     "the server may write this file again at your next login (synchronize* CVars; "
     "see `wowlab doctor`)"
 )
+# The login note leads with the files the plan lists (M16-103). Whether the
+# client reads Config.wtf again at login, or only when it starts, is
+# unconfirmed (docs/LAB_FILE_MAP.md, its timing rules), so the notes tie it
+# to the next start. The file map lists no server replacement for Config.wtf
+# (its row and the Timing rules; it holds machine-scope settings), so its
+# note names no server.
 LOGIN_NOTE = (
+    "The result is proven only by starting the client and logging in: it reads the *-cache "
+    "files at login, and the server may replace them then."
+)
+LOGIN_NOTE_PLAIN = "The result is proven only by starting the client and logging in."
+"""The note when the plan lists neither Config.wtf nor a *-cache file under
+WTF/ (a SavedVariables-only or AddOns.txt-only apply)."""
+LOGIN_NOTE_CONFIG = (
     "The result is proven only by starting the client and logging in: it reads Config.wtf "
-    "at start and the other files at login, and the server may replace *-cache files at login."
+    "again the next time you start it."
+)
+LOGIN_NOTE_BOTH = (
+    "The result is proven only by starting the client and logging in: it reads Config.wtf "
+    "again the next time you start it and the other files at login, and the server may "
+    "replace *-cache files at login."
 )
 SERVER_SIDE_NOTE = (
     "Action-bar contents and talents are not in these files (the server keeps them; not yet "
@@ -632,6 +655,41 @@ class ApplyPlan(_Frozen):
 
 def _plain(markdown: str) -> str:
     return markdown.replace("`", "").replace("**", "")
+
+
+def login_files(paths: Iterable[str]) -> tuple[bool, bool]:
+    """Whether `paths` (relative to the flavor folder) name `Config.wtf`, and
+    whether they name a `*-cache` file, under `WTF/` and outside a
+    SavedVariables folder. A file in a SavedVariables folder, or outside
+    `WTF/` (an addon's own file), is neither, whatever its name (M16-97,
+    M16-103)."""
+    config = cache_file = False
+    for path in paths:
+        parts = [p.casefold() for p in path.replace("\\", "/").split("/")]
+        if parts[0] != "wtf" or "savedvariables" in parts[:-1]:
+            continue
+        name = parts[-1]
+        if name == "config.wtf":
+            config = True
+        elif "-cache" in name:
+            cache_file = True
+    return config, cache_file
+
+
+def login_note(paths: Iterable[str]) -> str:
+    """`profile apply`'s login note for a plan listing `paths`: `LOGIN_NOTE`
+    for *-cache files only, `LOGIN_NOTE_CONFIG` for Config.wtf only,
+    `LOGIN_NOTE_BOTH` for both and `LOGIN_NOTE_PLAIN` for neither. It names
+    Config.wtf only when the plan lists it, and the server only when the plan
+    lists a *-cache file (M16-103)."""
+    config, cache_file = login_files(paths)
+    if config and cache_file:
+        return LOGIN_NOTE_BOTH
+    if config:
+        return LOGIN_NOTE_CONFIG
+    if cache_file:
+        return LOGIN_NOTE
+    return LOGIN_NOTE_PLAIN
 
 
 def _base_name(path: str) -> str:

@@ -102,10 +102,13 @@ def test_make_ci_runs_every_stage() -> None:
 # no markers), and the paths are each job's documented roots: the whole
 # testpaths for `quality`, `lab/core/tests` for the desktop job (docs/LAB_PLAN.md
 # section 15.3 E3), `tests/harness` for the hook tests on 3.9 and 3.12.
+# The third `quality` entry is the bidi scan alone, which runs only on a
+# docs-only PR, when the two passes are skipped (M16-89).
 CI_PYTEST = {
     "quality": [
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL],
         ["-q", "-m", SERIAL],
+        ["-q", "tests/repo/test_bidi_controls.py"],
     ],
     "lab-desktop": [
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL, "lab/core/tests"],

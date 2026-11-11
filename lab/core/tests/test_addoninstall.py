@@ -37,6 +37,7 @@ from test_cli import (
     user_data,  # noqa: F401
 )
 
+import wowlab_core
 from wowlab_core import addoninstall, cli, guard, install, profiles
 from wowlab_core.toc import parse_toc
 
@@ -219,7 +220,10 @@ def test_install_writes_the_addon_with_the_discovered_interface(flavor: Path) ->
     installed = flavor / LAB
     assert sorted(p.name for p in installed.iterdir()) == sorted(["WowLab.toc", *_source_lua()])
     toc = (installed / "WowLab.toc").read_bytes()
-    assert toc == (SOURCE / "WowLab.toc").read_bytes().replace(b"@WOWLAB_INTERFACE@", b"16001")
+    assert toc == addoninstall.installed_toc(
+        (SOURCE / "WowLab.toc").read_bytes(), INTERFACE, wowlab_core.__version__
+    )
+    assert f"## Version: {wowlab_core.__version__}".encode() in toc
     for name in _source_lua():
         assert (installed / name).read_bytes() == (SOURCE / name).read_bytes()
     (record,) = guard.history()

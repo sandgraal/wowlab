@@ -52,7 +52,14 @@
           "name": "synchronizeConfig",
           "value": null
         }
-      ]
+      ],
+      "lab_addon": {
+        "status": "not_installed",
+        "installed": [],
+        "expected": 16001,
+        "version": null,
+        "detail": null
+      }
     }
   ],
   "other_dirs": [],
@@ -76,5 +83,37 @@
     }
   },
   "problems": [],
-  "first_run": null
+  "first_run": null,
+  "next_steps": [
+    {
+      "item": "lab_addon",
+      "flavor_folder": "_classic_beta_",
+      "state": "missing",
+      "count": null,
+      "newest_mtime_ns": null,
+      "command": "wowlab addon install lab",
+      "detail": null,
+      "fix": "Close the game, then run `wowlab addon install lab`."
+    },
+    {
+      "item": "characters",
+      "flavor_folder": "_classic_beta_",
+      "state": "ok",
+      "count": 4,
+      "newest_mtime_ns": null,
+      "command": "wowlab char list",
+      "detail": "they are not updated until the lab-addon above is fixed",
+      "fix": null
+    },
+    {
+      "item": "combat_log",
+      "flavor_folder": "_classic_beta_",
+      "state": "ok",
+      "count": 1,
+      "newest_mtime_ns": 1700000000000000000,
+      "command": null,
+      "detail": null,
+      "fix": null
+    }
+  ]
 }

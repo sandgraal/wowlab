@@ -638,6 +638,123 @@ _MKDIR_MODE = _PRIVATE_DIR_MODE if _PRIVATE_MODES else 0o777
 default, so that on Windows the folder keeps the access it inherits (from
 CPython 3.12.4, a mode of 0700 there sets a protected access list)."""
 
+
+# -- the user data directory is private (M16-78) -----------------------------
+#
+# LAB_PLAN §6.10, amended 2026-11-11 (b): every folder wowlab creates under
+# the user data directory is made 0700 in the `mkdir` itself, whatever the
+# umask, and so is every parent made on the way to a store given explicitly
+# outside it. `Path.mkdir(parents=True)` will not do: it makes the parents at
+# the default mode whatever `mode=` says, so each missing folder is made here
+# by its own `mkdir`, top-down.
+
+
+def user_data_dir() -> Path:
+    """`<platform data dir>/wowlab`, read at call time (§6.9)."""
+    return platformdirs.user_data_path("wowlab")
+
+
+def _within_dir(path: Path, folder: Path) -> bool:
+    return path == folder or folder in path.parents
+
+
+def _resolved_or(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):  # a link loop: the lexical spelling only
+        return path
+
+
+def _new_dir_mode(
+    path: Path,
+    user_data: Path,
+    user_data_resolved: Path,
+    *,
+    is_target: bool,
+    outside: bool,
+    private_on_windows: bool,
+) -> int:
+    """The mode the `mkdir` of the missing folder `path` asks for."""
+    if not _PRIVATE_MODES:
+        return _PRIVATE_DIR_MODE if is_target and private_on_windows else _MKDIR_MODE
+    resolved = _resolved_or(path)
+    # Only a parent made on the way may be a folder that holds the user data
+    # directory; the folder asked for is wowlab's own, wherever it is.
+    holds_user_data = path in user_data.parents or resolved in user_data_resolved.parents
+    if not is_target and holds_user_data:
+        return 0o777  # the platform's data directory (or above): not wowlab's
+    if outside or _within_dir(path, user_data) or _within_dir(resolved, user_data_resolved):
+        return _PRIVATE_DIR_MODE
+    return 0o777
+
+
+def make_private_dirs(
+    path: Path, *, outside: bool = False, private_on_windows: bool = False
+) -> None:
+    """Make `path` and every missing folder above it, top-down, one `mkdir`
+    per missing folder, as `Path.mkdir(parents=True, exist_ok=True)` does
+    otherwise: an existing directory at `path` is fine; anything else there,
+    or a folder above it that is not a directory (a file, or a link to
+    nothing), raises `FileExistsError` or `NotADirectoryError` before
+    anything is made.
+
+    A folder made at or below the user data directory is made 0700 by its
+    `mkdir`. A umask can only take bits away, so group and other never get
+    any; one that took owner bits is given them back through a descriptor
+    that does not follow a link (best effort: the folder is no wider for
+    it). With `outside`, a folder made outside the user data directory is
+    made 0700 too (a store given explicitly and its parents); without it,
+    such a folder (an output folder the player named) gets the default
+    mode. A parent that holds the user data directory (the platform's data
+    directory, such as `~/.local/share`) is not wowlab's: when missing, it
+    is made at the default mode. `path` itself never counts as one.
+
+    Off POSIX every folder is made at the default mode, as `_MKDIR_MODE`
+    explains, except `path` itself with `private_on_windows` (guard's store
+    root and `journal/`, made with mode 0700 before M16-78)."""
+    target = Path(path).absolute()
+    user_data = user_data_dir().absolute()
+    user_data_resolved = _resolved_or(user_data)
+    for folder in (*reversed(target.parents), target):
+        if os.path.lexists(folder):
+            if folder != target and not folder.is_dir():
+                if folder.exists():  # a file in the way, as `mkdir` below it says
+                    raise NotADirectoryError(errno.ENOTDIR, "not a directory", str(folder))
+                # A link to nothing: what `Path.mkdir(parents=True)` says.
+                raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(folder))
+            continue
+        mode = _new_dir_mode(
+            folder,
+            user_data,
+            user_data_resolved,
+            is_target=folder == target,
+            outside=outside,
+            private_on_windows=private_on_windows,
+        )
+        try:
+            folder.mkdir(mode)  # this folder only: never `parents=True`
+        except FileExistsError:
+            continue  # made meanwhile by someone else; judged by the caller
+        if mode == _PRIVATE_DIR_MODE and _PRIVATE_MODES:
+            _owner_bits_back(folder)
+    if not target.is_dir():
+        raise FileExistsError(errno.EEXIST, "exists and is not a directory", str(target))
+
+
+def _owner_bits_back(folder: Path) -> None:
+    """Set the folder just made 0700 to exactly 0700, when a umask took owner
+    bits from it; never through a link."""
+    with contextlib.suppress(OSError):
+        st = os.lstat(folder)
+        if not stat.S_ISDIR(st.st_mode) or stat.S_IMODE(st.st_mode) == _PRIVATE_DIR_MODE:
+            return
+        fd = os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW)
+        try:
+            _set_private(fd, exact=True)
+        finally:
+            os.close(fd)
+
+
 _EXPOSED_SHOWN = 10
 """How many exposed entries `exposure` names; it counts them all."""
 
@@ -2134,7 +2251,7 @@ class SnapshotStore:
         """A descriptor on the store root, opened as named (see above)."""
         try:
             if create:
-                self.path.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
+                make_private_dirs(self.path, outside=True)  # 0700, parents too (M16-78)
             fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             if create:
@@ -2212,7 +2329,7 @@ class SnapshotStore:
         checked: list[tuple[Path, os.stat_result]] = []
         try:
             if create:
-                path.mkdir(parents=True, exist_ok=True)
+                make_private_dirs(path, outside=True)
             elif not path.is_dir():
                 return None
             for part in parts:
@@ -3223,7 +3340,7 @@ class SnapshotStore:
         """The store's `tmp/`, created if needed, when it is a directory and
         not a link; else None."""
         try:
-            self.tmp_dir.mkdir(_MKDIR_MODE, parents=True, exist_ok=True)
+            make_private_dirs(self.tmp_dir, outside=True)
             st = os.lstat(self.tmp_dir)
         except OSError:
             return None
