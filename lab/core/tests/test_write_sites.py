@@ -154,13 +154,10 @@ ALLOWED: dict[tuple[str, str], str] = {
         "stdout once its reader has gone; it is a device, never a file in an install"
     ),
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
-    (_DB2LAKE, "path.mkdir(parents=True, exist_ok=True)"): _LAKE_DIR,
-    (_LOOKSTORE, "self._root.mkdir(parents=True, exist_ok=True)"): _LOOKS_DIR,
     (_LOOKSTORE, 'with tmp.open("xb") as handle:'): _LOOKS_DIR + "; a new temp name (x mode)",
     (_LOOKSTORE, "tmp.replace(final)"): _LOOKS_DIR + "; the temp file onto <name>.json",
     (_LOOKSTORE, "tmp.unlink(missing_ok=True)"): _LOOKS_DIR + "; its own temp file",
     (_LOOKSTORE, "final.hardlink_to(tmp)"): _LOOKS_DIR + "; publishes without replacing",
-    (_LOOKSPAGE, "folder.mkdir(parents=True, exist_ok=True)"): _PAGE_FILE,
     (_LOOKSPAGE, 'with tmp.open("xb") as handle:'): _PAGE_FILE
     + "; a new temp name beside the page (x mode)",
     (_LOOKSPAGE, "tmp.replace(final)"): _PAGE_FILE + "; the temp file onto the page, whole",

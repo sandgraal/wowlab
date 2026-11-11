@@ -34,7 +34,7 @@ import platformdirs
 
 from wowlab_core.gamedata import default_cache_dir
 from wowlab_core.lookstore import default_looks_dir, refuse_install
-from wowlab_core.snapshot import default_store_path
+from wowlab_core.snapshot import default_store_path, make_private_dirs
 
 __all__ = [
     "DATA_ELEMENT_ID",
@@ -640,7 +640,7 @@ def write_page(page: str, out: Path) -> Path:
     final = check_target(out)
     folder = final.parent
     refuse_install(folder, _WHAT)
-    folder.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(folder)  # 0700 under the user data directory (M16-78)
     refuse_install(folder, _WHAT)
     tmp = folder / f".{final.name}.{uuid.uuid4().hex}.tmp"
     try:

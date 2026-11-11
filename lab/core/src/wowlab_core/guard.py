@@ -664,7 +664,7 @@ def _write_record(store_path: Path, record: _JournalRecord) -> None:
     text = json.dumps(raw, ensure_ascii=True, sort_keys=True, indent=1)
     data = (text + "\n").encode("ascii")
     try:
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _snapshots.make_private_dirs(directory, outside=True)  # 0700 (M16-66, M16-78)
         tmp = directory / f".{record.id}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, 0o600)
@@ -861,11 +861,13 @@ class _HeldLock:
     """The process that took it: a forked child never unlocks the parent's lock."""
 
 
-def _plain_dir(path: Path, *, parents: bool) -> None:
-    """Make `path` if it is missing, then require a real directory there: not
-    a symbolic link, not a junction or any other reparse point."""
+def _plain_dir(path: Path) -> None:
+    """Make `path` and any missing folder above it, each 0700 in its own
+    `mkdir` (LAB_PLAN §6.10, amended 2026-11-11 (b); M16-78), then require a
+    real directory there: not a symbolic link, not a junction or any other
+    reparse point."""
     try:
-        path.mkdir(parents=parents, exist_ok=True)
+        _snapshots.make_private_dirs(path)
         st = path.lstat()
         junction = path.is_junction()
     except OSError as exc:
@@ -1015,7 +1017,8 @@ class _Locks:
         _refuse_inside_any_install(store_path / _STORE_LOCK, "the store lock")
         if create:
             try:
-                resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
+                # The store and every missing parent 0700, top-down (M16-78).
+                _snapshots.make_private_dirs(resolved, outside=True)
             except OSError as exc:
                 raise GuardError(f"cannot make the store {store_path}: {exc}") from exc
             _refuse_inside_any_install(store_path, "the store")
@@ -1026,8 +1029,8 @@ class _Locks:
         path = _install_lock_path(place)
         _refuse_inside_any_install(path.parent, "the lock directory")
         _refuse_inside_any_install(path, "the install lock")
-        _plain_dir(path.parent.parent, parents=True)
-        _plain_dir(path.parent, parents=False)
+        _plain_dir(path.parent.parent)
+        _plain_dir(path.parent)
         self._held.append(_take_lock(path, "the install lock"))
 
     def cover(self, store_path: Path, place: _Place) -> bool:

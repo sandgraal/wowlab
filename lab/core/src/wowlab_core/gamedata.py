@@ -74,6 +74,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from wowlab_core import __version__
 from wowlab_core.errors import WowlabError
+from wowlab_core.snapshot import make_private_dirs
 
 __all__ = [
     "DOWNLOAD_DEADLINE_SECONDS",
@@ -612,7 +613,7 @@ def _writable_dir(path: Path, *, publishes_tables: bool = False) -> None:
     finding that out here means a refused location costs the source nothing.
     """
     _refuse_install(path)
-    path.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(path)  # 0700 under the user data directory (M16-78)
     _refuse_install(path)
     if publishes_tables:
         _refuse_no_hard_links(path)

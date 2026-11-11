@@ -302,7 +302,6 @@ def test_the_watch_sees_the_mode_a_mkdir_asks_for_constructed(tmp_path: Path) ->
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
 @pytest.mark.parametrize("kind", SCENARIOS)
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
 def test_a_transaction_makes_locks_and_the_store_parents_0700_constructed(
@@ -321,7 +320,6 @@ def test_a_transaction_makes_locks_and_the_store_parents_0700_constructed(
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
 @pytest.mark.parametrize("kind", SCENARIOS)
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
 def test_a_dry_run_makes_locks_and_the_store_parents_0700_constructed(
@@ -342,7 +340,6 @@ def test_a_dry_run_makes_locks_and_the_store_parents_0700_constructed(
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
 def test_store_lock_create_makes_the_store_parents_0700_constructed(
     guard: Any, tmp_path: Path, mask: int
@@ -357,7 +354,6 @@ def test_store_lock_create_makes_the_store_parents_0700_constructed(
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
 def test_store_lock_create_on_the_default_store_makes_the_user_data_dir_0700_constructed(
     guard: Any, tmp_path: Path, mask: int
@@ -370,7 +366,6 @@ def test_store_lock_create_on_the_default_store_makes_the_user_data_dir_0700_con
 
 
 @posix_only
-@pytest.mark.xfail(strict=True, reason="M16-78 not implemented")
 @pytest.mark.parametrize("mask", MASKS, ids=oct)
 def test_undo_makes_the_user_data_dir_and_locks_0700_constructed(
     guard: Any, flavor: Any, idle: None, tmp_path: Path, mask: int
