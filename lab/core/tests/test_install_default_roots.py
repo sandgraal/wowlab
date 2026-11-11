@@ -398,7 +398,7 @@ def test_cli_prints_the_error_then_every_location_then_the_commands_constructed(
     assert result.exit_code == cli.EXIT_ERROR
     assert result.stderr.splitlines() == [
         "wowlab: no WoW install found in the folders wowlab searches (2 checked, listed "
-        "below); name the install as shown at the end",
+        "below); name the install as shown at the end (wowlab doctor says more)",
         f"searched, no install there: {first}",
         f"searched, no install there: {second}",
         "to name the install, use the folder that holds .build.info (not one of the _..._ "

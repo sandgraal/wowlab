@@ -175,7 +175,8 @@ def test_no_install_found_names_root_and_the_variable(no_install: Path) -> None:
     assert result.exit_code == cli.EXIT_ERROR
     assert _one_line(result.stderr) == (
         "wowlab: no WoW install found in the folders wowlab searches "
-        "(1 checked, listed below); name the install as shown at the end"
+        "(1 checked, listed below); name the install as shown at the end "
+        "(wowlab doctor says more)"
     )
     assert '  --root "<path>"' in result.stderr.splitlines()
     assert any(ENV_LINE in line for line in result.stderr.splitlines())
@@ -191,7 +192,7 @@ def test_no_default_location_names_root_and_the_variable(
     stderr = run("sv", "list").stderr
     line = _one_line(stderr)
     assert "wowlab knows no default install location on this system" in line
-    assert line.endswith("; name the install as shown at the end")
+    assert line.endswith("; name the install as shown at the end (wowlab doctor says more)")
     assert '  --root "<path>"' in stderr.splitlines()
     assert any(ENV_LINE in out for out in stderr.splitlines())
 

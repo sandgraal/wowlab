@@ -1274,7 +1274,7 @@ def _install_words(exc: install.InstallError, how: str = _NAME_THE_INSTALL) -> s
         # The lines that name the install end the notes: the default advice
         # points there rather than saying it twice.
         if how == _NAME_THE_INSTALL:
-            how = "name the install as shown at the end"
+            how = "name the install as shown at the end (wowlab doctor says more)"
         n = len(exc.checked)
         if n:
             # Listed in the notes: on stderr after this line, in an
