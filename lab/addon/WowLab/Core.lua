@@ -72,11 +72,13 @@ local debugNext = false
 -- last announced its first pass in chat and then finished a session with
 -- that pass done. The chat line prints once per schema (each new lab-addon
 -- format): when this differs from ns.SCHEMA (a new schema, or a first run),
--- or when the probe was lost. It is written only at the addon's own logout
--- write, and only when the first pass ran in that session, and it is
--- cleared from the live table at ADDON_LOADED, so a session in which the
--- client saved the file but the logout write did not finish leaves none,
--- and the next load prints again. A crash cannot be detected: a crash
+-- or when the probe was lost; WowLabCharDB is per character, so once per
+-- schema on each character. It is set by the addon's own write of its
+-- tables, at logout or by `/wowlab save` (which the client saves at the next
+-- /reload or logout), and only when the first pass ran in that session, and
+-- it is cleared from the live table at ADDON_LOADED, so a session in which
+-- the client saved the file but neither the logout write nor a
+-- `/wowlab save` set it leaves none, and the next load prints again. A crash cannot be detected: a crash
 -- writes nothing, so the file stays as the last session that saved it.
 ns.announced = nil
 
@@ -702,9 +704,10 @@ ns.On("ADDON_LOADED", function(_, name)
     end
     WowLabCharDB.probe = copyProbe()
     putSkip(WowLabCharDB)
-    -- Until this session's logout write puts it back (M16-45): a session
-    -- whose logout write did not finish leaves no `announced` in a file the
-    -- client saved, so the next load prints the line again.
+    -- Until this session's write of the tables puts it back, at logout or
+    -- by `/wowlab save` (M16-45): a session in which neither set it leaves
+    -- no `announced` in a file the client saved, so the next load prints
+    -- the line again.
     WowLabCharDB.announced = nil
 end)
 
