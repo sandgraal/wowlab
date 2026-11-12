@@ -5186,10 +5186,12 @@ snapshots that wowlab already has, and writes only through `guard`.
 | CW-4 | **Patch-day card**: `addons check` and unreadable SavedVariables shown on the home tab | M16-34 | S |
 | CW-5 | **Packaging**: a double-click launcher on macOS as a release asset (from the owner's `install-wowlab-app.sh`) and a frozen binary on Windows. Needs an ADR-0031 amendment, Proposed | release workflow | M |
 | CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
-| CW-7 | Owner and volunteers: one human Windows run (M13-02) and one retail capture, recruited through M16-32's announcement | — | owner |
+| CW-7 | Owner and volunteers: one retail capture from the owner's own install (M17-10), and one human Windows run (M13-02) recruited through M16-32's announcement | — | owner |
 
-**Prerequisites.** v0.2 tagged after M16-05 (the launch-client session,
-with the two persistence tests), M16-33 and M16-32.
+**Order.** The wave starts after M16-05 (the launch-client session and
+its capture). v0.2 (M16-33, M16-32) ships before the wave's review
+(M17-12). Whether the wave also runs before v0.2 ships is the owner's
+call (ADR-0024), asked 2026-11-12.
 
 **Deferred by this pick.** M15-06 to M15-13 and Wave 7 (they
 duplicate wow.export and Wowhead and would retire "never reads `Data/`"),

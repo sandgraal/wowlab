@@ -2992,14 +2992,14 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 
 # M17 — the companion wave
 
-Spec: `docs/LAB_PLAN.md` §19. *Owner pick, 2026-11-12, in session ("go with the companion wave, file the tickets"), from the product review (`docs/handoffs/review-2026-11-12.md`).* It is picked in place of resuming M15, whose open tickets (M15-06 to M15-13) stay where they are, unscheduled. M16 finishes alongside: M16's open tickets keep their order, and the owner asked for the overlap, as for Wave 3 (§14.8).
+Spec: `docs/LAB_PLAN.md` §19. *Owner pick, 2026-11-12, in session ("go with the companion wave, file the tickets"), from the product review (`docs/handoffs/review-2026-11-12.md`).* It is picked in place of resuming M15, whose open tickets (M15-06 to M15-13) stay where they are, unscheduled. M16's open tickets keep their order. M17-01 and M17-02 depend on M16-05, so the wave starts once the launch-client capture lands; the review closes only after v0.2 (M16-32, M16-33). Whether M17 also runs before v0.2 ships, as Wave 3 overlapped once (§14.8), is the owner's call under ADR-0024, asked 2026-11-12 and not yet answered.
 
 **The aim.** `wowlab ui` becomes the player's account companion: every character in one place, each character's history, a UI that cannot be lost, and a patch-day check. The CLI stays the power-user layer. No invariant moves. Everything here reads lab-addon records and snapshots that wowlab already keeps, and anything written into an install goes through `guard`. No ticket changes what `guard.py` or `luadata.py` does. If one turns out to need that, a `T` grader ticket is split off and lands first (ADR-0013).
 
 **The bar for this wave.** A ticket here changes what a player sees. Follow-ups found in review are filed only if they change what a player sees or block a ticket in this wave; anything else goes in the review's notes for M17-12.
 
 ## [ ] M17-01 — The account hub: the UI's home tab
-**Size:** M · **Depends on:** nothing · **Spec:** §19 CW-1, §14.4
+**Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-1, §14.4
 
 A new first tab, **Account**, which opens by default; Explorer moves after Character.
 - One row per character folder that `labaddon.survey` finds, across every flavor (as `char list` does since M16-114 and M16-116). The row shows name, realm folder, flavor, level, class, race, spec, average item level (equipped, from the `gear` section's `average`), professions, and when it was last saved (the file's mtime, labelled "last logout or /reload").
@@ -3013,7 +3013,7 @@ A new first tab, **Account**, which opens by default; Explorer moves after Chara
 ---
 
 ## [ ] M17-02 — `char history`: a character over time, from snapshots
-**Size:** M · **Depends on:** nothing · **Spec:** §19 CW-2
+**Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-2
 
 Every snapshot already holds each character's `WowLab.lua`. `wowlab char history [--character X]` reads that file from every snapshot in the store (read-only, through the store's objects, never the install), plus the live file, and prints one row per distinct record: date, level, average item level, spec, the gear slots that changed (by item name from the link, with the item level), and the currencies that changed.
 - Records with the same save time are shown once.
@@ -3026,7 +3026,7 @@ Every snapshot already holds each character's `WowLab.lua`. `wowlab char history
 ---
 
 ## [ ] M17-03 — The timeline in the Character tab
-**Size:** M · **Depends on:** M17-02 · **Spec:** §19 CW-2
+**Size:** M · **Depends on:** M17-01, M17-02, M17-04 · **Sources:** §19 CW-2 (after M17-01 and M17-04: all three edit the UI templates)
 
 A **History** panel on the Character tab, built from `char history --json`:
 - a small chart of average item level and level over time, and of gold once M17-06 records it;
@@ -3039,7 +3039,7 @@ With fewer than two records, the panel says what makes history appear: take snap
 ---
 
 ## [ ] M17-04 — Back up before patch day: one button, and a "the game updated" prompt
-**Size:** S · **Depends on:** M17-01 · **Spec:** §19 CW-3
+**Size:** S · **Depends on:** M17-01 · **Sources:** §19 CW-3
 
 On the Account tab:
 - a **Back up now** button that runs `snap create` (wowlab's own store only, no confirm step needed, as today) and then shows the diff against the previous snapshot as M16-10's plan lines by name;
@@ -3054,7 +3054,7 @@ The CLI's `doctor` next steps (M16-37) gain the same "game updated since your la
 ---
 
 ## [ ] M17-05 — The patch-day card
-**Size:** S · **Depends on:** M17-01 · **Spec:** §19 CW-4
+**Size:** S · **Depends on:** M17-01, M17-04 · **Sources:** §19 CW-4 (after M17-04: both add to the Account tab)
 
 A card on the Account tab from `addons check --json` (M16-34) and `sv list --orphans`:
 - the addons that are out of date for this client;
@@ -3068,16 +3068,16 @@ Each line opens the Explorer on the file. Read-only. With nothing found, the car
 ---
 
 ## [ ] M17-06 — The lab-addon records gold
-**Size:** S · **Depends on:** M16-45 · **Spec:** §19 CW-6 · **owner** (a capture after one logout)
+**Size:** S · **Depends on:** M16-05 · **Sources:** §19 CW-6 · **owner** (a capture after one logout)
 
-The hub and the timeline need the character's money, which no schema records today. Add a `money` section (`GetMoney()`, copper as an integer) to the lab-addon. It goes in schema 5 if M16-45 has not merged by the time this ticket starts, and in schema 6 if it has (ADR-0026, §13.1 rules for a schema change). Like every new API call, it is **[verify]**, sits in a section `/wowlab skip` can turn off, and gets a runbook step. The reader in `labaddon.py` and M17-01, M17-02 and M17-03 show gold once it is recorded, and "not recorded" before that. Time played is out of scope: `RequestTimePlayed` prints to chat, which ADR-0026's recorder must not do.
+The hub and the timeline need the character's money, which no schema records today. Add a `money` section (`GetMoney()`, copper as an integer) to the lab-addon. It goes in schema 5 if M16-45 has not merged by the time this ticket starts, and in schema 6 if it has (ADR-0026, §13.1 rules for a schema change). Like every new API call, it is **[verify]**, sits in a section `/wowlab skip` can turn off, and gets a runbook step. The reader in `labaddon.py` and M17-01, M17-02 and M17-03 show gold once it is recorded, and "not recorded" before that. Time played is out of scope: `RequestTimePlayed` prints to chat, and §18.1 item 9 and M16-45 keep the lab-addon's chat output to one line per addon version.
 
 **Acceptance:** static addon tests and reader tests on a constructed record (labelled), then the owner's capture closes the [verify]; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the lab-addon; gold in the hub and the timeline.
 
 ---
 
 ## [ ] M17-07 — ADR-0031 amendment: double-click distribution
-**Size:** XS · **Depends on:** nothing · **owner** (accepts or amends)
+**Size:** XS · **Depends on:** nothing · **Sources:** §19 CW-5 · **owner** (drafts reviewed by the owner)
 
 The conductor drafts, with `/adr amend 0031`, a Proposed amendment that permits, besides the wheel and PyPI:
 - a macOS launcher app attached to each release;
@@ -3085,12 +3085,12 @@ The conductor drafts, with `/adr amend 0031`, a Proposed amendment that permits,
 
 Both are built from the tagged source, with `SHA256SUMS` and attestations as M16-43 set up. The amendment also names the build tool for the Windows binary, which needs its own ADR under ADR-0030 (a build toolchain). The conductor drafts that ADR in the same PR, Proposed, with the candidates and a recommendation. The README still says "untested" for every platform without a human run.
 
-**Acceptance:** the PR with both Proposed texts merges; the owner records a decision on each.
+**Acceptance:** the PR with both Proposed texts merges. Acceptance is M17-13, a separate owner ticket, so no build starts on a Proposed text.
 
 ---
 
 ## [ ] M17-08 — The macOS launcher, as a release asset
-**Size:** S · **Depends on:** M17-07 accepted · **Spec:** §19 CW-5
+**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5
 
 From the owner's `install-wowlab-app.sh` (untracked on 2026-11-12; the owner commits it or hands it over):
 - the release workflow builds a `wowlab.app` that runs the released wheel's `wowlab ui`, and attaches it zipped to the release with its hash in `SHA256SUMS`;
@@ -3103,7 +3103,7 @@ Signing and notarisation are out of scope; the release notes say how to open an 
 ---
 
 ## [ ] M17-09 — The Windows frozen binary
-**Size:** M · **Depends on:** M17-07 accepted, and the ADR it names · **Spec:** §19 CW-5
+**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5
 
 Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release with its hash, and smoke-test `wowlab --version` and `wowlab ui` headless on `windows-latest`. Double-clicking it opens the UI. Windows stays "untested" in the README until M13-02's human run.
 
@@ -3112,7 +3112,7 @@ Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release w
 ---
 
 ## [ ] M17-10 — Owner: a retail capture
-**Size:** S · **Depends on:** nothing · **owner** (a capture on retail)
+**Size:** S · **Depends on:** nothing · **Sources:** §19 CW-7 · **owner** (a capture on retail)
 
 The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.py`, as a `macos-retail` fixture root with provenance rows: discovery, `.flavor.info`, the account tree, one character with the lab-addon after one logout. The README's "retail untested" line changes only after the readers pass on it. Findings that contradict `docs/LAB_FORMATS.md` are handled as AGENTS.md "Stop and ask" says.
 
@@ -3121,7 +3121,7 @@ The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.p
 ---
 
 ## [ ] M17-11 — The README and the wiki say what the companion does
-**Size:** S · **Depends on:** M17-01, M17-03, M17-04, M16-33
+**Size:** S · **Depends on:** M17-01, M17-03, M17-04, M16-33 · **Sources:** §19, M16-33
 
 The first screen leads with the account hub and the backup button, with one screenshot of each from the fixtures. The command reference gains `char history` and `char list --summary`. The wiki rows go in `docs/handoffs/wiki-pending.md`.
 
@@ -3130,8 +3130,17 @@ The first screen leads with the account hub and the backup button, with one scre
 ---
 
 ## [ ] M17-12 — M17 review
-**Size:** S · **Depends on:** M17-01, M17-02, M17-03, M17-04, M17-05, M17-06, M17-07, M17-08, M17-09, M17-10, M17-11
+**Size:** S · **Depends on:** M17-01, M17-02, M17-03, M17-04, M17-05, M17-06, M17-07, M17-08, M17-09, M17-10, M17-11, M17-13, M16-32, M16-33 · **Sources:** ADR-0024
 
 The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release downloads (GitHub and PyPI), stars, and issue and discussion authors who are not the owner. Then it covers what shipped and what is left. It stops dispatch until the owner picks the next wave.
 
 **Acceptance:** the review merges.
+
+---
+
+## [ ] M17-13 — Owner: accept or amend the packaging ADRs
+**Size:** XS · **Depends on:** M17-07 · **Sources:** §19 CW-5, ADR-0030 · **owner** (a decision on each text)
+
+The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0031 amendment and the build-tool ADR. The conductor makes the status edits only on the owner's explicit instruction (`.claude/rules/docs.md`). M17-08 and M17-09 start only after this.
+
+**Acceptance:** both ADRs carry the owner's decision, dated.
