@@ -2894,7 +2894,7 @@ The #490 code review found that under (a1) a closed record that never took a sna
 ## [ ] M16-116 — `char list --account X --json` says which flavors lack the account
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-114 domain re-review (#496)
 
-With several flavors, `wowlab char list --account X` prints "Flavor F (v): no account X" for a flavor without X, but `--json` leaves F out of `flavors[]`, so a script cannot tell "no account X there" from "flavor not looked at". Keep F in `flavors[]` with an empty character list and a field that says the account was not found there (for example `account_found: false`), present on every flavor entry when `--account` is given. Text output unchanged.
+With several flavors, `wowlab char list --account X` prints "Flavor F (v): no account X" for a flavor without X, but `--json` leaves F out of `flavors[]`, so a script cannot tell "no account X there" from "flavor not looked at". Keep F in `flavors[]` with `characters: 0` and a field that says the account was not found there (for example `account_found: false`), present on every flavor entry when `--account` is given. Text output unchanged.
 
 **Acceptance:** a test on the M16-114 two-flavor setup (`test_cli_flavors.py`) for text and `--json`; the command reference regenerated; user-facing change listed in the PR. Reviewed by `code-reviewer`.
 
@@ -2911,10 +2911,3 @@ Deleting the M16-107T marker left `JOURNAL_SCENARIO_PARAMS` in `lab/core/tests/t
 For a flavor whose product has no `.build.info` row, `wowlab doctor` prints "Flavor _classic_beta_: product …, version no version in .build.info". Say it as a sentence a player can act on: the version is unknown because `.build.info` lists no row for that product, which happens when the Battle.net app has not installed or updated that flavor; reads still work and nothing is wrong with the install. `--json` unchanged (`version: null`).
 
 **Acceptance:** a pinned wording test on a constructed flavor folder with no matching row (an L8 boundary input); `domain-reviewer` confirms the explanation; user-facing change listed in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
-
-## [ ] M16-119 — `wowlab ui` shows an error's notes, not only its message
-**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-11 (screenshot of the Commands page with the no-install error); M16-112 (#494)
-
-When a run fails with an `ErrorReport` that has `notes` (since M16-112, the no-install error lists every folder searched and the lines that name the install), the Commands page shows only `message`. Show the notes under it, one line each, as plain text (no HTML from the report). Every other error stays as it is.
-
-**Acceptance:** a Node-stub test in the style of `test_ui_explorer.py`: a failed run whose report has notes shows each note in order as text; one without notes is unchanged; a note holding `<` is shown literally. User-facing change listed in the PR (wiki: ui). Reviewed by `code-reviewer` and `security-reviewer` (ui template).
