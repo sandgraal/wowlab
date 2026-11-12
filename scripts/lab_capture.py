@@ -142,6 +142,15 @@ IDENTITY_CVARS: tuple[str, ...] = _redact.IDENTITY_CVARS
 EMAIL_RE: re.Pattern[bytes] = _redact.EMAIL_RE
 BATTLETAG_RE: re.Pattern[bytes] = _redact.BATTLETAG_RE
 GUID_RE: re.Pattern[bytes] = _redact.GUID_RE
+# `character-list-order.txt` (M16-126, from the M16-125 review): each line is
+# `<n> <realm-id>-<8 hex> <n>`, and the middle field is a Player GUID without
+# its `Player-` prefix, which GUID_RE needs. The file lists the account's own
+# characters, so discovery takes every such field as an own GUID, and the
+# scrub maps it to the bare form of that GUID's pseudonym; any one it cannot
+# map refuses the file. Only in that file: elsewhere `<n>-<hex>` is too common.
+BARE_GUID_RE = re.compile(rb"(?<![0-9A-Za-z\-])[0-9]+-[0-9A-Fa-f]{8,}(?![0-9A-Za-z\-])")
+CHARACTER_LIST_NAME = "character-list-order.txt"
+BARE_GUID_LABEL = "player GUID without its prefix, not mapped"
 ACCOUNT_GUID_RE: re.Pattern[bytes] = _redact.ACCOUNT_GUID_RE
 GUILD_GUID_RE: re.Pattern[bytes] = _redact.GUILD_GUID_RE
 CLUB_GUID_RE: re.Pattern[bytes] = _redact.CLUB_GUID_RE
@@ -1006,6 +1015,7 @@ class Identity:
         unit_guids: Sequence[tuple[int, int, bytes]] = (),
         timestamps: Sequence[tuple[int, int, bytes]] = (),
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
+        bare_guids: bool = False,
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -1017,7 +1027,8 @@ class Identity:
         (UnitGuids), and `timestamps` its shifted timestamps (TimeShift); both are
         claimed with the player GUIDs. `country_tags` are `.build.info`'s geoip and
         account countries replaced by placeholders (country_scan), claimed in the
-        same pass.
+        same pass. `bare_guids` marks `character-list-order.txt`, whose own
+        GUIDs have no `Player-` prefix (BARE_GUID_RE).
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -1053,6 +1064,11 @@ class Identity:
                 claim(m.start(), m.end(), self.guids[key], "guid")
             elif others is not None and key in others.guids:
                 claim(m.start(), m.end(), others.guids[key], "other-guid")
+        if bare_guids:
+            for m in BARE_GUID_RE.finditer(data):
+                key = b"PLAYER-" + m.group(0).upper()
+                if key in self.guids:
+                    claim(m.start(), m.end(), self.guids[key][len(b"Player-") :], "guid")
         for start, end, new in unit_guids:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
@@ -1120,6 +1136,11 @@ class Identity:
         folded = self._folded_hits(scrubbed, [*written, *toc_out])
         if folded:
             problems.append(f"{FOLDED_SURVIVOR_LABEL} x{folded}")
+        if bare_guids:
+            mapped = {guid[len(b"Player-") :] for guid in self._pseudo_guids}
+            unmapped = [m for m in BARE_GUID_RE.finditer(scrubbed) if m.group(0) not in mapped]
+            if unmapped:
+                problems.append(_located(BARE_GUID_LABEL, scrubbed, unmapped))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
 
     def stray_in_combat_log(
@@ -2968,6 +2989,7 @@ def process(
         unit_guids=located.edits if located is not None else (),
         timestamps=stamped.edits if stamped is not None else (),
         country_tags=countries.edits if countries is not None else (),
+        bare_guids=name == CHARACTER_LIST_NAME,
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -3151,6 +3173,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     own_characters: set[tuple[str, str | None]] = set()
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
+    lists: list[Path] = []  # character-list-order.txt: own GUIDs without `Player-`
 
     # Every folder under the root that has WTF/Account, whether or not it is
     # still an installed flavor: an uninstalled product leaves WTF/ behind, and
@@ -3213,6 +3236,9 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             accounts.add(account.name)
             in_account = listed(account)
             configs.extend(config_files(in_account))
+            lists.extend(
+                p for p in in_account if p.name.casefold() == CHARACTER_LIST_NAME and p.is_file()
+            )
             for realm in folders(in_account):
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
                     continue
@@ -3263,6 +3289,17 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 piece = _trim_account_piece(text)
                 if piece:
                     account_names.add(piece)
+
+    for order in lists:
+        try:
+            data = read_bytes(order)
+        except OSError as error:
+            raise CaptureError(
+                f"a {CHARACTER_LIST_NAME} could not be read ({type(error).__name__}); the "
+                "character GUIDs it lists would be missing from the identity map, so nothing "
+                "is captured"
+            ) from None
+        guids.update(b"Player-" + m.group(0) for m in BARE_GUID_RE.finditer(data))
 
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:

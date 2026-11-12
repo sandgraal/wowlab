@@ -331,3 +331,51 @@ def test_constructed_known_gap_a_dotless_address_glued_to_packed_bits_passes() -
         line = b'SET closedInfoFrames "' + value + b'"\n'
         problems = _problems(line, config=True)
         assert not [p for p in problems if p.startswith("email address")], value
+
+
+# ─── character-list-order.txt: own GUIDs without `Player-` ───────────────────
+# From the M16-125 review: the launch client writes `<n> <realm-id>-<8 hex> <n>`
+# lines, a Player GUID without its prefix. Invented numbers only.
+
+
+def test_constructed_a_bare_own_guid_is_mapped_to_the_bare_pseudonym() -> None:
+    identity = lab_capture.Identity(guids=[b"Player-4321-00C0FFEE"])
+    result = identity.scrub(b"1 4321-00C0FFEE 0\r\n", bare_guids=True)
+    assert result.data == b"1 9999-00000001 0\r\n"
+    assert not result.problems
+
+
+def test_constructed_a_bare_guid_that_cannot_be_mapped_refuses() -> None:
+    identity = lab_capture.Identity(guids=[b"Player-4321-00C0FFEE"])
+    result = identity.scrub(b"1 4321-00C0FFEE 0\n2 4321-0BADF00D 1\n", bare_guids=True)
+    assert [p for p in result.problems if p.startswith(lab_capture.BARE_GUID_LABEL)]
+
+
+def test_constructed_bare_guids_are_looked_for_only_in_the_character_list() -> None:
+    result = lab_capture.Identity().scrub(b"1 4321-0BADF00D 0\n")
+    assert not [p for p in result.problems if p.startswith(lab_capture.BARE_GUID_LABEL)]
+
+
+def test_constructed_a_run_maps_every_guid_in_the_character_list(
+    install: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Discovery takes each field as an own GUID, so the file is written with
+    pseudonyms, and the same GUID in a SavedVariables file gets the same pseudonym."""
+    from test_lab_capture import OWN_GUID
+
+    bare_own = OWN_GUID.removeprefix("Player-")
+    account = install / "_retail_" / "WTF" / "Account" / ACCOUNT
+    listing = f"1 {bare_own} 0\n2 4321-00C0FFEE 1\n"
+    (account / "character-list-order.txt").write_bytes(listing.encode())
+    out = tmp_path / "incoming"
+    assert capture(install, out, "--flavor", "_retail_") == 0
+    written = outputs(out)
+    (dest,) = [p for p in written if p.endswith("/character-list-order.txt")]
+    scrubbed = written[dest]
+    assert bare_own.encode() not in scrubbed and b"00C0FFEE" not in scrubbed
+    fields = lab_capture.BARE_GUID_RE.findall(scrubbed)
+    assert len(fields) == 2 and all(f.startswith(b"9999-") for f in fields)
+    (deep,) = [p for p in written if p.endswith("/SavedVariables/Deep.lua")]
+    assert b"Player-" + fields[0] in written[deep]  # one GUID, one pseudonym
+    printed = capsys.readouterr()
+    assert bare_own not in printed.out + printed.err
