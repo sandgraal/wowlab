@@ -806,6 +806,9 @@ from wowlab_core.cli._cmd_db2 import (
     _check_table_key as _check_table_key,
 )
 from wowlab_core.cli._cmd_db2 import (
+    _unknown_build as _unknown_build,
+)
+from wowlab_core.cli._cmd_db2 import (
     db2_builds as db2_builds,
 )
 from wowlab_core.cli._cmd_db2 import (
@@ -996,6 +999,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _no_text as _no_text,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _no_version_cause as _no_version_cause,
 )
 from wowlab_core.cli._cmd_doctor import (
     _offers_undo as _offers_undo,

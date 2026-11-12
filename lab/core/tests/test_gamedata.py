@@ -458,7 +458,10 @@ def test_resolve_build_without_a_version(make: Callable[..., Harness]) -> None:
     with pytest.raises(BuildNotPublished) as caught:
         h.data.resolve_build(FakeFlavor("wow", None))
     assert h.requests == []
-    assert "has no version in .build.info" in str(caught.value)
+    assert (
+        str(caught.value)
+        == "the version of the flavor (product 'wow') is unknown, so there is no build to look up"
+    )
     assert "not published" not in str(caught.value), "nothing was asked of the source"
 
 

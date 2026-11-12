@@ -11,6 +11,7 @@ from wowlab_core import (
     gamedata,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _no_version_cause,
     _open_gamedata,
 )
 from wowlab_core.cli._common import (
@@ -66,8 +67,18 @@ def _build_for(build: str | None, root: Path | None, flavor: str | None) -> str:
         return build
     _, chosen, _ = _open(root, flavor)
     if chosen.version is None:
-        raise CliError(f"{chosen.folder} has no version in .build.info; pass --build")
+        raise CliError(_unknown_build(chosen.folder, chosen.product, chosen.matching_rows))
     return chosen.version
+
+
+def _unknown_build(folder: str, product: str, matching_rows: int) -> str:
+    """The `--build` refusal for a flavor whose version is unknown, in the
+    three cases `doctor` tells apart (M16-118, M16-121): no product, no
+    `.build.info` row for it, a row with a blank version. The no-row case
+    points at `doctor`, which says what usually causes it."""
+    cause = _no_version_cause(folder, product, matching_rows)
+    why = " (wowlab doctor says why)" if product and matching_rows == 0 else ""
+    return f"{cause}, so the version of {folder} is unknown{why}; pass --build"
 
 
 def _check_table_key(data: gamedata.GameData, table: str, build: str) -> None:

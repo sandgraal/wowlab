@@ -325,8 +325,10 @@ def _and(names: Sequence[str]) -> str:
 
 def flavor_label(folder: str, product: str, version: str | None) -> str:
     """A flavor folder with its product code and version, as the scan and the
-    flavor prompt show it."""
-    return f"{folder} ({product or 'no product'}, {version or 'no version in .build.info'})"
+    flavor prompt show it. An unknown version is "version unknown", true
+    whichever way it is unknown (no product, no `.build.info` row for it, a
+    row with a blank version); `doctor`'s flavor lines say which (M16-121)."""
+    return f"{folder} ({product or 'no product'}, {version or 'version unknown'})"
 
 
 def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
