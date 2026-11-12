@@ -2846,6 +2846,26 @@ def _lab_addon_line(state: addoninstall.LabAddonState, reinstall: str = _REINSTA
     return None
 
 
+def _no_build_row(product: str | None) -> str:
+    """Why a flavor's version is unknown: `.build.info` has no row for its
+    product (M16-118). The Battle.net app keeps that file, a row per game
+    version it has installed; a flavor folder with no row is one it no
+    longer lists (a beta that ended or was renamed, or an uninstalled game
+    version, whose folder stayed) or has not finished installing."""
+    if not product:
+        return (
+            "  The version is unknown because this folder's .flavor.info names no product, "
+            "so no row of .build.info can match it."
+        )
+    return (
+        f"  The version is unknown because .build.info, the Battle.net app's list of the "
+        f"game versions it has installed, has no row for product {product}. That happens when this "
+        "folder was left behind by a game version the app no longer lists (a beta that "
+        "ended or was renamed, or one uninstalled) or one it has not finished installing. "
+        "wowlab still reads this folder, and this alone does not mean the install is damaged."
+    )
+
+
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     """The doctor report as text, its problems and then its next steps
     last (M16-37), then its standing notes behind --notes (`_say_notes`). The first run's section, said only
@@ -2866,8 +2886,11 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         for line in firstrun.pointing_lines():
             _say(line)
     for f in report.flavors:
-        version = f.version or "no version in .build.info"
-        _say(f"Flavor {f.folder}: product {f.product or '(none)'}, version {version}")
+        _say(
+            f"Flavor {f.folder}: product {f.product or '(none)'}, version {f.version or 'unknown'}"
+        )
+        if f.version is None:
+            _say_prose(_no_build_row(f.product), hang="    ", keep=[f.product])
         if f.matching_rows > 1:
             _say(
                 f"  {f.matching_rows} rows of .build.info name this product; "
