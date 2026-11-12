@@ -5190,8 +5190,8 @@ snapshots that wowlab already has, and writes only through `guard`.
 
 **Order.** The wave starts after M16-05 (the launch-client session and
 its capture). v0.2 (M16-33, M16-32) ships before the wave's review
-(M17-12). Whether the wave also runs before v0.2 ships is the owner's
-call (ADR-0024), asked 2026-11-12.
+(M17-12). *Owner decision, 2026-11-12:* the wave runs before v0.2
+ships (ADR-0024).
 
 **Deferred by this pick.** M15-06 to M15-13 and Wave 7 (they
 duplicate wow.export and Wowhead and would retire "never reads `Data/`"),
