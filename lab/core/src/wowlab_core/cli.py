@@ -2846,6 +2846,28 @@ def _lab_addon_line(state: addoninstall.LabAddonState, reinstall: str = _REINSTA
     return None
 
 
+def _unknown_version(product: str | None, matching_rows: int) -> str:
+    """Why a flavor's version is unknown (M16-118). Three cases: its
+    `.flavor.info` gives no product (empty, or unreadable:
+    `install._read_flavor_product` gives "" for both); `.build.info` has no
+    row for its product (the Battle.net app keeps that file, a row per game
+    version installed in the folder; the usual causes are hedged, not
+    asserted); or a row matches and its Version cell is blank."""
+    if not product:
+        return (
+            "  This folder's .flavor.info gives no product code (it is empty or could not "
+            "be read), so no .build.info row can match it."
+        )
+    if matching_rows >= 1:
+        return f"  The .build.info row for product {product} has no version in it."
+    return (
+        "  .build.info, where the Battle.net app lists the game versions installed here, "
+        f"has no row for product {product}. Usually this folder was left behind by a beta "
+        "that ended or was renamed, or by a game version that was uninstalled. wowlab still "
+        "reads its settings and addons; lookups that need the game version cannot run."
+    )
+
+
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     """The doctor report as text, its problems and then its next steps
     last (M16-37), then its standing notes behind --notes (`_say_notes`). The first run's section, said only
@@ -2866,8 +2888,11 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
         for line in firstrun.pointing_lines():
             _say(line)
     for f in report.flavors:
-        version = f.version or "no version in .build.info"
-        _say(f"Flavor {f.folder}: product {f.product or '(none)'}, version {version}")
+        _say(
+            f"Flavor {f.folder}: product {f.product or '(none)'}, version {f.version or 'unknown'}"
+        )
+        if f.version is None:
+            _say_prose(_unknown_version(f.product, f.matching_rows), hang="    ", keep=[f.product])
         if f.matching_rows > 1:
             _say(
                 f"  {f.matching_rows} rows of .build.info name this product; "
