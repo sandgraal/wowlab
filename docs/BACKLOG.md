@@ -2947,7 +2947,7 @@ For a flavor whose version is unknown (no `.build.info` row, a blank version, or
 ## [ ] M16-124 — `snap create` with several flavors
 **Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
 
-With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and lists `--flavor` commands, because a write never picks a flavor on its own (M16-114). `snap create` writes only into wowlab's own store, never into the install, so that rule's reason (never change the wrong game's files) does not apply. Decide, and record in LAB_PLAN §6.11, one of:
+With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and lists `--flavor` commands, from the one-flavor rule in `_select_flavor` (`cli/_common.py`) that read commands such as `cvar list` share too. `snap create` writes only into wowlab's own store, never into the install, and the character reads already pick a flavor themselves (M16-114). Decide, and record in LAB_PLAN §6.11, one of:
 - (a) `snap create` with no `--flavor` snapshots every flavor, one snapshot each;
 - (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
 - (c) unchanged.

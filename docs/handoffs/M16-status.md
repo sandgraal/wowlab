@@ -7,8 +7,9 @@ first, then `AGENTS.md`, `docs/AGENT_WORKFLOW.md`, and the M16 section of
 
 ## Where things stand
 
-`main` is at 737399d or later. The repository has no open PR except #379
-(M16-45), which waits on the owner. No agent is running, and no scheduled
+`main` is at 737399d or later. Two PRs stay open: #379 (M16-45), which waits
+on the owner, and the draft #427 (`docs/readme-daily-2026-11-10`), left
+from the deleted daily wiki job; the owner can close it. No agent is running, and no scheduled
 check-in is pending.
 
 The owner tested on macOS on 2026-11-12, against `main` run from the clone
@@ -45,7 +46,7 @@ the three usability issues filed as M16-122 to M16-124.
 - ADR-0037 is accepted (2026-11-11).
 - The ADR-0029 amendment of 2026-11-12 is accepted.
 - The M16-90 legacy risk is accepted (§6.10, under the `flavor_path` rule): a pre-M16-90 record whose `flavor_path` holds a refused character makes the journal unreadable, and that blocks changes on every install sharing the store. Review it with ADR-0037's frozen cases before outside users are invited.
-- Keep the grader gate (`scripts/check_grader_diff.py`).
+- Keep the grader gate (`scripts/check_grader_diff.py`), 2026-11-11 (recorded in the message of commit f16d802, #493).
 - The process rules are in `docs/AGENT_WORKFLOW.md`:
   - the review-round cap;
   - owner questions carry their consequences;
