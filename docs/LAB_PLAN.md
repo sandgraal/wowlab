@@ -5162,6 +5162,36 @@ The panel's suggestions that the owner declined, or left for later:
    names in the review are merged.
 7. M16-47 is the wave review.
 
+## 19. Proposed: the companion wave (not picked)
+
+*Proposed 2026-11-12 by the conductor, from the product review the owner
+asked for (`docs/handoffs/review-2026-11-12.md`). Nothing here is a ticket.
+It is a candidate for the owner's next wave pick (ADR-0024), offered in
+place of resuming M15. The `CW-` ids are placeholders.*
+
+**Aim.** Re-aim `wowlab ui` from an explorer of the install's files to a
+companion for the player's account: every character in one place, a history
+of each, and a UI that cannot be lost. The CLI stays as the power-user
+layer. No invariant moves: everything below reads lab-addon records and
+snapshots that wowlab already has, and writes only through `guard`.
+
+| Id | What | Builds on | Size |
+|---|---|---|---|
+| CW-1 | **Account hub** as the UI's home tab: one row per recorded character across flavors (level, class, spec, item level, gold, last played), sortable and filterable, opening the Character tab. §14.4's alt-dashboard spec is the base | `labaddon.survey`, `char list`, `gear` | M |
+| CW-2 | **Timeline**: a character's item level, gold, currencies and gear changes over time, from dated lab-addon records kept in the store at each snapshot | `snapshot`, `labaddon` | M |
+| CW-3 | **Back up before patch day**: one button on the home tab for a snapshot, its diff against the previous one in player words, and undo | `snapshot`, M16-10 plan lines | S |
+| CW-4 | **Patch-day card**: `addons check` and unreadable SavedVariables shown on the home tab | M16-34 | S |
+| CW-5 | **Packaging**: a double-click launcher on macOS as a release asset (from the owner's `install-wowlab-app.sh`) and a frozen binary on Windows. Needs an ADR-0031 amendment, Proposed | release workflow | M |
+| CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
+| CW-7 | Owner and volunteers: one human Windows run (M13-02) and one retail capture, recruited through M16-32's announcement | — | owner |
+
+**Prerequisites.** v0.2 tagged after M16-05 (the launch-client session,
+with the two persistence tests), M16-33 and M16-32.
+
+**Deferred by this proposal if picked.** M15-06 to M15-13 and Wave 7 (they
+duplicate wow.export and Wowhead and would retire "never reads `Data/`"),
+`char advise --send`, crew-book, comp-builder and the db2lake SQL command.
+
 ## Appendix A. §6.10's earlier text and its dated amendments
 
 §6.10 was rewritten as one current section on 2026-11-12 (M16-110), with no rule changed. This appendix keeps what it replaced, unchanged: the base text of M10-11 (A.1) and each dated amendment in the order it was added (A.2 to A.8). The one exception is the dated 2026-11-12 sentence on `undone_as` under A.8's (a1), added by PR #500 on the same day and kept here so both texts carry it. Every owner decision keeps its date and its words here. If §6.10 and this appendix read differently, that is an error in §6.10: the latest dated amendment here governs until §6.10 is corrected.
