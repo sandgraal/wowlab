@@ -99,7 +99,8 @@ _UI_RUN = (
     "only what the CLI "
     "itself writes, never into an install outside the gate; the server writes no file"
 )
-_CLI = "lab/core/src/wowlab_core/cli.py"
+_CLI = "lab/core/src/wowlab_core/cli/_common.py"
+_CLI_UI = "lab/core/src/wowlab_core/cli/_cmd_ui.py"
 _BROWSER = (
     "`wowlab ui` (ADR-0029, M13-24): webbrowser.open takes a URL, not a file mode; it "
     "opens the owner's browser at the server's loopback URL and writes no file"
@@ -151,7 +152,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     (_UI, "import subprocess"): _UI_RUN,
     (_WINJOB, "import ctypes"): _JOB,
     (_WINJOB, "from ctypes import wintypes"): _JOB,
-    (_CLI, "opened = bool(webbrowser.open(server.url))"): _BROWSER,
+    (_CLI_UI, "opened = bool(webbrowser.open(server.url))"): _BROWSER,
     (_CLI, "devnull = os.open(os.devnull, os.O_WRONLY)"): (
         "a closed pipe on stdout (M16-14): the null device, opened to stand in for "
         "stdout once its reader has gone; it is a device, never a file in an install"
