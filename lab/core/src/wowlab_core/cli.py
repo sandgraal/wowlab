@@ -11595,6 +11595,11 @@ class CharListFlavor(_Out):
     folder: str
     version: str | None
     characters: int
+    # With --account: whether this flavor has that account folder (M16-116).
+    # A flavor without it is still listed, with `characters` 0 and False
+    # here, so a script can tell "no such account there" from "flavor not
+    # looked at". None when no --account was given.
+    account_found: bool | None = None
 
 
 class CharListReport(_Out):
@@ -11612,7 +11617,8 @@ class CharListReport(_Out):
     # then names its own `flavor`, as it does with one.
     flavor_folder: str | None
     # Each flavor listed, in discovery order, with its version and how many
-    # character folders it holds (M16-114).
+    # character folders it holds (M16-114); with --account, a flavor without
+    # that account too, marked `account_found: false` (M16-116).
     flavors: list[CharListFlavor] = []
     # --account as the layout spells the account folder, or as the place wowlab
     # could not look inside spells it; as typed when neither names it (such as
@@ -11802,9 +11808,10 @@ def char_list(
             CharListFlavor(
                 folder=f.folder,
                 version=f.version,
-                characters=sum(1 for e in mine if not _first_name_folder(e)),
+                characters=sum(1 for e in mine or [] if not _first_name_folder(e)),
+                account_found=None if account is None else mine is not None,
             )
-            for f, mine in blocks
+            for f, mine in shown
         ],
         account=acct_folder,
         characters=entries,

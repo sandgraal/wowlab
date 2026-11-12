@@ -96,7 +96,14 @@ def test_char_list_json_carries_flavor_constructed() -> None:
     assert {c["flavor"] for c in data["characters"]} == {FLAVOR}
     flavors = {f["folder"]: f for f in data["flavors"]}
     assert set(flavors) == {FLAVOR, EMPTY}
-    assert flavors[EMPTY] == {"folder": EMPTY, "version": None, "characters": 0}
+    # No --account: `account_found` is null on every entry (M16-116).
+    assert flavors[EMPTY] == {
+        "folder": EMPTY,
+        "version": None,
+        "characters": 0,
+        "account_found": None,
+    }
+    assert flavors[FLAVOR]["account_found"] is None
     assert flavors[FLAVOR]["characters"] > 0
     assert flavors[FLAVOR]["version"]
 
@@ -117,7 +124,11 @@ def test_char_list_account_in_one_flavor_constructed() -> None:
     assert result.exit_code == 0, (result.stdout, result.stderr)
     data = json.loads(result.stdout)
     assert data["account"] == ACCOUNT
-    assert [f["folder"] for f in data["flavors"]] == [FLAVOR]
+    # The flavor without the account stays listed, marked (M16-116).
+    assert [(f["folder"], f["account_found"]) for f in data["flavors"]] == [
+        (FLAVOR, True),
+        (EMPTY, False),
+    ]
     assert run("char", "list", "--account", "nope").exit_code == 2
 
 
@@ -288,6 +299,49 @@ def test_char_list_names_a_flavor_without_the_account_constructed(two_flavors: P
     text = run("char", "list", "--account", OTHER_ACCOUNT).stdout.splitlines()
     assert f"Flavor {FLAVOR} ({VERSION}): no account {OTHER_ACCOUNT}" in text
     assert f"Flavor {EMPTY}" in text
+
+
+def test_char_list_json_names_a_flavor_without_the_account_constructed(
+    two_flavors: Path,
+) -> None:
+    """M16-116: the flavor the text calls "no account X" stays in `flavors[]`
+    with no characters and `account_found: false`; the text is as before."""
+    _other_account(two_flavors)
+    text = run("char", "list", "--account", OTHER_ACCOUNT)
+    assert text.exit_code == 0, (text.stdout, text.stderr)
+    lines = text.stdout.splitlines()
+    assert f"Flavor {FLAVOR} ({VERSION}): no account {OTHER_ACCOUNT}" in lines
+    assert f"Flavor {EMPTY}" in lines
+    result = run("char", "list", "--account", OTHER_ACCOUNT, "--json", "--brief")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    data = json.loads(result.stdout)
+    assert data["account"] == OTHER_ACCOUNT
+    assert {c["flavor"] for c in data["characters"]} == {EMPTY}
+    flavors = data["flavors"]
+    order = [f["folder"] for f in json.loads(run("install", "show", "--json").stdout)["flavors"]]
+    assert [f["folder"] for f in flavors] == order  # discovery order, both kept
+    by_folder = {f["folder"]: f for f in flavors}
+    assert by_folder[FLAVOR] == {
+        "folder": FLAVOR,
+        "version": VERSION,
+        "characters": 0,
+        "account_found": False,
+    }
+    assert by_folder[EMPTY]["account_found"] is True
+    assert by_folder[EMPTY]["characters"] > 0
+    # The report reads back into its model.
+    report = cli.CharListReport.model_validate_json(result.stdout)
+    assert {f.folder: f.account_found for f in report.flavors} == {FLAVOR: False, EMPTY: True}
+
+
+def test_char_list_one_flavor_account_found_constructed() -> None:
+    """With --flavor and --account the one flavor listed has the account;
+    one without it is an error, as before (M16-116)."""
+    result = run("char", "list", "--flavor", FLAVOR, "--account", ACCOUNT, "--json", "--brief")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert [(f["folder"], f["account_found"]) for f in json.loads(result.stdout)["flavors"]] == [
+        (FLAVOR, True)
+    ]
 
 
 def test_char_gear_names_its_flavor_constructed() -> None:
