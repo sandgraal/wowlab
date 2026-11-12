@@ -26,17 +26,33 @@
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
 // text goes in through textContent only. The home folder is shown as "~".
 (function () {
-  // The opened URL carries a one-time boot key, which `start` exchanges once
-  // for the session key every request carries (M16-42). The query leaves the
-  // address bar, and so the history, before the first request; the session
-  // key is kept in this closure only, never in storage or the page's URL,
-  // and is never read from that URL either.
-  const boot = new URLSearchParams(window.location.search).get("boot") || "";
-  let token = "";
+  // The session key (M16-113). The page served for the link `wowlab ui`
+  // opened holds it in one <meta> element, which is read and removed here;
+  // it is kept in localStorage, which belongs to this origin alone (this
+  // server's port included), so a reload and a second tab, which get the
+  // page with no key in it, send it too. It is never read from the URL. The
+  // link's query leaves the address bar, and so the history, before the
+  // first request. Every request sends the key in a header, never a cookie.
+  const STORE = "wowlab-session";
+  let session = "";
+  const given = document.getElementById("wowlab-session");
+  if (given) {
+    session = given.getAttribute("content") || "";
+    given.remove();
+  }
+  try {
+    if (session) window.localStorage.setItem(STORE, session);
+    else session = window.localStorage.getItem(STORE) || "";
+  } catch (error) {
+    // No storage (a locked-down browser): this tab keeps the key it was given.
+  }
   if (window.location.search && window.history && typeof window.history.replaceState === "function") {
     window.history.replaceState(null, "", "/");
   }
-  const api = (path) => path + "?token=" + encodeURIComponent(token);
+  const api = (path) => path;
+  const keyed = (headers) => Object.assign({ "X-Wowlab-Session": session }, headers || {});
+  const NO_SESSION =
+    "This page needs the link wowlab ui opened. Open that link again, or, if wowlab ui was stopped, start it again.";
   const byId = (id) => document.getElementById(id);
   // The one outside origin the page may link to (M15-02; ADR-0019's and
   // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
@@ -157,8 +173,8 @@
         method: "POST",
         cache: "no-store",
         credentials: "omit",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: command, params: params }),
+        headers: keyed({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ command: command, params: withFlavor(command, params) }),
       });
       result = await reply.json();
     } catch (error) {
@@ -186,6 +202,97 @@
     } catch (_) {
       return { error: "wowlab " + command.join(" ") + " did not print JSON." };
     }
+  }
+
+  // ─── the flavor every run uses (M16-114) ───
+
+  // With several flavor folders, the header's picker names the flavor every
+  // run passes as --flavor: each command that declares --flavor gets it,
+  // unless its own field names one or it reads every flavor folder already
+  // (`tree --install`, `doctor --redact` or `--redact-name`). The picker
+  // starts on the only flavor that has characters, else on the first whose
+  // .build.info row has a version, else on the first, as `char list --json`
+  // reports them (on the one it listed, when $WOWLAB_FLAVOR named one), and
+  // keeps the choice while the page is open. With one flavor folder it is
+  // not shown and no run gets --flavor from it.
+  const runFlavor = {
+    picked: "", // the flavor folder picked; "" with one flavor folder or before the start
+    settle: null,
+    ready: null, // settled once the start is known; the Character tab waits for it
+    filled: false,
+  };
+  runFlavor.ready = new Promise((resolve) => {
+    runFlavor.settle = resolve;
+  });
+  // A run with one of these set (a flag, or a list with a value) reads every
+  // flavor folder and refuses --flavor: `tree --install`, `doctor --redact`
+  // and `doctor --redact-name`, which implies `--redact`.
+  const EVERY_FLAVOR = ["whole_install", "redact", "redact_name"];
+  // The tab shown (`showTab`): a new flavor rereads the Character tab only
+  // while it is shown.
+  let tabShown = "explorer";
+
+  function takesFlavor(path) {
+    const key = JSON.stringify(path);
+    const command = offeredCommands.find((c) => c && JSON.stringify(c.path) === key);
+    return (
+      Boolean(command) && Array.isArray(command.params) &&
+      command.params.some((p) => p && p.name === "flavor" && !p.refused)
+    );
+  }
+
+  // The parameters of one run, with the picked flavor added where it goes.
+  function withFlavor(path, params) {
+    const given = params || {};
+    if (!runFlavor.picked || !takesFlavor(path)) return given;
+    if (typeof given.flavor === "string" && given.flavor !== "") return given;
+    const set = (value) => value === true || (Array.isArray(value) && value.length > 0);
+    if (EVERY_FLAVOR.some((name) => set(given[name]))) return given;
+    return Object.assign({}, given, { flavor: runFlavor.picked });
+  }
+
+  function startFlavor(flavors, report) {
+    if (report && typeof report.flavor_folder === "string" && flavors.includes(report.flavor_folder)) {
+      return report.flavor_folder;
+    }
+    const seen = report && Array.isArray(report.flavors)
+      ? report.flavors.filter((f) => f && typeof f.folder === "string" && flavors.includes(f.folder))
+      : [];
+    const having = seen.filter((f) => typeof f.characters === "number" && f.characters > 0);
+    // A place in another flavor that `char list` could not look inside may
+    // hold characters too: then no flavor is "the only one with characters".
+    const blind = report && Array.isArray(report.not_looked_at)
+      ? report.not_looked_at.some((n) => n && n.flavor !== (having[0] && having[0].folder))
+      : false;
+    if (having.length === 1 && !blind) return having[0].folder;
+    const versioned = flavors.find((folder) =>
+      seen.some((f) => f.folder === folder && typeof f.version === "string" && f.version !== ""));
+    return versioned || flavors[0];
+  }
+
+  async function fillRunFlavors(flavors) {
+    if (runFlavor.filled) return;
+    runFlavor.filled = true;
+    const box = byId("run-flavor-box");
+    if (flavors.length < 2) {
+      box.hidden = true;
+      runFlavor.settle();
+      return;
+    }
+    // Asked before any flavor is picked: every flavor's characters.
+    const reply = await runJson(["char", "list"], { brief: true }, true);
+    const start = startFlavor(flavors, reply.data);
+    const picker = byId("run-flavor");
+    picker.replaceChildren();
+    for (const folder of flavors) {
+      const option = make("option", visible(folder));
+      option.value = folder;
+      picker.appendChild(option);
+    }
+    picker.value = start;
+    runFlavor.picked = start;
+    box.hidden = false;
+    runFlavor.settle();
   }
 
   // ─── the explorer ───
@@ -513,11 +620,13 @@
     if (seq !== explorer.treeSeq) return;
     if (reply.error) {
       explorerSay(shown(reply.error), true);
+      runFlavor.settle();
       return;
     }
     const report = reply.data;
     if (!report || !Array.isArray(report.items) || !Array.isArray(report.flavor_folders)) {
       explorerSay("wowlab tree printed something this page does not know.", true);
+      runFlavor.settle();
       return;
     }
     explorer.report = report;
@@ -527,6 +636,7 @@
     explorer.closedWhileFiltering = new Set();
     byId("tree-root").textContent = shown(report.install_root);
     fillFlavors(explorer.flavors);
+    fillRunFlavors(explorer.flavors);
     fillLevels(report);
     drawTree();
     const notes = [];
@@ -1198,9 +1308,13 @@
 
   function loadCharacters() {
     if (!character.asked) {
-      character.asked = (async () => {
+      const asked = (async () => {
         charSay("Reading the lab-addon's files…", false);
+        // The header's flavor is known first, so the list is that flavor's.
+        await runFlavor.ready;
         const reply = await runJson(["char", "list"], { brief: true }, true);
+        // Another flavor was picked while this one was read.
+        if (character.asked !== asked) return;
         const report = reply.data;
         if (!report || !Array.isArray(report.characters)) {
           character.asked = null;
@@ -1210,6 +1324,7 @@
         character.note = reply.error ? shown(reply.error) : "";
         fillPicker(report);
       })();
+      character.asked = asked;
     }
     return character.asked;
   }
@@ -1251,6 +1366,30 @@
     pickCharacter(character.entries[first]);
   }
 
+  // Another flavor in the header: what was read or planned for the last one
+  // goes, and the Character tab, when it is shown, reads the new one.
+  byId("run-flavor").addEventListener("change", () => {
+    const folder = byId("run-flavor").value;
+    if (!explorer.flavors.includes(folder) || folder === runFlavor.picked) return;
+    runFlavor.picked = folder;
+    clearConfirm();
+    character.seq += 1;
+    character.asked = null;
+    character.entries = [];
+    character.flavor = null;
+    character.binds = null;
+    character.macros = null;
+    character.note = "";
+    byId("char-picker").replaceChildren();
+    byId("char-header").replaceChildren();
+    byId("char-gear").replaceChildren();
+    clearDressing();
+    byId("char-keys").replaceChildren();
+    byId("char-macros").replaceChildren();
+    charSay("", false);
+    if (tabShown === "character") loadCharacters();
+  });
+
   byId("char-picker").addEventListener("change", () => {
     const at = byId("char-picker").value;
     if (!/^[0-9]+$/.test(at)) return;
@@ -1276,7 +1415,9 @@
     charSay("Reading the gear, keys and macros of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
-    if (character.flavor) params.flavor = character.flavor;
+    // The flavor the list read, else (every flavor listed) the row's own.
+    const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
+    if (flavor) params.flavor = flavor;
     for (const load of [loadGear, loadKeys, loadMacros]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -1999,7 +2140,7 @@
     let reply;
     let result;
     try {
-      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit" });
+      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit", headers: keyed() });
       result = await reply.json();
     } catch (error) {
       return { error: "The request failed: " + error };
@@ -2062,6 +2203,7 @@
   // ─── tabs ───
 
   function showTab(name) {
+    tabShown = name;
     for (const which of ["explorer", "gaps", "commands", "character", "looks"]) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
@@ -2256,7 +2398,7 @@
         empty.input.focus();
         return;
       }
-      body = { command: command.path, params: collect() };
+      body = { command: command.path, params: withFlavor(command.path, collect()) };
     }
     clearConfirm();
     const seq = ++runSeq;
@@ -2271,7 +2413,7 @@
         method: "POST",
         cache: "no-store",
         credentials: "omit",
-        headers: { "Content-Type": "application/json" },
+        headers: keyed({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
       const result = await reply.json();
@@ -2293,7 +2435,7 @@
       say(outcome ? outcome.text : "", Boolean(outcome && outcome.alert));
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
-      if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
+      if (stage === "plan" && JSON.stringify(withFlavor(command.path, collect())) === JSON.stringify(body.params)) {
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
         confirmSay("A field changed while the plan ran: show the plan again to be offered Confirm.");
@@ -2314,62 +2456,20 @@
     }
   }
 
-  // The boot exchange: the one-time key from the opened URL for the session
-  // key. True when the page holds a session key afterwards.
-  async function start() {
-    if (token) return true;
-    if (!boot) {
-      const none = "This page was opened without its key: stop wowlab ui with Ctrl-C and start it again.";
-      say(none, true);
-      explorerSay(none, true);
-      return false;
-    }
-    let reply;
-    try {
-      reply = await fetch("/api/session?boot=" + encodeURIComponent(boot), {
-        method: "POST",
-        cache: "no-store",
-        credentials: "omit",
-      });
-    } catch (error) {
-      say("The server could not be reached: " + error, true);
-      explorerSay("The server could not be reached: " + error, true);
-      return false;
-    }
-    let data = null;
-    try {
-      data = await reply.json();
-    } catch (error) {
-      data = null;
-    }
-    if (!reply.ok || !data || typeof data.token !== "string" || !data.token) {
-      const refused =
-        data && data.error === "boot_spent"
-          ? "This link was already used, so this page cannot start. If you did not open it " +
-            "twice, something else on this computer may have: stop wowlab ui with Ctrl-C and " +
-            "start it again."
-          : "The server refused to start this page (" + reply.status + ").";
-      say(refused, true);
-      explorerSay(refused, true);
-      return false;
-    }
-    token = data.token;
-    return true;
-  }
-
   async function load() {
-    if (!(await start())) return;
+    // With no key the server refuses, and the 403 below says what to do.
     let reply;
     try {
-      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit" });
+      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit", headers: keyed() });
     } catch (error) {
       say("The server could not be reached: " + error, true);
       explorerSay("The server could not be reached: " + error, true);
       return;
     }
     if (!reply.ok) {
-      say("The server refused the request (" + reply.status + ").", true);
-      explorerSay("The server refused the request (" + reply.status + ").", true);
+      const refused = reply.status === 403 ? NO_SESSION : "The server refused the request (" + reply.status + ").";
+      say(refused, true);
+      explorerSay(refused, true);
       return;
     }
     const data = await reply.json();
@@ -2495,7 +2595,8 @@
   }
 
   // Whether a failed run printed only its error report on stdout: an object
-  // with exactly `kind`, `message` and `exit_code`, the run's own exit code.
+  // with exactly `kind`, `message` and `exit_code`, the run's own exit code,
+  // and optionally `notes`, an array (the lines after the error).
   function errorReport(result) {
     if (result.exit_code === 0 || typeof result.stdout !== "string") return false;
     let value;
@@ -2506,7 +2607,8 @@
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const keys = Object.keys(value).sort().join(",");
-    return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
+    const notes = keys === "exit_code,kind,message,notes" && Array.isArray(value.notes);
+    return (keys === "exit_code,kind,message" || notes) && value.exit_code === result.exit_code;
   }
 
   // Shows one run's stdout under "Details": a tree when it is one JSON

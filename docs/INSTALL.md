@@ -137,11 +137,17 @@ its settings menu and pick "Show in Finder" (macOS) or "Show in Explorer"
 (Windows). On a Mac `.build.info` is a hidden file: press Cmd-Shift-. in
 Finder to show hidden files.
 
-Without help, wowlab looks only where the game installs by default:
+Without help, wowlab looks in these folders:
 
-- macOS: `/Applications/World of Warcraft`
+- macOS: `World of Warcraft` in `/Applications`, `/Applications/Games`,
+  `/Games`, `~/Applications`, `~/Games` and `/Users/Shared`, then on each
+  volume under `/Volumes` (by name, and only when none of those holds it):
+  at its top, in its `Applications` and in its `Games`
 - Windows: `World of Warcraft` at the top of each drive, then under
-  `Program Files (x86)` and `Program Files`, the system drive first
+  `Program Files (x86)`, `Program Files` and `Games`, the system drive first
+
+The first install found is used, and wowlab says which folder it took.
+When it finds none, it lists every folder it looked in.
 
 On Linux there is no default: the game runs under Wine, Lutris or
 Proton, inside a Windows-style folder tree called a prefix, and wowlab
@@ -309,15 +315,14 @@ wowlab ui
 ```
 
 It picks a free port, listens only on this machine, and opens your
-browser on a link that works once; if no browser opens, the link is
-printed once, so paste it. Stop it with Ctrl-C. The page trades the link
-for a key it keeps only while it is open, and takes the link out of the
-address bar, so reloading the page needs a new `wowlab ui`.
+browser on its link; if no browser opens, the link is printed once, so
+paste it. The link, a reload of the page and a second tab keep working
+until you stop `wowlab ui` with Ctrl-C; a new `wowlab ui` makes a new
+link, and the old one stops working.
 
 `wowlab ui` is made for a single-user machine. On a computer other people
 log in to, they can see the link in their process list while your browser
-starts, and if one of them opens it first, your page says the link was
-already used: stop `wowlab ui` and start it again. From the page,
+starts, and can open it too, until you stop `wowlab ui`. From the page,
 `sv dump` reads only files inside your install.
 
 Reading never changes anything. Six commands can change game files; each

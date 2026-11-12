@@ -181,7 +181,8 @@ def test_lingering_connections_do_not_stop_a_new_request(served: tuple[Any, Path
             held[-1].sendall(_get("/", "evil.example"))
         start = time.monotonic()
         with _connect(server) as sock:
-            sock.sendall(_get("/", _ok_host(server)))
+            # M16-113: a bare `/` now serves the keyless shell (200); an API path still refuses.
+            sock.sendall(_get("/api/commands", _ok_host(server)))
             reply = _read_all(sock)
         assert reply.split()[1] == b"403"
         assert time.monotonic() - start < 2.0

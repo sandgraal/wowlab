@@ -2793,6 +2793,77 @@ Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it wh
 - The 1 MB file-size hook entry for `cli.py` is moved or removed.
 - Reviewed by `code-reviewer`.
 
+## [ ] M16-114 — With several flavors, characters are still found, and `wowlab ui` can pick a flavor
+**Size:** M · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11; LAB_PLAN §16 (CLI conventions), amendment of 2026-11-11
+
+Implement the amendment:
+- `WOWLAB_FLAVOR`;
+- `char list` across all flavors, with the one-flavor-with-characters rule for the other `char` commands;
+- write commands never pick a flavor, and their error lists each flavor with its command line;
+- the `wowlab ui` header flavor picker, passed as `--flavor` on every run.
+
+M16-113 changes `ui/__init__.py` and `page.js` at the same time, so keep to the header and run-argv code and leave the boot/session code alone. Whichever merges second rebases.
+
+**Acceptance:**
+- **Tests (constructed, L8 boundary)** on an install with two flavors, characters in one:
+  - `char list` labels its rows by flavor, and `--json` carries `flavor`;
+  - `char show` uses the one flavor with characters and says so;
+  - a write command with no flavor fails and lists the command lines;
+  - `WOWLAB_FLAVOR`, and `--flavor` winning over it;
+  - a bad `WOWLAB_FLAVOR` errors and lists the flavors.
+- **UI tests:** the picker appears only with several flavors, starts on the right flavor, and every run argv carries `--flavor`.
+- **User-facing:** listed in the PR (wiki: ui, char, getting started).
+- **Reviews:** `code-reviewer`, `domain-reviewer` (flavors) and `security-reviewer` (ui).
+
+# M16 owner testing (filed 2026-11-11)
+
+## [ ] M16-112 — Discovery searches more folders for the install, and says where it looked
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 (install at `/Games/World of Warcraft` not found); LAB_PLAN §6.1, amendment of 2026-11-11
+
+Implement §6.1's amendment of 2026-11-11 in `install.default_roots` and in the error that discovery raises when it finds nothing.
+- **macOS search:** `/Applications`, `/Applications/Games`, `/Games`, `~/Applications`, `~/Games`, `/Users/Shared`, then `/Volumes/*` and each volume's `Applications/` and `Games/`. Links under `/Volumes` are skipped.
+- **Windows:** `<drive>\Games` is added after the existing three.
+- **The no-install error** lists every location checked, and gives the `--root` and `WOWLAB_WOW_ROOT` lines to copy.
+
+Keep `default_roots` testable without the real filesystem: the platform, the home directory, the `/Volumes` listing and the drives are all injectable, as `drives` and `environ` already are. Constructed tests only (L8 boundary: folder layouts, no game data).
+
+**Acceptance:**
+- **Order:** tests pin the order for macOS and Windows.
+- **Two locations:** with two installs present, the first in the order wins.
+- **`/Volumes`:** a link entry is skipped, and an unreadable entry is skipped without an error.
+- **No home:** the `~` entries are skipped.
+- **Error text:** the no-install error lists the checked locations and the two commands.
+- **Unchanged:** the explicit root and `WOWLAB_WOW_ROOT` are still final. Every existing discovery test passes unchanged.
+- **Docs:** the CLI `--root` help still reads true.
+- **User-facing:** listed in the PR (wiki: install, getting started).
+- **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
+
+## [ ] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 ("get rid of this requirement"); LAB_PLAN, `wowlab ui` amendment of 2026-11-11
+
+Replace the one-time boot key (M16-42) with a session that lasts as long as the `wowlab ui` process, as the amendment says:
+- the link `wowlab ui` opens works, and keeps working;
+- a reload works, and so does a second tab in the same browser;
+- other origins and processes are still refused;
+- Ctrl-C ends it.
+
+Remove the "already used" page, its terminal notice, and the `--help` and docs text that say a reload needs a new `wowlab ui`.
+
+**Acceptance:**
+- **Reload works:** a reload of the shell, and a second request without the query, are served when they carry the session.
+- **Refusals:** a request with no session and no token is refused. So is a request whose Origin or Host is not the server's own.
+- **New server, new session:** a request carrying the session of an earlier server is refused.
+- **Tests:** existing UI tests updated where they pinned the one-time behaviour. In this PR, name each test that changed and why.
+- **User-facing:** listed in the PR (wiki: ui).
+- **Reviews:** `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-115T — [TEST] A record naming a temp outside the flavor is damaged (item 2 amended)
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (e1); the owner's answer of 2026-11-11 ("A") to the M16-90 implementer's block
+
+In `lab/core/tests/test_guard_owner_decisions.py`, `test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist` covers the `NEVER_LOOKED_UP` cases: outside the allowlist, at the install root, under `Data/`, another flavor folder, outside the install, absolute, UNC. For those cases only, expect the forged record to be refused as damaged. Both routes (`transaction()` and `undo()`) raise `GuardError` naming the damaged record, before any write, snapshot or lookup of the forged path. The install, the journal and the store are left unchanged. Keep every other case exactly as it is. The amended cases are strict xfail "M16-90 not implemented", activated by M16-90 by marker deletion.
+
+**Acceptance:** strict xfail on main for the right reason; the other cases unchanged and passing. Reviewed by `code-reviewer` and `security-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
 ## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`

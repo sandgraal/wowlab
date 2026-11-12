@@ -140,7 +140,7 @@ def _own_api_only(out: dict[str, Any]) -> None:
     assert out["requests"], "the page asked for nothing"
     for request in out["requests"]:
         url = request["url"]
-        assert url.startswith(("/api/commands?", "/api/run?")), url
+        assert url.startswith(("/api/commands", "/api/run")), url
 
 
 def _target(scenario: dict[str, Any], rel: str, flavor: str = FLAVOR) -> str:
@@ -858,7 +858,7 @@ def test_preview_runs_the_first_view_exactly_and_draws_a_tree(
         view = views[rel][0]
         sent = previewed["newRequests"]
         assert len(sent) == 1, sent
-        assert sent[0]["url"].startswith("/api/run?"), sent
+        assert sent[0]["url"].startswith("/api/run"), sent
         assert sent[0]["body"] == {"command": view["command"], "params": view["params"]}, sent
         printed = json.loads(scenario["runs"][n]["stdout"])
         assert isinstance(printed, dict) and printed, rel

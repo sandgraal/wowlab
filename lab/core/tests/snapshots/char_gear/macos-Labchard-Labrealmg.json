@@ -299,6 +299,7 @@
     "Item levels and the averages are the client's figures as recorded, never derived from bonus ids. The averages are GetAverageItemLevel's returns, not the mean of the item levels listed, and how the client computes them is not known.",
     "overall: on Retail, the best items owned, bags included (community documentation, [verify] on Forever)."
   ],
+  "flavor_folder": "_classic_beta_",
   "dressing": {
     "items": [
       "9749",

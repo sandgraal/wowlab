@@ -370,6 +370,30 @@ raises `NotAnInstallError` with `reason` `unreadable` and the words "cannot
 read .build.info (it changed as it was read; run the command again)". The
 discovery output of an unchanged install is byte for byte what it was.
 
+*Amended 2026-11-11 (owner decision in session, M16-112): a wider default search.* The owner keeps his install outside `/Applications`, and discovery did not find it. When no explicit root and no `WOWLAB_WOW_ROOT` is given, the default search is now the following. In each folder listed, discovery looks for a `World of Warcraft` child.
+
+- **macOS**, in this order:
+  1. `/Applications`
+  2. `/Applications/Games`
+  3. `/Games`
+  4. `~/Applications`
+  5. `~/Games`
+  6. `/Users/Shared`
+  7. for each entry directly under `/Volumes`, sorted by name: `/Volumes/<name>`, `/Volumes/<name>/Applications` and `/Volumes/<name>/Games`. These are searched only after the first six have failed, so a stalled network share or a sleeping disk costs nothing when the install is found earlier. An entry under `/Volumes` that is a link by `is_link` is skipped, which covers the boot volume's link back to `/`. So is a name that starts with `.`. Each candidate is checked with one `stat`, and a failure is reported as "could not check" (domain review, 2026-11-11).
+
+  `~` is the current user's home directory. If the home cannot be found, the two `~` entries are skipped.
+- **Windows:** each drive's list gains `<drive>\Games\World of Warcraft`, after the three existing locations and in the same drive order.
+- **Unchanged:**
+  - the first location that is an install wins;
+  - the explicit root and `WOWLAB_WOW_ROOT` are final, as in amendment (2) of 2026-09-22;
+  - a location that is not a directory, or cannot be checked, is passed over;
+  - one that holds an unusable `.build.info` is reported, as before.
+
+  The output already names the root it used, so a player with two installs can see which one was taken.
+- **When nothing is found**, the error lists every location that was checked, in order. It ends with the two ways to name the install: `--root "<path>"`, and the variable for the current terminal window, `export WOWLAB_WOW_ROOT="<path>"` (macOS), or on Windows both `set WOWLAB_WOW_ROOT=<path>` (cmd) and `$env:WOWLAB_WOW_ROOT = "<path>"` (PowerShell). It also says the path to use is the folder that holds `.build.info`, not `_retail_`.
+- **Still out of scope:** reading Battle.net's own records of where it installed the game. That would need an ADR and a real capture.
+- **Linux:** still explicit root only.
+
 ### 6.2 `layout` — typed walk of a flavor (M10-06)
 
 Pure read. Produces the inventory every later tool starts from:
@@ -1552,6 +1576,13 @@ The path checked is the one that would be journaled: the resolved `flavor_path`,
 
 `transaction()` (a dry run included) and `undo()` refuse a flavor whose resolved path holds any of them, with `GuardError`, before any snapshot, lock-held write or journal record. `history()` refuses a record whose `flavor_path` holds one, as a damaged record. The gate never writes a record that `history()` would refuse, so a player whose install path holds such a character gets the refusal at the first change, never a lockout after it. Relative paths inside the flavor are unchanged: a real file name may hold a bidi mark, and only the output escapes it (the M16-84 amendment of 2026-11-10, item (d)).
 
+(e1) **A record that names a temp outside the flavor is damaged.** *Owner decision, 2026-11-11 ("A"), from the M16-90 implementation.*
+- **The conflict.** Two graders on `main` disagreed about a journal record whose `temps` or `temps_left` names a path that is not a plain flavor-relative name: outside the allowlist, at the install root, under `Data/`, in another flavor folder, outside the install, absolute or UNC.
+  - M16-69T, item 2 of the 2026-09 owner decisions, required the next change to carry on and list that path in its own `temps_left`.
+  - M16-90T required `history()` to refuse the record.
+- **The ruling:** refuse. `history()` refuses such a record as damaged, like any other field that fails the write rules, and every command that reads the journal stops there. Under ADR-0037, `doctor` gives its generic answer: the snapshots are kept, and you can restore one. Only a hand-edited or corrupted journal can hold such a record, because the gate journals only the temps it creates inside the flavor.
+- **What item 2 still requires.** The cleanup removes only regular temp files that match the pattern, that the gate wrote and that sit inside the allowlist. A link, a directory, another name or a case variant inside the flavor is still left alone and listed in `temps_left`, and the change carries on. Only the paths that are not plain flavor-relative names change: they now make the record damaged.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
@@ -1587,6 +1618,13 @@ completeness; their behaviour is specified in §13.
 `--flavor` selects a flavor when more than one is installed; with exactly one
 it is implied. Every command that prints data has `--json`. Exit codes:
 0 ok, 1 error, 2 usage, 3 refused by guard.
+
+*Amended 2026-11-11 (owner decision in session, M16-114):* the owner's install has two flavors, `_classic_beta_` and `_forever_`. `wowlab ui`'s Character tab then showed only "choose one with --flavor", with no way to choose, and his characters could not be reached. "The app should find my characters if it knows where my wow install is."
+- **`WOWLAB_FLAVOR`.** It names the flavor folder when `--flavor` is not given, as `WOWLAB_WOW_ROOT` names the root. `--flavor` wins over it. A value that names no flavor of the install is an error that lists the flavors.
+- **`char list` without `--flavor`** on an install with several flavors lists the characters of every flavor, each row labelled with its flavor folder. `--json` gains a `flavor` field per character. The other `char` commands still need one flavor. When only one flavor has any character folder (in `--account`'s account, when it is given), and every other flavor could be read and has none, they use that flavor and print one line saying so: `wowlab: using <folder> (<version>), the only flavor with character folders (--flavor picks another)`. A flavor wowlab could not look inside counts as unknown, and the several-flavors error stands. `CharGearReport` gains `flavor_folder`, just before `dressing` (which stays last), as the other `char` reports carry it (review of 2026-11-11).
+- **Write commands.** A command that writes (through `guard`) never picks a flavor by itself. With several flavors and no `--flavor` or `WOWLAB_FLAVOR`, it fails as today. The error now lists each flavor with the exact command line to copy.
+- **`wowlab ui`** shows a flavor picker in its header when the install has more than one flavor. Every run from every tab passes the picked flavor as `--flavor`. The picker starts on the only flavor that has characters, else on the first flavor whose `.build.info` row has a version, else on the first flavor. It keeps the choice while the page is open. With one flavor, the picker is not shown.
+
 
 *Amended 2026-09-27 (owner decision after the PR #68 reviews):* a
 whole-snapshot `wowlab snap restore` (no `--paths`) skips every file whose
@@ -4129,6 +4167,20 @@ with exit 3 and before reading it, a file whose real path is not in the
 install wowlab finds by itself, and a `--root` naming another install, so a
 refusal quotes none of its bytes and the page cannot plant an install around
 a file. The file read is the real path that was checked.
+
+*Amended 2026-11-11 (owner decision in session, M16-113; this supersedes the "works once" part of the 2026-10-27 amendment above):* the owner tested `wowlab ui`, and a reload showed "This wowlab ui link was already used". He ruled it too much: "get rid of this requirement". The link `wowlab ui` opens, and a reload of the page, now keep working for as long as that `wowlab ui` process runs.
+- **What stays:** the protection against other web pages and other local programs driving the server.
+  - The server is bound to `127.0.0.1` and checks its Host header as before.
+  - Every API request must still prove it comes from the browser that opened the link. The design is the implementer's. The default is an `HttpOnly`, `SameSite=Strict`, `Path=/` session cookie set when the link is first opened, which the server accepts in place of the `token` parameter, so a reload or a second tab in that browser works.
+  - A request with neither the header nor a valid token is refused, as now.
+  - Accepted risk (owner, 2026-11-11): the link is in the browser's process arguments, which another account on the same computer can read, and it opens the session until Ctrl-C; this tool is used on single-user machines, and the risk is revisited before outside users are invited (ADR-0037).
+  - *Design chosen (2026-11-11, M16-113, after the owner's security ruling that a cookie on `127.0.0.1` reaches every port):* the cookie default was replaced. The page served for the link holds the session key in one `<meta>` element, which `page.js` removes, keeps in `localStorage` (per origin, port included) and sends in the `X-Wowlab-Session` header on every request; another site's page cannot send that header without a preflight, which is refused. A bare `GET /` serves the shell with no key in it, so a reload and a second tab get the page and send the stored key.
+  - Stopping `wowlab ui` (Ctrl-C) ends the session. A new `wowlab ui` makes a new link, and the old one stops working.
+- **What goes:**
+  - the one-time boot key, and its "already used" page and terminal notice;
+  - the rule that a reload needs a new `wowlab ui`.
+- **Security review** judges whether the chosen design still stops a cross-site request (CSRF), a DNS-rebinding page, and another local user's process. A finding there goes back to the owner rather than restoring the one-time link.
+
 
 **What stays in Wave 5 (M14).** The confirm flow for every command that declares
 `--yes` (`snap restore`, `undo`, `profile apply`, `addon install`, `addon

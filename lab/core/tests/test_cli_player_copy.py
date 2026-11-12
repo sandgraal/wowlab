@@ -61,7 +61,7 @@ OVERLAYS = ("", "macos-70450", "macos-70058")
 runner = CliRunner()
 
 # Environment variables the player sets, named in help on purpose.
-ENV_NAMES = frozenset({"WOWLAB_WOW_ROOT", "NO_COLOR"})
+ENV_NAMES = frozenset({"WOWLAB_WOW_ROOT", "WOWLAB_FLAVOR", "NO_COLOR"})
 
 
 # ─── the patterns ────────────────────────────────────────────────────────────
