@@ -2768,7 +2768,7 @@ This does not touch `guard.py`. `doctor` reads only. If the implementer finds a 
 - A side-by-side table in the PR maps every rule in the old text to its place in the new one.
 - Reviewed by `code-reviewer` and `security-reviewer`; the gate's spec is security-relevant.
 
-## [ ] M16-111 — Split `cli.py` by command group
+## [x] M16-111 — Split `cli.py` by command group
 **Size:** M · **Depends on:** M16-69 · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
 
 `lab/core/src/wowlab_core/cli.py` is about 14,000 lines in one module. Split it into a package `wowlab_core/cli/` with one module per command group:
@@ -2914,16 +2914,44 @@ For a flavor whose product has no `.build.info` row, `wowlab doctor` prints "Fla
 
 # M16 follow-ups (filed 2026-11-12, eleventh batch)
 
-## [ ] M16-120 — `guard.py` docstrings state the (a2) undo-target rule
+## [x] M16-120 — `guard.py` docstrings state the (a2) undo-target rule
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-110 reviews (#501)
 
 `guard.py`'s module docstring (around line 191) says a record "is passed over when it has `undoes`, never took a snapshot … and is closed", and `undo()`'s docstring (around line 3280) speaks of "a closed undo that never took its snapshot". Both describe (a1)'s narrower rule. `_passed_over` implements (a2) (LAB_PLAN §6.10, "The undo target"): no `undoes` condition. Rewrite those docstrings to state §6.10's rule. Comments and docstrings only; no code, no grader.
 
 **Acceptance:** `git diff` shows only docstring/comment lines in `guard.py`; `make ci` green (a `guard.py` change). Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-121 — The old "no version in .build.info" words, made to match M16-118
+## [x] M16-121 — The old "no version in .build.info" words, made to match M16-118
 **Size:** XS · **Depends on:** M16-111 · **Sources:** the M16-118 implementer's report and reviews (#504)
 
 M16-118 changed `doctor`'s flavor line. The old wording is still in the first-run section's flavor label (`firstrun.flavor_label`, "(wow_x, no version in .build.info)"), in `doctor`'s `Game data: no version to look up (.build.info has no version for product '…')` line (which now sits under "has no row" text for the same flavor), in the `--build` refusal in the CLI, and in `gamedata.py` and `addoninstall.py`. Make each say what is actually true, using the same three cases as M16-118 (no row, a row with a blank version, no product), or point to the explanation `doctor` already prints, without repeating it ("one fact lives in one place").
 
 **Acceptance:** pinned wording tests for each changed message (constructed boundary inputs, as in `test_doctor_version_words.py`); `--json` unchanged; user-facing changes listed. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, twelfth batch: the owner's macOS test and the conductor's smoke test)
+
+## [ ] M16-122 — `doctor` names the wowlab version that is running
+**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-12
+
+The owner's `wowlab` on PATH was the installed 0.1.0rc1 release while the clone was at `main`, so every fix tested looked unfixed, and nothing said so. `doctor`, text and `--json`, names the running wowlab's version and where it runs from: the package location, and whether it is an editable install of a source checkout. When the source checkout it runs from has a different version, or when `wowlab` is run from inside a checkout that is not the one installed, it says so in one line and names the command to run that checkout instead (`uv run wowlab …`). No network call.
+
+**Acceptance:** constructed tests for an installed copy, an editable install and a run from a different checkout; `--json` gains the fields, listed as user-facing; `doctor --redact` covers the path. Reviewed by `code-reviewer`.
+
+## [ ] M16-123 — `doctor` does not offer a lab-addon install into a flavor whose version is unknown
+**Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
+
+For a flavor whose version is unknown (no `.build.info` row, a blank version, or no product; M16-118), `doctor`'s next steps say "Lab-addon: not installed. Close the game, then run `wowlab addon install lab --flavor _x_`". That install is refused, because the TOC's `## Interface:` cannot be filled (M16-121). The next step should say instead that the lab-addon cannot be installed there until the game version is known, and point at the flavor's explanation above it rather than repeat it. The owner's `_classic_beta_` hits this.
+
+**Acceptance:** a constructed test (a no-row flavor beside a real one, as in `test_doctor_version_words.py`): no `addon install` line for that flavor, the real flavor's line unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-124 — `snap create` with several flavors
+**Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
+
+With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and lists `--flavor` commands, because a write never picks a flavor on its own (M16-114). `snap create` writes only into wowlab's own store, never into the install, so that rule's reason (never change the wrong game's files) does not apply. Decide, and record in LAB_PLAN §6.11, one of:
+- (a) `snap create` with no `--flavor` snapshots every flavor, one snapshot each;
+- (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
+- (c) unchanged.
+
+The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
+
+**Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
