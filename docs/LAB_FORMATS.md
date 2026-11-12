@@ -166,7 +166,8 @@ exist in some versions **[verify]**; keep anything unmatched as `Unknown`.
 `_forever_`, product `wowf`, build 1.60.1.70888, interface 16001, macOS).*
 The persistence tests of `docs/handoffs/M14-binds-persist.md` were run on a
 **character** file (the character uses its own key bindings; the account
-`bindings-cache.wtf` is 0 bytes). This was run D of that runbook, done twice:
+`bindings-cache.wtf` is 0 bytes): runs A and B of that runbook, on the
+character file:
 
 | Run | `synchronizeBindings` | Edit made with the client closed | Worked after login? | Key Bindings panel | Edit still in the file after logout? | File rewritten at logout? |
 |---|---|---|---|---|---|---|
@@ -178,11 +179,18 @@ survives login whether `synchronizeBindings` is on or off**. The server did
 not put its own copy back. With sync on, the client left the file untouched
 at logout; with sync off, it rewrote it unchanged. Line endings stayed CRLF.
 The account file and the sync-on case for a binding changed *in game* on
-another machine were not tested. `synchronizeBindings` is the client's only
-`synchronize*` CVar that answers here: `GetCVar("synchronizeMacros")`
-returned nothing and `GetCVar("synchronizeConfig")` returned `"1"`. The
-character `bindings-cache.wtf` exists when character-specific bindings are
-on. The matching **[verify]** in `docs/LAB_FILE_MAP.md` is generated from `filemap.toml` and is left for an implementer ticket.
+another machine were not tested. Of the three `synchronize*` names probed,
+`GetCVar("synchronizeBindings")` and `GetCVar("synchronizeConfig")` returned
+`"1"` and `GetCVar("synchronizeMacros")` returned nothing. The character
+`bindings-cache.wtf` exists when character-specific bindings are on. The
+matching **[verify]** in `docs/LAB_FILE_MAP.md` is generated from
+`filemap.toml` and is left for M16-125.
+
+The same session answered M16-05's other questions. The lab-addon loaded on
+the launch client (interface 16001), was not marked out of date, and wrote
+its record at both logouts. The account `edit-mode-cache-account.txt` was
+rewritten during the session, not at logout; whether a hand edit to it is
+kept was not tested. Macro persistence and numbering are in §7.
 
 ## 7. `macros-cache.txt`
 
@@ -626,12 +634,12 @@ Dated entries, newest last. Each names the fixture that prompted it.
   both `Sound_VoiceChat*`, and every `synchronize*` CVar (absent is not "off":
   the default is **[verify]**; *resolved 2026-11-12, M16-05, build 70888:*
   with no line in any file, `synchronizeBindings` and `synchronizeConfig`
-  read `"1"` in game, and `synchronizeMacros` does not exist. Setting one to
-  its default removes its line. Offline edits to `Config.wtf`
-  (`farclip "8000"` → `"7999"`) and to the account `config-cache.wtf`
-  (`showTargetOfTarget "1"` → `"0"`) both survived login with
-  `synchronizeConfig` on; and at logout the client dropped the line rather than
-  write `"0"`). Also recorded verbatim, meaning unknown:
+  read `"1"` in game, and `GetCVar("synchronizeMacros")` returned nothing.
+  Offline edits to `Config.wtf` (`farclip "8000"` → `"7999"`) and to the
+  account `config-cache.wtf` (`showTargetOfTarget "1"` → `"0"`) both
+  survived login with `synchronizeConfig` on. At logout the client removed
+  the edited `showTargetOfTarget` line instead of writing `"0"`; that it
+  drops every CVar set to its default is **[verify]**). Also recorded verbatim, meaning unknown:
   `portal "test"`, `currentGameMode "15"`, `engineSurveyPatch "16001"`.
 - **2026-09-22, §6, same capture.** Account `bindings-cache.wtf`: three
   `bind KEY ACTION` lines, CRLF, no header or mode line. The quoted

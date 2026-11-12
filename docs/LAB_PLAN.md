@@ -3792,7 +3792,10 @@ and the CI job stays on.
   macros are reported as "cannot judge" until a capture settles it. Whether
   an edit to `macros-cache.txt` made with the client closed survives the
   next login, with `synchronizeMacros` on and off, is unknown; M13-07's
-  first step settles it.
+  first step settles it. *Amended 2026-11-12 (M16-05):* on the Forever
+  launch client, build 70888, offline edits to a character's
+  `macros-cache.txt` survived two logins, and `synchronizeMacros` does not
+  answer on that client (`docs/LAB_FORMATS.md` §7).
 - **Bindings.** `bindings-cache.wtf` maps keys to binding commands such as
   `ACTIONBUTTON3`, not to spells, and what sits in an action-bar slot is
   server state (`docs/LAB_IDEAS.md`, keybind-coach). So spell-to-key needs

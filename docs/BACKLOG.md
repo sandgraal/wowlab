@@ -2964,7 +2964,7 @@ The conductor recommends (a). The owner decides (a "stop and ask" item: it chang
 M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is staged on the owner's machine: 33 files, scrubbed by `scripts/lab_capture.py`, with its provenance rows printed by the tool.
 - Move it into the corpus as its own run folder (`macos-70888/`, laid out as `macos/forever/...` in the staging, per the fixtures README's "one run per top-level folder" rule), with one provenance row per file.
 - Whatever it shows that the parsers or `docs/LAB_FORMATS.md` did not expect is reported, not special-cased (L4).
-- `filemap.toml` and the regenerated `docs/LAB_FILE_MAP.md` take the results of `docs/LAB_FORMATS.md` §6 and §7 (amended 2026-11-12): the character `bindings-cache.wtf` exists when character-specific key bindings are on (its **[verify]** is resolved); offline edits to this character's bindings and macros, `Config.wtf` and the account `config-cache.wtf` survived login on the launch client with `synchronizeBindings` on and off. Wording for players follows `.claude/rules/player-copy.md`; the Edit column is unchanged unless the reviewers agree.
+- `filemap.toml` and the regenerated `docs/LAB_FILE_MAP.md` take the results of `docs/LAB_FORMATS.md` §6 and §7 (amended 2026-11-12): the character `bindings-cache.wtf` exists when character-specific key bindings are on (its **[verify]** is resolved); on the launch client, offline edits to this character's `bindings-cache.wtf` survived login with `synchronizeBindings` on and off; offline edits to its `macros-cache.txt` survived two logins (`synchronizeMacros` does not answer there); offline edits to `Config.wtf` and the account `config-cache.wtf` survived one login with `synchronizeConfig` on. The account `bindings-cache.wtf`, the account `macros-cache.txt` and the character `config-cache.wtf` were not tested: keep their wording as it is. Wording for players follows `.claude/rules/player-copy.md`; the Edit column is unchanged unless the reviewers agree.
 
 **Acceptance:** `make test-parser` green with the new root; every new file has a row; `filemap.py --check` and `test_filemap.py` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (fixtures).
 
@@ -2978,3 +2978,12 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 - **False positive.** The character `config-cache.wtf` was refused for "email address x1": the `closedInfoFrames` CVar is a packed bitfield whose bytes matched the pattern (`…@@@@<x>@<y>.<z>@@…`). The email check does not fire on a CVar value made of such packed bytes, or the CVar is blanked by default; the choice is recorded. A real email in a CVar value is still refused.
 
 **Acceptance:** tests on constructed inputs, labelled (hostile-input tests are allowed constructed, L8); the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the tool's refusal and pick-over lines.
+
+---
+
+## [ ] M16-127 — `doctor` lists the sync settings the client has
+**Size:** XS · **Depends on:** nothing · **Sources:** `code-reviewer` on PR #513 (M16-05)
+
+`doctor` prints `synchronizeMacros` with "not set (the client's default, and wowlab cannot tell whether it is on)" (`_SYNC_CVARS` in `cli/_cmd_doctor.py`). On the Forever launch client, build 70888, that CVar does not answer `GetCVar` at all (`docs/LAB_FORMATS.md` §5, §7, amended 2026-11-12), so the line suggests a default that does not exist. `synchronizeBindings` and `synchronizeConfig` read `"1"` with no line in any file. Without hard-coding a flavor or build (L6): a CVar with no line is described as possibly absent on this client rather than as on by default, or the absent default for `synchronizeBindings` and `synchronizeConfig` is stated as observed on one client, worded per `.claude/rules/player-copy.md`.
+
+**Acceptance:** tests on constructed `Config.wtf` and `config-cache.wtf`, labelled; `make ci` green. Reviewed by `code-reviewer`. User-facing: `doctor`'s sync lines.
