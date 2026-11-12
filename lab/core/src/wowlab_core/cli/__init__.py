@@ -806,6 +806,9 @@ from wowlab_core.cli._cmd_db2 import (
     _check_table_key as _check_table_key,
 )
 from wowlab_core.cli._cmd_db2 import (
+    _unknown_build as _unknown_build,
+)
+from wowlab_core.cli._cmd_db2 import (
     db2_builds as db2_builds,
 )
 from wowlab_core.cli._cmd_db2 import (

@@ -496,7 +496,7 @@ def test_install_without_a_flavor_version_fails_clearly_constructed(root: Path) 
     before = _tree(root)
     result = run("addon", "install", "lab", "--yes")
     assert result.exit_code == 1
-    assert "no version" in result.stderr
+    assert "the flavor's version is unknown" in result.stderr
     assert _tree(root) == before
 
 

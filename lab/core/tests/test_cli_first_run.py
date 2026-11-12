@@ -745,7 +745,7 @@ def test_two_flavors_are_each_listed_and_yes_needs_a_choice_constructed(
     result = run("doctor", "--yes")
     assert result.exit_code == 2
     assert f"Flavor 1 of 2: {FLAVOR} (wow_classic_beta, 1.60.1.69913)" in result.stdout
-    assert f"Flavor 2 of 2: {SECOND} (wow_constructed, no version in .build.info)" in result.stdout
+    assert f"Flavor 2 of 2: {SECOND} (wow_constructed, version unknown)" in result.stdout
     assert "--yes needs --flavor to say which one to snapshot" in result.stdout
     assert _lines(result.stdout)[-1] == firstrun.undo_line(None)
 
@@ -776,7 +776,7 @@ def test_two_flavors_interactively_the_player_chooses_constructed(
     if answer.startswith("9"):
         assert "Not a number from 1 to 2: 9" in result.stderr
     assert f"  1) {FLAVOR} (wow_classic_beta, 1.60.1.69913)" in result.stderr
-    assert f"  2) {SECOND} (wow_constructed, no version in .build.info)" in result.stderr
+    assert f"  2) {SECOND} (wow_constructed, version unknown)" in result.stderr
     assert "Take a first snapshot" not in result.stderr, "choosing is the answer"
     if picked is not None:
         other = SECOND if picked == FLAVOR else FLAVOR

@@ -66,8 +66,26 @@ def _build_for(build: str | None, root: Path | None, flavor: str | None) -> str:
         return build
     _, chosen, _ = _open(root, flavor)
     if chosen.version is None:
-        raise CliError(f"{chosen.folder} has no version in .build.info; pass --build")
+        raise CliError(_unknown_build(chosen.folder, chosen.product, chosen.matching_rows))
     return chosen.version
+
+
+def _unknown_build(folder: str, product: str, matching_rows: int) -> str:
+    """The `--build` refusal for a flavor whose version is unknown, in the
+    three cases `doctor` tells apart (M16-118, M16-121): no product, no
+    `.build.info` row for it, a row with a blank version. The no-row case
+    points at `doctor`, which says what usually causes it."""
+    if not product:
+        return f"{folder}'s .flavor.info gives no product code, so its version is unknown; pass --build"
+    if matching_rows >= 1:
+        return (
+            f"the .build.info row for {folder}'s product {product} has no version in it; "
+            "pass --build"
+        )
+    return (
+        f".build.info has no row for {folder}'s product {product}, so its version is "
+        "unknown (wowlab doctor says why); pass --build"
+    )
 
 
 def _check_table_key(data: gamedata.GameData, table: str, build: str) -> None:

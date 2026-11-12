@@ -1235,7 +1235,9 @@ def _print_game_data(g: GameDataReport) -> str:
             f"wago.tools does not list version {g.version}; wowlab db2 cannot fetch tables for it"
         )
     if g.status == "no_version":
-        return f"no version to look up ({g.detail})"
+        # The flavor's line above says why (M16-118, M16-121); `detail` stays
+        # in --json unchanged.
+        return "no version to look up"
     if g.status == "not_checked":
         return "not checked (--check-builds asks wago.tools)"
     return f"could not check ({g.detail})"
