@@ -188,6 +188,9 @@ def test_constructed_the_owners_own_chat_is_captured(
 
 # The shape of a launch-client value that was refused: `@` runs around `x@y`.
 PACKED = b'SET closedInfoFrames "@@pD@@@@D@A@@@@@@APH"\n'
+# The launch client's real value is shaped like this: 22 bytes, `@@` runs, a
+# match flanked by `@`, and one raw 0x02 control byte among the packed bytes.
+PACKED_WITH_C0 = b'SET closedInfoFrames "@@p\x02@@@@D@A@@@@@@APH@@"\n'
 
 
 @pytest.mark.parametrize(
@@ -197,12 +200,14 @@ PACKED = b'SET closedInfoFrames "@@pD@@@@D@A@@@@@@APH"\n'
         b'SET closedInfoFrames "@@R@@@@@P@@B@@@@@@APH@@@@@B"\r\n',  # an earlier client's value
         b'SET closedInfoFramesAccountWide "@@B@C@@"\n',
         b'SET someBits "D@A@@"\n',  # at the start of the value
+        PACKED_WITH_C0,
     ],
     ids=[
         "constructed-launch-shape",
         "constructed-older",
         "constructed-other-cvar",
         "constructed-at-start",
+        "constructed-launch-shape-with-control-byte",
     ],
 )
 def test_constructed_a_packed_bitfield_is_not_an_email(line: bytes) -> None:
@@ -219,6 +224,9 @@ def test_constructed_a_packed_bitfield_is_not_an_email(line: bytes) -> None:
         b'SET contact "someone@example"\n',  # packed bytes, but no `@@`
         b'SET contact "@@ someone@example"\n',  # not packed: a blank
         b'SET contact "someone@example@@"\n'.replace(b"someone", b"some-one"),
+        # A raw 0x02 beside a dotted address: the dot is still not a packed byte.
+        b'SET closedInfoFrames "@@\x02someone.real@example.com\x02@@"\n',
+        b'SET closedInfoFrames "@@p\x02@@D@A@@ \x02someone@example.com@@"\n',
     ],
     ids=[
         "constructed-plain",
@@ -227,6 +235,8 @@ def test_constructed_a_packed_bitfield_is_not_an_email(line: bytes) -> None:
         "constructed-no-double-at",
         "constructed-blank",
         "constructed-hyphen",
+        "constructed-control-byte-beside-dotted-address",
+        "constructed-control-byte-bits-then-address",
     ],
 )
 def test_constructed_a_real_email_in_a_cvar_value_still_refuses(line: bytes) -> None:
@@ -238,12 +248,13 @@ def test_constructed_the_exemption_is_for_config_files_only() -> None:
     assert [p for p in _problems(PACKED) if p.startswith("email address")]
 
 
+@pytest.mark.parametrize("packed", [PACKED, PACKED_WITH_C0], ids=["constructed", "constructed-c0"])
 def test_constructed_a_packed_cvar_in_config_cache_is_captured(
-    install: Path, tmp_path: Path
+    packed: bytes, install: Path, tmp_path: Path
 ) -> None:
     character = install / "_retail_" / "WTF" / "Account" / ACCOUNT / "Area 52" / MAIN
     path = character / "config-cache.wtf"
-    original = path.read_bytes() + PACKED
+    original = path.read_bytes() + packed
     path.write_bytes(original)
     out = tmp_path / "incoming"
     assert capture(install, out, "--flavor", "_retail_") == 0

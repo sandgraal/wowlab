@@ -462,18 +462,23 @@ OTHER_CHAT_LABEL = "another player's name or chat line"
 BNET_LINK_LABEL = "Battle.net friend link"
 # A packed bitfield CVar (`closedInfoFrames "@@R@@@@@P@@B@@@@@@APH"`): the
 # client writes six bits per byte as `@` (0x40) plus the bits, so the value
-# is all bytes 0x40..0x7F, and a single `@` between two letters looks like
-# `x@y` to EMAIL_RE (M16-126: a launch-client `config-cache.wtf` was refused for
-# it). An email match is not counted when it lies in the quoted value of a
-# `SET` line of a config file, that value is made only of 0x40..0x7F bytes and
-# holds `@@` (an address holds one `@`), and the match touches another `@`
-# on either side. A real address has a dotted domain or digits, `-` or `+`,
-# which are outside that range, so it still refuses; so does one with no
-# `@@` in its value or standing apart from the `@` runs. Chosen over blanking
-# `closedInfoFrames` by default: blanking hides a non-identity value from the
-# corpus, and only that one CVar, where this covers every packed CVar.
+# is bytes 0x40..0x7F, and a single `@` between two letters looks like `x@y`
+# to EMAIL_RE (M16-126: a launch-client `config-cache.wtf` was refused for
+# it). The launch client's value also holds a raw C0 control byte (0x02;
+# CVar values may carry them), so C0 bytes are packed bytes too, except the
+# line breaks, which end the SET line. An email match is not counted when it
+# lies in the quoted value of a `SET` line of a config file, that value is
+# made only of packed bytes and holds `@@` (an address holds one `@`), and
+# the match touches another `@` on either side. A real address has a dotted
+# domain or digits, `-` or `+`, which are outside the packed bytes, so it
+# still refuses (no address holds a control byte, so admitting them opens
+# nothing); so does one with no `@@` in its value or standing apart from the
+# `@` runs. Chosen over blanking `closedInfoFrames` by default: blanking
+# hides a non-identity value from the corpus, and only that one CVar, where
+# this covers every packed CVar.
+_PACKED_BYTE = rb"[\x00-\x09\x0b\x0c\x0e-\x1f\x40-\x7f]"
 PACKED_VALUE_RE = re.compile(
-    _LINE_START + rb'SET[ \t]+[A-Za-z0-9_.]+[ \t]+"((?=[\x40-\x7f]*@@)[\x40-\x7f]*)"',
+    _LINE_START + rb'SET[ \t]+[A-Za-z0-9_.]+[ \t]+"((?=%s*@@)%s*)"' % (_PACKED_BYTE, _PACKED_BYTE),
     re.IGNORECASE,
 )
 # Invented GUIDs for other players: a server id no real GUID of the owner's
