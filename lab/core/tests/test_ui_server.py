@@ -618,7 +618,7 @@ def test_the_token_never_appears_in_a_log_line(
     _send(planted, "GET", _target(planted, "/"))
     _send(planted, "GET", _target(planted, "/api/commands"))
     _send(planted, "GET", _target(planted, "/no-such-page"))
-    _send(planted, "GET", _target(planted, "/../cli.py"))
+    _send(planted, "GET", _target(planted, "/../guard.py"))
     _send(planted, "GET", _target(planted, "/"), host="evil.example")
     _send(planted, "GET", _target(planted, "/"), origin="http://evil.example")
     _send(planted, "POST", _target(planted, "/api/run"), body=b"{not json")
@@ -800,7 +800,7 @@ def _assorted_replies(server: Any) -> list[tuple[str, Reply]]:
         ("bad host", _send(server, "GET", _target(server, "/"), host="evil.example")),
         ("bad origin", _send(server, "GET", _target(server, "/"), origin="http://evil.example")),
         ("not found", _send(server, "GET", _target(server, "/no-such-page"))),
-        ("traversal", _send(server, "GET", _target(server, "/../cli.py"))),
+        ("traversal", _send(server, "GET", _target(server, "/../guard.py"))),
         ("excluded", _run(server, ["danger"], {})),
         ("not a command", _run(server, ["grp"], {})),
         ("unknown parameter", _run(server, ["echo"], {"bogus": "x"})),
@@ -1420,7 +1420,10 @@ def test_static_files_are_the_package_templates(planted: Any) -> None:
 
 def _package_files() -> list[Path]:
     package = Path(importlib.import_module("wowlab_core").__file__ or "").parent
-    return sorted(p for p in package.iterdir() if p.is_file())
+    files = [p for p in package.iterdir() if p.is_file()]
+    # cli.py became the cli/ package (M16-111): its modules are package files too.
+    files += [p for p in (package / "cli").iterdir() if p.is_file()]
+    return sorted(files)
 
 
 def test_static_files_vouch_only_for_templates(
@@ -1455,18 +1458,18 @@ def test_a_package_file_that_is_not_a_template_is_not_served(planted: Any) -> No
 
 
 _TRAVERSALS = [
-    "/../cli.py",
-    "/./cli.py",
-    "/..%2fcli.py",
-    "/%2e%2e/cli.py",
-    "/%2e%2e%2fcli.py",
-    "/%252e%252e%252fcli.py",
-    "/static/../../cli.py",
-    "/static/..%2f..%2fcli.py",
-    "/static/%2e%2e/%2e%2e/cli.py",
-    "/..\\cli.py",
-    "/%5c..%5ccli.py",
-    "/static/..%5c..%5ccli.py",
+    "/../guard.py",
+    "/./guard.py",
+    "/..%2fguard.py",
+    "/%2e%2e/guard.py",
+    "/%2e%2e%2fguard.py",
+    "/%252e%252e%252fguard.py",
+    "/static/../../guard.py",
+    "/static/..%2f..%2fguard.py",
+    "/static/%2e%2e/%2e%2e/guard.py",
+    "/..\\guard.py",
+    "/%5c..%5cguard.py",
+    "/static/..%5c..%5cguard.py",
     "//etc/passwd",
     "/etc/passwd",
     "/../../../../../../../../etc/passwd",
@@ -1474,7 +1477,7 @@ _TRAVERSALS = [
     "/C:/Windows/win.ini",
     "/C:%5cWindows%5cwin.ini",
     "/%00",
-    "/cli.py%00.html",
+    "/guard.py%00.html",
     "/..",
     "/.",
     "/~/.ssh/id_rsa",
@@ -1646,5 +1649,5 @@ def test_serving_and_running_write_no_file(
         assert _argv_of(_run(server, ["echo"], {"path": "x", "tag": ["a"]}))[0] == "echo"
         assert _run(server, ["danger"], {}).status == 403
         assert _send(server, "GET", "/api/commands").status == 403
-        assert _send(server, "GET", _target(server, "/../cli.py")).status in (400, 403, 404)
+        assert _send(server, "GET", _target(server, "/../guard.py")).status in (400, 403, 404)
     assert _listing(root) == before

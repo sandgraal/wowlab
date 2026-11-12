@@ -87,6 +87,22 @@ def test_a_module_value_set_on_the_package_reaches_the_module_that_reads_it(
     assert _cmd_binds._COACH_LOG_BUDGET == 7
 
 
+def test_a_name_deleted_from_the_package_comes_back_to_every_module_on_undo() -> None:
+    """`monkeypatch.delattr(cli, ...)` deletes the name everywhere it was held;
+    its undo, a set of a name the package no longer has, puts it back there."""
+    original = cli._say_err
+    holders = [p for p in _parts() if p.__dict__.get("_say_err") is original]
+    assert len(holders) > 1, "more than one module calls _say_err"
+    m = pytest.MonkeyPatch()
+    try:
+        m.delattr(cli, "_say_err")
+        assert not any("_say_err" in p.__dict__ for p in holders)
+    finally:
+        m.undo()
+    assert cli._say_err is original
+    assert all(p.__dict__.get("_say_err") is original for p in holders)
+
+
 def test_a_name_another_module_binds_to_a_different_object_is_left_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

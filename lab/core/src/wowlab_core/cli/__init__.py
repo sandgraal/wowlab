@@ -2523,6 +2523,9 @@ _PARTS = (
     _cmd_ui,
 )
 _UNSET = object()
+# The modules a name was deleted from along with the package's, so that the
+# next set of that name (a `monkeypatch.delattr` undone) gives it back to them.
+_DELETED_FROM: dict[str, list[types.ModuleType]] = {}
 
 
 class _Package(types.ModuleType):
@@ -2530,13 +2533,16 @@ class _Package(types.ModuleType):
     `monkeypatch.setattr(cli, "_confirm", ...)`) does the same in every
     module of the package that holds the same object under that name, so code
     that looks the name up in its own module's globals sees the change, as
-    it did when the package was one module (M16-111)."""
+    it did when the package was one module (M16-111). A name deleted here and
+    set again is set again in the modules it was deleted from."""
 
     @override
     def __setattr__(self, name: str, value: object) -> None:
         old = self.__dict__.get(name, _UNSET)
         super().__setattr__(name, value)
         if old is _UNSET:
+            for part in _DELETED_FROM.pop(name, []):
+                setattr(part, name, value)
             return
         for part in _PARTS:
             if part.__dict__.get(name, _UNSET) is old:
@@ -2548,9 +2554,11 @@ class _Package(types.ModuleType):
         super().__delattr__(name)
         if old is _UNSET:
             return
-        for part in _PARTS:
-            if part.__dict__.get(name, _UNSET) is old:
-                delattr(part, name)
+        held = [part for part in _PARTS if part.__dict__.get(name, _UNSET) is old]
+        for part in held:
+            delattr(part, name)
+        if held:
+            _DELETED_FROM[name] = held
 
 
 sys.modules[__name__].__class__ = _Package
