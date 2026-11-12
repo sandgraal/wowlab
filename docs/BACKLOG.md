@@ -2330,7 +2330,7 @@ The archive holds the same settings and saved data as the store, but is created 
 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
+## [x] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
 **Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T, M16-107T, M16-108T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
@@ -2538,7 +2538,7 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 
 # M16 follow-ups found in review (filed 2026-11-10, fifth batch)
 
-## [ ] M16-90T — [TEST] `history()` refuses a journal record whose paths are not plain flavor-relative names
+## [x] M16-90T — [TEST] `history()` refuses a journal record whose paths are not plain flavor-relative names
 **Size:** S · **Depends on:** M16-84 · **Sources:** the M16-84T security review (#453); the #455 review
 
 A probe showed that main's `guard.history()` returns whatever strings a record on disk holds in `paths[].path`, `temps_left` and `created_dirs`, for example `../../etc/passwd` followed by an ESC sequence. `_public()` also copies `temps_removed` and `flavor_path` unchecked. The graders cover every path field `_public()` exposes: `paths[].path`, `created_dirs`, `temps_removed` and `temps_left` must pass `_check_rel`. `flavor_path` is absolute by design but must hold no control or bidi character, because `undo`'s plan header prints it. M16-84's `paths_left` is already graded by M16-84T. `_JournalRecord` checks only the hashes and the format, and `_load_journal` runs no `_check_rel` on any path field. `undo()` checks paths later; `history()` never does, so `doctor` and `undo`'s plan can show a planted path. This is `guard.py`, which is load-bearing (ADR-0013), so the graders land first. They cover a record whose path fields hold traversal, absolute, UNC, control-character and bidi values, and expect `history()` to raise `GuardError` ("a damaged record is an error, never skipped") with the install and the store unchanged.
@@ -2547,7 +2547,7 @@ A probe showed that main's `guard.history()` returns whatever strings a record o
 
 **Acceptance:** strict-xfail graders on main, activated by M16-90 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names, and the gate refuses such a flavor
+## [x] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names, and the gate refuses such a flavor
 **Size:** S · **Depends on:** M16-90T · **Sources:** as M16-90T
 
 **Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
@@ -2607,12 +2607,14 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 # M16 follow-ups found in review (filed 2026-11-11, sixth batch)
 
-## [ ] M16-96 — CLI `undo` closes any open record that names no file
+## [x] M16-96 — CLI `undo` closes any open record that names no file
 **Size:** XS · **Depends on:** M16-69 · **Sources:** the M16-93T code review (#462)
 
 `cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
 
 **Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
+
+*Closed 2026-11-12 against M16-69 (#490):* `cli.undo` no longer returns early for an `open` record with no paths and no folders; it closes it through `guard.undo`.
 
 ## [x] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
@@ -2793,7 +2795,7 @@ Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it wh
 - The 1 MB file-size hook entry for `cli.py` is moved or removed.
 - Reviewed by `code-reviewer`.
 
-## [ ] M16-114 — With several flavors, characters are still found, and `wowlab ui` can pick a flavor
+## [x] M16-114 — With several flavors, characters are still found, and `wowlab ui` can pick a flavor
 **Size:** M · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11; LAB_PLAN §16 (CLI conventions), amendment of 2026-11-11
 
 Implement the amendment:
@@ -2817,7 +2819,7 @@ M16-113 changes `ui/__init__.py` and `page.js` at the same time, so keep to the 
 
 # M16 owner testing (filed 2026-11-11)
 
-## [ ] M16-112 — Discovery searches more folders for the install, and says where it looked
+## [x] M16-112 — Discovery searches more folders for the install, and says where it looked
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 (install at `/Games/World of Warcraft` not found); LAB_PLAN §6.1, amendment of 2026-11-11
 
 Implement §6.1's amendment of 2026-11-11 in `install.default_roots` and in the error that discovery raises when it finds nothing.
@@ -2838,7 +2840,7 @@ Keep `default_roots` testable without the real filesystem: the platform, the hom
 - **User-facing:** listed in the PR (wiki: install, getting started).
 - **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
 
-## [ ] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
+## [x] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 ("get rid of this requirement"); LAB_PLAN, `wowlab ui` amendment of 2026-11-11
 
 Replace the one-time boot key (M16-42) with a session that lasts as long as the `wowlab ui` process, as the amendment says:
@@ -2857,7 +2859,7 @@ Remove the "already used" page, its terminal notice, and the `--help` and docs t
 - **User-facing:** listed in the PR (wiki: ui).
 - **Reviews:** `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-115T — [TEST] A record naming a temp outside the flavor is damaged (item 2 amended)
+## [x] M16-115T — [TEST] A record naming a temp outside the flavor is damaged (item 2 amended)
 **Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (e1); the owner's answer of 2026-11-11 ("A") to the M16-90 implementer's block
 
 In `lab/core/tests/test_guard_owner_decisions.py`, `test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist` covers the `NEVER_LOOKED_UP` cases: outside the allowlist, at the install root, under `Data/`, another flavor folder, outside the install, absolute, UNC. For those cases only, expect the forged record to be refused as damaged. Both routes (`transaction()` and `undo()`) raise `GuardError` naming the damaged record, before any write, snapshot or lookup of the forged path. The install, the journal and the store are left unchanged. Keep every other case exactly as it is. The amended cases are strict xfail "M16-90 not implemented", activated by M16-90 by marker deletion.
@@ -2866,23 +2868,53 @@ In `lab/core/tests/test_guard_owner_decisions.py`, `test_constructed_cleanup_rem
 
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
-## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
+## [x] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
 **Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
 
 M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"), spelled out in LAB_PLAN §6.10 (a1):* `wowlab undo` passes over the closed killed undo K, which never took a snapshot, and any record that only closes K. The plan offered is D's, and `--expect <D id>` is accepted. `doctor` names both D and K. Undo records carry `undoes`. Also grade four further cases: a normally completed undo, even one that changed no file, is never passed over; `--expect` naming D while a record newer than D that is not passed over exists is a mismatch; `history()` refuses an `undoes` that names no earlier record; and the transaction route is unchanged. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-107T — [TEST] The journal-keys grader expects `undoes` on an undo record
+## [x] M16-107T — [TEST] The journal-keys grader expects `undoes` on an undo record
 **Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (a1); the M16-69 implementer's report (2026-11-11)
 
 `test_guard_snapshot_kind.py::test_constructed_journal_record_is_unchanged` (M16-09T) pinned the exact key set of every journal record, the undo scenario's included, so no M16-69 could pass it and M16-100T's graders together. The undo case expects `JOURNAL_KEYS | {"undoes"}`, with `undoes` naming the record it undid, strict xfail "M16-69 not implemented". The other cases assert `undoes` is absent.
 
 **Acceptance:** strict xfail on main for the right reason; reviewed by `code-reviewer`. (PR #491.)
 
-## [ ] M16-108T — [TEST] Every closed record that never took a snapshot is passed over
+## [x] M16-108T — [TEST] Every closed record that never took a snapshot is passed over
 **Size:** XS · **Depends on:** M16-100T · **Sources:** the owner's answers of 2026-11-11 to the M16-69 code review (#490: "Skip it", then "Skip all, show D"); LAB_PLAN §6.10 amendment (a2)
 
 The #490 code review found that under (a1) a closed record that never took a snapshot locks `undo` out of every earlier change when it has no `undoes`. That happens when the gate closes a record itself after its pre-write snapshot fails, and when a killed transaction is closed by `undo`. (a2) passes over every such record. Change M16-93T's transaction-route grader so that, after the killed K is closed, the target is the interrupted change D before it, not K. `doctor` then reports D with D's own `wowlab undo --expect <D id>` line and names K, and exits 1. A further `wowlab undo --expect <D id> --yes` settles D and leaves `doctor` clean. Add graders for the failed-snapshot route: a change whose pre-write snapshot raises `SnapshotError` after a cleanup leaves the change before it as the target, so `--expect <earlier id>` is accepted and `doctor` reports nothing new. Also grade that an `open` K, still unclosed, stays the target. This is a `guard.py` grader change, with strict-xfail markers "M16-69 not implemented".
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, tenth batch)
+
+## [ ] M16-116 — `char list --account X --json` says which flavors lack the account
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-114 domain re-review (#496)
+
+With several flavors, `wowlab char list --account X` prints "Flavor F (v): no account X" for a flavor without X, but `--json` leaves F out of `flavors[]`, so a script cannot tell "no account X there" from "flavor not looked at". Keep F in `flavors[]` with an empty character list and a field that says the account was not found there (for example `account_found: false`), present on every flavor entry when `--account` is given. Text output unchanged.
+
+**Acceptance:** a test on the M16-114 two-flavor setup (`test_cli_flavors.py`) for text and `--json`; the command reference regenerated; user-facing change listed in the PR. Reviewed by `code-reviewer`.
+
+## [ ] M16-117T — [TEST] Flatten `JOURNAL_SCENARIO_PARAMS` and drop its RUF034 ignore
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-69 PR (#490), lint note
+
+Deleting the M16-107T marker left `JOURNAL_SCENARIO_PARAMS` in `lab/core/tests/test_guard_snapshot_kind.py` with a conditional whose two branches are equal, and root `pyproject.toml` carries a per-file `RUF034` ignore for it. Replace the conditional with the plain value and remove the ignore. Nothing a test asserts changes. It is a `guard.py` grader, so it lands as its own [TEST] change.
+
+**Acceptance:** the file's collected test ids and outcomes are identical before and after (`pytest --collect-only -q` and a run, pasted); `make lint` clean without the ignore. Reviewed by `code-reviewer`.
+
+## [ ] M16-118 — `doctor` says "version unknown" in words when `.build.info` has no row for a flavor
+**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-11 (`_classic_beta_` beside `_forever_`)
+
+For a flavor whose product has no `.build.info` row, `wowlab doctor` prints "Flavor _classic_beta_: product …, version no version in .build.info". Say it as a sentence a player can act on: the version is unknown because `.build.info` lists no row for that product, which happens when the Battle.net app has not installed or updated that flavor; reads still work and nothing is wrong with the install. `--json` unchanged (`version: null`).
+
+**Acceptance:** a pinned wording test on a constructed flavor folder with no matching row (an L8 boundary input); `domain-reviewer` confirms the explanation; user-facing change listed in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-119 — `wowlab ui` shows an error's notes, not only its message
+**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-11 (screenshot of the Commands page with the no-install error); M16-112 (#494)
+
+When a run fails with an `ErrorReport` that has `notes` (since M16-112, the no-install error lists every folder searched and the lines that name the install), the Commands page shows only `message`. Show the notes under it, one line each, as plain text (no HTML from the report). Every other error stays as it is.
+
+**Acceptance:** a Node-stub test in the style of `test_ui_explorer.py`: a failed run whose report has notes shows each note in order as text; one without notes is unchanged; a note holding `<` is shown literally. User-facing change listed in the PR (wiki: ui). Reviewed by `code-reviewer` and `security-reviewer` (ui template).
