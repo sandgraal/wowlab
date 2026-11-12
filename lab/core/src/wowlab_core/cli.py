@@ -11808,6 +11808,11 @@ class CharListFlavor(_Out):
     folder: str
     version: str | None
     characters: int
+    # With --account (M16-116): True, the account folder was found in this
+    # flavor and read; False, this flavor has no such account folder (it is
+    # still listed, with `characters` 0); None, no --account was given, or
+    # wowlab could not look where that folder would be (see `not_looked_at`).
+    account_found: bool | None = None
 
 
 class CharListReport(_Out):
@@ -11825,7 +11830,8 @@ class CharListReport(_Out):
     # then names its own `flavor`, as it does with one.
     flavor_folder: str | None
     # Each flavor listed, in discovery order, with its version and how many
-    # character folders it holds (M16-114).
+    # character folders it holds (M16-114); with --account, a flavor without
+    # that account too, marked `account_found: false` (M16-116).
     flavors: list[CharListFlavor] = []
     # --account as the layout spells the account folder, or as the place wowlab
     # could not look inside spells it; as typed when neither names it (such as
@@ -11981,9 +11987,11 @@ def char_list(
     missed: CliError | None = None
     # Each flavor in order, with its rows, or None when it has no such account.
     shown: list[tuple[install.Flavor, list[labaddon.CharacterFile] | None]] = []
+    # The flavors whose --account folder wowlab could not look for (M16-116).
+    unsure: set[str] = set()
     for chosen in chosen_ones:
         try:
-            folder, mine, hidden = _char_list_flavor(
+            folder, mine, hidden, looked = _char_list_flavor(
                 inst, chosen, account, root, json_out and not brief
             )
         except CliError as exc:
@@ -11995,6 +12003,8 @@ def char_list(
             shown.append((chosen, None))
             continue
         acct_folder = folder if acct_folder is None else acct_folder
+        if not looked:
+            unsure.add(chosen.folder)
         mine = [e.model_copy(update={"flavor": chosen.folder}) for e in mine]
         hidden = [n.model_copy(update={"flavor": chosen.folder}) for n in hidden]
         entries += mine
@@ -12015,9 +12025,10 @@ def char_list(
             CharListFlavor(
                 folder=f.folder,
                 version=f.version,
-                characters=sum(1 for e in mine if not _first_name_folder(e)),
+                characters=sum(1 for e in mine or [] if not _first_name_folder(e)),
+                account_found=(None if account is None or f.folder in unsure else mine is not None),
             )
-            for f, mine in blocks
+            for f, mine in shown
         ],
         account=acct_folder,
         characters=entries,
@@ -12088,9 +12099,10 @@ def _char_list_flavor(
     account: str | None,
     root: Path | None,
     keep_records: bool,
-) -> tuple[str | None, list[labaddon.CharacterFile], list[labaddon.NotLookedAt]]:
+) -> tuple[str | None, list[labaddon.CharacterFile], list[labaddon.NotLookedAt], bool]:
     """One flavor's part of `char list`: the account folder as named, the
-    rows and the places not looked inside."""
+    rows, the places not looked inside, and False when the --account folder
+    was not found but could be in one of those places (M16-116)."""
     lay = layout.Layout.for_flavor(chosen, inst.root)
     acct_folder: str | None = None
     hidden: list[labaddon.NotLookedAt] | None = None
@@ -12105,7 +12117,7 @@ def _char_list_flavor(
                 raise
             acct_folder = next((n.account for n in hidden if n.account), account)
     if hidden is not None:
-        return acct_folder, [], hidden
+        return acct_folder, [], hidden, False
     # A refused row's `char show` advice repeats --root only when it was
     # given: otherwise $WOWLAB_WOW_ROOT or discovery finds the install
     # again, and no absolute path lands in text that gets pasted.
@@ -12117,7 +12129,7 @@ def _char_list_flavor(
         every_folder=True,
         installed_version=chosen.version,
     )
-    return acct_folder, found.characters, found.not_looked_at
+    return acct_folder, found.characters, found.not_looked_at, True
 
 
 def _char_list_rows(
