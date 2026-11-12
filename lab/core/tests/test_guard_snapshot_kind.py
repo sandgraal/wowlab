@@ -352,15 +352,7 @@ def test_constructed_pre_write_and_user_snapshot_of_one_tree_share_a_fingerprint
 
 
 # Only the undo record gains a key (§6.10 (a1)); M16-69 makes guard write it.
-JOURNAL_SCENARIO_PARAMS = [
-    pytest.param(
-        name,
-        id=f"constructed-{name}",
-    )
-    if name == "undo"
-    else pytest.param(name, id=f"constructed-{name}")
-    for name in SCENARIOS
-]
+JOURNAL_SCENARIO_PARAMS = [pytest.param(name, id=f"constructed-{name}") for name in SCENARIOS]
 
 
 @pytest.mark.parametrize("scenario", JOURNAL_SCENARIO_PARAMS)
