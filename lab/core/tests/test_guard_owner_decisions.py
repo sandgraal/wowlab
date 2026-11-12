@@ -1985,7 +1985,6 @@ def _not_a_temp_param(case: str) -> Any:
         return pytest.param(
             case,
             id=f"constructed-{case}",
-            marks=pytest.mark.xfail(strict=True, reason="M16-90 not implemented"),
         )
     return pytest.param(case, id=f"constructed-{case}")
 

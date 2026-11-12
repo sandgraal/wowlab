@@ -232,7 +232,6 @@ HOSTILE_RELATIVE: tuple[tuple[str, str], ...] = (
 RELATIVE_FIELDS = ("paths", "created_dirs", "temps", "temps_removed", "temps_left")
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize("field", RELATIVE_FIELDS)
 @pytest.mark.parametrize(
     "value",
@@ -308,7 +307,6 @@ HOSTILE_FLAVOR_PATH: tuple[tuple[str, str, str], ...] = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize(
     ("where", "char"),
     [pytest.param(w, c, id=f"constructed-{n}") for n, w, c in HOSTILE_FLAVOR_PATH],
@@ -351,7 +349,6 @@ def forbidden_flavor_characters() -> list[int]:
     return codes
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 def test_constructed_every_forbidden_character_in_a_flavor_path_is_damaged(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -370,7 +367,6 @@ def test_constructed_every_forbidden_character_in_a_flavor_path_is_damaged(
 # ─── a damaged record is never skipped ───────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize("field", RELATIVE_FIELDS)
 def test_constructed_a_damaged_older_record_is_not_skipped(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None, field: str
@@ -502,7 +498,6 @@ def assert_transaction_refused(
     assert journal_files(store) == journal_before, "the refused transaction journaled"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize(
     "dry_run",
     [pytest.param(False, id="constructed-write"), pytest.param(True, id="constructed-dry-run")],
@@ -529,7 +524,6 @@ def test_constructed_transaction_refuses_a_flavor_path_with_a_forbidden_characte
     assert_transaction_refused(guard, odd, moved, store, dry_run=dry_run)
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize(
     "dry_run",
     [pytest.param(False, id="constructed-write"), pytest.param(True, id="constructed-dry-run")],
@@ -553,7 +547,6 @@ def test_constructed_transaction_refuses_a_clean_symlink_to_a_forbidden_path(
     assert_transaction_refused(guard, via_link, moved, store, dry_run=dry_run)
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 @pytest.mark.parametrize("char", GATE_PARAMS)
 def test_constructed_undo_refuses_a_flavor_path_with_a_forbidden_character(
     guard: Any,
@@ -686,7 +679,6 @@ def history_refuses(guard: Any, file: Path, raw: dict[str, Any], store: Path, co
     return False
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 def test_constructed_the_gate_refuses_every_forbidden_character_in_a_flavor_path(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:
@@ -709,7 +701,6 @@ def test_constructed_the_gate_refuses_every_forbidden_character_in_a_flavor_path
     assert tried > 100, f"the file system held only {tried} of the characters"
 
 
-@pytest.mark.xfail(strict=True, reason="M16-90 not implemented")
 def test_constructed_the_gate_and_history_refuse_the_same_characters(
     guard: Any, tmp_path: Path, world: Path, flavor: Flavor, idle: None
 ) -> None:
