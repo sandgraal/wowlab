@@ -1491,7 +1491,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new comman
 
 ---
 
-## [ ] M16-05 — Owner: the launch-client session
+## [x] M16-05 — Owner: the launch-client session
 **Size:** S · **owner** · **Depends on:** the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
 
 Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's runbook on the launch client and records:
@@ -2960,7 +2960,7 @@ The conductor recommends (a). The owner decides (a "stop and ask" item: it chang
 
 ---
 
-## [ ] M16-125 — The launch-client capture lands, and the file map follows M16-05
+## [x] M16-125 — The launch-client capture lands, and the file map follows M16-05
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
 
 M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is staged on the owner's machine: 33 files, scrubbed by `scripts/lab_capture.py`, with its provenance rows printed by the tool.
@@ -2972,7 +2972,7 @@ M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is sta
 
 ---
 
-## [ ] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
+## [x] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
 
 Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
