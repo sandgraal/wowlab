@@ -3,11 +3,12 @@
 
 The install is the captured tree (`fixtures/macos/`): its `.build.info`
 and its flavor folder, copied into `tmp_path` under the name its provenance
-row gives. Constructed (L8, boundary): a second flavor folder, `_forever_`,
+row gives. Constructed (L8, boundary): a second flavor folder, `_old_beta_`,
 holding only a `.flavor.info` whose product no `.build.info` row names, as
-on the owner's macOS install of 2026-11-11 (`_classic_beta_` beside
-`_forever_`, one of them with no row). A second constructed folder's
-`.flavor.info` names no product at all. The user data directory is
+on the owner's macOS install of 2026-11-11 (two flavor folders, one of them
+with no row). A second constructed folder's `.flavor.info` names no product
+at all. A third names a product whose constructed `.build.info` row, added
+to the captured file, has a blank Version cell. The user data directory is
 redirected and the process table holds no client. Nothing reads or writes a
 real install.
 """
@@ -26,18 +27,18 @@ from wowlab_core import cli, install
 
 CAPTURE = Path(__file__).resolve().parent / "fixtures" / "macos"
 FLAVOR = "_classic_beta_"  # the provenance row's flavor folder; tests may name it (L6)
-NO_ROW = "_forever_"  # constructed
+NO_ROW = "_old_beta_"  # constructed: a leftover folder
 NO_ROW_PRODUCT = "wow_constructed_no_row"  # constructed: no .build.info row names it
 NO_PRODUCT = "_blank_"  # constructed: .flavor.info with the header and no product
+BLANK_VERSION = "_no_version_"  # constructed: its product's row has a blank Version cell
+BLANK_VERSION_PRODUCT = "wow_constructed_blank_version"
 
 WORDS = (
     f"Flavor {NO_ROW}: product {NO_ROW_PRODUCT}, version unknown\n"
-    "  The version is unknown because .build.info, the Battle.net app's list of the "
-    f"game versions it has installed, has no row for product {NO_ROW_PRODUCT}. That "
-    "happens when this folder was left behind by a game version the app no longer "
-    "lists (a beta that ended or was renamed, or one uninstalled) or one it has not "
-    "finished installing. wowlab still reads this folder, and this alone does not mean "
-    "the install is damaged.\n"
+    "  .build.info, where the Battle.net app lists the game versions installed here, "
+    f"has no row for product {NO_ROW_PRODUCT}. Usually this folder was left behind by a "
+    "beta that ended or was renamed, or by a game version that was uninstalled. wowlab "
+    "still reads its settings and addons; lookups that need the game version cannot run.\n"
 )
 
 
@@ -52,15 +53,26 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
 
 
-def _install(tmp_path: Path, *, blank: bool = False) -> Path:
+def _flavor_info(root: Path, folder: str, product: str) -> None:
+    (root / folder).mkdir()
+    (root / folder / ".flavor.info").write_bytes(f"Product Flavor!STRING:0\n{product}".encode())
+
+
+def _install(
+    tmp_path: Path, *, blank: bool = False, blank_version: bool = False, product: str = ""
+) -> Path:
     root = tmp_path / "wow"
     root.mkdir()
     shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
     shutil.copytree(CAPTURE / "forever", root / FLAVOR)
-    (root / NO_ROW).mkdir()
-    (root / NO_ROW / ".flavor.info").write_bytes(
-        f"Product Flavor!STRING:0\n{NO_ROW_PRODUCT}\n".encode()
-    )
+    _flavor_info(root, NO_ROW, f"{product or NO_ROW_PRODUCT}\n")
+    if blank_version:
+        # A constructed row: 15 cells as in the captured header, Version
+        # (the 13th) blank, Product last.
+        cells = ["us", "1"] + [""] * 12 + [BLANK_VERSION_PRODUCT]
+        with (root / ".build.info").open("ab") as out:
+            out.write(("|".join(cells) + "\n").encode())
+        _flavor_info(root, BLANK_VERSION, f"{BLANK_VERSION_PRODUCT}\n")
     if blank:
         (root / NO_PRODUCT).mkdir()
         (root / NO_PRODUCT / ".flavor.info").write_bytes(b"Product Flavor!STRING:0\n")
@@ -95,9 +107,31 @@ def test_a_flavor_info_with_no_product_says_so_constructed(tmp_path: Path) -> No
 
     assert (
         f"Flavor {NO_PRODUCT}: product (none), version unknown\n"
-        "  The version is unknown because this folder's .flavor.info names no product, "
-        "so no row of .build.info can match it.\n"
+        "  This folder's .flavor.info gives no product code (it is empty or could not be "
+        "read), so no .build.info row can match it.\n"
     ) in text
+
+
+def test_a_matched_row_with_a_blank_version_says_so_not_no_row_constructed(
+    tmp_path: Path,
+) -> None:
+    text = _doctor(_install(tmp_path, blank_version=True))
+
+    assert (
+        f"Flavor {BLANK_VERSION}: product {BLANK_VERSION_PRODUCT}, version unknown\n"
+        f"  The .build.info row for product {BLANK_VERSION_PRODUCT} has no version in it.\n"
+    ) in text
+    assert f"has no row for product {BLANK_VERSION_PRODUCT}" not in text
+    # The folder with no row still gets the no-row words.
+    assert WORDS in text
+
+
+def test_a_product_with_control_characters_is_escaped_constructed(tmp_path: Path) -> None:
+    hostile = "wow\x1b[31mred"
+    text = _doctor(_install(tmp_path, product=hostile))
+
+    assert "\x1b" not in text
+    assert "has no row for product wow\\x1b[31mred." in text
 
 
 def test_json_still_says_version_null_constructed(tmp_path: Path) -> None:
