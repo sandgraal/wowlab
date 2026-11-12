@@ -2955,3 +2955,26 @@ With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and list
 The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
 
 **Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M16-125 — The launch-client capture lands, and the file map follows M16-05
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
+
+M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is staged on the owner's machine: 33 files, scrubbed by `scripts/lab_capture.py`, with its provenance rows printed by the tool.
+- Move it into the corpus as its own run folder (`macos-70888/`, laid out as `macos/forever/...` in the staging, per the fixtures README's "one run per top-level folder" rule), with one provenance row per file.
+- Whatever it shows that the parsers or `docs/LAB_FORMATS.md` did not expect is reported, not special-cased (L4).
+- `filemap.toml` and the regenerated `docs/LAB_FILE_MAP.md` take the results of `docs/LAB_FORMATS.md` §6 and §7 (amended 2026-11-12): the character `bindings-cache.wtf` exists when character-specific key bindings are on (its **[verify]** is resolved); offline edits to this character's bindings and macros, `Config.wtf` and the account `config-cache.wtf` survived login on the launch client with `synchronizeBindings` on and off. Wording for players follows `.claude/rules/player-copy.md`; the Edit column is unchanged unless the reviewers agree.
+
+**Acceptance:** `make test-parser` green with the new root; every new file has a row; `filemap.py --check` and `test_filemap.py` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (fixtures).
+
+---
+
+## [ ] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
+
+Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
+- **Other players' chat.** The automatic SavedVariables pick chose a UI addon's file as "colour and link escapes". The file held chat history: guild lines in the form `|Hchannel:GUILD|h[Guild]|h |Hplayer:<name-realm>…|h[<name>]|h: <message>`, with other players' names and words. The tool only printed a `look` line for free text. A file holding a `|Hplayer:` link whose name is not the captured character's (or chat-channel lines carrying another speaker) is refused, as an unmapped GUID is, and the automatic pick passes it over with that reason. `--pseudonymise-other-players` stays for combat logs only unless the reviewers decide otherwise.
+- **False positive.** The character `config-cache.wtf` was refused for "email address x1": the `closedInfoFrames` CVar is a packed bitfield whose bytes matched the pattern (`…@@@@<x>@<y>.<z>@@…`). The email check does not fire on a CVar value made of such packed bytes, or the CVar is blanked by default; the choice is recorded. A real email in a CVar value is still refused.
+
+**Acceptance:** tests on constructed inputs, labelled (hostile-input tests are allowed constructed, L8); the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the tool's refusal and pick-over lines.
