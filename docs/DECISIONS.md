@@ -399,6 +399,16 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amendment (2026-10-21, later; Accepted 2026-10-21 — owner decision in session, answering the conductor's question after code review; the status edit was made by the conductor on the owner's explicit instruction):** to item (2) of the amendment above. The gate's download count is GitHub's release-asset downloads plus PyPI's downloads of the same versions, read by hand at the gate from the public figures on pypistats.org. "From GitHub's own counts" is read that way. The issues and discussions threshold is unchanged.
 
+
+**Amendment (2026-11-12, M17-07; Proposed — the owner accepts, amends or rejects it under M17-13):** double-click distribution. The owner picked the companion wave on 2026-11-12 (`docs/LAB_PLAN.md` §19, CW-5), whose audience does not use a terminal. Distribution, as amended on 2026-10-21, keeps "no installer and no signed or frozen binary until the gate passes and a further ADR says so". The gate starts at v0.2, which has not shipped. This amendment is that further ADR for two artefacts only, before the gate:
+1. **A macOS app.** A zipped `wowlab.app` that starts `wowlab ui` from the released version, attached to each release with its hash in `SHA256SUMS` and the attestations M16-43 set up. It needs no git clone, no editable install and no terminal. It is built by the tool ADR-0038 names (if accepted), from the tagged source, in the release workflow. The owner's `install-wowlab-app.sh` is its starting point, not its form: that script needs git and uv.
+2. **A Windows frozen binary.** `wowlab.exe` (with its folder, zipped), built the same way and attached the same way. Double-clicking it opens the UI.
+
+Both stay **unsigned and unnotarised**. The release notes and `INSTALL.md` say how to open an unsigned app on each system (Gatekeeper's "Open", SmartScreen's "Run anyway") and how to check the hash. Signing costs money and an identity process and needs its own ADR.
+
+Unchanged: the wheel, the sdist and PyPI stay the primary distribution; no installer (no `.pkg`, `.msi` or `.dmg` that runs scripts at install time); the gate, its thresholds and its counts (the two new downloads count as release-asset downloads); "Supported platforms" — a platform stays "untested" in the README until CI runs the suite on it **and** a human has run the first-run flow; the trust model, L1 to L8, and every other clause. Neither artefact may add a network call, an auto-updater or anything that runs at login.
+
+Consequences: a release grows by two downloads of tens of megabytes each, and the release workflow gains build jobs on `macos-latest` and `windows-latest` with the same permissions rules as the existing release job (`contents: write` only where the upload happens, pinned actions, `security-reviewer`). Antivirus and Gatekeeper warnings on unsigned builds become a support topic; INSTALL.md answers it once. If the owner rejects this amendment, M17-08 and M17-09 are not built and nothing else in M17 changes.
 ---
 
 ## ADR-0032 — A model may advise on a character's bindings and macros; how it sees the data
@@ -572,3 +582,30 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
   - the generic `doctor` answer exists before the freeze is cited to close any compound case;
   - it is graded once, against a damaged-journal and a missing-manifest case (constructed, L8 boundary);
   - its wording follows the existing `doctor` rules: no ticket or module ids, and the command last.
+
+---
+
+## ADR-0038 — The double-click builds are made with PyInstaller, in one-folder mode, from the released wheel
+
+**Status:** Proposed (2026-11-12)
+
+**Context:** ADR-0031's amendment of 2026-11-12 (M17-07, Proposed) allows a macOS app and a Windows frozen binary as release assets. ADR-0030 says a build toolchain needs its own ADR naming its purpose, where it lives, how it is verified and what it may not do. wowlab is pure Python 3.12 with no C extension of its own; its runtime dependencies are the list in `docs/LAB_PLAN.md` §6, plus package data (the UI templates, the vendored three.js of ADR-0034, the fonts of ADR-0035). The candidates:
+- **PyInstaller** (GPL with a bootloader exception that allows distributing the built app under any licence). The most used freezer for pure-Python apps; builds a `.app` on macOS and an `.exe` on Windows from the same spec; needs no compiler. Its *one-file* mode unpacks to a temp folder at each start and is the form antivirus engines flag most; its *one-folder* mode is flagged less and starts faster.
+- **Nuitka** compiles to C. Smaller and faster binaries, but it needs a C compiler on each runner, builds take minutes to tens of minutes, and its output is harder to review.
+- **Briefcase** (BeeWare) makes platform-native app bundles and installers. It is shaped around installers (`.msi`, `.dmg`), which ADR-0031 does not allow, and adds its own project layout.
+- **An embedded CPython** (python.org's Windows embeddable zip, or a python-build-standalone build) with the wheel installed into it and a small launcher. Nothing is frozen, so nothing unpacks at runtime; but it needs a launcher of its own on each system (a `.cmd` shows a console window; a native launcher is a second toolchain), and there is no common macOS form.
+- **cx_Freeze** and **PyOxidizer**: cx_Freeze is close to PyInstaller with a smaller user base; PyOxidizer is no longer maintained.
+
+**Decision:** If the owner accepts ADR-0031's amendment of 2026-11-12, both artefacts are built with **PyInstaller**, one pinned version, in **one-folder** mode:
+1. **Where it lives.** Only in the release workflow and one spec file under `packaging/` (with its launcher stub, if any). It is a build-time dependency only, in a dependency group of its own; it is never a runtime dependency and never imported by `wowlab_core`.
+2. **Input.** The wheel the same workflow built for the tag, installed into a clean virtual environment on the runner. Never the working tree, never an editable install.
+3. **Output.** `wowlab.app` (zipped) on `macos-latest`, `wowlab` folder with `wowlab.exe` (zipped) on `windows-latest`; each hashed into `SHA256SUMS` and attested like the wheel. Starting either one runs `wowlab ui`, which opens the browser as it does today.
+4. **How it is verified.** CI starts each build headless on its runner, checks `wowlab --version` against the tag, starts `wowlab ui` without a browser and fetches its page with the session token, then stops it. A test pins the PyInstaller version and the spec file's hash; changing either is a PR that says why. The owner opens the macOS app once on their Mac before the first release that carries it (M17-08); Windows stays "untested" until M13-02's human run.
+5. **What it may not do.** No one-file mode, no UPX compression (both raise antivirus flags), no code signing with a borrowed or self-made certificate, no hidden imports beyond what the spec lists and a test checks, no runtime hooks that change what the Lab does, no auto-update and no network access of its own. The built app reads and writes exactly what the wheel does (L1, L2).
+
+**Consequences:**
+- Two more runners per release (`macos-latest`, `windows-latest`) and a few minutes of build time; the release is published only when every build and smoke test passes.
+- Each download is tens of megabytes, because it carries Python. The wheel stays the small, preferred install for anyone with a terminal.
+- Unsigned builds draw Gatekeeper and SmartScreen warnings, and some antivirus engines flag PyInstaller apps whatever their content; one-folder mode, no UPX and published hashes reduce this, and `INSTALL.md` explains it. A reported false positive is answered with the hash and the attestation, and reported to the antivirus vendor by the owner if it persists.
+- ADR-0030's list gains: "PyInstaller, build-time only, in the release workflow, under ADR-0038".
+- If a later need (a smaller download, signing, an installer) outgrows this, a new ADR replaces this one; the artefacts' names and the smoke test stay.
