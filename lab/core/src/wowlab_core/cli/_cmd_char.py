@@ -1550,12 +1550,19 @@ class CharHistoryReport(_Out):
 _HISTORY_NOTES = [
     *_CHAR_NOTES,
     "One row per save: copies with the same save time are one record, however many "
-    "snapshots hold it. A restore gives the file a new time, so a restored record can "
-    "show again as a later row.",
+    "snapshots hold it. A restore gives the file a new time, so a restored record shows "
+    "again as a later row, marked with the save whose contents it has.",
     "Item names are each link's bracketed text, and item levels and the average are the "
     "client's figures as recorded; nothing is fetched.",
+    "A gear change is a slot whose item differs: another item id, or the same item id with "
+    "a different enchant, gems, bonus ids, modifiers or item level. A link also carries the "
+    "character's level and spec, which are not counted as a change to the item.",
+    "Currencies are what the currency panel listed through your filter and collapsed "
+    "headers at that save; a currency under a collapsed header is not listed, so a row "
+    "says when the panel was read differently.",
     "Spec and currency names come from game-data tables already downloaded for the "
-    "installed client (wowlab db2 fetch); without them the id is shown.",
+    "installed client (wowlab db2 fetch), even for older saves; without them the id is "
+    "shown.",
 ]
 _HISTORY_FEW = (
     "To see this character change over time, take a snapshot after you play "
@@ -1566,18 +1573,27 @@ _HISTORY_FEW = (
 
 def _history_names(
     version: str | None,
-) -> tuple[Callable[[int], str | None], Callable[[int], str | None]]:
-    """Spec and currency names from the tables cached for `version`."""
-    cache: dict[tuple[str, int], str | None] = {}
+) -> tuple[Callable[[int, int | None], str | None], Callable[[int], str | None]]:
+    """Spec names (by the body type, as `char show` and `char gear` name
+    them) and currency names from the tables cached for `version`."""
+    cache: dict[tuple[str, int, int | None], str | None] = {}
 
-    def lookup(table: str, row_id: int) -> str | None:
+    def lookup(table: str, female: str, row_id: int, sex: int | None) -> str | None:
         if version is None:
             return None
-        if (table, row_id) not in cache:
-            cache[(table, row_id)] = _cached_name(table, "Name_lang", version, row_id, None)
-        return cache[(table, row_id)]
+        key = (table, row_id, sex)
+        if key not in cache:
+            cache[key] = _cached_name(table, female, version, row_id, sex)
+        return cache[key]
 
-    return (lambda i: lookup("ChrSpecialization", i)), (lambda i: lookup("CurrencyTypes", i))
+    def spec(row_id: int, sex: int | None) -> str | None:
+        table, female = _NAME_TABLES["spec"]
+        return lookup(table, female, row_id, sex)
+
+    def currency(row_id: int) -> str | None:
+        return lookup("CurrencyTypes", "Name_lang", row_id, None)
+
+    return spec, currency
 
 
 def _history_item(item: charhistory.HistoryItem | None) -> str:
@@ -1591,9 +1607,12 @@ def _history_item(item: charhistory.HistoryItem | None) -> str:
 
 def _history_head(row: charhistory.HistoryRow) -> str:
     level = f"level {row.level}" if row.level is not None else "level not recorded"
-    ilvl = (
-        f"item level {row.item_level}" if row.item_level is not None else "item level not recorded"
-    )
+    if row.item_level is not None:
+        ilvl = f"equipped item level {row.item_level}"
+    elif row.item_level_absent == "the client returned no equipped average":
+        ilvl = "equipped item level not returned"
+    else:
+        ilvl = "equipped item level not recorded"
     spec = row.spec
     if spec.id is None:
         spec_words = "spec not recorded"
@@ -1604,6 +1623,22 @@ def _history_head(row: charhistory.HistoryRow) -> str:
     return f"{_local_time(row.saved_at_ns)}  {level}, {ilvl}, {spec_words}"
 
 
+def _gear_change_words(g: charhistory.GearChange) -> str:
+    slot = f"slot {g.slot} {g.slot_name}" if g.slot_name else f"slot {g.slot}"
+    if g.before is not None and g.after is not None and g.differs != ["item id"]:
+        what = (
+            f"{_history_item(g.after)}, same item id, a different instance "
+            f"({', '.join(g.differs)}); before: {_history_item(g.before)}"
+        )
+    else:
+        what = f"{_history_item(g.before)} to {_history_item(g.after)}"
+    return f"  gear: {slot}: {what}"
+
+
+def _currency_value(n: int | None) -> str:
+    return "not listed" if n is None else str(n)
+
+
 def _history_lines(row: charhistory.HistoryRow) -> list[str]:
     where: list[str] = []
     if row.snapshots:
@@ -1611,32 +1646,26 @@ def _history_lines(row: charhistory.HistoryRow) -> list[str]:
     if row.live:
         where.append("the file in the install")
     lines = [f"  from {' and '.join(where)}"]
+    if row.same_bytes_as_ns is not None:
+        lines.append(
+            f"  same contents as the save of {_local_time(row.same_bytes_as_ns)}: likely "
+            "restored, so the time is when it was put back"
+        )
     if row.changed_from_ns is None:
         lines.append("  the oldest record wowlab has")
         return lines
     if row.gear_not_compared is not None:
         lines.append(f"  gear not compared: {row.gear_not_compared}")
-    for g in row.gear_changes:
-        slot = f"slot {g.slot} {g.slot_name}" if g.slot_name else f"slot {g.slot}"
-        same = (
-            g.before is not None
-            and g.after is not None
-            and (g.before.name, g.before.item_level) == (g.after.name, g.after.item_level)
-        )
-        what = (
-            f"{_history_item(g.after)}, same item, its link differs (enchant, gems, bonus ids or how the client "
-            "writes links)"
-            if same
-            else f"{_history_item(g.before)} to {_history_item(g.after)}"
-        )
-        lines.append(f"  gear: {slot}: {what}")
+    lines += [_gear_change_words(g) for g in row.gear_changes]
     if row.currencies_not_compared is not None:
         lines.append(f"  currencies not compared: {row.currencies_not_compared}")
     for c in row.currency_changes:
         name = f"{c.name} (currency {c.id})" if c.name else f"currency {c.id}"
-        before = "none" if c.before is None else str(c.before)
-        after = "none" if c.after is None else str(c.after)
-        lines.append(f"  currency: {name}: {before} to {after}")
+        lines.append(
+            f"  currency: {name}: {_currency_value(c.before)} to {_currency_value(c.after)}"
+        )
+    if row.currency_panel_changed is not None:
+        lines.append(f"  {row.currency_panel_changed}")
     if (
         not row.gear_changes
         and not row.currency_changes
@@ -1658,7 +1687,7 @@ def char_history(
     notes_out: NotesOpt = False,
 ) -> None:
     """One character over time: the WowLab.lua every snapshot holds, and the
-    one in the install, one row per save with its level, average item level
+    one in the install, one row per save with its level, equipped item level
     and spec, and the gear and currencies that changed from the save before.
     Without --character, the character whose WowLab.lua was written last.
     A snapshot whose copy cannot be read is listed with the reason. Reads
@@ -1714,6 +1743,19 @@ def char_history(
         raise typer.Exit(EXIT_ERROR)
 
 
+def _history_summary(report: CharHistoryReport) -> str:
+    """The line above the rows: how many saves, and where they came from."""
+    n = len(report.rows)
+    if not n:
+        return "No save of this character could be read."
+    where = f"from {report.snapshots_holding} of {_plural(report.snapshots_searched, 'snapshot')}"
+    if any(r.live for r in report.rows):
+        where += " and the file in the install"
+    elif any(u.where == "install" for u in report.unreadable):
+        where += " (the file in the install could not be read; see below)"
+    return f"{_plural(n, 'save')}, {where}, oldest first:"
+
+
 def _say_char_history(
     report: CharHistoryReport,
     acct: layout.Account,
@@ -1727,13 +1769,7 @@ def _say_char_history(
         keep=held,
     )
     n = len(report.rows)
-    _say(
-        f"{_plural(n, 'save')}, from {report.snapshots_holding} of "
-        f"{_plural(report.snapshots_searched, 'snapshot')} and the file in the install, "
-        "oldest first:"
-        if n
-        else "No save of this character could be read."
-    )
+    _say(_history_summary(report))
     for row in report.rows:
         _say(_history_head(row))
         for line in _history_lines(row):

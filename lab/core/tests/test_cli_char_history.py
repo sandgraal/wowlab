@@ -28,7 +28,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -198,14 +200,29 @@ def test_rows_carry_level_item_level_and_spec_as_each_record_holds_them(
         assert row["client_version"] == client.version
 
 
-def _slots(rec: tuple[str, str]) -> dict[int, tuple[str, int | None]]:
-    from wowlab_core import gear, labaddon
+_PAYLOAD = re.compile(r"\|Hitem:([^|]*)\|h\[([^\]]*)\]")
 
-    record = labaddon.parse_char(_record(*rec))
-    section = record.gear
+
+def _instance(link: str) -> tuple[str, ...]:
+    """A link's payload fields with field 8 (link level) and 9 (spec), the
+    character's, blanked, and its name: the item instance."""
+    match = _PAYLOAD.search(link)
+    assert match is not None
+    fields = match.group(1).split(":")
+    fields[8:10] = ["", ""]
+    return (*fields, match.group(2), link[: link.index("|H")])
+
+
+def _gear_links(data: bytes) -> dict[int, tuple[str, int | None]]:
+    from wowlab_core import labaddon
+
+    section = labaddon.parse_char(data).gear
     assert isinstance(section, labaddon.Gear)
-    filled, _ = gear.rows(section, gear.shipped_slot_table())
-    return {s.slot: (s.raw_link, s.item_level) for s in filled}
+    return {s.slot: (s.link, s.item_level) for s in section.slots}
+
+
+def _slots(rec: tuple[str, str]) -> dict[int, tuple[tuple[str, ...], int | None]]:
+    return {n: (_instance(link), lvl) for n, (link, lvl) in _gear_links(_record(*rec)).items()}
 
 
 def test_gear_changes_are_the_slots_whose_item_differs_from_the_save_before(
@@ -222,12 +239,93 @@ def test_gear_changes_are_the_slots_whose_item_differs_from_the_save_before(
         assert row["gear_not_compared"] is None
         for g in row["gear_changes"]:
             if g["after"] is not None:
-                assert (g["after"]["link"], g["after"]["item_level"]) == after[g["slot"]]
+                assert (_instance(g["after"]["link"]), g["after"]["item_level"]) == after[g["slot"]]
                 assert g["after"]["name"] and "|" not in g["after"]["name"]
             if g["before"] is not None:
-                assert (g["before"]["link"], g["before"]["item_level"]) == before[g["slot"]]
+                assert (_instance(g["before"]["link"]), g["before"]["item_level"]) == before[
+                    g["slot"]
+                ]
+            both = g["before"] is not None and g["after"] is not None
+            assert bool(g["differs"]) == both, "named when both sides hold an item"
     assert rows[1]["changed_from_ns"] == T1
     assert any(r["gear_changes"] for r in rows[1:]), "the records differ in gear"
+
+
+def test_a_level_up_alone_is_no_gear_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """70009 at level 13 and 70425 at level 15 (real records): the links of
+    the items worn in both differ in field 8, the link level, and are not
+    counted as changes."""
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _record(*R1), T1)
+    _snap(root, 1)
+    _put(root, _record(*R3), T2)
+    [first, second] = _json()["rows"]
+    assert (first["level"], second["level"]) == (13, 15)
+    before, after = _gear_links(_record(*R1)), _gear_links(_record(*R3))
+    level_only = [
+        n
+        for n in set(before) & set(after)
+        if before[n] != after[n]
+        and _instance(before[n][0]) == _instance(after[n][0])
+        and before[n][1] == after[n][1]
+    ]
+    assert level_only, "the fixtures hold items whose link differs only in the link level"
+    changed = {g["slot"] for g in second["gear_changes"]}
+    assert not changed & set(level_only)
+    out = _run().stdout
+    assert "a different instance (link" not in out
+
+
+def _relink(data: bytes, edit: Callable[[list[str]], None]) -> bytes:
+    """Every item link in `data` with its payload fields edited (constructed)."""
+
+    def one(match: re.Match[bytes]) -> bytes:
+        fields = match.group(1).decode().split(":")
+        edit(fields)
+        return b"|Hitem:" + ":".join(fields).encode() + b"|h"
+
+    return re.sub(rb"\|Hitem:([^|]*)\|h", one, data)
+
+
+def test_constructed_only_link_level_and_spec_differ_is_no_gear_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _record(*R2), T1)
+    _snap(root, 1)
+
+    def character_fields(fields: list[str]) -> None:
+        fields[8], fields[9] = "60", "1482"
+
+    _put(root, _relink(_record(*R2), character_fields), T2)
+    row = _json()["rows"][1]
+    assert row["gear_changes"] == [] and row["gear_not_compared"] is None
+    assert "  no gear or currency changes" in _run().stdout
+
+
+def test_constructed_same_item_id_another_instance_names_the_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One more bonus id on every link: the same item ids, other instances."""
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _record(*R2), T1)
+    _snap(root, 1)
+
+    def bonus(fields: list[str]) -> None:
+        count = int(fields[12] or 0)
+        fields[13 : 13 + count] = [*fields[13 : 13 + count], "99999"]
+        fields[12] = str(count + 1)
+
+    _put(root, _relink(_record(*R2), bonus), T2)
+    changes = _json()["rows"][1]["gear_changes"]
+    assert changes
+    for g in changes:
+        assert g["differs"] == ["bonus ids"]
+        assert g["before"]["item_id"] == g["after"]["item_id"]
+    out = _run().stdout
+    assert "same item id, a different instance (bonus ids); before: " in out
 
 
 def _currencies(rec: tuple[str, str]) -> dict[int, int | None]:
@@ -388,7 +486,7 @@ def test_constructed_currency_changes_with_names_from_the_cache(
     assert first["rows"][1]["currency_changes"][0]["name"] is None, "nothing cached, no name"
     out = _run().stdout
     assert "  currency: Honor Points (currency 1792): 100 to 250" in out
-    assert "  currency: currency 9999999: none to 7" in out
+    assert "  currency: currency 9999999: not listed to 7" in out
 
 
 def test_constructed_currencies_switched_off_are_not_compared(
@@ -409,3 +507,101 @@ def test_constructed_currencies_switched_off_are_not_compared(
     row = _json()["rows"][1]
     assert row["currency_changes"] == []
     assert "switched off" in row["currencies_not_compared"]
+
+
+def test_headline_says_equipped_item_level(history: dict[str, Any]) -> None:
+    out = _run().stdout
+    assert out.count(", equipped item level ") == 4
+    assert ", item level " not in out.replace("equipped item level", "")
+
+
+def test_constructed_no_average_reads_not_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _install(tmp_path, monkeypatch)
+    data = _lf(R2)
+    assert data.count(b'["equipped"] = ') == 1
+    _put(root, re.sub(rb'\["equipped"\] = [^,]*,\n', b"", data), T1)
+    row = _json()["rows"][0]
+    assert row["item_level"] is None
+    assert "equipped item level not returned" in _run().stdout
+
+
+def test_a_restored_record_names_the_save_it_repeats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1, then R2, then R1's bytes again under a later time, as a restore
+    leaves them (real records; the sequence constructed)."""
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _record(*R1), T1)
+    _snap(root, 1)
+    _put(root, _record(*R2), T2)
+    _snap(root, 2)
+    _put(root, _record(*R1), T3)
+    rows = _json()["rows"]
+    assert [r["same_bytes_as_ns"] for r in rows] == [None, None, T1]
+    out = _run().stdout
+    assert out.count("likely restored") == 1
+    assert "same contents as the save of " in out
+    assert "likely restored, so the time is when it was put back" in out
+
+
+def test_constructed_a_changed_currency_panel_is_said_on_the_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _install(tmp_path, monkeypatch)
+    data = _with_currencies(R2, {515: 3})
+    _put(root, data, T1)
+    _snap(root, 1)
+    assert data.count(b'["headers_collapsed"] = 0,') == 1
+    _put(root, data.replace(b'["headers_collapsed"] = 0,', b'["headers_collapsed"] = 2,'), T2)
+    row = _json()["rows"][1]
+    assert row["currency_changes"] == []
+    assert row["currency_panel_changed"] == (
+        "the currency panel was read with 2 collapsed headers, 0 the save before"
+    )
+    assert "  the currency panel was read with 2 collapsed headers" in _run().stdout
+
+
+def test_constructed_spec_name_follows_the_body_type_as_char_show_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, user_dirs: Path
+) -> None:
+    """Sangraal-Sett (schema 4, sex_raw 2) and the same record with sex_raw
+    3, over a constructed ChrSpecialization table whose female name differs."""
+    root = _install(tmp_path, monkeypatch)
+    male = _lf(R_LIVE)
+    assert male.count(b'["sex_raw"] = 2,') == 1
+    _put(root, male, T1)
+    _snap(root, 1)
+    _put(root, male.replace(b'["sex_raw"] = 2,', b'["sex_raw"] = 3,'), T2)
+    build = _json()["names_build"]
+    folder = user_dirs / "gamedata" / "tables" / build
+    folder.mkdir(parents=True)
+    (folder / "ChrSpecialization.csv").write_text(
+        "ID,Name_lang,FemaleName_lang\n1490,Warlock,Warlockess\n", encoding="utf-8"
+    )
+    rows = _json()["rows"]
+    assert [r["spec_name"] for r in rows] == ["Warlock", "Warlockess"]
+
+
+def test_constructed_summary_names_the_install_file_only_when_it_gave_a_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _record(*R1), T1)
+    _snap(root, 1)
+    out = _run().stdout
+    assert "1 save, from 1 of 1 snapshot and the file in the install, oldest first:" in out
+    _put(root, b"WowLabCharDB = {\n", T2)
+    out = _run().stdout
+    assert (
+        "1 save, from 1 of 1 snapshot (the file in the install could not be read; see below), "
+        "oldest first:" in out
+    )
+    assert "  the file in the install: " in out
+
+
+def test_notes_say_names_come_from_the_installed_build(history: dict[str, Any]) -> None:
+    out = " ".join(_run("--notes").stdout.split())
+    assert "installed client (wowlab db2 fetch), even for older saves" in out
+    assert "character's level and spec, which are not counted" in out
