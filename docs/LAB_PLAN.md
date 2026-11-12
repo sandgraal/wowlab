@@ -1576,6 +1576,13 @@ The path checked is the one that would be journaled: the resolved `flavor_path`,
 
 `transaction()` (a dry run included) and `undo()` refuse a flavor whose resolved path holds any of them, with `GuardError`, before any snapshot, lock-held write or journal record. `history()` refuses a record whose `flavor_path` holds one, as a damaged record. The gate never writes a record that `history()` would refuse, so a player whose install path holds such a character gets the refusal at the first change, never a lockout after it. Relative paths inside the flavor are unchanged: a real file name may hold a bidi mark, and only the output escapes it (the M16-84 amendment of 2026-11-10, item (d)).
 
+(e1) **A record that names a temp outside the flavor is damaged.** *Owner decision, 2026-11-11 ("A"), from the M16-90 implementation.*
+- **The conflict.** Two graders on `main` disagreed about a journal record whose `temps` or `temps_left` names a path that is not a plain flavor-relative name: outside the allowlist, at the install root, under `Data/`, in another flavor folder, outside the install, absolute or UNC.
+  - M16-69T, item 2 of the 2026-09 owner decisions, required the next change to carry on and list that path in its own `temps_left`.
+  - M16-90T required `history()` to refuse the record.
+- **The ruling:** refuse. `history()` refuses such a record as damaged, like any other field that fails the write rules, and every command that reads the journal stops there. Under ADR-0037, `doctor` gives its generic answer: the snapshots are kept, and you can restore one. Only a hand-edited or corrupted journal can hold such a record, because the gate journals only the temps it creates inside the flavor.
+- **What item 2 still requires.** The cleanup removes only regular temp files that match the pattern, that the gate wrote and that sit inside the allowlist. A link, a directory, another name or a case variant inside the flavor is still left alone and listed in `temps_left`, and the change carries on. Only the paths that are not plain flavor-relative names change: they now make the record damaged.
+
 ### 6.11 CLI — `wowlab` (M10-14)
 
 ```
