@@ -863,6 +863,12 @@ from wowlab_core.cli._cmd_doctor import (
     _SYNC_NOTE as _SYNC_NOTE,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _SYNC_UNSET as _SYNC_UNSET,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _SYNC_UNSET_ONE as _SYNC_UNSET_ONE,
+)
+from wowlab_core.cli._cmd_doctor import (
     _THE_GAME as _THE_GAME,
 )
 from wowlab_core.cli._cmd_doctor import (
