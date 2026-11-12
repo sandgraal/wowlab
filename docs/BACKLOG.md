@@ -2992,6 +2992,29 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 
 ---
 
+## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes three small chat gaps
+**Size:** S · **Depends on:** nothing · **Sources:** `security-reviewer` and `code-reviewer` on PR #514 (M16-126); the M16-125 leak of 2026-11-12
+
+On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-list-order.txt` reached a pushed branch, because `GUID_RE` needs `Player-`. M16-126 maps and refuses bare GUIDs in that one file. What is left, in `scripts/lab_capture.py`:
+- **Every file.** Discovery knows the owner's own GUIDs. Search every captured file for each one's exact text, with and without the `Player-` prefix, in any case, and rewrite it to the pseudonym; a bare `<n>-<hex>` pattern stays too common to match blindly.
+- **L1.** After the owner's own speaker link, another `Name:` on the same line still passes. Refuse it.
+- **L2.** A `|h` inside a channel label, or upper-case `|H` closers, end the link early. Use a label of `\[[^\]\r\n]*\]` and a case-insensitive closer.
+- **L3.** In `character-list-order.txt`, refuse any unmapped `[0-9]+-[0-9A-Fa-f]{6,}` token, whatever its boundaries.
+- **The HonorBound rule fails open** (`security-reviewer` on M16-125). `honorbound_scan` leaves the hash in place, with no edit and no refusal, for a tab or `,` before `h=`, `h = `, `H=`, leading space or a tab after `#HB3`, `#hb3`, `#HB4` and a UTF-8 BOM. Match `^\s*#HB\d+\s` without regard to case, accept `[ \t;,]` before the key and spaces around `=`, strip a BOM, and refuse any `#HB<n>` line whose `h` was not replaced.
+
+**Acceptance:** constructed tests for each case, labelled; the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: refusal lines only.
+
+---
+
+## [ ] M16-129 — The case-folding symlink test skips on a case-insensitive volume
+**Size:** XS · **Depends on:** nothing · **Sources:** every local run of 2026-11-12
+
+`tests/scripts/test_lab_capture_symlinked_wtf.py::test_constructed_symlinked_wtf_in_another_case_stops_the_capture` fails in its own setup on macOS (`FileExistsError` making `WTF` beside `wtf`), on `main` too. Skip it when the temporary directory folds case, as the existing "temporary volume folds case" skips do. CI on Linux keeps running it.
+
+**Acceptance:** the test skips on a case-insensitive volume and runs on Linux; `make test-fast` green on macOS. Reviewed by `code-reviewer`.
+
+---
+
 # M17 — the companion wave
 
 Spec: `docs/LAB_PLAN.md` §19. *Owner pick, 2026-11-12, in session ("go with the companion wave, file the tickets"), from the product review (`docs/handoffs/review-2026-11-12.md`).* It is picked in place of resuming M15, whose open tickets (M15-06 to M15-13) stay where they are, unscheduled. M16's open tickets keep their order. M17-01 and M17-02 depend on M16-05, so the wave starts once the launch-client capture lands; the review closes only after v0.2 (M16-32, M16-33). *Owner decision, 2026-11-12, in session ("before v0.2 ships"):* M17 runs alongside M16 and does not wait for v0.2, as Wave 3 overlapped once (§14.8).
