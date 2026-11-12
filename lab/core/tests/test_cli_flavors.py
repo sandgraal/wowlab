@@ -334,6 +334,36 @@ def test_char_list_json_names_a_flavor_without_the_account_constructed(
     assert {f.folder: f.account_found for f in report.flavors} == {FLAVOR: False, EMPTY: True}
 
 
+def test_char_list_account_behind_an_unfollowed_link_is_not_found_constructed(
+    two_flavors: Path, tmp_path: Path
+) -> None:
+    """M16-116: when the second flavor's whole `WTF/Account/` is a link
+    wowlab does not follow, the --account folder may be behind it: that
+    flavor is `account_found: null` (not looked at, named in
+    `not_looked_at`), never true or false. The first flavor, read, stays
+    true."""
+    outside = tmp_path / "outside-accounts"
+    shutil.copytree(two_flavors / FLAVOR / "WTF" / "Account", outside)
+    (two_flavors / EMPTY / "WTF").mkdir()
+    try:
+        (two_flavors / EMPTY / "WTF" / "Account").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    result = run("char", "list", "--account", ACCOUNT, "--json", "--brief")
+    assert result.exit_code == 1, (result.stdout, result.stderr)  # a place not looked inside
+    data = json.loads(result.stdout)
+    assert {n["flavor"] for n in data["not_looked_at"]} == {EMPTY}
+    by_folder = {f["folder"]: f for f in data["flavors"]}
+    assert by_folder[EMPTY] == {
+        "folder": EMPTY,
+        "version": None,
+        "characters": 0,
+        "account_found": None,
+    }
+    assert by_folder[FLAVOR]["account_found"] is True
+    assert by_folder[FLAVOR]["characters"] > 0
+
+
 def test_char_list_one_flavor_account_found_constructed() -> None:
     """With --flavor and --account the one flavor listed has the account;
     one without it is an error, as before (M16-116)."""
