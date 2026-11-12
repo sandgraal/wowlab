@@ -2730,7 +2730,7 @@ Reviewed by `code-reviewer`.
 
 # M16 process and scope (filed 2026-11-11, owner decisions: ADR-0037 and the conductor's review)
 
-## [ ] M16-109 — `doctor`'s one answer for a failure wowlab cannot work out
+## [x] M16-109 — `doctor`'s one answer for a failure wowlab cannot work out
 **Size:** S · **Depends on:** M16-69, M16-90 · **Sources:** ADR-0037 (accepted 2026-11-11)
 
 ADR-0037 freezes automatic crash recovery. Every compound failure then gets one generic answer instead of a rule of its own. Examples of a compound failure:
@@ -2753,7 +2753,7 @@ This does not touch `guard.py`. `doctor` reads only. If the implementer finds a 
 - The change is listed as user-facing (wiki: doctor).
 - Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-110 — LAB_PLAN §6.10 as one current section
+## [x] M16-110 — LAB_PLAN §6.10 as one current section
 **Size:** S · **Depends on:** M16-69, M16-90, M16-108T · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
 
 §6.10 is the write gate's spec. It has grown into a base text followed by dated amendments, with (a), (a1) and (a2) alone covering one rule in three places, so a reader cannot tell what is true without reading all of it in order.
@@ -2891,23 +2891,39 @@ The #490 code review found that under (a1) a closed record that never took a sna
 
 # M16 follow-ups (filed 2026-11-12, tenth batch)
 
-## [ ] M16-116 — `char list --account X --json` says which flavors lack the account
+## [x] M16-116 — `char list --account X --json` says which flavors lack the account
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-114 domain re-review (#496)
 
 With several flavors, `wowlab char list --account X` prints "Flavor F (v): no account X" for a flavor without X, but `--json` leaves F out of `flavors[]`, so a script cannot tell "no account X there" from "flavor not looked at". Keep F in `flavors[]` with `characters: 0` and a field that says the account was not found there (for example `account_found: false`), present on every flavor entry when `--account` is given. Text output unchanged.
 
 **Acceptance:** a test on the M16-114 two-flavor setup (`test_cli_flavors.py`) for text and `--json`; the command reference regenerated; user-facing change listed in the PR. Reviewed by `code-reviewer`.
 
-## [ ] M16-117T — [TEST] Flatten `JOURNAL_SCENARIO_PARAMS` and drop its RUF034 ignore
+## [x] M16-117T — [TEST] Flatten `JOURNAL_SCENARIO_PARAMS` and drop its RUF034 ignore
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-69 PR (#490), lint note
 
 Deleting the M16-107T marker left `JOURNAL_SCENARIO_PARAMS` in `lab/core/tests/test_guard_snapshot_kind.py` with a conditional whose two branches are equal, and root `pyproject.toml` carries a per-file `RUF034` ignore for it. Replace the conditional with the plain value and remove the ignore. Nothing a test asserts changes. It is a `guard.py` grader, so it lands as its own [TEST] change.
 
 **Acceptance:** the file's collected test ids and outcomes are identical before and after (`pytest --collect-only -q` and a run, pasted); `make lint` clean without the ignore. Reviewed by `code-reviewer`.
 
-## [ ] M16-118 — `doctor` says "version unknown" in words when `.build.info` has no row for a flavor
+## [x] M16-118 — `doctor` says "version unknown" in words when `.build.info` has no row for a flavor
 **Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-11 (`_classic_beta_` beside `_forever_`)
 
 For a flavor whose product has no `.build.info` row, `wowlab doctor` prints "Flavor _classic_beta_: product …, version no version in .build.info". Say it as a sentence a player can act on: the version is unknown because `.build.info` lists no row for that product, which happens when the Battle.net app has not installed or updated that flavor; reads still work and nothing is wrong with the install. `--json` unchanged (`version: null`).
 
 **Acceptance:** a pinned wording test on a constructed flavor folder with no matching row (an L8 boundary input); `domain-reviewer` confirms the explanation; user-facing change listed in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, eleventh batch)
+
+## [ ] M16-120 — `guard.py` docstrings state the (a2) undo-target rule
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-110 reviews (#501)
+
+`guard.py`'s module docstring (around line 191) says a record "is passed over when it has `undoes`, never took a snapshot … and is closed", and `undo()`'s docstring (around line 3280) speaks of "a closed undo that never took its snapshot". Both describe (a1)'s narrower rule. `_passed_over` implements (a2) (LAB_PLAN §6.10, "The undo target"): no `undoes` condition. Rewrite those docstrings to state §6.10's rule. Comments and docstrings only; no code, no grader.
+
+**Acceptance:** `git diff` shows only docstring/comment lines in `guard.py`; `make ci` green (a `guard.py` change). Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M16-121 — The old "no version in .build.info" words, made to match M16-118
+**Size:** XS · **Depends on:** M16-111 · **Sources:** the M16-118 implementer's report and reviews (#504)
+
+M16-118 changed `doctor`'s flavor line. The old wording is still in the first-run section's flavor label (`firstrun.flavor_label`, "(wow_x, no version in .build.info)"), in `doctor`'s `Game data: no version to look up (.build.info has no version for product '…')` line (which now sits under "has no row" text for the same flavor), in the `--build` refusal in the CLI, and in `gamedata.py` and `addoninstall.py`. Make each say what is actually true, using the same three cases as M16-118 (no row, a row with a blank version, no product), or point to the explanation `doctor` already prints, without repeating it ("one fact lives in one place").
+
+**Acceptance:** pinned wording tests for each changed message (constructed boundary inputs, as in `test_doctor_version_words.py`); `--json` unchanged; user-facing changes listed. Reviewed by `code-reviewer` and `domain-reviewer`.
