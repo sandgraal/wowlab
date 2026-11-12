@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: BanterBlocker
+## Notes: Hide chat messages containing words from your own filter lists.|nType /banter or /bb to configure.
+## Version: 2.0.1
+## IconTexture: Interface\AddOns\BanterBlocker\BanterBlockerIcon.tga
+## SavedVariables: BanterBlockerDB, NoNoiseChatDB
+## OptionalDeps: Blizzard_ChatFrameBase, Blizzard_Settings
+## X-Category: Chat & Communication
+
+UserLists.lua
+Defaults.lua
+Engine.lua
+Stats.lua
+BanterBlocker.lua
+Options.lua

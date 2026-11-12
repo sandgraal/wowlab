@@ -1,0 +1,2 @@
+
+PuristCharDB = nil
