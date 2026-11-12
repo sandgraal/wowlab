@@ -356,6 +356,8 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amended by (2026-10-26; Accepted with ADR-0035 the same day):** ADR-0035 admits third-party font files (twelve pinned OFL WOFF2 files) as package data under its own rules. They are data, not a language.
 
+**Amended by (2026-11-12; Accepted with ADR-0038 the same day):** ADR-0038 admits PyInstaller as a build-time toolchain only, in the release workflow and under `packaging/`, for the macOS app and the Windows binary that ADR-0031's amendment of 2026-11-12 allows. It is never a runtime dependency.
+
 ---
 
 ## ADR-0031 — wowlab may be installed by other players; the trust model is the product
@@ -399,7 +401,7 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 
 **Amendment (2026-10-21, later; Accepted 2026-10-21 — owner decision in session, answering the conductor's question after code review; the status edit was made by the conductor on the owner's explicit instruction):** to item (2) of the amendment above. The gate's download count is GitHub's release-asset downloads plus PyPI's downloads of the same versions, read by hand at the gate from the public figures on pypistats.org. "From GitHub's own counts" is read that way. The issues and discussions threshold is unchanged.
 
-**Amendment (2026-11-12, M17-07; Proposed — the owner accepts, amends or rejects it under M17-13):** double-click distribution. The owner picked the companion wave on 2026-11-12 (`docs/LAB_PLAN.md` §19, CW-5), whose audience does not use a terminal. Distribution, as amended on 2026-10-21, keeps "no installer and no signed or frozen binary until the gate passes and a further ADR says so". The gate starts at v0.2, which has not shipped. This amendment is that further ADR for two artefacts only, before the gate:
+**Amendment (2026-11-12, M17-07; Accepted 2026-11-12 — owner decision in session ("accept all", 2026-11-12, M17-13); the status edit was made by the conductor on the owner's explicit instruction):** double-click distribution. The owner picked the companion wave on 2026-11-12 (`docs/LAB_PLAN.md` §19, CW-5), whose audience does not use a terminal. Distribution, as amended on 2026-10-21, keeps "no installer and no signed or frozen binary until the gate passes and a further ADR says so". The gate starts at v0.2, which has not shipped. This amendment is that further ADR for two artefacts only, before the gate:
 1. **A macOS app.** A zipped `wowlab.app` that starts `wowlab ui` from the released version, attached to each release with its hash in `SHA256SUMS` and the attestations M16-43 set up. It needs no git clone, no editable install and no typing in a terminal. It is built by the tool ADR-0038 names (if accepted), from the tagged source, in the release workflow, and carries its own Python. This departs from §19 CW-5 and M17-08, which describe a *launcher* based on the owner's `install-wowlab-app.sh`: that script needs git, uv and a clone, and runs `git pull` at each start, which is an auto-update this amendment forbids. What the script gets right is kept: the app opens a Terminal window that shows the server and stops it when closed (ADR-0038, item 3). It is built for Apple Silicon only (`arm64`); Intel Macs keep the wheel.
 2. **A Windows frozen binary.** `wowlab.exe` (with its folder, zipped), built the same way and attached the same way. Double-clicking it opens the UI.
 
@@ -587,7 +589,7 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 ## ADR-0038 — The double-click builds are made with PyInstaller, in one-folder mode, from the released wheel
 
-**Status:** Proposed (2026-11-12)
+**Status:** Accepted (2026-11-12; proposed 2026-11-12) — owner decision in session ("accept all", 2026-11-12, M17-13); the status edit was made by the conductor on the owner's explicit instruction
 
 **Context:** ADR-0031's amendment of 2026-11-12 (M17-07, Proposed) allows a macOS app and a Windows frozen binary as release assets. ADR-0030 says a build toolchain needs its own ADR naming its purpose, where it lives, how it is verified and what it may not do. wowlab is pure Python 3.12 with no C extension of its own; its runtime dependencies are the list in `docs/LAB_PLAN.md` §6, plus package data (the UI templates, the vendored three.js of ADR-0034, the fonts of ADR-0035). The candidates:
 Each candidate below is described as its maintainers' documentation describes it, recalled on 2026-11-12 and not re-read for this text; the owner or the build ticket checks the points that decide it.

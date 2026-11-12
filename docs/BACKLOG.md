@@ -3078,7 +3078,7 @@ The hub and the timeline need the character's money, which no schema records tod
 
 ---
 
-## [ ] M17-07 — ADR-0031 amendment: double-click distribution
+## [x] M17-07 — ADR-0031 amendment: double-click distribution
 **Size:** XS · **Depends on:** nothing · **Sources:** §19 CW-5 · **owner** (drafts reviewed by the owner)
 
 The conductor drafts, with `/adr amend 0031`, a Proposed amendment that permits, besides the wheel and PyPI:
@@ -3091,16 +3091,16 @@ Both are built from the tagged source, with `SHA256SUMS` and attestations as M16
 
 ---
 
-## [ ] M17-08 — The macOS launcher, as a release asset
-**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5
+## [ ] M17-08 — The macOS app, as a release asset
+**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038
 
-From the owner's `install-wowlab-app.sh` (untracked on 2026-11-12; the owner commits it or hands it over):
-- the release workflow builds a `wowlab.app` that runs the released wheel's `wowlab ui`, and attaches it zipped to the release with its hash in `SHA256SUMS`;
-- it needs no git clone and no editable install.
+*Aligned 2026-11-12 with ADR-0031's amendment and ADR-0038 (both accepted): the app is a frozen PyInstaller build, not a launcher over a clone.* The owner's `install-wowlab-app.sh` is the model for what a double-click does (a visible Terminal window that stops the server when closed), not for how the app is built:
+- the release workflow builds an `arm64` `wowlab.app` from the tagged wheel with PyInstaller, one-folder, under ADR-0038's rules (the spec and the Python launcher under `packaging/`), and attaches it zipped to the release with its hash in `SHA256SUMS`;
+- it needs no git clone, no editable install and no typing in a terminal, and it never pulls or updates itself.
 
 Signing and notarisation are out of scope; the release notes say how to open an unsigned app.
 
-**Acceptance:** the workflow builds the app on a release-candidate tag; a CI smoke test starts it headless and gets the UI's page; the owner opens it once on their Mac, recorded in the PR. Reviewed by `code-reviewer` and `security-reviewer` (workflow). User-facing: a new download on the release page; INSTALL.md.
+**Acceptance:** the workflow builds the app on a release-candidate tag; the CI smoke test of ADR-0038 item 4 passes; the owner opens it once on their Mac (the Terminal hand-off), recorded in the PR. Reviewed by `code-reviewer` and `security-reviewer` (workflow). User-facing: a new download on the release page; INSTALL.md.
 
 ---
 
@@ -3140,7 +3140,7 @@ The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release
 
 ---
 
-## [ ] M17-13 — Owner: accept or amend the packaging ADRs
+## [x] M17-13 — Owner: accept or amend the packaging ADRs
 **Size:** XS · **Depends on:** M17-07 · **Sources:** §19 CW-5, ADR-0030 · **owner** (a decision on each text)
 
 The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0031 amendment and the build-tool ADR. The conductor makes the status edits only on the owner's explicit instruction (`.claude/rules/docs.md`). M17-08 and M17-09 start only after this.
