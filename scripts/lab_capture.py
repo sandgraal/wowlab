@@ -60,9 +60,9 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   surviving identity string in any casing or embedding (CVar names included),
   or an unblanked identity CVar is refused: nothing is written for it and the
   exit status is non-zero. So is a file holding other players' chat (M16-126):
-  a `|Hplayer:` link to a name that is not one of the owner's character
-  folders, any `|HBNplayer:` link, or a `|Hchannel:` line whose plain-text
-  speaker is someone else (PLAYER_LINK_RE). The email check passes over the
+  a player link to anyone but the owner's characters, any Battle.net link or
+  name token, or a `|Hchannel:` line whose speaker is not the owner's own
+  player link (PLAYER_LINK_RE). The email check passes over the
   `x@y` a packed bitfield CVar spells (PACKED_VALUE_RE).
 
 Free text (M16-44): the patterns above cannot see other people's words. So
@@ -443,23 +443,40 @@ OTHER_UNCHECKABLE_LABEL = "other player's name cannot be checked"
 # is not "free text"), and the message is someone else's words. So the file is
 # refused, as an unmapped GUID is, and the automatic SavedVariables pick
 # passes it over with this reason:
-# - a `|Hplayer:` link whose name (the part before `-`, `:` or `|`) is not one
-#   of the owner's character folders (case and normal form ignored). An
-#   empty name, or one holding `%` (a format string in addon text), names nobody;
-# - any `|HBNplayer:` link: a Battle.net friend, never the character captured;
-# - a `|Hchannel:` link followed by a plain-text speaker (`Name: `, `[Name]: `)
-#   that is not one of the owner's characters. A speaker that is itself a
-#   `|Hplayer:` or `|HBNplayer:` link is left to the two rules above.
-# Counts only: an offset would point at someone's message.
-# `--pseudonymise-other-players` does not apply: it rewrites a name, and a
-# chat line's words stay someone else's words whatever the name says.
-PLAYER_LINK_RE = re.compile(rb"\|+Hplayer:([^:|\-\s]*)", re.IGNORECASE)
-BNET_LINK_RE = re.compile(rb"\|+HBNplayer:", re.IGNORECASE)
-CHANNEL_SPEAKER_RE = re.compile(
-    rb"\|+Hchannel:[^|]*\|+h(?:\[[^\]|]*\])?\|+h[ \t]*(?!\|+H)\[?([^\s:|\[\]]+)\]?:", re.IGNORECASE
+# - a player link (`|Hplayer:`, `|HplayerCommunity:`, `|HplayerGM:`) whose
+#   target is not one of the owner's characters. The target is `Name` or
+#   `Name-Realm` up to the first `:` or `|`; with a realm, name and realm must
+#   both match one character folder (any spelling of the folder's realm), so
+#   a namesake on another realm is someone else. Case and normal form are
+#   ignored. An empty target, or one holding `%` (a format string in addon
+#   text), names nobody;
+# - any Battle.net link (`|HBNplayer:`, `|HBNplayerCommunity:`) and any
+#   Battle.net name token (`|Kq12|k`): a Battle.net friend, never the
+#   character captured;
+# - a `|Hchannel:` link followed by anything but the owner's own player link
+#   (colour codes skipped) or the end of the string or line. The client writes
+#   every chat line's speaker as a player link, so a plain-text speaker (in
+#   any colour, bracket, spacing, realm or colon) is not the owner's line and
+#   refuses, whoever it names. A speaker that is another player's link is
+#   counted once, by the first rule.
+# The link types beyond `player`, `BNplayer` and `channel` (the `Community`
+# and `GM` forms, the `|K` token) were named by a reviewer from memory of the
+# client's interface code, not from a capture [verify]. Counts only: an
+# offset would point at someone's message. `--pseudonymise-other-players`
+# does not apply: it rewrites a name, and a chat line's words stay someone
+# else's words whatever the name says.
+PLAYER_LINK_RE = re.compile(rb"\|+H(?i:player(?:Community|GM)?):([^:|]*)")
+BNET_RE = re.compile(rb"\|+H(?i:BNplayer(?:Community)?):|\|+K[a-zA-Z][0-9]+\|+k")
+CHANNEL_LINK_RE = re.compile(
+    rb"\|+H(?i:channel):[^|\r\n]*\|+h(?:[^|\r\n]|\|+(?!h))*\|+h[ \t]*"
+    rb"(?:\|+c(?:[0-9A-Fa-f]{8}|n[A-Za-z0-9_]+:)[ \t]*)*"
 )
+# What may follow a channel link when it has no speaker (a channel list, or a
+# "joined channel" line ending in the link): the end, a quote, a bracket or a
+# line break.
+_NO_SPEAKER = frozenset(b"\"']\r\n")
 OTHER_CHAT_LABEL = "another player's name or chat line"
-BNET_LINK_LABEL = "Battle.net friend link"
+BNET_LINK_LABEL = "Battle.net friend link or name"
 # A packed bitfield CVar (`closedInfoFrames "@@R@@@@@P@@B@@@@@@APH"`): the
 # client writes six bits per byte as `@` (0x40) plus the bits, so the value
 # is bytes 0x40..0x7F, and a single `@` between two letters looks like `x@y`
@@ -469,13 +486,15 @@ BNET_LINK_LABEL = "Battle.net friend link"
 # line breaks, which end the SET line. An email match is not counted when it
 # lies in the quoted value of a `SET` line of a config file, that value is
 # made only of packed bytes and holds `@@` (an address holds one `@`), and
-# the match touches another `@` on either side. A real address has a dotted
-# domain or digits, `-` or `+`, which are outside the packed bytes, so it
-# still refuses (no address holds a control byte, so admitting them opens
-# nothing); so does one with no `@@` in its value or standing apart from the
-# `@` runs. Chosen over blanking `closedInfoFrames` by default: blanking
-# hides a non-identity value from the corpus, and only that one CVar, where
-# this covers every packed CVar.
+# the match touches another `@` on either side. A dotted domain, digits, `-`
+# or `+` are outside the packed bytes, so such an address still refuses; so
+# does one with no `@@` in its value or standing apart from the `@` runs.
+# Known gap, accepted because the real value has this shape: an address of
+# letters only with no dot, or with a control byte where its dot would be
+# (`"@@@john@gmail\x01com@@"`), glued to the `@` runs of an otherwise
+# packed value, is not refused. Chosen over blanking `closedInfoFrames` by
+# default: blanking hides a non-identity value from the corpus, and only that
+# one CVar, where this covers every packed CVar.
 _PACKED_BYTE = rb"[\x00-\x09\x0b\x0c\x0e-\x1f\x40-\x7f]"
 PACKED_VALUE_RE = re.compile(
     _LINE_START + rb'SET[ \t]+[A-Za-z0-9_.]+[ \t]+"((?=%s*@@)%s*)"' % (_PACKED_BYTE, _PACKED_BYTE),
@@ -675,7 +694,7 @@ class Identity:
         loose: Iterable[str] = (),
         groups: Iterable[str] = (),
         account_names: Iterable[str] = (),
-        own_characters: Iterable[str] = (),
+        own_characters: Iterable[str | tuple[str, str | None]] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
         folder's casing), given that realm's pseudonym. `loose`: second names of
@@ -686,9 +705,12 @@ class Identity:
         so adding one never renumbers a folder's pseudonym. One that is a
         folder's name or another value in another casing is an alias of it:
         same pseudonym, counted once.
-        `own_characters`: the names of the owner's character folders. Not
-        scrubbed (they are public); a chat link or chat line naming one of them,
-        or one of `characters` or its pseudonym, is the owner's own (M16-126).
+        `own_characters`: the owner's character folders, as (name, realm
+        folder), or (name, None) or a bare name when the realm is unknown (a
+        `<First>-<Second>` folder). Not scrubbed (they are public); a player
+        link to one of them is the owner's own (M16-126): `Name-Realm` needs
+        the realm to match when it is known. `characters` and their
+        pseudonyms count as known on any realm.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -710,11 +732,21 @@ class Identity:
         }
         spelled = [p for p in map(_loose_pattern, self._ordered(loose)) if p is not None]
         self._loose = re.compile(b"|".join(spelled), re.IGNORECASE) if spelled else None
-        speakers = {_fold(name) for name in own_characters}
+        anywhere: set[str] = set()  # own names whose realm is unknown
+        pairs: set[tuple[str, str]] = set()  # (name, realm form), folded
+        for own in own_characters:
+            own_name, own_realm = (own, None) if isinstance(own, str) else own
+            if own_realm is None:
+                anywhere.add(_fold(own_name))
+            else:
+                folded = _fold(own_name)
+                pairs.update((folded, _fold(form)) for form in _realm_forms(own_realm))
         for i, character in enumerate(self._ordered(characters)):
             self._add_name(character, _shaped(character, "Labchar", i), "character")
-            speakers.update((_fold(character), _fold(self.names[character])))
-        self._own_speakers = frozenset(speakers)
+            anywhere.update((_fold(character), _fold(self.names[character])))
+        self._own_anywhere = frozenset(anywhere)
+        self._own_pairs = frozenset(pairs)
+        self._own_names = self._own_anywhere | {own_name for own_name, _ in pairs}
         for i, extra in enumerate(self._ordered(extras)):
             self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
         ordered_accounts = self._ordered(accounts)
@@ -1139,19 +1171,35 @@ class Identity:
         )
 
     def _other_chat(self, scrubbed: bytes) -> int:
-        """Chat links and chat-channel speakers naming someone other than the
-        owner's characters (PLAYER_LINK_RE, CHANNEL_SPEAKER_RE)."""
+        """Player links naming someone other than the owner's characters, and
+        chat-channel lines whose speaker is not the owner's own link
+        (PLAYER_LINK_RE, CHANNEL_LINK_RE)."""
 
-        def other(name: bytes) -> bool:
-            text = name.partition(b"-")[0].decode("utf-8", errors="replace")
-            return _fold(text) not in self._own_speakers
+        def nobody(target: bytes) -> bool:
+            return not target or b"%" in target
+
+        def own(target: bytes) -> bool:
+            name, hyphen, realm = target.decode("utf-8", errors="replace").partition("-")
+            if not hyphen:
+                return _fold(name) in self._own_names
+            return (_fold(name), _fold(realm)) in self._own_pairs or (
+                _fold(name) in self._own_anywhere
+            )
 
         linked = sum(
             1
             for m in PLAYER_LINK_RE.finditer(scrubbed)
-            if m.group(1) and b"%" not in m.group(1) and other(m.group(1))
+            if not nobody(m.group(1)) and not own(m.group(1))
         )
-        spoken = sum(1 for m in CHANNEL_SPEAKER_RE.finditer(scrubbed) if other(m.group(1)))
+        spoken = 0
+        for m in CHANNEL_LINK_RE.finditer(scrubbed):
+            at = m.end()
+            if at == len(scrubbed) or scrubbed[at] in _NO_SPEAKER:
+                continue  # no speaker: a channel list or a "joined" line
+            link = PLAYER_LINK_RE.match(scrubbed, at)
+            if link is not None and not nobody(link.group(1)):
+                continue  # a player link: own, or counted above
+            spoken += 1
         return linked + spoken
 
     def _inspect(
@@ -1191,7 +1239,7 @@ class Identity:
         chat = self._other_chat(scrubbed)
         if chat:
             problems.append(f"{OTHER_CHAT_LABEL} x{chat}")
-        bnet = len(BNET_LINK_RE.findall(scrubbed))
+        bnet = len(BNET_RE.findall(scrubbed))
         if bnet:
             problems.append(f"{BNET_LINK_LABEL} x{bnet}")
         report(problems, "BattleTag", BATTLETAG_RE.finditer(scrubbed))
@@ -3099,6 +3147,8 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     """
     accounts: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
+    # For the chat check: a grouped folder's second name is not a realm.
+    own_characters: set[tuple[str, str | None]] = set()
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
 
@@ -3174,10 +3224,12 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                         split = split_character_folder(character.name)
                         if split is not None:
                             pairs.add(split)
+                            own_characters.add((split[0], None))
                         configs.extend(config_files(listed(character)))
                     continue
                 for character in folders(listed(realm)):
                     pairs.add((character.name, realm.name))
+                    own_characters.add((character.name, realm.name))
                     configs.extend(config_files(listed(character)))
 
     guids: set[bytes] = {g.encode() for g in args.own_guid or []}
@@ -3241,7 +3293,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         show_names=args.show_map,
         groups=groups,
         account_names=account_names,
-        own_characters={character for character, _ in pairs},
+        own_characters=own_characters,
     )
 
 

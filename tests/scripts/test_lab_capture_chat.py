@@ -74,7 +74,12 @@ GUILD = b"|Hchannel:GUILD|h[Guild]|h "
             [f"{lab_capture.OTHER_CHAT_LABEL} x1"],
         ),
         (b'x = "|Hchannel:GUILD|h[Guild]|h [Quillmoss-Ash]: hi"\n', None),
-        (b'x = "|Hchannel:GUILD|h[Guild]|h Thrallmar: back in five"\n', []),
+        # Stricter than a name check: the client writes every speaker as a
+        # player link, so a plain-text speaker refuses even with the owner's name.
+        (
+            b'x = "|Hchannel:GUILD|h[Guild]|h Thrallmar: back in five"\n',
+            [f"{lab_capture.OTHER_CHAT_LABEL} x1"],
+        ),
         # A channel link with no speaker (a channel list), a format string, an empty name.
         (b'x = "|Hchannel:GUILD|h[Guild]|h"\n', []),
         (b'x = "|Hplayer:%s|h[%s]|h"\n', []),
@@ -119,6 +124,59 @@ def test_constructed_a_pseudonymised_character_is_still_the_owner() -> None:
     identity = lab_capture.Identity(characters=["Brindlefen"])
     result = identity.scrub(b'x = "|Hplayer:Brindlefen|h[Brindlefen]|h: hi"\n')
     assert not _chat(list(result.problems))
+
+
+# Review probes (security, round 1): link types and speaker spellings that a
+# narrower pattern let through. Every name and message is invented.
+REFUSED_FORMS = {
+    "constructed-community-link": b"|HplayerCommunity:Quillmoss-Ash:1:2:3:4|h[Quillmoss]|h: hi",
+    "constructed-bnet-community-link": b"|HBNplayerCommunity:|Kq1|k:1:2:3:4|h[|Kq1|k]|h: hi",
+    "constructed-gm-link": b"|HplayerGM:Quillmoss:1|h[Quillmoss]|h: hi",
+    "constructed-bare-bnet-name": b"|Kq12|k: hi there",
+    "constructed-coloured-plain-speaker": b"|Hchannel:GUILD|h[Guild]|h |cff40ff40Quillmoss|r: hi",
+    "constructed-coloured-bracketed-speaker": (
+        b"|Hchannel:GUILD|h[Guild]|h [|cff40ff40Quillmoss|r]: hi"
+    ),
+    "constructed-coloured-channel-label": b"|Hchannel:CHANNEL:2|h[2. |cffTrade|r]|h Quillmoss: hi",
+    "constructed-space-before-colon": b"|Hchannel:GUILD|h[Guild]|h Quillmoss : hi",
+    "constructed-realm-with-space": b"|Hchannel:GUILD|h[Guild]|h Quillmoss-Argent Dawn: hi",
+    "constructed-fullwidth-colon": "|Hchannel:GUILD|h[Guild]|h Quillmoss\uff1a hi".encode(),
+    "constructed-namesake-on-another-realm": b"|Hplayer:Thrallmar-Otherfen:1|h[Thrallmar]|h: hi",
+}
+
+
+@pytest.mark.parametrize("line", list(REFUSED_FORMS.values()), ids=list(REFUSED_FORMS))
+def test_constructed_more_chat_forms_refuse(line: bytes) -> None:
+    identity = lab_capture.Identity(own_characters=[(OWN, "Area 52")])
+    found = _chat(list(identity.scrub(b'x = "' + line + b'"\n').problems))
+    assert found, "another player's chat was not refused"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        b"|Hchannel:GUILD|h[Guild]|h |Hplayer:Thrallmar-Area52:3:GUILD|h[Thrallmar]|h: ok",
+        b"|Hchannel:GUILD|h[Guild]|h |Hplayer:thrallmar-Area 52:3|h[Thrallmar]|h: ok",
+        b"|Hchannel:GUILD|h[Guild]|h |cff40ff40|Hplayer:Thrallmar|h[Thrallmar]|h|r: ok",
+        b"|Hchannel:CHANNEL:2|h[2. |cffffc0c0Trade|r]|h |Hplayer:Thrallmar-Area52|h[T]|h: ok",
+    ],
+    ids=[
+        "constructed-own-realm-no-space",
+        "constructed-own-realm-folder-spelling",
+        "constructed-own-coloured-link",
+        "constructed-own-in-coloured-channel",
+    ],
+)
+def test_constructed_the_owners_own_chat_lines_pass(line: bytes) -> None:
+    identity = lab_capture.Identity(own_characters=[(OWN, "Area 52")])
+    assert not _chat(list(identity.scrub(b'x = "' + line + b'"\n').problems))
+
+
+def test_constructed_a_grouped_character_matches_on_any_realm() -> None:
+    """A `<First>-<Second>` folder has no realm: its first name is the owner's anywhere."""
+    identity = lab_capture.Identity(own_characters=[("Brindlefen", None)])
+    data = b'x = "|Hplayer:Brindlefen-Somewhere:1|h[Brindlefen]|h: hi"\n'
+    assert not _chat(list(identity.scrub(data).problems))
 
 
 # ─── other players' chat: a whole run ────────────────────────────────────────
@@ -261,3 +319,15 @@ def test_constructed_a_packed_cvar_in_config_cache_is_captured(
     written = outputs(out)
     (dest,) = [p for p in written if p.endswith(f"/{MAIN}/config-cache.wtf")]
     assert written[dest] == original  # byte for byte: the value is not blanked
+
+
+def test_constructed_known_gap_a_dotless_address_glued_to_packed_bits_passes() -> None:
+    """KNOWN GAP, pinned on purpose (see PACKED_VALUE_RE). The real
+    `closedInfoFrames` value has this shape, so the exemption stays: an
+    address of letters only, or with a control byte for its dot, glued to the
+    `@` runs of an otherwise packed value, is not refused. If this test
+    starts failing, the gap closed: update the comment with it."""
+    for value in (b"@@@john@gmail@@", b"@@@john@gmail\x01com@@"):
+        line = b'SET closedInfoFrames "' + value + b'"\n'
+        problems = _problems(line, config=True)
+        assert not [p for p in problems if p.startswith("email address")], value
