@@ -59,7 +59,11 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
   or an unblanked identity CVar is refused: nothing is written for it and the
-  exit status is non-zero.
+  exit status is non-zero. So is a file holding other players' chat (M16-126):
+  a player link to anyone but the owner's characters, any Battle.net link or
+  name token, or a `|Hchannel:` line whose speaker is not the owner's own
+  player link (PLAYER_LINK_RE). The email check passes over the
+  `x@y` a packed bitfield CVar spells (PACKED_VALUE_RE).
 
 Free text (M16-44): the patterns above cannot see other people's words. So
 the automatic SavedVariables selection never picks a chat-log, mail or notes
@@ -138,6 +142,15 @@ IDENTITY_CVARS: tuple[str, ...] = _redact.IDENTITY_CVARS
 EMAIL_RE: re.Pattern[bytes] = _redact.EMAIL_RE
 BATTLETAG_RE: re.Pattern[bytes] = _redact.BATTLETAG_RE
 GUID_RE: re.Pattern[bytes] = _redact.GUID_RE
+# `character-list-order.txt` (M16-126, from the M16-125 review): each line is
+# `<n> <realm-id>-<8 hex> <n>`, and the middle field is a Player GUID without
+# its `Player-` prefix, which GUID_RE needs. The file lists the account's own
+# characters, so discovery takes every such field as an own GUID, and the
+# scrub maps it to the bare form of that GUID's pseudonym; any one it cannot
+# map refuses the file. Only in that file: elsewhere `<n>-<hex>` is too common.
+BARE_GUID_RE = re.compile(rb"(?<![0-9A-Za-z\-])[0-9]+-[0-9A-Fa-f]{8,}(?![0-9A-Za-z\-])")
+CHARACTER_LIST_NAME = "character-list-order.txt"
+BARE_GUID_LABEL = "player GUID without its prefix, not mapped"
 ACCOUNT_GUID_RE: re.Pattern[bytes] = _redact.ACCOUNT_GUID_RE
 GUILD_GUID_RE: re.Pattern[bytes] = _redact.GUILD_GUID_RE
 CLUB_GUID_RE: re.Pattern[bytes] = _redact.CLUB_GUID_RE
@@ -433,6 +446,69 @@ OTHER_GUID_LABEL = "other player's GUID without a unit name"
 # or one character long cannot be searched for without matching the log's own
 # text: the log is refused rather than written unchecked. Count only.
 OTHER_UNCHECKABLE_LABEL = "other player's name cannot be checked"
+# Other players' chat, in any file (M16-126). A UI addon's SavedVariables can
+# keep chat history: `|Hchannel:GUILD|h[Guild]|h |Hplayer:<Name-Realm>:...|h[<Name>]|h:
+# <message>`. The free-text note cannot be trusted to catch it (a short line
+# is not "free text"), and the message is someone else's words. So the file is
+# refused, as an unmapped GUID is, and the automatic SavedVariables pick
+# passes it over with this reason:
+# - a player link (`|Hplayer:`, `|HplayerCommunity:`, `|HplayerGM:`) whose
+#   target is not one of the owner's characters. The target is `Name` or
+#   `Name-Realm` up to the first `:` or `|`; with a realm, name and realm must
+#   both match one character folder (any spelling of the folder's realm), so
+#   a namesake on another realm is someone else. Case and normal form are
+#   ignored. An empty target, or one holding `%` (a format string in addon
+#   text), names nobody;
+# - any Battle.net link (`|HBNplayer:`, `|HBNplayerCommunity:`) and any
+#   Battle.net name token (`|Kq12|k`): a Battle.net friend, never the
+#   character captured;
+# - a `|Hchannel:` link followed by anything but the owner's own player link
+#   (colour codes skipped) or the end of the string or line. The client writes
+#   every chat line's speaker as a player link, so a plain-text speaker (in
+#   any colour, bracket, spacing, realm or colon) is not the owner's line and
+#   refuses, whoever it names. A speaker that is another player's link is
+#   counted once, by the first rule.
+# The link types beyond `player`, `BNplayer` and `channel` (the `Community`
+# and `GM` forms, the `|K` token) were named by a reviewer from memory of the
+# client's interface code, not from a capture [verify]. Counts only: an
+# offset would point at someone's message. `--pseudonymise-other-players`
+# does not apply: it rewrites a name, and a chat line's words stay someone
+# else's words whatever the name says.
+PLAYER_LINK_RE = re.compile(rb"\|+H(?i:player(?:Community|GM)?):([^:|]*)")
+BNET_RE = re.compile(rb"\|+H(?i:BNplayer(?:Community)?):|\|+K[a-zA-Z][0-9]+\|+k")
+CHANNEL_LINK_RE = re.compile(
+    rb"\|+H(?i:channel):[^|\r\n]*\|+h(?:[^|\r\n]|\|+(?!h))*\|+h[ \t]*"
+    rb"(?:\|+c(?:[0-9A-Fa-f]{8}|n[A-Za-z0-9_]+:)[ \t]*)*"
+)
+# What may follow a channel link when it has no speaker (a channel list, or a
+# "joined channel" line ending in the link): the end, a quote, a bracket or a
+# line break.
+_NO_SPEAKER = frozenset(b"\"']\r\n")
+OTHER_CHAT_LABEL = "another player's name or chat line"
+BNET_LINK_LABEL = "Battle.net friend link or name"
+# A packed bitfield CVar (`closedInfoFrames "@@R@@@@@P@@B@@@@@@APH"`): the
+# client writes six bits per byte as `@` (0x40) plus the bits, so the value
+# is bytes 0x40..0x7F, and a single `@` between two letters looks like `x@y`
+# to EMAIL_RE (M16-126: a launch-client `config-cache.wtf` was refused for
+# it). The launch client's value also holds a raw C0 control byte (0x02;
+# CVar values may carry them), so C0 bytes are packed bytes too, except the
+# line breaks, which end the SET line. An email match is not counted when it
+# lies in the quoted value of a `SET` line of a config file, that value is
+# made only of packed bytes and holds `@@` (an address holds one `@`), and
+# the match touches another `@` on either side. A dotted domain, digits, `-`
+# or `+` are outside the packed bytes, so such an address still refuses; so
+# does one with no `@@` in its value or standing apart from the `@` runs.
+# Known gap, accepted because the real value has this shape: an address of
+# letters only with no dot, or with a control byte where its dot would be
+# (`"@@@john@gmail\x01com@@"`), glued to the `@` runs of an otherwise
+# packed value, is not refused. Chosen over blanking `closedInfoFrames` by
+# default: blanking hides a non-identity value from the corpus, and only that
+# one CVar, where this covers every packed CVar.
+_PACKED_BYTE = rb"[\x00-\x09\x0b\x0c\x0e-\x1f\x40-\x7f]"
+PACKED_VALUE_RE = re.compile(
+    _LINE_START + rb'SET[ \t]+[A-Za-z0-9_.]+[ \t]+"((?=%s*@@)%s*)"' % (_PACKED_BYTE, _PACKED_BYTE),
+    re.IGNORECASE,
+)
 # Invented GUIDs for other players: a server id no real GUID of the owner's
 # pseudonyms uses (theirs are Player-9999-...), numbered in order of first
 # appearance, so nothing about the real value survives.
@@ -627,6 +703,7 @@ class Identity:
         loose: Iterable[str] = (),
         groups: Iterable[str] = (),
         account_names: Iterable[str] = (),
+        own_characters: Iterable[str | tuple[str, str | None]] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
         folder's casing), given that realm's pseudonym. `loose`: second names of
@@ -637,6 +714,12 @@ class Identity:
         so adding one never renumbers a folder's pseudonym. One that is a
         folder's name or another value in another casing is an alias of it:
         same pseudonym, counted once.
+        `own_characters`: the owner's character folders, as (name, realm
+        folder), or (name, None) or a bare name when the realm is unknown (a
+        `<First>-<Second>` folder). Not scrubbed (they are public); a player
+        link to one of them is the owner's own (M16-126): `Name-Realm` needs
+        the realm to match when it is known. `characters` and their
+        pseudonyms count as known on any realm.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -658,8 +741,21 @@ class Identity:
         }
         spelled = [p for p in map(_loose_pattern, self._ordered(loose)) if p is not None]
         self._loose = re.compile(b"|".join(spelled), re.IGNORECASE) if spelled else None
+        anywhere: set[str] = set()  # own names whose realm is unknown
+        pairs: set[tuple[str, str]] = set()  # (name, realm form), folded
+        for own in own_characters:
+            own_name, own_realm = (own, None) if isinstance(own, str) else own
+            if own_realm is None:
+                anywhere.add(_fold(own_name))
+            else:
+                folded = _fold(own_name)
+                pairs.update((folded, _fold(form)) for form in _realm_forms(own_realm))
         for i, character in enumerate(self._ordered(characters)):
             self._add_name(character, _shaped(character, "Labchar", i), "character")
+            anywhere.update((_fold(character), _fold(self.names[character])))
+        self._own_anywhere = frozenset(anywhere)
+        self._own_pairs = frozenset(pairs)
+        self._own_names = self._own_anywhere | {own_name for own_name, _ in pairs}
         for i, extra in enumerate(self._ordered(extras)):
             self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
         ordered_accounts = self._ordered(accounts)
@@ -919,6 +1015,7 @@ class Identity:
         unit_guids: Sequence[tuple[int, int, bytes]] = (),
         timestamps: Sequence[tuple[int, int, bytes]] = (),
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
+        bare_guids: bool = False,
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -930,7 +1027,8 @@ class Identity:
         (UnitGuids), and `timestamps` its shifted timestamps (TimeShift); both are
         claimed with the player GUIDs. `country_tags` are `.build.info`'s geoip and
         account countries replaced by placeholders (country_scan), claimed in the
-        same pass.
+        same pass. `bare_guids` marks `character-list-order.txt`, whose own
+        GUIDs have no `Player-` prefix (BARE_GUID_RE).
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -966,6 +1064,11 @@ class Identity:
                 claim(m.start(), m.end(), self.guids[key], "guid")
             elif others is not None and key in others.guids:
                 claim(m.start(), m.end(), others.guids[key], "other-guid")
+        if bare_guids:
+            for m in BARE_GUID_RE.finditer(data):
+                key = b"PLAYER-" + m.group(0).upper()
+                if key in self.guids:
+                    claim(m.start(), m.end(), self.guids[key][len(b"Player-") :], "guid")
         for start, end, new in unit_guids:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
@@ -1033,6 +1136,11 @@ class Identity:
         folded = self._folded_hits(scrubbed, [*written, *toc_out])
         if folded:
             problems.append(f"{FOLDED_SURVIVOR_LABEL} x{folded}")
+        if bare_guids:
+            mapped = {guid[len(b"Player-") :] for guid in self._pseudo_guids}
+            unmapped = [m for m in BARE_GUID_RE.finditer(scrubbed) if m.group(0) not in mapped]
+            if unmapped:
+                problems.append(_located(BARE_GUID_LABEL, scrubbed, unmapped))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
 
     def stray_in_combat_log(
@@ -1083,6 +1191,38 @@ class Identity:
             pseudo_guids=others.pseudo_guids if others is not None else frozenset(),
         )
 
+    def _other_chat(self, scrubbed: bytes) -> int:
+        """Player links naming someone other than the owner's characters, and
+        chat-channel lines whose speaker is not the owner's own link
+        (PLAYER_LINK_RE, CHANNEL_LINK_RE)."""
+
+        def nobody(target: bytes) -> bool:
+            return not target or b"%" in target
+
+        def own(target: bytes) -> bool:
+            name, hyphen, realm = target.decode("utf-8", errors="replace").partition("-")
+            if not hyphen:
+                return _fold(name) in self._own_names
+            return (_fold(name), _fold(realm)) in self._own_pairs or (
+                _fold(name) in self._own_anywhere
+            )
+
+        linked = sum(
+            1
+            for m in PLAYER_LINK_RE.finditer(scrubbed)
+            if not nobody(m.group(1)) and not own(m.group(1))
+        )
+        spoken = 0
+        for m in CHANNEL_LINK_RE.finditer(scrubbed):
+            at = m.end()
+            if at == len(scrubbed) or scrubbed[at] in _NO_SPEAKER:
+                continue  # no speaker: a channel list or a "joined" line
+            link = PLAYER_LINK_RE.match(scrubbed, at)
+            if link is not None and not nobody(link.group(1)):
+                continue  # a player link: own, or counted above
+            spoken += 1
+        return linked + spoken
+
     def _inspect(
         self,
         scrubbed: bytes,
@@ -1107,8 +1247,22 @@ class Identity:
         ) -> Iterator[re.Match[bytes]]:
             return (m for m in matches if not _overlaps(spans, m.start(), m.end()))
 
-        report(problems, "email address", EMAIL_RE.finditer(scrubbed))
+        packed = [m.span(1) for m in PACKED_VALUE_RE.finditer(scrubbed)] if config else []
+
+        def address(m: re.Match[bytes]) -> bool:
+            """Not a bitfield's `x@y` (see PACKED_VALUE_RE)."""
+            start, end = m.span()
+            glued = scrubbed[start - 1 : start] == b"@" or scrubbed[end : end + 1] == b"@"
+            return not (glued and _inside(packed, start, end))
+
+        report(problems, "email address", filter(address, EMAIL_RE.finditer(scrubbed)))
         report(problems, "home path", HOME_RE.finditer(scrubbed))
+        chat = self._other_chat(scrubbed)
+        if chat:
+            problems.append(f"{OTHER_CHAT_LABEL} x{chat}")
+        bnet = len(BNET_RE.findall(scrubbed))
+        if bnet:
+            problems.append(f"{BNET_LINK_LABEL} x{bnet}")
         report(problems, "BattleTag", BATTLETAG_RE.finditer(scrubbed))
         report(
             problems,
@@ -2835,6 +2989,7 @@ def process(
         unit_guids=located.edits if located is not None else (),
         timestamps=stamped.edits if stamped is not None else (),
         country_tags=countries.edits if countries is not None else (),
+        bare_guids=name == CHARACTER_LIST_NAME,
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -3014,8 +3169,11 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     """
     accounts: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
+    # For the chat check: a grouped folder's second name is not a realm.
+    own_characters: set[tuple[str, str | None]] = set()
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
+    lists: list[Path] = []  # character-list-order.txt: own GUIDs without `Player-`
 
     # Every folder under the root that has WTF/Account, whether or not it is
     # still an installed flavor: an uninstalled product leaves WTF/ behind, and
@@ -3078,6 +3236,9 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             accounts.add(account.name)
             in_account = listed(account)
             configs.extend(config_files(in_account))
+            lists.extend(
+                p for p in in_account if p.name.casefold() == CHARACTER_LIST_NAME and p.is_file()
+            )
             for realm in folders(in_account):
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
                     continue
@@ -3089,10 +3250,12 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                         split = split_character_folder(character.name)
                         if split is not None:
                             pairs.add(split)
+                            own_characters.add((split[0], None))
                         configs.extend(config_files(listed(character)))
                     continue
                 for character in folders(listed(realm)):
                     pairs.add((character.name, realm.name))
+                    own_characters.add((character.name, realm.name))
                     configs.extend(config_files(listed(character)))
 
     guids: set[bytes] = {g.encode() for g in args.own_guid or []}
@@ -3127,6 +3290,17 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 if piece:
                     account_names.add(piece)
 
+    for order in lists:
+        try:
+            data = read_bytes(order)
+        except OSError as error:
+            raise CaptureError(
+                f"a {CHARACTER_LIST_NAME} could not be read ({type(error).__name__}); the "
+                "character GUIDs it lists would be missing from the identity map, so nothing "
+                "is captured"
+            ) from None
+        guids.update(b"Player-" + m.group(0) for m in BARE_GUID_RE.finditer(data))
+
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:
         for normal in ("NFC", "NFD"):
@@ -3156,6 +3330,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         show_names=args.show_map,
         groups=groups,
         account_names=account_names,
+        own_characters=own_characters,
     )
 
 
