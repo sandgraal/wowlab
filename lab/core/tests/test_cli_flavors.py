@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import platformdirs
+import psutil
 import pytest
 from typer.testing import CliRunner
 
@@ -45,6 +46,9 @@ runner = CliRunner()
 def two_flavors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     redirected = tmp_path / "userdata"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: redirected / "wowlab")
+    # No client in the process table: the write gate's client check reads it,
+    # and a Windows runner's table cannot always be read ("unknown", exit 3).
+    monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter(()))
     root = tmp_path / "World of Warcraft"
     root.mkdir()
     shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
