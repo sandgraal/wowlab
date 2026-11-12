@@ -205,12 +205,13 @@ _PAYLOAD = re.compile(r"\|Hitem:([^|]*)\|h\[([^\]]*)\]")
 
 def _instance(link: str) -> tuple[str, ...]:
     """A link's payload fields with field 8 (link level) and 9 (spec), the
-    character's, blanked, and its name: the item instance."""
+    character's, blanked: the item instance. The name and colour are
+    display text and are left out."""
     match = _PAYLOAD.search(link)
     assert match is not None
     fields = match.group(1).split(":")
     fields[8:10] = ["", ""]
-    return (*fields, match.group(2), link[: link.index("|H")])
+    return tuple(fields)
 
 
 def _gear_links(data: bytes) -> dict[int, tuple[str, int | None]]:
@@ -607,4 +608,75 @@ def test_constructed_summary_names_the_install_file_only_when_it_gave_a_row(
 def test_notes_say_names_come_from_the_installed_build(history: dict[str, Any]) -> None:
     out = " ".join(_run("--notes").stdout.split())
     assert "installed client (wowlab db2 fetch), even for older saves" in out
-    assert "character's level and spec, which are not counted" in out
+    assert "character's level and spec, and its name and colour are display text" in out
+    assert "same instance whose item level, the client's figure, changed" in out
+
+
+def _two_saves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, later: bytes) -> dict[str, Any]:
+    """R2, snapshotted, then `later` as the live file; the later row."""
+    root = _install(tmp_path, monkeypatch)
+    _put(root, _lf(R2), T1)
+    _snap(root, 1)
+    _put(root, later, T2)
+    row: dict[str, Any] = _json()["rows"][1]
+    return row
+
+
+def test_constructed_a_name_alone_is_no_gear_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every link's bracketed name rewritten, as a client language switch
+    would: no gear change."""
+    renamed = re.sub(rb"\|h\[[^\]]*\]\|h", b"|h[Renamed]|h", _lf(R2))
+    assert renamed != _lf(R2)
+    row = _two_saves(tmp_path, monkeypatch, renamed)
+    assert row["gear_changes"] == [] and row["gear_not_compared"] is None
+    assert "different instance" not in _run().stdout
+
+
+def test_constructed_a_colour_form_alone_is_no_gear_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every named colour written in the hex form instead: no gear change."""
+    hexed = re.sub(rb"\|cnIQ[0-9]:\|Hitem", b"|cff1eff00|Hitem", _lf(R2))
+    assert hexed != _lf(R2)
+    row = _two_saves(tmp_path, monkeypatch, hexed)
+    assert row["gear_changes"] == []
+
+
+def _item_levels_up(data: bytes) -> bytes:
+    return re.sub(
+        rb'\["item_level"\] = ([0-9]+),',
+        lambda m: b'["item_level"] = %d,' % (int(m.group(1)) + 1),
+        data,
+    )
+
+
+def test_constructed_item_level_alone_is_the_same_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    row = _two_saves(tmp_path, monkeypatch, _item_levels_up(_lf(R2)))
+    assert row["gear_changes"]
+    for g in row["gear_changes"]:
+        assert g["differs"] == ["item level"]
+        assert g["after"]["item_level"] == g["before"]["item_level"] + 1
+    out = _run().stdout
+    assert "different instance" not in out
+    assert ", same instance, item level 15 to 16 (the client's figure)" in out
+
+
+def test_constructed_bonus_and_item_level_name_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def bonus(fields: list[str]) -> None:
+        count = int(fields[12] or 0)
+        fields[13 : 13 + count] = [*fields[13 : 13 + count], "99999"]
+        fields[12] = str(count + 1)
+
+    later = _item_levels_up(_relink(_lf(R2), bonus))
+    row = _two_saves(tmp_path, monkeypatch, later)
+    assert row["gear_changes"]
+    assert {tuple(g["differs"]) for g in row["gear_changes"]} == {("bonus ids", "item level")}
+    out = _run().stdout
+    assert "a different instance (bonus ids); before: " in out
+    assert "; item level 15 to 16 (the client's figure)" in out

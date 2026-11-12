@@ -1555,9 +1555,11 @@ _HISTORY_NOTES = [
     "again as a later row, marked with the save whose contents it has.",
     "Item names are each link's bracketed text, and item levels and the average are the "
     "client's figures as recorded; nothing is fetched.",
-    "A gear change is a slot whose item differs: another item id, or the same item id with "
-    "a different enchant, gems, bonus ids, modifiers or item level. A link also carries the "
-    "character's level and spec, which are not counted as a change to the item.",
+    "A gear change is a slot whose item differs: another item id; the same item id as a "
+    "different instance (another enchant, gems, bonus ids or modifiers in its link); or the "
+    "same instance whose item level, the client's figure, changed. A link also carries the "
+    "character's level and spec, and its name and colour are display text; none of these is "
+    "counted as a change to the item.",
     "Currencies are what the currency panel listed through your filter and collapsed "
     "headers at that save; a currency under a collapsed header is not listed, so a row "
     "says when the panel was read differently.",
@@ -1627,10 +1629,22 @@ def _history_head(row: charhistory.HistoryRow) -> str:
 def _gear_change_words(g: charhistory.GearChange) -> str:
     slot = f"slot {g.slot} {g.slot_name}" if g.slot_name else f"slot {g.slot}"
     if g.before is not None and g.after is not None and g.differs != ["item id"]:
-        what = (
-            f"{_history_item(g.after)}, same item id, a different instance "
-            f"({', '.join(g.differs)}); before: {_history_item(g.before)}"
+        parts = [d for d in g.differs if d != "item level"]
+        level = (
+            f"item level {_num_words(g.before.item_level)} to "
+            f"{_num_words(g.after.item_level)} (the client's figure)"
+            if "item level" in g.differs
+            else None
         )
+        if parts:
+            what = (
+                f"{_history_item(g.after)}, same item id, a different instance "
+                f"({', '.join(parts)}); before: {_history_item(g.before)}"
+            )
+            if level is not None:
+                what += f"; {level}"
+        else:
+            what = f"{g.after.name}, same instance, {level}"
     else:
         what = f"{_history_item(g.before)} to {_history_item(g.after)}"
     return f"  gear: {slot}: {what}"

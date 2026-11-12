@@ -70,9 +70,10 @@ _INSTANCE_FIELDS: tuple[tuple[str, str], ...] = (
     ("crafter", "crafter field"),
     ("extra_enchant_id", "extra enchant"),
     ("extra_fields", "extra link fields"),
-    ("colour", "quality colour"),
-    ("name", "name"),
 )
+# Not compared: the link's colour (display markup, in a form the client
+# chooses; a quality change shows through the bonus ids) and its bracketed
+# name (display text: a client language switch or a renamed item changes it).
 _LINK_LEVEL = 8
 _LINK_SPEC = 9
 
@@ -94,8 +95,10 @@ class HistoryItem(_Model):
 class GearChange(_Model):
     """One slot whose item differs from the row before. `before` or `after`
     is None for an empty slot. `differs` names what differs: `["item id"]`
-    for another item, the instance's parts (`"bonus ids"`, `"item level"`,
-    ...) for the same item id, and nothing when one side is empty."""
+    for another item; for the same item id, the link's parts that differ
+    (`"bonus ids"`, `"gems"`, ...: another instance) and then `"item level"`
+    when the client's figure differs (alone: the same instance); nothing
+    when one side is empty. The link's name and colour are never compared."""
 
     slot: int
     slot_name: str | None
