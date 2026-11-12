@@ -1,6 +1,7 @@
-"""`wowlab char show`, `list`, `gear`, `binds` and `macros` (M16-111)."""
+"""`wowlab char show`, `list`, `gear`, `binds` and `macros` (M16-111), and
+`history` (M17-02)."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -8,6 +9,7 @@ import typer
 
 from wowlab_core import (
     addoninstall,
+    charhistory,
     dressing,
     gamedata,
     gear,
@@ -16,6 +18,7 @@ from wowlab_core import (
     keymap,
     labaddon,
     layout,
+    luadata,
     macrocheck,
     macroplace,
     snapshot,
@@ -1515,3 +1518,236 @@ def _say_char_macros(
     # so "0 macros" may be wrong (domain review, M16-16).
     caveat = macroplace.CANDIDATE_RULE if may_sit else _MACRO_FILE_TEXT
     _say_notes(_macro_notes(report.notes), show_notes, caveat, keep=keep)
+
+
+# ─── char history (M17-02) ───────────────────────────────────────────────────
+
+
+class CharHistoryReport(_Out):
+    """`wowlab char history --json`: one character over time, one row per
+    distinct save of its WowLab.lua (by the file's modification time), oldest
+    first, from every snapshot in the store and the file in the install;
+    each row with what changed from the row before. Copies that could not be
+    read, and snapshots whose manifest does not load, are listed with the
+    reason."""
+
+    flavor_folder: str
+    account: str
+    character: str  # "<realm folder>/<character folder>"
+    chosen_by: Literal["--character", "latest"]
+    file: str  # relative to the flavor folder
+    # The installed client's version: the build whose cached tables named
+    # specs and currencies (None when the install has none).
+    names_build: str | None
+    rows: list[charhistory.HistoryRow]
+    unreadable: list[charhistory.UnreadableCopy]
+    damaged_snapshots: list[snapshot.InvalidManifest]
+    snapshots_searched: int
+    snapshots_holding: int
+    notes: list[str]
+
+
+_HISTORY_NOTES = [
+    *_CHAR_NOTES,
+    "One row per save: copies with the same save time are one record, however many "
+    "snapshots hold it. A restore gives the file a new time, so a restored record can "
+    "show again as a later row.",
+    "Item names are each link's bracketed text, and item levels and the average are the "
+    "client's figures as recorded; nothing is fetched.",
+    "Spec and currency names come from game-data tables already downloaded for the "
+    "installed client (wowlab db2 fetch); without them the id is shown.",
+]
+_HISTORY_FEW = (
+    "To see this character change over time, take a snapshot after you play "
+    "(wowlab snap create): each logout or /reload saves a new record, and each snapshot "
+    "keeps the one on disk."
+)
+
+
+def _history_names(
+    version: str | None,
+) -> tuple[Callable[[int], str | None], Callable[[int], str | None]]:
+    """Spec and currency names from the tables cached for `version`."""
+    cache: dict[tuple[str, int], str | None] = {}
+
+    def lookup(table: str, row_id: int) -> str | None:
+        if version is None:
+            return None
+        if (table, row_id) not in cache:
+            cache[(table, row_id)] = _cached_name(table, "Name_lang", version, row_id, None)
+        return cache[(table, row_id)]
+
+    return (lambda i: lookup("ChrSpecialization", i)), (lambda i: lookup("CurrencyTypes", i))
+
+
+def _history_item(item: charhistory.HistoryItem | None) -> str:
+    if item is None:
+        return "empty"
+    level = (
+        "item level not returned" if item.item_level is None else f"item level {item.item_level}"
+    )
+    return f"{item.name} ({level})"
+
+
+def _history_head(row: charhistory.HistoryRow) -> str:
+    level = f"level {row.level}" if row.level is not None else "level not recorded"
+    ilvl = (
+        f"item level {row.item_level}" if row.item_level is not None else "item level not recorded"
+    )
+    spec = row.spec
+    if spec.id is None:
+        spec_words = "spec not recorded"
+    elif row.spec_name:
+        spec_words = f"spec {row.spec_name} (spec id {spec.id})"
+    else:
+        spec_words = f"spec id {spec.id}"
+    return f"{_local_time(row.saved_at_ns)}  {level}, {ilvl}, {spec_words}"
+
+
+def _history_lines(row: charhistory.HistoryRow) -> list[str]:
+    where: list[str] = []
+    if row.snapshots:
+        where.append(f"{_plural(len(row.snapshots), 'snapshot')} ({', '.join(row.snapshots)})")
+    if row.live:
+        where.append("the file in the install")
+    lines = [f"  from {' and '.join(where)}"]
+    if row.changed_from_ns is None:
+        lines.append("  the oldest record wowlab has")
+        return lines
+    if row.gear_not_compared is not None:
+        lines.append(f"  gear not compared: {row.gear_not_compared}")
+    for g in row.gear_changes:
+        slot = f"slot {g.slot} {g.slot_name}" if g.slot_name else f"slot {g.slot}"
+        same = (
+            g.before is not None
+            and g.after is not None
+            and (g.before.name, g.before.item_level) == (g.after.name, g.after.item_level)
+        )
+        what = (
+            f"{_history_item(g.after)}, same item, its link differs (enchant, gems, bonus ids or how the client "
+            "writes links)"
+            if same
+            else f"{_history_item(g.before)} to {_history_item(g.after)}"
+        )
+        lines.append(f"  gear: {slot}: {what}")
+    if row.currencies_not_compared is not None:
+        lines.append(f"  currencies not compared: {row.currencies_not_compared}")
+    for c in row.currency_changes:
+        name = f"{c.name} (currency {c.id})" if c.name else f"currency {c.id}"
+        before = "none" if c.before is None else str(c.before)
+        after = "none" if c.after is None else str(c.after)
+        lines.append(f"  currency: {name}: {before} to {after}")
+    if (
+        not row.gear_changes
+        and not row.currency_changes
+        and row.gear_not_compared is None
+        and row.currencies_not_compared is None
+    ):
+        lines.append("  no gear or currency changes")
+    return lines
+
+
+@char_app.command("history", short_help="One character over time, from your snapshots.")
+@_handled
+def char_history(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """One character over time: the WowLab.lua every snapshot holds, and the
+    one in the install, one row per save with its level, average item level
+    and spec, and the gear and currencies that changed from the save before.
+    Without --character, the character whose WowLab.lua was written last.
+    A snapshot whose copy cannot be read is listed with the reason. Reads
+    only; take snapshots with `wowlab snap create` to build history.
+
+    \f
+    JSON: CharHistoryReport."""
+    _, chosen, lay = _open_char(root, flavor, account)
+    acct = _select_account(lay, account)
+    files = [f for f in lay.saved_variables() if f.account == acct.folder and _is_lab_file(f)]
+    target, how, tie = _lab_char_file(acct, files, character)
+    try:
+        table = gear.load_slot_table()
+    except gear.SlotTableError as exc:
+        raise CliError(f"the slot table cannot be used: {exc}") from exc
+
+    def read_live() -> bytes:
+        try:
+            return snapshot.read_regular_file(
+                lay.flavor_path / target.path, limit=luadata.MAX_FILE_BYTES, root=lay.install_root
+            )
+        except snapshot.LinkedPathError as exc:
+            raise exc.changed_while_read(lay.flavor_path) from exc
+
+    spec_name, currency_name = _history_names(chosen.version)
+    found = charhistory.collect(
+        snapshot.SnapshotStore(),
+        f"{chosen.folder}/{target.path}",
+        live=(target.mtime_ns, read_live),
+        table=table.table,
+        spec_name=spec_name,
+        currency_name=currency_name,
+    )
+    report = CharHistoryReport(
+        flavor_folder=chosen.folder,
+        account=acct.folder,
+        character=f"{target.realm_folder}/{target.character_folder}",
+        chosen_by=how,
+        file=target.path,
+        names_build=chosen.version,
+        rows=found.rows,
+        unreadable=found.unreadable,
+        damaged_snapshots=found.damaged_snapshots,
+        snapshots_searched=found.snapshots_searched,
+        snapshots_holding=found.snapshots_holding,
+        notes=_HISTORY_NOTES,
+    )
+    if json_out:
+        _emit(report)
+    else:
+        _say_char_history(report, acct, how, tie, notes_out)
+    if not report.rows:
+        raise typer.Exit(EXIT_ERROR)
+
+
+def _say_char_history(
+    report: CharHistoryReport,
+    acct: layout.Account,
+    how: Literal["--character", "latest"],
+    tie: str,
+    notes_out: bool,
+) -> None:
+    held = [*_account_words(acct), report.file]
+    _say_prose(
+        f"Character: {report.character} in account {acct.folder}{_picked_words(how, tie)}",
+        keep=held,
+    )
+    n = len(report.rows)
+    _say(
+        f"{_plural(n, 'save')}, from {report.snapshots_holding} of "
+        f"{_plural(report.snapshots_searched, 'snapshot')} and the file in the install, "
+        "oldest first:"
+        if n
+        else "No save of this character could be read."
+    )
+    for row in report.rows:
+        _say(_history_head(row))
+        for line in _history_lines(row):
+            _say(line)
+    if report.unreadable or report.damaged_snapshots:
+        bad_count = len(report.unreadable) + len(report.damaged_snapshots)
+        copies = "1 copy" if bad_count == 1 else f"{bad_count} copies"
+        _say(f"Could not read {copies}" + (" (the others were read):" if n else ":"))
+    for bad in report.unreadable:
+        where = (
+            "the file in the install" if bad.where == "install" else f"snapshot {bad.snapshot_id}"
+        )
+        _say(f"  {where}: {bad.reason}")
+    for damaged in report.damaged_snapshots:
+        _say(f"  snapshot file {damaged.name} does not load: {damaged.reason}")
+    caveat = _HISTORY_FEW if n < 2 else None
+    _say_notes(report.notes, notes_out, caveat, keep=held)

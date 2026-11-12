@@ -638,6 +638,9 @@ from wowlab_core.cli._cmd_char import (
     CharGearReport as CharGearReport,
 )
 from wowlab_core.cli._cmd_char import (
+    CharHistoryReport as CharHistoryReport,
+)
+from wowlab_core.cli._cmd_char import (
     CharListFlavor as CharListFlavor,
 )
 from wowlab_core.cli._cmd_char import (
