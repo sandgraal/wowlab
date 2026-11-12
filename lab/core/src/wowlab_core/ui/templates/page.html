@@ -22,15 +22,26 @@
 </div>
 <label id="run-flavor-box" class="run-flavor" hidden>Runs use flavor <select id="run-flavor"></select></label>
 <nav class="tabs" role="tablist" aria-label="Views">
-<button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="true" aria-controls="explorer-view">Explorer</button>
+<button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">Account</button>
+<button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
+<button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
 <button id="tab-gaps" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gaps-view">Gaps</button>
 <button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
-<button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
 <button id="tab-looks" class="tab" type="button" role="tab" aria-selected="false" aria-controls="looks-view">Looks</button>
 </nav>
 </header>
 <main>
-<section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer">
+<section id="account-view" role="tabpanel" aria-labelledby="tab-account">
+<h2 class="unseen">Account</h2>
+<p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. Read only: this tab runs <code>wowlab char list --summary</code> and nothing else. Pick a character to open it in the Character tab.</p>
+<div class="toolbar panel">
+<label id="hub-flavor-box">Flavor <select id="hub-flavor"></select></label>
+<label>Class <select id="hub-class"></select></label>
+<p id="hub-status" role="status"></p>
+</div>
+<div id="hub-table" class="panel hub-table" role="region" aria-label="Characters" tabindex="0"></div>
+</section>
+<section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer" hidden>
 <div class="toolbar panel">
 <label id="flavor-box" hidden>Open flavor folder <select id="flavor"></select></label>
 <label>Verdict <select id="level-filter"><option value="">All</option></select></label>

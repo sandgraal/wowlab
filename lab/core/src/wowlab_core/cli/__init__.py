@@ -659,6 +659,15 @@ from wowlab_core.cli._cmd_char import (
     CharShowReport as CharShowReport,
 )
 from wowlab_core.cli._cmd_char import (
+    CharSummaryProfession as CharSummaryProfession,
+)
+from wowlab_core.cli._cmd_char import (
+    CharSummaryReport as CharSummaryReport,
+)
+from wowlab_core.cli._cmd_char import (
+    CharSummaryRow as CharSummaryRow,
+)
+from wowlab_core.cli._cmd_char import (
     _bare_words as _bare_words,
 )
 from wowlab_core.cli._cmd_char import (

@@ -536,6 +536,24 @@ pre:empty { display: none; }
 .macro-finding { color: var(--ruin); }
 .macro-clean { margin: var(--space-1) 0; color: var(--text-muted); }
 
+/* ─── the Account tab (M17-01): every character in one table, which
+   scrolls in its own labelled, focusable box on a narrow window ─── */
+#hub-status { margin: 0; color: var(--text-muted); flex-basis: 100%; font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+#hub-status:empty { display: none; }
+#hub-status.error { color: var(--ruin); }
+.hub-table { max-width: 100%; overflow-x: auto; padding: var(--space-3) var(--space-4); }
+.hub-table .char-table th { white-space: nowrap; }
+.hub-sort, .hub-open {
+  padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: inherit; letter-spacing: inherit; color: inherit;
+}
+.hub-open { text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.hub-row:not(.hub-row-bare) { cursor: pointer; }
+.hub-row:not(.hub-row-bare):hover { background: var(--hover); }
+.hub-none { color: var(--text-muted); font-style: italic; }
+.hub-advice code { font-family: var(--font-mono); font-size: 14px; unicode-bidi: isolate; overflow-wrap: anywhere; }
+.hub-advice .copy { margin-left: var(--space-2); }
+
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
 #looks-status { margin: 0; color: var(--text-muted); flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
