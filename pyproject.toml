@@ -63,10 +63,6 @@ ignore = [
 "**/tests/**" = ["T20"]
 # CI helper scripts report through stdout.
 "scripts/*.py" = ["T20"]
-# M16-69 activated an M16-107T grader there by deleting its marker line only;
-# the parametrize list it leaves has two equal branches. A grader is never
-# edited by the session it grades, so the rule is relaxed here instead.
-"lab/core/tests/test_guard_snapshot_kind.py" = ["RUF034"]
 
 # Hooks run under the system interpreter (as old as 3.9) in every contributor
 # session, so pyupgrade must not modernise them past that.
