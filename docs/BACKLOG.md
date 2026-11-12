@@ -1492,7 +1492,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new comman
 ---
 
 ## [ ] M16-05 — Owner: the launch-client session
-**Size:** S · **owner** · **Depends on:** M16-45, M16-46, and the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
+**Size:** S · **owner** · **Depends on:** the launch (*amended 2026-11-12:* M16-45 and M16-46 dropped from this line; the session ran on schema 4 on 2026-11-12 and the lab-addon loaded and recorded, so it no longer waits for them) · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
 
 Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's runbook on the launch client and records:
 - the flavor folder, the product code and the interface number;
