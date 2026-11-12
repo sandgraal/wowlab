@@ -168,6 +168,11 @@ OWN_GUID_LABEL = "the owner's own GUID not replaced"
 _PLAYER_PREFIX = b"PLAYER-"
 
 
+def _guid_bytes(guid: bytes | str) -> bytes:
+    """A GUID as bytes (`str` from a caller is ASCII)."""
+    return guid.encode("ascii", errors="replace") if isinstance(guid, str) else guid
+
+
 def _own_guid_pattern(guids: dict[bytes, bytes]) -> re.Pattern[bytes] | None:
     """Group 1 the optional `Player-` prefix, group 2 the body of one own GUID.
 
@@ -826,7 +831,8 @@ class Identity:
                 self._add_account(name, index)
                 index += 1
 
-        canonical = sorted({guid.upper() for guid in guids})
+        # Some older review probes pass `str` GUIDs; take them as their ASCII bytes.
+        canonical = sorted({_guid_bytes(guid).upper() for guid in guids})
         self.guids: dict[bytes, bytes] = {
             guid: b"Player-9999-%08X" % (i + 1) for i, guid in enumerate(canonical)
         }
