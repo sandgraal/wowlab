@@ -5161,13 +5161,13 @@ The panel's suggestions that the owner declined, or left for later:
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
-§6.10 was rewritten as one current section on 2026-11-12 (M16-110), with no rule changed. This appendix keeps what it replaced, unchanged: the base text of M10-11 (A.1) and each dated amendment in the order it was added (A.2 to A.8). Every owner decision keeps its date and its words here. §6.10 is the rule; where the two read differently, the later amendment here was already the rule, and §6.10 states it.
+§6.10 was rewritten as one current section on 2026-11-12 (M16-110), with no rule changed. This appendix keeps what it replaced, unchanged: the base text of M10-11 (A.1) and each dated amendment in the order it was added (A.2 to A.8). The one exception is the dated 2026-11-12 sentence on `undone_as` under A.8's (a1), added by PR #500 on the same day and kept here so both texts carry it. Every owner decision keeps its date and its words here. If §6.10 and this appendix read differently, that is an error in §6.10: the latest dated amendment here governs until §6.10 is corrected.
 
 How an older reference resolves:
 - "§6.10" quoting a phrase of the original text (for example "open a journal entry under the store" or "of the default subtrees") is A.1.
 - "§6.10 item 1" to "item 4", "the 2026-09-22 amendment", "clarified 2026-09-22", and "reworded" or "added 2026-09-23" are A.2.
 - "amended 2026-09-28" is A.3; "amended 2026-10-17" is A.4; "amended 2026-10-22" is A.5.
-- "2026-11-10 (a)", "(b)" and "(c)" with no ticket named are A.6; the M16-84 amendment of 2026-11-10, with its (a) to (d), is A.7.
+- "2026-11-10 (a)", "(b)" and "(c)" with no ticket named are A.6; the M16-84 amendment of 2026-11-10, with its (a) to (d), is A.7. "2026-11-10 (d)" is always A.7, with or without a ticket named.
 - "§6.10 (a)", "(a1)", "(a2)", "(b)", "(e)" and "(e1)" with no date, or dated 2026-11-11, are A.8. The 2026-11-12 sentence on `undone_as` under (a1) is A.8 too (M16-69, #490).
 
 ### A.1 The base text (M10-11)
