@@ -1902,6 +1902,32 @@ class StoreReport(_Out):
     exposure: snapshot.StoreExposure
 
 
+# Why wowlab cannot work out safely what a change did (ADR-0037): the
+# journal does not load, or the pre-write snapshot of the change `undo`
+# would act on cannot be read. `undo` refuses either and changes nothing.
+CannotWorkOutCause = Literal["journal_unreadable", "snapshot_unreadable"]
+
+
+class CannotWorkOut(_Out):
+    """`doctor`'s one problem for a failure wowlab cannot work out (ADR-0037):
+    the snapshots are kept, and the newest whole one is offered for a
+    restore the player inspects first."""
+
+    cause: CannotWorkOutCause
+    # The journal record whose pre-write snapshot cannot be read; None when
+    # the journal itself does not load.
+    record_id: str | None
+    # The newest snapshot `snap verify` finds whole (it loads, every object
+    # it names is there and re-hashes to its name) and that was taken of a
+    # flavor folder of the install `doctor` checked, so `snap restore` can
+    # plan it there; of the change's own flavor when it has one. None when
+    # there is none.
+    snapshot_id: str | None
+    # The command the problem ends with, with the caller's --root as given;
+    # None with no whole snapshot.
+    command: str | None
+
+
 # What each "Next steps" item of `doctor` is about (M16-37).
 NextStepItem = Literal["install", "lab_addon", "characters", "combat_log"]
 # `ok`: nothing to do; `missing`: not there yet; `stale`: the lab-addon is
@@ -1960,6 +1986,11 @@ class DoctorReport(_Out):
     # What to do next (M16-37): the install when none was found, else for
     # each flavor the lab-addon, the characters recorded and a combat log.
     next_steps: list[NextStep] = Field(default_factory=list)
+    # A failure wowlab cannot work out safely (ADR-0037): the journal does
+    # not load, or the change undo would act on has no readable pre-write
+    # snapshot. Its one entry of `problems` says the same. Left out of the
+    # JSON when there is none.
+    cannot_work_out: CannotWorkOut | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 # The CVars that decide whether the server may replace local binds, macros
@@ -2237,14 +2268,14 @@ def _doctor(
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
     steps: list[NextStep] = []
+    # The --root the player gave, as given, for the commands the next
+    # steps name; None when the install was found without one.
+    given_root = str(root) if root is not None and str(root) != "" else None
     if inst is None:
         steps.append(_install_step(build_info_missing))
     else:
         game = _game_data(inst.flavors, check_builds)
         several = len(inst.flavors) > 1
-        # The --root the player gave, as given, for the commands the next
-        # steps name; None when the install was found without one.
-        given_root = str(root) if root is not None and str(root) != "" else None
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -2277,8 +2308,14 @@ def _doctor(
     store = _read_left(_store_report(), inst)
     if store.damaged:
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
+    unsure: CannotWorkOut | None = None
     if store.journal_error:
-        problems.append("the journal of the write gate cannot be read")
+        unsure = _cannot_work_out("journal_unreadable", None, inst, given_root)
+        problems.append(_cannot_work_out_problem(unsure))
+    elif store.last_transaction is not None and _snapshot_unreadable(store.last_transaction):
+        t = store.last_transaction
+        unsure = _cannot_work_out("snapshot_unreadable", t, inst, given_root)
+        problems.append(_cannot_work_out_problem(unsure, t))
     elif store.last_transaction is not None and store.last_transaction.state == "open":
         t = store.last_transaction
         problems.append(
@@ -2313,6 +2350,157 @@ def _doctor(
         not_taken=list(inst.not_taken) if inst is not None else [],
         build_info_missing=build_info_missing,
         next_steps=steps,
+        cannot_work_out=unsure,
+    )
+
+
+# ─── doctor: a failure wowlab cannot work out (ADR-0037) ─────────────────────
+
+
+def _offers_undo(t: LastTransaction) -> bool:
+    """Whether `doctor` would offer `wowlab undo --expect` for `t` and that
+    undo would restore from its pre-write snapshot: an `open` record that
+    took one, or a `rollback_incomplete` record with files or folders to put
+    back. Every other record needs no snapshot read (or no undo at all)."""
+    if t.state == "open":
+        return t.snapshot_taken
+    if t.state == "rollback_incomplete":
+        return bool(t.paths or t.created_dirs)
+    return False
+
+
+def _snapshot_unreadable(t: LastTransaction) -> bool:
+    """Whether the change `undo` would act on needs its pre-write snapshot
+    and that snapshot cannot be read, as `undo` reads it (by id, from the
+    store): its manifest is missing or does not load, or a file the change
+    replaced is not in it as the journal names it, or that file's object is
+    missing or does not re-hash to its name. `undo` refuses such a record
+    and changes nothing. Reads only."""
+    if not _offers_undo(t):
+        return False
+    try:
+        records = guard.history()
+    except guard.GuardError:
+        return False  # said as the journal's own problem
+    target = guard._undo_target(records)
+    if target is None or target.id != t.id or not target.snapshot_id:
+        return False
+    store = snapshot.SnapshotStore()
+    try:
+        manifest = store.show(target.snapshot_id)
+        # As `undo` reads it (`guard._undo_record`): each file the change
+        # replaced must be in the snapshot, as the journal names it, and its
+        # object present and sound, before anything is written.
+        prefix = Path(target.flavor_path).name + "/"
+        for item in target.paths:
+            if item.before is None:
+                continue
+            entry = manifest.entry(prefix + item.path)
+            if entry is None or entry.kind != "file" or entry.sha256 != item.before:
+                return True
+            store.read_object(entry.sha256, size=entry.size)
+    except (snapshot.SnapshotError, OSError):
+        return True
+    return False
+
+
+def _newest_whole_snapshot(inst: install.Install, prefer: str | None) -> snapshot.Manifest | None:
+    """The newest snapshot `snap verify` finds whole (its manifest loads,
+    every object it names is in the store and re-hashes to its name) that
+    `snap restore` would plan in the install `doctor` checked: taken of one
+    of this install's flavor folders, in this install, as the write gate
+    refuses a snapshot of another install. With `prefer` (the flavor folder
+    of the change), the newest of that flavor's snapshots when there is one.
+    None when there is none, or the store cannot be checked. Reads only;
+    re-hashes every object, so it runs only for this problem."""
+    store = snapshot.SnapshotStore()
+    try:
+        verified = store.verify()
+        listing = store.list_lenient()
+    except (snapshot.SnapshotError, OSError):
+        return None
+    corrupt = set(verified.corrupt_objects)
+    if snapshot.OBJECTS_DIR_ENTRY in corrupt:
+        return None  # nothing under objects/ was checked
+    missing = {m.snapshot_id for m in verified.missing_objects}
+    folders = {f.folder for f in inst.flavors}
+    whole: list[snapshot.Manifest] = []
+    for manifest in listing.manifests:  # oldest first
+        if manifest.flavor_folder is None or manifest.flavor_folder not in folders:
+            continue
+        if not guard._local_absolute(manifest.install_root) or not guard._same_dir(
+            Path(manifest.install_root), inst.root
+        ):
+            continue  # another install's: `snap restore` here refuses it
+        if manifest.id in missing:
+            continue
+        if any(e.sha256 is not None and e.sha256 in corrupt for e in manifest.entries):
+            continue
+        whole.append(manifest)
+    preferred = [m for m in whole if m.flavor_folder == prefer]
+    for pick in (preferred, whole):
+        if pick:
+            return pick[-1]
+    return None
+
+
+def _cannot_work_out(
+    cause: CannotWorkOutCause,
+    record: LastTransaction | None,
+    inst: install.Install | None,
+    given_root: str | None,
+) -> CannotWorkOut:
+    """The answer for a failure wowlab cannot work out. The command offered
+    is one the player can run as printed: a snapshot of the install `doctor`
+    checked, with the caller's --root as given, quoted as `doctor`'s next
+    steps quote it. With no install found there is none to offer."""
+    whole = (
+        None
+        if inst is None
+        else _newest_whole_snapshot(inst, record.flavor_folder if record is not None else None)
+    )
+    if whole is None or whole.flavor_folder is None or inst is None:
+        return CannotWorkOut(
+            cause=cause,
+            record_id=record.id if record is not None else None,
+            snapshot_id=None,
+            command=None,
+        )
+    # No --flavor: `snap restore` takes the flavor from the snapshot.
+    command = _wowlab_command(
+        ["snap", "restore", whole.id, "--dry-run"], whole.flavor_folder, False, given_root
+    )
+    return CannotWorkOut(
+        cause=cause,
+        record_id=record.id if record is not None else None,
+        snapshot_id=whole.id,
+        command=command,
+    )
+
+
+def _cannot_work_out_problem(c: CannotWorkOut, t: LastTransaction | None = None) -> str:
+    """The `doctor` problem for a failure wowlab cannot work out (ADR-0037):
+    what it is, that wowlab cannot work out safely what the change did and
+    undo changes nothing, that the snapshots are kept, and the newest whole
+    one with the command to inspect its restore, last. With no whole
+    snapshot it says so and offers no command."""
+    if c.cause == "journal_unreadable" or t is None:
+        lead = (
+            "the journal of the write gate cannot be read, so wowlab cannot work out safely "
+            "what its last change did"
+        )
+    else:
+        lead = (
+            f"{_subject(t.id, t.passed_over)} {_journal_state_words(t.state)} (record {t.id}), "
+            "and the snapshot wowlab took before it cannot be read, so wowlab cannot work out "
+            "safely what this change did"
+        )
+    lead += "; undo refuses and changes nothing. Your snapshots are kept"
+    if c.snapshot_id is None or c.command is None:
+        return lead + ", but none of them is whole, so wowlab has none to offer to restore."
+    return (
+        f"{lead}; the newest whole one is {c.snapshot_id}. To see what restoring it would "
+        f"put back before you choose, run: {c.command}"
     )
 
 
