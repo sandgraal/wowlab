@@ -1016,6 +1016,7 @@ class Identity:
         timestamps: Sequence[tuple[int, int, bytes]] = (),
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
         bare_guids: bool = False,
+        honorbound: Sequence[tuple[int, int, bytes, str]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -1028,7 +1029,9 @@ class Identity:
         claimed with the player GUIDs. `country_tags` are `.build.info`'s geoip and
         account countries replaced by placeholders (country_scan), claimed in the
         same pass. `bare_guids` marks `character-list-order.txt`, whose own
-        GUIDs have no `Player-` prefix (BARE_GUID_RE).
+        GUIDs have no `Player-` prefix (BARE_GUID_RE). `honorbound` are a
+        `macros-cache.txt`'s `#HB3` hash values replaced by `0`s
+        (honorbound_scan), claimed in the same pass.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -1073,7 +1076,7 @@ class Identity:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
             claim(start, end, new, "timestamp")
-        for start, end, new, reason in country_tags:
+        for start, end, new, reason in (*country_tags, *honorbound):
             claim(start, end, new, reason)
         close_pass()
         if others is not None:
@@ -1919,6 +1922,35 @@ class CountryScan:
     edits: tuple[tuple[int, int, bytes, str], ...]  # (start, end, placeholder, reason)
     # (refusal label, count) of key occurrences that are not a whole token of a Tags cell
     unplaced: tuple[tuple[str, int], ...]
+
+
+# HonorBound (an addon) writes a `#HB3 l=…;s=…;p=…;u=…;n=…;h=<hex>` line into
+# a macro body (M16-125 security review). How the `h=` hash is made is
+# unknown, and it may be derived from the character's GUID, so in
+# `macros-cache.txt` the value of `h=` in a line that starts `#HB3 ` is
+# replaced byte for byte with `0`s of the same length. Nothing else in the
+# line or the file is touched.
+HONORBOUND_LINE = b"#HB3 "
+HONORBOUND_FIELD_RE = re.compile(rb"(?:^|(?<=[ ;]))h=([^;\s]*)")
+HONORBOUND_PLACEHOLDER_BYTE = b"0"
+HONORBOUND_REASON = "honorbound"
+MACROS_NAME = "macros-cache.txt"
+
+
+def honorbound_scan(data: bytes) -> tuple[tuple[int, int, bytes, str], ...]:
+    """(start, end, placeholder, reason) for the `h=` value of every `#HB3 ` line."""
+    edits: list[tuple[int, int, bytes, str]] = []
+    for offset, line in _lines_with_offsets(data):
+        if not line.startswith(HONORBOUND_LINE):
+            continue
+        body = line[len(HONORBOUND_LINE) :]
+        base = offset + len(HONORBOUND_LINE)
+        for m in HONORBOUND_FIELD_RE.finditer(body):
+            start, end = m.span(1)
+            if start < end:
+                placeholder = HONORBOUND_PLACEHOLDER_BYTE * (end - start)
+                edits.append((base + start, base + end, placeholder, HONORBOUND_REASON))
+    return tuple(edits)
 
 
 def _lines_with_offsets(data: bytes) -> Iterator[tuple[int, bytes]]:
@@ -2990,6 +3022,7 @@ def process(
         timestamps=stamped.edits if stamped is not None else (),
         country_tags=countries.edits if countries is not None else (),
         bare_guids=name == CHARACTER_LIST_NAME,
+        honorbound=honorbound_scan(original) if name == MACROS_NAME else (),
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -3092,6 +3125,7 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
             ("unit-guid", "unit-guids-rewritten"),
             ("geoip", "geoip-country-replaced"),
             ("acct", "acct-country-replaced"),
+            (HONORBOUND_REASON, "honorbound-hash-replaced"),
         )
         if result.count(reason)
     ]
