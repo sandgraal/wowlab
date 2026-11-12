@@ -1696,7 +1696,7 @@ lab/
     │   ├── snapshot.py
     │   ├── guard.py              # load-bearing
     │   ├── filemap.py  filemap.toml
-    │   └── cli.py
+    │   └── cli/                  # one module per command group (M16-111, 2026-11-12)
     └── tests/
         ├── fixtures/             # real captures + README.md index (provenance)
         ├── parser/               # @pytest.mark.parser — runs under make test-parser

@@ -1,6 +1,6 @@
 ---
 paths:
-  - "lab/core/src/wowlab_core/cli.py"
+  - "lab/core/src/wowlab_core/cli/**"
   - "lab/core/src/wowlab_core/ui/**"
   - "lab/core/src/wowlab_core/filemap.toml"
   - "lab/core/src/wowlab_core/firstrun.py"

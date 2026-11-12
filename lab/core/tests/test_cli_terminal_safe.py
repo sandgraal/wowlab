@@ -259,10 +259,17 @@ def test_note_escapes_its_own_non_line_break_controls_constructed(
     assert capsys.readouterr().err == "a\\x1bb\\xe2\\x80\\xa8c\\x09d\ne\n"
 
 
+def _cli_trees() -> list[ast.Module]:
+    """Every module of the `cli` package, which was one file, `cli.py`, until
+    M16-111 split it."""
+    package = Path(cli.__file__).parent
+    return [ast.parse(p.read_text(encoding="utf-8")) for p in sorted(package.glob("*.py"))]
+
+
 def _note_calls() -> list[ast.Call]:
-    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
     return [
         node
+        for tree in _cli_trees()
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
@@ -271,9 +278,8 @@ def _note_calls() -> list[ast.Call]:
 
 
 def _module_strings() -> dict[str, str]:
-    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
     out: dict[str, str] = {}
-    for node in tree.body:
+    for node in (node for tree in _cli_trees() for node in tree.body):
         if (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
