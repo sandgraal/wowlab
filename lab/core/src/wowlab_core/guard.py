@@ -486,7 +486,8 @@ class HistoryRecord(_Frozen):
     amended 2026-11-11, (a1)); None for every other record. `snapshot_id`
     is the empty string for a record whose pre-write snapshot was never
     taken (killed between the leftover cleanup and the snapshot, or the
-    snapshot failed): it changed no player file."""
+    snapshot failed); with no `paths` and no `created_dirs`, it changed no
+    player file (§6.10 as amended 2026-11-11, (a2))."""
 
 
 class PlanItem(_Frozen):
@@ -755,8 +756,10 @@ def _journal_dir(store_path: Path) -> Path:
 
 def _load_journal(store_path: Path) -> list[_JournalRecord]:
     """Every record under the store, oldest first. Reads only; a missing store
-    or journal is an empty history. A damaged record is an error, never
-    skipped: `undo()` acts on the most recent one."""
+    or journal is an empty history. A damaged record anywhere is an error
+    for the whole history, never skipped: `undo()` picks its undo target
+    (§6.10 as amended 2026-11-11, (a1), (a2)) only from a journal read in
+    full."""
     directory = _journal_dir(store_path)
     try:
         names = sorted(p.name for p in directory.iterdir())
@@ -3433,8 +3436,9 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
 
 
 def _close_unsnapshotted(store_path: Path, record: _JournalRecord, place: _Place) -> None:
-    """Close a record that never took its pre-write snapshot (§6.10 as
-    amended 2026-11-11, (a)): it changed no player file, so nothing is
+    """Close a record that never took its pre-write snapshot and lists no
+    path and no created folder (§6.10 as amended 2026-11-11, (a), (a2); the
+    caller, `_undo_record`, checks both): it changed no player file, so nothing is
     restored and no removed leftover is brought back. An `open` one (killed
     between its cleanup and its snapshot) is rewritten `rolled_back` with a
     note; a closed one is left as it is. Under the store and install locks,
