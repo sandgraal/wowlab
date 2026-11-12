@@ -2992,14 +2992,14 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 
 ---
 
-## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes three small chat gaps
+## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes the remaining chat, GUID and HonorBound gaps
 **Size:** S · **Depends on:** nothing · **Sources:** `security-reviewer` and `code-reviewer` on PR #514 (M16-126); the M16-125 leak of 2026-11-12
 
 On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-list-order.txt` reached a pushed branch, because `GUID_RE` needs `Player-`. M16-126 maps and refuses bare GUIDs in that one file. What is left, in `scripts/lab_capture.py`:
 - **Every file.** Discovery knows the owner's own GUIDs. Search every captured file for each one's exact text, with and without the `Player-` prefix, in any case, and rewrite it to the pseudonym; a bare `<n>-<hex>` pattern stays too common to match blindly.
-- **L1.** After the owner's own speaker link, another `Name:` on the same line still passes. Refuse it.
-- **L2.** A `|h` inside a channel label, or upper-case `|H` closers, end the link early. Use a label of `\[[^\]\r\n]*\]` and a case-insensitive closer.
-- **L3.** In `character-list-order.txt`, refuse any unmapped `[0-9]+-[0-9A-Fa-f]{6,}` token, whatever its boundaries.
+- **Speaker after own link.** After the owner's own speaker link, another `Name:` on the same line still passes. Refuse it.
+- **Link label and closer.** A `|h` inside a channel label, or upper-case `|H` closers, end the link early. Use a label of `\[[^\]\r\n]*\]` and a case-insensitive closer.
+- **Bare GUID tokens.** In `character-list-order.txt`, refuse any unmapped `[0-9]+-[0-9A-Fa-f]{6,}` token, whatever its boundaries.
 - **The HonorBound rule fails open** (`security-reviewer` on M16-125). `honorbound_scan` leaves the hash in place, with no edit and no refusal, for a tab or `,` before `h=`, `h = `, `H=`, leading space or a tab after `#HB3`, `#hb3`, `#HB4` and a UTF-8 BOM. Match `^\s*#HB\d+\s` without regard to case, accept `[ \t;,]` before the key and spaces around `=`, strip a BOM, and refuse any `#HB<n>` line whose `h` was not replaced.
 
 **Acceptance:** constructed tests for each case, labelled; the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: refusal lines only.
