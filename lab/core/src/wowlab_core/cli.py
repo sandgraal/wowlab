@@ -1918,10 +1918,13 @@ class CannotWorkOut(_Out):
     # the journal itself does not load.
     record_id: str | None
     # The newest snapshot `snap verify` finds whole (it loads, every object
-    # it names is there and re-hashes to its name) and that names a flavor
-    # folder, so `snap restore` can plan it; None when there is none.
+    # it names is there and re-hashes to its name) and that was taken of a
+    # flavor folder of the install `doctor` checked, so `snap restore` can
+    # plan it there; of the change's own flavor when it has one. None when
+    # there is none.
     snapshot_id: str | None
-    # The command the problem ends with; None with no whole snapshot.
+    # The command the problem ends with, with the caller's --root as given;
+    # None with no whole snapshot.
     command: str | None
 
 
@@ -2265,14 +2268,14 @@ def _doctor(
     flavors: list[DoctorFlavor] = []
     client: ClientReport | None = None
     steps: list[NextStep] = []
+    # The --root the player gave, as given, for the commands the next
+    # steps name; None when the install was found without one.
+    given_root = str(root) if root is not None and str(root) != "" else None
     if inst is None:
         steps.append(_install_step(build_info_missing))
     else:
         game = _game_data(inst.flavors, check_builds)
         several = len(inst.flavors) > 1
-        # The --root the player gave, as given, for the commands the next
-        # steps name; None when the install was found without one.
-        given_root = str(root) if root is not None and str(root) != "" else None
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -2307,11 +2310,11 @@ def _doctor(
         problems.append(f"{len(store.damaged)} damaged snapshot manifest(s)")
     unsure: CannotWorkOut | None = None
     if store.journal_error:
-        unsure = _cannot_work_out("journal_unreadable", None)
+        unsure = _cannot_work_out("journal_unreadable", None, inst, given_root)
         problems.append(_cannot_work_out_problem(unsure))
     elif store.last_transaction is not None and _snapshot_unreadable(store.last_transaction):
         t = store.last_transaction
-        unsure = _cannot_work_out("snapshot_unreadable", t.id)
+        unsure = _cannot_work_out("snapshot_unreadable", t, inst, given_root)
         problems.append(_cannot_work_out_problem(unsure, t))
     elif store.last_transaction is not None and store.last_transaction.state == "open":
         t = store.last_transaction
@@ -2369,8 +2372,10 @@ def _offers_undo(t: LastTransaction) -> bool:
 def _snapshot_unreadable(t: LastTransaction) -> bool:
     """Whether the change `undo` would act on needs its pre-write snapshot
     and that snapshot cannot be read, as `undo` reads it (by id, from the
-    store): its manifest is missing or does not load. `undo` refuses such a
-    record and changes nothing. Reads only."""
+    store): its manifest is missing or does not load, or a file the change
+    replaced is not in it as the journal names it, or that file's object is
+    missing or does not re-hash to its name. `undo` refuses such a record
+    and changes nothing. Reads only."""
     if not _offers_undo(t):
         return False
     try:
@@ -2380,19 +2385,34 @@ def _snapshot_unreadable(t: LastTransaction) -> bool:
     target = guard._undo_target(records)
     if target is None or target.id != t.id or not target.snapshot_id:
         return False
+    store = snapshot.SnapshotStore()
     try:
-        snapshot.SnapshotStore().show(target.snapshot_id)
+        manifest = store.show(target.snapshot_id)
+        # As `undo` reads it (`guard._undo_record`): each file the change
+        # replaced must be in the snapshot, as the journal names it, and its
+        # object present and sound, before anything is written.
+        prefix = Path(target.flavor_path).name + "/"
+        for item in target.paths:
+            if item.before is None:
+                continue
+            entry = manifest.entry(prefix + item.path)
+            if entry is None or entry.kind != "file" or entry.sha256 != item.before:
+                return True
+            store.read_object(entry.sha256, size=entry.size)
     except (snapshot.SnapshotError, OSError):
         return True
     return False
 
 
-def _newest_whole_snapshot() -> str | None:
-    """The id of the newest snapshot `snap verify` finds whole: its manifest
-    loads, every object it names is in the store and re-hashes to its name.
-    Only one that names a flavor folder counts, as `snap restore` refuses
-    any other. None when there is none, or the store cannot be checked.
-    Reads only; re-hashes every object, so it runs only for this problem."""
+def _newest_whole_snapshot(inst: install.Install, prefer: str | None) -> snapshot.Manifest | None:
+    """The newest snapshot `snap verify` finds whole (its manifest loads,
+    every object it names is in the store and re-hashes to its name) that
+    `snap restore` would plan in the install `doctor` checked: taken of one
+    of this install's flavor folders, in this install, as the write gate
+    refuses a snapshot of another install. With `prefer` (the flavor folder
+    of the change), the newest of that flavor's snapshots when there is one.
+    None when there is none, or the store cannot be checked. Reads only;
+    re-hashes every object, so it runs only for this problem."""
     store = snapshot.SnapshotStore()
     try:
         verified = store.verify()
@@ -2403,19 +2423,59 @@ def _newest_whole_snapshot() -> str | None:
     if snapshot.OBJECTS_DIR_ENTRY in corrupt:
         return None  # nothing under objects/ was checked
     missing = {m.snapshot_id for m in verified.missing_objects}
-    for manifest in reversed(listing.manifests):  # oldest first, so newest last
-        if manifest.flavor_folder is None or manifest.id in missing:
+    folders = {f.folder for f in inst.flavors}
+    whole: list[snapshot.Manifest] = []
+    for manifest in listing.manifests:  # oldest first
+        if manifest.flavor_folder is None or manifest.flavor_folder not in folders:
+            continue
+        if not guard._local_absolute(manifest.install_root) or not guard._same_dir(
+            Path(manifest.install_root), inst.root
+        ):
+            continue  # another install's: `snap restore` here refuses it
+        if manifest.id in missing:
             continue
         if any(e.sha256 is not None and e.sha256 in corrupt for e in manifest.entries):
             continue
-        return manifest.id
+        whole.append(manifest)
+    preferred = [m for m in whole if m.flavor_folder == prefer]
+    for pick in (preferred, whole):
+        if pick:
+            return pick[-1]
     return None
 
 
-def _cannot_work_out(cause: CannotWorkOutCause, record_id: str | None) -> CannotWorkOut:
-    whole = _newest_whole_snapshot()
-    command = None if whole is None else f"wowlab snap restore {whole} --dry-run"
-    return CannotWorkOut(cause=cause, record_id=record_id, snapshot_id=whole, command=command)
+def _cannot_work_out(
+    cause: CannotWorkOutCause,
+    record: LastTransaction | None,
+    inst: install.Install | None,
+    given_root: str | None,
+) -> CannotWorkOut:
+    """The answer for a failure wowlab cannot work out. The command offered
+    is one the player can run as printed: a snapshot of the install `doctor`
+    checked, with the caller's --root as given, quoted as `doctor`'s next
+    steps quote it. With no install found there is none to offer."""
+    whole = (
+        None
+        if inst is None
+        else _newest_whole_snapshot(inst, record.flavor_folder if record is not None else None)
+    )
+    if whole is None or whole.flavor_folder is None or inst is None:
+        return CannotWorkOut(
+            cause=cause,
+            record_id=record.id if record is not None else None,
+            snapshot_id=None,
+            command=None,
+        )
+    # No --flavor: `snap restore` takes the flavor from the snapshot.
+    command = _wowlab_command(
+        ["snap", "restore", whole.id, "--dry-run"], whole.flavor_folder, False, given_root
+    )
+    return CannotWorkOut(
+        cause=cause,
+        record_id=record.id if record is not None else None,
+        snapshot_id=whole.id,
+        command=command,
+    )
 
 
 def _cannot_work_out_problem(c: CannotWorkOut, t: LastTransaction | None = None) -> str:

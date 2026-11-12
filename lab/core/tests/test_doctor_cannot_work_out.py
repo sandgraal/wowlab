@@ -1,11 +1,14 @@
 """`doctor`'s one answer for a failure wowlab cannot work out (M16-109, ADR-0037).
 
 - A journal that does not load, or a change `undo` would act on whose
-  pre-write snapshot cannot be read (its manifest is missing), is one
-  `doctor` problem, exit 1. It says wowlab cannot work out safely what the
-  change did, that undo changes nothing and the snapshots are kept, names
-  the newest snapshot `snap verify` finds whole, and ends with
-  `wowlab snap restore <id> --dry-run`.
+  pre-write snapshot cannot be read as undo reads it (its manifest is
+  missing, or an object a replaced file needs is missing or corrupt), is
+  one `doctor` problem, exit 1. It says wowlab cannot work out safely what
+  the change did, that undo changes nothing and the snapshots are kept,
+  names the newest snapshot `snap verify` finds whole of the install doctor
+  checked (of the change's flavor first), and ends with
+  `wowlab snap restore <id> --dry-run`, plus the `--root` doctor was given;
+  the command runs as printed.
 - With no whole snapshot left, it says so and offers no command.
 - `--json` carries it as `cannot_work_out` (`cause`, `record_id`,
   `snapshot_id`, `command`); `--redact` keeps the snapshot id, which names
@@ -28,11 +31,14 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 from test_cli import (
+    CAPTURE,
+    FLAVOR,
     flavor,  # noqa: F401
     idle,  # noqa: F401  (autouse: no client in the process table)
     ok,
@@ -42,7 +48,7 @@ from test_cli import (
     user_data,  # noqa: F401
 )
 
-from wowlab_core import cli, doctorredact, guard, snapshot
+from wowlab_core import cli, doctorredact, guard, install, snapshot
 
 RESTORE = "wowlab snap restore"
 
@@ -267,6 +273,176 @@ def test_a_snapshot_with_a_missing_object_is_not_offered_constructed(flavor: Pat
     store.object_path(sorted(only_newest)[0]).unlink()
     _, report = _doctor_json()
     assert report["cannot_work_out"]["snapshot_id"] == older
+
+
+# ─── a missing or corrupt pre-write object ──────────────────────────────────
+
+
+def _replace_config(flavor: Path) -> guard.HistoryRecord:
+    """A real change through the write gate that replaces a file, so `undo`
+    needs the object of its pre-write copy: `snap restore --paths` puts
+    `WTF/Config.wtf` back after a constructed edit. Two snapshots result:
+    the one `snap create` took, then the change's pre-write snapshot."""
+    ok("snap", "create")
+    cfg = flavor / "WTF" / "Config.wtf"
+    cfg.write_bytes(cfg.read_bytes() + b'SET constructedM16109 "1"\n')
+    ok("snap", "restore", _snapshots()[0], "--paths", "WTF/Config.wtf", "--yes")
+    last = guard.history()[-1]
+    assert [p.before for p in last.paths if p.before], "positive control: a file was replaced"
+    assert len(_snapshots()) == 2, "positive control: two snapshots"
+    return last
+
+
+@pytest.mark.parametrize(
+    "state", ["open", "rollback_incomplete"], ids=["interrupted", "rollback-unfinished"]
+)
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_a_lost_pre_write_object_is_the_generic_answer_constructed(
+    flavor: Path, state: str, damage: str
+) -> None:
+    """The manifest loads, but `undo` also reads every object the journal's
+    `before` names and refuses when one is missing or does not re-hash."""
+    last = _replace_config(flavor)
+    older = _snapshots()[0]
+    _rewrite(last.id, state=state)
+    store = _store()
+    store.show(last.snapshot_id)  # positive control: the manifest loads
+    for change in last.paths:
+        if change.before is None:
+            continue
+        obj = store.object_path(change.before)
+        if damage == "missing":
+            obj.unlink()
+        else:
+            obj.chmod(0o600)
+            obj.write_bytes(b"constructed: not what the name hashes to\n")
+
+    result, report = _doctor_json()
+    assert result.exit_code == 1, result.output
+    unsure = report["cannot_work_out"]
+    assert unsure["cause"] == "snapshot_unreadable"
+    assert unsure["record_id"] == last.id
+    (problem,) = report["problems"]
+    assert "undo --expect" not in problem
+    assert "cannot work out safely" in problem
+    if unsure["snapshot_id"] is not None:
+        # The older snapshot shares the object, so it is whole only when the
+        # damaged object is the change's alone.
+        assert unsure["snapshot_id"] == older
+        assert ok(*shlex.split(unsure["command"])[1:]).exit_code == 0
+
+    journal = _record_path(last.id).read_bytes()
+    refused = run("undo", "--expect", last.id, "--yes")
+    assert refused.exit_code != 0, "positive control: undo refuses this change"
+    assert _record_path(last.id).read_bytes() == journal
+
+
+def test_a_whole_pre_write_object_keeps_the_undo_line_constructed(flavor: Path) -> None:
+    """Positive control for the object check: nothing lost, the usual answer."""
+    last = _replace_config(flavor)
+    _rewrite(last.id, state="open")
+    result, report = _doctor_json()
+    assert result.exit_code == 1
+    assert "cannot_work_out" not in report
+    assert report["problems"] == [cli._interrupted(last.id)]
+
+
+# ─── the offered command runs as printed ─────────────────────────────────────
+
+
+def _second_install(tmp_path: Path) -> Path:
+    """Constructed: another copy of the captured tree, a second install."""
+    other = tmp_path / "Second WoW"
+    other.mkdir()
+    shutil.copy2(CAPTURE / ".build.info", other / ".build.info")
+    shutil.copytree(CAPTURE / "forever", other / FLAVOR)
+    return other
+
+
+def test_a_newer_snapshot_of_another_install_is_not_offered_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    last = _install_change()
+    own = _snapshots()[-1]
+    other = _second_install(tmp_path)
+    ok("snap", "create", "--root", str(other))
+    foreign = _snapshots()[-1]
+    assert foreign != own, "positive control: the newest snapshot is the other install's"
+    _damage_journal(last.id)
+
+    result, report = _doctor_json()
+    assert result.exit_code == 1, result.output
+    assert report["cannot_work_out"]["snapshot_id"] == own
+    argv = shlex.split(report["cannot_work_out"]["command"])
+    assert argv == ["wowlab", "snap", "restore", own, "--dry-run"]
+    assert ok(*argv[1:]).exit_code == 0
+    # Positive control: the other install's snapshot is refused here.
+    assert run("snap", "restore", foreign, "--dry-run").exit_code != 0
+
+
+def test_only_another_installs_snapshots_offer_nothing_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the store holding only the other install's snapshots, doctor
+    has none of this install to offer, and says so."""
+    other = _second_install(tmp_path)
+    monkeypatch.setenv(install.ENV_ROOT, str(other))
+    last = _install_change()
+    _damage_journal(last.id)
+    result, report = _doctor_json("--root", str(root))
+    assert result.exit_code == 1, result.output
+    assert report["cannot_work_out"]["snapshot_id"] is None
+    assert report["cannot_work_out"]["command"] is None
+    (problem,) = report["problems"]
+    assert "none of them is whole" in problem
+
+
+def test_the_command_carries_the_root_doctor_was_given_constructed(
+    root: Path, flavor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Constructed: a space in the root, so the quoting shows.
+    spaced = tmp_path / "W o W"
+    shutil.copytree(root, spaced)
+    monkeypatch.setenv(install.ENV_ROOT, str(spaced))
+    last = _install_change()
+    own = _snapshots()[-1]
+    _damage_journal(last.id)
+    monkeypatch.setenv(install.ENV_ROOT, str(_second_install(tmp_path)))
+
+    result, report = _doctor_json("--root", str(spaced))
+    assert result.exit_code == 1, result.output
+    command = report["cannot_work_out"]["command"]
+    assert command == shlex.join(
+        ["wowlab", "snap", "restore", own, "--dry-run", "--root", str(spaced)]
+    )
+    assert report["problems"][-1].endswith(f"run: {command}")
+    assert ok(*shlex.split(command)[1:]).exit_code == 0
+    # Without --root, the default install is found: no --root in the command.
+    _, plain = _doctor_json()
+    assert plain["cannot_work_out"]["command"] is None, "the default install has no snapshot"
+
+
+def test_the_change_flavor_is_preferred_and_named_constructed(root: Path, flavor: Path) -> None:
+    """On an install with several flavors, the change's own flavor's newest
+    whole snapshot is offered over a newer one of another flavor. The
+    command names no --flavor: `snap restore` takes it from the snapshot."""
+    second = root / "_constructed_"
+    shutil.copytree(flavor, second)
+    ok("snap", "create", "--flavor", FLAVOR)
+    ok("addon", "install", "lab", "--yes", "--flavor", FLAVOR)
+    last = guard.history()[-1]
+    own = _snapshots()[0]
+    ok("snap", "create", "--flavor", "_constructed_")
+    assert _snapshots()[-1] not in (own, last.snapshot_id)
+    _rewrite(last.id, state="open")
+    _drop_manifest(last.snapshot_id)
+
+    result, report = _doctor_json()
+    assert result.exit_code == 1, result.output
+    assert report["cannot_work_out"]["snapshot_id"] == own
+    argv = shlex.split(report["cannot_work_out"]["command"])
+    assert argv == ["wowlab", "snap", "restore", own, "--dry-run"]
+    assert ok(*argv[1:]).exit_code == 0
 
 
 # ─── --redact ────────────────────────────────────────────────────────────────
