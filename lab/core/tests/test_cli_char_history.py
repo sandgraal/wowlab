@@ -355,7 +355,7 @@ def test_text_has_one_head_line_per_save_and_names_the_changes(history: dict[str
     result = _run()
     assert result.exit_code == 0, result.stdout
     out = result.stdout
-    assert "4 saves, from 5 of 5 snapshots and the file in the install, oldest first:" in out
+    assert "4 saves, from 4 of 5 snapshots and the file in the install, oldest first:" in out
     assert out.count("  from ") == 4
     assert "the oldest record wowlab has" in out
     assert "  gear: slot " in out
@@ -424,6 +424,9 @@ def test_constructed_damaged_manifest_is_listed_by_name(
     assert damaged["name"] == "20261106T000000000000Z-deadbeef.json"
     out = _run().stdout
     assert "snapshot file 20261106T000000000000Z-deadbeef.json does not load" in out
+    # A damaged manifest is a snapshot that did not load, not a copy.
+    assert "Could not read 1 copy (the others were read):" in out
+    assert "1 snapshot did not load, so wowlab cannot tell whether they hold" in out
 
 
 def test_constructed_live_file_unreadable_and_no_snapshots_exits_1(
@@ -595,7 +598,7 @@ def test_constructed_summary_names_the_install_file_only_when_it_gave_a_row(
     _put(root, b"WowLabCharDB = {\n", T2)
     out = _run().stdout
     assert (
-        "1 save, from 1 of 1 snapshot (the file in the install could not be read; see below), "
+        "1 save, from 1 of 1 snapshot (the install's own copy could not be read; see below), "
         "oldest first:" in out
     )
     assert "  the file in the install: " in out

@@ -1,6 +1,7 @@
 """`wowlab char show`, `list`, `gear`, `binds` and `macros` (M16-111), and
 `history` (M17-02)."""
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Literal
@@ -1704,10 +1705,20 @@ def char_history(
     except gear.SlotTableError as exc:
         raise CliError(f"the slot table cannot be used: {exc}") from exc
 
+    live_path = lay.flavor_path / target.path
+    # The save time and the bytes from one file: its lstat now, and the read
+    # refused if the file opened is not that one (a logout replacing it in
+    # between), as the survey reads it. When the lstat fails, the read says why.
+    try:
+        live_st: os.stat_result | None = os.lstat(live_path)
+    except OSError:
+        live_st = None
+    live_ns = live_st.st_mtime_ns if live_st is not None else target.mtime_ns
+
     def read_live() -> bytes:
         try:
             return snapshot.read_regular_file(
-                lay.flavor_path / target.path, limit=luadata.MAX_FILE_BYTES, root=lay.install_root
+                live_path, limit=luadata.MAX_FILE_BYTES, expect=live_st, root=lay.install_root
             )
         except snapshot.LinkedPathError as exc:
             raise exc.changed_while_read(lay.flavor_path) from exc
@@ -1716,7 +1727,7 @@ def char_history(
     found = charhistory.collect(
         snapshot.SnapshotStore(),
         f"{chosen.folder}/{target.path}",
-        live=(target.mtime_ns, read_live),
+        live=(live_ns, read_live),
         table=table.table,
         spec_name=spec_name,
         currency_name=currency_name,
@@ -1744,15 +1755,18 @@ def char_history(
 
 
 def _history_summary(report: CharHistoryReport) -> str:
-    """The line above the rows: how many saves, and where they came from."""
+    """The line above the rows: how many saves, and where they came from:
+    only the copies that made a row (a copy that could not be read is
+    listed below the rows, not counted here)."""
     n = len(report.rows)
     if not n:
         return "No save of this character could be read."
-    where = f"from {report.snapshots_holding} of {_plural(report.snapshots_searched, 'snapshot')}"
+    read = len({s for r in report.rows for s in r.snapshots})
+    where = f"from {read} of {_plural(report.snapshots_searched, 'snapshot')}"
     if any(r.live for r in report.rows):
         where += " and the file in the install"
     elif any(u.where == "install" for u in report.unreadable):
-        where += " (the file in the install could not be read; see below)"
+        where += " (the install's own copy could not be read; see below)"
     return f"{_plural(n, 'save')}, {where}, oldest first:"
 
 
@@ -1774,8 +1788,8 @@ def _say_char_history(
         _say(_history_head(row))
         for line in _history_lines(row):
             _say(line)
-    if report.unreadable or report.damaged_snapshots:
-        bad_count = len(report.unreadable) + len(report.damaged_snapshots)
+    if report.unreadable:
+        bad_count = len(report.unreadable)
         copies = "1 copy" if bad_count == 1 else f"{bad_count} copies"
         _say(f"Could not read {copies}" + (" (the others were read):" if n else ":"))
     for bad in report.unreadable:
@@ -1783,6 +1797,11 @@ def _say_char_history(
             "the file in the install" if bad.where == "install" else f"snapshot {bad.snapshot_id}"
         )
         _say(f"  {where}: {bad.reason}")
+    if report.damaged_snapshots:
+        _say(
+            f"{_plural(len(report.damaged_snapshots), 'snapshot')} did not load, so wowlab "
+            "cannot tell whether they hold this character:"
+        )
     for damaged in report.damaged_snapshots:
         _say(f"  snapshot file {damaged.name} does not load: {damaged.reason}")
     caveat = _HISTORY_FEW if n < 2 else None
