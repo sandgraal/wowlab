@@ -5162,12 +5162,15 @@ The panel's suggestions that the owner declined, or left for later:
    names in the review are merged.
 7. M16-47 is the wave review.
 
-## 19. Proposed: the companion wave (not picked)
+## 19. M17: the companion wave
 
 *Proposed 2026-11-12 by the conductor, from the product review the owner
-asked for (`docs/handoffs/review-2026-11-12.md`). Nothing here is a ticket.
-It is a candidate for the owner's next wave pick (ADR-0024), offered in
-place of resuming M15. The `CW-` ids are placeholders.*
+asked for (`docs/handoffs/review-2026-11-12.md`), in place of resuming M15.
+Picked by the owner the same day, in session: "go with the companion wave,
+file the tickets". The tickets are M17-01 to M17-12 in `docs/BACKLOG.md`;
+the `CW-` ids below are the plan's names for them (CW-1 is M17-01, CW-2 is
+M17-02 and M17-03, CW-3 is M17-04, CW-4 is M17-05, CW-5 is M17-07 to
+M17-09, CW-6 is M17-06, CW-7 is M13-02 and M17-10).*
 
 **Aim.** Re-aim `wowlab ui` from an explorer of the install's files to a
 companion for the player's account: every character in one place, a history
@@ -5188,7 +5191,7 @@ snapshots that wowlab already has, and writes only through `guard`.
 **Prerequisites.** v0.2 tagged after M16-05 (the launch-client session,
 with the two persistence tests), M16-33 and M16-32.
 
-**Deferred by this proposal if picked.** M15-06 to M15-13 and Wave 7 (they
+**Deferred by this pick.** M15-06 to M15-13 and Wave 7 (they
 duplicate wow.export and Wowhead and would retire "never reads `Data/`"),
 `char advise --send`, crew-book, comp-builder and the db2lake SQL command.
 
