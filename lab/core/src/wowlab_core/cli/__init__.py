@@ -1001,6 +1001,9 @@ from wowlab_core.cli._cmd_doctor import (
     _no_text as _no_text,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _no_version_cause as _no_version_cause,
+)
+from wowlab_core.cli._cmd_doctor import (
     _offers_undo as _offers_undo,
 )
 from wowlab_core.cli._cmd_doctor import (

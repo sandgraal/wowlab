@@ -11,6 +11,7 @@ from wowlab_core import (
     gamedata,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _no_version_cause,
     _open_gamedata,
 )
 from wowlab_core.cli._common import (
@@ -75,17 +76,9 @@ def _unknown_build(folder: str, product: str, matching_rows: int) -> str:
     three cases `doctor` tells apart (M16-118, M16-121): no product, no
     `.build.info` row for it, a row with a blank version. The no-row case
     points at `doctor`, which says what usually causes it."""
-    if not product:
-        return f"{folder}'s .flavor.info gives no product code, so its version is unknown; pass --build"
-    if matching_rows >= 1:
-        return (
-            f"the .build.info row for {folder}'s product {product} has no version in it; "
-            "pass --build"
-        )
-    return (
-        f".build.info has no row for {folder}'s product {product}, so its version is "
-        "unknown (wowlab doctor says why); pass --build"
-    )
+    cause = _no_version_cause(folder, product, matching_rows)
+    why = " (wowlab doctor says why)" if product and matching_rows == 0 else ""
+    return f"{cause}, so the version of {folder} is unknown{why}; pass --build"
 
 
 def _check_table_key(data: gamedata.GameData, table: str, build: str) -> None:

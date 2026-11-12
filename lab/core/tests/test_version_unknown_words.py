@@ -101,13 +101,19 @@ def test_doctor_game_data_line_does_not_repeat_the_reason_constructed(
     assert "no version in .build.info" not in text
 
 
-def test_doctor_json_game_data_detail_is_unchanged_constructed(root: Path) -> None:
+def test_doctor_json_game_data_detail_names_the_case_constructed(root: Path) -> None:
     data = json.loads(_run("doctor", "--offline", "--root", str(root), "--json").stdout)
 
-    by_folder = {f["folder"]: f for f in data["flavors"]}
-    game_data = by_folder[NO_ROW]["game_data"]
-    assert game_data["status"] == "no_version"
-    assert game_data["detail"] == f".build.info has no version for product {NO_ROW_PRODUCT!r}"
+    by_folder = {f["folder"]: f["game_data"] for f in data["flavors"]}
+    assert {by_folder[f]["status"] for f in (NO_ROW, NO_PRODUCT, BLANK_VERSION)} == {"no_version"}
+    assert by_folder[NO_PRODUCT]["detail"] == f"{NO_PRODUCT}'s .flavor.info gives no product code"
+    assert by_folder[NO_ROW]["detail"] == f".build.info has no row for product {NO_ROW_PRODUCT}"
+    assert by_folder[BLANK_VERSION]["detail"] == (
+        f"the .build.info row for product {BLANK_VERSION_PRODUCT} has no version in it"
+    )
+    # The fields are unchanged; only that free text is.
+    assert set(by_folder[NO_ROW]) == {"status", "version", "detail"}
+    assert by_folder[NO_ROW]["version"] is None
 
 
 # ─── the --build refusal ─────────────────────────────────────────────────────
@@ -118,18 +124,18 @@ def test_doctor_json_game_data_detail_is_unchanged_constructed(root: Path) -> No
     [
         (
             NO_PRODUCT,
-            f"{NO_PRODUCT}'s .flavor.info gives no product code, so its version is unknown; "
-            "pass --build",
+            f"{NO_PRODUCT}'s .flavor.info gives no product code, so the version of "
+            f"{NO_PRODUCT} is unknown; pass --build",
         ),
         (
             NO_ROW,
-            f".build.info has no row for {NO_ROW}'s product {NO_ROW_PRODUCT}, so its version "
+            f".build.info has no row for product {NO_ROW_PRODUCT}, so the version of {NO_ROW} "
             "is unknown (wowlab doctor says why); pass --build",
         ),
         (
             BLANK_VERSION,
-            f"the .build.info row for {BLANK_VERSION}'s product {BLANK_VERSION_PRODUCT} has "
-            "no version in it; pass --build",
+            f"the .build.info row for product {BLANK_VERSION_PRODUCT} has no version in it, "
+            f"so the version of {BLANK_VERSION} is unknown; pass --build",
         ),
     ],
 )
@@ -156,7 +162,7 @@ def test_db2_build_refusal_escapes_a_hostile_product_constructed(tmp_path: Path)
     result = _run("db2", "fetch", "ChrClasses", "--root", str(root), "--flavor", NO_ROW)
 
     assert "\x1b" not in result.stderr
-    assert "product wow\\x1b[31mred, so its version is unknown" in result.stderr
+    assert f"product wow\\x1b[31mred, so the version of {NO_ROW} is unknown" in result.stderr
 
 
 # ─── the library's messages ──────────────────────────────────────────────────

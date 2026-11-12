@@ -300,6 +300,18 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
     return out
 
 
+def _no_version_cause(folder: str, product: str, matching_rows: int) -> str:
+    """Why a flavor's version is unknown, in one clause, in the three cases
+    `_unknown_version` tells apart (M16-118): no product, no `.build.info`
+    row for it, a row with a blank version. `game_data.detail` in --json and
+    the `db2 --build` refusal both use it (M16-121)."""
+    if not product:
+        return f"{folder}'s .flavor.info gives no product code"
+    if matching_rows >= 1:
+        return f"the .build.info row for product {product} has no version in it"
+    return f".build.info has no row for product {product}"
+
+
 def _game_data(flavors: Sequence[install.Flavor], check_builds: bool) -> dict[str, GameDataReport]:
     reports: dict[str, GameDataReport] = {}
     pending: list[install.Flavor] = []
@@ -308,7 +320,7 @@ def _game_data(flavors: Sequence[install.Flavor], check_builds: bool) -> dict[st
             reports[f.folder] = GameDataReport(
                 status="no_version",
                 version=None,
-                detail=f".build.info has no version for product {f.product!r}",
+                detail=_no_version_cause(f.folder, f.product, f.matching_rows),
             )
         elif not check_builds:
             reports[f.folder] = GameDataReport(
