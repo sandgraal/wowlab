@@ -162,6 +162,36 @@ M13-09), which the scrub tool imports.
 `bind BUTTON4 "CLICK SomeAddonButton:LeftButton"`. Header or mode lines
 exist in some versions **[verify]**; keep anything unmatched as `Unknown`.
 
+*Amended 2026-11-12 (M16-05, the owner's launch-client session, Forever
+`_forever_`, product `wowf`, build 1.60.1.70888, interface 16001, macOS).*
+The persistence tests of `docs/handoffs/M14-binds-persist.md` were run on a
+**character** file (the character uses its own key bindings; the account
+`bindings-cache.wtf` is 0 bytes): runs A and B of that runbook, on the
+character file:
+
+| Run | `synchronizeBindings` | Edit made with the client closed | Worked after login? | Key Bindings panel | Edit still in the file after logout? | File rewritten at logout? |
+|---|---|---|---|---|---|---|
+| A | `1` (no line in any file; `GetCVar` returned `"1"`) | `ALT-I` → `CTRL-F11` for `ITEMTREE_OPEN` | yes | not recorded | yes | **no** (mtime unchanged) |
+| B | `0` (`SET synchronizeBindings "0"` in `Config.wtf`) | `CTRL-F11` → `CTRL-F12` | yes | `CTRL-F12` | yes | yes (same content) |
+
+So, on this client, **an offline edit of a character `bindings-cache.wtf`
+survives login whether `synchronizeBindings` is on or off**. The server did
+not put its own copy back. With sync on, the client left the file untouched
+at logout; with sync off, it rewrote it unchanged. Line endings stayed CRLF.
+The account file and the sync-on case for a binding changed *in game* on
+another machine were not tested. Of the three `synchronize*` names probed,
+`GetCVar("synchronizeBindings")` and `GetCVar("synchronizeConfig")` returned
+`"1"` and `GetCVar("synchronizeMacros")` returned nothing. The character
+`bindings-cache.wtf` exists when character-specific bindings are on. The
+matching **[verify]** in `docs/LAB_FILE_MAP.md` is generated from
+`filemap.toml` and is left for M16-125.
+
+The same session answered M16-05's other questions. The lab-addon loaded on
+the launch client (interface 16001), was not marked out of date, and wrote
+its record at both logouts. The account `edit-mode-cache-account.txt` was
+rewritten during the session, not at logout; whether a hand edit to it is
+kept was not tested. Macro persistence and numbering are in §7.
+
 ## 7. `macros-cache.txt`
 
 Records:
@@ -176,6 +206,32 @@ END
 Header fields: format version, macro id (hex), name, icon (name or file id).
 Body is every line up to a line that is exactly `END`. Account macros live in
 the account folder, character macros in the character folder.
+
+*Amended 2026-11-12 (M16-05, same session as the §6 amendment).*
+- **Persistence (`docs/handoffs/M13-07.md`).** With the client closed, a
+  character macro body was changed (`/cast Shadow Ward` → `/use Shadow Ward`),
+  then (`/sit` → `/dance`) on a second login. Both times `/macro` showed the
+  edit after login, and the file kept it after logout. The client rewrites
+  the file at logout. `synchronizeMacros` does not exist on this client
+  (`GetCVar` returned nothing), so there was no sync setting to flip. The
+  second run had `synchronizeBindings` off and `synchronizeConfig` on.
+- **Macro index = position in the file.** Account macros take indices 1 to
+  120 and character macros take 121 onward. The index follows each record's
+  order in the file as the client wrote it at logout; the macro id does not
+  decide it. The client writes macros with a blank name (`" "`) first, then
+  by name, so the in-game window's order and the file's order agree.
+  Observed with `GetMacroIndexByName`: account `wowlab acc` = 1; with 29
+  character macros, `aa wowlab two` = 147 and `zz wowlab one` = 149, at
+  positions 27 and 29 in the character file. Action slots 66, 67 and 68
+  (the bottom-left bar, buttons 6 to 8) held them. `wowlab char macros`
+  placed all three correctly from the files alone, so its candidate numbering
+  holds for this build. Deleting macros in game removes their records at the
+  next logout, and the indices close up.
+- `MAX_ACCOUNT_MACROS` and `MAX_CHARACTER_MACROS` are nil on this client;
+  120 per set is the community value, not observed.
+- A new account macro was written as
+  `VER 3 0000000000000001 "wowlab acc" "134400"`, CRLF, like the character
+  file. Whether the client writes a macro with an empty body was not tested.
 
 ## 8. Combat log (`Logs/WoWCombatLog*.txt`)
 
@@ -576,7 +632,14 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (Config.wtf), `lastSelectedClubId` (character file). Absent on this build:
   `lastCharacterGuid` (Config.wtf has `lastCharacterIndex` instead), `realmName`,
   both `Sound_VoiceChat*`, and every `synchronize*` CVar (absent is not "off":
-  the default is **[verify]**). Also recorded verbatim, meaning unknown:
+  the default is **[verify]**; *resolved 2026-11-12, M16-05, build 70888:*
+  with no line in any file, `synchronizeBindings` and `synchronizeConfig`
+  read `"1"` in game, and `GetCVar("synchronizeMacros")` returned nothing.
+  Offline edits to `Config.wtf` (`farclip "8000"` → `"7999"`) and to the
+  account `config-cache.wtf` (`showTargetOfTarget "1"` → `"0"`) both
+  survived login with `synchronizeConfig` on. At logout the client removed
+  the edited `showTargetOfTarget` line instead of writing `"0"`; that it
+  drops every CVar set to its default is **[verify]**). Also recorded verbatim, meaning unknown:
   `portal "test"`, `currentGameMode "15"`, `engineSurveyPatch "16001"`.
 - **2026-09-22, §6, same capture.** Account `bindings-cache.wtf`: three
   `bind KEY ACTION` lines, CRLF, no header or mode line. The quoted
