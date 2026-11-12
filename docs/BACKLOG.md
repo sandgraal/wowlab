@@ -3095,7 +3095,7 @@ Both are built from the tagged source, with `SHA256SUMS` and attestations as M16
 **Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038
 
 *Aligned 2026-11-12 with ADR-0031's amendment and ADR-0038 (both accepted): the app is a frozen PyInstaller build, not a launcher over a clone.* The owner's `install-wowlab-app.sh` is the model for what a double-click does (a visible Terminal window that stops the server when closed), not for how the app is built:
-- the release workflow builds an `arm64` `wowlab.app` from the tagged wheel with PyInstaller, one-folder, under ADR-0038's rules (the spec and the Python launcher under `packaging/`), and attaches it zipped to the release with its hash in `SHA256SUMS`;
+- the release workflow builds an `arm64` `wowlab.app` from the tagged wheel with PyInstaller, one-folder, under ADR-0038's rules (the spec and the Python launcher under `packaging/`), and attaches it zipped to the release with its hash in `SHA256SUMS` and an attestation, as M16-43 set up for the wheel;
 - it needs no git clone, no editable install and no typing in a terminal, and it never pulls or updates itself.
 
 Signing and notarisation are out of scope; the release notes say how to open an unsigned app.
@@ -3105,7 +3105,7 @@ Signing and notarisation are out of scope; the release notes say how to open an 
 ---
 
 ## [ ] M17-09 — The Windows frozen binary
-**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5
+**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038 (one-folder; the launcher runs `ui` with no arguments; smoke test item 4, with the recorder as a single executable file on Windows)
 
 Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release with its hash, and smoke-test `wowlab --version` and `wowlab ui` headless on `windows-latest`. Double-clicking it opens the UI. Windows stays "untested" in the README until M13-02's human run.
 
