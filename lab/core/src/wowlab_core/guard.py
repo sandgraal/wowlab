@@ -189,18 +189,22 @@ never gain permission bits: an existing file keeps no more than its current
 bits and the recorded bits; a recreated one gets its recorded bits less the
 umask and never an execute bit.
 
-`undo()` acts on the undo target (§6.10 as amended 2026-11-11, (a1)): the
-newest record that is not passed over. A record is passed over when it has
-`undoes`, never took a snapshot (`snapshot_id` empty) and is closed, and so
-is a closed record that changes no file and `undoes` a passed-over one. An
-undo that completed normally is never passed over. Every record `undo()`
+`undo()` acts on the undo target (§6.10 as amended 2026-11-11, (a1), (a2)):
+the newest record that is not passed over. A record is passed over when it
+is closed, never took a pre-write snapshot (`snapshot_id` empty; a snapshot
+id whose manifest is missing counts as taken) and lists no path and no
+created folder, whether a `transaction` or an `undo`, with or without
+`undoes`, however many in a row. Such a record changed no player file. A
+record that closes one is passed over only on the same terms, so an undo
+that completed normally, which always took a snapshot, never is. Every record `undo()`
 writes names the record it undoes in `undoes`; `history()` refuses, as
 damaged, an `undoes` that is not the id of an earlier record of the same
 flavor. It refuses as damaged, too, a record whose `paths`, `created_dirs`,
 `temps`, `temps_removed` or `temps_left` holds a path the write rules below
 refuse, or whose `flavor_path` holds a character the gate refuses in a
 flavor (M16-90), so it never hands on a planted path. A target that never
-took a snapshot changed no player file: `undo()` closes it in place (`rolled_back`, nothing restored, no record appended,
+took a snapshot and lists no path and no created folder changed no player
+file: `undo()` closes it in place (`rolled_back`, nothing restored, no record appended,
 no removed temp brought back), and does nothing for one already closed.
 
 `undo(expected_id=...)` compares the id of the record the caller approved
@@ -482,7 +486,8 @@ class HistoryRecord(_Frozen):
     amended 2026-11-11, (a1)); None for every other record. `snapshot_id`
     is the empty string for a record whose pre-write snapshot was never
     taken (killed between the leftover cleanup and the snapshot, or the
-    snapshot failed): it changed no player file."""
+    snapshot failed); with no `paths` and no `created_dirs`, it changed no
+    player file (§6.10 as amended 2026-11-11, (a2))."""
 
 
 class PlanItem(_Frozen):
@@ -705,8 +710,8 @@ def _snapshot_taken(record: _JournalRecord | HistoryRecord) -> bool:
 
 
 def _passed_over(records: Sequence[_JournalRecord | HistoryRecord]) -> frozenset[str]:
-    """The ids `undo()` passes over (§6.10 as amended 2026-11-11, (a1) as
-    widened by (a2)): every closed record that never took a pre-write
+    """The ids `undo()` passes over (§6.10 as amended 2026-11-11, (a1), (a2)):
+    every closed record that never took a pre-write
     snapshot and lists no path and no created folder, with or without
     `undoes`, however many in a row. Such a record changed no player file
     (at most it removed leftover temps). A record that closes one is passed
@@ -751,8 +756,10 @@ def _journal_dir(store_path: Path) -> Path:
 
 def _load_journal(store_path: Path) -> list[_JournalRecord]:
     """Every record under the store, oldest first. Reads only; a missing store
-    or journal is an empty history. A damaged record is an error, never
-    skipped: `undo()` acts on the most recent one."""
+    or journal is an empty history. A damaged record anywhere is an error
+    for the whole history, never skipped: `undo()` picks its undo target
+    (§6.10 as amended 2026-11-11, (a1), (a2)) only from a journal read in
+    full."""
     directory = _journal_dir(store_path)
     try:
         names = sorted(p.name for p in directory.iterdir())
@@ -3277,10 +3284,13 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
     """Undo the undo target, as a transaction of its own.
 
     The target is the newest record that is not passed over (§6.10 as
-    amended 2026-11-11, (a1); `_undo_target`): a closed undo that never took
-    its snapshot, and a closed record that only closes one, are skipped.
+    amended 2026-11-11, (a1), (a2); `_undo_target`): every closed record,
+    a `transaction` or an `undo`, with or without `undoes`, that never took
+    its pre-write snapshot and lists no path and no created folder is
+    skipped, however many in a row.
     Only the paths the target journaled are restored, from its pre-write
-    snapshot. A target that never took its snapshot changed no player file:
+    snapshot. A target that never took its snapshot and lists no path and
+    no created folder changed no player file:
     it is closed in place (`rolled_back`, with a note), nothing is restored
     and no record is appended; one already closed is left as it is. The
     undo's own record names the target in `undoes`. Everything read from the store is checked first: the flavor it
@@ -3323,8 +3333,8 @@ def undo(*, store: Path | None = None, expected_id: str | None = None) -> None:
 
 
 def _last_record(store_path: Path, expected_id: str | None = None) -> _JournalRecord:
-    """The undo target (§6.10 as amended 2026-11-11, (a1)): the newest
-    record that is not passed over; with `expected_id`, it must have exactly
+    """The undo target (§6.10 as amended 2026-11-11, (a1), (a2)): the newest
+    record that is not passed over (`_passed_over`); with `expected_id`, it must have exactly
     that id (a whole-string compare, nothing looser)."""
     records = _load_journal(store_path)
     if not records:
@@ -3373,7 +3383,8 @@ def _record_place(record: _JournalRecord, *, install: _Place | None = None) -> _
 
 def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _Locks) -> None:
     """Plan the undo of `last` and run it as a transaction, under `locks`.
-    A record that never took its snapshot is closed in place instead."""
+    A record that never took its snapshot and lists no path and no created
+    folder is closed in place instead."""
     if not _snapshot_taken(last) and not last.paths and not last.created_dirs:
         # Passed over once closed ((a2)): the only record closed without
         # restoring. Any other record whose snapshot cannot be read is
@@ -3425,8 +3436,9 @@ def _undo_record(store_path: Path, last: _JournalRecord, place: _Place, locks: _
 
 
 def _close_unsnapshotted(store_path: Path, record: _JournalRecord, place: _Place) -> None:
-    """Close a record that never took its pre-write snapshot (§6.10 as
-    amended 2026-11-11, (a)): it changed no player file, so nothing is
+    """Close a record that never took its pre-write snapshot and lists no
+    path and no created folder (§6.10 as amended 2026-11-11, (a), (a2); the
+    caller, `_undo_record`, checks both): it changed no player file, so nothing is
     restored and no removed leftover is brought back. An `open` one (killed
     between its cleanup and its snapshot) is rewritten `rolled_back` with a
     note; a closed one is left as it is. Under the store and install locks,
