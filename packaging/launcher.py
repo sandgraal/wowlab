@@ -1,7 +1,7 @@
 """The entry point of the frozen `wowlab` builds (ADR-0038 item 3, M17-08).
 
 PyInstaller freezes this file, not `wowlab_core.cli`, so that a double-click
-does something useful. It is the ordinary `wowlab` command with three
+does something useful. It is the ordinary `wowlab` command with four
 differences, and nothing else:
 
 1. **No arguments means `ui`.** The `wowlab` command prints its help and
@@ -21,6 +21,8 @@ differences, and nothing else:
    `sys.executable` is this launcher, so that exact prefix is taken off and
    the rest runs as the command it names. Nothing else that looks like an
    interpreter option is interpreted.
+4. **macOS `-psn_…`.** A leading process serial number argument, which
+   LaunchServices can add on a Finder launch, is dropped before rules 1 to 3.
 
 No network access, no update check, nothing that runs at login. The build
 reads and writes exactly what the wheel does.
@@ -34,6 +36,9 @@ from collections.abc import Callable, Sequence
 
 # The prefix `wowlab_core.ui` starts its runs with after `sys.executable`.
 UI_RUN_PREFIX = ("-P", "-m", "wowlab_core")
+
+# The process serial number argument LaunchServices may add on macOS.
+PSN_PREFIX = "-psn_"
 
 # The one program the hand-off runs, by absolute path (never a PATH lookup).
 OPEN = "/usr/bin/open"
@@ -58,6 +63,12 @@ def plan(
     `("terminal", command)`: run `command` and exit (the macOS hand-off).
     `("run", args)`: run the `wowlab` command with `args`."""
     args = list(argv)
+    # LaunchServices can start a Finder-opened app with a process serial
+    # number, `-psn_0_NNN`, as its first argument. The console bootloader
+    # passes it on, so it is dropped here (macOS only) and what is left is
+    # read as usual: nothing left is a double-click.
+    if platform == "darwin" and args and args[0].startswith(PSN_PREFIX):
+        args = args[1:]
     if tuple(args[: len(UI_RUN_PREFIX)]) == UI_RUN_PREFIX:
         return ("run", args[len(UI_RUN_PREFIX) :])
     if args:

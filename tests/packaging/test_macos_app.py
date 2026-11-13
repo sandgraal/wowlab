@@ -242,6 +242,69 @@ def test_the_ui_run_form_runs_the_command_it_names(attached: bool) -> None:
     ) == ("run", [])
 
 
+PSN = "-psn_0_1234567"
+
+
+def test_a_finder_psn_alone_with_no_terminal_hands_off_to_terminal() -> None:
+    # LaunchServices may add a process serial number; the console bootloader
+    # passes it on, and click would refuse it ("No such option: -p").
+    assert launcher.plan([PSN], platform="darwin", attached=False, executable=EXE) == (
+        "terminal",
+        ["/usr/bin/open", "-a", "Terminal", EXE],
+    )
+
+
+def test_a_finder_psn_alone_with_a_terminal_runs_ui() -> None:
+    assert launcher.plan([PSN], platform="darwin", attached=True, executable=EXE) == (
+        "run",
+        ["ui"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([PSN, "--version"], ["--version"]),
+        ([PSN, "doctor", "--json"], ["doctor", "--json"]),
+        ([PSN, "-P", "-m", "wowlab_core", "doctor"], ["doctor"]),
+        # Only a leading one is dropped; anywhere else it is an argument.
+        (["explain", PSN], ["explain", PSN]),
+    ],
+)
+@pytest.mark.parametrize("attached", [True, False])
+def test_a_finder_psn_before_real_arguments_is_dropped(
+    argv: list[str], expected: list[str], attached: bool
+) -> None:
+    assert launcher.plan(argv, platform="darwin", attached=attached, executable=EXE) == (
+        "run",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_a_psn_argument_is_only_dropped_on_macos(platform: str) -> None:
+    assert launcher.plan([PSN], platform=platform, attached=True, executable=EXE) == (
+        "run",
+        [PSN],
+    )
+
+
+def test_main_drops_a_finder_psn_and_hands_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    monkeypatch.setattr(launcher, "_attached", lambda: False)
+    monkeypatch.setattr(launcher.sys, "executable", EXE)
+    spawned: list[list[str]] = []
+    ran: list[list[str]] = []
+
+    def spawn(args: list[str]) -> int:
+        spawned.append(args)
+        return 0
+
+    assert launcher.main([PSN], run=ran.append, spawn=spawn) == 0
+    assert spawned == [["/usr/bin/open", "-a", "Terminal", EXE]]
+    assert ran == []
+
+
 def test_the_ui_run_form_matches_what_the_ui_starts() -> None:
     from wowlab_core import ui
 
