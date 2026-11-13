@@ -580,7 +580,9 @@ def _doctor(
                     lab_addon=lab_addon,
                 )
             )
-            steps += _flavor_steps(lay, f.folder, lab_addon, several, given_root)
+            steps += _flavor_steps(
+                lay, f.folder, lab_addon, several, given_root, version_known=f.version is not None
+            )
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -834,13 +836,36 @@ def _wowlab_command(args: Sequence[str], folder: str, several: bool, root: str |
     return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
 
 
+def _no_install_until_version(folder: str) -> str:
+    """The fix for a lab-addon that is not installed in a flavor whose
+    version is unknown (M16-123): the install would be refused, since the
+    TOC's ## Interface: cannot be filled, so none is offered; the flavor's
+    own lines above say why its version is unknown, and are not repeated."""
+    return (
+        "It cannot be installed in this flavor until its game version is known; the lines "
+        f"under Flavor {folder} above say why it is not."
+    )
+
+
 def _lab_addon_step(
-    folder: str, state: addoninstall.LabAddonState, several: bool, root: str | None = None
+    folder: str,
+    state: addoninstall.LabAddonState,
+    several: bool,
+    root: str | None = None,
+    *,
+    version_known: bool = True,
 ) -> NextStep:
     command = _wowlab_command(_REINSTALL.split()[1:], folder, several, root)
     fix = f"Close the game, then run `{command}`."
     if state.status == "current":
         return NextStep(item="lab_addon", flavor_folder=folder, state="ok", command=command)
+    if state.status == "not_installed" and not version_known:
+        return NextStep(
+            item="lab_addon",
+            flavor_folder=folder,
+            state="missing",
+            fix=_no_install_until_version(folder),
+        )
     if state.status == "not_installed":
         return NextStep(
             item="lab_addon", flavor_folder=folder, state="missing", command=command, fix=fix
@@ -941,8 +966,10 @@ def _flavor_steps(
     lab_addon: addoninstall.LabAddonState,
     several: bool,
     root: str | None,
+    *,
+    version_known: bool = True,
 ) -> list[NextStep]:
-    lab = _lab_addon_step(folder, lab_addon, several, root)
+    lab = _lab_addon_step(folder, lab_addon, several, root, version_known=version_known)
     return [
         lab,
         _characters_step(lay, folder, several, root, lab_state=lab.state),

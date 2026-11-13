@@ -1079,6 +1079,9 @@ from wowlab_core.cli._cmd_doctor import (
     _next_step_answer as _next_step_answer,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _no_install_until_version as _no_install_until_version,
+)
+from wowlab_core.cli._cmd_doctor import (
     _no_text as _no_text,
 )
 from wowlab_core.cli._cmd_doctor import (
