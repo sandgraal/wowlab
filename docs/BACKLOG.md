@@ -2954,7 +2954,7 @@ With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and list
 - (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
 - (c) unchanged.
 
-The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
+The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default). *Owner decision, 2026-11-12, in session: (a).* With several flavor folders and no `--flavor`, `snap create` takes one snapshot per flavor and names each. Read commands keep the one-flavor rule.
 
 **Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
 

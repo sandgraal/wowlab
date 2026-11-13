@@ -222,6 +222,10 @@ as a ticket the conductor writes in a wave. Anything a player pastes is
 treated as possibly carrying a name or path that redaction missed: it is
 never copied into a commit, fixture or doc.
 
+## The bar for new tickets
+
+*Owner decision, 2026-11-12, from the product review (`docs/handoffs/review-2026-11-12.md`, Step 1).* A new ticket is filed only if it changes what a player sees, comes from a player's report, or blocks a release or a ticket in the current wave. A privacy or security defect found in review counts as blocking. A review follow-up that clears none of these goes into the wave review's notes (`docs/handoffs/M<n>-review.md`), not into the backlog. Hardening, rewording or refactoring with no player-visible effect waits for a player's report.
+
 ## Stop-and-ask
 
 The `AGENTS.md` list, plus: reviewer/implementer deadlock after two rounds,
