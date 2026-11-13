@@ -7,16 +7,26 @@
 -->
 wowlab {{VERSION}} runs on your own machine against your own World of Warcraft install. It is read-only by default. Every command that changes files asks first and goes through one write gate; a snapshot is taken before the change, and `wowlab undo` reverses it. The only network traffic is fetching public game tables, and nothing is uploaded (ADR-0031).
 
+## New in v0.2
+
+- **The Account tab.** `wowlab ui` now opens on a home tab that lists every character you have played on this computer, in every game version you have installed, as of its last logout: level, class, race, spec, item level, professions and when you last played it. Sort by any column, filter by class, and click a character to open it. A character with nothing recorded yet says how to fix that. The same table is on the command line as `wowlab char list --summary`.
+- **Take a backup now.** One button at the top of the Account tab saves your settings, keybinds, macros, addons and their saved settings into wowlab's own folder, never your game folder. After a patch the tab tells you the game updated since your last backup, and **Restore this backup…** shows what putting it back would change before anything changes. On the command line it is still `wowlab snap create`, which now backs up every game version you have installed when you do not name one.
+- **The Patch day card.** Also on the Account tab: the addons that are out of date for your game version or missing an addon they need, a count of the ones that are fine, and the saved data that no installed addon claims or that wowlab cannot read. The addon check is also `wowlab addons check`.
+- **A character over time.** `wowlab char history` reads your backups back, plus the game's current file: one row per save, with level, item level and spec, and the gear and currencies that changed since the one before. The Character tab's **History** panel shows the same thing, with two small charts. It reads what the lab-addon (`wowlab addon install lab`) records at logout, so each backup you take adds a row.
+- **The Mac app and the Windows app.** If you would rather not use a terminal, download the app for your computer below (see the two sections under Install). The Mac app is for Apple silicon. The Windows app is untested: it is built and started by the release checks, but no person has yet run it on a real Windows install, so please report what happens.
+- **The package is now called `wowlab`.** v0.1.0 was published as `wowlab-core`. The command is still `wowlab`, and your snapshots, profiles and settings stay where they were. If you installed v0.1.0, run `uv tool uninstall wowlab-core` before you install this one.
+- **Saved data wowlab cannot read.** `wowlab sv list --unreadable` lists every SavedVariables file wowlab cannot read, for example one cut off during a save, with why, and where reading stopped when it can say. It only reads.
+
 ## What is in it
 
-The first public release. It reads an install and tells you what every file is, keeps snapshots of your setup, and puts them back.
+It reads an install and tells you what every file is, keeps snapshots of your setup, and puts them back. v0.1.0 was the first public release; this is the whole toolset as of v0.2.
 
 - **Find and explain:** `doctor` (finds the install; a first run says what wowlab will do and offers a first snapshot), `install show`, `tree`, `explain` (what a file is, who writes it, whether it is safe to touch, with the snapshot facts and the commands that read it), `filemap gaps`.
 - **The explorer:** `wowlab ui` opens a view of the whole install in your browser. It runs the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), directly. A command that takes `--yes` runs first as a plan that changes nothing, and runs for real only when you press Confirm under it, through the same write gate as on the command line. It listens only on this machine behind a token.
 - **Snapshots and undo:** `snap create`, `snap list`, `snap show`, `snap diff`, `snap restore`, `snap verify`, `snap gc`, `undo`.
-- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list` and `macros check`, `addons`, `sv list`, `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
+- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list` and `macros check`, `addons`, `addons check` (v0.2), `sv list` (`--unreadable` in v0.2), `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
 - **Profiles and looks:** `profile save`, `apply`, `list`, `show`, `delete`; `looks import-char`, `options`, `races`, `compare`, `page`.
-- **Characters and game data:** `char list`, `char show`, `db2 builds`, `db2 fetch`, `db2 head`, `log tail`.
+- **Characters and game data:** `char list` (`--summary` in v0.2), `char show`, `char gear`, `char binds`, `char macros` and `char history` (all four v0.2), `db2 builds`, `db2 fetch`, `db2 head`, `log tail`.
 - **For bug reports:** `doctor --redact` prints output with no character, realm, account folder, BattleTag or home path in it; names it cannot find on its own, such as your guild's, go in `--redact-name`.
 
 **Platforms.** macOS is tested by hand on the owner's install. Windows and Linux are untested: CI runs the test suite on both, but nobody has yet run the first-run flow on a real Windows install, and there is no native Linux client. See the README's platform table before relying on either.
