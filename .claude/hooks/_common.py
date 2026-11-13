@@ -86,7 +86,11 @@ def deny(event: str, reason: str) -> None:
 
 # ─── paths ───────────────────────────────────────────────────────────────────
 
-_VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+# `$NAME` or `${NAME}`, nothing else: `${NAME#x}`, `${NAME:+x}`, `$1`, `$@`
+# and the like are left in place and make the token unresolved (a review of
+# 2026-11-13 found `${PWD:+.claude}` resolving to a harmless path while bash
+# wrote into `.claude/`).
+_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) -> tuple[str, bool]:
@@ -111,7 +115,7 @@ def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) ->
 
     def sub(m: re.Match[str]) -> str:
         nonlocal unresolved
-        val = known.get(m.group(1))
+        val = known.get(m.group(1) or m.group(2))
         if not val:
             unresolved = True
             return m.group(0)
@@ -120,13 +124,95 @@ def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) ->
     out = _VAR.sub(sub, token)
     if out.startswith("~"):
         out = str(Path.home()) + out[1:]
+    # Any `$` the pattern did not consume is an expansion the hook cannot
+    # follow (an operator form, a positional or special parameter, a
+    # substitution the lexer split apart).
+    if "$" in _VAR.sub("", token):
+        unresolved = True
     return out, not unresolved
 
 
 _ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
 
 
-def assignments(seg: list[str], cwd: str, assigned: dict[str, str]) -> dict[str, str]:
+# Words that, as a segment's command, may set or clear a variable some other
+# way than a plain `NAME=value`, or open a compound command whose
+# assignments run conditionally or in a subshell. Any of them turns
+# assignment tracking off for the whole line.
+_TRACKING_BLOCKERS = frozenset(
+    {
+        "declare", "typeset", "local", "readonly", "read", "unset", "eval",
+        "let", "source", ".", "mapfile", "readarray", "getopts", "set",
+        "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+        "done", "case", "esac", "select", "function", "coproc", "{", "}",
+        "[[", "]]", "!", "time",
+    }
+)  # fmt: skip
+_TRACKING_STOP = frozenset({"&&", "||", "|", "&", "|&"})
+_APPEND_OR_INDEX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+
+
+def assignment_prefix(command: str) -> int:
+    """How many leading segments of `command` may set a tracked variable.
+
+    Owner decision, 2026-11-13, narrowed the same day after a review found
+    bypasses: an assignment counts only in the plain `;`-separated start of
+    a line, before any `&&`, `||`, `|` or `&` (after one of those an
+    assignment may not run, or runs in a subshell). The answer is 0, and
+    nothing is tracked, when the line has a newline, a subshell or group,
+    a compound command, a builtin that assigns (`declare`, `read`,
+    `printf -v`, `unset`, ...), an append (`S+=x`) or an array element
+    (`S[0]=x`) anywhere.
+    """
+    stripped = strip_heredocs(command)
+    if "\n" in stripped.strip():
+        return 0
+    lexer = shlex.shlex(stripped, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return 0
+    if any(t in ("(", ")") for t in tokens):
+        return 0
+    segments = split_segments(command) or []
+    for seg in segments:
+        words = seg[1:] if seg and seg[0] == "export" else seg
+        if seg and seg[0] == "export" and any(w.startswith("-") for w in words):
+            return 0
+        if words and words[0] in _TRACKING_BLOCKERS:
+            return 0
+        if words and words[0] == "printf" and any(w.startswith("-v") for w in words):
+            return 0
+        for w in words:
+            m = _APPEND_OR_INDEX.match(w)
+            if m and (m.group(1) or "+=" in m.group(0)):
+                return 0
+    # Count the non-empty segments before the first stop operator, the way
+    # `split_segments` counts them. The segment just before `&&` or `||`
+    # always runs in this shell; the one before `|`, `|&` or `&` runs in a
+    # subshell, so it does not count.
+    count = 0
+    open_segment = False
+    for tok in tokens:
+        if tok in _TRACKING_STOP:
+            if open_segment and tok in ("&&", "||"):
+                count += 1
+            return count
+        if tok == ";":
+            if open_segment:
+                count += 1
+            open_segment = False
+        elif tok in _OPERATORS or set(tok) <= {";"}:
+            return 0  # `;;` or anything else this count does not model
+        else:
+            open_segment = True
+    return len(segments)
+
+
+def assignments(
+    seg: list[str], cwd: str, assigned: dict[str, str], record: bool = True
+) -> dict[str, str]:
     """The variables after this segment runs, when it only assigns them.
 
     Owner decision, 2026-11-13: `S=/some/dir; echo x > $S/f` should be
@@ -134,10 +220,12 @@ def assignments(seg: list[str], cwd: str, assigned: dict[str, str]) -> dict[str,
     words (optionally after `export`) sets anything; a prefix assignment
     (`NAME=value cmd`) lasts for `cmd` alone and is not recorded. A value
     the hook cannot resolve (`$(...)`, a backtick, an unknown variable)
-    removes the name, so a later use of it is still refused. Quotes are
-    already gone (the segment comes from `split_segments`), and the value is
-    expanded the way the shell expands an assignment: variables and a
-    leading `~`, never globs.
+    removes the name, so a later use of it is still refused. With
+    `record=False` (a segment past `assignment_prefix`) every name the
+    segment assigns is removed instead. Quotes are already gone (the
+    segment comes from `split_segments`), and the value is expanded the way
+    the shell expands an assignment: variables and a leading `~`, never
+    globs.
     """
     words = seg[1:] if seg and seg[0] == "export" else seg
     if not words or not all(_ASSIGN.fullmatch(w) for w in words):
@@ -147,7 +235,7 @@ def assignments(seg: list[str], cwd: str, assigned: dict[str, str]) -> dict[str,
         m = _ASSIGN.fullmatch(w)
         assert m is not None
         name, raw = m.group(1), m.group(2)
-        if "`" in raw or "$(" in raw:
+        if not record or "`" in raw or "$(" in raw:
             out.pop(name, None)
             continue
         value, ok = expand_vars(raw, cwd, out)

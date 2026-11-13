@@ -41,6 +41,7 @@ from urllib.parse import unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _common import (
+    assignment_prefix,
     assignments,
     command_position,
     deny,
@@ -57,6 +58,7 @@ from _common import (
 )
 
 EVENT = "PreToolUse"
+_MOVES_PATHS = re.compile(r"(HOME|PWD|OLDPWD|CDPATH)=")
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
 _GRAPHQL_REFUSAL = (
     "GraphQL mutations change repo state without a prompt; only the "
@@ -558,17 +560,28 @@ def _inspect(
     scan_cwd = cwd
     # Variables this line assigns to a value the hook can resolve (owner
     # decision, 2026-11-13); a use of any other variable is still refused.
+    # A change to these moves where a later path lands in a way the guard
+    # does not model (`HOME=$PWD; echo > ~/AGENTS.md`, `CDPATH=.claude; cd
+    # agents`), so it is refused in any form (review of 2026-11-13).
+    for tok in (t for seg in segments for t in seg):
+        if _MOVES_PATHS.match(tok):
+            deny(
+                EVENT,
+                f"this guard does not follow a change to {tok.split('=')[0]}; "
+                "set it in a separate command.",
+            )
+    limit = assignment_prefix(command)
     scan_vars: dict[str, str] = {}
-    for seg in segments:
+    for index, seg in enumerate(segments):
         for target in _write_targets(seg, scan_cwd):
             expanded, ok = expand_vars(target, scan_cwd, scan_vars)
             if ok:
                 full = expanded if Path(expanded).is_absolute() else str(Path(scan_cwd) / expanded)
                 written.add(os.path.normpath(full))
         scan_cwd = _cd_target(seg, scan_cwd, scan_vars) or scan_cwd
-        scan_vars = assignments(seg, scan_cwd, scan_vars)
+        scan_vars = assignments(seg, scan_cwd, scan_vars, record=index < limit)
     assigned: dict[str, str] = {}
-    for seg in segments:
+    for index, seg in enumerate(segments):
         for inner in inner_commands(seg):
             _inspect(inner, cwd, agent_type, depth + 1, frozenset(written))
         for reason in (
@@ -595,7 +608,7 @@ def _inspect(
         new_cwd = _cd_target(seg, cwd, assigned)
         if new_cwd:
             cwd = new_cwd
-        assigned = assignments(seg, cwd, assigned)
+        assigned = assignments(seg, cwd, assigned, record=index < limit)
 
 
 def main() -> None:
