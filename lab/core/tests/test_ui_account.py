@@ -268,15 +268,11 @@ def test_the_hub_reads_every_flavor_at_the_start_constructed(
     runs = _bodies(out["requests"])
     # The home tab's one run comes first, with no flavor, before the tree.
     assert runs[0] == {"command": ["char", "list"], "params": SUMMARY}
-    # M17-05: then the patch-day card's two reads of each flavor, still on
-    # the home tab, then the tree.
-    card = [
-        {"command": command, "params": dict(params, flavor=flavor)}
-        for flavor in (BETA, FOREVER)
-        for command, params in ((["addons", "check"], {}), (["sv", "list"], {"orphans": True}))
-    ]
-    assert runs[1:5] == card
-    assert runs[5] == {"command": ["tree"], "params": {"whole_install": True, "explain": True}}
+    # M17-05: the patch-day card's reads start from the hub's report and run
+    # beside the tree, which waits for none of them.
+    card = (["addons", "check"], ["sv", "list"])
+    others = [r for r in runs[1:] if r["command"] not in card]
+    assert others[0] == {"command": ["tree"], "params": {"whole_install": True, "explain": True}}
     assert sum(1 for r in runs if r["params"] == SUMMARY) == 1
     view = out["first"]["hub"]
     # page.html selects the tab and shows its view; the script keeps it so.

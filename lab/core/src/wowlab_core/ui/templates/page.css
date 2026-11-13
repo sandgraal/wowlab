@@ -574,12 +574,12 @@ pre:empty { display: none; }
 .patch-day h3 { margin: 0 0 var(--space-2); }
 .patch-day h4 { margin: var(--space-2) 0 var(--space-1); }
 .patch-day-intro { margin: 0 0 var(--space-2); color: var(--text-muted); }
-.patch-day-intro code { font-family: var(--font-mono); font-size: 14px; }
 .patch-day-lines, .patch-day-list { margin: 0; padding: 0; list-style: none; }
 .patch-day-list { margin-left: var(--space-3); }
 .patch-day-item { margin: var(--space-1) 0; overflow-wrap: anywhere; }
 .patch-day-what { margin: var(--space-2) 0 0; }
 .patch-day-clear { margin: var(--space-1) 0; }
+.patch-day-note { margin: var(--space-1) 0; color: var(--text-muted); overflow-wrap: anywhere; }
 .patch-day-error { margin: var(--space-1) 0; color: var(--ruin); overflow-wrap: anywhere; }
 .patch-day-open {
   padding: 0; border: 0; background: none; cursor: pointer; text-align: left;

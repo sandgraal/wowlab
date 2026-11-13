@@ -666,6 +666,7 @@ _M17_05_JS_CLASSES = frozenset(
         "patch-day-list",
         "patch-day-error",
         "patch-day-clear",
+        "patch-day-note",
     }
 )
 
@@ -845,11 +846,8 @@ _ACCOUNT_WORDS = [
     "Backup",
     # M17-05: the patch-day card's heading and intro; its lines are the script's.
     "Patch day",
-    "Addons this client may not load, and saved data no installed addon uses, as",
-    "wowlab addons check",
-    "and",
-    "wowlab sv list --orphans",
-    "report them. Reads only. Pick a line to see its file in the Explorer.",
+    "Addons the game may skip, and saved data no installed addon declares, as wowlab reads "
+    "them from your files. Reads only. Pick a line to see its file in the Explorer.",
     "Flavor",
     "Class",
     "[aria-label] Characters",

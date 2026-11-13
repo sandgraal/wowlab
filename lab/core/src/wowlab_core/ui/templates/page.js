@@ -2318,7 +2318,7 @@
         fillHubFilters();
         drawHub();
         takeBackups(report);
-        await takePatchDay(report);
+        takePatchDay(report);
       })();
       hub.asked = asked;
     }
@@ -2586,11 +2586,12 @@
   byId("tab-looks").addEventListener("click", () => showTab("looks"));
 
   // ─── the patch-day card on the Account tab (M17-05, §19 CW-4) ───
-  // Per flavor the hub's report lists: the addons `addons check` finds out
-  // of date for this client or missing a required addon, and the
-  // SavedVariables files `sv list --orphans` finds that no installed addon
-  // declares. Every judgement is the commands'; the page lays the lines out
-  // and says, from `addons check`'s own list, whether an orphan's addon is
+  // Per flavor the hub's report lists: the addons `addons check` finds made
+  // for another game version, needing an addon that will not load, or not
+  // checkable, and the SavedVariables files `sv list --orphans` finds that
+  // no installed addon declares. Every judgement is the commands'; the page
+  // lays the lines out, counts the addons whose counted TOCs all match, and
+  // says, from `addons check`'s own list, whether an orphan's addon is
   // installed at all. Each line's name opens the Explorer on its file.
   // Nothing here edits anything.
 
@@ -2599,6 +2600,12 @@
     flavors: [], // per flavor folder, what the two runs said
     pending: null, // a path to show once the Explorer's tree is read
   };
+  // How many standing notes `addons check --json` carries; a longer list
+  // starts with the one caveat for this result.
+  const PATCH_DAY_CHECK_NOTES = 4;
+  // The sentence `sv list --orphans` prints with its list.
+  const PATCH_DAY_REINSTALL =
+    "If the addon is installed again it reads this file again, so deleting it loses those settings.";
 
   function patchDaySay(text, isError) {
     const node = byId("patch-day-status");
@@ -2606,15 +2613,23 @@
     node.classList.toggle("error", Boolean(isError));
   }
 
-  // The client compares addon names with ASCII letters folded, as wowlab does.
+  // Names are matched with ASCII letters folded and nothing else touched:
+  // wowlab's own rule (`wtfconfig.fold_name`, which `addons check` and
+  // `sv list --orphans` match addon names with).
   const patchDayFold = (name) => String(name).replace(/[A-Z]/g, (ch) => ch.toLowerCase());
 
   function patchDayRead(folder, check, orphans) {
-    const read = { flavor: folder, addons: null, interface: null, checkError: "", files: null, filesError: "" };
-    const report = check.data && typeof check.data === "object" ? check.data.check : null;
+    const read = {
+      flavor: folder, addons: null, interface: null, caveat: "", checkError: "", files: null, filesError: "",
+    };
+    const data = check.data && typeof check.data === "object" ? check.data : null;
+    const report = data ? data.check : null;
     if (report && typeof report === "object" && Array.isArray(report.addons)) {
       read.addons = objects(report.addons).filter((a) => typeof a.name === "string" && typeof a.path === "string");
       read.interface = hubNum(report.client_interface);
+      if (Array.isArray(data.notes) && data.notes.length > PATCH_DAY_CHECK_NOTES && typeof data.notes[0] === "string") {
+        read.caveat = shown(data.notes[0]);
+      }
     } else {
       read.checkError = check.error ? shown(check.error) : "wowlab addons check printed something this page does not know.";
     }
@@ -2665,7 +2680,13 @@
     return item;
   }
 
-  function patchDayList(box, what, items) {
+  function patchDayNote(box, text) {
+    const note = make("p", text);
+    note.className = "patch-day-note";
+    box.appendChild(note);
+  }
+
+  function patchDayList(box, what, items, after) {
     if (!items.length) return;
     const head = make("p", what);
     head.className = "patch-day-what";
@@ -2674,24 +2695,82 @@
     list.className = "patch-day-list";
     list.append(...items);
     box.appendChild(list);
+    if (after) patchDayNote(box, after);
   }
 
   function patchDayToc(addon, file) {
     return typeof file === "string" && file !== "" ? addon.path + "/" + file : addon.path;
   }
 
-  function patchDayLate(read, addon) {
-    const tocs = objects(addon.tocs);
-    const client = read.interface === null ? "" : "; this client's is " + read.interface;
-    if (addon.out_of_date === true && tocs.length) {
-      const toc = tocs[0];
-      const declared = typeof toc.interface === "string" ? visible(toc.interface) : "another version";
-      return patchDayItem(read.flavor, addon.name, patchDayToc(addon, toc.file),
-        " is for interface " + declared + client + ".");
+  // The TOCs the client is taken to load (`counted_tocs`), as checked.
+  function patchDayCounted(addon) {
+    const names = texts(addon.counted_tocs);
+    return objects(addon.tocs).filter((t) => names.includes(t.file));
+  }
+
+  // Current: the client loads a TOC of it, and every one it counts matches.
+  function patchDayCurrent(addon) {
+    const counted = patchDayCounted(addon);
+    return addon.selection !== "no_toc" && counted.length > 0 &&
+      counted.every((t) => t.interface_status === "matches");
+  }
+
+  const patchDayLate = (addon) => addon.out_of_date === true || addon.no_toc_for_client === true;
+
+  // An addon made for another game version: the interfaces its TOC lists,
+  // and the game's.
+  function patchDayMade(read, addon) {
+    const tocs = addon.out_of_date === true ? objects(addon.tocs).slice(0, 1) : patchDayCounted(addon);
+    const numbers = [...new Set(tocs.flatMap((t) => (Array.isArray(t.interface_versions) ? t.interface_versions : [])
+      .filter((n) => typeof n === "number" && Number.isFinite(n))))];
+    const written = tocs.map((t) => t.interface).filter((v) => typeof v === "string" && v !== "").map(visible);
+    const listed = numbers.length ? numbers.map(String) : written;
+    const lists = listed.length
+      ? " lists " + (listed.length === 1 ? "interface " : "interfaces ") + listed.join(", ")
+      : " lists another interface";
+    const game = String(read.interface);
+    const older = numbers.length > 0 && read.interface !== null && numbers.every((n) => n < read.interface);
+    const text = older
+      ? lists + "; this game is " + game + ", so the game lists it as out of date."
+      : lists + ", made for another game version; this game is " + game + ".";
+    const file = addon.out_of_date === true && tocs.length ? tocs[0].file : null;
+    return patchDayItem(read.flavor, addon.name, patchDayToc(addon, file), text);
+  }
+
+  // Why an addon that is neither current nor made for another version could
+  // not be checked; null when the unknown interface is the only reason (the
+  // block's first line says so).
+  function patchDayUnchecked(read, addon) {
+    if (addon.selection === "no_toc") {
+      return patchDayItem(read.flavor, addon.name, addon.path,
+        " has no TOC file named after its folder, so the game does not load it.");
     }
-    return patchDayItem(read.flavor, addon.name, addon.path,
-      " has " + count(tocs.length, "TOC file", "TOC files") + ", none for this client's interface" +
-      (read.interface === null ? "" : " " + read.interface) + ".");
+    const counted = patchDayCounted(addon);
+    const unread = counted.find((t) => t.interface_status === "unread");
+    if (unread) {
+      const why = typeof unread.error === "string" && unread.error !== "" ? ": " + shown(unread.error) : "";
+      return patchDayItem(read.flavor, addon.name, patchDayToc(addon, unread.file),
+        " has a TOC file wowlab could not read" + why + ".");
+    }
+    const bare = counted.find((t) => t.interface_status === "none");
+    if (bare) {
+      return patchDayItem(read.flavor, addon.name, patchDayToc(addon, bare.file),
+        " has no Interface line in its TOC file.");
+    }
+    if (read.interface === null) return null;
+    return patchDayItem(read.flavor, addon.name, addon.path, " could not be checked against this game.");
+  }
+
+  // How many addons are current, when the game's interface is known.
+  function patchDayCount(read, current, unchecked) {
+    const all = read.addons.length;
+    if (all === 0) return "No addons are installed.";
+    if (current === all) {
+      return all === 1 ? "Your one addon is current for this client."
+        : "All " + grouped(all) + " addons are current for this client.";
+    }
+    const left = unchecked ? "; " + grouped(unchecked) + " could not be checked." : ".";
+    return grouped(current) + " of " + grouped(all) + (all === 1 ? " addon is" : " addons are") + " current" + left;
   }
 
   function patchDayNeeds(read, addon) {
@@ -2730,10 +2809,19 @@
   function patchDayBlock(read, several) {
     const item = make("li");
     if (several) item.appendChild(make("h4", visible(read.flavor)));
+    // The unknown interface first, whatever else is listed; else the
+    // command's caveat for this result, if it has one.
+    if (read.addons !== null && read.interface === null) {
+      patchDayNote(item, "wowlab cannot tell which addons are out of date: it cannot work out this game's interface version.");
+    } else if (read.caveat) {
+      patchDayNote(item, read.caveat);
+    }
     const addons = read.addons || [];
-    const late = addons.filter((a) => a.out_of_date === true || a.no_toc_for_client === true);
+    const late = addons.filter(patchDayLate);
     const needy = addons.filter((a) =>
       texts(a.missing_dependencies).length > 0 || texts(a.unloadable_dependencies).length > 0);
+    const current = addons.filter(patchDayCurrent);
+    const unchecked = addons.filter((a) => !patchDayCurrent(a) && !patchDayLate(a));
     const files = read.files || [];
     for (const error of [read.checkError, read.filesError]) {
       if (!error) continue;
@@ -2741,24 +2829,18 @@
       said.className = "patch-day-error";
       item.appendChild(said);
     }
-    patchDayList(item, "Out of date for this client", late.map((a) => patchDayLate(read, a)));
-    patchDayList(item, "Missing a required addon", needy.map((a) => patchDayNeeds(read, a)));
-    patchDayList(item, "Saved data no installed addon uses", files.map((f) => patchDayOrphan(read, f)));
-    if (read.addons !== null && !late.length && !needy.length && !files.length && !read.filesError) {
-      let text;
-      if (read.interface === null) {
-        text = "wowlab cannot tell whether your addons are current: it cannot work out this client's interface version.";
-      } else if (addons.length === 0) {
-        text = "No addons are installed, and no saved data is left without one.";
-      } else if (addons.length === 1) {
-        text = "Your one addon is current for this client.";
-      } else {
-        text = "All " + grouped(addons.length) + " addons are current for this client.";
-      }
-      const clear = make("p", text);
-      clear.className = "patch-day-clear";
-      item.appendChild(clear);
+    if (read.addons !== null && read.interface !== null) {
+      const summary = make("p", patchDayCount(read, current.length, unchecked.length));
+      summary.className = "patch-day-clear";
+      item.appendChild(summary);
     }
+    patchDayList(item, "Made for another game version", late.map((a) => patchDayMade(read, a)),
+      'The game skips these unless "Load out of date AddOns" is ticked in its AddOns list (not yet confirmed).');
+    patchDayList(item, "Needs an addon that will not load", needy.map((a) => patchDayNeeds(read, a)));
+    patchDayList(item, "Could not be checked",
+      unchecked.map((a) => patchDayUnchecked(read, a)).filter((line) => line !== null));
+    patchDayList(item, "Saved data no installed addon declares", files.map((f) => patchDayOrphan(read, f)),
+      PATCH_DAY_REINSTALL);
     return item;
   }
 
