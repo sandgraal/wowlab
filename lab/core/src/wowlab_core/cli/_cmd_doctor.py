@@ -580,7 +580,9 @@ def _doctor(
                     lab_addon=lab_addon,
                 )
             )
-            steps += _flavor_steps(lay, f.folder, lab_addon, several, given_root)
+            steps += _flavor_steps(
+                lay, f.folder, lab_addon, several, given_root, version_known=f.version is not None
+            )
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -797,6 +799,10 @@ _RECORD_HOW = (
 _COMBATLOG_HOW = (
     "In game, type /combatlog to turn combat logging on; the game writes a log only while it is on."
 )
+# A flavor the lab-addon cannot be installed in yet, its version unknown
+# (M16-123): the lab-addon line above says why; no in-game step is offered.
+_RECORDS_WAIT_NO_INSTALL = "they are not updated until the lab-addon above can be installed"
+_RECORD_NO_INSTALL = "None can be made until the lab-addon above can be installed."
 # What a missing or out-of-date lab-addon means for the records: none
 # while it is missing; an out-of-date one may still load ('Load out of date
 # AddOns'), so that is hedged; and nothing when wowlab cannot tell.
@@ -834,13 +840,36 @@ def _wowlab_command(args: Sequence[str], folder: str, several: bool, root: str |
     return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
 
 
+def _no_install_until_version(folder: str) -> str:
+    """The fix for a lab-addon that is not installed in a flavor whose
+    version is unknown (M16-123): the install would be refused, since the
+    TOC's ## Interface: cannot be filled, so none is offered; the flavor's
+    own lines above say why its version is unknown, and are not repeated."""
+    return (
+        "It cannot be installed in this flavor until its game version is known; the lines "
+        f"under Flavor {folder} above say why it is not."
+    )
+
+
 def _lab_addon_step(
-    folder: str, state: addoninstall.LabAddonState, several: bool, root: str | None = None
+    folder: str,
+    state: addoninstall.LabAddonState,
+    several: bool,
+    root: str | None = None,
+    *,
+    version_known: bool = True,
 ) -> NextStep:
     command = _wowlab_command(_REINSTALL.split()[1:], folder, several, root)
     fix = f"Close the game, then run `{command}`."
     if state.status == "current":
         return NextStep(item="lab_addon", flavor_folder=folder, state="ok", command=command)
+    if state.status == "not_installed" and not version_known:
+        return NextStep(
+            item="lab_addon",
+            flavor_folder=folder,
+            state="missing",
+            fix=_no_install_until_version(folder),
+        )
     if state.status == "not_installed":
         return NextStep(
             item="lab_addon", flavor_folder=folder, state="missing", command=command, fix=fix
@@ -874,6 +903,7 @@ def _characters_step(
     several: bool,
     root: str | None,
     lab_state: NextStepState,
+    installable: bool = True,
 ) -> NextStep:
     """How many character folders hold a lab-addon record: from the listing
     alone (`budget=0` opens no file), so doctor reads no record. A place
@@ -891,9 +921,12 @@ def _characters_step(
         notes.append(
             f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
         )
-    if count and lab_state in _RECORDS_WAIT:
+    if count and not installable:
+        notes.append(_RECORDS_WAIT_NO_INSTALL)
+    elif count and lab_state in _RECORDS_WAIT:
         notes.append(_RECORDS_WAIT[lab_state])
     state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
+    how = _RECORD_HOW if installable else _RECORD_NO_INSTALL
     return NextStep(
         item="characters",
         flavor_folder=folder,
@@ -901,7 +934,7 @@ def _characters_step(
         count=count,
         command=command,
         detail="; ".join(notes) or None,
-        fix=_RECORD_HOW if state == "missing" else None,
+        fix=how if state == "missing" else None,
     )
 
 
@@ -941,11 +974,15 @@ def _flavor_steps(
     lab_addon: addoninstall.LabAddonState,
     several: bool,
     root: str | None,
+    *,
+    version_known: bool = True,
 ) -> list[NextStep]:
-    lab = _lab_addon_step(folder, lab_addon, several, root)
+    lab = _lab_addon_step(folder, lab_addon, several, root, version_known=version_known)
     return [
         lab,
-        _characters_step(lay, folder, several, root, lab_state=lab.state),
+        _characters_step(
+            lay, folder, several, root, lab_state=lab.state, installable=lab.command is not None
+        ),
         _combat_log_step(lay, folder),
     ]
 

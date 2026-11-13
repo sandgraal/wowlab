@@ -914,7 +914,13 @@ from wowlab_core.cli._cmd_doctor import (
     _RECORD_HOW as _RECORD_HOW,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _RECORD_NO_INSTALL as _RECORD_NO_INSTALL,
+)
+from wowlab_core.cli._cmd_doctor import (
     _RECORDS_WAIT as _RECORDS_WAIT,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _RECORDS_WAIT_NO_INSTALL as _RECORDS_WAIT_NO_INSTALL,
 )
 from wowlab_core.cli._cmd_doctor import (
     _REINSTALL as _REINSTALL,
@@ -1077,6 +1083,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _next_step_answer as _next_step_answer,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _no_install_until_version as _no_install_until_version,
 )
 from wowlab_core.cli._cmd_doctor import (
     _no_text as _no_text,
