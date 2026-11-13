@@ -27,7 +27,7 @@ def test_version_flag_prints_the_package_version() -> None:
 
 def test_version_is_a_real_version_string() -> None:
     assert __version__[0].isdigit(), __version__
-    assert "unknown" not in __version__, "wowlab-core is not installed in this environment"
+    assert "unknown" not in __version__, "wowlab is not installed in this environment"
 
 
 def test_no_arguments_shows_help_instead_of_doing_anything() -> None:

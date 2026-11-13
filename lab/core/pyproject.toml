@@ -1,5 +1,5 @@
 [project]
-name = "wowlab-core"
+name = "wowlab"
 version = "0.1.0"
 description = "Local-only library and CLI over a World of Warcraft install"
 requires-python = ">=3.12"

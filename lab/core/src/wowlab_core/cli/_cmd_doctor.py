@@ -260,7 +260,7 @@ class RunningWowlab(_Out):
     # the Python environment it is installed in.
     location: str
     # The source checkout the code is in (a folder holding
-    # lab/core/pyproject.toml for wowlab-core), and the version that file
+    # lab/core/pyproject.toml for the wowlab project), and the version that file
     # gives now; None for an installed copy.
     checkout: str | None
     checkout_version: str | None
@@ -548,20 +548,25 @@ def _store_report() -> StoreReport:
 
 # ─── doctor: the wowlab that is running (M16-122) ───────────────────────────
 
-_DIST = "wowlab-core"
+_DIST = "wowlab"
+# The project names a source checkout's lab/core/pyproject.toml may give: the
+# distribution was `wowlab-core` until 2026-11-13 (M16-32), and a checkout
+# made before the rename is still a checkout.
+_CHECKOUT_NAMES = (_DIST, "wowlab-core")
 _CHECKOUT_PROJECT = ("lab", "core", "pyproject.toml")
 
 
 def _checkout_version(folder: Path) -> str | None:
     """The version `folder`'s lab/core/pyproject.toml gives, when `folder` is
-    a wowlab source checkout (that file names the project wowlab-core); None
+    a wowlab source checkout (that file names the project wowlab, or
+    wowlab-core before the rename); None
     otherwise, and when it cannot be read."""
     try:
         data = tomllib.loads(folder.joinpath(*_CHECKOUT_PROJECT).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
     project = data.get("project")
-    if not isinstance(project, dict) or project.get("name") != _DIST:
+    if not isinstance(project, dict) or project.get("name") not in _CHECKOUT_NAMES:
         return None
     version = project.get("version")
     return version if isinstance(version, str) else ""

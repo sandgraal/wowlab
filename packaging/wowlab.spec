@@ -27,7 +27,7 @@ HIDDEN_IMPORTS = collect_submodules("wowlab_core")
 # The package data the wheel carries: the UI's templates, fonts and viewer,
 # the bundled lab-addon, and the TOML tables.
 DATAS = collect_data_files("wowlab_core")
-VERSION = importlib.metadata.version("wowlab-core")
+VERSION = importlib.metadata.version("wowlab")
 # The build environment holds PyInstaller and its own dependencies beside the
 # wheel; none of them is wowlab's, so none is frozen into the app.
 EXCLUDES = ["PyInstaller", "setuptools", "pkg_resources", "_distutils_hack", "distutils"]

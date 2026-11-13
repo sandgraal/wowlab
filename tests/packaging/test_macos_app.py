@@ -48,8 +48,11 @@ APP_WORKFLOW = ROOT / ".github" / "workflows" / "macos-app.yml"
 # ADR-0038 item 4: changing either is a PR that says why.
 # M17-09 re-pinned the spec for a comment only: it names what the Windows
 # build is (the `wowlab/` folder itself); no line PyInstaller runs changed.
+# M16-32 re-pinned it for the distribution's rename (2026-11-13): the app's
+# version is read from `importlib.metadata.version("wowlab")`, the new
+# distribution name; nothing else in the spec changed.
 PYINSTALLER = "pyinstaller==6.22.3"
-SPEC_SHA256 = "cfe15166047a3d39473aeb48dc40ea0fa4b48a48d73e278bd72e2b990abd70a5"
+SPEC_SHA256 = "eb19b25033f27894f782555a988fc907ec7af6a934e326662a8407cc5938cd03"
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -587,8 +590,8 @@ ZIP = "wowlab-9.9.9-macos-arm64.zip"
 # (M17-09).
 OTHER_ZIP = "wowlab-9.9.9-windows-x64.zip"
 OTHER_BYTES = b"constructed windows zip\n"
-WHEEL = "wowlab_core-9.9.9-py3-none-any.whl"
-SDIST = "wowlab_core-9.9.9.tar.gz"
+WHEEL = "wowlab-9.9.9-py3-none-any.whl"
+SDIST = "wowlab-9.9.9.tar.gz"
 ZIP_BYTES = b"constructed zip\n"
 WHEEL_SHA = "a" * 64
 SDIST_SHA = "b" * 64

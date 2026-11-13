@@ -1,4 +1,4 @@
-# The build backend for wowlab-core releases, pinned with hashes (M13-03).
+# The build backend for wowlab releases, pinned with hashes (M13-03).
 # .github/workflows/release.yml builds with
 #   uv build --build-constraints lab/core/build-constraints.txt --require-hashes
 # so a release is never built by a backend version nobody chose. Regenerate with

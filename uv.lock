@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -8,7 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "wowlab-core",
+    "wowlab",
     "wowlab-workspace",
 ]
 
@@ -962,7 +962,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wowlab-core"
+name = "wowlab"
 version = "0.1.0"
 source = { editable = "lab/core" }
 dependencies = [
@@ -987,7 +987,7 @@ name = "wowlab-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "wowlab-core" },
+    { name = "wowlab" },
 ]
 
 [package.dev-dependencies]
@@ -1006,7 +1006,7 @@ packaging = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "wowlab-core", editable = "lab/core" }]
+requires-dist = [{ name = "wowlab", editable = "lab/core" }]
 
 [package.metadata.requires-dev]
 dev = [

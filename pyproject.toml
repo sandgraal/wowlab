@@ -5,7 +5,7 @@ name = "wowlab-workspace"
 version = "0.0.0"
 description = "wowlab repository root (uv workspace)"
 requires-python = ">=3.12"
-dependencies = ["wowlab-core"]
+dependencies = ["wowlab"]
 
 [tool.uv]
 package = false
@@ -14,7 +14,7 @@ package = false
 members = ["lab/core"]
 
 [tool.uv.sources]
-wowlab-core = { workspace = true }
+wowlab = { workspace = true }
 
 [dependency-groups]
 dev = [

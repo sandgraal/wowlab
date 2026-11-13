@@ -899,6 +899,9 @@ from wowlab_core.cli._cmd_db2 import (
     db2_head as db2_head,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _CHECKOUT_NAMES as _CHECKOUT_NAMES,
+)
+from wowlab_core.cli._cmd_doctor import (
     _CHECKOUT_PROJECT as _CHECKOUT_PROJECT,
 )
 from wowlab_core.cli._cmd_doctor import (

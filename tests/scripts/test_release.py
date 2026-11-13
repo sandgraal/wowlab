@@ -57,6 +57,11 @@ INSTALL_V010 = (
     f"wowlab_core-0.1.0-py3-none-any.whl#sha256={WHEEL_V010_SHA256}"
 )
 
+# The distribution was `wowlab-core` when v0.1.0 was built, so that release's
+# wheel is `wowlab_core-0.1.0-...`. It is `wowlab` since 2026-11-13 (M16-32):
+# the line the script prints for a version names `wowlab-<version>-...`.
+INSTALL_V010_RENAMED = INSTALL_V010.replace("/wowlab_core-0.1.0-", "/wowlab-0.1.0-")
+
 
 # ─── the workflow ─────────────────────────────────────────────────────────────
 
@@ -259,7 +264,7 @@ def test_the_build_hashes_checks_sums_and_uploads_and_never_runs_the_wheel() -> 
     steps = build["steps"]
     runs = [" ".join(s.get("run", "").split()) for s in steps]
     order = [
-        "uv build --package wowlab-core --no-sources --no-create-gitignore "
+        "uv build --package wowlab --no-sources --no-create-gitignore "
         "--build-constraints lab/core/build-constraints.txt --require-hashes "
         '--out-dir "$RUNNER_TEMP/dist"',
         'scripts/release_check.py notes --tag "$TAG" --version "$VERSION"',
@@ -281,7 +286,9 @@ def test_the_build_hashes_checks_sums_and_uploads_and_never_runs_the_wheel() -> 
     assert steps[-1]["uses"].startswith("actions/upload-artifact@")
     assert steps[-1]["with"]["path"] == "release/"
     joined = " ".join(runs)
-    assert not re.search(r"\buv tool\b|\bwowlab\b(?!-core)|\bpip install\b", joined)
+    # `--package wowlab` names the project to build; any other `wowlab` would
+    # run the command.
+    assert not re.search(r"\buv tool\b|(?<!--package )\bwowlab\b|\bpip install\b", joined)
 
 
 def _verifies_against_build_outputs(job: dict[str, Any]) -> dict[str, Any]:
@@ -475,11 +482,11 @@ def test_the_notes_template_has_a_section_for_json_model_changes() -> None:
     # M16-43: the attestation check names the release workflow and the tag,
     # and the checked file, not the address, is what gets installed.
     assert (
-        "gh attestation verify wowlab_core-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab "
+        "gh attestation verify wowlab-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab "
         "--signer-workflow sandgraal/wowlab/.github/workflows/release.yml "
         "--source-ref refs/tags/{{TAG}}"
     ) in text
-    assert "`uv tool install --python 3.12 ./wowlab_core-{{VERSION}}-py3-none-any.whl`" in text
+    assert "`uv tool install --python 3.12 ./wowlab-{{VERSION}}-py3-none-any.whl`" in text
 
 
 # ─── scripts/release_check.py ─────────────────────────────────────────────────
@@ -554,7 +561,7 @@ def test_the_regex_agrees_with_packaging() -> None:
             assert release.prerelease == parsed.is_prerelease, v
 
 
-def _pyproject(tmp_path: Path, version: str, name: str = "wowlab-core") -> Path:
+def _pyproject(tmp_path: Path, version: str, name: str = "wowlab") -> Path:
     path = tmp_path / "pyproject.toml"
     path.write_text(f'[project]\nname = "{name}"\nversion = "{version}"\n', encoding="utf-8")
     return path
@@ -564,8 +571,8 @@ def test_the_tag_for_the_real_package_version() -> None:
     version = rc.project_version(rc.PYPROJECT)
     release = rc.check_tag(f"v{version}")
     assert release.version == version
-    assert release.wheel == f"wowlab_core-{version}-py3-none-any.whl"
-    assert release.sdist == f"wowlab_core-{version}.tar.gz"
+    assert release.wheel == f"wowlab-{version}-py3-none-any.whl"
+    assert release.sdist == f"wowlab-{version}.tar.gz"
 
 
 @pytest.mark.parametrize(
@@ -595,18 +602,18 @@ def test_constructed_a_matching_tag_writes_the_job_outputs(tmp_path: Path) -> No
         "earlier=1\n"
         "version=0.2.0rc1\n"
         "prerelease=true\n"
-        "wheel=wowlab_core-0.2.0rc1-py3-none-any.whl\n"
-        "sdist=wowlab_core-0.2.0rc1.tar.gz\n"
+        "wheel=wowlab-0.2.0rc1-py3-none-any.whl\n"
+        "sdist=wowlab-0.2.0rc1.tar.gz\n"
     )
 
 
 def test_constructed_a_non_canonical_or_foreign_pyproject_fails(tmp_path: Path) -> None:
     with pytest.raises(rc.ReleaseError, match="canonical PEP 440"):
         rc.check_tag("v0.2.0-rc1", _pyproject(tmp_path, "0.2.0-rc1"))
-    with pytest.raises(rc.ReleaseError, match="does not declare the project wowlab-core"):
+    with pytest.raises(rc.ReleaseError, match="does not declare the project wowlab"):
         rc.check_tag("v0.1.0", _pyproject(tmp_path, "0.1.0", name="other"))
     dynamic = tmp_path / "dynamic.toml"
-    dynamic.write_text('[project]\nname = "wowlab-core"\ndynamic = ["version"]\n', "utf-8")
+    dynamic.write_text('[project]\nname = "wowlab"\ndynamic = ["version"]\n', "utf-8")
     with pytest.raises(rc.ReleaseError, match=r"no static project\.version"):
         rc.check_tag("v0.1.0", dynamic)
 
@@ -653,11 +660,11 @@ def _dist(
 ) -> Path:
     dist = tmp_path / "dist"
     dist.mkdir()
-    info = f"wowlab_core-{version}.dist-info"
-    with zipfile.ZipFile(dist / f"wowlab_core-{version}-py3-none-any.whl", "w") as whl:
+    info = f"wowlab-{version}.dist-info"
+    with zipfile.ZipFile(dist / f"wowlab-{version}-py3-none-any.whl", "w") as whl:
         whl.writestr(
             f"{info}/METADATA",
-            _metadata("wowlab-core", wheel_version or version, license_file),
+            _metadata("wowlab", wheel_version or version, license_file),
         )
         if wheel_license is not None:
             whl.writestr(f"{info}/licenses/LICENSE", wheel_license)
@@ -669,20 +676,18 @@ def _dist(
             else:
                 entry.external_attr = (stat.S_IFREG | 0o644) << 16
                 whl.writestr(entry, data)
-    members: dict[str, bytes | None] = {
-        "PKG-INFO": _metadata("wowlab-core", sdist_version or version)
-    }
+    members: dict[str, bytes | None] = {"PKG-INFO": _metadata("wowlab", sdist_version or version)}
     if sdist_license is not None:
         members["LICENSE"] = sdist_license
     members.update(dict.fromkeys(sdist_extra, b""))
     members.update({f"src/wowlab_core/_addon/WowLab/{n}": d for n, d in sdist_addon.items()})
-    with tarfile.open(dist / f"wowlab_core-{version}.tar.gz", "w:gz") as sdist:
+    with tarfile.open(dist / f"wowlab-{version}.tar.gz", "w:gz") as sdist:
         if sdist_addon_dir:
-            folder = tarfile.TarInfo(f"wowlab_core-{version}/src/wowlab_core/_addon/WowLab")
+            folder = tarfile.TarInfo(f"wowlab-{version}/src/wowlab_core/_addon/WowLab")
             folder.type = tarfile.DIRTYPE
             sdist.addfile(folder)
         for name, data in members.items():
-            member = tarfile.TarInfo(f"wowlab_core-{version}/{name}")
+            member = tarfile.TarInfo(f"wowlab-{version}/{name}")
             if data is None:
                 member.type = tarfile.SYMTYPE
                 member.linkname = "Core.lua"
@@ -701,11 +706,11 @@ def test_constructed_the_wheel_and_sdist_of_the_version_pass(tmp_path: Path) -> 
 
 def test_constructed_a_stray_or_missing_file_fails(tmp_path: Path) -> None:
     dist = _dist(tmp_path)
-    (dist / "wowlab_core-0.0.9-py3-none-any.whl").write_bytes(b"")
+    (dist / "wowlab-0.0.9-py3-none-any.whl").write_bytes(b"")
     with pytest.raises(rc.ReleaseError, match="holds"):
         rc.check_dist(dist, "0.1.0")
-    (dist / "wowlab_core-0.0.9-py3-none-any.whl").unlink()
-    (dist / "wowlab_core-0.1.0.tar.gz").unlink()
+    (dist / "wowlab-0.0.9-py3-none-any.whl").unlink()
+    (dist / "wowlab-0.1.0.tar.gz").unlink()
     with pytest.raises(rc.ReleaseError, match="holds"):
         rc.check_dist(dist, "0.1.0")
 
@@ -725,8 +730,8 @@ def test_constructed_metadata_naming_another_version_fails(
     [
         ({"license_file": None}, r"License-File \[\], not \['LICENSE'\]"),
         ({"license_file": "COPYING"}, r"License-File \['COPYING'\]"),
-        ({"wheel_license": None}, "has no wowlab_core-0.1.0.dist-info/licenses/LICENSE"),
-        ({"sdist_license": None}, "has no wowlab_core-0.1.0/LICENSE"),
+        ({"wheel_license": None}, "has no wowlab-0.1.0.dist-info/licenses/LICENSE"),
+        ({"sdist_license": None}, "has no wowlab-0.1.0/LICENSE"),
         ({"sdist_license": b"another text\n"}, "do not carry the same LICENSE"),
         ({"wheel_license": b"\n", "sdist_license": b"\n"}, "do not carry the same LICENSE"),
         ({"sdist_extra": ("tests/test_cli.py",)}, "holds the test suite"),
@@ -750,7 +755,7 @@ assert _TOC is not None
         ({"wheel_addon": _without("WowLab.toc")}, "has no wowlab_core/_addon/WowLab/WowLab.toc"),
         (
             {"sdist_addon": _without("WowLab.toc")},
-            "has no wowlab_core-0.1.0/src/wowlab_core/_addon/WowLab/WowLab.toc",
+            "has no wowlab-0.1.0/src/wowlab_core/_addon/WowLab/WowLab.toc",
         ),
         ({"wheel_addon": _without("Gear.lua")}, r"py3-none-any\.whl holds .* not "),
         ({"sdist_addon": _without("Gear.lua")}, r"tar\.gz holds .* not "),
@@ -830,7 +835,7 @@ def test_the_sdist_takes_the_repository_license_and_leaves_the_tests_out() -> No
 
 def test_the_install_line_the_readme_gives() -> None:
     release = rc.parse_version("0.1.0")
-    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010
+    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010_RENAMED
     with pytest.raises(rc.ReleaseError, match="OWNER/NAME"):
         rc.install_line("sandgraal/wowlab; rm -rf ~", release, WHEEL_V010_SHA256)
 
@@ -879,7 +884,7 @@ def test_the_real_template_renders_with_the_install_line(
     assert code == 0
     # The hash in the line is the one of the file in --dir, read by the script.
     line = rc.install_line("sandgraal/wowlab", rc.parse_version("0.1.0"), digest)
-    assert line == INSTALL_V010.replace(WHEEL_V010_SHA256, digest)
+    assert line == INSTALL_V010_RENAMED.replace(WHEEL_V010_SHA256, digest)
     text = out.read_text(encoding="utf-8")
     assert f"\n{line}\n" in text
     assert capsys.readouterr().out == f"{line}\n"

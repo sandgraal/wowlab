@@ -10,7 +10,8 @@ command that runs that checkout.
 
 Constructed (boundary): every source checkout and Python environment here is
 a folder built in `tmp_path` (a checkout is a folder holding
-`lab/core/pyproject.toml` for wowlab-core), and what the probe would read
+`lab/core/pyproject.toml` for the project wowlab, or wowlab-core before
+the rename of 2026-11-13), and what the probe would read
 (the version, the install record's `direct_url.json`, the current folder) is
 given to `_running_wowlab`, or patched over `_wowlab_probe` for a whole run.
 The install for the CLI runs is the committed capture (`fixtures/macos/`)
@@ -49,14 +50,14 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
 
 
-def _checkout(folder: Path, version: str) -> Path:
+def _checkout(folder: Path, version: str, name: str = "wowlab") -> Path:
     """A constructed source checkout at `folder`: its project file and the
     package folder; returns the package folder."""
     core = folder / "lab" / "core"
     package = core / "src" / "wowlab_core"
     package.mkdir(parents=True)
     (core / "pyproject.toml").write_text(
-        f'[project]\nname = "wowlab-core"\nversion = "{version}"\n', encoding="utf-8"
+        f'[project]\nname = "{name}"\nversion = "{version}"\n', encoding="utf-8"
     )
     return package
 
@@ -128,6 +129,19 @@ def test_not_installed_says_so_constructed(
     assert w.checkout == str(clone)
     lines = _text(w, capsys)
     assert lines[0] == f"wowlab: version 0.0.0+unknown, run from {clone}, with no install record"
+
+
+def test_a_checkout_from_before_the_rename_is_a_checkout_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The distribution was `wowlab-core` until 2026-11-13 (M16-32): a clone
+    not pulled since still names that project, and is still a checkout."""
+    clone = tmp_path / "clone"
+    package = _checkout(clone, "0.1.0", name="wowlab-core")
+    w = cli._running_wowlab("0.1.0", package, EDITABLE, True, clone / "lab", clone / ".venv")
+    assert w.install == "editable"
+    assert w.checkout == str(clone)
+    assert w.checkout_version == "0.1.0"
 
 
 # ─── the one-line warnings ───────────────────────────────────────────────────
