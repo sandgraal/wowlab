@@ -46,8 +46,8 @@ carries it, PyPI and an announcement.
 
 ## Dropped by the owner (2026-11-13)
 
-- **M17-06**, gold in the lab-addon. The hub and the timeline show gold as
-  "not recorded".
+- **M17-06**, gold in the lab-addon. The hub and the timeline do not show
+  gold.
 - **M17-10**, a retail capture. The README keeps saying retail is untested.
 
 ## In flight when this was written
@@ -79,12 +79,12 @@ untested.
 - **#532 shipped a page crash** (`picker.options.some` on a DOM collection).
   The Node stand-in for the DOM returned real arrays, so the tests passed.
   #544 fixed it, and a static check now refuses an Array method on a DOM
-  collection. The owner found it in a minute of use, where several reviewer
-  rounds had not. For UI work, a run of the real page in a browser is worth
+  collection. The owner found it in a minute of use, where the tests and
+  the review had not. For UI work, a run of the real page in a browser is worth
   more than another reviewer.
 - **A shell-guard loosening (#541) took three review rounds and was closed
   unmerged.** Only the holes it found were fixed (#543). The remaining gaps
-  are documented in CLAUDE.md, not chased.
+  are documented in CLAUDE.md (#545), not chased.
 
 ## Recommendation for the next step
 
@@ -94,5 +94,10 @@ it). Then wait for the M13 gate's kind of evidence: outside downloads,
 issues and setups. Pick the next wave from what those people ask for. If
 the owner wants a wave anyway, the review of 2026-11-12 still argues
 against resuming M15 (the 3D chain) before there are users.
+
+**Ideas unblocked** (ADR-0024): none that should be built before v0.2 has
+users. The 2026-11-12 review's later items (bag triage across alts, a weekly
+checklist, `binds coach --apply` after the persistence tests) stay on the
+menu until someone asks for them.
 
 Dispatch stops here until the owner picks.
