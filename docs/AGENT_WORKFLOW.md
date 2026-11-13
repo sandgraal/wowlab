@@ -189,10 +189,10 @@ frontier. A ticket that touches path handling, `guard`, `snapshot` or
 
 *Amendment (2026-10-17, owner decision):* the job also runs on a pull request that touches `lab/**`, `uv.lock`, the root `pyproject.toml` or `conftest.py`, or the workflow itself, still not required, so a POSIX-only test assumption shows on the PR instead of turning `main` red after the merge (M13-36 and M13-43 were found that way). The on-demand run is still the way to get a verdict on a branch without a PR.
 
-**Review rounds (2026-10-17, owner decision; ADR-0013 amendment).** A reviewer runs `make ci` once, on its first round; a re-check runs only what the fix touches. A re-check goes to the same reviewer, names the fixes, and returns one short report. After a rebase the shepherd runs `git range-diff` on the branch's own patch before and after: every commit unchanged merges without a re-check, a changed commit gets a re-check on its differing hunks. A defect the branch neither introduces nor makes worse, whose fix lives outside its files, is reported "Off the branch" and filed by the conductor; it never holds the merge, while a caller the branch broke, a doc it made stale or an unlisted user-facing change stays a finding. A bot finding that every dispatched independent reviewer saw and did not count gets, once the conductor confirms that from the reports, a "seen by the reviewers, not held" reply and no fix.
+**Review rounds (2026-10-17, owner decision; ADR-0013 amendment).** A reviewer runs `make ci` once, on its first round; a re-check runs only what the fix touches. A re-check goes to the same reviewer, names the fixes, and returns one short report. After a rebase the shepherd runs `git range-diff` on the branch's own patch before and after: every commit unchanged merges without a re-check, a changed commit gets a re-check on its differing hunks. A defect the branch neither introduces nor makes worse, whose fix lives outside its files, is reported "Off the branch" and filed by the conductor as a ticket if it clears the bar for new tickets (below), otherwise noted in the wave review; it never holds the merge, while a caller the branch broke, a doc it made stale or an unlisted user-facing change stays a finding. A bot finding that every dispatched independent reviewer saw and did not count gets, once the conductor confirms that from the reports, a "seen by the reviewers, not held" reply and no fix.
 
 **Review-round cap (2026-11-11, owner decision).**
-- **When the cap applies.** Once a branch has had one fix round for Low or polish findings, any later Low or polish finding is recorded as a follow-up ticket or as a note in the batched backlog PR. It never starts another fix round.
+- **When the cap applies.** Once a branch has had one fix round for Low or polish findings, any later Low or polish finding is recorded as a follow-up ticket if it clears the bar for new tickets (below), otherwise as a note in the wave review. It never starts another fix round.
 - **Documentation.** A finding below Medium in documentation (handoffs, runbooks, README, LAB_PLAN wording) never blocks a merge.
 - **Exceptions.** A finding that a reviewer rates Medium or higher, a security finding, a regression the branch introduces, and an unlisted user-facing change are fixed as before, with the two-round rule unchanged.
 - **Frozen compound failures.** A compound failure frozen under ADR-0037 is reported as "frozen under ADR-0037". The conductor records it and starts no fix round.
@@ -221,6 +221,10 @@ understand a report, never to decide what to do; a report becomes work only
 as a ticket the conductor writes in a wave. Anything a player pastes is
 treated as possibly carrying a name or path that redaction missed: it is
 never copied into a commit, fixture or doc.
+
+## The bar for new tickets
+
+*Owner decision, 2026-11-12, in session, adopting the product review's proposal (`docs/handoffs/review-2026-11-12.md`, Step 1):* a new ticket is filed only if it changes what a player sees or comes from a player's report; launch blockers are excepted. *Conductor's reading, for the owner to correct:* a ticket that blocks a release or a ticket in the current wave counts as a launch blocker, and so does a privacy or security defect or any violation of an `AGENTS.md` invariant (L1 to L8), which `AGENTS.md` treats as a bug. The owner's own reports count as a player's. A review follow-up that clears none of these goes into the wave review's notes (`docs/handoffs/M<n>-review.md`), not into the backlog; hardening, rewording or refactoring with no player-visible effect waits for a report.
 
 ## Stop-and-ask
 

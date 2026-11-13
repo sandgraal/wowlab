@@ -77,6 +77,8 @@ Two criteria were met by close equivalents, not literally:
 - **"A fresh user"** was a throwaway `HOME` on the owner's Mac, not a separate account.
 - **"A tag that does not match publishes nothing"** is shown by `release_check.py` and `tests/scripts/test_release.py`, not by pushing a wrong tag. Under the rulesets a tag is permanent.
 
+
+*Note 2026-11-12:* the owner turned immutable releases off so the macOS app and Windows binary can be attached after publishing (ADR-0031 amendment of 2026-11-12, M17-08); the `immutable-releases` step above no longer applies.
 ---
 
 ## [x] M13-04 — First-run flow
@@ -2954,7 +2956,7 @@ With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and list
 - (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
 - (c) unchanged.
 
-The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
+The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default). *Owner decision, 2026-11-12, in session: (a).* With several flavor folders and no `--flavor`, `snap create` takes one snapshot per flavor and names each. Read commands keep the one-flavor rule.
 
 **Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
 
