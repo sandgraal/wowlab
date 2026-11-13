@@ -65,6 +65,15 @@ def _assert_refused(code: int, out: Path, capsys: pytest.CaptureFixture[str], wh
     assert "OUTSIDETARGET" not in text  # the link's target is never printed
 
 
+def _folds_case(where: Path) -> bool:
+    probe = where / "case-probe"
+    probe.mkdir()
+    try:
+        return (where / "CASE-PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
 def test_constructed_symlinked_wtf_stops_the_capture(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -79,6 +88,8 @@ def test_constructed_symlinked_wtf_in_another_case_stops_the_capture(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A real `wtf/` beside a linked `WTF/`: the planner would take the link."""
+    if _folds_case(tmp_path):
+        pytest.skip("the temporary directory's volume folds case")
     root, elsewhere = _install(tmp_path)
     (root / "_retail_" / "wtf").mkdir()
     (root / "_retail_" / "WTF").symlink_to(elsewhere, target_is_directory=True)

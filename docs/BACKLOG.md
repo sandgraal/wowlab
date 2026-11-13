@@ -1491,7 +1491,7 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new comman
 
 ---
 
-## [ ] M16-05 — Owner: the launch-client session
+## [x] M16-05 — Owner: the launch-client session
 **Size:** S · **owner** · **Depends on:** the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
 
 Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's runbook on the launch client and records:
@@ -2960,7 +2960,7 @@ The conductor recommends (a). The owner decides (a "stop and ask" item: it chang
 
 ---
 
-## [ ] M16-125 — The launch-client capture lands, and the file map follows M16-05
+## [x] M16-125 — The launch-client capture lands, and the file map follows M16-05
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
 
 M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is staged on the owner's machine: 33 files, scrubbed by `scripts/lab_capture.py`, with its provenance rows printed by the tool.
@@ -2972,7 +2972,7 @@ M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is sta
 
 ---
 
-## [ ] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
+## [x] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
 
 Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
@@ -2989,6 +2989,29 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 `doctor` prints `synchronizeMacros` with "not set (the client's default, and wowlab cannot tell whether it is on)" (`_SYNC_CVARS` in `cli/_cmd_doctor.py`). On the Forever launch client, build 70888, that CVar does not answer `GetCVar` at all (`docs/LAB_FORMATS.md` §5, §7, amended 2026-11-12), so the line suggests a default that does not exist. `synchronizeBindings` and `synchronizeConfig` read `"1"` with no line in any file. Without hard-coding a flavor or build (L6): a CVar with no line is described as possibly absent on this client rather than as on by default, or the absent default for `synchronizeBindings` and `synchronizeConfig` is stated as observed on one client, worded per `.claude/rules/player-copy.md`.
 
 **Acceptance:** tests on constructed `Config.wtf` and `config-cache.wtf`, labelled; `make ci` green. Reviewed by `code-reviewer`. User-facing: `doctor`'s sync lines.
+
+---
+
+## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes the remaining chat, GUID and HonorBound gaps
+**Size:** S · **Depends on:** nothing · **Sources:** `security-reviewer` and `code-reviewer` on PR #514 (M16-126); the M16-125 leak of 2026-11-12
+
+On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-list-order.txt` reached a pushed branch, because `GUID_RE` needs `Player-`. M16-126 maps and refuses bare GUIDs in that one file. What is left, in `scripts/lab_capture.py`:
+- **Every file.** Discovery knows the owner's own GUIDs. Search every captured file for each one's exact text, with and without the `Player-` prefix, in any case, and rewrite it to the pseudonym; a bare `<n>-<hex>` pattern stays too common to match blindly.
+- **Speaker after own link.** After the owner's own speaker link, another `Name:` on the same line still passes. Refuse it.
+- **Link label and closer.** A `|h` inside a channel label, or upper-case `|H` closers, end the link early. Use a label of `\[[^\]\r\n]*\]` and a case-insensitive closer.
+- **Bare GUID tokens.** In `character-list-order.txt`, refuse any unmapped `[0-9]+-[0-9A-Fa-f]{6,}` token, whatever its boundaries.
+- **The HonorBound rule fails open** (`security-reviewer` on M16-125). `honorbound_scan` leaves the hash in place, with no edit and no refusal, for a tab or `,` before `h=`, `h = `, `H=`, leading space or a tab after `#HB3`, `#hb3`, `#HB4` and a UTF-8 BOM. Match `^\s*#HB\d+\s` without regard to case, accept `[ \t;,]` before the key and spaces around `=`, strip a BOM, and refuse any `#HB<n>` line whose `h` was not replaced.
+
+**Acceptance:** constructed tests for each case, labelled; the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: refusal lines only.
+
+---
+
+## [ ] M16-129 — The case-folding symlink test skips on a case-insensitive volume
+**Size:** XS · **Depends on:** nothing · **Sources:** every local run of 2026-11-12
+
+`tests/scripts/test_lab_capture_symlinked_wtf.py::test_constructed_symlinked_wtf_in_another_case_stops_the_capture` fails in its own setup on macOS (`FileExistsError` making `WTF` beside `wtf`), on `main` too. Skip it when the temporary directory folds case, as the existing "temporary volume folds case" skips do. CI on Linux keeps running it.
+
+**Acceptance:** the test skips on a case-insensitive volume and runs on Linux; `make test-fast` green on macOS. Reviewed by `code-reviewer`.
 
 ---
 
@@ -3078,7 +3101,7 @@ The hub and the timeline need the character's money, which no schema records tod
 
 ---
 
-## [ ] M17-07 — ADR-0031 amendment: double-click distribution
+## [x] M17-07 — ADR-0031 amendment: double-click distribution
 **Size:** XS · **Depends on:** nothing · **Sources:** §19 CW-5 · **owner** (drafts reviewed by the owner)
 
 The conductor drafts, with `/adr amend 0031`, a Proposed amendment that permits, besides the wheel and PyPI:
@@ -3091,21 +3114,21 @@ Both are built from the tagged source, with `SHA256SUMS` and attestations as M16
 
 ---
 
-## [ ] M17-08 — The macOS launcher, as a release asset
-**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5
+## [ ] M17-08 — The macOS app, as a release asset
+**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038
 
-From the owner's `install-wowlab-app.sh` (untracked on 2026-11-12; the owner commits it or hands it over):
-- the release workflow builds a `wowlab.app` that runs the released wheel's `wowlab ui`, and attaches it zipped to the release with its hash in `SHA256SUMS`;
-- it needs no git clone and no editable install.
+*Aligned 2026-11-12 with ADR-0031's amendment and ADR-0038 (both accepted): the app is a frozen PyInstaller build, not a launcher over a clone.* The owner's `install-wowlab-app.sh` is the model for what a double-click does (a visible Terminal window that stops the server when closed), not for how the app is built:
+- the release workflow builds an `arm64` `wowlab.app` from the tagged wheel with PyInstaller, one-folder, under ADR-0038's rules (the spec and the Python launcher under `packaging/`), and attaches it zipped to the release with its hash in `SHA256SUMS` and an attestation, as M16-43 set up for the wheel;
+- it needs no git clone, no editable install and no typing in a terminal, and it never pulls or updates itself.
 
 Signing and notarisation are out of scope; the release notes say how to open an unsigned app.
 
-**Acceptance:** the workflow builds the app on a release-candidate tag; a CI smoke test starts it headless and gets the UI's page; the owner opens it once on their Mac, recorded in the PR. Reviewed by `code-reviewer` and `security-reviewer` (workflow). User-facing: a new download on the release page; INSTALL.md.
+**Acceptance:** the workflow builds the app on a release-candidate tag; the CI smoke test of ADR-0038 item 4 passes; the owner opens it once on their Mac (the Terminal hand-off), recorded in the PR. Reviewed by `code-reviewer` and `security-reviewer` (workflow). User-facing: a new download on the release page; INSTALL.md.
 
 ---
 
 ## [ ] M17-09 — The Windows frozen binary
-**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5
+**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038 (one-folder; the launcher runs `ui` with no arguments; smoke test item 4, with the recorder as a single executable file on Windows)
 
 Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release with its hash, and smoke-test `wowlab --version` and `wowlab ui` headless on `windows-latest`. Double-clicking it opens the UI. Windows stays "untested" in the README until M13-02's human run.
 
@@ -3140,7 +3163,7 @@ The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release
 
 ---
 
-## [ ] M17-13 — Owner: accept or amend the packaging ADRs
+## [x] M17-13 — Owner: accept or amend the packaging ADRs
 **Size:** XS · **Depends on:** M17-07 · **Sources:** §19 CW-5, ADR-0030 · **owner** (a decision on each text)
 
 The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0031 amendment and the build-tool ADR. The conductor makes the status edits only on the owner's explicit instruction (`.claude/rules/docs.md`). M17-08 and M17-09 start only after this.

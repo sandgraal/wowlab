@@ -155,6 +155,7 @@ verified (ADR-0030):
 - Lua only under `lab/addon/`, run only by the game client (ADR-0026).
 - HTML, CSS and plain JavaScript only as template text inside the package,
   with no build step (ADR-0027, ADR-0029); one pinned, vendored third-party JavaScript library for the viewer under ADR-0034 (accepted 2026-10-19, not yet built); twelve pinned OFL font files for `wowlab ui` under ADR-0035 (accepted 2026-10-26, not yet built), data rather than a language.
+- PyInstaller as a build-time toolchain only, in the release workflow and `packaging/`, for the macOS app and the Windows binary (ADR-0038, accepted 2026-11-12, not yet built); never a runtime dependency.
 
 Any other language, runtime or build toolchain needs a new ADR; one added
 for performance in the core also carries measurements (ADR-0020). Runtime dependencies are limited

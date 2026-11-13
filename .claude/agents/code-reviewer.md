@@ -87,6 +87,13 @@ found nothing. When a probe **reproduces a real defect**, commit it as a
 directory. Tell the conductor which probes you committed; the implementer
 will `git pull --rebase` before fixing.
 
+Before that push, `git ls-remote origin <branch>` must show the exact
+commit your probe sits on. If the branch is gone from origin or has moved,
+do not push: describe the probe in your report. A branch can be deleted or
+rebuilt because it leaked something; a push from an old base publishes it
+again (2026-11-12, M16-125). Work in a worktree of your own, never in an
+implementer's.
+
 ## Report — final message
 
 Findings ranked by severity. For each: file and line, the invariant, ADR,

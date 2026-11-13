@@ -360,8 +360,8 @@ def test_doctor_folds_six_unset_sync_lines_into_one(make: Callable[[str], Path])
     assert synced == [
         "  Server sync: the three sync settings wowlab reads are not set in WTF/Config.wtf or "
         "WTF/Account/90000001#6/config-cache.wtf (when on, the server can replace your "
-        "bindings, macros or settings at login; not set is the client's default, and wowlab "
-        "cannot tell whether that default is on)"
+        "bindings, macros or settings at login; with no line, the client may treat a setting "
+        "as on or may not have it at all, and wowlab cannot tell which)"
     ]
     assert "synchronizeBindings" not in out
 
@@ -407,7 +407,7 @@ def test_doctor_lists_sync_lines_when_one_is_set(make: Callable[[str], Path]) ->
         "login):\n" in out
     )
     assert 'WTF/Config.wtf: synchronizeBindings "1"' in out
-    assert "synchronizeMacros not set (the client's default" in out
+    assert "synchronizeMacros not set (the client may treat it as on or may not have it" in out
 
 
 def test_coach_says_cannot_judge_where_a_count_would_be_0(make: Callable[[str], Path]) -> None:

@@ -5210,6 +5210,8 @@ character, and `--notes` the standing notes. Clicking a recorded row (or its
 name, a button) opens the Character tab on that character, moving the
 header's flavor to the row's.
 
+*CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
+
 **Order.** The wave starts after M16-05 (the launch-client session and
 its capture). v0.2 (M16-33, M16-32) ships before the wave's review
 (M17-12). *Owner decision, 2026-11-12:* the wave runs before v0.2
