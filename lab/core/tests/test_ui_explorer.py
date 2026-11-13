@@ -368,6 +368,11 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
 
 _HTML_SINKS = [
     "innerHTML",
+    # An attribute set by namespace or as a node escapes the closed set of
+    # names below; `xlink` names the SVG link namespace (M17-03).
+    "setAttributeNS",
+    "setAttributeNode",
+    "xlink",
     "outerHTML",
     "insertAdjacentHTML",
     "document.write",
@@ -452,6 +457,7 @@ def test_the_script_writes_text_only(server: Any) -> None:
     assert script.count(SVG_NS_LINE) == 1
     made = re.findall(r"createElementNS\(([^)]*)\)", script)
     assert made, "the history charts draw SVG"
+    assert script.count("createElementNS") == len(made)
     for args in made:
         found = re.fullmatch(r'SVG_NS, "([a-z]+)"', args)
         assert found is not None and found.group(1) in SVG_TAGS, args

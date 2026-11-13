@@ -861,11 +861,19 @@ def test_no_sentence_of_the_page_changed() -> None:
     assert _words(_template("page.html")) == _with_m17_03(expected)
 
 
-# What M17-03 changed: the Character tab's intro names a fifth read command,
-# and the history panel's heading follows the gear panel (its lines are the
+# What M17-03 changed: the Character tab's intro names the history and a
+# fifth read command, and the history panel's heading follows the gear panel (its lines are the
 # script's).
 _INTRO_M17_03_BEFORE = ["wowlab char binds", "and", "wowlab char macros"]
 _INTRO_M17_03 = ["wowlab char binds", ",", "wowlab char macros", "and", "wowlab char history"]
+_INTRO_SENTENCE_BEFORE = (
+    ", never the session in progress, beside the key bindings and macros the client last wrote. "
+    "Read only: this tab runs"
+)
+_INTRO_SENTENCE_M17_03 = (
+    ", never the session in progress, beside the key bindings and macros the client last wrote, "
+    "and, under History, its earlier saves that your backups hold. Read only: this tab runs"
+)
 
 
 def _with_m17_03(words: list[str]) -> list[str]:
@@ -875,6 +883,8 @@ def _with_m17_03(words: list[str]) -> list[str]:
         if words[i : i + len(_INTRO_M17_03_BEFORE)] == _INTRO_M17_03_BEFORE
     )
     words = words[:at] + _INTRO_M17_03 + words[at + len(_INTRO_M17_03_BEFORE) :]
+    said = words.index(_INTRO_SENTENCE_BEFORE)
+    words[said] = _INTRO_SENTENCE_M17_03
     keys = words.index("Keys")
     assert words[keys - 1] == "See it dressed"
     return [*words[:keys], "History", *words[keys:]]

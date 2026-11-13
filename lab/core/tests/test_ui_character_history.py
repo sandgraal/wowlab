@@ -96,6 +96,7 @@ function historyView() {
       head: table.all().filter((e) => e.tagName === "th" && e.scope === "col").map((e) => e.textContent),
       rows: table.all().filter((e) => e.tagName === "tr").slice(1).map((tr) => ({
         cells: tr.children.map((c) => c._text), restored: tr.children[0].textContent, title: tr.children[0].title,
+        ilvlTitle: tr.children[2].title,
         scope: tr.children[0].scope })) },
     changes: list ? list.children.map((li) => ({ when: li.children[0].textContent,
       items: li.children[1].children.map((c) => c.textContent) })) : [],
@@ -233,8 +234,8 @@ def test_several_saves_draw_two_charts_and_a_table_cross_capture(
     day = lambda ns: _local(ns).split(" ")[0]  # noqa: E731
     assert view["lines"][0] == {
         "cls": "char-count",
-        "text": f"4 saves, {day(T1)} to {day(T_LIVE)}. A time is when the game wrote the file, "
-        "at logout or /reload.",
+        "text": f"4 saves, {day(T1)} to {day(T_LIVE)}. A time is the file's modification time: "
+        "when the game wrote it at logout or /reload, or when a restore put it back.",
     }
     # Two charts, SVG in the SVG namespace, hidden from screen readers.
     assert len(view["charts"]) == 2
@@ -254,10 +255,18 @@ def test_several_saves_draw_two_charts_and_a_table_cross_capture(
         top = max(known)
         for (_, y), v in zip(chart["dots"], known, strict=True):
             assert (y == min(y for _, y in chart["dots"])) == (v == top), (field, v)
-        assert chart["labels"][0] == str(top)
-    caption = view["captions"][0]
+        assert chart["labels"][0] == (f"{top:.1f}" if field == "item_level" else str(top))
     known = [r["item_level"] for r in rows if r["item_level"] is not None]
-    assert caption == f"Equipped item level: from {min(known)} to {max(known)}."
+    levels = [r["level"] for r in rows if r["level"] is not None]
+    # Lowest and highest, never "from ... to" (which reads as a gain), and
+    # the steps are said not to be time.
+    assert view["captions"] == [
+        "Equipped item level (the client's average, as the addon recorded it): "
+        f"lowest {min(known):.1f}, highest {max(known):.1f}, one step per save (not spaced by "
+        "time).",
+        f"Level: lowest {min(levels)}, highest {max(levels)}, one step per save (not spaced by "
+        "time).",
+    ]
     # The table: the charts' text alternative, reachable and labelled.
     table = view["table"]
     assert table["role"] == "region" and table["label"] == "Each save as a table"
@@ -271,7 +280,9 @@ def test_several_saves_draw_two_charts_and_a_table_cross_capture(
         assert cells[0] == _local(row["saved_at_ns"])
         assert cells[1] == _num(row["level"]) or cells[1].startswith("not recorded")
         if row["item_level"] is not None:
-            assert cells[2] == str(row["item_level"])
+            # One decimal shown; the exact figure in the title.
+            assert cells[2] == f"{row['item_level']:.1f}"
+            assert drawn["ilvlTitle"] == f"exact: {row['item_level']:g}"
         assert cells[3] == _spec(row) or (row["spec"]["id"] is None and "not recorded" in cells[3])
     assert [r["cells"][4] for r in table["rows"]] == [
         "1 snapshot",
@@ -281,7 +292,7 @@ def test_several_saves_draw_two_charts_and_a_table_cross_capture(
     ]
     # The restored save is flagged, with the save whose contents it has.
     restored = table["rows"][3]
-    assert restored["restored"].endswith("likely restored")
+    assert restored["restored"] == f"{_local(T_LIVE)}, likely restored (same as {_local(T1)})"
     assert restored["title"] == (
         f"Same contents as the save of {_local(T1)}: likely restored, so this time is when it "
         "was put back."
@@ -329,6 +340,11 @@ def test_the_changes_are_newest_first_in_player_words_cross_capture(
             assert f"Level {was} to {now}" in drawn
         else:
             assert not any(item.startswith("Level ") for item in drawn)
+    # Saves 1 and 2 record the same values and gear: nothing changed in
+    # what both record.
+    assert view["changes"][2]["items"] == [
+        "No change in what both saves record (level, equipped item level, spec, gear, currencies)."
+    ]
     # The report's notes, behind a closed summary.
     assert view["notes"] == several["notes"]
     assert view["summary"] == [f"{len(several['notes'])} notes on what these figures are"]
@@ -337,9 +353,10 @@ def test_the_changes_are_newest_first_in_player_words_cross_capture(
 # ─── zero and one save ───────────────────────────────────────────────────────
 
 _FEW = (
-    "History appears once wowlab holds two saves of this character. The game saves it when you "
-    "log out or type /reload; take a backup after you play (Take a backup now on the Account "
-    "tab, or wowlab snap create), and each backup keeps the save that is on disk."
+    "History appears once there are two different saves of this character (the file in the game "
+    "folder counts as one). The game saves it when you log out or type /reload; take a backup "
+    "after you log out or /reload (Take a backup now on the Account tab, or wowlab snap create); "
+    "a backup taken while you are still playing keeps the save from before."
 )
 
 
@@ -492,3 +509,44 @@ def test_the_panel_runs_only_char_history_and_holds_no_game_table() -> None:
     assert "slot_name" in script and "spec_name" in script
     for word in ("snap create", "restore", "undo"):
         assert f'runJson(["{word}' not in script
+
+
+def test_gear_changes_are_worded_as_the_cli_words_them_cross_capture(
+    server: Any, several: dict[str, Any], tmp_path: Path
+) -> None:
+    """Constructed from the real report: one change made another instance of
+    the same item id (bonus ids, and its item level), one the same instance
+    at another item level, and a level only one save records."""
+    report = json.loads(json.dumps(several))
+    row = next(r for r in report["rows"] if len(r["gear_changes"]) >= 2)
+    at = report["rows"].index(row)
+    first, second = row["gear_changes"][:2]
+    for g in (first, second):
+        assert g["before"] is not None
+        if g["after"] is None:
+            g["after"] = dict(g["before"])
+    first["after"]["item_level"] = (first["before"]["item_level"] or 0) + 3
+    first["differs"] = ["bonus ids", "item level"]
+    second["after"]["name"] = second["before"]["name"]
+    second["after"]["item_level"] = (second["before"]["item_level"] or 0) + 1
+    second["differs"] = ["item level"]
+    row["level"] = None
+    out = _drive(tmp_path / "node", _scenario(server, report))
+    items = out["steps"][1]["changes"][len(report["rows"]) - 1 - at]["items"]
+
+    def item(side: dict[str, Any]) -> str:
+        return f"{side['name']} (item level {side['item_level']})"
+
+    b, a = first["before"], first["after"]
+    assert (
+        f"{first['slot_name']}: {item(a)}, same item id, a different instance (bonus ids); "
+        f"before: {item(b)}; item level {b['item_level']} to {a['item_level']} (the client's "
+        "figure)"
+    ) in items
+    b, a = second["before"], second["after"]
+    assert (
+        f"{second['slot_name']}: {a['name']}, same instance, item level {b['item_level']} to "
+        f"{a['item_level']} (the client's figure)"
+    ) in items
+    assert "Level: not recorded in one of the two saves." in items
+    assert not any("the same item with" in i for i in items)
