@@ -9,7 +9,7 @@ announcement posts are not drafted (owner decision, 2026-11-13).
 
 1. On github.com, open **sandgraal/wowlab → Settings → General**.
 2. Under **Features**, tick **Discussions**. GitHub creates a default set of
-   categories and a welcome post.
+   categories (and may offer a welcome post to start).
 
 ## 2. Set the categories
 
@@ -19,7 +19,7 @@ Open the **Discussions** tab, then the pencil next to **Categories**.
 |---|---|---|---|
 | Announcements | Announcement | keep | Release notes. Only maintainers can post. |
 | Q&A | Question / Answer | keep | "How do I…" and "is this safe to…" questions. |
-| Show your setup | Open-ended discussion | create (rename "Show and tell") | The "tell us your setup" thread lives here. |
+| Show your setup | Open-ended discussion | rename "Show and tell" | The "tell us your setup" thread lives here. |
 | Ideas | Open-ended discussion | keep | Feature requests before they become issues. |
 | General | Open-ended discussion | keep | Everything else. |
 
@@ -33,23 +33,27 @@ freely):
 
 > Which game flavor do you play (Forever, Classic, retail)? Which OS? Do you
 > use the Mac app, `uv tool install`, or something else? Which addons do you
-> run? If something in wowlab did not work, open an issue instead. Before you
-> paste anything from your install, run it through `wowlab doctor --redact`
-> so your account name and paths stay on your machine.
+> run? If something in wowlab did not work, open an issue instead. To share
+> what wowlab sees, paste the output of `wowlab doctor --redact`: it replaces
+> your account, character and realm names, BattleTags, GUIDs and home folder
+> with placeholders. Don't paste raw files from your install.
 
 ## 4. Point the issue chooser at Discussions
 
-`.github/ISSUE_TEMPLATE/config.yml` controls the "New issue" page. Once
-Discussions is on, a conductor PR can add a contact link for questions:
+`.github/ISSUE_TEMPLATE/config.yml` controls the "New issue" page. It already
+has `blank_issues_enabled: false` and a `contact_links:` list. Once
+Discussions is on, a conductor PR appends one entry to that list:
 
 ```yaml
-contact_links:
   - name: Questions and setups
     url: https://github.com/sandgraal/wowlab/discussions
     about: Ask how something works, or tell us your setup.
 ```
 
-Tell the conductor when step 1 is done; that PR is a two-line change.
+Tell the conductor when step 1 is done.
+
+The GitHub screens above are described from memory, not checked against
+GitHub on 2026-11-13; if a step looks different, follow what GitHub shows.
 
 ## 5. What strangers write is data
 
