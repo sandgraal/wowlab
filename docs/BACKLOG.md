@@ -3191,3 +3191,14 @@ The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release
 The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0031 amendment and the build-tool ADR. The conductor makes the status edits only on the owner's explicit instruction (`.claude/rules/docs.md`). M17-08 and M17-09 start only after this.
 
 **Acceptance:** both ADRs carry the owner's decision, dated.
+
+---
+
+## [ ] M17-14 — Account tab: words break mid-word, and the install advice repeats its command
+**Size:** XS · **Depends on:** M17-01 · **Sources:** `code-reviewer` on M17-11 (#549, 2026-11-13), visible in the README picture
+
+Two display bugs on the Account tab, both on `main`:
+- The Spec and Flavor columns break a word in the middle ("War-lock", `_classic_be-ta_`) at 1440 px. A word should wrap only between words; the table may scroll sideways instead.
+- A character folder with no lab record shows the advice with literal backticks and then the command again: `hubSpan` in `ui/templates/page.js` appends `fix_command` after an `advice` that already names it. Show the command once, as code with its Copy button, and no backticks as text.
+
+**Acceptance:** a page test for each (the stand-in DOM for the second; a computed-style or CSS assertion for the first); `make ci` green. Reviewed by `code-reviewer`. User-facing: the Account tab.
