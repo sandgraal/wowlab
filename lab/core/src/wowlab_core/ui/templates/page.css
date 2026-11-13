@@ -567,6 +567,29 @@ pre:empty { display: none; }
 #backup-status.error { color: var(--ruin); }
 .backup .plan-lines { margin: var(--space-2) 0 0; }
 
+/* ─── the Account tab's patch-day card (M17-05): per flavor, the addons
+   out of date or missing a required addon, and saved data no installed
+   addon uses; each line's name opens the Explorer on its file ─── */
+.patch-day { padding: var(--space-3) var(--space-4); }
+.patch-day h3 { margin: 0 0 var(--space-2); }
+.patch-day h4 { margin: var(--space-2) 0 var(--space-1); }
+.patch-day-intro { margin: 0 0 var(--space-2); color: var(--text-muted); }
+.patch-day-lines, .patch-day-list { margin: 0; padding: 0; list-style: none; }
+.patch-day-list { margin-left: var(--space-3); }
+.patch-day-item { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.patch-day-what { margin: var(--space-2) 0 0; }
+.patch-day-clear { margin: var(--space-1) 0; }
+.patch-day-note { margin: var(--space-1) 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.patch-day-error { margin: var(--space-1) 0; color: var(--ruin); overflow-wrap: anywhere; }
+.patch-day-open {
+  padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: inherit; letter-spacing: inherit; color: inherit;
+  text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; unicode-bidi: isolate;
+}
+#patch-day-status { margin: var(--space-2) 0 0; color: var(--text-muted); overflow-wrap: anywhere; }
+#patch-day-status:empty { display: none; }
+#patch-day-status.error { color: var(--ruin); }
+
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
 #looks-status { margin: 0; color: var(--text-muted); flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
