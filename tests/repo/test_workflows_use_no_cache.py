@@ -64,6 +64,7 @@ PATHS_FILTER = "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 SETUP_UV = "astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2"  # v10.3.3
 TRIVY = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
 ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
+PYPI_PUBLISH = "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086"  # v1.14.3
 
 # What each action does with the Actions cache at the pinned commit, as read
 # from its action.yml on 2026-10-18 (M13-42):
@@ -86,6 +87,12 @@ ATTEST = "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504d
 # attest-build-provenance (v4.2.2, M16-43, read 2026-11-04): a composite
 # action with one step, actions/attest@508db95 (v4.2.1), a node24 action
 # whose action.yml has no cache input and no nested action: nothing.
+# gh-action-pypi-publish (v1.14.3, M16-32, read 2026-11-13): a composite
+# action. Its only nested action is actions/setup-python@a309ff8 (v6.2.0),
+# run only when the runner has no python3 (ubuntu-latest has one) and given
+# no `cache` input, which is off by default; then a generated Docker action
+# that pulls ghcr.io/pypa/gh-action-pypi-publish at the pinned commit. No
+# cache input of its own: nothing.
 CACHE_OFF: Mapping[str, str] = {
     SETUP_UV: "enable-cache",
     TRIVY: "cache",
@@ -99,7 +106,7 @@ ALLOWED: Mapping[str, frozenset[str]] = {
     # M17-08: the macOS app on a pull request or by hand; no attestation, no release.
     "macos-app.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
     "perf-nightly.yml": frozenset({CHECKOUT, SETUP_UV}),
-    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST}),
+    "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST, PYPI_PUBLISH}),
     # M17-09: the Windows app on a pull request or by hand; as macos-app.yml.
     "windows-app.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
     "windows.yml": frozenset({CHECKOUT, SETUP_UV}),

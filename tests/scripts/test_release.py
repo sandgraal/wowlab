@@ -4,7 +4,8 @@ Two halves. The workflow tests read `.github/workflows/release.yml` as data
 and pin what `security-reviewer` signs off on: the trigger, the token's
 reach (read-only everywhere; `contents: write`, and since M16-43
 `id-token: write` and `attestations: write` for the provenance attestation,
-on the release job only),
+on the release job only; since M16-32 `id-token: write` alone on the
+PyPI job, in the `release` environment),
 action commits pinned, no secret but the job token, and the version check
 standing between a tag and a release. The script tests grade
 `scripts/release_check.py`, which does the checking. The last section
@@ -101,6 +102,7 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
         "windows_app",
         "windows_app_smoke",
         "windows_app_release",
+        "pypi",
     }
     writer = {"contents": "write", "id-token": "write", "attestations": "write"}
     assert {n: j.get("permissions") for n, j in jobs.items()} == {
@@ -115,6 +117,8 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
         "windows_app": None,
         "windows_app_smoke": None,
         "windows_app_release": writer,
+        # M16-32: trusted publishing needs the OIDC token and nothing else.
+        "pypi": {"id-token": "write"},
     }
 
 
@@ -137,6 +141,10 @@ def test_every_publish_waits_for_the_release_environment() -> None:
         "windows_app_smoke": None,
         # M17-09: the Windows app is attached the same way.
         "windows_app_release": None,
+        # M16-32: the PyPI upload waits for the owner's approval of the same
+        # environment, and PyPI's trusted publisher is bound to it, so no job
+        # outside it (the attach jobs hold `id-token: write`) can publish.
+        "pypi": "release",
     }
     for name in ("app_release", "windows_app_release"):
         attach = jobs[name]
@@ -184,6 +192,8 @@ def test_no_secret_but_the_job_token_and_only_where_it_publishes() -> None:
     ]
     for name, job in _jobs().items():
         assert "github.token" not in str(job.get("env", {})), name
+    # M16-32: the PyPI job holds no token at all; PyPI trusts its OIDC token.
+    assert not [h for h in holders if h[0] == "pypi"]
 
 
 def test_no_expression_is_spliced_into_a_shell_script() -> None:
@@ -335,6 +345,67 @@ def test_the_release_job_checks_the_download_against_the_build_outputs() -> None
     assert release["env"]["NOTES_SHA256"] == "${{ needs.build.outputs.notes_sha256 }}"
     assert 'sha256sum -c "$RUNNER_TEMP/expected-notes"' in verify["run"]
     assert 'cmp "$RUNNER_TEMP/expected" SHA256SUMS' in verify["run"]
+
+
+# ─── PyPI (M16-32) ───────────────────────────────────────────────────────────
+
+PYPI_PUBLISH = re.compile(r"pypa/gh-action-pypi-publish@[0-9a-f]{40}")
+
+
+def test_the_pypi_job_runs_after_the_release_in_the_release_environment() -> None:
+    # ADR-0031, amendment of 2026-10-21: the same wheel, published by this
+    # workflow through trusted publishing. Only after the GitHub Release is
+    # out (`needs: release`, the implicit success()), only in the `release`
+    # environment the owner approves and PyPI's trusted publisher names, and
+    # with the OIDC token as its one permission.
+    pypi = _jobs()["pypi"]
+    assert pypi["needs"] == ["version", "build", "release"]
+    assert "if" not in pypi
+    assert pypi["environment"] == "release"
+    assert pypi["permissions"] == {"id-token": "write"}
+    assert pypi["runs-on"] == "ubuntu-latest"  # the publishing action is Linux-only
+    assert pypi["env"] == {
+        "WHEEL": "${{ needs.version.outputs.wheel }}",
+        "SDIST": "${{ needs.version.outputs.sdist }}",
+        "WHEEL_SHA256": "${{ needs.build.outputs.wheel_sha256 }}",
+        "SDIST_SHA256": "${{ needs.build.outputs.sdist_sha256 }}",
+    }
+    data = _workflow()
+    assert data.get("on", data.get(True)) == {"push": {"tags": ["v*"]}}
+
+
+def test_the_pypi_job_publishes_exactly_the_checked_files_with_no_secret() -> None:
+    pypi = _jobs()["pypi"]
+    steps = pypi["steps"]
+    verify = _verifies_against_build_outputs(pypi)
+    run = verify["run"]
+    # Only the two checked files reach dist/, the folder the action uploads
+    # whole, and they are checked again there.
+    assert 'cp -- "release/$WHEEL" "release/$SDIST" dist/' in run
+    assert (
+        run.index("cp -- ")
+        < run.index("cd dist")
+        < run.rindex('sha256sum -c "$RUNNER_TEMP/expected"')
+    )
+    assert 'test "$(find . -mindepth 1 | wc -l)" -eq 2' in run
+    uses = [s["uses"] for s in steps if "uses" in s]
+    assert [u.split("@")[0] for u in uses] == [
+        "actions/download-artifact",
+        "pypa/gh-action-pypi-publish",
+    ]
+    publish = steps[-1]
+    assert PYPI_PUBLISH.fullmatch(publish["uses"])
+    assert steps.index(verify) < steps.index(publish)
+    # Trusted publishing: no user, no password, no other index, no token.
+    assert publish["with"] == {"packages-dir": "dist/", "print-hash": True}
+    assert "env" not in publish
+    assert "secrets." not in str(pypi)
+    assert "token" not in str(pypi.get("env", {})).lower()
+    for step in steps:
+        assert "token" not in str(step.get("env", {})).lower(), step.get("name")
+    # No repository code: no checkout, no uv, no Python, no scripts.
+    runs = " ".join(s.get("run", "") for s in steps)
+    assert not re.search(r"\buv\b|\bpython3?\b|\bscripts/|\bgit\b|\bmake\b|\bgh\b", runs)
 
 
 def test_the_release_tag_rulesets() -> None:
