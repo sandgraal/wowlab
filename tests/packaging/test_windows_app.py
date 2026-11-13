@@ -361,6 +361,72 @@ def test_constructed_a_windows_artifact_that_is_not_the_built_zip_is_refused(
     assert calls == []
 
 
+@posix_only
+@pytest.mark.parametrize("own_zip_attached", [False, True])
+@pytest.mark.parametrize("job", ["app_release", "windows_app_release"])
+def test_constructed_missing_sums_with_the_other_zip_attached_are_refused(
+    tmp_path: Path, job: str, own_zip_attached: bool
+) -> None:
+    # A re-run after SHA256SUMS was lost: written whole, it would drop the
+    # other app's line, so a person restores it instead. The refusal comes
+    # after one `gh release view` and before any download or upload.
+    if job == "app_release":
+        published = {WIN_ZIP: WIN_BYTES} | ({ZIP: ZIP_BYTES} if own_zip_attached else {})
+        ran, after, calls = _run_attach(tmp_path, published)
+        other = WIN_ZIP
+    else:
+        published = {ZIP: ZIP_BYTES} | ({WIN_ZIP: WIN_BYTES} if own_zip_attached else {})
+        ran, after, calls = _run_windows(tmp_path, published)
+        other = ZIP
+    assert ran[-1] == "The release's SHA256SUMS is one this job may write (failed)"
+    assert after == published
+    assert [c[:2] for c in calls] == [["release", "view"]]
+    log = (tmp_path / "step2.log").read_text(encoding="utf-8")
+    assert f"SHA256SUMS is missing but {other} is attached; restore SHA256SUMS by hand" in log
+
+
+# ─── the smoke script refuses to touch the real data folder off CI ──────────
+
+
+@pytest.mark.parametrize(
+    ("windows", "actions", "flag", "refused"),
+    [
+        (True, None, False, True),
+        (True, "false", False, True),
+        (True, "true", False, False),
+        (True, None, True, False),
+        (False, None, False, False),
+    ],
+    ids=["windows-local", "windows-actions-false", "windows-actions", "windows-flag", "posix"],
+)
+def test_the_smoke_test_on_windows_runs_only_on_actions_or_when_allowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    windows: bool,
+    actions: str | None,
+    flag: bool,
+    refused: bool,
+) -> None:
+    monkeypatch.setattr(app_smoke, "WINDOWS", windows)
+    if actions is None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_ACTIONS", actions)
+    # A path that is not a file: past the guard, main stops there with 1.
+    argv = ["--exe", str(tmp_path / "missing.exe"), "--version", "0.0.0"]
+    if flag:
+        argv.append("--allow-real-data-dir")
+    code = app_smoke.main(argv)
+    err = capsys.readouterr().err
+    if refused:
+        assert code == 2
+        assert "known folder" in err and "--allow-real-data-dir" in err
+    else:
+        assert code == 1
+        assert "is not a file" in err
+
+
 # ─── the smoke script's browser on Windows ───────────────────────────────────
 
 

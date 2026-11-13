@@ -670,6 +670,8 @@ def _run_attach(
             timeout=60,
             check=False,
         )
+        # What the step printed, for a test that checks a message (M17-09).
+        (tmp_path / f"step{i}.log").write_bytes(done.stdout + done.stderr)
         if done.returncode != 0:
             ran[-1] += " (failed)"
             break

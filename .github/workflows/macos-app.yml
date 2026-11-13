@@ -8,7 +8,9 @@ name: macOS app
 # release.yml, from the tag's wheel, with the same steps as the `app` and
 # `app_smoke` jobs below (tests/packaging/test_macos_app.py holds the two
 # to the same steps); here the wheel is built from the checked-out commit,
-# exactly as release.yml's `build` job builds it.
+# exactly as release.yml's `build` job builds it. On a pull request from a
+# fork, the zip uploaded here is built from the fork's code: it is
+# untrusted; only the zip on a release, built by release.yml, is wowlab's.
 on:
   pull_request:
     branches: [main]

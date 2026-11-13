@@ -35,9 +35,10 @@ The run gets a home folder of its own in a temporary directory and
 `WOWLAB_WOW_ROOT` pointing at an empty folder, so it never reads a game
 install. On macOS and Linux it never writes into the user's own wowlab data
 either; on Windows the data folder is the system's own known folder, which
-no environment variable moves, so run it on a CI runner. Standard library only.
-Exit 0 when every check passes; otherwise the first failure is printed and
-the exit is 1.
+no environment variable moves, so there it runs only on GitHub Actions
+(`GITHUB_ACTIONS=true`) or with `--allow-real-data-dir`, and otherwise exits
+2 before starting anything. Standard library only. Exit 0 when every check
+passes; otherwise the first failure is printed and the exit is 1.
 """
 
 from __future__ import annotations
@@ -251,7 +252,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--exe", type=Path, required=True, help="the frozen wowlab executable")
     parser.add_argument("--version", required=True, help="the version the tag names")
+    parser.add_argument(
+        "--allow-real-data-dir",
+        action="store_true",
+        help="on Windows, run even off GitHub Actions, writing into this user's wowlab data",
+    )
     args = parser.parse_args(argv)
+    if WINDOWS and os.environ.get("GITHUB_ACTIONS") != "true" and not args.allow_real_data_dir:
+        print(
+            "app_smoke: on Windows the build writes into this user's own wowlab data folder "
+            "(the system's known folder, which no environment variable moves); run it on "
+            "GitHub Actions, or pass --allow-real-data-dir to accept that",
+            file=sys.stderr,
+        )
+        return 2
     exe = args.exe.resolve()
     if not exe.is_file():
         print(f"app_smoke: {exe} is not a file", file=sys.stderr)

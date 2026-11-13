@@ -587,8 +587,9 @@ jobs:
       # most one line for each app, in the order they were added: this job's
       # zip as its build hashed it (a re-run: nothing to write), and the
       # other app's zip, which has to be on the release with that hash. Or it
-      # is missing (it is written whole). Anything else is refused before
-      # anything is uploaded.
+      # is missing, and so is the other app's zip (it is written whole; with
+      # the other zip attached it would lose that zip's line, so a person
+      # restores it). Anything else is refused before anything is uploaded.
       - name: The release's SHA256SUMS is one this job may write
         env:
           GH_TOKEN: ${{ github.token }}
@@ -597,6 +598,11 @@ jobs:
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+            # Written whole, it would leave out the other app's line.
+            if printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+              echo "SHA256SUMS is missing but $OTHER_ZIP is attached; restore SHA256SUMS by hand, then re-run this job; refusing" >&2
+              exit 1
+            fi
             echo "the release has no SHA256SUMS; it is written whole"
             cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
             echo write > "$RUNNER_TEMP/sums-action"
@@ -716,8 +722,9 @@ jobs:
       # most one line for each app, in the order they were added: this job's
       # zip as its build hashed it (a re-run: nothing to write), and the
       # other app's zip, which has to be on the release with that hash. Or it
-      # is missing (it is written whole). Anything else is refused before
-      # anything is uploaded.
+      # is missing, and so is the other app's zip (it is written whole; with
+      # the other zip attached it would lose that zip's line, so a person
+      # restores it). Anything else is refused before anything is uploaded.
       - name: The release's SHA256SUMS is one this job may write
         env:
           GH_TOKEN: ${{ github.token }}
@@ -726,6 +733,11 @@ jobs:
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+            # Written whole, it would leave out the other app's line.
+            if printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+              echo "SHA256SUMS is missing but $OTHER_ZIP is attached; restore SHA256SUMS by hand, then re-run this job; refusing" >&2
+              exit 1
+            fi
             echo "the release has no SHA256SUMS; it is written whole"
             cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
             echo write > "$RUNNER_TEMP/sums-action"

@@ -9,7 +9,9 @@ name: Windows app
 # `windows_app` and `windows_app_smoke` jobs below
 # (tests/packaging/test_windows_app.py holds the two to the same steps);
 # here the wheel is built from the checked-out commit, exactly as
-# release.yml's `build` job builds it.
+# release.yml's `build` job builds it. On a pull request from a fork, the
+# zip uploaded here is built from the fork's code: it is untrusted, and only
+# the zip on a release, built by release.yml, is wowlab's.
 on:
   pull_request:
     branches: [main]
