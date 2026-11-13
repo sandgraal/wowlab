@@ -550,3 +550,53 @@ def test_gear_changes_are_worded_as_the_cli_words_them_cross_capture(
     ) in items
     assert "Level: not recorded in one of the two saves." in items
     assert not any("the same item with" in i for i in items)
+
+
+def test_no_change_names_only_what_was_compared_constructed(
+    server: Any, several: dict[str, Any], tmp_path: Path
+) -> None:
+    """Constructed from the real report: saves 1 and 2 record the same
+    values. With gear not compared and the second save's level not recorded,
+    the no-change sentence names neither; with nothing compared at all, it
+    is not said."""
+    report = json.loads(json.dumps(several))
+    second = report["rows"][1]
+    assert second["gear_changes"] == [] and second["currency_changes"] == []
+    second["gear_not_compared"] = "m17-03 constructed: not compared"
+    second["level"] = None
+    out = _drive(tmp_path / "node", _scenario(server, report))
+    assert out["steps"][1]["changes"][2]["items"] == [
+        "Level: not recorded in one of the two saves.",
+        "Gear not compared: m17-03 constructed: not compared",
+        "No change in what both saves record (equipped item level, spec, currencies).",
+    ]
+    for row in report["rows"][:2]:
+        row["item_level"] = None
+        row["spec"]["id"] = None
+        row["level"] = None
+    second["currencies_not_compared"] = "m17-03 constructed: none listed"
+    out = _drive(tmp_path / "node-none", _scenario(server, report))
+    items = out["steps"][1]["changes"][2]["items"]
+    assert items == [
+        "Gear not compared: m17-03 constructed: not compared",
+        "Currencies not compared: m17-03 constructed: none listed",
+    ]
+
+
+def test_levels_that_round_alike_are_shown_exactly_constructed(
+    server: Any, several: dict[str, Any], tmp_path: Path
+) -> None:
+    """Constructed: two equipped item levels that read 8.2 to one decimal
+    but differ are written exactly in the change and in the caption."""
+    report = json.loads(json.dumps(several))
+    for row, value in zip(report["rows"], (8.1875, 8.2, 8.2, 8.1875), strict=True):
+        row["item_level"] = value
+    out = _drive(tmp_path / "node", _scenario(server, report))
+    view = out["steps"][1]
+    assert view["captions"][0] == (
+        "Equipped item level (the client's average, as the addon recorded it): lowest 8.1875, "
+        "highest 8.2, one step per save (not spaced by time)."
+    )
+    assert view["charts"][0]["labels"][:2] == ["8.2", "8.1875"]
+    assert "Equipped item level 8.1875 to 8.2 (the client's figure)" in view["changes"][2]["items"]
+    assert "Equipped item level 8.2 to 8.1875 (the client's figure)" in view["changes"][0]["items"]

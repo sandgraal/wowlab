@@ -2191,6 +2191,12 @@
     return v.toFixed(1);
   }
 
+  // Two different item levels that read the same to one decimal are shown
+  // exactly, so a change never reads as "8.2 to 8.2".
+  function twoDecimals(a, b) {
+    return a !== b && oneDecimal(a) === oneDecimal(b) ? [String(a), String(b)] : [oneDecimal(a), oneDecimal(b)];
+  }
+
   function historyItemLevel(row) {
     const v = historyNum(row.item_level);
     return v === null ? notRecorded(row.item_level_absent) : oneDecimal(v);
@@ -2231,10 +2237,14 @@
     }
     const low = Math.min(...known);
     const high = Math.max(...known);
+    // Two values that read the same once rounded are written exactly.
+    const exact = low !== high && shownAs(low) === shownAs(high);
+    const lowText = exact ? String(low) : shownAs(low);
+    const highText = exact ? String(high) : shownAs(high);
     const range =
       low === high
-        ? ": " + shownAs(low) + " in every save that records it"
-        : ": lowest " + shownAs(low) + ", highest " + shownAs(high);
+        ? ": " + lowText + " in every save that records it"
+        : ": lowest " + lowText + ", highest " + highText;
     box.appendChild(charLine(title + range + STEPS, "history-caption"));
     const c = CHART;
     const across = c.width - c.left - c.right;
@@ -2287,8 +2297,8 @@
       node.textContent = text;
       chart.appendChild(node);
     };
-    label(shownAs(high), c.left - 8, c.top + 5, true);
-    if (high !== low) label(shownAs(low), c.left - 8, c.top + down + 5, true);
+    label(highText, c.left - 8, c.top + 5, true);
+    if (high !== low) label(lowText, c.left - 8, c.top + down + 5, true);
     label(dayOf(rows[0].saved_at_ns), c.left, c.height - 6, false);
     label(dayOf(rows[rows.length - 1].saved_at_ns), c.left + across, c.height - 6, true);
     box.appendChild(chart);
@@ -2390,12 +2400,16 @@
       return out;
     }
     // A value both saves record is compared; one that only one save records
-    // is said to be so, never counted as a change.
+    // is said to be so, never counted as a change. `compared` names what was
+    // compared, for the sentence when nothing changed.
     let changed = 0;
+    const compared = [];
     const compare = (label, was, now, words) => {
       if (was === null && now === null) return;
       if (was === null || now === null) out.push(label + ": not recorded in one of the two saves.");
-      else if (was !== now) {
+      else {
+        compared.push(label.toLowerCase());
+        if (was === now) return;
         changed += 1;
         out.push(words(was, now));
       }
@@ -2405,25 +2419,31 @@
       "Equipped item level",
       historyNum(prev.item_level),
       historyNum(row.item_level),
-      (a, b) => "Equipped item level " + oneDecimal(a) + " to " + oneDecimal(b) + " (the client's figure)",
+      (a, b) => {
+        const [x, y] = twoDecimals(a, b);
+        return "Equipped item level " + x + " to " + y + " (the client's figure)";
+      },
     );
     const specOf = (r) => (r.spec && typeof r.spec.id === "number" ? r.spec.id : null);
     compare("Spec", specOf(prev), specOf(row), () => "Spec " + historySpec(prev) + " to " + historySpec(row));
     if (typeof row.gear_not_compared === "string") out.push("Gear not compared: " + visible(row.gear_not_compared));
+    else compared.push("gear");
     for (const g of objects(row.gear_changes)) {
       changed += 1;
       out.push(historyGear(g));
     }
     if (typeof row.currencies_not_compared === "string") {
       out.push("Currencies not compared: " + visible(row.currencies_not_compared));
+    } else {
+      compared.push("currencies");
     }
     for (const c of objects(row.currency_changes)) {
       changed += 1;
       out.push(historyCurrency(c));
     }
     if (typeof row.currency_panel_changed === "string") out.push(visible(row.currency_panel_changed));
-    if (!changed) {
-      out.push("No change in what both saves record (level, equipped item level, spec, gear, currencies).");
+    if (!changed && compared.length) {
+      out.push("No change in what both saves record (" + compared.join(", ") + ").");
     }
     return out;
   }
