@@ -269,6 +269,7 @@ _WRAPPERS = {
     "nice",
     "env",
     "command",
+    "builtin",
     "do",
     "then",
     "else",
