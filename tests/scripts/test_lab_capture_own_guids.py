@@ -474,6 +474,7 @@ def test_constructed_a_channel_link_without_a_closer_refuses() -> None:
         b"|Hchannel:x|h" + b"|" * 400 + b"x",
         OWN_LINK[: OWN_LINK.index(b"|h")] + b"|" * 400 + b"x",
         b"|Hplayer:Thrallmar|h" + b"[a]" * 400,
+        b"|Hchannel:x|h" + b"[a" * 20_000,
     ],
     ids=[
         "constructed-unclosed-label-run",
@@ -481,6 +482,7 @@ def test_constructed_a_channel_link_without_a_closer_refuses() -> None:
         "constructed-pipe-run-in-channel-label",
         "constructed-pipe-run-in-own-link-data",
         "constructed-unclosed-label-run-in-own-link",
+        "constructed-many-unclosed-brackets-on-one-line",
     ],
 )
 def test_constructed_hostile_link_text_scrubs_in_linear_time(line: bytes) -> None:

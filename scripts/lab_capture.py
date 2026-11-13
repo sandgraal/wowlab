@@ -527,7 +527,9 @@ BNET_RE = re.compile(rb"\|+H(?i:BNplayer(?:Community)?):|\|+K[a-zA-Z][0-9]+\|+k"
 # an atomic group and every pipe run is possessive, so a line of `[a][a]...`
 # or of `||||...` with no closer fails in linear time instead of trying every
 # way to split it (code review of M16-128: exponential before).
-_LINK_LABEL = rb"(?:(?>\[[^\]\r\n]*+\]|[^|\r\n]|\|++(?![hH])))*"
+# A bracket never spans another `[`, so an unclosed `[` is given up at the next
+# one: many unclosed `[` on one long line stay linear.
+_LINK_LABEL = rb"(?:(?>\[[^\]\[\r\n]*+\]|[^|\r\n]|\|++(?![hH])))*"
 _LINK_DATA = rb"(?:(?>[^|\r\n]++|\|++(?![hH])))*"
 CHANNEL_LINK_RE = re.compile(
     rb"\|+H(?i:channel):" + _LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH][ \t]*+"
