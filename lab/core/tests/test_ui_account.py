@@ -84,7 +84,9 @@ function hubView() {
       titles: tr.children.map((c) => c.title),
       spans: tr.children.map((c) => c.colSpan || 1),
       open: tr.all().filter((e) => e.tagName === "button" && has(e, "hub-open")).length,
-      code: tr.all().filter((e) => e.tagName === "code").map((e) => e.textContent) })),
+      code: tr.all().filter((e) => e.tagName === "code").map((e) => e.textContent),
+      advice: tr.children.filter((c) => has(c, "hub-advice")).flatMap((c) =>
+        c.children.map((e) => [e.tagName, e.textContent])) })),
     active: active ? (active.id || active.className) : null,
     activeText: active ? active.textContent : null,
   };
@@ -334,10 +336,20 @@ def test_a_folder_with_no_record_gives_the_one_action_that_fixes_it_constructed(
     assert bare["bare"] and bare["open"] == 0
     assert bare["cells"][:3] == [BARE.split("/")[1], "1", BETA]
     assert bare["spans"] == [1, 1, 1, len(COLUMNS) - 3]
+    # The command is shown once, as code with its Copy button where the
+    # advice names it, and the advice's backticks are not shown (M17-14).
     assert bare["code"] == ["wowlab addon install lab"]
-    assert bare["cells"][3].startswith(
-        "No lab record: run `wowlab addon install lab`, then log in on this character"
-    )
+    assert "`" not in bare["cells"][3]
+    assert bare["advice"][:4] == [
+        ["span", "No lab record: "],
+        ["span", "run "],
+        ["code", "wowlab addon install lab"],
+        ["button", "Copy"],
+    ]
+    assert bare["advice"][4][0] == "span"
+    assert bare["advice"][4][1].startswith(", then log in on this character")
+    assert len(bare["advice"]) == 5
+    assert bare["cells"][3].count("wowlab addon install lab") == 1
     copied = out["steps"][0]
     assert copied["clipboard"] == ["wowlab addon install lab"]
     assert copied["newRequests"] == [], "copying runs nothing"
@@ -524,3 +536,93 @@ def test_a_row_in_a_flavor_the_header_cannot_move_to_opens_no_other_constructed(
         {"command": ["char", "list"], "params": dict(BRIEF, flavor=BETA)}
     ]
     assert opened["char"]["header"] == "" and opened["char"]["rows"] == []
+
+
+def _bare_advice(
+    server: Any, tmp_path: Path, advice: str | None, fix_command: str | None
+) -> dict[str, Any]:
+    """The bare row drawn from a report whose advice and fix command are
+    replaced (constructed): what the cell holds, in order, and what its
+    Copy button copies when there is one."""
+    scenario = _scenario(server, [{"hub_copy": 0}] if fix_command else [])
+    run = _summary_run(scenario)
+    report = json.loads(run["stdout"])
+    bare = next(r for r in report["rows"] if r["state"] == "no_lab_record")
+    bare["advice"] = advice
+    bare["fix_command"] = fix_command
+    run["stdout"] = json.dumps(report)
+    out = _drive(tmp_path / "node", scenario)
+    row = next(r for r in out["first"]["hub"]["rows"] if r["bare"])
+    return {"row": row, "step": out["steps"][0] if out["steps"] else None}
+
+
+def test_advice_that_does_not_name_the_command_is_followed_by_it_once_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """M17-14: a fix command the advice does not mark is shown after it,
+    once; any other marked part is code, with no backticks as text."""
+    seen = _bare_advice(server, tmp_path, "log in once, then `/reload`", "wowlab fix it")
+    row = seen["row"]
+    assert row["advice"] == [
+        ["span", "No lab record: "],
+        ["span", "log in once, then "],
+        ["code", "/reload"],
+        ["span", " "],
+        ["code", "wowlab fix it"],
+        ["button", "Copy"],
+    ]
+    assert "`" not in row["cells"][3]
+    assert seen["step"]["clipboard"] == ["wowlab fix it"]
+
+
+def test_advice_without_a_command_shows_no_copy_button_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    seen = _bare_advice(server, tmp_path, "run `a`, then `b`", None)
+    assert seen["row"]["code"] == ["a", "b"]
+    assert seen["row"]["advice"] == [
+        ["span", "No lab record: "],
+        ["span", "run "],
+        ["code", "a"],
+        ["span", ", then "],
+        ["code", "b"],
+    ]
+
+
+def test_the_hub_table_wraps_only_between_words() -> None:
+    """M17-14: at 1440 px the Spec and Flavor columns broke a word in the
+    middle ("War-lock", `_classic_be-ta_`), because every `.char-table`
+    cell may break anywhere. The hub's cells, names and code wrap only
+    between words, and the box scrolls sideways instead. The other tabs'
+    tables keep the generic rule."""
+    import test_ui_wellspring as wellspring
+
+    rules = wellspring._rules(wellspring._css())
+    # The table's rules (the status line above it, `#hub-status`, is prose
+    # and may break a long folder name anywhere).
+    hub_rules = [(s, d) for m, s, d in rules if not m and ".hub" in s and "#hub-status" not in s]
+    # Nothing in the table may break a word.
+    for selector, decls in hub_rules:
+        assert decls.get("overflow-wrap") in (None, "normal"), selector
+        assert decls.get("word-break") in (None, "normal"), selector
+        assert decls.get("hyphens") in (None, "manual", "none"), selector
+    # The generic cell may still break anywhere, so the hub's cells say
+    # otherwise with a more specific selector, and so do its name buttons
+    # and code.
+    [generic] = [d for m, s, d in rules if not m and s == ".char-table td"]
+    assert generic.get("overflow-wrap") == "anywhere"
+
+    def parts(selector: str) -> list[str]:
+        return [p.strip() for p in selector.split(",")]
+
+    override = [d for s, d in hub_rules if ".char-table.hub td" in parts(s)]
+    assert override and override[-1]["overflow-wrap"] == "normal"
+    assert override[-1]["word-break"] == "normal"
+    selectors = [p for s, _ in hub_rules for p in parts(s)]
+    for part in (".char-table.hub .hub-open", ".char-table.hub .hub-advice code"):
+        assert part in selectors
+    [box] = [d for s, d in hub_rules if s == ".hub-table"]
+    assert box["overflow-x"] == "auto"
+    # The table the page draws carries both classes the override names.
+    script = (first_stage._TEMPLATES / "page.js").read_text(encoding="utf-8")
+    assert 'table.className = "char-table hub";' in script

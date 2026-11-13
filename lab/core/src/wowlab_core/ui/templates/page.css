@@ -562,15 +562,18 @@ pre:empty { display: none; }
 #hub-status.error { color: var(--ruin); }
 .hub-table { max-width: 100%; overflow-x: auto; padding: var(--space-3) var(--space-4); }
 .hub-table .char-table th { white-space: nowrap; }
+/* A word wraps only between words: a narrow column grows, and the box
+   scrolls sideways, rather than break a class, spec or flavor mid-word. */
+.char-table.hub td, .char-table.hub .hub-open, .char-table.hub .hub-advice code { overflow-wrap: normal; word-break: normal; hyphens: manual; }
 .hub-sort, .hub-open {
   padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
   font: inherit; letter-spacing: inherit; color: inherit;
 }
-.hub-open { text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.hub-open { text-decoration: underline; text-underline-offset: 3px; unicode-bidi: isolate; }
 .hub-row:not(.hub-row-bare) { cursor: pointer; }
 .hub-row:not(.hub-row-bare):hover { background: var(--hover); }
 .hub-none { color: var(--text-muted); font-style: italic; }
-.hub-advice code { font-family: var(--font-mono); font-size: 14px; unicode-bidi: isolate; overflow-wrap: anywhere; }
+.hub-advice code { font-family: var(--font-mono); font-size: 14px; unicode-bidi: isolate; }
 .hub-advice .copy { margin-left: var(--space-2); }
 
 /* ─── the Account tab's backups (M17-04): a line per flavor, the prompt
