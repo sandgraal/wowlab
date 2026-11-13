@@ -3070,7 +3070,7 @@ Every snapshot already holds each character's `WowLab.lua`. `wowlab char history
 
 ---
 
-## [ ] M17-03 — The timeline in the Character tab
+## [x] M17-03 — The timeline in the Character tab
 **Size:** M · **Depends on:** M17-01, M17-02, M17-04 · **Sources:** §19 CW-2 (after M17-01 and M17-04: all three edit the UI templates)
 
 A **History** panel on the Character tab, built from `char history --json`:
@@ -3098,7 +3098,7 @@ The CLI's `doctor` next steps (M16-37) gain the same "game updated since your la
 
 ---
 
-## [ ] M17-05 — The patch-day card
+## [x] M17-05 — The patch-day card
 **Size:** S · **Depends on:** M17-01, M17-04 · **Sources:** §19 CW-4 (after M17-04: both add to the Account tab)
 
 A card on the Account tab from `addons check --json` (M16-34) and `sv list --orphans`:
