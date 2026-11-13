@@ -1853,6 +1853,9 @@ from wowlab_core.cli._cmd_snap import (
     LuaChange as LuaChange,
 )
 from wowlab_core.cli._cmd_snap import (
+    SnapCreateReport as SnapCreateReport,
+)
+from wowlab_core.cli._cmd_snap import (
     SnapListReport as SnapListReport,
 )
 from wowlab_core.cli._cmd_snap import (
@@ -1869,6 +1872,15 @@ from wowlab_core.cli._cmd_snap import (
 )
 from wowlab_core.cli._cmd_snap import (
     _resolve_ref as _resolve_ref,
+)
+from wowlab_core.cli._cmd_snap import (
+    _say_created as _say_created,
+)
+from wowlab_core.cli._cmd_snap import (
+    _snap_every_flavor as _snap_every_flavor,
+)
+from wowlab_core.cli._cmd_snap import (
+    _snap_one as _snap_one,
 )
 from wowlab_core.cli._cmd_snap import (
     _summary as _summary,

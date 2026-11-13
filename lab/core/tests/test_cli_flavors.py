@@ -503,6 +503,27 @@ def test_snap_create_error_names_the_snapshots_already_taken_constructed(
     assert note in result.stderr
 
 
+def test_snap_create_error_on_the_first_flavor_says_none_was_taken_constructed(
+    monkeypatch: pytest.MonkeyPatch, two_flavors: Path
+) -> None:
+    """An OSError injected for the first flavor: nothing was taken, and the
+    note says so."""
+    from wowlab_core.cli import _cmd_snap
+
+    first = install.discover(two_flavors).flavors[0].folder
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("constructed read error")
+
+    monkeypatch.setattr(_cmd_snap.firstrun, "snapshot_flavor", failing)
+    result = run("snap", "create", "--json")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert json.loads(result.stdout)["notes"] == [
+        f"{first} was not snapshotted; no snapshot was taken"
+    ]
+    assert json.loads(run("snap", "list", "--json").stdout)["snapshots"] == []
+
+
 def test_read_commands_keep_the_one_flavor_rule_after_snap_create_constructed() -> None:
     assert run("snap", "create").exit_code == 0
     result = run("cvar", "list")

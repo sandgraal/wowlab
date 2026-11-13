@@ -201,14 +201,19 @@ def _snap_one(
         client_running=running,
     )
     if running is not False:
-        prefix = "{}: " if several else ""
-        values = (chosen.folder,) if several else ()
-        _note(
-            prefix + "wowlab could not confirm the client was closed: SavedVariables on disk "
-            "are as of its last logout or /reload, and the client overwrites them at its next "
-            "logout, /reload or exit.",
-            *values,
-        )
+        if several:
+            _note(
+                "{}: wowlab could not confirm the client was closed: SavedVariables on disk "
+                "are as of its last logout or /reload, and the client overwrites them at its "
+                "next logout, /reload or exit.",
+                chosen.folder,
+            )
+        else:
+            _note(
+                "wowlab could not confirm the client was closed: SavedVariables on disk are as "
+                "of its last logout or /reload, and the client overwrites them at its next "
+                "logout, /reload or exit."
+            )
     return manifest
 
 
@@ -239,8 +244,13 @@ def _snap_every_flavor(
         try:
             manifest = _snap_one(inst, chosen, message, screenshots, several=True)
         except Exception as exc:
-            done = ", ".join(f"{m.id} ({f.folder})" for f, m in taken) or "none"
-            exc.add_note(f"{chosen.folder} was not snapshotted; snapshots already taken: {done}")
+            if taken:
+                done = ", ".join(f"{m.id} ({f.folder})" for f, m in taken)
+                exc.add_note(
+                    f"{chosen.folder} was not snapshotted; snapshots already taken: {done}"
+                )
+            else:
+                exc.add_note(f"{chosen.folder} was not snapshotted; no snapshot was taken")
             raise
         taken.append((chosen, manifest))
         if not json_out:

@@ -1465,7 +1465,7 @@ it is implied. Every command that prints data has `--json`. Exit codes:
 *Amended 2026-11-12 (owner decision, option (a) of M16-124):* `snap create` with several flavors and no `--flavor` or `WOWLAB_FLAVOR` used to fail with the several-flavors error. A snapshot only reads the install and writes into wowlab's own store, so it now takes one snapshot of each flavor, in the order discovery lists them, and says which flavor each one is.
 - **Text.** One line, `<n> flavors in <root>: one snapshot of each.`, then each snapshot's usual block, whose second line names its flavor folder and version. `-m` and `--screenshots` apply to every snapshot. When wowlab cannot confirm a flavor's client was closed, that note starts with the flavor folder.
 - **`--json`.** `SnapCreateReport`: `{"snapshots": [<manifest>, ...]}`, one manifest per flavor in the same order, each with its `flavor_folder`. With one flavor, or with one named by `--flavor` or `WOWLAB_FLAVOR`, the command prints the bare manifest, as before.
-- **An error** stops the run. Snapshots already taken stay in the store, and the error's note names the flavor that was not snapshotted and each snapshot already taken (`ErrorReport.notes` under `--json`).
+- **An error** stops the run. Snapshots already taken stay in the store, and the error's note names the flavor that was not snapshotted and each snapshot already taken, or says that none was (`ErrorReport.notes` under `--json`).
 - **Everything else is unchanged.** Read commands such as `cvar list` keep the one-flavor rule, the character reads keep their own pick above, and a command that writes into an install still never picks a flavor by itself.
 
 
