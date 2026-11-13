@@ -1,29 +1,41 @@
-"""Smoke test of a frozen wowlab build (ADR-0038 item 4, M17-08).
+"""Smoke test of a frozen wowlab build (ADR-0038 item 4, M17-08, M17-09).
 
     python scripts/app_smoke.py --exe wowlab.app/Contents/MacOS/wowlab --version 0.2.0
+    python scripts/app_smoke.py --exe wowlab/wowlab.exe --version 0.2.0
 
 Runs the built executable as a player's machine would, with nothing of the
 repository on its path, and checks, in order:
 
 1. `--version` prints `wowlab <version>`, the tag's version;
 2. `-P -m wowlab_core --version` prints the same: the form `wowlab ui` starts
-   its runs with, which the frozen launcher has to accept;
+   its runs with, which the frozen launcher has to accept; and that form,
+   given `PYTHONIOENCODING=utf-8` as `wowlab ui` gives each run, writes UTF-8
+   to a pipe (its error message repeats a non-ASCII option);
 3. `ui` serves: it is started with `BROWSER` set to `scripts/record_url.py`,
    which writes the URL it is given to a file and exits 0, so no real browser
-   starts. The URL, boot key included, is read from that file; the page it
-   opens is fetched (200, the page shell with its session key); a wrong boot
-   key is refused (403); and one command, `doctor --json`, runs
-   through the page's own run endpoint, which exercises step 2's form from
-   inside the server. Then the server is stopped with Ctrl-C (SIGINT) and has
-   to exit within a few seconds.
+   starts. On Windows `webbrowser` runs the whole `BROWSER` value as one
+   program, which has to be directly executable, so there `BROWSER` names a
+   one-line `.cmd`, written into the run's temporary folder, that runs the
+   recorder with this interpreter. The URL, boot key included, is read from
+   that file; the page it opens is fetched (200, the page shell with its
+   session key); a wrong boot key is refused (403); and one command,
+   `doctor --json`, runs through the page's own run endpoint, which
+   exercises step 2's form from inside the server. Then the server is
+   stopped and has to exit within a few seconds: on macOS and Linux with
+   Ctrl-C (SIGINT), exit 0; on Windows with Ctrl-Break, the console event a
+   script can send to a process group of its own, which ends the process as
+   closing its console window does (the exit code is printed, not checked).
 
 On macOS `ui` is passed explicitly: started with no arguments and no
 terminal, the launcher would hand off to Terminal instead (ADR-0038 item 3),
-which the owner checks by opening the app once.
+which the owner checks by opening the app once. On Windows it is started with
+no arguments, as a double-click starts it.
 
 The run gets a home folder of its own in a temporary directory and
 `WOWLAB_WOW_ROOT` pointing at an empty folder, so it never reads a game
-install or writes into the user's own wowlab data. Standard library only.
+install. On macOS and Linux it never writes into the user's own wowlab data
+either; on Windows the data folder is the system's own known folder, which
+no environment variable moves, so run it on a CI runner. Standard library only.
 Exit 0 when every check passes; otherwise the first failure is printed and
 the exit is 1.
 """
@@ -48,13 +60,28 @@ URL = re.compile(r"http://127\.0\.0\.1:(?P<port>\d{1,5})/\?boot=(?P<boot>[A-Za-z
 SESSION = re.compile(r'<meta id="wowlab-session" content="(?P<key>[A-Za-z0-9_-]{20,})">')
 WAIT_S = 60.0
 STOP_S = 15.0
+WINDOWS = os.name == "nt"
+# An option no wowlab command has, with characters outside ASCII and outside
+# every Windows ANSI code page's common ground; the error message repeats it.
+NON_ASCII_OPTION = "--no-such-option-é✓"
 
 
 class SmokeError(Exception):
     """A check failed; the message says which."""
 
 
-def _env(home: Path, wow_root: Path, url_file: Path) -> dict[str, str]:
+def browser_for(tmp: Path) -> str:
+    """The `BROWSER` value: the recorder itself, or on Windows a `.cmd` in
+    `tmp` that runs it (`%*` passes the URL whole, where `%1` would stop at
+    its `=`)."""
+    if not WINDOWS:
+        return str(RECORDER)
+    cmd = tmp / "record_url.cmd"
+    cmd.write_text(f'@"{sys.executable}" "{RECORDER}" %*\r\n', encoding="utf-8")
+    return str(cmd)
+
+
+def _env(home: Path, wow_root: Path, url_file: Path, browser: str) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WOWLAB_", "PYTHON"))}
     env.update(
         {
@@ -66,7 +93,7 @@ def _env(home: Path, wow_root: Path, url_file: Path) -> dict[str, str]:
             "LOCALAPPDATA": str(home / "local"),
             "APPDATA": str(home / "roaming"),
             "WOWLAB_WOW_ROOT": str(wow_root),
-            "BROWSER": str(RECORDER),
+            "BROWSER": browser,
             "WOWLAB_SMOKE_URL_FILE": str(url_file),
         }
     )
@@ -92,6 +119,21 @@ def check_version(exe: Path, version: str, env: dict[str, str]) -> None:
                 f"expected {expected!r}; stderr: {done.stderr.strip()!r}"
             )
         print(f"ok: {' '.join(args)} -> {got}")
+    done_bytes = subprocess.run(
+        [str(exe), "-P", "-m", "wowlab_core", NON_ASCII_OPTION],
+        env={**env, "PYTHONIOENCODING": "utf-8"},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    said = (done_bytes.stdout + done_bytes.stderr).decode("utf-8", "replace")
+    if done_bytes.returncode == 0 or NON_ASCII_OPTION not in said:
+        raise SmokeError(
+            f"an unknown non-ASCII option: exit {done_bytes.returncode}, and the output "
+            f"read as UTF-8 does not repeat it: {said[-400:]!r}"
+        )
+    print("ok: -P -m wowlab_core with PYTHONIOENCODING=utf-8 writes UTF-8")
 
 
 def _open(request: urllib.request.Request | str) -> tuple[int, bytes]:
@@ -115,12 +157,16 @@ def _wait_for_url(url_file: Path, server: subprocess.Popen[bytes]) -> str:
 
 
 def check_ui(exe: Path, env: dict[str, str], url_file: Path) -> None:
+    # On Windows with no arguments, as a double-click starts it, and in a
+    # process group of its own, so that Ctrl-Break reaches it and not this
+    # script.
     server = subprocess.Popen(
-        [str(exe), "ui"],
+        [str(exe)] if WINDOWS else [str(exe), "ui"],
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if WINDOWS else 0,
     )
     try:
         url = _wait_for_url(url_file, server)
@@ -162,18 +208,30 @@ def check_ui(exe: Path, env: dict[str, str], url_file: Path) -> None:
         _stop(server)
         raise
     code = _stop(server)
+    if WINDOWS:
+        if code is None:
+            raise SmokeError(f"wowlab ui did not stop within {STOP_S:.0f} s of Ctrl-Break")
+        print(f"ok: wowlab ui stopped on Ctrl-Break (exit {code})")
+        return
     if code != 0:
         raise SmokeError(f"wowlab ui exited {code} after Ctrl-C, not 0")
     print("ok: wowlab ui stopped on Ctrl-C (exit 0)")
 
 
 def _stop(server: subprocess.Popen[bytes]) -> int | None:
-    """Ctrl-C the server (SIGINT; a kill where there is none) and wait; its
-    exit code, or None when it had to be killed. Its stderr is echoed."""
+    """Stop the server as a console does (Ctrl-C, SIGINT; on Windows
+    Ctrl-Break to its process group) and wait; its exit code, or None when it
+    had to be killed. Its stderr is echoed."""
     code: int | None
     if server.poll() is None:
-        if os.name == "nt":
-            server.terminate()
+        if WINDOWS:
+            try:
+                server.send_signal(getattr(signal, "CTRL_BREAK_EVENT"))  # noqa: B009
+            except OSError as no_console:
+                # A console event needs a console shared with the server;
+                # without one, the log says so and the server is ended.
+                print(f"note: Ctrl-Break could not be sent ({no_console}); terminating")
+                server.terminate()
         else:
             server.send_signal(signal.SIGINT)
         try:
@@ -203,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         wow_root = Path(tmp) / "no-install"
         home.mkdir()
         wow_root.mkdir()
-        env = _env(home, wow_root, Path(tmp) / "url.txt")
+        env = _env(home, wow_root, Path(tmp) / "url.txt", browser_for(Path(tmp)))
         try:
             check_version(exe, args.version, env)
             check_ui(exe, env, Path(tmp) / "url.txt")

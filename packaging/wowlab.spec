@@ -1,4 +1,4 @@
-# PyInstaller spec for the frozen wowlab builds (ADR-0038, M17-08).
+# PyInstaller spec for the frozen wowlab builds (ADR-0038, M17-08, M17-09).
 #
 # Run by the release workflow only, with PyInstaller from the `packaging`
 # dependency group, in a clean virtual environment that holds the released
@@ -9,8 +9,10 @@
 # One-folder mode (EXE with exclude_binaries=True, then COLLECT), a console
 # build of the ordinary `wowlab` command, no UPX. On macOS the folder is
 # wrapped in `wowlab.app` (BUNDLE) with PyInstaller's ad-hoc signature, which
-# carries no identity. tests/packaging/test_macos_app.py pins this file's
-# SHA-256: a change here is a PR that says why.
+# carries no identity. On Windows the folder itself is the app: `wowlab/`
+# with `wowlab.exe` and `_internal/`, which the release zips as it is.
+# tests/packaging/test_macos_app.py pins this file's SHA-256: a change here
+# is a PR that says why.
 import importlib.metadata
 import sys
 

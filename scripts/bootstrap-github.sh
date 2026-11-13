@@ -71,9 +71,9 @@ gh api "repos/$REPO/environments/release" \
 gh repo view "$REPO" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge \
   --jq '"   squash=\(.squashMergeAllowed) merge=\(.mergeCommitAllowed) rebase=\(.rebaseMergeAllowed) deleteOnMerge=\(.deleteBranchOnMerge)"'
 # Immutable releases stay off (owner decision 2026-11-12; ADR-0031 amendment
-# of 2026-11-12, M17-08): the release workflow attaches the macOS app to a
-# release after publishing it, which an immutable release refuses. Tags stay
-# fixed by the release-tags-immutable ruleset above.
+# of 2026-11-12, M17-08, M17-09): the release workflow attaches the macOS and
+# Windows apps to a release after publishing it, which an immutable release
+# refuses. Tags stay fixed by the release-tags-immutable ruleset above.
 immutable=$(gh api "repos/$REPO/immutable-releases" --jq .enabled 2>/dev/null || echo unknown)
-echo "   immutable releases: $immutable (keep off: the macOS app is attached after publishing)"
+echo "   immutable releases: $immutable (keep off: the apps are attached after publishing)"
 echo "done."

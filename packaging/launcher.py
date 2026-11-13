@@ -1,7 +1,8 @@
-"""The entry point of the frozen `wowlab` builds (ADR-0038 item 3, M17-08).
+"""The entry point of the frozen `wowlab` builds (ADR-0038 item 3, M17-08,
+M17-09).
 
 PyInstaller freezes this file, not `wowlab_core.cli`, so that a double-click
-does something useful. It is the ordinary `wowlab` command with four
+does something useful. It is the ordinary `wowlab` command with five
 differences, and nothing else:
 
 1. **No arguments means `ui`.** The `wowlab` command prints its help and
@@ -23,6 +24,16 @@ differences, and nothing else:
    interpreter option is interpreted.
 4. **macOS `-psn_…`.** A leading process serial number argument, which
    LaunchServices can add on a Finder launch, is dropped before rules 1 to 3.
+5. **`PYTHONIOENCODING`, frozen builds only.** A frozen interpreter starts
+   isolated and ignores every `PYTHON*` variable. `wowlab ui` sets
+   `PYTHONIOENCODING=utf-8` for each run it starts and reads the run's output
+   as UTF-8; on Windows a piped stream's own encoding is the ANSI code page,
+   so the launcher applies the variable to the standard streams itself, as
+   the interpreter does for the wheel.
+
+On Windows a double-click (no arguments) runs `wowlab ui` under rule 1 in the
+console window Windows opens for it: the window shows the server, and
+closing it or pressing Ctrl-C stops it (M17-09).
 
 No network access, no update check, nothing that runs at login. The build
 reads and writes exactly what the wheel does.
@@ -30,9 +41,11 @@ reads and writes exactly what the wheel does.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 # The prefix `wowlab_core.ui` starts its runs with after `sys.executable`.
 UI_RUN_PREFIX = ("-P", "-m", "wowlab_core")
@@ -78,6 +91,27 @@ def plan(
     return ("run", ["ui"])
 
 
+def apply_io_encoding(environ: Mapping[str, str], streams: Iterable[tuple[str, Any]]) -> None:
+    """Rule 5: reconfigure each `(name, stream)` as `PYTHONIOENCODING` asks,
+    as the interpreter does at start (`encoding[:errors]`; standard error
+    keeps its own error handler). A stream that cannot be reconfigured, or an
+    encoding Python does not know, is left as it is."""
+    encoding, _, errors = environ.get("PYTHONIOENCODING", "").partition(":")
+    for name, stream in streams:
+        options: dict[str, str] = {}
+        if encoding:
+            options["encoding"] = encoding
+        if errors and name != "stderr":
+            options["errors"] = errors
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not options or reconfigure is None:
+            continue
+        try:
+            reconfigure(**options)
+        except (LookupError, ValueError, OSError):
+            continue
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -96,6 +130,11 @@ def main(
             return subprocess.run(args, check=False).returncode
         return spawn(args)
     if run is None:
+        if getattr(sys, "frozen", False):
+            apply_io_encoding(
+                os.environ,
+                (("stdin", sys.stdin), ("stdout", sys.stdout), ("stderr", sys.stderr)),
+            )
         from wowlab_core.cli import app
 
         app(args=args, prog_name="wowlab")

@@ -51,8 +51,8 @@ installs the current release, and the release page
 and `SHA256SUMS`. To check a download, put the three files in one folder and
 run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
 `shasum -a 256 -c SHA256SUMS --ignore-missing`); each file has to print
-`OK`. (`--ignore-missing` skips the Mac app's line when you did not
-download it.) On Windows run
+`OK`. (`--ignore-missing` skips the apps' lines when you did not
+download them.) On Windows run
 `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and
 compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
@@ -170,6 +170,60 @@ gh attestation verify wowlab-<version>-macos-arm64.zip \
 Some antivirus tools flag apps built the way this one is, whatever is in
 them. If yours does, check the hash and the attestation as above; a file
 that passes both is the one the release workflow built.
+
+### The Windows app (64-bit), no terminal needed
+
+Windows is untested (see Platforms above): CI builds this app and starts it
+on Windows, but nobody has yet run the first run below with it on a real
+Windows install.
+
+The release page also carries `wowlab-<version>-windows-x64.zip`: wowlab as
+a Windows program, with its own Python inside, for 64-bit Windows on an
+Intel or AMD processor. It is the same wowlab as the wheel, built from it by
+the release workflow; it never updates itself and makes no network request
+of its own. To get a newer version, download the newer zip. The zip is
+attached a little after the rest of the release; a release without it is
+one whose Windows build failed, and the wheel is unaffected.
+
+1. Download the zip from the release page. In File Explorer, right-click it
+   and choose **Extract All…**, and extract it somewhere you keep programs,
+   such as your Documents folder. It unpacks to a folder named `wowlab`
+   holding `wowlab.exe` and a folder named `_internal`. Keep the two
+   together, and do not run `wowlab.exe` from inside the zip without
+   extracting it: it needs `_internal` beside it.
+2. Double-click `wowlab.exe`. The app is not signed with a code-signing
+   certificate (that costs money and an identity check), so the first time
+   Windows may show **Windows protected your PC**. Click **More info**, check
+   that the app is `wowlab.exe`, and click **Run anyway**. Windows remembers
+   this for that copy. (These are the steps Windows 10 and 11 show for an
+   unsigned program; they are not yet confirmed on this app.)
+3. A console window opens and runs `wowlab ui`, and your browser opens the
+   explorer. The window is the server: it shows what wowlab is doing, and
+   closing it (or pressing Ctrl-C in it) stops wowlab.
+
+From PowerShell or Command Prompt the app is the ordinary `wowlab` command:
+`.\wowlab\wowlab.exe --version` prints its version, and every other command
+works the same way.
+
+**Check the app's download.** The zip's line is in the release's
+`SHA256SUMS`, and the zip carries its own build-provenance attestation, as
+the wheel does. In PowerShell, in the folder holding the zip, run
+`Get-FileHash -Algorithm SHA256 wowlab-<version>-windows-x64.zip` and compare
+the hash with the zip's line in `SHA256SUMS` (the case of the letters does
+not matter). With the [GitHub CLI](https://cli.github.com/), run:
+
+<!-- not-run: needs the network -->
+```bash
+gh attestation verify wowlab-<version>-windows-x64.zip \
+  --repo sandgraal/wowlab \
+  --signer-workflow sandgraal/wowlab/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
+```
+
+(In PowerShell, put it on one line without the backslashes.) Some antivirus
+tools flag programs built the way this one is, whatever is in them. If yours does, check the hash and the
+attestation as above; a file that passes both is the one the release
+workflow built.
 
 **From source**, if you want the development version:
 

@@ -7,9 +7,11 @@ name: Release
 # also carries the macOS app, `wowlab-<version>-macos-arm64.zip`, frozen from
 # the same wheel with PyInstaller (ADR-0031 amendment of 2026-11-12,
 # ADR-0038), attested like the wheel and attached after the release is
-# published, with its line added to SHA256SUMS (`app_release`). The release
-# never waits on the app: a failed app build fails its own job and leaves
-# the release as published. The
+# published, with its line added to SHA256SUMS (`app_release`). Since M17-09
+# it carries the Windows app the same way, `wowlab-<version>-windows-x64.zip`
+# (`windows_app`, `windows_app_smoke`, `windows_app_release`). The release
+# never waits on an app, and neither app waits on the other: a failed app
+# build fails its own job and leaves the release as published. The
 # tag has to be exactly `v` plus the package version (docs/LAB_PLAN.md §15.3,
 # E5); a PEP 440 pre-release or development version becomes a GitHub
 # pre-release. Nothing is published unless every job before `release`
@@ -21,8 +23,8 @@ on:
   push:
     tags: ["v*"]
 
-# The token is read-only everywhere except the `release` and `app_release`
-# jobs, which run no code from the repository: they download the checked
+# The token is read-only everywhere except the `release`, `app_release` and
+# `windows_app_release` jobs, which run no code from the repository: they download the checked
 # files, attest them and call `gh`.
 permissions:
   contents: read
@@ -325,6 +327,127 @@ jobs:
           codesign --verify --deep --strict "$RUNNER_TEMP/unzipped/wowlab.app"
           uv run --isolated --no-project --python "$PYTHON_VERSION" -- python scripts/app_smoke.py --exe "$RUNNER_TEMP/unzipped/wowlab.app/Contents/MacOS/wowlab" --version "$VERSION"
 
+  # M17-09 (ADR-0038): the Windows app, a `wowlab` folder with `wowlab.exe`,
+  # frozen from the wheel `build` made, on an x64 Windows runner, from the
+  # same spec as the macOS app. Like `app`, this job never runs what it
+  # built: it hashes the zip and uploads it, and `windows_app_smoke` runs it.
+  # The steps of this job and of `windows_app_smoke` are the same, step for
+  # step, as those of windows-app.yml, which builds the app on a pull request
+  # that changes it or by hand (tests/packaging/test_windows_app.py). Bash
+  # (Git for Windows), so the checks read as the macOS jobs' do.
+  windows_app:
+    name: Build the Windows app
+    needs: [version, build]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      app_sha256: ${{ steps.zip.outputs.app_sha256 }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      WHEEL: ${{ needs.version.outputs.wheel }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+      APP_ZIP: wowlab-${{ needs.version.outputs.version }}-windows-x64.zip
+    steps:
+      # The spec, the launcher and uv.lock come from the tagged commit; the
+      # code that is frozen comes from the wheel only (ADR-0038 item 2).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+      - name: The wheel is the one the build hashed
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" > "$RUNNER_TEMP/expected-wheel"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-wheel")" -eq 1
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c "$RUNNER_TEMP/expected-wheel"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # As in `app`: the wheel's dependencies at the versions uv.lock pins,
+      # with their hashes, PyInstaller from the `packaging` group, then the
+      # wheel; the Python frozen into the app is uv's own build of 3.12.
+      - name: A clean virtual environment with the wheel and PyInstaller
+        run: |
+          uv export --frozen --package wowlab-core --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
+          uv export --frozen --only-group packaging --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/packaging.txt"
+          uv venv --managed-python --python "$PYTHON_VERSION" "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/Scripts/python.exe" --require-hashes -r "$RUNNER_TEMP/runtime.txt" -r "$RUNNER_TEMP/packaging.txt"
+          uv pip install --python "$RUNNER_TEMP/venv/Scripts/python.exe" --no-deps "$RUNNER_TEMP/release/$WHEEL"
+      # Run outside the checkout, so nothing of the working tree is on the
+      # path PyInstaller analyses but packaging/ itself. One folder: the
+      # executable beside `_internal`, never a single self-unpacking file;
+      # and an x64 executable (the PE header's machine field is 0x8664).
+      - name: PyInstaller, one folder, no UPX
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv/Scripts/pyinstaller.exe" --noconfirm --clean --distpath "$RUNNER_TEMP/dist" --workpath "$RUNNER_TEMP/work" "$GITHUB_WORKSPACE/packaging/wowlab.spec"
+          test -f "$RUNNER_TEMP/dist/wowlab/wowlab.exe"
+          test -d "$RUNNER_TEMP/dist/wowlab/_internal"
+          "$RUNNER_TEMP/venv/Scripts/python.exe" -I -c 'import struct, sys; d = open(sys.argv[1], "rb").read(4096); o = struct.unpack_from("<I", d, 60)[0]; assert d[o:o + 4] == b"PE\0\0" and struct.unpack_from("<H", d, o + 4)[0] == 0x8664, "not an x64 executable"' "$RUNNER_TEMP/dist/wowlab/wowlab.exe"
+      # The zip holds the one folder, `wowlab/`, with forward-slash names, as
+      # Python's zipfile writes it (Git for Windows has no zip command).
+      - name: Zip the app and record its SHA-256
+        id: zip
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          mkdir "$RUNNER_TEMP/app"
+          "$RUNNER_TEMP/venv/Scripts/python.exe" -I -m zipfile -c "$RUNNER_TEMP/app/$APP_ZIP" wowlab
+          echo "app_sha256=$(sha256sum "$RUNNER_TEMP/app/$APP_ZIP" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-app
+          path: ${{ runner.temp }}/app/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ADR-0038 item 4 on Windows: the zip a player downloads, unpacked, runs:
+  # `--version` names the tag's version, and `wowlab.exe` started with no
+  # arguments, as a double-click starts it, serves its page to a recorded
+  # browser and runs a command for it (scripts/app_smoke.py). Nothing here
+  # reaches what `release` publishes.
+  windows_app_smoke:
+    name: Smoke-test the Windows app
+    needs: [version, windows_app]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APP_ZIP: wowlab-${{ needs.version.outputs.version }}-windows-x64.zip
+      APP_SHA256: ${{ needs.windows_app.outputs.app_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-app
+          path: ${{ runner.temp }}/app
+      - name: The zip is the one the build hashed
+        run: |
+          printf '%s  %s\n' "$APP_SHA256" "$APP_ZIP" > "$RUNNER_TEMP/expected-app"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-app")" -eq 1
+          cd "$RUNNER_TEMP/app"
+          sha256sum -c "$RUNNER_TEMP/expected-app"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Unzip it and run the smoke test
+        run: |
+          mkdir "$RUNNER_TEMP/unzipped"
+          uv run --isolated --no-project --python "$PYTHON_VERSION" -- python -I -m zipfile -e "$RUNNER_TEMP/app/$APP_ZIP" "$RUNNER_TEMP/unzipped"
+          uv run --isolated --no-project --python "$PYTHON_VERSION" -- python scripts/app_smoke.py --exe "$RUNNER_TEMP/unzipped/wowlab/wowlab.exe" --version "$VERSION"
+
   release:
     name: Publish the GitHub Release
     needs: [version, test, build, smoke]
@@ -395,20 +518,31 @@ jobs:
             "${flags[@]}" \
             "release/$WHEEL" "release/$SDIST" release/SHA256SUMS
 
-  # M17-08 (ADR-0031 amendment of 2026-11-12, ADR-0038 item 3): the macOS app
-  # is attached to the published release afterwards, so the wheel and the
-  # sdist never wait on it. It runs only when the release was published and
-  # the app was built and passed its smoke test; a failed app build or smoke
-  # test fails its own job, visibly, skips this one, and leaves the release
-  # as published. Like `release`, it checks out nothing and runs no
-  # repository code: it checks the zip against the hash `app` recorded (a job
-  # output, never the artifact's own word), checks what the release already
-  # holds, attests the zip, and uploads the zip and SHA256SUMS with the zip's
-  # line added. It is safe to re-run: a zip or a SHA256SUMS already there is
-  # checked and left as it is, and anything else there is refused.
+  # M17-08 and M17-09 (ADR-0031 amendment of 2026-11-12, ADR-0038 item 3):
+  # each app is attached to the published release afterwards, by a job of its
+  # own (`app_release` for macOS, `windows_app_release` for Windows), so the
+  # wheel and the sdist never wait on either, and neither app waits on the
+  # other. Each runs only when the release was published and its app was
+  # built and passed its smoke test; a failed app build or smoke test fails
+  # its own job, visibly, skips that app's attach job, and leaves the release
+  # as published, with the other app if it was built. Like `release`, they
+  # check out nothing and run no repository code: each checks its zip
+  # against the hash its build job recorded (a job output, never the
+  # artifact's own word), checks what the release already holds, attests the
+  # zip, and uploads the zip and SHA256SUMS with the zip's line added. They
+  # are safe to re-run: a zip or a SHA256SUMS line already there is checked
+  # and left as it is, and anything else there is refused.
+  #
+  # Both rewrite the one SHA256SUMS, so they never run at the same time: one
+  # concurrency group, which queues the second until the first is done
+  # (never cancels it). Each then reads SHA256SUMS as the other may have left
+  # it: the wheel's and the sdist's lines, then app lines in the order they
+  # were added, its own as its build hashed it and the other app's checked
+  # against the zip of that name on the release. The read-back after the
+  # upload catches a write that raced past the group anyway.
   #
   # No environment, by owner decision (2026-11-12, M17-08, after the
-  # security review of 657bddd): attaching the app runs on its own. What
+  # security review of 657bddd): attaching an app runs on its own. What
   # gates it is `needs: release`, which the owner approved through the
   # `release` environment for this `v*` tag in this same run; its write
   # permissions are its own, and nothing else in the run gets them.
@@ -416,7 +550,10 @@ jobs:
     name: Attach the macOS app to the release
     needs: [version, build, app, app_smoke, release]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    concurrency:
+      group: release-apps-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write # gh release view/download/upload: the zip and SHA256SUMS on the release
       id-token: write # attest-build-provenance: the OIDC token Sigstore signs with
@@ -429,6 +566,7 @@ jobs:
       SDIST_SHA256: ${{ needs.build.outputs.sdist_sha256 }}
       APP_ZIP: wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip
       APP_SHA256: ${{ needs.app.outputs.app_sha256 }}
+      OTHER_ZIP: wowlab-${{ needs.version.outputs.version }}-windows-x64.zip
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -440,38 +578,200 @@ jobs:
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-app")" -eq 1
           cd app
           sha256sum -c "$RUNNER_TEMP/expected-app"
-      # What the release's SHA256SUMS may be before this job writes it:
-      # exactly the wheel's and the sdist's lines as `build` hashed them
-      # (the zip's line is then added), those lines and the zip's (a re-run:
-      # nothing to do), or missing (it is written whole). Anything else is
-      # refused before anything is uploaded.
+      # What the release's SHA256SUMS may be before this job writes it: the
+      # wheel's and the sdist's lines exactly as `build` hashed them, then at
+      # most one line for each app, in the order they were added: this job's
+      # zip as its build hashed it (a re-run: nothing to write), and the
+      # other app's zip, which has to be on the release with that hash. Or it
+      # is missing (it is written whole). Anything else is refused before
+      # anything is uploaded.
       - name: The release's SHA256SUMS is one this job may write
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
-          cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
             echo "the release has no SHA256SUMS; it is written whole"
+            cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
             echo write > "$RUNNER_TEMP/sums-action"
             exit 0
           fi
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published"
-          if cmp -s "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/published/SHA256SUMS"; then
-            echo "SHA256SUMS already lists the zip"
-            echo keep > "$RUNNER_TEMP/sums-action"
-          elif cmp -s "$RUNNER_TEMP/expected" "$RUNNER_TEMP/published/SHA256SUMS"; then
-            echo write > "$RUNNER_TEMP/sums-action"
-          else
-            echo "the release's SHA256SUMS is not the one the build wrote; refusing" >&2
+          published="$RUNNER_TEMP/published/SHA256SUMS"
+          head -n 2 "$published" > "$RUNNER_TEMP/read"
+          if ! cmp -s "$RUNNER_TEMP/expected" "$RUNNER_TEMP/read"; then
+            echo "the release's SHA256SUMS does not start with the build's lines; refusing" >&2
             exit 1
+          fi
+          mine=no
+          other=no
+          tail -n +3 "$published" > "$RUNNER_TEMP/published-apps"
+          while IFS= read -r line <&3; do
+            name="${line#*  }"
+            if ! printf '%s\n' "$line" | grep -Eqx '[0-9a-f]{64}  [^ ]+'; then
+              echo "the release's SHA256SUMS has a line that is not a hash and a name; refusing" >&2
+              exit 1
+            elif [ "$name" = "$APP_ZIP" ] && [ "$mine" = no ] && [ "$line" = "$(cat "$RUNNER_TEMP/expected-app")" ]; then
+              mine=yes
+            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$OTHER_ZIP" --dir "$RUNNER_TEMP/other"
+              printf '%s\n' "$line" > "$RUNNER_TEMP/expected-other"
+              (cd "$RUNNER_TEMP/other" && sha256sum -c "$RUNNER_TEMP/expected-other")
+              other=yes
+            else
+              echo "the release's SHA256SUMS lists $name in a way the builds did not write; refusing" >&2
+              exit 1
+            fi
+            printf '%s\n' "$line" >> "$RUNNER_TEMP/read"
+          done 3< "$RUNNER_TEMP/published-apps"
+          # The lines read are the whole file, byte for byte.
+          if ! cmp -s "$RUNNER_TEMP/read" "$published"; then
+            echo "the release's SHA256SUMS is not the one the builds wrote; refusing" >&2
+            exit 1
+          fi
+          if [ "$mine" = yes ]; then
+            echo "SHA256SUMS already lists the zip"
+            cp "$published" "$RUNNER_TEMP/with-app"
+            echo keep > "$RUNNER_TEMP/sums-action"
+          else
+            cat "$published" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
+            echo write > "$RUNNER_TEMP/sums-action"
           fi
       - name: Attest the app
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: app/wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip
+      # A zip already on the release (a re-run) has to be this one: it is
+      # downloaded and checked against the build's hash, and left as it is.
+      - name: Upload the app, unless the release has it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if printf '%s\n' "$assets" | grep -Fqx -- "$APP_ZIP"; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APP_ZIP" --dir "$RUNNER_TEMP/present"
+            cd "$RUNNER_TEMP/present"
+            sha256sum -c "$RUNNER_TEMP/expected-app"
+            echo "the release already has this $APP_ZIP; not uploading it again"
+          else
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "app/$APP_ZIP"
+          fi
+      # Written, then read back from the release and compared.
+      - name: Upload SHA256SUMS with the zip's line
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(cat "$RUNNER_TEMP/sums-action")" = write ]; then
+            cp "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/SHA256SUMS"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/SHA256SUMS"
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/after"
+          cmp "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/after/SHA256SUMS"
+          cat "$RUNNER_TEMP/after/SHA256SUMS"
+
+  # M17-09: the Windows app, as `app_release` attaches the macOS app (the
+  # note above it holds for both). Its steps are `app_release`'s, step for
+  # step, but for the artifact it downloads and the zip it attests
+  # (tests/packaging/test_windows_app.py).
+  windows_app_release:
+    name: Attach the Windows app to the release
+    needs: [version, build, windows_app, windows_app_smoke, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: release-apps-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # gh release view/download/upload: the zip and SHA256SUMS on the release
+      id-token: write # attest-build-provenance: the OIDC token Sigstore signs with
+      attestations: write # attest-build-provenance: stores the attestation on the repository
+    env:
+      TAG: ${{ github.ref_name }}
+      WHEEL: ${{ needs.version.outputs.wheel }}
+      SDIST: ${{ needs.version.outputs.sdist }}
+      WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+      SDIST_SHA256: ${{ needs.build.outputs.sdist_sha256 }}
+      APP_ZIP: wowlab-${{ needs.version.outputs.version }}-windows-x64.zip
+      APP_SHA256: ${{ needs.windows_app.outputs.app_sha256 }}
+      OTHER_ZIP: wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-app
+          path: app
+      - name: The zip is the one the build hashed
+        run: |
+          printf '%s  %s\n' "$APP_SHA256" "$APP_ZIP" > "$RUNNER_TEMP/expected-app"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-app")" -eq 1
+          cd app
+          sha256sum -c "$RUNNER_TEMP/expected-app"
+      # What the release's SHA256SUMS may be before this job writes it: the
+      # wheel's and the sdist's lines exactly as `build` hashed them, then at
+      # most one line for each app, in the order they were added: this job's
+      # zip as its build hashed it (a re-run: nothing to write), and the
+      # other app's zip, which has to be on the release with that hash. Or it
+      # is missing (it is written whole). Anything else is refused before
+      # anything is uploaded.
+      - name: The release's SHA256SUMS is one this job may write
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+            echo "the release has no SHA256SUMS; it is written whole"
+            cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
+            echo write > "$RUNNER_TEMP/sums-action"
+            exit 0
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published"
+          published="$RUNNER_TEMP/published/SHA256SUMS"
+          head -n 2 "$published" > "$RUNNER_TEMP/read"
+          if ! cmp -s "$RUNNER_TEMP/expected" "$RUNNER_TEMP/read"; then
+            echo "the release's SHA256SUMS does not start with the build's lines; refusing" >&2
+            exit 1
+          fi
+          mine=no
+          other=no
+          tail -n +3 "$published" > "$RUNNER_TEMP/published-apps"
+          while IFS= read -r line <&3; do
+            name="${line#*  }"
+            if ! printf '%s\n' "$line" | grep -Eqx '[0-9a-f]{64}  [^ ]+'; then
+              echo "the release's SHA256SUMS has a line that is not a hash and a name; refusing" >&2
+              exit 1
+            elif [ "$name" = "$APP_ZIP" ] && [ "$mine" = no ] && [ "$line" = "$(cat "$RUNNER_TEMP/expected-app")" ]; then
+              mine=yes
+            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$OTHER_ZIP" --dir "$RUNNER_TEMP/other"
+              printf '%s\n' "$line" > "$RUNNER_TEMP/expected-other"
+              (cd "$RUNNER_TEMP/other" && sha256sum -c "$RUNNER_TEMP/expected-other")
+              other=yes
+            else
+              echo "the release's SHA256SUMS lists $name in a way the builds did not write; refusing" >&2
+              exit 1
+            fi
+            printf '%s\n' "$line" >> "$RUNNER_TEMP/read"
+          done 3< "$RUNNER_TEMP/published-apps"
+          # The lines read are the whole file, byte for byte.
+          if ! cmp -s "$RUNNER_TEMP/read" "$published"; then
+            echo "the release's SHA256SUMS is not the one the builds wrote; refusing" >&2
+            exit 1
+          fi
+          if [ "$mine" = yes ]; then
+            echo "SHA256SUMS already lists the zip"
+            cp "$published" "$RUNNER_TEMP/with-app"
+            echo keep > "$RUNNER_TEMP/sums-action"
+          else
+            cat "$published" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
+            echo write > "$RUNNER_TEMP/sums-action"
+          fi
+      - name: Attest the app
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: app/wowlab-${{ needs.version.outputs.version }}-windows-x64.zip
       # A zip already on the release (a re-run) has to be this one: it is
       # downloaded and checked against the build's hash, and left as it is.
       - name: Upload the app, unless the release has it

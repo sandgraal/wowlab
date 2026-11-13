@@ -87,7 +87,8 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
     jobs = _jobs()
     # M17-08 added the macOS app's build and smoke jobs, read-only like the
     # rest, and `app_release`, which attaches the app to the published release
-    # (tests/packaging/test_macos_app.py grades the three).
+    # (tests/packaging/test_macos_app.py grades the three). M17-09 added the
+    # Windows app's three, the same way (tests/packaging/test_windows_app.py).
     assert set(jobs) == {
         "version",
         "test",
@@ -97,6 +98,9 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
         "app",
         "app_smoke",
         "app_release",
+        "windows_app",
+        "windows_app_smoke",
+        "windows_app_release",
     }
     writer = {"contents": "write", "id-token": "write", "attestations": "write"}
     assert {n: j.get("permissions") for n, j in jobs.items()} == {
@@ -108,6 +112,9 @@ def test_the_token_is_read_only_except_on_the_release_job() -> None:
         "app": None,
         "app_smoke": None,
         "app_release": writer,
+        "windows_app": None,
+        "windows_app_smoke": None,
+        "windows_app_release": writer,
     }
 
 
@@ -126,15 +133,20 @@ def test_every_publish_waits_for_the_release_environment() -> None:
         # gated by `release` itself, which the owner approved for this `v*`
         # tag in the same run, and its write permissions are its own.
         "app_release": None,
+        "windows_app": None,
+        "windows_app_smoke": None,
+        # M17-09: the Windows app is attached the same way.
+        "windows_app_release": None,
     }
-    attach = jobs["app_release"]
-    assert "release" in attach["needs"]
-    assert "if" not in attach  # the implicit success(): only after `release` succeeded
-    assert attach["permissions"] == {
-        "contents": "write",
-        "id-token": "write",
-        "attestations": "write",
-    }
+    for name in ("app_release", "windows_app_release"):
+        attach = jobs[name]
+        assert "release" in attach["needs"]
+        assert "if" not in attach  # the implicit success(): only after `release` succeeded
+        assert attach["permissions"] == {
+            "contents": "write",
+            "id-token": "write",
+            "attestations": "write",
+        }
     data = _workflow()
     assert data.get("on", data.get(True)) == {"push": {"tags": ["v*"]}}
 
@@ -165,6 +177,10 @@ def test_no_secret_but_the_job_token_and_only_where_it_publishes() -> None:
         ("app_release", "The release's SHA256SUMS is one this job may write"),
         ("app_release", "Upload the app, unless the release has it"),
         ("app_release", "Upload SHA256SUMS with the zip's line"),
+        # M17-09: the same three steps for the Windows app.
+        ("windows_app_release", "The release's SHA256SUMS is one this job may write"),
+        ("windows_app_release", "Upload the app, unless the release has it"),
+        ("windows_app_release", "Upload SHA256SUMS with the zip's line"),
     ]
     for name, job in _jobs().items():
         assert "github.token" not in str(job.get("env", {})), name
