@@ -1025,6 +1025,10 @@ def test_no_template_names_another_origin() -> None:
     # link's address against (test_ui_explorer.py, DRESSING_ORIGIN).
     origin = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
     assert _template("page.js").count(origin) == 1
+    # Not an origin (M17-03): the SVG namespace the history charts are made
+    # in, a name `createElementNS` needs; nothing is fetched from it.
+    namespace = 'const SVG_NS = "http://www.w3.org/2000/svg";'
+    assert _template("page.js").count(namespace) == 1
     for name in ("page.html", "page.js", "page.css"):
-        text = _template(name).replace(origin, "")
+        text = _template(name).replace(origin, "").replace(namespace, "")
         assert re.search(r"(?i)\b(?:https?:|wss?:|ftp:)//|[\"'(]\s*//[a-z0-9]", text) is None, name

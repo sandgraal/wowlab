@@ -1222,8 +1222,9 @@
   // `char macros --json` for the same character: every word about a key or
   // a macro (what a key does, whether the sources agree, where a macro may
   // sit, a finding) is the report's, and the two filters read the report's
-  // own fields (`disagrees`, `findings`). Those four read commands are the
-  // only ones this tab runs, and nothing in it edits anything.
+  // own fields (`disagrees`, `findings`). The history panel (M17-03) lays
+  // out `char history --json`. Those five read commands are the only ones
+  // this tab runs, and nothing in it edits anything.
 
   const character = {
     asked: null, // the one `char list` run; asked again after a failure
@@ -1413,6 +1414,7 @@
     clearDressing();
     byId("char-keys").replaceChildren();
     byId("char-macros").replaceChildren();
+    byId("char-history").replaceChildren();
     charSay("", false);
     if (tabShown === "character") loadCharacters();
   }
@@ -1424,8 +1426,8 @@
     if (readable(entry)) pickCharacter(entry);
   });
 
-  // The one pick handler: it clears all three panels, then asks for the
-  // gear, the keys and the macros of the character picked, one run after
+  // The one pick handler: it clears the panels, then asks for the gear,
+  // the keys, the macros and the history of the character picked, one run after
   // the other, each drawn when its reply comes and only if no later pick was
   // made since (`seq`). One run at a time: a pick never holds more than one
   // of the server's few run slots (`MAX_CONCURRENT_RUNS`, 503 `busy` past
@@ -1437,15 +1439,16 @@
     clearDressing();
     byId("char-keys").replaceChildren();
     byId("char-macros").replaceChildren();
+    byId("char-history").replaceChildren();
     character.binds = null;
     character.macros = null;
-    charSay("Reading the gear, keys and macros of " + visible(entry.label) + "…", false);
+    charSay("Reading the gear, keys, macros and history of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
     // The flavor the list read, else (every flavor listed) the row's own.
     const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
     if (flavor) params.flavor = flavor;
-    for (const load of [loadGear, loadKeys, loadMacros]) {
+    for (const load of [loadGear, loadKeys, loadMacros, loadHistory]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
     }
@@ -2127,6 +2130,414 @@
   }
 
   byId("char-macros-findings").addEventListener("change", () => filterMacros());
+
+  // ─── the history panel (M17-03, §19 CW-2) ───
+  // Laid out from `char history --json` for the character picked: one row
+  // per save of its WowLab.lua, oldest first, from every snapshot in
+  // wowlab's store and the file in the game folder. A save's time is the
+  // file's modification time, so a restored file shows as a later save; the
+  // report marks it (`same_bytes_as_ns`) and the panel says so. Every item,
+  // slot, spec and currency name, and every reason, is the report's; this
+  // script compares only the level, the equipped item level and the spec id
+  // of two saves next to each other. The charts are inline SVG built here
+  // from those numbers alone (no text of the report goes into them but a
+  // date and a number), hidden from screen readers; the table under them
+  // holds the same values and is what a screen reader reads.
+
+  // The SVG namespace: a name the DOM needs to make SVG elements, not an
+  // address. Nothing is fetched from it.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  // The chart's drawing box, in its own units: the SVG scales to the panel.
+  const CHART = { width: 640, height: 150, left: 56, right: 16, top: 14, bottom: 26 };
+
+  const HISTORY_FEW =
+    "History appears once there are two different saves of this character (the file in the game " +
+    "folder counts as one). The game saves it when you log out or type /reload; take a backup after " +
+    "you log out or /reload (Take a backup now on the Account tab, or wowlab snap create); a backup " +
+    "taken while you are still playing keeps the save from before.";
+
+  async function loadHistory(entry, params, seq) {
+    // A character with no save that could be read ends with an error and
+    // still prints its report: the report says why, so it is drawn.
+    const reply = await runJson(["char", "history"], params, true);
+    if (seq !== character.seq) return;
+    const report = reply.data;
+    if (!report || !Array.isArray(report.rows)) {
+      charError(byId("char-history"), reply, "char history");
+      return;
+    }
+    drawHistory(report);
+  }
+
+  const historyNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+  // The date part of `localTime`, for a chart's axis.
+  function dayOf(ns) {
+    return localTime(ns).split(" ")[0];
+  }
+
+  function historySpec(row) {
+    const spec = row.spec && typeof row.spec === "object" ? row.spec : {};
+    if (typeof spec.id !== "number") return notRecorded(spec.absent);
+    if (typeof row.spec_name === "string" && row.spec_name) return visible(row.spec_name);
+    return "spec id " + spec.id;
+  }
+
+  function historyLevel(row) {
+    return historyNum(row.level) === null ? notRecorded(row.level_absent) : String(row.level);
+  }
+
+  // An equipped item level to one decimal; the exact figure goes in a title.
+  function oneDecimal(v) {
+    return v.toFixed(1);
+  }
+
+  // Two different item levels that read the same to one decimal are shown
+  // exactly, so a change never reads as "8.2 to 8.2".
+  function twoDecimals(a, b) {
+    return a !== b && oneDecimal(a) === oneDecimal(b) ? [String(a), String(b)] : [oneDecimal(a), oneDecimal(b)];
+  }
+
+  function historyItemLevel(row) {
+    const v = historyNum(row.item_level);
+    return v === null ? notRecorded(row.item_level_absent) : oneDecimal(v);
+  }
+
+  // Where a save was found: how many snapshots hold it, and the game folder.
+  function historyHeld(row) {
+    const held = [];
+    const snaps = texts(row.snapshots).length;
+    if (snaps) held.push(count(snaps, "snapshot", "snapshots"));
+    if (row.live === true) held.push("the game folder");
+    return held.length ? held.join(" and ") : "nowhere listed";
+  }
+
+  function historyRestored(row) {
+    return historyNum(row.same_bytes_as_ns) === null
+      ? ""
+      : "Same contents as the save of " + localTime(row.same_bytes_as_ns) +
+          ": likely restored, so this time is when it was put back.";
+  }
+
+  // One step per save, so the line's slope is not a rate.
+  const STEPS = ", one step per save (not spaced by time).";
+
+  // One chart: a line through each save's value (broken where a save does
+  // not record it), a dot on each value, the lowest and highest value at the
+  // left, and the first and last save's dates under it, one step per save.
+  // The caption says the same in words; with fewer than two values it is the
+  // caption alone.
+  function historyChart(title, values, rows, shownAs) {
+    const box = make("div");
+    box.className = "history-chart";
+    const known = values.filter((v) => v !== null);
+    if (known.length < 2) {
+      const few = title + ": recorded in " + known.length + " of " + count(values.length, "save", "saves");
+      box.appendChild(charLine(few + ", too few to draw.", "char-none"));
+      return box;
+    }
+    const low = Math.min(...known);
+    const high = Math.max(...known);
+    // Two values that read the same once rounded are written exactly.
+    const exact = low !== high && shownAs(low) === shownAs(high);
+    const lowText = exact ? String(low) : shownAs(low);
+    const highText = exact ? String(high) : shownAs(high);
+    const range =
+      low === high
+        ? ": " + lowText + " in every save that records it"
+        : ": lowest " + lowText + ", highest " + highText;
+    box.appendChild(charLine(title + range + STEPS, "history-caption"));
+    const c = CHART;
+    const across = c.width - c.left - c.right;
+    const down = c.height - c.top - c.bottom;
+    const xOf = (i) => c.left + (across * i) / (values.length - 1);
+    const yOf = (v) => (high === low ? c.top + down / 2 : c.top + (down * (high - v)) / (high - low));
+    const fixed = (n) => String(Math.round(n * 10) / 10);
+    const chart = document.createElementNS(SVG_NS, "svg");
+    chart.setAttribute("viewBox", "0 0 " + c.width + " " + c.height);
+    chart.setAttribute("aria-hidden", "true");
+    chart.classList.add("history-svg");
+    const axis = document.createElementNS(SVG_NS, "polyline");
+    const corner = [[c.left, c.top], [c.left, c.top + down], [c.left + across, c.top + down]];
+    axis.setAttribute("points", corner.map(([x, y]) => fixed(x) + "," + fixed(y)).join(" "));
+    axis.classList.add("history-axis");
+    chart.appendChild(axis);
+    let run = [];
+    const lines = [];
+    values.forEach((v, i) => {
+      if (v === null) {
+        if (run.length) lines.push(run);
+        run = [];
+      } else {
+        run.push(fixed(xOf(i)) + "," + fixed(yOf(v)));
+      }
+    });
+    if (run.length) lines.push(run);
+    for (const points of lines) {
+      if (points.length < 2) continue;
+      const line = document.createElementNS(SVG_NS, "polyline");
+      line.setAttribute("points", points.join(" "));
+      line.classList.add("history-line");
+      chart.appendChild(line);
+    }
+    values.forEach((v, i) => {
+      if (v === null) return;
+      const dot = document.createElementNS(SVG_NS, "circle");
+      dot.setAttribute("cx", fixed(xOf(i)));
+      dot.setAttribute("cy", fixed(yOf(v)));
+      dot.setAttribute("r", "4");
+      dot.classList.add("history-dot");
+      chart.appendChild(dot);
+    });
+    const label = (text, x, y, atEnd) => {
+      const node = document.createElementNS(SVG_NS, "text");
+      node.setAttribute("x", fixed(x));
+      node.setAttribute("y", fixed(y));
+      node.classList.add("history-label");
+      if (atEnd) node.classList.add("history-end");
+      node.textContent = text;
+      chart.appendChild(node);
+    };
+    label(highText, c.left - 8, c.top + 5, true);
+    if (high !== low) label(lowText, c.left - 8, c.top + down + 5, true);
+    label(dayOf(rows[0].saved_at_ns), c.left, c.height - 6, false);
+    label(dayOf(rows[rows.length - 1].saved_at_ns), c.left + across, c.height - 6, true);
+    box.appendChild(chart);
+    return box;
+  }
+
+  // The charts' values, one row per save, oldest first: what a screen
+  // reader reads in their place.
+  function historyTable(rows) {
+    const wrap = make("div");
+    wrap.className = "history-table";
+    wrap.setAttribute("role", "region");
+    wrap.setAttribute("aria-label", "Each save as a table");
+    wrap.tabIndex = 0;
+    const table = make("table");
+    table.className = "char-table";
+    table.appendChild(make("caption", "Each save, oldest first: the values the charts draw"));
+    const head = make("tr");
+    for (const word of ["Saved", "Level", "Equipped item level", "Spec", "Held in"]) {
+      const th = make("th", word);
+      th.scope = "col";
+      head.appendChild(th);
+    }
+    const thead = make("thead");
+    thead.appendChild(head);
+    const body = make("tbody");
+    for (const row of rows) {
+      const tr = make("tr");
+      const saved = make("th", localTime(row.saved_at_ns));
+      saved.scope = "row";
+      const restored = historyRestored(row);
+      if (restored) {
+        saved.appendChild(make("small", ", likely restored (same as " + localTime(row.same_bytes_as_ns) + ")"));
+        saved.title = restored;
+      }
+      tr.appendChild(saved);
+      for (const text of [historyLevel(row), historyItemLevel(row), historySpec(row), historyHeld(row)]) {
+        tr.appendChild(make("td", text));
+      }
+      const exact = historyNum(row.item_level);
+      if (exact !== null) tr.children[2].title = "exact: " + String(exact);
+      body.appendChild(tr);
+    }
+    table.append(thead, body);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function historyItem(item) {
+    if (!item || typeof item !== "object") return "empty";
+    return visible(String(item.name)) + " (item level " + numberWords(item.item_level) + ")";
+  }
+
+  // One gear change, in `char history`'s words: another item; the same item
+  // id as a different instance (the link's parts the report lists in
+  // `differs`); or the same instance at another item level.
+  function historyGear(g) {
+    const slot =
+      typeof g.slot_name === "string" && g.slot_name ? visible(g.slot_name) : "slot " + visible(String(g.slot));
+    const before = g.before && typeof g.before === "object" ? g.before : null;
+    const after = g.after && typeof g.after === "object" ? g.after : null;
+    const differs = texts(g.differs);
+    let what;
+    if (before && after && !(differs.length === 1 && differs[0] === "item id")) {
+      const parts = differs.filter((d) => d !== "item level").map(visible);
+      const level = differs.includes("item level")
+        ? "item level " + numberWords(before.item_level) + " to " + numberWords(after.item_level) +
+          " (the client's figure)"
+        : "";
+      if (parts.length) {
+        what =
+          historyItem(after) + ", same item id, a different instance (" + parts.join(", ") + "); before: " +
+          historyItem(before);
+        if (level) what += "; " + level;
+      } else if (level) {
+        what = visible(String(after.name)) + ", same instance, " + level;
+      } else {
+        what = historyItem(before) + " to " + historyItem(after);
+      }
+    } else {
+      what = historyItem(before) + " to " + historyItem(after);
+    }
+    return slot + ": " + what;
+  }
+
+  function historyCurrency(c) {
+    const amount = (n) => (historyNum(n) === null ? "not listed" : String(n));
+    const name = typeof c.name === "string" && c.name ? visible(c.name) : "currency " + visible(String(c.id));
+    return name + ": " + amount(c.before) + " to " + amount(c.after);
+  }
+
+  // What changed at `row` since `prev`, the save before it, in words.
+  function historyChanges(row, prev) {
+    const out = [];
+    const restored = historyRestored(row);
+    if (restored) out.push(restored);
+    if (!prev) {
+      out.push("The oldest save wowlab has.");
+      return out;
+    }
+    // A value both saves record is compared; one that only one save records
+    // is said to be so, never counted as a change. `compared` names what was
+    // compared, for the sentence when nothing changed.
+    let changed = 0;
+    const compared = [];
+    const compare = (label, was, now, words) => {
+      if (was === null && now === null) return;
+      if (was === null || now === null) out.push(label + ": not recorded in one of the two saves.");
+      else {
+        compared.push(label.toLowerCase());
+        if (was === now) return;
+        changed += 1;
+        out.push(words(was, now));
+      }
+    };
+    compare("Level", historyNum(prev.level), historyNum(row.level), (a, b) => "Level " + a + " to " + b);
+    compare(
+      "Equipped item level",
+      historyNum(prev.item_level),
+      historyNum(row.item_level),
+      (a, b) => {
+        const [x, y] = twoDecimals(a, b);
+        return "Equipped item level " + x + " to " + y + " (the client's figure)";
+      },
+    );
+    const specOf = (r) => (r.spec && typeof r.spec.id === "number" ? r.spec.id : null);
+    compare("Spec", specOf(prev), specOf(row), () => "Spec " + historySpec(prev) + " to " + historySpec(row));
+    if (typeof row.gear_not_compared === "string") out.push("Gear not compared: " + visible(row.gear_not_compared));
+    else compared.push("gear");
+    for (const g of objects(row.gear_changes)) {
+      changed += 1;
+      out.push(historyGear(g));
+    }
+    if (typeof row.currencies_not_compared === "string") {
+      out.push("Currencies not compared: " + visible(row.currencies_not_compared));
+    } else {
+      compared.push("currencies");
+    }
+    for (const c of objects(row.currency_changes)) {
+      changed += 1;
+      out.push(historyCurrency(c));
+    }
+    if (typeof row.currency_panel_changed === "string") out.push(visible(row.currency_panel_changed));
+    if (!changed && compared.length) {
+      out.push("No change in what both saves record (" + compared.join(", ") + ").");
+    }
+    return out;
+  }
+
+  // The saves, newest first, each with what changed since the one before.
+  function historyList(rows) {
+    const list = make("ol");
+    list.className = "history-list";
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const item = make("li");
+      item.appendChild(make("strong", localTime(rows[i].saved_at_ns)));
+      const changes = make("ul");
+      for (const text of historyChanges(rows[i], i ? rows[i - 1] : null)) changes.appendChild(make("li", text));
+      item.appendChild(changes);
+      list.appendChild(item);
+    }
+    return list;
+  }
+
+  // The copies that could not be read, and the snapshots that did not load.
+  function historyMissing(box, report) {
+    const bad = objects(report.unreadable);
+    if (bad.length) {
+      box.appendChild(make("h4", "Could not read " + count(bad.length, "copy", "copies")));
+      const list = make("ul");
+      list.className = "char-slots";
+      for (const copy of bad) {
+        const where =
+          copy.where === "install" ? "the file in the game folder" : "snapshot " + visible(String(copy.snapshot_id));
+        list.appendChild(make("li", where + ": " + shown(String(copy.reason))));
+      }
+      box.appendChild(list);
+    }
+    const damaged = objects(report.damaged_snapshots);
+    if (damaged.length) {
+      box.appendChild(
+        make(
+          "h4",
+          count(damaged.length, "snapshot", "snapshots") +
+            " did not load, so wowlab cannot tell whether they hold this character",
+        ),
+      );
+      const list = make("ul");
+      list.className = "char-slots";
+      for (const d of damaged) list.appendChild(make("li", visible(String(d.name)) + ": " + shown(String(d.reason))));
+      box.appendChild(list);
+    }
+  }
+
+  function drawHistory(report) {
+    const box = byId("char-history");
+    box.replaceChildren();
+    const rows = objects(report.rows).filter((r) => historyNum(r.saved_at_ns) !== null);
+    if (rows.length < 2) {
+      const so = rows.length
+        ? "One save of this character so far, written " + localTime(rows[0].saved_at_ns) + "."
+        : "No save of this character could be read.";
+      box.appendChild(charLine(so, "char-count"));
+      box.appendChild(charLine(HISTORY_FEW, "char-line"));
+    } else {
+      const span =
+        count(rows.length, "save", "saves") + ", " + dayOf(rows[0].saved_at_ns) + " to " +
+        dayOf(rows[rows.length - 1].saved_at_ns) + ". A time is the file's modification time: when the game " +
+        "wrote it at logout or /reload, or when a restore put it back.";
+      box.appendChild(charLine(span, "char-count"));
+      const charts = make("div");
+      charts.className = "history-charts";
+      charts.append(
+        historyChart(
+          "Equipped item level (the client's average, as the addon recorded it)",
+          rows.map((r) => historyNum(r.item_level)),
+          rows,
+          oneDecimal,
+        ),
+        historyChart("Level", rows.map((r) => historyNum(r.level)), rows, String),
+      );
+      box.appendChild(charts);
+    }
+    if (rows.length) box.appendChild(historyTable(rows));
+    if (rows.length >= 2) {
+      box.appendChild(make("h4", "Changes, newest first"));
+      box.appendChild(historyList(rows));
+    }
+    historyMissing(box, report);
+    const notes = texts(report.notes);
+    if (notes.length) {
+      const more = make("details");
+      more.className = "history-notes";
+      more.appendChild(make("summary", count(notes.length, "note", "notes") + " on what these figures are"));
+      more.appendChild(charNotes(notes));
+      box.appendChild(more);
+    }
+  }
 
   // ─── the looks tab (M14-04, §16.3) ───
   // "Download tables and write the page" runs `looks page` (no parameters: its default place

@@ -279,6 +279,9 @@ def test_a_later_pick_clears_the_link(server: Any, forever: Path, tmp_path: Path
 
 def test_the_origin_constant_is_the_shipped_sites() -> None:
     script = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    assert script.count("://") == 1
+    # The other `://` is the SVG namespace (M17-03), a name, not an origin.
+    namespace = 'const SVG_NS = "http://www.w3.org/2000/svg";'
+    assert script.count(namespace) == 1
+    assert script.replace(namespace, "").count("://") == 1
     assert f'const DRESSING_ORIGIN = "{dressing.load_sites().site.origin}";' in script
     assert script.count(".href") == 1 and "link.href = checked;" in script

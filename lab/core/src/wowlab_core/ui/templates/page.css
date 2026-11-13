@@ -535,6 +535,25 @@ pre:empty { display: none; }
 .macro-findings, .macro-slots { padding-left: var(--space-5); }
 .macro-finding { color: var(--ruin); }
 .macro-clean { margin: var(--space-1) 0; color: var(--text-muted); }
+/* the history panel (M17-03): two small charts, the table that carries the
+   same values, and the changes, newest first. The charts take their colours
+   from the tokens through their classes, and scale to the panel. */
+.history-charts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-2) 0 var(--space-3); }
+.history-chart { flex: 1 1 18rem; min-width: 0; max-width: 40rem; }
+.history-caption { margin: 0 0 var(--space-1); color: var(--text); }
+.history-svg { display: block; width: 100%; height: auto; }
+.history-axis { fill: none; stroke: var(--rule-strong); stroke-width: 1; }
+.history-line { fill: none; stroke: var(--wellspring); stroke-width: 2; stroke-linejoin: round; }
+.history-dot { fill: var(--brass); }
+.history-label { fill: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
+.history-end { text-anchor: end; }
+.history-table { max-width: 100%; overflow-x: auto; margin: 0 0 var(--space-3); }
+.history-table caption { text-align: left; color: var(--text-muted); padding: 0 0 var(--space-1); }
+.history-table th[scope="row"] { font-family: var(--font-mono); font-size: 14px; font-weight: 400; white-space: nowrap; }
+.history-list { margin: 0; padding-left: var(--space-5); }
+.history-list > li { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.history-list ul { margin: var(--space-1) 0 0; padding-left: var(--space-5); unicode-bidi: isolate; }
+.history-notes { margin-top: var(--space-3); color: var(--text-muted); }
 
 /* ─── the Account tab (M17-01): every character in one table, which
    scrolls in its own labelled, focusable box on a narrow window ─── */
