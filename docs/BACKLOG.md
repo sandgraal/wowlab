@@ -3174,7 +3174,7 @@ The first screen leads with the account hub and the backup button, with one scre
 
 ---
 
-## [ ] M17-12 — M17 review
+## [x] M17-12 — M17 review
 **Size:** S · **Depends on:** M17-01, M17-02, M17-03, M17-04, M17-05, M17-06, M17-07, M17-08, M17-09, M17-10, M17-11, M17-13, M16-32, M16-33 · **Sources:** ADR-0024
 
 The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release downloads (GitHub and PyPI), stars, and issue and discussion authors who are not the owner. Then it covers what shipped and what is left. It stops dispatch until the owner picks the next wave.
