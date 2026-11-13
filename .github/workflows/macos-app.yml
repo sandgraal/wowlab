@@ -1,0 +1,174 @@
+name: macOS app
+
+# Builds and smoke-tests the macOS app (M17-08, ADR-0038) without a release:
+# on a pull request that changes what the app is built from, and by hand
+# (workflow_dispatch) on any branch. It publishes nothing, holds no secret
+# and writes nothing outside its own artifacts; the zip it uploads is kept
+# seven days for a person to try. The release itself builds the app in
+# release.yml, from the tag's wheel, with the same steps as the `app` and
+# `app_smoke` jobs below (tests/packaging/test_macos_app.py holds the two
+# to the same steps); here the wheel is built from the checked-out commit,
+# exactly as release.yml's `build` job builds it.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packaging/**"
+      - "scripts/app_smoke.py"
+      - "scripts/record_url.py"
+      - ".github/workflows/macos-app.yml"
+      - ".github/workflows/release.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  wheel:
+    name: Build the wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.wheel.outputs.version }}
+      wheel: ${{ steps.wheel.outputs.wheel }}
+      wheel_sha256: ${{ steps.wheel.outputs.wheel_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: uv build
+        run: >-
+          uv build --package wowlab-core --no-sources --no-create-gitignore
+          --build-constraints lab/core/build-constraints.txt --require-hashes
+          --out-dir "$RUNNER_TEMP/dist"
+      - name: The wheel, its version and its SHA-256
+        id: wheel
+        run: |
+          version="$(uv run --isolated --no-project --python "$PYTHON_VERSION" -- python -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' lab/core/pyproject.toml)"
+          wheel="wowlab_core-$version-py3-none-any.whl"
+          mkdir release
+          cp "$RUNNER_TEMP/dist/$wheel" release/
+          {
+            echo "version=$version"
+            echo "wheel=$wheel"
+            echo "wheel_sha256=$(sha256sum -- "release/$wheel" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  app:
+    name: Build the macOS app
+    needs: wheel
+    runs-on: macos-latest
+    timeout-minutes: 30
+    outputs:
+      app_sha256: ${{ steps.zip.outputs.app_sha256 }}
+    env:
+      VERSION: ${{ needs.wheel.outputs.version }}
+      WHEEL: ${{ needs.wheel.outputs.wheel }}
+      WHEEL_SHA256: ${{ needs.wheel.outputs.wheel_sha256 }}
+      APP_ZIP: wowlab-${{ needs.wheel.outputs.version }}-macos-arm64.zip
+    steps:
+      # The spec, the launcher and uv.lock come from the checked-out commit;
+      # the code that is frozen comes from the wheel only (ADR-0038 item 2).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+      - name: The wheel is the one the build hashed
+        run: |
+          printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" > "$RUNNER_TEMP/expected-wheel"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-wheel")" -eq 1
+          cd "$RUNNER_TEMP/release"
+          shasum -a 256 -c "$RUNNER_TEMP/expected-wheel"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # A virtual environment of its own: the wheel's dependencies at the
+      # versions uv.lock pins, with their hashes, then PyInstaller from the
+      # `packaging` group (ADR-0038 item 1), then the wheel itself. The
+      # Python frozen into the app is uv's own build of 3.12, never whatever
+      # the runner image happens to carry.
+      - name: A clean virtual environment with the wheel and PyInstaller
+        run: |
+          uv export --frozen --package wowlab-core --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
+          uv export --frozen --only-group packaging --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/packaging.txt"
+          uv venv --managed-python --python "$PYTHON_VERSION" "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes -r "$RUNNER_TEMP/runtime.txt" -r "$RUNNER_TEMP/packaging.txt"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps "$RUNNER_TEMP/release/$WHEEL"
+      # Run outside the checkout, so nothing of the working tree is on the
+      # path PyInstaller analyses but packaging/ itself.
+      - name: PyInstaller, one folder, no UPX
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/pyinstaller" --noconfirm --clean --distpath "$RUNNER_TEMP/dist" --workpath "$RUNNER_TEMP/work" "$GITHUB_WORKSPACE/packaging/wowlab.spec"
+          test "$(lipo -archs "$RUNNER_TEMP/dist/wowlab.app/Contents/MacOS/wowlab")" = arm64
+          codesign --verify --deep --strict "$RUNNER_TEMP/dist/wowlab.app"
+      - name: Zip the app and record its SHA-256
+        id: zip
+        run: |
+          mkdir "$RUNNER_TEMP/app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/dist/wowlab.app" "$RUNNER_TEMP/app/$APP_ZIP"
+          echo "app_sha256=$(shasum -a 256 "$RUNNER_TEMP/app/$APP_ZIP" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app
+          path: ${{ runner.temp }}/app/
+          if-no-files-found: error
+          retention-days: 7
+
+  app_smoke:
+    name: Smoke-test the macOS app
+    needs: [wheel, app]
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.wheel.outputs.version }}
+      APP_ZIP: wowlab-${{ needs.wheel.outputs.version }}-macos-arm64.zip
+      APP_SHA256: ${{ needs.app.outputs.app_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: app
+          path: ${{ runner.temp }}/app
+      - name: The zip is the one the build hashed
+        run: |
+          printf '%s  %s\n' "$APP_SHA256" "$APP_ZIP" > "$RUNNER_TEMP/expected-app"
+          test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-app")" -eq 1
+          cd "$RUNNER_TEMP/app"
+          shasum -a 256 -c "$RUNNER_TEMP/expected-app"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Unzip it and run the smoke test
+        run: |
+          mkdir "$RUNNER_TEMP/unzipped"
+          ditto -x -k "$RUNNER_TEMP/app/$APP_ZIP" "$RUNNER_TEMP/unzipped"
+          codesign --verify --deep --strict "$RUNNER_TEMP/unzipped/wowlab.app"
+          uv run --isolated --no-project --python "$PYTHON_VERSION" -- python scripts/app_smoke.py --exe "$RUNNER_TEMP/unzipped/wowlab.app/Contents/MacOS/wowlab" --version "$VERSION"

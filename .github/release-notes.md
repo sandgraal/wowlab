@@ -35,12 +35,20 @@ With [uv](https://docs.astral.sh/uv/) installed:
 
 Then run `wowlab --version` and `wowlab doctor --offline`.
 
+## The Mac app (Apple silicon)
+
+No terminal needed: download `wowlab-{{VERSION}}-macos-arm64.zip` below (it is attached a little after the release appears; if it never does, its build failed, so use the install line above), double-click it, drag `wowlab.app` into Applications and open it from there. It is the same wowlab, with its own Python inside, for Macs with Apple silicon; Intel Macs use the install line. It never updates itself.
+
+The app is not signed by an Apple developer account, so macOS refuses it the first time. On macOS 15 (Sequoia) and later, Control-click and Open no longer get past this: click **Done** in the message, open **System Settings → Privacy & Security**, click **Open Anyway** beside the line about `wowlab` and confirm with your password or Touch ID, then open the app again and choose **Open Anyway**. (Not yet confirmed on this app on every macOS version.) A Terminal window then runs `wowlab ui` and your browser opens the explorer; closing the window stops wowlab.
+
+The zip has its line in `SHA256SUMS` and its own attestation: `gh attestation verify wowlab-{{VERSION}}-macos-arm64.zip --repo sandgraal/wowlab --signer-workflow sandgraal/wowlab/.github/workflows/release.yml --source-ref refs/tags/{{TAG}}`.
+
 ## Check the download
 
 The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SUMS`, but `uv tool install` does not check it, and checking a file you downloaded says nothing about the copy `uv tool install <address>` downloads again. To install exactly the file you checked:
 
 1. Download the wheel, the sdist and `SHA256SUMS` attached below into one empty folder, and open a terminal there.
-2. Check them. Run `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter). Then check where the wheel was built: the wheel and the sdist each carry a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/) run
+2. Check them. Run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS, `shasum -a 256 -c SHA256SUMS --ignore-missing`; `--ignore-missing` skips the Mac app's line when you did not download it); each file has to print `OK`. On Windows, run `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and compare the hash with its line in `SHA256SUMS` (the case of the letters does not matter). Then check where the wheel was built: the wheel and the sdist each carry a signed build-provenance attestation. With the [GitHub CLI](https://cli.github.com/) run
 
    ```
    gh attestation verify wowlab_core-{{VERSION}}-py3-none-any.whl --repo sandgraal/wowlab --signer-workflow sandgraal/wowlab/.github/workflows/release.yml --source-ref refs/tags/{{TAG}}
