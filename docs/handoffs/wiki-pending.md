@@ -59,6 +59,39 @@ condition is kept.
 | #502 | M16-109 | `doctor`'s one answer when it cannot work out what a change did, naming a whole snapshot to restore | Snapshots-and-Undo; the doctor page |
 | #504, #510 | M16-118, M16-121 | "version unknown" explained in words (doctor, first run, `db2 --build`, `addon install`); `doctor --json` `game_data.detail` names the case, and `lab_addon.detail` carries the new text | the doctor page; Getting-Started (first run); Command-Reference (`db2`) |
 | #505 | M16-116 | `char list --account X --json`: every flavor listed, with `account_found` | Command-Reference (`char list`) |
+| #521 | M17-02 | New `char history`: one character over time, one row per snapshot that holds its lab-addon file (and one for the file in the game folder now), with level, equipped item level and spec, and the gear and currencies that changed since the row before. `--character`, `--account`, `--flavor`, `--json`, `--notes` | Command-Reference: add the row below; Lab-Addon-and-Characters (a "Your character over time" section); Snapshots-and-Undo (snapshots build the history); CLI-Reference (regenerate) |
+| #523 | M17-01 | The Account tab is the browser view's home tab: every character folder in every flavor, sortable, filterable by flavor and class, a click opens the Character tab. New `char list --summary` prints the same table, with `--notes` | Home and Getting-Started (`wowlab ui` opens on the Account tab); Lab-Addon-and-Characters; the `wowlab ui` page (a new Account tab section, with a screenshot); Command-Reference: add the row below; CLI-Reference (regenerate) |
+| #525 | M17-08 | The Mac app (Apple silicon), a zip on the release page: double-click it, no terminal and no uv needed. Unsigned: the first open needs a right-click and Open. No release has carried it yet | Getting-Started; Installing (a "The Mac app" section, from the install guide's section of that name); Home (the install line). Only once a release carries it |
+| #529 | M16-124 | `snap create` with no `--flavor` takes one snapshot per flavor | Snapshots-and-Undo (`snap create`); Command-Reference (`snap create`) |
+| #530 | M16-123 | `doctor` no longer offers a lab-addon install into a game version it cannot name; it says the install has to wait until the version is known | the doctor page; Lab-Addon-and-Characters, if it quotes doctor's next step |
+| #531 | M16-122 | `doctor` names the wowlab that is running: its version, how it was installed and where it runs from, and a different checkout in the current folder | the doctor page; Installing and Troubleshooting ("which wowlab am I running?"); CLI-Reference (regenerate) |
+| #532 | M17-04 | Take a backup now on the Account tab: one line per flavor saying how old the last backup is, "The game updated since your last backup" after a patch, a Take a backup now button (only into wowlab's own store) and Restore this backup…, which opens the Commands tab on the plan. `doctor` says the game updated too | Home; Getting-Started (the first backup); Snapshots-and-Undo (a "From the browser" section); the `wowlab ui` page (a screenshot of the backup line); the doctor page |
+| #533 | M17-09 | The Windows app (64-bit), a zip on the release page: extract it, double-click `wowlab.exe`. Unsigned: Windows may show "Windows protected your PC" (More info, then Run anyway). Untested by a person on a real Windows install; CI builds it and starts it. No release has carried it yet | Getting-Started; Installing (a "The Windows app" section); Home. Say "untested" wherever Windows is named. Only once a release carries it |
+| #534 | M16-130 | `char list --help`'s short line says it lists every character folder | CLI-Reference (regenerate) |
+| #535 | M16-32 | The release workflow publishes the wheel to PyPI by trusted publishing. User-facing at the first upload: no PyPI install line goes on any page until that upload exists | Getting-Started and Installing, only after the first upload |
+| #537, #544 | M17-05, M17-04 fix | The Account tab's Patch day card: addons made for another game version, addons that need one that will not load, and saved data no installed addon declares; a line opens its file in the Explorer. A part of the Account tab that fails says "This part of the page could not be drawn" with the reason, in that part only, and the rest still draws (#544 also fixed the character list not appearing) | the `wowlab ui` page (Account tab: the Patch day card; the "could not be drawn" line, under troubleshooting); Getting-Started (patch day) |
+| #538 | M17-03 | The Character tab's History panel: the same rows as `char history`, newest first, for the character picked | Lab-Addon-and-Characters (Character tab); the `wowlab ui` page (Character tab) |
+| #540 | M16-131 | New `sv list --unreadable`: only the saved-data files wowlab cannot read (a file cut off during a save, say), with where and why; the Patch day card lists them too | SavedVariables-and-Merging; Command-Reference: add the row below; CLI-Reference (regenerate); the `wowlab ui` page (Patch day card) |
+| #548 | M16-32 | The distribution is renamed from `wowlab-core` to `wowlab` (the command is still `wowlab`); the next release's files are `wowlab-<version>-…`. Upgrade note: "Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first." User-facing at the next release | Getting-Started and Installing (the install line and the upgrade note, at the next release); Home, if it names `wowlab-core`; FAQ, if it names the wheel |
+| #549 | M17-11 | This list's Command-Reference rows, and the README's first screen (the Account tab and Take a backup now, with a screenshot of each) | Home: lead with the Account tab and Take a backup now, as the README does; the two images are in the repository's `docs/assets/` folder and may be linked from the wiki |
+
+### Command-Reference rows, ready to paste
+
+Under the characters heading, replacing the `char list` row (it still says
+"Every character folder with a `WowLab.lua`", which has been wrong since
+#363: `char list` lists every character folder, with or without one):
+
+| Command | What it does | Writes? |
+|---|---|---|
+| `wowlab char list [--account A] [--flavor F]` | Every character folder, in every account and every flavor. For a folder the lab-addon has written to: when it last saved, and the spec, or why the file could not be read. For one it has not: "no lab record", and how many settings, macros and saved-data files the folder holds. | No |
+| `wowlab char list --summary` | One line per character: level, class, race, spec, item level, professions and when it last logged out or reloaded, or what to do when the lab-addon has not recorded it yet. The same table as the Account tab of `wowlab ui`. `--notes` adds what the figures mean. | No |
+| `wowlab char history [--character C]` | One character over time: one row per snapshot you took that holds its lab-addon file, and one for now, with level, equipped item level and spec, and the gear and currencies that changed since the row before. Without `--character`, the character that saved last. Take snapshots with `wowlab snap create` to build history. | No |
+
+Under the SavedVariables heading:
+
+| Command | What it does | Writes? |
+|---|---|---|
+| `wowlab sv list --unreadable` | Only the saved-data files wowlab cannot read (a file cut off during a save, say), each with where it is and why. | No |
 
 ## Merged between the last wiki pass (2026-10-22 09:07) and 2026-11-04
 
