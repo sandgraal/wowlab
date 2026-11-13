@@ -4,6 +4,7 @@
 import hashlib
 import json
 import os
+import re
 import shlex
 import sys
 import tomllib
@@ -572,6 +573,40 @@ def _checkout_of(start: Path) -> tuple[Path, str] | None:
     return None
 
 
+def _checkout_holding(package: Path) -> tuple[Path, str] | None:
+    """The source checkout whose own source folder `package` is
+    (`<checkout>/lab/core/src/wowlab_core`), with its version; None for a
+    copy installed anywhere else, a checkout's own environment included."""
+    if len(package.parents) < 4:
+        return None
+    root = package.parents[3]
+    if root.joinpath("lab", "core", "src", package.name) != package:
+        return None
+    version = _checkout_version(root)
+    return (root, version) if version is not None else None
+
+
+_PRE = {"alpha": "a", "a": "a", "beta": "b", "b": "b", "c": "rc", "rc": "rc", "pre": "rc"}
+_PRE_RE = re.compile(r"[-_.]?(alpha|beta|pre|rc|a|b|c)[-_.]?(\d*)")
+_POST_RE = re.compile(r"[-_.]?(post|dev)[-_.]?(\d*)")
+
+
+def _normal_version(v: str) -> str:
+    """`v` in one spelling for the common forms the packaging rules allow:
+    `0.2.0-rc.1` as `0.2rc1`, `V1.0.0` as `1`."""
+    v = v.strip().lower().removeprefix("v")
+    release = re.match(r"\d+(?:\.\d+)*", v)
+    if release is None:
+        return v
+    head = [str(int(p)) for p in release.group().split(".")]
+    while len(head) > 1 and head[-1] == "0":
+        head.pop()
+    rest = v[release.end() :]
+    rest = _PRE_RE.sub(lambda m: _PRE[m.group(1)] + (m.group(2) or "0"), rest, count=1)
+    rest = _POST_RE.sub(lambda m: f".{m.group(1)}{m.group(2) or '0'}", rest)
+    return ".".join(head) + rest
+
+
 def _wowlab_probe() -> tuple[str, Path, str | None, bool, Path, Path]:
     """What `_running_wowlab` is given on this machine: the version, the
     package folder, the install record's direct_url.json (None when there
@@ -610,7 +645,7 @@ def _running_wowlab(
     kind: WowlabInstall = (
         "not_installed" if not found else "editable" if _editable(direct_url) else "installed"
     )
-    mine = _checkout_of(package)
+    mine = _checkout_holding(package)
     here = _checkout_of(cwd)
     other = here if here is not None and (mine is None or here[0] != mine[0]) else None
     if mine is not None:
@@ -1501,7 +1536,7 @@ def _print_wowlab(w: RunningWowlab) -> None:
         w.install != "installed"
         and w.checkout is not None
         and w.checkout_version
-        and w.checkout_version != w.version
+        and _normal_version(w.checkout_version) != _normal_version(w.version)
     ):
         command = _run_checkout(w.checkout)
         _say_prose(

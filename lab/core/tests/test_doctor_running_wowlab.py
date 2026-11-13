@@ -269,3 +269,51 @@ def test_doctor_redact_covers_the_paths_constructed(
     assert w["version"] == "0.1.0rc1"
     for key in ("package", "location", "other_checkout"):
         assert w[key].startswith("<HOME>"), w[key]
+
+
+def test_a_copy_in_a_checkouts_own_environment_is_a_copy_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A non-editable copy in the checkout's `.venv` (`uv sync
+    --no-editable`) is not the checkout: it is named by its environment, and
+    run inside the checkout, the checkout's own version is said."""
+    clone = tmp_path / "clone"
+    _checkout(clone, "0.2.0")
+    env = clone / ".venv"
+    w = cli._running_wowlab("0.1.0", _environment(env), WHEEL, True, clone, env)
+    assert w.install == "installed"
+    assert w.checkout is None
+    assert w.location == str(env)
+    assert w.other_checkout == str(clone)
+    assert _text(w, capsys) == [
+        f"wowlab: version 0.1.0, installed in {env}",
+        "  The current folder is in a wowlab source checkout (version 0.2.0), which this "
+        "wowlab does not run from: to run that checkout, run "
+        f"`uv run --project {clone} wowlab doctor`.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "same"),
+    [
+        ("0.2.0-rc.1", "0.2.0rc1", True),
+        ("1.0", "1.0.0", True),
+        ("V0.1.0", "0.1.0", True),
+        ("0.1.0.post1", "0.1.0-post1", True),
+        ("0.1.0", "0.2.0", False),
+        ("0.1.0rc1", "0.1.0", False),
+        ("0.10.0", "0.1.0", False),
+        ("0.1.0", "0.1.0.dev0", False),
+    ],
+)
+def test_versions_spelled_two_ways_are_one_constructed(a: str, b: str, same: bool) -> None:
+    assert (cli._normal_version(a) == cli._normal_version(b)) is same
+
+
+def test_an_editable_checkout_at_the_same_version_spelled_otherwise_says_nothing_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clone = tmp_path / "clone"
+    package = _checkout(clone, "0.2.0-rc.1")
+    w = cli._running_wowlab("0.2.0rc1", package, EDITABLE, True, clone, clone / ".venv")
+    assert len(_text(w, capsys)) == 1

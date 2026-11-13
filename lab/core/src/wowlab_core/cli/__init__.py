@@ -917,6 +917,15 @@ from wowlab_core.cli._cmd_doctor import (
     _OFFLINE_DEPRECATED as _OFFLINE_DEPRECATED,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _POST_RE as _POST_RE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _PRE as _PRE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _PRE_RE as _PRE_RE,
+)
+from wowlab_core.cli._cmd_doctor import (
     _RECORD_HOW as _RECORD_HOW,
 )
 from wowlab_core.cli._cmd_doctor import (
@@ -1019,6 +1028,9 @@ from wowlab_core.cli._cmd_doctor import (
     _characters_step as _characters_step,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _checkout_holding as _checkout_holding,
+)
+from wowlab_core.cli._cmd_doctor import (
     _checkout_of as _checkout_of,
 )
 from wowlab_core.cli._cmd_doctor import (
@@ -1104,6 +1116,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _no_version_cause as _no_version_cause,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _normal_version as _normal_version,
 )
 from wowlab_core.cli._cmd_doctor import (
     _offers_undo as _offers_undo,
