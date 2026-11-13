@@ -5195,6 +5195,8 @@ snapshots that wowlab already has, and writes only through `guard`.
 | CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
 | CW-7 | Owner and volunteers: one retail capture from the owner's own install (M17-10), and one human Windows run (M13-02) recruited through M16-32's announcement | — | owner |
 
+*Amended 2026-11-13 (owner decision, in session):* gold (M17-06) and the retail capture (M17-10) are dropped. The hub and the timeline do not show gold; the README keeps saying retail is untested. CW-7 is now only the Windows run (M13-02).
+
 *Amended 2026-11-12 (M17-01), CW-1 as built.* The Account tab is the
 UI's first tab and opens by default; the order is Account, Character,
 Explorer, Gaps, Commands, Looks. It is drawn from one run of the new read
@@ -5212,7 +5214,7 @@ shows as "not recorded" with the reason as the cell's title. Class, race,
 spec and profession names come only from game tables already cached for the
 flavor's installed version (`SkillLine`'s `DisplayName_lang` for
 professions); otherwise the ids are shown. Gold is not in the table: no
-schema records it yet (M17-06). The text form prints three lines per
+schema records it (M17-06 was dropped on 2026-11-13). The text form prints three lines per
 character, and `--notes` the standing notes. Clicking a recorded row (or its
 name, a button) opens the Character tab on that character, moving the
 header's flavor to the row's.
@@ -5274,7 +5276,7 @@ says so and what makes history appear (log out or `/reload`, then take a
 backup). The charts are SVG the page's own script makes from numbers and
 dates only, in a closed set of elements (`svg`, `polyline`, `circle`,
 `text`) and attributes, hidden from screen readers; no new library, and
-gold is not charted until a record holds it (M17-06).
+gold is not charted (M17-06 was dropped on 2026-11-13).
 
 *Amended 2026-11-13 (M17-05), CW-4 as built.* The Account tab's
 **Patch day** card sits between the Backup panel and the table. Once
