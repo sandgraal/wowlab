@@ -58,20 +58,58 @@ def _section() -> str:
     return text[start:end]
 
 
-def _table() -> dict[str, float]:
+_ROW = re.compile(r"^\| `([a-z-]+)` \|.*\| ([0-9.]+) \|$")
+
+
+def _tables(section: str) -> list[dict[str, float]]:
+    """Every Markdown table in `section` that has command rows, in order: a
+    command id -> the table's last column. A table is a run of lines that
+    start with `|`; a command listed twice in one table is an error, so no
+    row can hide another."""
+    tables: list[dict[str, float]] = []
     rows: dict[str, float] = {}
-    for line in _section().splitlines():
-        match = re.match(r"^\| `([a-z-]+)` \|.*\| ([0-9.]+) \|$", line)
+    for line in [*section.splitlines(), ""]:
+        if not line.startswith("|"):
+            if rows:
+                tables.append(rows)
+            rows = {}
+            continue
+        match = _ROW.match(line)
         if match:
+            assert match.group(1) not in rows, f"{match.group(1)} listed twice in one table"
             rows[match.group(1)] = float(match.group(2))
-    return rows
+    return tables
 
 
 # ─── the spec table and the script agree ────────────────────────────────────
 
 
 def test_the_plan_table_matches_the_script_baselines() -> None:
-    assert _table() == perf_budget.BASELINE
+    tables = _tables(_section())
+    assert tables, "no baseline table in §6.12"
+    for table in tables:
+        assert table == perf_budget.BASELINE
+
+
+def test_a_baseline_table_that_disagrees_with_the_script_is_caught() -> None:
+    # Constructed: the real §6.12 with the first table's first row changed.
+    lines = _section().splitlines()
+    first = next(i for i, line in enumerate(lines) if _ROW.match(line))
+    lines[first] = re.sub(r"\| [0-9.]+ \|$", "| 99.9 |", lines[first])
+    tables = _tables("\n".join(lines))
+    assert tables[0] != perf_budget.BASELINE
+    assert any(table != perf_budget.BASELINE for table in tables)
+
+
+def test_a_command_listed_twice_in_one_table_is_refused() -> None:
+    # Constructed: one table with the same command on two rows.
+    text = (
+        "| Command | What is run | Baseline ratio |\n|---|---|---|\n"
+        "| `version` | `wowlab --version` | 9.9 |\n"
+        "| `version` | `wowlab --version` | 1.8 |\n"
+    )
+    with pytest.raises(AssertionError, match="listed twice"):
+        _tables(text)
 
 
 def test_every_command_has_a_positive_baseline() -> None:
