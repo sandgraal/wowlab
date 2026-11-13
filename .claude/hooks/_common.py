@@ -86,14 +86,21 @@ def deny(event: str, reason: str) -> None:
 
 # ─── paths ───────────────────────────────────────────────────────────────────
 
-_VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+# `$NAME` or `${NAME}`, nothing else. A review of 2026-11-13 found the old
+# pattern (`\$\{?NAME\}?`) matching the `${PWD` of `${PWD:+.claude}` and
+# leaving the operator as path text, so a write into `.claude/` resolved to
+# a harmless path. Operator forms, positional and special parameters, and a
+# zsh modifier or subscript right after a name (`$PWD:h`, `$S[1,3]`) are
+# now unresolved.
+_VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 def expand_vars(token: str, cwd: str) -> tuple[str, bool]:
     """Expand the shell variables a path can plausibly use.
 
-    Returns (expanded, fully_resolved). Unknown variables are left in place
-    and reported as unresolved so the caller can refuse to guess.
+    Returns (expanded, fully_resolved). Unknown variables, and any `$` or
+    `~` form this cannot follow, are left in place and reported as
+    unresolved so the caller can refuse to guess.
     """
     known = {
         "CLAUDE_PROJECT_DIR": os.environ.get("CLAUDE_PROJECT_DIR", ""),
@@ -105,15 +112,20 @@ def expand_vars(token: str, cwd: str) -> tuple[str, bool]:
 
     def sub(m: re.Match[str]) -> str:
         nonlocal unresolved
-        val = known.get(m.group(1))
-        if not val:
+        val = known.get(m.group(1) or m.group(2))
+        if not val or token[m.end() : m.end() + 1] in (":", "["):
             unresolved = True
             return m.group(0)
         return val
 
     out = _VAR.sub(sub, token)
-    if out.startswith("~"):
+    if "$" in _VAR.sub("", token):
+        unresolved = True
+    if out == "~" or out.startswith("~/"):
         out = str(Path.home()) + out[1:]
+    elif out.startswith("~"):
+        # `~+` is $PWD, `~-` is $OLDPWD, `~name` is another home.
+        unresolved = True
     return out, not unresolved
 
 

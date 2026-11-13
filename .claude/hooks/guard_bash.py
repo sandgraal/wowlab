@@ -56,6 +56,8 @@ from _common import (
 )
 
 EVENT = "PreToolUse"
+_MOVES_PATHS = re.compile(r"(HOME|PWD|OLDPWD|CDPATH)=")
+_GLOB = re.compile(r"[*?\[{]")
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
 _GRAPHQL_REFUSAL = (
     "GraphQL mutations change repo state without a prompt; only the "
@@ -529,7 +531,14 @@ def _cd_target(seg: list[str], cwd: str) -> str | None:
     i = command_position(seg, "cd")
     if i is None:
         return None
+    if "-" in seg[i + 1 :]:
+        # `cd -` returns to $OLDPWD, which the guard does not track; it was
+        # read as `cd ~` (review of 2026-11-13).
+        deny(EVENT, "`cd -` cannot be followed; cd to a literal path.")
     rest = [a for a in seg[i + 1 :] if not a.startswith("-")]
+    if len(rest) > 1:
+        # zsh's `cd old new` substitutes inside $PWD (review of 2026-11-13).
+        deny(EVENT, "`cd` with two paths cannot be followed; cd to one literal path.")
     target = rest[0] if rest else str(Path.home())
     expanded, ok = expand_vars(target, cwd)
     if not ok:
@@ -553,6 +562,16 @@ def _inspect(
     # Every path this command line writes, with the cd chain followed, so a
     # gh api graphql query file written earlier in the same line is refused:
     # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
+    # A change to these moves where a later path lands in a way the guard
+    # does not model (`HOME=$PWD; echo > ~/AGENTS.md`, `CDPATH=.claude; cd
+    # agents`), so it is refused in any form (review of 2026-11-13).
+    for tok in (t for seg in segments for t in seg):
+        if _MOVES_PATHS.match(tok):
+            deny(
+                EVENT,
+                f"this guard does not follow a change to {tok.split('=')[0]}; "
+                "set it in a separate command.",
+            )
     written: set[str] = set(outer_written)
     scan_cwd = cwd
     for seg in segments:
@@ -580,6 +599,14 @@ def _inspect(
                 deny(
                     EVENT,
                     f"cannot resolve the variable in write target {target!r}; use a literal path.",
+                )
+            if _GLOB.search(expanded):
+                # The shell expands these against files that exist
+                # (`.cla[u]de/settings.json`), so the path checked is not
+                # the path written (review of 2026-11-13).
+                deny(
+                    EVENT,
+                    f"write target {target!r} has a glob or brace pattern; use a literal path.",
                 )
             _root, rel = relative_to_checkout(expanded, cwd)
             reason = shell_write_denial(rel, agent_type)
