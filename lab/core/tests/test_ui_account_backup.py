@@ -445,14 +445,16 @@ def test_the_report_is_read_again_after_a_commands_tab_run_constructed(
     # Showing the tab with nothing run since reads nothing.
     assert shown_again["newRequests"] == []
     assert [r["body"]["command"] for r in ran["newRequests"]] == [CREATE]
-    # The report, then (M17-05) the patch-day card's reads, which the
-    # scenario does not hold here.
+    # The report, then (M17-05) the patch-day card's reads (the second
+    # `sv list` is M16-131's `--unreadable`), which the scenario does not
+    # hold here.
     assert hub_tab._bodies(reread["newRequests"])[0] == {
         "command": ["char", "list"],
         "params": hub_tab.SUMMARY,
     }
     assert [r["command"] for r in hub_tab._bodies(reread["newRequests"])[1:]] == [
         ["addons", "check"],
+        ["sv", "list"],
         ["sv", "list"],
     ] * 2
     assert reread["hubFlavor"] == "f:" + BETA
