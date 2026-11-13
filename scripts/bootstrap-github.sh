@@ -70,6 +70,10 @@ gh api "repos/$REPO/environments/release" \
   --jq '"   environment \(.name): reviewers=\([.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login] | join(","))"'
 gh repo view "$REPO" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge \
   --jq '"   squash=\(.squashMergeAllowed) merge=\(.mergeCommitAllowed) rebase=\(.rebaseMergeAllowed) deleteOnMerge=\(.deleteBranchOnMerge)"'
-echo "done. Remaining owner steps:"
-echo "  - make published releases immutable (assets and tag can no longer change):"
-echo "      gh api -X PUT repos/$REPO/immutable-releases"
+# Immutable releases stay off (owner decision 2026-11-12; ADR-0031 amendment
+# of 2026-11-12, M17-08): the release workflow attaches the macOS app to a
+# release after publishing it, which an immutable release refuses. Tags stay
+# fixed by the release-tags-immutable ruleset above.
+immutable=$(gh api "repos/$REPO/immutable-releases" --jq .enabled 2>/dev/null || echo unknown)
+echo "   immutable releases: $immutable (keep off: the macOS app is attached after publishing)"
+echo "done."

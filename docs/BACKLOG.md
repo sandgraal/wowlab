@@ -77,6 +77,8 @@ Two criteria were met by close equivalents, not literally:
 - **"A fresh user"** was a throwaway `HOME` on the owner's Mac, not a separate account.
 - **"A tag that does not match publishes nothing"** is shown by `release_check.py` and `tests/scripts/test_release.py`, not by pushing a wrong tag. Under the rulesets a tag is permanent.
 
+
+*Note 2026-11-12:* the owner turned immutable releases off so the macOS app and Windows binary can be attached after publishing (ADR-0031 amendment of 2026-11-12, M17-08); the `immutable-releases` step above no longer applies.
 ---
 
 ## [x] M13-04 — First-run flow
@@ -2954,7 +2956,7 @@ With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and list
 - (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
 - (c) unchanged.
 
-The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
+The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default). *Owner decision, 2026-11-12, in session: (a).* With several flavor folders and no `--flavor`, `snap create` takes one snapshot per flavor and names each. Read commands keep the one-flavor rule.
 
 **Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
 
@@ -2983,7 +2985,7 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 
 ---
 
-## [ ] M16-127 — `doctor` lists the sync settings the client has
+## [x] M16-127 — `doctor` lists the sync settings the client has
 **Size:** XS · **Depends on:** nothing · **Sources:** `code-reviewer` on PR #513 (M16-05)
 
 `doctor` prints `synchronizeMacros` with "not set (the client's default, and wowlab cannot tell whether it is on)" (`_SYNC_CVARS` in `cli/_cmd_doctor.py`). On the Forever launch client, build 70888, that CVar does not answer `GetCVar` at all (`docs/LAB_FORMATS.md` §5, §7, amended 2026-11-12), so the line suggests a default that does not exist. `synchronizeBindings` and `synchronizeConfig` read `"1"` with no line in any file. Without hard-coding a flavor or build (L6): a CVar with no line is described as possibly absent on this client rather than as on by default, or the absent default for `synchronizeBindings` and `synchronizeConfig` is stated as observed on one client, worded per `.claude/rules/player-copy.md`.
@@ -2992,7 +2994,7 @@ Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
 
 ---
 
-## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes the remaining chat, GUID and HonorBound gaps
+## [x] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes the remaining chat, GUID and HonorBound gaps
 **Size:** S · **Depends on:** nothing · **Sources:** `security-reviewer` and `code-reviewer` on PR #514 (M16-126); the M16-125 leak of 2026-11-12
 
 On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-list-order.txt` reached a pushed branch, because `GUID_RE` needs `Player-`. M16-126 maps and refuses bare GUIDs in that one file. What is left, in `scripts/lab_capture.py`:
@@ -3006,12 +3008,21 @@ On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-
 
 ---
 
-## [ ] M16-129 — The case-folding symlink test skips on a case-insensitive volume
+## [x] M16-129 — The case-folding symlink test skips on a case-insensitive volume
 **Size:** XS · **Depends on:** nothing · **Sources:** every local run of 2026-11-12
 
 `tests/scripts/test_lab_capture_symlinked_wtf.py::test_constructed_symlinked_wtf_in_another_case_stops_the_capture` fails in its own setup on macOS (`FileExistsError` making `WTF` beside `wtf`), on `main` too. Skip it when the temporary directory folds case, as the existing "temporary volume folds case" skips do. CI on Linux keeps running it.
 
 **Acceptance:** the test skips on a case-insensitive volume and runs on Linux; `make test-fast` green on macOS. Reviewed by `code-reviewer`.
+
+---
+
+## [ ] M16-130 — `char list --help` describes what it lists
+**Size:** XS · **Depends on:** nothing · **Sources:** `domain-reviewer` on PR #527 (2026-11-13)
+
+`char list`'s short help says "Every character with a lab-addon record." (`cli/_cmd_char.py`). Since M16-35 it lists every character folder, with "no lab record" rows, and the Account tab shows the same. A player reading `wowlab --help` is told the opposite of what they see. Reword it per `.claude/rules/player-copy.md`, and check `char list --summary`'s help says the same.
+
+**Acceptance:** the help-drift and player-copy tests pass; `make ci` green. Reviewed by `code-reviewer`. User-facing: `char list --help`.
 
 ---
 
@@ -3023,7 +3034,7 @@ Spec: `docs/LAB_PLAN.md` §19. *Owner pick, 2026-11-12, in session ("go with the
 
 **The bar for this wave.** A ticket here changes what a player sees. Follow-ups found in review are filed only if they change what a player sees or block a ticket in this wave; anything else goes in the review's notes for M17-12.
 
-## [ ] M17-01 — The account hub: the UI's home tab
+## [x] M17-01 — The account hub: the UI's home tab
 **Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-1, §14.4
 
 A new first tab, **Account**, which opens by default; Explorer moves after Character.
@@ -3037,7 +3048,7 @@ A new first tab, **Account**, which opens by default; Explorer moves after Chara
 
 ---
 
-## [ ] M17-02 — `char history`: a character over time, from snapshots
+## [x] M17-02 — `char history`: a character over time, from snapshots
 **Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-2
 
 Every snapshot already holds each character's `WowLab.lua`. `wowlab char history [--character X]` reads that file from every snapshot in the store (read-only, through the store's objects, never the install), plus the live file, and prints one row per distinct record: date, level, average item level, spec, the gear slots that changed (by item name from the link, with the item level), and the currencies that changed.
@@ -3114,7 +3125,7 @@ Both are built from the tagged source, with `SHA256SUMS` and attestations as M16
 
 ---
 
-## [ ] M17-08 — The macOS app, as a release asset
+## [x] M17-08 — The macOS app, as a release asset
 **Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038
 
 *Aligned 2026-11-12 with ADR-0031's amendment and ADR-0038 (both accepted): the app is a frozen PyInstaller build, not a launcher over a clone.* The owner's `install-wowlab-app.sh` is the model for what a double-click does (a visible Terminal window that stops the server when closed), not for how the app is built:
