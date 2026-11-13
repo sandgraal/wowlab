@@ -2215,22 +2215,14 @@
     box.className = "history-chart";
     const known = values.filter((v) => v !== null);
     if (known.length < 2) {
-      box.appendChild(
-        charLine(
-          title + ": recorded in " + known.length + " of " + count(values.length, "save", "saves") + ", too few to draw.",
-          "char-none",
-        ),
-      );
+      const few = title + ": recorded in " + known.length + " of " + count(values.length, "save", "saves");
+      box.appendChild(charLine(few + ", too few to draw.", "char-none"));
       return box;
     }
     const low = Math.min(...known);
     const high = Math.max(...known);
-    box.appendChild(
-      charLine(
-        title + (low === high ? ": " + low + " in every save that records it." : ": from " + low + " to " + high + "."),
-        "history-caption",
-      ),
-    );
+    const range = low === high ? ": " + low + " in every save that records it." : ": from " + low + " to " + high + ".";
+    box.appendChild(charLine(title + range, "history-caption"));
     const c = CHART;
     const across = c.width - c.left - c.right;
     const down = c.height - c.top - c.bottom;
@@ -2242,11 +2234,8 @@
     chart.setAttribute("aria-hidden", "true");
     chart.classList.add("history-svg");
     const axis = document.createElementNS(SVG_NS, "polyline");
-    axis.setAttribute(
-      "points",
-      fixed(c.left) + "," + fixed(c.top) + " " + fixed(c.left) + "," + fixed(c.top + down) + " " +
-        fixed(c.left + across) + "," + fixed(c.top + down),
-    );
+    const corner = [[c.left, c.top], [c.left, c.top + down], [c.left + across, c.top + down]];
+    axis.setAttribute("points", corner.map(([x, y]) => fixed(x) + "," + fixed(y)).join(" "));
     axis.classList.add("history-axis");
     chart.appendChild(axis);
     let run = [];
@@ -2453,23 +2442,16 @@
     box.replaceChildren();
     const rows = objects(report.rows).filter((r) => historyNum(r.saved_at_ns) !== null);
     if (rows.length < 2) {
-      box.appendChild(
-        charLine(
-          rows.length
-            ? "One save of this character so far, written " + localTime(rows[0].saved_at_ns) + "."
-            : "No save of this character could be read.",
-          "char-count",
-        ),
-      );
+      const so = rows.length
+        ? "One save of this character so far, written " + localTime(rows[0].saved_at_ns) + "."
+        : "No save of this character could be read.";
+      box.appendChild(charLine(so, "char-count"));
       box.appendChild(charLine(HISTORY_FEW, "char-line"));
     } else {
-      box.appendChild(
-        charLine(
-          count(rows.length, "save", "saves") + ", " + dayOf(rows[0].saved_at_ns) + " to " +
-            dayOf(rows[rows.length - 1].saved_at_ns) + ". A time is when the game wrote the file, at logout or /reload.",
-          "char-count",
-        ),
-      );
+      const span =
+        count(rows.length, "save", "saves") + ", " + dayOf(rows[0].saved_at_ns) + " to " +
+        dayOf(rows[rows.length - 1].saved_at_ns) + ". A time is when the game wrote the file, at logout or /reload.";
+      box.appendChild(charLine(span, "char-count"));
       const charts = make("div");
       charts.className = "history-charts";
       charts.append(

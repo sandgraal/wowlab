@@ -498,8 +498,8 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # `install show`. A Preview runs a view's command, which is data, not a
     # literal here; its own graders are in test_ui_explorer_stage2.py. The
     # Character tab runs `char list` and `char gear` (M14-08), and `char
-    # binds` and `char macros` (M14-09), all four read commands; that only
-    # that tab runs them is graded in test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
+    # binds` and `char macros` (M14-09) and `char history` (M17-03), all
+    # read commands; that only that tab runs them is graded in test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
     # writes only under the data folder's pages/ (owner ruling 2026-10-15);
     # that it never passes `out` is graded in test_ui_looks.py. The Account
     # tab's Take a backup now (M17-04) runs `snap create`, which writes only into
@@ -515,6 +515,7 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("char", "gear"),
         ("char", "binds"),
         ("char", "macros"),
+        ("char", "history"),
         ("looks", "page"),
         ("snap", "create"),
         ("snap", "diff"),

@@ -213,9 +213,10 @@ def test_the_tree_promises_no_tree_keyboard() -> None:
     assert 'class="tree"' in tree and 'aria-label="Files in the install"' in tree
     for word in ('"treeitem"', '"group"', "aria-level", "aria-selected"):
         assert word not in script.replace('"aria-selected", on ? "true"', ""), word
-    # The one role the script sets is a status line's: status or alert.
+    # The roles the script sets: a status line's (status or alert), and the
+    # labelled region the history table scrolls in (M17-03).
     roles = re.findall(r'setAttribute\("role", ([^)]*)\)', script)
-    assert roles == ['isAlert ? "alert" : "status"'], roles
+    assert roles == ['isAlert ? "alert" : "status"', '"region"'], roles
     for cls in ('"row"', '"twisty"', '"twisty-gap"', '"note"'):
         assert cls in script, cls
     assert 'folder ? "name folder" : "name"' in script
