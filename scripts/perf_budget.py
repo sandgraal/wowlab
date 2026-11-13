@@ -101,15 +101,18 @@ COMMANDS: dict[str, tuple[tuple[str, ...], frozenset[int]]] = {
     "version": (("--version",), frozenset({0})),
 }
 
-# Command id -> its cost as a ratio to the calibration loop's CPU time. How
-# these were set is in docs/LAB_PLAN.md §6.12; the table there and this one
-# are kept equal by tests/scripts/test_perf_budget.py.
+# Command id -> its cost as a ratio to the calibration loop's CPU time. Each
+# is the highest ratio of four runs of perf-nightly.yml on main, on
+# ubuntu-latest (runs 42904800039, 42958822653, 43154402606 and
+# 43365102720, 2026-11-10 to 2026-11-13), rounded up to one decimal (M16-88).
+# How these were set is in docs/LAB_PLAN.md §6.12; the table there and this
+# one are kept equal by tests/scripts/test_perf_budget.py.
 BASELINE: dict[str, float] = {
-    "whole-restore": 15.6,
-    "sv-dump-json": 2.5,
-    "sv-merge": 7.8,
-    "addons-list": 2.5,
-    "version": 2.4,
+    "whole-restore": 13.0,
+    "sv-dump-json": 1.9,
+    "sv-merge": 6.2,
+    "addons-list": 2.0,
+    "version": 1.8,
 }
 
 

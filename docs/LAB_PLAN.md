@@ -1653,14 +1653,33 @@ touches no real install or snapshot store.
 
 | Command | What is run | Baseline ratio |
 |---|---|---|
-| `whole-restore` | `snap restore ID --dry-run --json`, the 20,000-file tree, nothing to change | 15.6 |
-| `sv-dump-json` | `sv dump --json` of a captured character `WowLab.lua` (23 KB) | 2.5 |
-| `sv-merge` | `sv merge WowLab.lua --into` one captured character `--from` the other `--json` (conflicts listed, nothing written, exit 1) | 7.8 |
-| `addons-list` | `addons list --json` | 2.5 |
-| `version` | `wowlab --version` | 2.4 |
+| `whole-restore` | `snap restore ID --dry-run --json`, the 20,000-file tree, nothing to change | 13.0 |
+| `sv-dump-json` | `sv dump --json` of a captured character `WowLab.lua` (23 KB) | 1.9 |
+| `sv-merge` | `sv merge WowLab.lua --into` one captured character `--from` the other `--json` (conflicts listed, nothing written, exit 1) | 6.2 |
+| `addons-list` | `addons list --json` | 2.0 |
+| `version` | `wowlab --version` | 1.8 |
 
-**These baselines are provisional** until they are re-recorded from the
-first runs of the nightly job on `main`, on `ubuntu-latest`. They were set
+*Re-recorded 2026-11-13 (M16-88).* The baselines above come from four runs
+of the nightly job on `main`, on `ubuntu-latest`: the first, by hand
+(run 42904800039, 2026-11-10), and three scheduled ones (42958822653,
+2026-11-11; 43154402606, 2026-11-12; 43365102720, 2026-11-13). All four
+passed. Each baseline is the highest ratio of the four, rounded up to one
+decimal:
+
+| Command | 42904800039 | 42958822653 | 43154402606 | 43365102720 | Baseline |
+|---|---|---|---|---|---|
+| `whole-restore` | 12.55 | 11.88 | 11.22 | 13.00 | 13.0 |
+| `sv-dump-json` | 1.85 | 1.39 | 1.40 | 1.84 | 1.9 |
+| `sv-merge` | 6.16 | 5.32 | 5.20 | 6.03 | 6.2 |
+| `addons-list` | 1.87 | 1.42 | 1.45 | 1.93 | 2.0 |
+| `version` | 1.77 | 1.32 | 1.33 | 1.77 | 1.8 |
+
+The calibration loop took 0.216 to 0.375 s CPU on those runners, and the
+gate's check took 2.764, 3.467, 2.438 and 1.993 s of wall-clock time, under
+the 5 s limit each time. The ratios moved by up to about 30 % from one run
+to the next (`sv dump --json`: 1.39 to 1.85).
+
+The first baselines, replaced by the ones above, were provisional. They were set
 on the development container on 2026-11-10 from five runs of the
 20,000-file tree: four at load averages of 10 to 19 from other sessions,
 and one on the quiet machine (load average about 1). The calibration loop
