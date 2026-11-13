@@ -426,57 +426,82 @@ def test_the_smoke_job_runs_the_downloaded_zip_against_the_tag() -> None:
     ) in run
 
 
-APP_OK = "needs.app.result == 'success' && needs.app_smoke.result == 'success'"
-
-
-def test_the_release_publishes_the_wheel_whatever_became_of_the_app() -> None:
+def test_the_release_never_waits_on_the_app() -> None:
+    # ADR-0031 amendment of 2026-11-12: the wheel and the sdist are released
+    # first; the app is attached after. `release` is as M16-43 left it.
     release = _jobs(RELEASE)["release"]
-    assert release["needs"] == ["version", "test", "build", "smoke", "app", "app_smoke"]
-    # Every job but the two app jobs has to have succeeded.
-    assert " ".join(release["if"].split()) == (
-        "${{ !cancelled() && needs.version.result == 'success' && "
-        "needs.test.result == 'success' && needs.build.result == 'success' && "
-        "needs.smoke.result == 'success' }}"
-    )
-    assert release["environment"] == "release"
+    assert release["needs"] == ["version", "test", "build", "smoke"]
+    assert "if" not in release
+    assert "APP_" not in str(release)
+    assert "macos-arm64" not in str(release)
 
 
-def test_the_release_adds_the_app_only_after_checking_and_attesting_it() -> None:
-    release = _jobs(RELEASE)["release"]
-    steps = release["steps"]
-    env = release["env"]
+def test_the_app_is_attached_after_the_release_only_when_built_and_smoked() -> None:
+    attach = _jobs(RELEASE)["app_release"]
+    assert attach["needs"] == ["version", "build", "app", "app_smoke", "release"]
+    # The implicit success(): a failed app build or smoke test fails its own
+    # job, visibly, and this one is skipped; the release stands.
+    assert "if" not in attach
+    assert "continue-on-error" not in attach
+    assert attach["environment"] == "release"
+    assert attach["permissions"] == {
+        "contents": "write",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    env = attach["env"]
+    # The hash comes from the build job's output, never from the artifact.
     assert env["APP_SHA256"] == "${{ needs.app.outputs.app_sha256 }}"
     assert env["APP_ZIP"] == "wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip"
-    assert env["APP_BUILT"] == "${{ needs.app.result }}"
-    assert env["APP_SMOKED"] == "${{ needs.app_smoke.result }}"
+    assert env["WHEEL_SHA256"] == "${{ needs.build.outputs.wheel_sha256 }}"
+    assert env["SDIST_SHA256"] == "${{ needs.build.outputs.sdist_sha256 }}"
+    assert env["TAG"] == "${{ github.ref_name }}"
+    assert "GH_TOKEN" not in env
+
+
+def test_the_attach_job_checks_attests_then_uploads_and_runs_no_repository_code() -> None:
+    steps = _jobs(RELEASE)["app_release"]["steps"]
+    uses = [s["uses"].split("@")[0] for s in steps if "uses" in s]
+    assert uses == ["actions/download-artifact", "actions/attest-build-provenance"]
+    assert steps[0]["with"] == {"name": "app", "path": "app"}
+    assert not any(s.get("continue-on-error") for s in steps)
     names = [s.get("name") for s in steps]
-    checked = steps[names.index("The app is the one its build hashed")]
-    download = steps[steps.index(checked) - 1]
-    assert download["uses"].startswith("actions/download-artifact@")
-    assert download["with"] == {"name": "app", "path": "app"}
-    assert download["if"] == APP_OK
-    assert checked["if"] == APP_OK
-    run = checked["run"]
-    assert 'printf \'%s  %s\\n\' "$APP_SHA256" "$APP_ZIP" > "$RUNNER_TEMP/expected-app"' in run
-    assert '(cd app && sha256sum -c "$RUNNER_TEMP/expected-app")' in run
-    assert 'cat "$RUNNER_TEMP/expected-app" >> release/SHA256SUMS' in run
-    # After the wheel and the sdist are checked against SHA256SUMS as built.
-    assert names.index("The files are the ones the build hashed") < steps.index(checked)
-    attest = steps[names.index("Attest the app")]
-    assert attest["if"] == APP_OK
-    assert attest["uses"].startswith("actions/attest-build-provenance@")
-    assert attest["with"] == {
-        "subject-path": "release/wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip"
-    }
-    assert steps.index(checked) < steps.index(attest) < names.index("Create the release")
-    missing = steps[names.index("Report a release without the app")]
-    assert missing["if"] == "needs.app.result != 'success' || needs.app_smoke.result != 'success'"
-    assert "::warning" in missing["run"]
-    create = steps[names.index("Create the release")]["run"]
+    runs = " ".join(s.get("run", "") for s in steps)
+    assert not re.search(r"\buv\b|\bpython3?\b|\bscripts/|\bgit\b|\bmake\b", runs)
+    checked = steps[names.index("The zip is the one the build hashed")]
     assert (
-        'if [ "$APP_BUILT" = "success" ] && [ "$APP_SMOKED" = "success" ]; '
-        'then app+=("release/$APP_ZIP"); fi'
-    ) in create
+        'printf \'%s  %s\\n\' "$APP_SHA256" "$APP_ZIP" > "$RUNNER_TEMP/expected-app"'
+        in (checked["run"])
+    )
+    assert 'sha256sum -c "$RUNNER_TEMP/expected-app"' in checked["run"]
+    sums = steps[names.index("SHA256SUMS on the release, with the zip's line added")]
+    assert sums["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    run = " ".join(sums["run"].split())
+    # The published SHA256SUMS is exactly what `build` hashed before the zip's
+    # line joins it.
+    assert (
+        'printf \'%s  %s\\n\' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" '
+        '> "$RUNNER_TEMP/expected"'
+    ) in sums["run"]
+    assert '--pattern SHA256SUMS --dir "$RUNNER_TEMP/published"' in run
+    assert 'cmp "$RUNNER_TEMP/expected" "$RUNNER_TEMP/published/SHA256SUMS"' in run
+    assert 'cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > app/SHA256SUMS' in run
+    attest = steps[names.index("Attest the app")]
+    assert attest["with"] == {
+        "subject-path": "app/wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip"
+    }
+    assert "env" not in attest
+    upload = steps[names.index("Upload the app and SHA256SUMS")]
+    assert upload["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert upload["run"].splitlines() == [
+        'gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "app/$APP_ZIP"',
+        'gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber app/SHA256SUMS',
+    ]
+    # Checked, then the sums, then attested, then uploaded: a failed check or
+    # attestation uploads nothing.
+    order = [steps.index(s) for s in (checked, sums, attest, upload)]
+    assert order == sorted(order)
+    assert order[-1] == len(steps) - 1
 
 
 # ─── the smoke test and the recorder ─────────────────────────────────────────

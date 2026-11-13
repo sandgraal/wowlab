@@ -60,13 +60,6 @@ INSTALL_V010 = (
 # ─── the workflow ─────────────────────────────────────────────────────────────
 
 
-RELEASE_IF = (
-    "${{ !cancelled() && needs.version.result == 'success' && "
-    "needs.test.result == 'success' && needs.build.result == 'success' && "
-    "needs.smoke.result == 'success' }}"
-)
-
-
 def _workflow() -> dict[str, Any]:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
@@ -92,17 +85,29 @@ def test_the_only_trigger_is_a_pushed_v_tag() -> None:
 def test_the_token_is_read_only_except_on_the_release_job() -> None:
     assert _workflow()["permissions"] == {"contents": "read"}
     jobs = _jobs()
-    # M17-08 added the macOS app's build and smoke jobs, read-only like the rest
-    # (tests/packaging/test_macos_app.py grades them).
-    assert set(jobs) == {"version", "test", "build", "smoke", "app", "app_smoke", "release"}
+    # M17-08 added the macOS app's build and smoke jobs, read-only like the
+    # rest, and `app_release`, which attaches the app to the published release
+    # (tests/packaging/test_macos_app.py grades the three).
+    assert set(jobs) == {
+        "version",
+        "test",
+        "build",
+        "smoke",
+        "release",
+        "app",
+        "app_smoke",
+        "app_release",
+    }
+    writer = {"contents": "write", "id-token": "write", "attestations": "write"}
     assert {n: j.get("permissions") for n, j in jobs.items()} == {
         "version": None,
         "test": None,
         "build": None,
         "smoke": None,
+        "release": writer,
         "app": None,
         "app_smoke": None,
-        "release": {"contents": "write", "id-token": "write", "attestations": "write"},
+        "app_release": writer,
     }
 
 
@@ -113,9 +118,10 @@ def test_every_publish_waits_for_the_release_environment() -> None:
         "test": None,
         "build": None,
         "smoke": None,
+        "release": "release",
         "app": None,
         "app_smoke": None,
-        "release": "release",
+        "app_release": "release",
     }
 
 
@@ -139,7 +145,12 @@ def test_no_secret_but_the_job_token_and_only_where_it_publishes() -> None:
         for job, step in _steps()
         if any("github.token" in str(v) for v in step.get("env", {}).values())
     ]
-    assert holders == [("release", "Create the release")]
+    assert holders == [
+        ("release", "Create the release"),
+        # M17-08: reads the published SHA256SUMS, then uploads the app and the new sums.
+        ("app_release", "SHA256SUMS on the release, with the zip's line added"),
+        ("app_release", "Upload the app and SHA256SUMS"),
+    ]
     for name, job in _jobs().items():
         assert "github.token" not in str(job.get("env", {})), name
 
@@ -152,18 +163,10 @@ def test_no_expression_is_spliced_into_a_shell_script() -> None:
 
 def test_the_release_job_runs_no_repository_code() -> None:
     release = _jobs()["release"]
-    assert release["needs"] == ["version", "test", "build", "smoke", "app", "app_smoke"]
-    # Any failure but the macOS app's publishes nothing (M17-08: the release
-    # goes out without the app when its build or smoke test fails; the
-    # condition is pinned in tests/packaging/test_macos_app.py).
-    assert " ".join(release["if"].split()) == RELEASE_IF
+    assert release["needs"] == ["version", "test", "build", "smoke"]
+    assert "if" not in release  # the implicit success(): any failure publishes nothing
     uses = [s["uses"].split("@")[0] for s in release["steps"] if "uses" in s]
-    assert uses == [
-        "actions/download-artifact",
-        "actions/download-artifact",
-        "actions/attest-build-provenance",
-        "actions/attest-build-provenance",
-    ]
+    assert uses == ["actions/download-artifact", "actions/attest-build-provenance"]
     runs = " ".join(s.get("run", "") for s in release["steps"])
     assert not re.search(r"\buv\b|\bpython3?\b|\bscripts/|\bgit\b|\bmake\b", runs)
 
@@ -177,8 +180,7 @@ def test_the_release_publishes_the_three_checked_files() -> None:
     assert 'gh release create "$TAG"' in run
     assert "--verify-tag" in run
     assert "--notes-file release/notes.md" in run
-    # The three files, and the macOS app when it was built (M17-08).
-    assert run.rstrip().endswith('"release/$WHEEL" "release/$SDIST" release/SHA256SUMS "${app[@]}"')
+    assert run.rstrip().endswith('"release/$WHEEL" "release/$SDIST" release/SHA256SUMS')
     assert 'if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi' in run
     assert release["env"]["PRERELEASE"] == "${{ needs.version.outputs.prerelease }}"
     assert release["env"]["TAG"] == "${{ github.ref_name }}"
@@ -196,9 +198,6 @@ def test_the_version_check_gates_every_other_job() -> None:
         assert jobs[name]["needs"] == "version", name
     assert jobs["smoke"]["needs"] == ["version", "build"]
     for name in jobs:
-        if name == "release":  # the explicit success() of every job but the app's (M17-08)
-            assert " ".join(jobs[name]["if"].split()) == RELEASE_IF
-            continue
         assert "if" not in jobs[name], name
     # The tagged commit is on main: a release is built from reviewed code only.
     runs = [s.get("run", "") for s in version["steps"]]

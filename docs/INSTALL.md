@@ -117,6 +117,8 @@ inside, for Macs with Apple silicon (M1 and later). Intel Macs use the
 `uv tool install` line above. The app is the same wowlab as the wheel, built
 from it by the release workflow; it never updates itself and makes no
 network request of its own. To get a newer version, download the newer zip.
+The zip is attached a little after the rest of the release; a release
+without it is one whose app build failed, and the wheel is unaffected.
 
 1. Download the zip from the release page and double-click it in Finder. It
    unpacks to `wowlab.app`. (Safari may unpack it for you and remove the

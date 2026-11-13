@@ -37,7 +37,7 @@ Then run `wowlab --version` and `wowlab doctor --offline`.
 
 ## The Mac app (Apple silicon)
 
-No terminal needed: download `wowlab-{{VERSION}}-macos-arm64.zip` below (when it is not there, its build failed and this release has no app; use the install line above), double-click it, drag `wowlab.app` into Applications and open it from there. It is the same wowlab, with its own Python inside, for Macs with Apple silicon; Intel Macs use the install line. It never updates itself.
+No terminal needed: download `wowlab-{{VERSION}}-macos-arm64.zip` below (it is attached a little after the release appears; if it never does, its build failed, so use the install line above), double-click it, drag `wowlab.app` into Applications and open it from there. It is the same wowlab, with its own Python inside, for Macs with Apple silicon; Intel Macs use the install line. It never updates itself.
 
 The app is not signed by an Apple developer account, so macOS refuses it the first time. On macOS 15 (Sequoia) and later, Control-click and Open no longer get past this: click **Done** in the message, open **System Settings → Privacy & Security**, click **Open Anyway** beside the line about `wowlab` and confirm with your password or Touch ID, then open the app again and choose **Open Anyway**. (Not yet confirmed on this app on every macOS version.) A Terminal window then runs `wowlab ui` and your browser opens the explorer; closing the window stops wowlab.
 
