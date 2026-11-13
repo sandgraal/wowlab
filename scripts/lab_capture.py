@@ -543,11 +543,16 @@ _LINK_REST_RE = re.compile(_LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH]
 # A speaker link's colon right after it: colour resets and spaces, then `:`.
 _SPEAKER_COLON_RE = re.compile(rb"(?:[ \t]|\|++[rR])*+(?::|\xef\xbc\x9a)")
 # A link followed by ` <word>:` (`|h says: ...`) is a speaker link too.
-_SPEAKER_WORD_RE = re.compile(rb"(?:[ \t]|\|++[rR])*+[A-Za-z\x80-\xff]++[ \t]*+(?::|\xef\xbc\x9a)")
+_SPEAKER_WORD_RE = re.compile(
+    rb"(?:[ \t]|\|++[rR])*+[A-Za-z\x80-\xff]++(?:-[A-Za-z0-9\x80-\xff' ]*+)?"
+    rb"(?:\]|\|++[rR])*+[ \t]*+(?::|\xef\xbc\x9a)"
+)
 # What may stand between the start of a line and a link that starts it: indent,
-# a table key, a quote, colour codes.
+# a table key, a quote, colour codes, a chat timestamp (`[12:30]`, coloured or not).
 _LINE_LEAD_RE = re.compile(
     rb"[ \t{,]*+(?:\[[^\]\r\n]*+\][ \t]*+=[ \t]*+)?[\"']?(?:\|++[cC][0-9A-Fa-f]{8})*+"
+    rb"(?:(?:\|++[cC][0-9A-Fa-f]{8})?\[[0-9:. ]++\](?:\|++[rR])?[ \t]*+)?"
+    rb"(?:\|++[cC][0-9A-Fa-f]{8})*+"
 )
 # M16-128: after the owner's own speaker link (one right after a channel link,
 # one followed by its colon or by ` <word>:`, or one that starts its line),
@@ -1329,10 +1334,9 @@ class Identity:
             if rest is None:
                 return False
             at = rest.end()
-            line_start = (
-                max(scrubbed.rfind(b"\n", 0, link.start()), scrubbed.rfind(b"\r", 0, link.start()))
-                + 1
-            )
+            # CR searched back only as far as the last LF: linear on LF-only files.
+            lf = scrubbed.rfind(b"\n", 0, link.start())
+            line_start = max(lf, scrubbed.rfind(b"\r", lf + 1, link.start())) + 1
             speaker = (
                 after_channel
                 or _LINE_LEAD_RE.fullmatch(scrubbed, line_start, link.start()) is not None
@@ -2086,7 +2090,7 @@ class CountryScan:
 # is touched.
 # M16-128 (security reviews of M16-125 and M16-128: the rule failed open),
 # fail closed: in `macros-cache.txt`, an HonorBound line is any line (split at
-# CR, LF or both) holding `#HB<digits>` anywhere, in any case, with `#` or the
+# CR, LF or both) holding `#HB<digits>` anywhere (spaces allowed after `#`), in any case, with `#` or the
 # full-width number sign U+FF03 (so a BOM, NBSP, indent or `/say ` before it changes
 # nothing). In the text after that tag, the key is `h` in either case, at its
 # start or after a space, tab, NBSP, `;` or `,`, with spaces or tabs allowed
@@ -2094,7 +2098,7 @@ class CountryScan:
 # (HONORBOUND_UNREPLACED_LABEL, count only: an offset would point at the hash)
 # when it still holds a run of 8 or more hex digits that is not all `0`s, or
 # has no non-empty `h` value made only of `0`s.
-HONORBOUND_TAG_RE = re.compile(rb"(?:#|\xef\xbc\x83)HB[0-9]+", re.IGNORECASE)
+HONORBOUND_TAG_RE = re.compile(rb"(?:#|\xef\xbc\x83)\s*HB[0-9]+", re.IGNORECASE)
 HONORBOUND_FIELD_RE = re.compile(rb"(?:^|(?<=[ \t;,\xa0]))h[ \t]*=[ \t]*([^;,\s]*)", re.IGNORECASE)
 _HEX_RUN_RE = re.compile(rb"[0-9A-Fa-f]{8,}")
 HONORBOUND_PLACEHOLDER_BYTE = b"0"

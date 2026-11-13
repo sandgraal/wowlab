@@ -490,3 +490,42 @@ def test_constructed_hostile_link_text_scrubs_in_linear_time(line: bytes) -> Non
     started = time.perf_counter()
     identity.scrub(b'x = "' + line + b'"\n')
     assert time.perf_counter() - started < 1.0
+
+
+# ─── review round 2 ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "lead",
+    [b"[12:30] ", b"|cff808080[12:30]|r "],
+    ids=["constructed-timestamp", "constructed-coloured-timestamp"],
+)
+def test_constructed_own_link_after_a_timestamp_is_a_speaker(lead: bytes) -> None:
+    identity = Identity(own_characters=[("Thrallmar", "Area 52")])
+    data = b'\t"' + lead + OWN_LINK + b' Quillmoss-Area52: s",\n'
+    problems = identity.scrub(data).problems
+    assert [p for p in problems if p.startswith(lab_capture.OTHER_CHAT_LABEL)]
+
+
+def test_constructed_a_realm_word_after_the_own_link_is_a_speaker() -> None:
+    assert _chat(OWN_LINK + b" Quillmoss-Area52: ok Brindlefen: secret")
+
+
+def test_constructed_many_own_link_lines_scrub_in_linear_time() -> None:
+    import time
+
+    identity = Identity(own_characters=[("Thrallmar", "Area 52")])
+    data = (b'\t"' + OWN_LINK + b' has come online.",\n') * 20_000
+    started = time.perf_counter()
+    identity.scrub(data)
+    assert time.perf_counter() - started < 5.0
+
+
+@pytest.mark.parametrize(
+    "line", [b"# HB3 l=1;h=", b"#\tHB3 l=1;h="], ids=["constructed-space", "constructed-tab"]
+)
+def test_constructed_honorbound_tag_with_space_after_the_sign(tmp_path: Path, line: bytes) -> None:
+    original = _macros(line + HASH)
+    outcome = _process(original, tmp_path)
+    assert outcome.result.data == original.replace(HASH, ZEROS)
+    assert not _unreplaced(outcome)
