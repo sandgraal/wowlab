@@ -964,7 +964,7 @@ def _backup_step(
         state="stale",
         command=command,
         detail=f"your last snapshot was taken on version {before}; the game is now {version}",
-        fix=f"Back up now: run `{command}`.",
+        fix=f"Take a backup now: run `{command}`.",
     )
 
 

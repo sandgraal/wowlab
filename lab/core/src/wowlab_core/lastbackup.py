@@ -3,8 +3,8 @@
 
 A *backup* is a snapshot in wowlab's store of the flavor's whole set of
 folders, taken from this install on this computer: one the player took
-(`snap create`, the UI's Back up now), the first run's, or the one the write
-gate takes before a change. A saved profile (restricted to its own paths)
+(`snap create`, the UI's Take a backup now), the first run's, or the one
+the write gate takes before a change. A saved profile (restricted to its own paths)
 and a snapshot added by `snap import` are not. The game *updated* since the
 newest backup when the client's version, as discovery reads it from
 `.build.info`, differs from the version that backup recorded; when either is

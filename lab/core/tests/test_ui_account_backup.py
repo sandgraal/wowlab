@@ -1,5 +1,5 @@
 """The Account tab's backups (M17-04, docs/LAB_PLAN.md §19 CW-3): a line
-per flavor with the newest backup's age, the "game updated" prompt, Back up
+per flavor with the newest backup's age, the "game updated" prompt, Take a backup
 now (`snap create --flavor`, then `snap diff` against the backup the line
 named, shown as its plan lines) and Restore, which opens the Commands tab on
 `snap restore` with the id filled in and runs nothing.
@@ -73,6 +73,20 @@ _STEPS = r"""
           title: ids.title.textContent, runText: ids.run.textContent,
           fields: ids.fields.all().filter((e) => e.tagName === "input").map((e) => ({ id: e.id, value: e.value })),
           active: active ? active.id : null });
+      } else if (step.form_run !== undefined) {
+        const before = requests.length;
+        const button = ids.commands.children.find((b) => b.textContent === step.form_run);
+        if (!button) { out.steps.push({ missing: "command " + step.form_run }); continue; }
+        button.fire("click"); ids.run.fire("click"); await tick();
+        out.steps.push({ newRequests: requests.slice(before) });
+      } else if (step.push_run !== undefined) {
+        scenario.runs.push(step.push_run);
+        out.steps.push({});
+      } else if (step.account_tab !== undefined) {
+        const before = requests.length;
+        ids["tab-account"].fire("click"); await tick();
+        out.steps.push({ backup: backupView(), newRequests: requests.slice(before),
+          hubFlavor: ids["hub-flavor"].value });
 """
 
 _ANCHOR = hub_tab._ANCHOR
@@ -107,9 +121,14 @@ def _update_beta(root: Path) -> None:
     config.write_bytes(config.read_bytes() + f'SET {CVAR} "1"\n'.encode())
 
 
-def _created(server: Any) -> dict[str, Any]:
+def _created(server: Any, note: str = "") -> dict[str, Any]:
+    """A real `snap create` of the beta flavor through the server. Its
+    stderr is set to `note` (constructed when not empty): the server's child
+    probes the real process table, so whether it says the client may be
+    running depends on the machine the tests run on."""
     run = hub_tab._run_of(server, CREATE, {"flavor": BETA})
     assert run["exit_code"] == 0, run["stderr"]
+    run["stderr"] = note
     return run
 
 
@@ -148,7 +167,7 @@ def test_each_flavor_has_a_line_and_no_backup_yet_constructed(
     out = _drive(tmp_path / "node", hub_tab._scenario(server, [{"backup": True}]))
     [step] = out["steps"]
     lines = step["backup"]["lines"]
-    assert [line["text"].split("Back up now")[0] for line in lines] == [
+    assert [line["text"].split("Take a backup now")[0] for line in lines] == [
         f"{BETA}: No backup yet.",
         f"{FOREVER}: No backup yet.",
     ]
@@ -172,7 +191,7 @@ def test_a_backup_on_another_build_prompts_constructed(
     assert re.match(f"{BETA}: {_AGE}, taken on version {BETA_VERSION}\\.", beta["text"])
     assert beta["updated"] == f" {UPDATED}: it is now version {NEWER}."
     assert [b["cls"] for b in beta["buttons"]] == ["backup-now", "backup-restore"]
-    assert [b["text"] for b in beta["buttons"]] == ["Back up now", "Restore this backup…"]
+    assert [b["text"] for b in beta["buttons"]] == ["Take a backup now", "Restore this backup…"]
     # The other flavor has no backup and no prompt.
     assert forever["updated"] is None
     assert forever["text"].startswith(f"{FOREVER}: No backup yet.")
@@ -194,7 +213,7 @@ def test_an_old_backup_says_its_age_in_days_constructed(
     assert re.match(f"{BETA}: Last backup \\d+ days ago \\((2020-01-01|2019-12-31) ", beta["text"])
 
 
-# ─── Back up now ─────────────────────────────────────────────────────────────
+# ─── Take a backup now ─────────────────────────────────────────────────────────────
 
 
 def test_back_up_now_runs_snap_create_for_the_flavor_then_the_diff_constructed(
@@ -368,3 +387,73 @@ def test_one_flavor_names_no_flavor_on_its_line_constructed(
     [line] = out["steps"][0]["backup"]["lines"]
     assert line["text"].startswith("No backup yet.")
     assert line["buttons"][0]["title"] == ""
+
+
+# ─── review fixes: the client note, and a report read again ─────────────────
+
+NOTE = (
+    "note: wowlab could not confirm the client was closed: SavedVariables on disk are as of "
+    "its last logout or /reload, and the client overwrites them at its next logout, /reload "
+    "or exit."
+)
+
+
+def test_a_backup_with_the_client_maybe_running_says_so_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Security review of M17-04: `snap create` exits 0 and says on stderr
+    that it could not confirm the client was closed; the status says it too."""
+    steps = [{"backup_click": 0, "which": "backup-now"}]
+    scenario = hub_tab._scenario(server, steps)
+    made = _created(server, NOTE)
+    scenario["runs"].append(made)
+    out = _drive(tmp_path / "node", scenario)
+    new = json.loads(made["stdout"])["id"]
+    status = out["steps"][0]["backup"]["status"]
+    assert status.startswith(f"Backed up {BETA} as {new}. {NOTE} It is the first backup")
+
+
+def test_the_report_is_read_again_after_a_commands_tab_run_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Code review of M17-04: a snapshot taken from the Commands tab (or by a
+    confirmed change) makes the panel's report old. Showing the Account tab
+    after such a run reads `char list --summary` again and keeps the flavor
+    filter, and the next backup diffs against the newest backup."""
+    _created(server)
+    _update_beta(both)
+    steps: list[dict[str, Any]] = [
+        {"hub_filter": "flavor", "value": "f:" + BETA},
+        {"account_tab": True},
+        {"form_run": "snap create"},
+        {"push_run": None},
+        {"account_tab": True},
+        {"backup_click": 0, "which": "backup-now"},
+    ]
+    scenario = hub_tab._scenario(server, steps)
+    made = _created(server)
+    second = json.loads(made["stdout"])["id"]
+    # What the form's run is answered with, whatever it sent: the page only
+    # needs to know that a run ended.
+    scenario["runs"].append({**made, "params": {}})
+    steps[3]["push_run"] = hub_tab._run_of(server, ["char", "list"], hub_tab.SUMMARY)
+    third_run = _created(server)
+    third = json.loads(third_run["stdout"])["id"]
+    scenario["runs"] += [third_run, hub_tab._run_of(server, DIFF, {"a": second, "b": third})]
+    out = _drive(tmp_path / "node", scenario)
+    _, shown_again, ran, _, reread, clicked = out["steps"]
+    # Showing the tab with nothing run since reads nothing.
+    assert shown_again["newRequests"] == []
+    assert [r["body"]["command"] for r in ran["newRequests"]] == [CREATE]
+    assert hub_tab._bodies(reread["newRequests"]) == [
+        {"command": ["char", "list"], "params": hub_tab.SUMMARY}
+    ]
+    assert reread["hubFlavor"] == "f:" + BETA
+    [beta] = reread["backup"]["lines"]
+    assert re.match(f"{BETA}: {_AGE}, taken on version {NEWER}\\.", beta["text"])
+    assert beta["updated"] is None
+    # The diff is against the backup the report read again names.
+    assert hub_tab._bodies(clicked["newRequests"]) == [
+        {"command": CREATE, "params": {"flavor": BETA}},
+        {"command": DIFF, "params": {"a": second, "b": third}},
+    ]

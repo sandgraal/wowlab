@@ -481,7 +481,7 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # that tab runs them is graded in test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
     # writes only under the data folder's pages/ (owner ruling 2026-10-15);
     # that it never passes `out` is graded in test_ui_looks.py. The Account
-    # tab's Back up now (M17-04) runs `snap create`, which writes only into
+    # tab's Take a backup now (M17-04) runs `snap create`, which writes only into
     # wowlab's own store, then the read `snap diff`; that only it runs them,
     # always with --flavor, is graded in test_ui_account_backup.py.
     assert {("tree",), ("explain",)} <= used, used

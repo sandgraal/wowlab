@@ -811,7 +811,7 @@ _ACCOUNT_WORDS = [
     "/reload",
     ", never the session in progress. This tab reads with",
     "wowlab char list --summary",
-    "; only Back up now writes, with",
+    "; only Take a backup now writes, with",
     "wowlab snap create",
     ", and only into wowlab's own store, never your game folder. Pick a character to open it "
     "in the Character tab.",

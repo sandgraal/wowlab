@@ -5222,11 +5222,16 @@ flavor (the client's version, the newest backup's id, time and version, and
 text output is unchanged. The Account tab draws a Backup panel from it
 above the table: per flavor (filtered by the hub's flavor filter), the
 newest backup's age and version, "The game updated since your last backup"
-when `game_updated`, **Back up now** and, with a backup, **Restore this
-backup…**. Back up now runs `snap create --flavor <that flavor> --json`
+when `game_updated`, **Take a backup now** and, with a backup, **Restore this
+backup…**. Take a backup now runs `snap create --flavor <that flavor> --json`
 (no confirm: it writes only into the store) and then `snap diff <the line's
 backup> <the new one> --json`, and shows its `plan_lines`; with no earlier
-backup it says there is nothing to compare. Restore opens the Commands tab
+backup it says there is nothing to compare. A note `snap create` prints
+beside its report (that wowlab could not confirm the client was closed) is
+shown with the result. After any run from the Commands tab, showing the
+Account tab again reads `char list --summary` again, keeping the filters,
+so a snapshot taken there or before a confirmed change is the next diff's
+base. Restore opens the Commands tab
 on `snap restore` with the id filled in and runs nothing; the plan and
 Confirm are that tab's (§16.1), unchanged. `doctor`'s next steps gain the
 item `backup`, listed only as `stale` when the game updated since the

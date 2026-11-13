@@ -63,13 +63,13 @@ def test_doctor_says_the_game_updated_since_the_last_snapshot_constructed(root: 
     assert step.detail == (
         f"your last snapshot was taken on version {VERSION}; the game is now {NEWER}"
     )
-    assert step.fix == "Back up now: run `wowlab snap create`."
+    assert step.fix == "Take a backup now: run `wowlab snap create`."
     report = _report()
     assert [s.item for s in report.next_steps][-1] == "backup"
     text = _text()
     assert (
         f"{UPDATED}; your last snapshot was taken on version {VERSION}; the game is now "
-        f"{NEWER}. Back up now: run `wowlab snap create`."
+        f"{NEWER}. Take a backup now: run `wowlab snap create`."
     ) in _block(text)
     _agrees(text, report)
 

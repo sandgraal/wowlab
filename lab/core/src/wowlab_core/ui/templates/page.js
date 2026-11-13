@@ -200,7 +200,8 @@
       return { error: error };
     }
     try {
-      return { data: JSON.parse(result.stdout) };
+      // A run that succeeded may still say something on stderr (a caveat).
+      return { data: JSON.parse(result.stdout), note: String(result.stderr || "").trim() };
     } catch (_) {
       return { error: "wowlab " + command.join(" ") + " did not print JSON." };
     }
@@ -2332,6 +2333,12 @@
   // each class a row names, plus "not recorded" when a row names none.
   function fillHubFilters() {
     const rows = hub.report.rows;
+    // A report read again keeps the filters picked, when it still lists them.
+    const keep = (picker, value) => {
+      picker.value = picker.options.some((o) => o.value === value) ? value : "";
+    };
+    const pickedFlavor = byId("hub-flavor").value;
+    const pickedClass = byId("hub-class").value;
     const flavors = [...new Set(rows.map((r) => hubStr(r.flavor)).filter(Boolean))];
     const flavorPicker = byId("hub-flavor");
     flavorPicker.replaceChildren();
@@ -2344,6 +2351,8 @@
     const classes = [...new Set(rows.map(hubClass).filter((c) => c !== null))].sort();
     for (const name of classes) hubOption(classPicker, "c:" + name, visible(name));
     if (rows.some((r) => hubClass(r) === null)) hubOption(classPicker, "none", NOT_RECORDED);
+    keep(flavorPicker, pickedFlavor);
+    keep(classPicker, pickedClass);
   }
 
   function hubShown() {
@@ -2553,7 +2562,15 @@
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
       byId(which + "-view").hidden = !on;
     }
-    if (name === "account") loadHub();
+    if (name === "account") {
+      // A run from the Commands tab may have changed the store or the
+      // install since the report was read (M17-04): read it again.
+      if (backup.stale && !backup.busy) {
+        backup.stale = false;
+        hub.asked = null;
+      }
+      loadHub();
+    }
     if (name === "gaps") loadGaps();
     if (name === "character") loadCharacters();
   }
@@ -2569,7 +2586,7 @@
   // ─── backups on the Account tab (M17-04, §19 CW-3) ───
   // One line per flavor the hub's report lists (`backups`): how old the
   // newest backup is, and, when the report says the game updated since it,
-  // the prompt to take one. Back up now runs `snap create` for that flavor,
+  // the prompt to take one. Take a backup now runs `snap create` for that flavor,
   // named with --flavor, which writes only into wowlab's own store, then
   // `snap diff` against the backup the line named, whose plan lines (each
   // key, macro and CVar by name) are shown as the CLI printed them. Restore
@@ -2581,7 +2598,11 @@
   const backup = {
     lines: [], // the report's `backups`, each line as the page last drew it
     error: "", // the report's `backup_error`
-    busy: false, // a Back up now in progress; every button waits for it
+    busy: false, // a Take a backup now in progress; every button waits for it
+    // A run from the Commands tab ended since the hub's report was read: it
+    // may have taken a snapshot (snap create, or the one taken before a
+    // change) or changed the install, so the Account tab reads it again.
+    stale: false,
   };
 
   function backupSay(text, isError) {
@@ -2633,10 +2654,10 @@
     }
     const actions = make("span");
     actions.className = "backup-actions";
-    const take = make("button", "Back up now");
+    const take = make("button", "Take a backup now");
     take.type = "button";
     take.className = "backup-now";
-    if (several) take.title = "Back up " + visible(line.flavor);
+    if (several) take.title = "Take a backup of " + visible(line.flavor);
     take.disabled = backup.busy;
     take.addEventListener("click", () => backUp(line));
     actions.appendChild(take);
@@ -2687,7 +2708,11 @@
       line.created_at = manifest.created_at;
       line.snapshot_version = hubStr(manifest.flavor_version);
       line.game_updated = false;
-      const done = "Backed up " + name + " as " + visible(manifest.id) + ".";
+      // What snap create said beside its report: that wowlab could not tell
+      // whether the client was closed, so saved data is as of its last
+      // logout or /reload.
+      const said = made.note ? " " + shown(made.note) : "";
+      const done = "Backed up " + name + " as " + visible(manifest.id) + "." + said;
       if (!before) {
         backupSay(done + " It is the first backup of " + name + " here, so there is nothing to compare it with.", false);
         return;
@@ -2925,6 +2950,7 @@
         body: JSON.stringify(body),
       });
       const result = await reply.json();
+      if (reply.ok) backup.stale = true;
       if (seq !== runSeq) return;
       if (!reply.ok) {
         say("The server refused this request: " + (result.error || reply.status), true);
