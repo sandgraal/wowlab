@@ -1,7 +1,10 @@
 [project]
 name = "wowlab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-only library and CLI over a World of Warcraft install"
+# The PyPI page (M16-32). hatchling puts the readme in the sdist whatever
+# `only-include` below says, and in the wheel's METADATA as its description.
+readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 # All runtime dependencies from docs/LAB_PLAN.md §6 are present.
