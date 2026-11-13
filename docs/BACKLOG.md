@@ -3167,7 +3167,7 @@ The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.p
 
 ---
 
-## [ ] M17-11 — The README and the wiki say what the companion does
+## [x] M17-11 — The README and the wiki say what the companion does
 **Size:** S · **Depends on:** M17-01, M17-03, M17-04, M16-33 · **Sources:** §19, M16-33
 
 The first screen leads with the account hub and the backup button, with one screenshot of each from the fixtures. The command reference gains `char history` and `char list --summary`. The wiki rows go in `docs/handoffs/wiki-pending.md`.
@@ -3194,7 +3194,7 @@ The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0
 
 ---
 
-## [ ] M17-14 — Account tab: words break mid-word, and the install advice repeats its command
+## [x] M17-14 — Account tab: words break mid-word, and the install advice repeats its command
 **Size:** XS · **Depends on:** M17-01 · **Sources:** `code-reviewer` on M17-11 (#549, 2026-11-13), visible in the README picture
 
 Two display bugs on the Account tab, both on `main`:
