@@ -1092,3 +1092,13 @@ def test_constructed_suggested_char_show_is_shell_quoted_and_names_the_flavor(
     shutil.copy2(_lab_file(flavor, FIRST), target)
     shown = ok(*want[1:])
     assert shown.stdout.startswith(f"Character: {who} in account {ACCOUNT}")
+
+
+def test_the_short_help_says_every_folder_is_listed() -> None:
+    # Since M16-35 a folder without a WowLab.lua is listed too, with "no lab
+    # record"; the one-line help in `char --help` says so (M16-130).
+    done = runner.invoke(cli.app, ["char", "--help"], terminal_width=200)
+    assert done.exit_code == 0, done.output
+    words = " ".join(done.stdout.split())
+    assert "Every character folder, and its lab-addon record if it has one." in words
+    assert "Every character with a lab-addon record." not in words
