@@ -30,28 +30,33 @@ GitHub only.
 
 ## 1. Check the name on PyPI
 
-The project name is `wowlab-core`, the `name` in `lab/core/pyproject.toml`.
+The project name is `wowlab`, the `name` in `lab/core/pyproject.toml`.
 On 2026-11-13, `https://pypi.org/pypi/wowlab-core/json` and
 `https://pypi.org/pypi/wowlab/json` both returned 404 (no such project).
-Check again before step 2: open `https://pypi.org/project/wowlab-core/`. A
+Check again before step 2: open `https://pypi.org/project/wowlab/`. A
 404 page means the name is free. If it is taken, stop and tell the
 conductor; the package would need a new name, which changes the wheel's
 file name and the release checks.
 
 **A pending publisher does not reserve the name.** The name is claimed only
 by the first upload, which creates the project. Until then anyone can
-register `wowlab-core` on PyPI first, and an install line pointing at it
+register `wowlab` on PyPI first, and an install line pointing at it
 would install their package. That is why this PR adds no PyPI line to
 INSTALL.md or README.md: those lines are added after the first PyPI
-release, once you have confirmed that `https://pypi.org/project/wowlab-core/`
+release, once you have confirmed that `https://pypi.org/project/wowlab/`
 exists and is yours.
 
 Note on the ticket's wording: `uvx wowlab doctor` asks PyPI for a project
-named `wowlab`. With the project named `wowlab-core`, the working command is
+named `wowlab`. When this handoff was written the project was named
+`wowlab-core`, and the working command would have been
 `uvx --from wowlab-core wowlab doctor`.
-Making the bare `uvx wowlab doctor` work needs either renaming the package
-to `wowlab` or a second, tiny `wowlab` project that depends on
-`wowlab-core`. That is your call; this PR does neither.
+
+*Decided 2026-11-13 (owner, in session):* the distribution is renamed from
+`wowlab-core` to `wowlab`, so `uvx wowlab doctor` and `uvx wowlab ui` work
+as typed. The import package stays `wowlab_core` and the command stays
+`wowlab`. From the next release the wheel is
+`wowlab-<version>-py3-none-any.whl` and the sdist `wowlab-<version>.tar.gz`;
+v0.1.0 keeps its published `wowlab_core-0.1.0-...` names.
 
 ## 2. Add a pending trusted publisher on pypi.org
 
@@ -64,7 +69,7 @@ A pending publisher lets the first upload create the project.
 
    | Field | Value |
    |---|---|
-   | PyPI Project Name | `wowlab-core` |
+   | PyPI Project Name | `wowlab` |
    | Owner | `sandgraal` |
    | Repository name | `wowlab` |
    | Workflow name | `release.yml` |
@@ -83,17 +88,20 @@ which only `v*` tags may deploy to.
 
 ## 3. After the first PyPI release
 
-- The pending publisher becomes a normal publisher of the `wowlab-core`
+- The pending publisher becomes a normal publisher of the `wowlab`
   project. Check under the project's **Settings → Publishing** that it still
   names `release.yml` and the environment `release`.
 - Compare the SHA-256 PyPI shows for the wheel (the file's **view hashes**
   link) with the wheel's line in the release's `SHA256SUMS`. They must be
   the same; the job's log prints it too.
-- Run `uvx --from wowlab-core wowlab --version`.
+- Run `uvx wowlab --version`.
 - Then, in a follow-up PR, INSTALL.md and README.md gain the PyPI lines
-  (`uvx --from wowlab-core wowlab doctor`, `uv tool install wowlab-core`).
-  M16-32 stays open until they land and the bare `uvx wowlab doctor`
-  question above is decided.
+  (`uvx wowlab doctor`, `uv tool install wowlab`). M16-32 stays open until
+  they land. (The bare `uvx wowlab doctor` question above was decided on
+  2026-11-13: the distribution is `wowlab`.) Beside those lines goes the
+  upgrade note, because `uv tool install wowlab` over v0.1.0 stops with
+  "Executable already exists: wowlab" and `uv tool upgrade wowlab-core`
+  finds nothing to upgrade: "Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first."
 - The download count for the gate adds PyPI's figures from pypistats.org
   (ADR-0031, later amendment of 2026-10-21); that is the remaining
   `M13-gate.md` part of M16-32, not done here.

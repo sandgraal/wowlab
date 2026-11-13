@@ -54,14 +54,14 @@ jobs:
           enable-cache: false
       - name: uv build
         run: >-
-          uv build --package wowlab-core --no-sources --no-create-gitignore
+          uv build --package wowlab --no-sources --no-create-gitignore
           --build-constraints lab/core/build-constraints.txt --require-hashes
           --out-dir "$RUNNER_TEMP/dist"
       - name: The wheel, its version and its SHA-256
         id: wheel
         run: |
           version="$(uv run --isolated --no-project --python "$PYTHON_VERSION" -- python -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' lab/core/pyproject.toml)"
-          wheel="wowlab_core-$version-py3-none-any.whl"
+          wheel="wowlab-$version-py3-none-any.whl"
           mkdir release
           cp "$RUNNER_TEMP/dist/$wheel" release/
           {
@@ -115,7 +115,7 @@ jobs:
       # the runner image happens to carry.
       - name: A clean virtual environment with the wheel and PyInstaller
         run: |
-          uv export --frozen --package wowlab-core --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
+          uv export --frozen --package wowlab --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
           uv export --frozen --only-group packaging --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/packaging.txt"
           uv venv --managed-python --python "$PYTHON_VERSION" "$RUNNER_TEMP/venv"
           uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes -r "$RUNNER_TEMP/runtime.txt" -r "$RUNNER_TEMP/packaging.txt"

@@ -1714,7 +1714,7 @@ keeps them equal.
 ```
 lab/
 ├── README.md
-└── core/                         # uv workspace member "wowlab-core"
+└── core/                         # uv workspace member "wowlab"
     ├── pyproject.toml
     ├── src/wowlab_core/
     │   ├── __init__.py
@@ -1735,7 +1735,9 @@ scripts/lab_capture.py            # M10-02: capture + scrub tool
 ```
 
 Later waves add siblings of `core/` under `lab/`. Apps depend on
-`wowlab-core`; `wowlab-core` depends on none of them.
+`wowlab`; `wowlab` depends on none of them.
+
+*Amended 2026-11-13 (owner decision, M16-32):* the distribution is `wowlab`, renamed from `wowlab-core` so that `uvx wowlab doctor` works as typed; the import package stays `wowlab_core` and the command `wowlab`.
 
 ## 8. Fixtures and scrubbing
 
@@ -3884,7 +3886,8 @@ default on 2026-10-14.*
 - **E4. The redaction entry point.** Default: `wowlab doctor --redact`, as
   named. Alternative: a separate `wowlab report` command.
 - **E5. Version and tag.** Default: the tag equals the package version
-  (`v0.1.0` for `wowlab-core` 0.1.0), and the release job fails before
+  (`v0.1.0` for `wowlab-core` 0.1.0; the distribution is `wowlab` since
+  2026-11-13), and the release job fails before
   publishing when they differ.
 
 ### 15.4 The gate

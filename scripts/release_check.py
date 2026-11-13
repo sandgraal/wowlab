@@ -6,7 +6,7 @@
         --repository OWNER/NAME --template PATH --dir DIST --out PATH
 
 `version` fails unless the tag is exactly `v` plus the version of
-`wowlab-core` in `lab/core/pyproject.toml` (docs/LAB_PLAN.md §15.3, E5). The
+`wowlab` in `lab/core/pyproject.toml` (docs/LAB_PLAN.md §15.3, E5). The
 version has to be a PEP 440 public version already in canonical form
 (`0.1.0`, `0.2.0rc1`, `1.0.0.post1`, `0.3.0.dev2`; no epoch, no local
 label), so that the tag, the wheel's file name and the version the wheel
@@ -20,7 +20,7 @@ carry the same non-empty LICENSE (the wheel's with a `License-File: LICENSE`
 line), and the sdist holds no test suite. Both also carry the lab-addon
 (M13-14) that `wowlab addon install lab` uses outside a checkout: the wheel
 under `wowlab_core/_addon/WowLab/`, the sdist under
-`wowlab_core-<version>/src/wowlab_core/_addon/WowLab/`, each holding exactly
+`wowlab-<version>/src/wowlab_core/_addon/WowLab/`, each holding exactly
 `WowLab.toc` (with the line `## Interface: @WOWLAB_INTERFACE@` exactly once)
 and the `.lua` files that TOC lists, as plain files with the same bytes in
 both: no other file, no link, no folder entry. Nothing is extracted; named
@@ -55,8 +55,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "lab" / "core" / "pyproject.toml"
 
-PROJECT = "wowlab-core"
-DIST_NAME = "wowlab_core"  # the project name as wheel and sdist file names spell it
+PROJECT = "wowlab"  # `wowlab-core` until 2026-11-13 (M16-32)
+DIST_NAME = "wowlab"  # the project name as wheel and sdist file names spell it
+PACKAGE = "wowlab_core"  # the import package inside the wheel and the sdist
 INSTALL_PYTHON = "3.12"  # the interpreter CI runs the suite on
 
 _NUM = r"(?:0|[1-9][0-9]*)"
@@ -114,7 +115,7 @@ def parse_version(version: str) -> Release:
 
 
 def project_version(pyproject: Path) -> str:
-    """The static `project.version` of `wowlab-core` in `pyproject`."""
+    """The static `project.version` of `wowlab` in `pyproject`."""
     with pyproject.open("rb") as fh:
         data = tomllib.load(fh)
     project = data.get("project")
@@ -191,8 +192,8 @@ def addon_listed(toc: bytes, where: str) -> list[str]:
 
 def _wheel_addon(whl: zipfile.ZipFile, wheel: str) -> dict[str, bytes]:
     """The lab-addon in the wheel: name to bytes, exactly the TOC and what it lists."""
-    prefix = f"{DIST_NAME}/{ADDON_DIR}/"
-    under = [i for i in whl.infolist() if i.filename.startswith(f"{DIST_NAME}/_addon/")]
+    prefix = f"{PACKAGE}/{ADDON_DIR}/"
+    under = [i for i in whl.infolist() if i.filename.startswith(f"{PACKAGE}/_addon/")]
     for info in under:
         kind = stat.S_IFMT(info.external_attr >> 16)
         if info.is_dir() or kind not in (0, stat.S_IFREG):
@@ -201,15 +202,13 @@ def _wheel_addon(whl: zipfile.ZipFile, wheel: str) -> dict[str, bytes]:
     toc = _wheel_member(whl, wheel, prefix + ADDON_TOC)
     expected = sorted(prefix + n for n in [ADDON_TOC, *addon_listed(toc, f"{wheel}:{prefix}")])
     if sorted(names) != expected:
-        raise ReleaseError(
-            f"{wheel} holds {sorted(names)} under {DIST_NAME}/_addon/, not {expected}"
-        )
+        raise ReleaseError(f"{wheel} holds {sorted(names)} under {PACKAGE}/_addon/, not {expected}")
     return {n.removeprefix(prefix): whl.read(n) for n in names}
 
 
 def _sdist_addon(sdist: tarfile.TarFile, name: str, top: str) -> dict[str, bytes]:
     """The lab-addon in the sdist: name to bytes, exactly the TOC and what it lists."""
-    package = f"{top}/src/{DIST_NAME}"
+    package = f"{top}/src/{PACKAGE}"
     prefix = f"{package}/{ADDON_DIR}/"
     under = [
         m

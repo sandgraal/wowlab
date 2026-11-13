@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag `v*` builds wowlab-core and publishes a GitHub Release with
+# Pushing a tag `v*` builds wowlab and publishes a GitHub Release with
 # three files: the wheel, the sdist and SHA256SUMS (ADR-0031, M13-03), and a
 # signed build-provenance attestation for the wheel and the sdist that
 # `gh attestation verify` checks (M16-43, docs/INSTALL.md). Since M17-08 it
@@ -122,7 +122,7 @@ jobs:
       # resolver sees it; --no-create-gitignore keeps the folder to the two files.
       - name: uv build
         run: >-
-          uv build --package wowlab-core --no-sources --no-create-gitignore
+          uv build --package wowlab --no-sources --no-create-gitignore
           --build-constraints lab/core/build-constraints.txt --require-hashes
           --out-dir "$RUNNER_TEMP/dist"
       # The notes' install line ends in `#sha256=` and the hash of the wheel
@@ -214,7 +214,7 @@ jobs:
         env:
           UV_TOOL_DIR: ${{ runner.temp }}/uv-tools
         run: |
-          source="$("$UV_TOOL_DIR/wowlab-core/bin/python" -I -c 'from wowlab_core import addoninstall as a; s = a.find_source(); a.addon_files(10000, s); print(s)')"
+          source="$("$UV_TOOL_DIR/wowlab/bin/python" -I -c 'from wowlab_core import addoninstall as a; s = a.find_source(); a.addon_files(10000, s); print(s)')"
           echo "$source"
           case "$source" in
             */site-packages/wowlab_core/_addon/WowLab) ;;
@@ -266,7 +266,7 @@ jobs:
       # the runner image happens to carry.
       - name: A clean virtual environment with the wheel and PyInstaller
         run: |
-          uv export --frozen --package wowlab-core --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
+          uv export --frozen --package wowlab --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
           uv export --frozen --only-group packaging --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/packaging.txt"
           uv venv --managed-python --python "$PYTHON_VERSION" "$RUNNER_TEMP/venv"
           uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes -r "$RUNNER_TEMP/runtime.txt" -r "$RUNNER_TEMP/packaging.txt"
@@ -378,7 +378,7 @@ jobs:
       # wheel; the Python frozen into the app is uv's own build of 3.12.
       - name: A clean virtual environment with the wheel and PyInstaller
         run: |
-          uv export --frozen --package wowlab-core --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
+          uv export --frozen --package wowlab --no-dev --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/runtime.txt"
           uv export --frozen --only-group packaging --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/packaging.txt"
           uv venv --managed-python --python "$PYTHON_VERSION" "$RUNNER_TEMP/venv"
           uv pip install --python "$RUNNER_TEMP/venv/Scripts/python.exe" --require-hashes -r "$RUNNER_TEMP/runtime.txt" -r "$RUNNER_TEMP/packaging.txt"
@@ -821,8 +821,9 @@ jobs:
 
   # M16-32 (ADR-0031, amendment of 2026-10-21): the same wheel and sdist, the
   # files `build` made and `release` published, go to PyPI as well, so
-  # `uvx --from wowlab-core wowlab doctor` works (the project on PyPI is
-  # named as in lab/core/pyproject.toml). Trusted publishing: PyPI
+  # `uvx wowlab doctor` works (the project on PyPI is named as in
+  # lab/core/pyproject.toml: `wowlab` since 2026-11-13, when the
+  # distribution was renamed from `wowlab-core`). Trusted publishing: PyPI
   # trusts an OIDC token for this repository, this workflow file and the
   # `release` environment, and nothing else; there is no API token and no
   # secret. The job runs in `environment: release`, so it waits for the

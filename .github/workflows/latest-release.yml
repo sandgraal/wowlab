@@ -77,7 +77,10 @@ jobs:
           cd "$RUNNER_TEMP/release"
           wheel="$(find . -maxdepth 1 -name '*.whl' -printf '%f\n')"
           test "$(printf '%s\n' "$wheel" | wc -l)" -eq 1
+          # The wheel is `wowlab-<version>-...`; a release built before the
+          # distribution was renamed (2026-11-13, M16-32) has `wowlab_core-`.
           version="${wheel#wowlab_core-}"
+          version="${version#wowlab-}"
           version="${version%-py3-none-any.whl}"
           test "$tag" = "v$version"
           {

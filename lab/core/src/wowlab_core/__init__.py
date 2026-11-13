@@ -6,7 +6,7 @@ Spec: docs/LAB_PLAN.md. Hard invariants L1-L8: AGENTS.md.
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("wowlab-core")
+    __version__ = version("wowlab")
 except PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 

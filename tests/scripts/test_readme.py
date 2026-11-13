@@ -3,9 +3,11 @@
 The first screen is everything above the marker comment the README carries
 (`FIRST_SCREEN_END`). These tests pin, against the repository as it is:
 
-- the one install line is byte for byte the line `scripts/release_check.py`
-  prints for v0.1.0, which `test_release.py` pins as `INSTALL_V010` and
-  M13-03's dry run installed (for v0.1.0rc1);
+- the one install line is byte for byte the v0.1.0 line `test_release.py`
+  pins as `INSTALL_V010`, the line `scripts/release_check.py` printed for
+  v0.1.0 when the distribution was still `wowlab-core` (it prints the same
+  line with `wowlab-0.1.0` since the rename, M16-32) and M13-03's dry run
+  installed (for v0.1.0rc1);
 - every `wowlab ...` invocation anywhere in the README names a command, and
   options, that exist in the Click tree (the wiki checker's own walk), and the
   three first commands are leaves of it;
@@ -32,7 +34,7 @@ import yaml
 # The modules those test files already loaded: loading them again would replace
 # them in sys.modules and break identity checks elsewhere.
 from test_check_wiki import cw, gen
-from test_release import INSTALL_V010, WHEEL_V010_SHA256, rc
+from test_release import INSTALL_V010, INSTALL_V010_RENAMED, WHEEL_V010_SHA256, rc
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
@@ -76,7 +78,7 @@ def _install_lines(text: str) -> list[str]:
 
 def test_one_install_line_and_it_is_the_v010_line() -> None:
     release = rc.parse_version("0.1.0")
-    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010
+    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V010_SHA256) == INSTALL_V010_RENAMED
     assert _install_lines(_readme()) == [INSTALL_V010], "exactly one install line, the v0.1.0 one"
     assert INSTALL_V010 + "\n" in _first_screen(), "on the first screen, on a line of its own"
 

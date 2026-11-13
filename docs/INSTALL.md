@@ -58,6 +58,8 @@ compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
 the owner create a `v*` tag (`docs/handoffs/M13-03.md`).
 
+Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
+
 The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
 that hash. The v0.1.0 line's hash was taken from that release's
 `SHA256SUMS`. From the next release on, the release workflow hashes the
@@ -82,7 +84,7 @@ checked:
 
    <!-- not-run: needs the network -->
    ```bash
-   gh attestation verify wowlab_core-<version>-py3-none-any.whl \
+   gh attestation verify wowlab-<version>-py3-none-any.whl \
      --repo sandgraal/wowlab \
      --signer-workflow sandgraal/wowlab/.github/workflows/release.yml \
      --source-ref refs/tags/v<version>
@@ -92,10 +94,11 @@ checked:
 
    <!-- not-run: an install, from the network -->
    ```bash
-   uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl
+   uv tool install --python 3.12 ./wowlab-<version>-py3-none-any.whl
    ```
 
 Replace `<version>` with the release's version, for example `0.2.0`.
+The v0.1.0 wheel has an older name: `wowlab_core-0.1.0-py3-none-any.whl`.
 
 **Check where a release was built.** From the first release after v0.1.0,
 the wheel and the sdist each carry a signed build-provenance attestation:
