@@ -229,6 +229,17 @@ def test_guard_bash_blocks_destructive_relative_targets(command: str, needle: st
         ("echo x > $PWD/AGENTS.md", "shell write"),
         ('echo x > "$CLAUDE_PROJECT_DIR"/.claude/settings.json', "shell write"),
         ("echo x > $UNKNOWN_VAR/AGENTS.md", "cannot resolve"),
+        # Assigned in the same line (owner decision, 2026-11-13): resolved, then checked.
+        ("S=.claude; echo x > $S/settings.json", "shell write"),
+        ('export D="$PWD"; echo x > "$D/AGENTS.md"', "shell write"),
+        ("A=.claude && B=$A/hooks && cp /tmp/x $B/guard_bash.py", "shell write"),
+        ('S=/tmp; cd $S && S=.claude; cd "$CLAUDE_PROJECT_DIR" && echo x > $S/x.md', "shell write"),
+        # Not resolvable, so still refused.
+        ("S=$(pwd); echo x > $S/AGENTS.md", "cannot resolve"),
+        ("S=`pwd`; echo x > $S/AGENTS.md", "cannot resolve"),
+        ("S=$OTHER/x; echo x > $S/AGENTS.md", "cannot resolve"),
+        ("S=/tmp echo hi; echo x > $S/AGENTS.md", "cannot resolve"),
+        ("S=/tmp; S=$(pwd); echo x > $S/AGENTS.md", "cannot resolve"),
         ("bash -c 'echo x > .claude/settings.json'", "shell write"),
         ("cd .claude/agents && cat > implementer.md <<'EOF'\nx\nEOF", "shell write"),
         ("cat > AGENTS.md <<'EOF'\nIt's a file\nEOF", "shell write"),
@@ -295,6 +306,10 @@ def test_guard_bash_blocks_everyone_from_shell_writing_the_harness(agent: str | 
         "kill 12345",
         "kill -TERM 12345",
         "grep pkill .claude/hooks/guard_bash.py",
+        "S=/tmp/scratch; echo x > $S/rec.sh",
+        'export S="/tmp/scratch dir"; printf x > "$S/rec.sh"',
+        "S=/tmp/a && T=$S/b && cd $T && echo x > f",
+        "S=~/notes; echo x > ${S}/a.md",
     ],
 )
 def test_guard_bash_allows_ordinary_writes(command: str) -> None:

@@ -89,8 +89,12 @@ def deny(event: str, reason: str) -> None:
 _VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
 
 
-def expand_vars(token: str, cwd: str) -> tuple[str, bool]:
+def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) -> tuple[str, bool]:
     """Expand the shell variables a path can plausibly use.
+
+    `assigned` holds variables the same command line set earlier to a value
+    the hook could resolve (see `assignments`); they win over the defaults,
+    as they would in the shell.
 
     Returns (expanded, fully_resolved). Unknown variables are left in place
     and reported as unresolved so the caller can refuse to guess.
@@ -101,6 +105,8 @@ def expand_vars(token: str, cwd: str) -> tuple[str, bool]:
         "HOME": str(Path.home()),
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
     }
+    if assigned:
+        known.update(assigned)
     unresolved = False
 
     def sub(m: re.Match[str]) -> str:
@@ -115,6 +121,43 @@ def expand_vars(token: str, cwd: str) -> tuple[str, bool]:
     if out.startswith("~"):
         out = str(Path.home()) + out[1:]
     return out, not unresolved
+
+
+_ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
+
+
+def assignments(seg: list[str], cwd: str, assigned: dict[str, str]) -> dict[str, str]:
+    """The variables after this segment runs, when it only assigns them.
+
+    Owner decision, 2026-11-13: `S=/some/dir; echo x > $S/f` should be
+    inspected, not refused. Only a segment that is nothing but `NAME=value`
+    words (optionally after `export`) sets anything; a prefix assignment
+    (`NAME=value cmd`) lasts for `cmd` alone and is not recorded. A value
+    the hook cannot resolve (`$(...)`, a backtick, an unknown variable)
+    removes the name, so a later use of it is still refused. Quotes are
+    already gone (the segment comes from `split_segments`), and the value is
+    expanded the way the shell expands an assignment: variables and a
+    leading `~`, never globs.
+    """
+    words = seg[1:] if seg and seg[0] == "export" else seg
+    if not words or not all(_ASSIGN.fullmatch(w) for w in words):
+        return assigned
+    out = dict(assigned)
+    for w in words:
+        m = _ASSIGN.fullmatch(w)
+        assert m is not None
+        name, raw = m.group(1), m.group(2)
+        if "`" in raw or "$(" in raw:
+            out.pop(name, None)
+            continue
+        value, ok = expand_vars(raw, cwd, out)
+        # A `$` left over is a substitution the lexer split apart
+        # (`S=$(cmd)` tokenises as `S=$`, `(`, ...): never a known value.
+        if ok and value and "$" not in value:
+            out[name] = value
+        else:
+            out.pop(name, None)
+    return out
 
 
 def _real_lenient(p: Path) -> Path:

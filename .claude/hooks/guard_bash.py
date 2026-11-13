@@ -41,6 +41,7 @@ from urllib.parse import unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _common import (
+    assignments,
     command_position,
     deny,
     expand_vars,
@@ -525,13 +526,13 @@ def _write_targets(seg: list[str], cwd: str) -> list[str]:
     return targets
 
 
-def _cd_target(seg: list[str], cwd: str) -> str | None:
+def _cd_target(seg: list[str], cwd: str, assigned: dict[str, str] | None = None) -> str | None:
     i = command_position(seg, "cd")
     if i is None:
         return None
     rest = [a for a in seg[i + 1 :] if not a.startswith("-")]
     target = rest[0] if rest else str(Path.home())
-    expanded, ok = expand_vars(target, cwd)
+    expanded, ok = expand_vars(target, cwd, assigned)
     if not ok:
         deny(EVENT, f"cannot resolve the variable in `cd {target}`; use a literal path.")
     return os.path.normpath(expanded if Path(expanded).is_absolute() else str(Path(cwd) / expanded))
@@ -555,13 +556,18 @@ def _inspect(
     # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
     written: set[str] = set(outer_written)
     scan_cwd = cwd
+    # Variables this line assigns to a value the hook can resolve (owner
+    # decision, 2026-11-13); a use of any other variable is still refused.
+    scan_vars: dict[str, str] = {}
     for seg in segments:
         for target in _write_targets(seg, scan_cwd):
-            expanded, ok = expand_vars(target, scan_cwd)
+            expanded, ok = expand_vars(target, scan_cwd, scan_vars)
             if ok:
                 full = expanded if Path(expanded).is_absolute() else str(Path(scan_cwd) / expanded)
                 written.add(os.path.normpath(full))
-        scan_cwd = _cd_target(seg, scan_cwd) or scan_cwd
+        scan_cwd = _cd_target(seg, scan_cwd, scan_vars) or scan_cwd
+        scan_vars = assignments(seg, scan_cwd, scan_vars)
+    assigned: dict[str, str] = {}
     for seg in segments:
         for inner in inner_commands(seg):
             _inspect(inner, cwd, agent_type, depth + 1, frozenset(written))
@@ -575,19 +581,21 @@ def _inspect(
         for target in _write_targets(seg, cwd):
             if target.startswith("/dev/"):
                 continue
-            expanded, resolved = expand_vars(target, cwd)
+            expanded, resolved = expand_vars(target, cwd, assigned)
             if not resolved:
                 deny(
                     EVENT,
-                    f"cannot resolve the variable in write target {target!r}; use a literal path.",
+                    f"cannot resolve the variable in write target {target!r}; set it in the "
+                    "same command to a literal path (S=/path; ... $S/f), or use a literal path.",
                 )
             _root, rel = relative_to_checkout(expanded, cwd)
             reason = shell_write_denial(rel, agent_type)
             if reason:
                 deny(EVENT, reason)
-        new_cwd = _cd_target(seg, cwd)
+        new_cwd = _cd_target(seg, cwd, assigned)
         if new_cwd:
             cwd = new_cwd
+        assigned = assignments(seg, cwd, assigned)
 
 
 def main() -> None:
