@@ -654,6 +654,25 @@ _M17_04_IDS = _M17_04_JS_IDS | {"backup", "backup-heading"}
 _M17_04_JS_CLASSES = frozenset(
     {"backup-line", "backup-updated", "backup-actions", "backup-now", "backup-restore"}
 )
+# What M17-03 added: the Character tab's history panel, its charts and table.
+_M17_03_JS_IDS = frozenset({"char-history"})
+_M17_03_IDS = _M17_03_JS_IDS | {"char-history-panel", "char-history-title"}
+_M17_03_JS_CLASSES = frozenset(
+    {
+        "history-axis",
+        "history-caption",
+        "history-chart",
+        "history-charts",
+        "history-dot",
+        "history-end",
+        "history-label",
+        "history-line",
+        "history-list",
+        "history-notes",
+        "history-svg",
+        "history-table",
+    }
+)
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
@@ -666,10 +685,21 @@ def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
         | _M17_01_CLASSES
         | _M17_04_CLASSES
     )
-    assert html_ids == (_HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS | _M17_04_IDS)
+    assert html_ids == (
+        _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS | _M17_04_IDS | _M17_03_IDS
+    )
     js_classes, js_ids = _js_names(_template("page.js"))
-    assert js_classes == _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES | _M17_04_JS_CLASSES
-    assert js_ids == (_JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_JS_IDS | _M17_04_JS_IDS)
+    assert js_classes == (
+        _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES | _M17_04_JS_CLASSES | _M17_03_JS_CLASSES
+    )
+    assert js_ids == (
+        _JS_IDS_BEFORE
+        | _M16_21_IDS
+        | _M16_114_IDS
+        | _M17_01_JS_IDS
+        | _M17_04_JS_IDS
+        | _M17_03_JS_IDS
+    )
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -828,7 +858,26 @@ def test_no_sentence_of_the_page_changed() -> None:
     at = before.index(_TABS_BEFORE[0])
     assert before[at : at + len(_TABS_BEFORE)] == _TABS_BEFORE
     expected = before[:at] + _TABS_M17_01 + _ACCOUNT_WORDS + before[at + len(_TABS_BEFORE) :]
-    assert _words(_template("page.html")) == expected
+    assert _words(_template("page.html")) == _with_m17_03(expected)
+
+
+# What M17-03 changed: the Character tab's intro names a fifth read command,
+# and the history panel's heading follows the gear panel (its lines are the
+# script's).
+_INTRO_M17_03_BEFORE = ["wowlab char binds", "and", "wowlab char macros"]
+_INTRO_M17_03 = ["wowlab char binds", ",", "wowlab char macros", "and", "wowlab char history"]
+
+
+def _with_m17_03(words: list[str]) -> list[str]:
+    at = next(
+        i
+        for i in range(len(words))
+        if words[i : i + len(_INTRO_M17_03_BEFORE)] == _INTRO_M17_03_BEFORE
+    )
+    words = words[:at] + _INTRO_M17_03 + words[at + len(_INTRO_M17_03_BEFORE) :]
+    keys = words.index("Keys")
+    assert words[keys - 1] == "See it dressed"
+    return [*words[:keys], "History", *words[keys:]]
 
 
 # ─── the sigil ───────────────────────────────────────────────────────────────

@@ -1,8 +1,9 @@
 """The Character tab of `wowlab ui`: picker, header, gear (M14-08, §16.3).
 
 The keys and macros panels (M14-09) are graded in
-`test_ui_character_panels.py`, on this harness; a pick here asks for all
-three of the character's reads.
+`test_ui_character_panels.py`, and the history panel (M17-03) in
+`test_ui_character_history.py`, on this harness; a pick here asks for all
+four of the character's reads.
 
 The page is driven under Node with the stand-in DOM of `test_ui_explorer.py`
 (HTML sinks throw; navigation, attributes outside the closed set and
@@ -69,11 +70,18 @@ BARE = "1/Labcharb-Labrealmd"
 TWIN = "Labrealmb Partb Partc Partd/Labchard"
 NEWER_NS = 1_760_000_000_000_000_000
 OLDER_NS = 1_750_000_000_000_000_000
-# The four read commands the tab runs (M14-09 added the last two).
-READS = {("char", "list"), ("char", "gear"), ("char", "binds"), ("char", "macros")}
+# The five read commands the tab runs (M14-09 added binds and macros, M17-03
+# history).
+READS = {
+    ("char", "list"),
+    ("char", "gear"),
+    ("char", "binds"),
+    ("char", "macros"),
+    ("char", "history"),
+}
 # The picker asks for no record (M13-72): `char list --json --brief`.
 LIST_PARAMS = {"brief": True}
-PICK_READS = (["char", "gear"], ["char", "binds"], ["char", "macros"])
+PICK_READS = (["char", "gear"], ["char", "binds"], ["char", "macros"], ["char", "history"])
 
 
 # ─── the harness: the first stage's, with this tab's steps ───────────────────
@@ -222,13 +230,13 @@ def timed(install: Path) -> Path:
 
 
 def _gear_params(character: str) -> dict[str, Any]:
-    """What the page sends `char gear`, `char binds` and `char macros` for a
-    row of `char list`."""
+    """What the page sends `char gear`, `char binds`, `char macros` and
+    `char history` for a row of `char list`."""
     return {"character": character, "account": ACCOUNT, "flavor": FLAVOR}
 
 
 def _pick_requests(character: str) -> list[dict[str, Any]]:
-    """The three runs one pick asks for, in the order the page sends them."""
+    """The four runs one pick asks for, in the order the page sends them."""
     return [{"command": c, "params": _gear_params(character)} for c in PICK_READS]
 
 
@@ -236,7 +244,7 @@ def _scenario(
     server: Any, steps: list[dict[str, Any]], gear_for: list[str], *, listed: bool = True
 ) -> dict[str, Any]:
     """The command list, `char list` (unless not `listed`) and `char gear`,
-    `char binds` and `char macros` for each character in `gear_for`, as the
+    `char binds`, `char macros` and `char history` for each character in `gear_for`, as the
     real CLI printed them through the real server. The explorer's runs are
     not held: its tree says so and the tab is unaffected."""
     runs = []
@@ -486,13 +494,13 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
     # `char list` is read once, however often the tab is used.
     assert sum(1 for b in asked if b["command"] == ["char", "list"]) == 1
     # Every request the page made in the whole run is one the page makes
-    # anyway (the command list, the explorer's tree) or one of the four.
+    # anyway (the command list, the explorer's tree) or one of the five.
     for request in out["requests"]:
         if request["body"] is None:
             assert request["url"].startswith("/api/commands"), request
         else:
             assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
-    # All four are read commands the server offers, not excluded and not a
+    # All five are read commands the server offers, not excluded and not a
     # confirm-step command.
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}
     for path in READS:

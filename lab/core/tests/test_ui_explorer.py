@@ -318,7 +318,8 @@ LOOKS_FRAME = (
 
 # The one outside origin the page may name (M15-02): the constant page.js
 # checks the dressing-room link against before it sets the link's href. It
-# is the only `://` in the page; a link to it opens only on the player's click
+# is the only origin in the page (the SVG namespace, SVG_NS_LINE, is a name,
+# not an origin); a link to it opens only on the player's click
 # (ADR-0019's and ADR-0031's amendments of 2026-10-19).
 DRESSING_ORIGIN = 'const DRESSING_ORIGIN = "https://www.wowhead.com";'
 # The check itself parses the address with the URL constructor, whose name,
@@ -337,6 +338,10 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
     assert body.count(LOOKS_FRAME) == 1
     assert body.count(DRESSING_ORIGIN) == 1 and body.count(DRESSING_PARSE) == 1
     body = body.replace(LOOKS_FRAME, "").replace(DRESSING_ORIGIN, "")
+    # Not an origin (M17-03): the SVG namespace the history charts are made
+    # in, which `createElementNS` needs; nothing is fetched from it.
+    assert body.count(SVG_NS_LINE) == 1
+    body = body.replace(SVG_NS_LINE, "")
     body = body.replace(DRESSING_PARSE, "").lower()
     for marker in _EXTERNAL:
         assert marker not in body, marker
@@ -411,6 +416,13 @@ LOOKS_SRCDOC = "frame.srcdoc = read.page;"
 # address that parsed, is https: and has exactly DRESSING_ORIGIN as its
 # origin (test_ui_dressing.py drives it with hostile addresses).
 DRESSING_HREF = "link.href = checked;"
+# The SVG the history charts draw (M17-03): the namespace, named once, and
+# the closed sets of elements and attributes the harness also enforces. None
+# of the attributes is a URL, a handler or a style; none of the elements can
+# fetch, link, run script or animate an attribute.
+SVG_NS_LINE = 'const SVG_NS = "http://www.w3.org/2000/svg";'
+SVG_TAGS = frozenset({"svg", "polyline", "circle", "text"})
+SVG_ATTRS = frozenset({"viewBox", "aria-hidden", "points", "cx", "cy", "r", "x", "y"})
 
 
 def test_the_script_writes_text_only(server: Any) -> None:
@@ -433,7 +445,16 @@ def test_the_script_writes_text_only(server: Any) -> None:
         "aria-expanded",
         "aria-label",
         "role",
+        *SVG_ATTRS,
     }
+    # SVG (M17-03, the history charts): only the closed set of elements, in
+    # the SVG namespace named once, each by a literal; no other namespace.
+    assert script.count(SVG_NS_LINE) == 1
+    made = re.findall(r"createElementNS\(([^)]*)\)", script)
+    assert made, "the history charts draw SVG"
+    for args in made:
+        found = re.fullmatch(r'SVG_NS, "([a-z]+)"', args)
+        assert found is not None and found.group(1) in SVG_TAGS, args
 
 
 def test_the_script_holds_no_file_map_logic() -> None:
@@ -640,6 +661,14 @@ const ALLOWED_ATTRS = scenario.allowed_attrs || ["aria-pressed", "aria-selected"
   "aria-label", "role"];
 const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", "script", "link", "base",
   "meta", "object", "embed", "video", "audio", "source", "track", "svg", "use", "style"];
+// The SVG the history charts draw (M17-03): these elements only, in the SVG
+// namespace, with these attributes only (none a URL, a handler or a style),
+// and no `className` assignment, which a browser refuses on an SVG element.
+// Any other element in any namespace (`a`, `use`, `image`, `script`,
+// `foreignObject`, `animate`, `set`, ...) is trapped.
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG_TAGS = ["svg", "polyline", "circle", "text"];
+const SVG_ATTRS = ["viewBox", "aria-hidden", "points", "cx", "cy", "r", "x", "y"];
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
@@ -659,6 +688,7 @@ class El {
     return new Proxy(this, {
       set(target, key, value) {
         if (typeof key === "string" && /^on[a-z]+$/.test(key)) trap("property " + key);
+        if (target.ns === SVG_NS && key === "className") trap("className on svg " + target.tagName);
         target[key] = value;
         return true;
       },
@@ -689,7 +719,12 @@ class El {
   removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parentElement = null; return c; }
   replaceChildren(...cs) { this.children = []; this._text = ""; for (const c of cs) this.appendChild(c); }
   replaceWith(...cs) { const p = this.parentElement; if (!p) return; const at = p.children.indexOf(this); const kids = []; for (const c of cs) kids.push(...this._adopt(c)); for (const k of kids) k.parentElement = p; p.children.splice(at, 1, ...kids); }
-  setAttribute(k, v) { k = String(k); if (!ALLOWED_ATTRS.includes(k)) trap("setAttribute " + k); this.attrs[k] = String(v); }
+  setAttribute(k, v) {
+    k = String(k);
+    const ok = this.ns === SVG_NS ? SVG_ATTRS.includes(k) : ALLOWED_ATTRS.includes(k);
+    if (!ok) trap("setAttribute " + k + (this.ns === SVG_NS ? " on svg " + this.tagName : ""));
+    this.attrs[k] = String(v);
+  }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   hasAttribute(k) { return k in this.attrs; }
   removeAttribute(k) { delete this.attrs[k]; }
@@ -807,7 +842,11 @@ const documentStub = {
   activeElement: null,
   getElementById: (id) => (id in ids ? ids[id] : null),
   createElement: (t) => { const tag = String(t).toLowerCase(); if (FORBIDDEN_TAGS.includes(tag)) trap("createElement " + tag); return new El(tag); },
-  createElementNS: (_, t) => trap("createElementNS " + t),
+  createElementNS: (ns, t) => {
+    const tag = String(t);
+    if (ns !== SVG_NS || !SVG_TAGS.includes(tag)) trap("createElementNS " + ns + " " + tag);
+    const el = new El(tag); el.ns = SVG_NS; return el;
+  },
   createTextNode: (t) => Object.assign(new El("#text"), { _text: String(t) }),
   createDocumentFragment: () => new El("#fragment"),
   querySelectorAll: (sel) => everywhere().filter((e) => matchSel(e, sel)),

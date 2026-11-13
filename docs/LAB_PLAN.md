@@ -5245,6 +5245,30 @@ newest backup of a flavor: "Backup: the game updated since your last
 snapshot", both versions, and `wowlab snap create` (with `--flavor` on an
 install with several) as the fix.
 
+*Amended 2026-11-13 (M17-03), CW-2's page as built.* The Character tab
+gains a History panel under the gear, drawn from `char history --json`
+(M17-02) for the character picked, as the fourth read of a pick (after
+`char gear`, `char binds` and `char macros`, one run at a time); the tab's
+intro names it. A save's time is the file's modification time and the
+panel says so; a save with `same_bytes_as_ns` is marked "likely restored"
+with the save whose contents it has. With two saves or more: a line with
+how many and from when to when, two small charts (equipped item level, and
+level; one step per save, oldest left, a line broken where a save does not
+record the value), each with a caption giving its range in words; then a
+table of every save (time, level, equipped item level, spec, where it is
+held), the charts' text alternative, in a labelled, focusable region; then
+the changes, newest first, in player words: a restore, a level, equipped
+item level or spec that differs from the save before, each gear change by
+the report's slot name, a currency with "not listed" for a side that does
+not list it, the panel-changed note, and "not compared" reasons. Copies
+that could not be read and snapshots that did not load follow, then the
+report's notes behind a closed summary. With one save or none, the panel
+says so and what makes history appear (log out or `/reload`, then take a
+backup). The charts are SVG the page's own script makes from numbers and
+dates only, in a closed set of elements (`svg`, `polyline`, `circle`,
+`text`) and attributes, hidden from screen readers; no new library, and
+gold is not charted until a record holds it (M17-06).
+
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 
 **Order.** The wave starts after M16-05 (the launch-client session and
