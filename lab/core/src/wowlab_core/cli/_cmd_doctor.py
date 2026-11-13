@@ -799,6 +799,10 @@ _RECORD_HOW = (
 _COMBATLOG_HOW = (
     "In game, type /combatlog to turn combat logging on; the game writes a log only while it is on."
 )
+# A flavor the lab-addon cannot be installed in yet, its version unknown
+# (M16-123): the lab-addon line above says why; no in-game step is offered.
+_RECORDS_WAIT_NO_INSTALL = "they are not updated until the lab-addon above can be installed"
+_RECORD_NO_INSTALL = "None can be made until the lab-addon above can be installed."
 # What a missing or out-of-date lab-addon means for the records: none
 # while it is missing; an out-of-date one may still load ('Load out of date
 # AddOns'), so that is hedged; and nothing when wowlab cannot tell.
@@ -899,6 +903,7 @@ def _characters_step(
     several: bool,
     root: str | None,
     lab_state: NextStepState,
+    installable: bool = True,
 ) -> NextStep:
     """How many character folders hold a lab-addon record: from the listing
     alone (`budget=0` opens no file), so doctor reads no record. A place
@@ -916,9 +921,12 @@ def _characters_step(
         notes.append(
             f"{_plural(unseen, 'place')} wowlab could not look inside (`{command}` names {it})"
         )
-    if count and lab_state in _RECORDS_WAIT:
+    if count and not installable:
+        notes.append(_RECORDS_WAIT_NO_INSTALL)
+    elif count and lab_state in _RECORDS_WAIT:
         notes.append(_RECORDS_WAIT[lab_state])
     state: NextStepState = "unknown" if unseen else ("ok" if count else "missing")
+    how = _RECORD_HOW if installable else _RECORD_NO_INSTALL
     return NextStep(
         item="characters",
         flavor_folder=folder,
@@ -926,7 +934,7 @@ def _characters_step(
         count=count,
         command=command,
         detail="; ".join(notes) or None,
-        fix=_RECORD_HOW if state == "missing" else None,
+        fix=how if state == "missing" else None,
     )
 
 
@@ -972,7 +980,9 @@ def _flavor_steps(
     lab = _lab_addon_step(folder, lab_addon, several, root, version_known=version_known)
     return [
         lab,
-        _characters_step(lay, folder, several, root, lab_state=lab.state),
+        _characters_step(
+            lay, folder, several, root, lab_state=lab.state, installable=lab.command is not None
+        ),
         _combat_log_step(lay, folder),
     ]
 

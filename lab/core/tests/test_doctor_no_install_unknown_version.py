@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 from pathlib import Path
 
 from test_doctor_version_words import (
@@ -90,3 +91,37 @@ def test_json_names_no_command_for_that_flavor_constructed(tmp_path: Path) -> No
     assert lab[NO_ROW]["fix"] == cli._no_install_until_version(NO_ROW)
     assert lab[FLAVOR]["state"] == "missing"
     assert lab[FLAVOR]["command"] == _command(root, FLAVOR)
+
+
+def test_the_characters_step_offers_no_in_game_step_there_constructed(tmp_path: Path) -> None:
+    """The step under it does not ask for the lab-addon to be installed and
+    enabled in game, which cannot be done there yet; the real flavor's
+    characters step is unchanged."""
+    root = _install(tmp_path)
+    steps = _steps(_doctor(root))
+
+    at = steps.index(f"  {NO_ROW}:")
+    assert steps[at + 2] == (
+        "    Character folders with a lab-addon record: none. None can be made until the "
+        "lab-addon above can be installed."
+    )
+    real = steps[steps.index(f"  {FLAVOR}:") + 2]
+    assert real.endswith("they are not updated until the lab-addon above is fixed.")
+
+
+def test_records_there_are_not_said_to_wait_for_a_fix_constructed(tmp_path: Path) -> None:
+    """Constructed: the captured flavor's WTF copied into the no-row folder,
+    so it holds lab-addon records too."""
+    root = _install(tmp_path)
+    shutil.copytree(root / FLAVOR / "WTF", root / NO_ROW / "WTF", symlinks=True)
+    text = _doctor(root)
+    steps = _steps(text)
+
+    line = steps[steps.index(f"  {NO_ROW}:") + 2]
+    assert line.startswith("    Character folders with a lab-addon record: 2 ")
+    assert line.endswith("; they are not updated until the lab-addon above can be installed.")
+    assert "In game, with the lab-addon installed" not in line
+    data = json.loads(_doctor(root, "--json"))
+    chars = {s["flavor_folder"]: s for s in data["next_steps"] if s["item"] == "characters"}
+    assert chars[NO_ROW]["detail"] == cli._RECORDS_WAIT_NO_INSTALL
+    assert chars[NO_ROW]["fix"] is None
