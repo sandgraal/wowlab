@@ -3026,7 +3026,7 @@ On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-
 
 ---
 
-## [ ] M16-131 — SavedVariables files that fail to read, on the patch-day card
+## [x] M16-131 — SavedVariables files that fail to read, on the patch-day card
 **Size:** S · **Depends on:** M17-05 · **Sources:** `domain-reviewer` and `code-reviewer` on M17-05 (2026-11-13)
 
 M17-05's ticket asked the patch-day card for "SavedVariables files that fail to parse"; no command reports them, so the card shipped with orphaned files instead (recorded in LAB_PLAN §19). A SavedVariables file with a syntax error leaves its addon with empty settings, and the client overwrites the file at the next logout, which is a real loss on patch day **[verify]**. Add a read (for example `sv list --unreadable`, or a field on `addons check`) that parses each SavedVariables file with `luadata` (no Lua is executed, L3) and reports the ones that fail, with the position; then add the list to the card. Reads only (L1).
@@ -3112,7 +3112,8 @@ Each line opens the Explorer on the file. Read-only. With nothing found, the car
 
 ---
 
-## [ ] M17-06 — The lab-addon records gold
+## [x] M17-06 — The lab-addon records gold (dropped)
+*Dropped by the owner, 2026-11-13 (in session: "fuck gold"). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
 **Size:** S · **Depends on:** M16-05 · **Sources:** §19 CW-6 · **owner** (a capture after one logout)
 
 The hub and the timeline need the character's money, which no schema records today. Add a `money` section (`GetMoney()`, copper as an integer) to the lab-addon. It goes in schema 5 if M16-45 has not merged by the time this ticket starts, and in schema 6 if it has (ADR-0026, §13.1 rules for a schema change). Like every new API call, it is **[verify]**, sits in a section `/wowlab skip` can turn off, and gets a runbook step. The reader in `labaddon.py` and M17-01, M17-02 and M17-03 show gold once it is recorded, and "not recorded" before that. Time played is out of scope: `RequestTimePlayed` prints to chat, and §18.1 item 9 and M16-45 keep the lab-addon's chat output to one line per addon version.
@@ -3156,7 +3157,8 @@ Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release w
 
 ---
 
-## [ ] M17-10 — Owner: a retail capture
+## [x] M17-10 — Owner: a retail capture (dropped)
+*Dropped by the owner, 2026-11-13 (in session: "fuck retail"). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
 **Size:** S · **Depends on:** nothing · **Sources:** §19 CW-7 · **owner** (a capture on retail)
 
 The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.py`, as a `macos-retail` fixture root with provenance rows: discovery, `.flavor.info`, the account tree, one character with the lab-addon after one logout. The README's "retail untested" line changes only after the readers pass on it. Findings that contradict `docs/LAB_FORMATS.md` are handled as AGENTS.md "Stop and ask" says.

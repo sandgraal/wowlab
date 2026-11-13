@@ -5195,6 +5195,8 @@ snapshots that wowlab already has, and writes only through `guard`.
 | CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
 | CW-7 | Owner and volunteers: one retail capture from the owner's own install (M17-10), and one human Windows run (M13-02) recruited through M16-32's announcement | — | owner |
 
+*Amended 2026-11-13 (owner decision, in session):* gold (M17-06) and the retail capture (M17-10) are dropped. The hub and the timeline keep showing gold as "not recorded"; the README keeps saying retail is untested. CW-7 is now only the Windows run (M13-02).
+
 *Amended 2026-11-12 (M17-01), CW-1 as built.* The Account tab is the
 UI's first tab and opens by default; the order is Account, Character,
 Explorer, Gaps, Commands, Looks. It is drawn from one run of the new read

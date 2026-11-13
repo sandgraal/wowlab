@@ -85,3 +85,12 @@ editor are not inspected. The Edit/Write path is fully guarded; use it.
 
 The guard also blocks `git rm` under `.claude/` for everyone, the conductor
 included. Deleting a harness file is an owner action in a terminal.
+
+The guard resolves `cd`, `$HOME`, `$PWD` and plain `NAME=` assignments
+before it judges a write target (#543), but not every roundabout way of
+moving the directory or changing `HOME`. Known and left open (owner,
+2026-11-13: documented, not chased): `HOME+=…`, `export -- HOME=…`,
+`declare`/`typeset`/`readonly`/`read`/`printf -v` setting `HOME`, `builtin
+export HOME=…`, zsh's `cdpath=…`, `shopt -s cdable_vars` and `setopt
+cdablevars`, `source /dev/stdin` fed a `cd`, and a `trap '… cd …' DEBUG`.
+None is an accident; an agent using one is evading the guard on purpose.
