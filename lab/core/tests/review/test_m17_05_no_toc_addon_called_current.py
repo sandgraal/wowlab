@@ -57,7 +57,11 @@ def test_positive_control_an_edited_addon_is_listed_constructed(
     server: Any, both: Path, tmp_path: Path
 ) -> None:
     beta = _beta(server, tmp_path, out_of_date=True)
-    assert beta["what"] == ["Out of date for this client"]
+    # Headings as of the fix round (85bf2e4): the edited addon, marked out of
+    # date, is listed under the card's heading for that.
+    assert "Made for another game version" in beta["what"], beta
+    made = [i for i in beta["items"] if i["text"].startswith("DBM-Brawlers lists")]
+    assert made, beta
 
 
 def test_a_folder_the_client_does_not_load_is_not_called_current_constructed(
