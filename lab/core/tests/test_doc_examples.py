@@ -80,13 +80,12 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "README.md",
-        "wowlab ui            # the explorer in your browser: every file in your install, "
-        "and whether it is safe to touch",
+        "wowlab ui            # the browser view; every character in one place arrives with the "
+        "next release",
         _NO_EXIT,
     ),
-    ("README.md", "wowlab ui", _NO_EXIT),
     ("README.md", "git clone https://github.com/sandgraal/wowlab && cd wowlab", _FROM_SOURCE),
-    ("README.md", "make setup", _FROM_SOURCE),
+    ("README.md", "uv sync --frozen", _FROM_SOURCE),
     (
         "docs/INSTALL.md",
         "gh attestation verify wowlab_core-<version>-py3-none-any.whl "
@@ -135,7 +134,7 @@ RUNS: dict[str, tuple[str, ...]] = {
     "README.md": (
         "wowlab doctor        # finds your install; on a first run, says what wowlab will do "
         "and offers a first snapshot",
-        "wowlab snap create   # snapshot your setup before you experiment",
+        "wowlab snap create   # back up your setup before patch day or an addon update",
         "wowlab explain WTF/Account/<ACCOUNT>/SavedVariables/DBM-Party-Vanilla.lua",
         "wowlab sv dump SavedVariables/DBM-StatusBarTimers.lua",
         "wowlab doctor",
