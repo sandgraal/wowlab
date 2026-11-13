@@ -5352,7 +5352,7 @@ own message (`detail`).
   game saves what it then holds over the file at the next logout or
   /reload **[verify]**. wowlab snap create keeps a copy of each listed file,
   and of its .lua.bak, as it is now." Else, when one is past a bound,
-  "wowlab did not check a file this large; that says nothing about whether
+  "wowlab did not check a file past its limits; that says nothing about whether
   the game loads it." Else (only `.lua.bak` files) none.
 - The standing note says wowlab is stricter than the game in places: it
   refuses things the game is not known to write (a long comment, a

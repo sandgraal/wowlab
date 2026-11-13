@@ -151,9 +151,7 @@ _UNREADABLE_LOSS = (
     "wowlab snap create keeps a copy of each listed file, and of its .lua.bak, as it is now."
 )
 # The caveat when every such file was only past a bound (`too_large`).
-_UNREADABLE_TOO_LARGE = (
-    "wowlab did not check a file this large; that says nothing about whether the game loads it."
-)
+_UNREADABLE_TOO_LARGE = "wowlab did not check a file past its limits; that says nothing about whether the game loads it."
 # Said after the reason of a listed `.lua.bak`.
 _UNREADABLE_BACKUP = (
     "This is the game's backup copy, which it does not load; it is replaced at a later "

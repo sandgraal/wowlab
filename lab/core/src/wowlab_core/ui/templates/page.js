@@ -3025,7 +3025,7 @@
   const PATCH_DAY_UNREAD_COPY =
     "wowlab snap create keeps a copy of each listed file, and of its .lua.bak, as it is now.";
   const PATCH_DAY_UNREAD_TOO_LARGE =
-    "wowlab did not check a file this large; that says nothing about whether the game loads it.";
+    "wowlab did not check a file past its limits; that says nothing about whether the game loads it.";
   const PATCH_DAY_UNREAD_BACKUP =
     "This is the game's backup copy, which it does not load; it is replaced at a later save";
 
