@@ -3113,7 +3113,7 @@ Each line opens the Explorer on the file. Read-only. With nothing found, the car
 ---
 
 ## [x] M17-06 — The lab-addon records gold (dropped)
-*Dropped by the owner, 2026-11-13 (in session: "fuck gold"). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
+*Dropped by the owner, 2026-11-13 (in session). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
 **Size:** S · **Depends on:** M16-05 · **Sources:** §19 CW-6 · **owner** (a capture after one logout)
 
 The hub and the timeline need the character's money, which no schema records today. Add a `money` section (`GetMoney()`, copper as an integer) to the lab-addon. It goes in schema 5 if M16-45 has not merged by the time this ticket starts, and in schema 6 if it has (ADR-0026, §13.1 rules for a schema change). Like every new API call, it is **[verify]**, sits in a section `/wowlab skip` can turn off, and gets a runbook step. The reader in `labaddon.py` and M17-01, M17-02 and M17-03 show gold once it is recorded, and "not recorded" before that. Time played is out of scope: `RequestTimePlayed` prints to chat, and §18.1 item 9 and M16-45 keep the lab-addon's chat output to one line per addon version.
@@ -3158,7 +3158,7 @@ Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release w
 ---
 
 ## [x] M17-10 — Owner: a retail capture (dropped)
-*Dropped by the owner, 2026-11-13 (in session: "fuck retail"). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
+*Dropped by the owner, 2026-11-13 (in session). Not built; ticked so it leaves the frontier and no longer holds M17-12.*
 **Size:** S · **Depends on:** nothing · **Sources:** §19 CW-7 · **owner** (a capture on retail)
 
 The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.py`, as a `macos-retail` fixture root with provenance rows: discovery, `.flavor.info`, the account tree, one character with the lab-addon after one logout. The README's "retail untested" line changes only after the readers pass on it. Findings that contradict `docs/LAB_FORMATS.md` are handled as AGENTS.md "Stop and ask" says.
