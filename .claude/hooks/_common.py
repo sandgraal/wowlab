@@ -122,8 +122,11 @@ def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) ->
         return val
 
     out = _VAR.sub(sub, token)
-    if out.startswith("~"):
+    if out == "~" or out.startswith("~/"):
         out = str(Path.home()) + out[1:]
+    elif out.startswith("~"):
+        # `~+` is $PWD, `~-` is $OLDPWD, `~name` another home: not followed.
+        unresolved = True
     # Any `$` the pattern did not consume is an expansion the hook cannot
     # follow (an operator form, a positional or special parameter, a
     # substitution the lexer split apart).
@@ -133,36 +136,67 @@ def expand_vars(token: str, cwd: str, assigned: dict[str, str] | None = None) ->
 
 
 _ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
+_UNSAFE_VALUE = re.compile(r"[\s$*?\[\]{}~`\\]")
 
 
-# Words that, as a segment's command, may set or clear a variable some other
-# way than a plain `NAME=value`, or open a compound command whose
-# assignments run conditionally or in a subshell. Any of them turns
-# assignment tracking off for the whole line.
-_TRACKING_BLOCKERS = frozenset(
+# Every bash builtin and reserved word. As a segment's command word, any of
+# them except _SAFE_BUILTINS turns assignment tracking off for the line:
+# they can set, clear or defer a change to a variable (`declare`, `read`,
+# `trap`, `eval`, ...), wrap another builtin (`builtin`, `command`), or open
+# a compound command. External programs cannot change this shell's
+# variables, so they are allowed. An allowlist, after review of 2026-11-13
+# found a blocklist kept leaking.
+_SHELL_WORDS = frozenset(
     {
-        "declare", "typeset", "local", "readonly", "read", "unset", "eval",
-        "let", "source", ".", "mapfile", "readarray", "getopts", "set",
-        "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
-        "done", "case", "esac", "select", "function", "coproc", "{", "}",
-        "[[", "]]", "!", "time",
+        "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command",
+        "compgen", "complete", "compopt", "continue", "declare", "dirs",
+        "disown", "echo", "enable", "eval", "exec", "exit", "export", "false",
+        "fc", "fg", "getopts", "hash", "help", "history", "jobs", "kill",
+        "let", "local", "logout", "mapfile", "popd", "printf", "pushd", "pwd",
+        "read", "readarray", "readonly", "return", "set", "shift", "shopt",
+        "source", "suspend", "test", "times", "trap", "true", "type",
+        "typeset", "ulimit", "umask", "unalias", "unset", "wait", ".", ":",
+        "[", "if", "then", "else", "elif", "fi", "case", "esac", "for",
+        "select", "while", "until", "do", "done", "in", "function", "time",
+        "{", "}", "!", "[[", "]]", "coproc",
     }
 )  # fmt: skip
+_SAFE_BUILTINS = frozenset({"echo", "cd", "true", "false", "test", "[", "pwd", ":", "printf"})
 _TRACKING_STOP = frozenset({"&&", "||", "|", "&", "|&"})
-_APPEND_OR_INDEX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+_COMMAND_WORD = re.compile(r"[A-Za-z0-9_./+-][A-Za-z0-9_./+@%,:=-]*")
+
+
+def _segment_allows_tracking(seg: list[str]) -> bool:
+    """A segment tracking may sit beside: plain assignments, or one simple command."""
+    if not seg:
+        return True
+    if seg[0] == "export":
+        return len(seg) > 1 and all(_ASSIGN.fullmatch(w) for w in seg[1:])
+    if all(_ASSIGN.fullmatch(w) for w in seg):
+        return not any(w.startswith("IFS=") for w in seg)
+    word = seg[0]
+    # A leading redirect or a prefix assignment (`X=1 declare ...`) can hide
+    # the real command word, so refuse both.
+    if "=" in word or not _COMMAND_WORD.fullmatch(word) or word[0].isdigit():
+        return False
+    if word in _SHELL_WORDS and word not in _SAFE_BUILTINS:
+        return False
+    if word == "printf" and any(w.startswith("-v") for w in seg[1:]):
+        return False
+    return not (word == "cd" and "-" in seg[1:])
 
 
 def assignment_prefix(command: str) -> int:
     """How many leading segments of `command` may set a tracked variable.
 
-    Owner decision, 2026-11-13, narrowed the same day after a review found
-    bypasses: an assignment counts only in the plain `;`-separated start of
-    a line, before any `&&`, `||`, `|` or `&` (after one of those an
+    Owner decision, 2026-11-13, narrowed twice the same day after review
+    found bypasses: an assignment counts only in the plain `;`-separated
+    start of a line, before any `&&`, `||`, `|` or `&` (after one of those an
     assignment may not run, or runs in a subshell). The answer is 0, and
-    nothing is tracked, when the line has a newline, a subshell or group,
-    a compound command, a builtin that assigns (`declare`, `read`,
-    `printf -v`, `unset`, ...), an append (`S+=x`) or an array element
-    (`S[0]=x`) anywhere.
+    nothing is tracked, when the line has a newline, a subshell, or any
+    segment that is not plain assignments or one simple command whose word
+    is an external program or a builtin that cannot change a variable (see
+    `_segment_allows_tracking`).
     """
     stripped = strip_heredocs(command)
     if "\n" in stripped.strip():
@@ -176,18 +210,8 @@ def assignment_prefix(command: str) -> int:
     if any(t in ("(", ")") for t in tokens):
         return 0
     segments = split_segments(command) or []
-    for seg in segments:
-        words = seg[1:] if seg and seg[0] == "export" else seg
-        if seg and seg[0] == "export" and any(w.startswith("-") for w in words):
-            return 0
-        if words and words[0] in _TRACKING_BLOCKERS:
-            return 0
-        if words and words[0] == "printf" and any(w.startswith("-v") for w in words):
-            return 0
-        for w in words:
-            m = _APPEND_OR_INDEX.match(w)
-            if m and (m.group(1) or "+=" in m.group(0)):
-                return 0
+    if not all(_segment_allows_tracking(seg) for seg in segments):
+        return 0
     # Count the non-empty segments before the first stop operator, the way
     # `split_segments` counts them. The segment just before `&&` or `||`
     # always runs in this shell; the one before `|`, `|&` or `&` runs in a
@@ -241,7 +265,10 @@ def assignments(
         value, ok = expand_vars(raw, cwd, out)
         # A `$` left over is a substitution the lexer split apart
         # (`S=$(cmd)` tokenises as `S=$`, `(`, ...): never a known value.
-        if ok and value and "$" not in value:
+        # An unquoted use of the name is word-split and globbed by bash, so
+        # a value with whitespace or a glob character could name a
+        # different path than the one checked (review of 2026-11-13).
+        if ok and value and not _UNSAFE_VALUE.search(value):
             out[name] = value
         else:
             out.pop(name, None)

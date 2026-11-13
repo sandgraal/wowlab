@@ -532,6 +532,10 @@ def _cd_target(seg: list[str], cwd: str, assigned: dict[str, str] | None = None)
     i = command_position(seg, "cd")
     if i is None:
         return None
+    if "-" in seg[i + 1 :]:
+        # `cd -` returns to $OLDPWD, which the guard does not track
+        # (review of 2026-11-13; it was read as `cd ~`).
+        deny(EVENT, "`cd -` cannot be followed; cd to a literal path.")
     rest = [a for a in seg[i + 1 :] if not a.startswith("-")]
     target = rest[0] if rest else str(Path.home())
     expanded, ok = expand_vars(target, cwd, assigned)
