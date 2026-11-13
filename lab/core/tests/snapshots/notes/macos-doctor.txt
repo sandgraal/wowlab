@@ -8,6 +8,7 @@ Flavor _classic_beta_: product wow_classic_beta, version 1.60.1.69913
     the client may treat a setting as on or may not have it at all, and wowlab
     cannot tell which)
 Client: not running
+wowlab: version 0.1.0, installed in <tmp>/env
 Snapshot store: <tmp>/userdata/wowlab/store
   1 snapshot(s) that load; none damaged
   no transactions in the journal
