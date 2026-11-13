@@ -78,7 +78,7 @@ def _tree_asked(out: dict[str, Any]) -> bool:
 
 @pytest.fixture
 def baseline(
-    server: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    server: Any, both: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The scenario, and what the unchanged page draws from it."""
     scenario = card_tab._scenario(server, [{"lines": True}], tree=True)
