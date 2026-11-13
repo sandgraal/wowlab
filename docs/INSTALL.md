@@ -69,18 +69,6 @@ it is wrong), and checking a file you downloaded says nothing about the copy
 `uv tool install <address>` downloads again. So the line tells you which
 file it means; it does not prove you got that file.
 
-**From PyPI, once the first PyPI release is out.** The release workflow will
-also publish the same wheel to PyPI, under the name `wowlab-core`. Then this
-runs `wowlab doctor` without installing wowlab for good:
-
-<!-- not-run: needs the network, and a PyPI release that is not out yet -->
-```bash
-uvx --from wowlab-core wowlab doctor
-```
-
-and `uv tool install wowlab-core` installs it. Before that first PyPI
-release, both fail with a "not found" error.
-
 **The checked install, in three steps.** To install exactly the file you
 checked:
 

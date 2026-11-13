@@ -38,9 +38,17 @@ Check again before step 2: open `https://pypi.org/project/wowlab-core/`. A
 conductor; the package would need a new name, which changes the wheel's
 file name and the release checks.
 
+**A pending publisher does not reserve the name.** The name is claimed only
+by the first upload, which creates the project. Until then anyone can
+register `wowlab-core` on PyPI first, and an install line pointing at it
+would install their package. That is why this PR adds no PyPI line to
+INSTALL.md or README.md: those lines are added after the first PyPI
+release, once you have confirmed that `https://pypi.org/project/wowlab-core/`
+exists and is yours.
+
 Note on the ticket's wording: `uvx wowlab doctor` asks PyPI for a project
 named `wowlab`. With the project named `wowlab-core`, the working command is
-`uvx --from wowlab-core wowlab doctor` (that is what INSTALL.md now shows).
+`uvx --from wowlab-core wowlab doctor`.
 Making the bare `uvx wowlab doctor` work needs either renaming the package
 to `wowlab` or a second, tiny `wowlab` project that depends on
 `wowlab-core`. That is your call; this PR does neither.
@@ -82,15 +90,22 @@ which only `v*` tags may deploy to.
   link) with the wheel's line in the release's `SHA256SUMS`. They must be
   the same; the job's log prints it too.
 - Run `uvx --from wowlab-core wowlab --version`.
-- The README's install section can then name the PyPI line. This PR left
-  README.md alone because draft PR #527 is rewriting it.
+- Then, in a follow-up PR, INSTALL.md and README.md gain the PyPI lines
+  (`uvx --from wowlab-core wowlab doctor`, `uv tool install wowlab-core`).
+  M16-32 stays open until they land and the bare `uvx wowlab doctor`
+  question above is decided.
 - The download count for the gate adds PyPI's figures from pypistats.org
   (ADR-0031, later amendment of 2026-10-21); that is the remaining
   `M13-gate.md` part of M16-32, not done here.
 
 ## Things this PR does not do
 
-- No change to README.md (see above).
+- No change to README.md or INSTALL.md (see above).
+- A `v*` tag whose version is a pre-release or development version
+  (`0.2.0rc1`, `0.2.0.dev1`) is published to PyPI too, as a PyPI
+  pre-release, and **permanently**: PyPI never lets a file name be uploaded
+  again, and deleting a release does not free its version. If you do not
+  want a pre-release on PyPI, decline the `pypi` approval for that run.
 - `lab/core/pyproject.toml` has no `readme` field, so the PyPI page will show
   no description, and `twine check` in the job warns about it (a warning,
   not a failure). Adding one changes the wheel's metadata and is a separate
