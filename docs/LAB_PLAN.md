@@ -1437,6 +1437,7 @@ wowlab binds list / wowlab macros list
 wowlab addons list [--json]
 wowlab addons check [--json] [--notes]               # §18.1 item 8 (M16-34)
 wowlab sv list --orphans [--json] [--notes]          # §18.1 item 8 (M16-34)
+wowlab sv list --unreadable [--json] [--notes]       # §19 CW-4 (M16-131)
 wowlab db2 builds | wowlab db2 fetch TABLE [--build B] | wowlab db2 head TABLE
 wowlab log tail [--follow]
 wowlab snap create [-m LABEL] | list | show ID | diff A B | verify | gc
@@ -5316,6 +5317,34 @@ that fail to parse, so the card's last list is the orphans, as the
 ticket's acceptance names them. Each line's name opens the Explorer on the
 file (the TOC, the addon folder, or the SavedVariables file), once the
 tree is read. Read-only.
+
+*Amended 2026-11-13 (M16-131), as built.* The read is an option on the
+command that already lists the files, `sv list --unreadable [--json]
+[--notes]`, rather than a new command or a field on `addons check` (which
+reads TOCs, not saved data): each SavedVariables file `sv list` would list
+(Blizzard's, the lab-addon's and `.lua.bak` files included) is read by
+`luadata.read` from the install root one folder at a time, as data and
+never run (L3), within the parser's own bounds, and nothing is written
+(L1). A file that does not read is listed with a kind (`refused`, with the
+parser's line and column; `too_large`, past a size, depth or budget bound,
+so not checked; `not_opened`), the reason in player words (the refusal
+words `sv dump` already prints, plus one more: a file that ends inside a
+table is named as cut off, since the parser reports the table's opening
+brace rather than the end) and the parser's own message. A file gone
+since the listing is not listed. `--unreadable` with `--orphans` is a usage
+error. JSON: `SvListReport` gains `unreadable` (false without the option)
+and `read_failures` (one `SvReadFailure` per listed file, in `files`'
+order), an additive change. With one or more listed, the one caveat is
+that if the game cannot load such a file either, the addon starts with its
+defaults and the game writes them over the file at its next save
+**[verify]**; the standing notes say that wowlab refuses a few things the
+client never writes (long comments and strings, functions), so a file
+edited by hand may be listed and still load. The card runs it per flavor
+after `sv list --orphans` and shows "Saved data wowlab could not read"
+(each file, opening the Explorer, with its reason) before the orphans,
+with that caveat under it and "(not yet confirmed)" said once per card.
+Every SavedVariables file of both real captures reads; the failures are
+graded on constructed files.
 
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 

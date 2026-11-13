@@ -360,6 +360,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["sv", "list"],
         ["sv", "list", "--orphans"],
         ["sv", "list", "--orphans", "--notes"],
+        ["sv", "list", "--unreadable"],
+        ["sv", "list", "--unreadable", "--notes"],
         *[["sv", "dump", p] for p in sv_files],
         ["cvar", "list"],
         ["cvar", "list", "--scope", "account"],
@@ -526,6 +528,7 @@ REFUSED = {
     "cut": (b'X = {\n  ["a"] = ', "the file ends early, at line 2"),
     "function": (b"X = function() end\n", "it holds a function, which saved data never does"),
     "call": (b"X = print(1)\n", "it holds a function call"),
+    "table": (b'X = {\n  ["a"] = 1,\n', "the file ends before the table that opens at line 1"),
 }
 
 
@@ -551,6 +554,26 @@ def test_lua_refusals_are_plain_words_and_json_keeps_the_rule(
     assert as_json.exit_code == 1
     assert "not SavedVariables data the parser accepts: line " in as_json.stderr
     assert "(at b'" in as_json.stderr
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED), ids=[f"{c}-constructed" for c in sorted(REFUSED)])
+def test_sv_list_unreadable_says_the_same_words_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """Constructed (hostile input, L8): `sv list --unreadable` (M16-131)
+    lists the refused file with the same plain words, and nothing a player
+    should not read."""
+    root = sandbox(tmp_path, monkeypatch, "")
+    data, words = REFUSED[case]
+    target = root / FLAVOR / "WTF" / "Account" / ACCOUNT / "SavedVariables" / "Refused.lua"
+    target.write_bytes(data)
+    for args in (["sv", "list", "--unreadable"], ["sv", "list", "--unreadable", "--notes"]):
+        out = runner.invoke(cli.app, args, terminal_width=200)
+        assert out.exit_code == 0, out.stderr
+        assert words in out.stdout
+        assert "(at b'" not in out.stdout
+        assert hits(out.stdout) == []
+        assert out.stdout.count("(not yet confirmed)") == 1
 
 
 def test_rule_ids_survive_in_json_runs_constructed(

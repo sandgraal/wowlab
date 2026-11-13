@@ -53,6 +53,7 @@ from wowlab_core.cli._common import (
     _json_text,
     _keep_notes,
     _listed,
+    _lua_refusal_why,
     _map_strings,
     _note,
     _open,
@@ -80,6 +81,20 @@ _SV_TIMING = (
 )
 
 
+class SvReadFailure(_Out):
+    """One SavedVariables file `sv list --unreadable` could not read (M16-131)."""
+
+    path: str  # as in `files`, relative to the flavor folder
+    # `refused`: not data the SavedVariables parser accepts; `too_large`: past
+    # one of the parser's bounds (size, depth, budget), so not checked;
+    # `not_opened`: the file could not be opened to read.
+    kind: Literal["refused", "too_large", "not_opened"]
+    reason: str  # in the words the text output prints
+    line: int | None  # 1-based, where the parser stopped (`refused` only)
+    column: int | None  # 1-based, in bytes (`refused` only)
+    detail: str  # the parser's own message, or the system's error
+
+
 class SvListReport(_Out):
     """`wowlab sv list --json`."""
 
@@ -88,6 +103,10 @@ class SvListReport(_Out):
     notes: list[str]  # the caveats the text output prints
     # M16-34: with --orphans, `files` holds only those no installed TOC declares.
     orphans: bool = False
+    # M16-131: with --unreadable, `files` holds only those wowlab could not
+    # read, and `read_failures` says why, one per file in the same order.
+    unreadable: bool = False
+    read_failures: list[SvReadFailure] = Field(default_factory=list)
 
 
 OrphansOpt = Annotated[
@@ -112,6 +131,27 @@ _ORPHAN_BLIZZARD = (
     "Blizzard's own files (SavedVariables.lua and Blizzard_*.lua) are never listed: the "
     "client loads its own addons from game data, not from Interface/AddOns/ [verify]."
 )
+
+
+UnreadableOpt = Annotated[
+    bool,
+    typer.Option(
+        "--unreadable",
+        help="Only the files wowlab cannot read as saved data (a file cut off during a save, "
+        "say), each with where and why. Reads every file.",
+    ),
+]
+_UNREADABLE_LOSS = (
+    "If the game cannot load such a file either, the addon starts with its default settings, "
+    "and the game writes them over the file at the next logout or /reload [verify]."
+)
+_UNREADABLE_WHAT = (
+    "Each file is read as data and never run. wowlab refuses a few things the game never "
+    "writes into saved data (a long comment, a long-bracket string, a function), so a file "
+    "someone edited by hand may be listed here and still load in the game. A backup taken now "
+    "(wowlab snap create) keeps a copy of every listed file as it is."
+)
+_UNREADABLE_WITH_ORPHANS = "--unreadable and --orphans are separate lists: give one of them"
 
 
 def _lab_records_caveat(n: int) -> str:
@@ -141,6 +181,7 @@ def sv_list(
     account: AccountOpt = None,
     character: CharacterOpt = None,
     orphans: OrphansOpt = False,
+    unreadable: UnreadableOpt = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -148,10 +189,14 @@ def sv_list(
 ) -> None:
     """Every SavedVariables file, account-wide and per character. With
     --orphans, only the files that no installed addon declares, with their
-    size and the total; its standing notes are behind --notes. Reads only.
+    size and the total; with --unreadable, only the files wowlab cannot
+    read as saved data, with where and why. Their standing notes are behind
+    --notes. Reads only: a file is read as data and never run.
 
     \f
     JSON: SvListReport."""
+    if orphans and unreadable:
+        raise CliError(_UNREADABLE_WITH_ORPHANS, EXIT_USAGE)
     inst, chosen, lay = _open(root, flavor)
     walk = lay.wtf_walk()
     files = list(walk.saved_variables)
@@ -173,6 +218,9 @@ def sv_list(
     )
     if orphans:
         _sv_orphans(lay, chosen.folder, files, no_account, json_out, notes_out)
+        return
+    if unreadable:
+        _sv_unreadable(lay, chosen.folder, files, no_account, json_out, notes_out)
         return
     report = SvListReport(flavor_folder=chosen.folder, files=files, notes=[_SV_TIMING, *no_account])
     if json_out:
@@ -237,6 +285,91 @@ def _sv_orphans(
         for f in found.files:
             _say(_sv_row(f))
     _say_notes(standing, notes_out, caveat, keep=[*found.not_judged, *found.no_toc, *no_account])
+
+
+def _read_failure(lay: layout.Layout, f: layout.SavedVariablesFile) -> SvReadFailure | None:
+    """Why `f` does not read as saved data, or None when it does. Parsed
+    by `luadata` as data, never run (L3), within its bounds, opened
+    read-only from the install root (L1). A file gone since the listing is
+    not a failure."""
+    try:
+        _listed(luadata.read, lay, f.path)
+    except FileNotFoundError:
+        return None
+    except luadata.LuaLimitError as exc:
+        limit = exc.message.replace(" (MAX_COST)", "")
+        return SvReadFailure(
+            path=f.path,
+            kind="too_large",
+            reason=f"it is beyond what wowlab reads ({limit}), so it was not checked",
+            line=None,
+            column=None,
+            detail=exc.message,
+        )
+    except luadata.LuaDataError as exc:
+        return SvReadFailure(
+            path=f.path,
+            kind="refused",
+            reason=_lua_refusal_why(exc),
+            line=exc.line,
+            column=exc.column,
+            detail=str(exc),
+        )
+    except OSError as exc:
+        said = exc.strerror or str(exc)
+        return SvReadFailure(
+            path=f.path,
+            kind="not_opened",
+            reason=f"wowlab could not open it: {said}",
+            line=None,
+            column=None,
+            detail=said,
+        )
+    return None
+
+
+def _sv_unreadable(
+    lay: layout.Layout,
+    flavor_folder: str,
+    files: Sequence[layout.SavedVariablesFile],
+    no_account: Sequence[str],
+    json_out: bool,
+    notes_out: bool,
+) -> None:
+    """M16-131, `sv list --unreadable`: each file read as data; the answer
+    (a count, then each file with why), the one caveat when any is listed,
+    then the standing notes or a footer."""
+    failed: list[tuple[layout.SavedVariablesFile, SvReadFailure]] = []
+    for f in files:
+        failure = _read_failure(lay, f)
+        if failure is not None:
+            failed.append((f, failure))
+    caveat = _UNREADABLE_LOSS if failed else None
+    standing = [_UNREADABLE_WHAT, _SV_TIMING, *no_account]
+    report = SvListReport(
+        flavor_folder=flavor_folder,
+        files=[f for f, _ in failed],
+        notes=[caveat, *standing] if caveat is not None else standing,
+        unreadable=True,
+        read_failures=[r for _, r in failed],
+    )
+    if json_out:
+        _emit(report)
+        return
+    if not files:
+        _say("No SavedVariables files.")
+    elif not failed:
+        _say(f"wowlab read all {_plural(len(files), 'SavedVariables file')} as saved data.")
+    else:
+        verb = "is" if len(failed) == 1 else "are"
+        _say(
+            f"{len(failed):,} of {_plural(len(files), 'SavedVariables file')} {verb} not "
+            "saved data wowlab can read:"
+        )
+        for f, failure in failed:
+            _say(_sv_row(f))
+            _say_prose(failure.reason + ".", indent="    ", hang="    ")
+    _say_notes(standing, notes_out, caveat, keep=list(no_account))
 
 
 def _no_account_notes(walk: layout.WtfWalk, flavor: str, root: str | None) -> list[str]:

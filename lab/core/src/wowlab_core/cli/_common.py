@@ -1107,12 +1107,20 @@ _LUA_REFUSAL_WORDS = {
     "the client does not write",
 }
 _UTF8_BOM = b"\xef\xbb\xbf"
+# The parser's refusal of a file that ends inside a table (M16-131).
+_LUA_UNCLOSED_TABLE = "unterminated table (end of input before its `}`)"
 
 
 def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
     """Why a SavedVariables file was refused, for a player: the two common
     real causes (a file cut off during a save, and a byte-order mark a text
     editor added) by name, and the parser's own rules in plain words."""
+    return f"not SavedVariables data wowlab can read: {_lua_refusal_why(exc)}"
+
+
+def _lua_refusal_why(exc: luadata.LuaDataError) -> str:
+    """The reason `_lua_refusal_words` gives, on its own (`sv list
+    --unreadable` prints it under a file's row, M16-131)."""
     where = f"line {exc.line}, column {exc.column}"
     if exc.offset == 0 and exc.token and _UTF8_BOM.startswith(exc.token[:3]):
         why = (
@@ -1124,11 +1132,17 @@ def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
             f"the file ends early, at {where}: it may have been cut off by a crash or a "
             "full disk during a save"
         )
+    elif exc.message == _LUA_UNCLOSED_TABLE:
+        # The parser names the table left open, not the end of the file.
+        why = (
+            f"the file ends before the table that opens at {where} is closed: it may have "
+            "been cut off by a crash or a full disk during a save"
+        )
     else:
         # The parser's own words, with no install value in them.
         message = _LUA_REFUSAL_WORDS.get(exc.message) or _render(exc.message)
         why = f"{message}, at {where}"
-    return f"not SavedVariables data wowlab can read: {why}"
+    return why
 
 
 # What every "no install" error ends with (M16-19): how to name the install.

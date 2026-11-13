@@ -2999,8 +2999,9 @@
   // ─── the patch-day card on the Account tab (M17-05, §19 CW-4) ───
   // Per flavor the hub's report lists: the addons `addons check` finds made
   // for another game version, needing an addon that will not load, or not
-  // checkable, and the SavedVariables files `sv list --orphans` finds that
-  // no installed addon declares. Every judgement is the commands'; the page
+  // checkable, the SavedVariables files `sv list --unreadable` cannot read
+  // as data (M16-131), and those `sv list --orphans` finds that no
+  // installed addon declares. Every judgement is the commands'; the page
   // lays the lines out, counts the addons whose counted TOCs all match, and
   // says, from `addons check`'s own list, whether an orphan's addon is
   // installed at all. Each line's name opens the Explorer on its file.
@@ -3014,6 +3015,10 @@
   // The sentence `sv list --orphans` prints with its list.
   const PATCH_DAY_REINSTALL =
     "If the addon is installed again it reads this file again, so deleting it loses those settings.";
+  // The caveat `sv list --unreadable` prints with its list, its unconfirmed
+  // part said as the card says it, once.
+  const PATCH_DAY_UNREAD_LOSS =
+    "If the game cannot load such a file either, the addon starts with its default settings, and the game writes them over the file at the next logout or /reload";
 
   function patchDaySay(text, isError) {
     const node = byId("patch-day-status");
@@ -3026,9 +3031,10 @@
   // `sv list --orphans` match addon names with).
   const patchDayFold = (name) => String(name).replace(/[A-Z]/g, (ch) => ch.toLowerCase());
 
-  function patchDayRead(folder, check, orphans) {
+  function patchDayRead(folder, check, orphans, unreadable) {
     const read = {
       flavor: folder, addons: null, interface: null, checkError: "", files: null, filesError: "",
+      unread: null, unreadError: "",
     };
     const report = check.data && typeof check.data === "object" ? check.data.check : null;
     if (report && typeof report === "object" && Array.isArray(report.addons)) {
@@ -3042,6 +3048,13 @@
       read.files = objects(listed.files).filter((f) => typeof f.path === "string" && f.path !== "");
     } else {
       read.filesError = orphans.error ? shown(orphans.error) : "wowlab sv list printed something this page does not know.";
+    }
+    const failed = unreadable.data;
+    if (failed && typeof failed === "object" && failed.unreadable === true && Array.isArray(failed.read_failures)) {
+      read.unread = objects(failed.read_failures)
+        .filter((f) => typeof f.path === "string" && f.path !== "" && typeof f.reason === "string");
+    } else {
+      read.unreadError = unreadable.error ? shown(unreadable.error) : "wowlab sv list printed something this page does not know.";
     }
     return read;
   }
@@ -3061,8 +3074,9 @@
     for (const folder of [...new Set(folders)]) {
       const check = await runJson(["addons", "check"], { flavor: folder }, false, true);
       const orphans = await runJson(["sv", "list"], { orphans: true, flavor: folder }, false, true);
+      const unreadable = await runJson(["sv", "list"], { unreadable: true, flavor: folder }, false, true);
       if (seq !== patchDay.seq) return;
-      read.push(patchDayRead(folder, check, orphans));
+      read.push(patchDayRead(folder, check, orphans, unreadable));
     }
     patchDay.flavors = read;
     patchDaySay("", false);
@@ -3211,6 +3225,11 @@
     return patchDayItem(read.flavor, file.path, file.path, size + previous + ": " + why);
   }
 
+  // A file `sv list --unreadable` could not read, with its reason.
+  function patchDayUnread(read, failure) {
+    return patchDayItem(read.flavor, failure.path, failure.path, ": " + shown(failure.reason) + ".");
+  }
+
   // `card.unconfirmed`: whether "(not yet confirmed)" was already said on
   // the card; it is said once, on the first block that needs it.
   function patchDayBlock(read, several, card) {
@@ -3228,7 +3247,7 @@
     const current = addons.filter(patchDayCurrent);
     const unchecked = addons.filter((a) => !patchDayCurrent(a) && !patchDayLate(a));
     const files = read.files || [];
-    for (const error of [read.checkError, read.filesError]) {
+    for (const error of [read.checkError, read.unreadError, read.filesError]) {
       if (!error) continue;
       const said = make("p", error);
       said.className = "patch-day-error";
@@ -3248,6 +3267,13 @@
     patchDayList(item, "Needs an addon that will not load", needy.map((a) => patchDayNeeds(read, a)));
     patchDayList(item, "Could not be checked",
       unchecked.map((a) => patchDayUnchecked(read, a)).filter((line) => line !== null));
+    const unread = read.unread || [];
+    if (unread.length) {
+      const unsure = card.unconfirmed ? "" : " (not yet confirmed)";
+      card.unconfirmed = true;
+      patchDayList(item, "Saved data wowlab could not read", unread.map((f) => patchDayUnread(read, f)),
+        PATCH_DAY_UNREAD_LOSS + unsure + ".");
+    }
     patchDayList(item, "Saved data no installed addon declares", files.map((f) => patchDayOrphan(read, f)),
       PATCH_DAY_REINSTALL);
     return item;

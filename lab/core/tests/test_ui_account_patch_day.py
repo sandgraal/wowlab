@@ -1,8 +1,9 @@
 """The Account tab's patch-day card (M17-05, docs/LAB_PLAN.md §19 CW-4):
 per flavor, the addons `addons check` finds out of date for this client or
-missing a required addon, and the SavedVariables files `sv list --orphans`
-finds that no installed addon declares, each line opening the Explorer on
-its file; with nothing found, "All N addons are current for this game version".
+missing a required addon, the SavedVariables files `sv list --unreadable`
+cannot read as data (M16-131), and those `sv list --orphans` finds that no
+installed addon declares, each line opening the Explorer on its file; with
+nothing found, "All N addons are current for this game version".
 
 The page is driven under Node with the harness of `test_ui_account.py`,
 fed what the real CLI printed through the real server. The install is that
@@ -36,6 +37,8 @@ BETA = hub_tab.BETA
 FOREVER = hub_tab.FOREVER
 CHECK = ["addons", "check"]
 SV_LIST = ["sv", "list"]
+ORPHANS = {"orphans": True}
+UNREADABLE = {"unreadable": True}
 ACCOUNT_SV = "WTF/Account/90000001#6/SavedVariables"
 ORPHAN_FILES = [
     f"{ACCOUNT_SV}/DBM-Party-Vanilla.lua",
@@ -105,12 +108,13 @@ def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
 
 
 def _card_runs(server: Any, flavors: tuple[str, ...] = (BETA, FOREVER)) -> list[dict[str, Any]]:
-    """`addons check` and `sv list --orphans` of each flavor, as the real CLI
-    printed them through the real server."""
+    """`addons check`, `sv list --orphans` and `sv list --unreadable` of each
+    flavor, as the real CLI printed them through the real server."""
     runs = []
     for flavor in flavors:
         runs.append(hub_tab._run_of(server, CHECK, {"flavor": flavor}))
         runs.append(hub_tab._run_of(server, SV_LIST, {"orphans": True, "flavor": flavor}))
+        runs.append(hub_tab._run_of(server, SV_LIST, {"unreadable": True, "flavor": flavor}))
     for run in runs:
         assert run["exit_code"] == 0, run["stderr"]
     return runs
@@ -122,11 +126,16 @@ def _scenario(server: Any, steps: list[dict[str, Any]], *, tree: bool = False) -
     return scenario
 
 
-def _run(scenario: dict[str, Any], command: list[str], flavor: str) -> dict[str, Any]:
+def _run(
+    scenario: dict[str, Any], command: list[str], flavor: str, option: dict[str, bool] = ORPHANS
+) -> dict[str, Any]:
+    """The run of `command` for `flavor`; of `sv list`, the one with `option`."""
     [run] = [
         r
         for r in scenario["runs"]
-        if r["command"] == command and r["params"].get("flavor") == flavor
+        if r["command"] == command
+        and r["params"].get("flavor") == flavor
+        and (command != SV_LIST or option.items() <= r["params"].items())
     ]
     return run
 
@@ -166,8 +175,10 @@ def test_the_card_reads_each_flavor_after_the_hub_beside_the_tree_constructed(
     assert [r for r in runs if r["command"] in (CHECK, SV_LIST)] == [
         {"command": CHECK, "params": {"flavor": BETA}},
         {"command": SV_LIST, "params": {"orphans": True, "flavor": BETA}},
+        {"command": SV_LIST, "params": {"unreadable": True, "flavor": BETA}},
         {"command": CHECK, "params": {"flavor": FOREVER}},
         {"command": SV_LIST, "params": {"orphans": True, "flavor": FOREVER}},
+        {"command": SV_LIST, "params": {"unreadable": True, "flavor": FOREVER}},
     ]
     assert ["tree"] in [r["command"] for r in runs]
     view = out["steps"][0]["patchDay"]
@@ -236,6 +247,93 @@ def test_the_two_dbm_addons_and_the_four_orphans_constructed(
         f"Show {BETA}/Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc in the Explorer"
     )
     assert beta["items"][4]["title"] == f"Show {BETA}/{ORPHAN_FILES[0]} in the Explorer"
+
+
+# ─── saved data wowlab could not read (M16-131) ──────────────────────────────
+
+UNREAD_HEAD = "Saved data wowlab could not read"
+LOSS = cli._UNREADABLE_LOSS.removesuffix(" [verify].")
+# Constructed (labelled): a file cut off inside its table, and one holding a
+# function, written into the copy of the beta flavor's account folder.
+BROKEN = {
+    f"{ACCOUNT_SV}/Cutoff.lua": b'Cutoff = {\n  ["a"] = 1,\n',
+    f"{ACCOUNT_SV}/Runs.lua": b"Runs = function() end\n",
+}
+
+
+def _write_broken(root: Path) -> None:
+    for rel, data in BROKEN.items():
+        (root / BETA / rel).write_bytes(data)
+
+
+def test_the_real_saved_data_all_reads_so_there_is_no_such_list(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Every SavedVariables file of both captures reads as data (L8)."""
+    scenario = _scenario(server, [{"patch_day": True}])
+    for flavor in (BETA, FOREVER):
+        report = json.loads(_run(scenario, SV_LIST, flavor, UNREADABLE)["stdout"])
+        assert report["unreadable"] is True and report["orphans"] is False
+        assert report["files"] == [] and report["read_failures"] == []
+    plain = json.loads(hub_tab._run_of(server, SV_LIST, {"flavor": BETA})["stdout"])
+    assert len(plain["files"]) >= 10, "the capture's files were all read"
+    blocks = _blocks(_drive(tmp_path / "node", scenario))
+    for block in blocks.values():
+        assert UNREAD_HEAD not in block["what"] and block["errors"] == []
+
+
+def test_files_wowlab_could_not_read_are_listed_with_why_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    _write_broken(both)
+    scenario = _scenario(server, [{"patch_day": True}])
+    report = json.loads(_run(scenario, SV_LIST, BETA, UNREADABLE)["stdout"])
+    assert [f["path"] for f in report["read_failures"]] == list(BROKEN)
+    blocks = _blocks(_drive(tmp_path / "node", scenario))
+    beta = blocks[BETA]
+    assert beta["errors"] == []
+    # After the addon lists, before the orphans.
+    assert beta["what"] == [
+        "Made for another game version",
+        "Needs an addon that will not load",
+        UNREAD_HEAD,
+        "Saved data no installed addon declares",
+    ]
+    unread = [i for i in beta["items"] if i["name"] in BROKEN]
+    assert [i["text"] for i in unread[:2]] == [
+        f"{ACCOUNT_SV}/Cutoff.lua: the file ends before the table that opens at line 1, "
+        "column 10 is closed: it may have been cut off by a crash or a full disk during a "
+        "save.",
+        f"{ACCOUNT_SV}/Runs.lua: it holds a function, which saved data never does (wowlab "
+        "reads the file as data and never runs it), at line 1, column 8.",
+    ]
+    assert unread[0]["title"] == f"Show {BETA}/{ACCOUNT_SV}/Cutoff.lua in the Explorer"
+    # "(not yet confirmed)" once on the card: the first list said it.
+    assert beta["notes"][1] == LOSS + "."
+    every = [n for b in blocks.values() for n in b["notes"]]
+    assert sum("(not yet confirmed)" in n for n in every) == 1
+
+
+def test_the_unreadable_list_alone_says_not_yet_confirmed_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    _write_broken(both)
+    scenario = _scenario(server, [{"patch_day": True}])
+    _edited(scenario, lambda report: None)
+    beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
+    assert beta["what"] == [UNREAD_HEAD]
+    assert beta["notes"] == [LOSS + " (not yet confirmed)."]
+    assert beta["clear"] == ["All 2 addons are current for this game version."]
+
+
+def test_a_failed_unreadable_read_is_said_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    scenario = _scenario(server, [{"patch_day": True}])
+    scenario["runs"].remove(_run(scenario, SV_LIST, FOREVER, UNREADABLE))
+    forever = _blocks(_drive(tmp_path / "node", scenario))[FOREVER]
+    assert forever["errors"] == [f"harness: no reply for {' '.join(SV_LIST)}"]
+    assert UNREAD_HEAD not in forever["what"]
 
 
 UNKNOWN = (
@@ -499,7 +597,7 @@ def test_an_addon_line_opens_its_toc_constructed(server: Any, both: Path, tmp_pa
     assert clicked["explainPath"] == f"{BETA}/Interface/AddOns/DBM-Brawlers/DBM-Brawlers.toc"
 
 
-def test_the_card_section_runs_only_its_two_reads() -> None:
+def test_the_card_section_runs_only_its_three_reads() -> None:
     script = (hub_tab.first_stage._TEMPLATES / "page.js").read_text(encoding="utf-8")
     start = script.index("// ─── the patch-day card on the Account tab")
     body = script[start : script.index("// ─── backups on the Account tab", start)]
@@ -507,6 +605,7 @@ def test_the_card_section_runs_only_its_two_reads() -> None:
     assert runs == [
         '["addons", "check"], { flavor: folder }, false, true',
         '["sv", "list"], { orphans: true, flavor: folder }, false, true',
+        '["sv", "list"], { unreadable: true, flavor: folder }, false, true',
     ]
     # Reads only: no confirm token, no --yes, no HTML sink, no request of its own.
     # ("(not yet confirmed)" is player copy, not the confirm step.)
@@ -514,5 +613,9 @@ def test_the_card_section_runs_only_its_two_reads() -> None:
         assert not re.search(word, body), word
     # The hub starts the card and waits for none of it, as for its backups.
     assert "takePatchDay(report);" in script and "await takePatchDay" not in script
-    # The orphan list's sentence is the CLI's own.
+    # The orphan list's sentence is the CLI's own; so is the unreadable
+    # list's, its unconfirmed part said as the card says it.
     assert json.dumps(cli._ORPHAN_REINSTALL) in body
+    loss, verify = cli._UNREADABLE_LOSS.rsplit(" ", 1)
+    assert verify == "[verify]."
+    assert f"const PATCH_DAY_UNREAD_LOSS =\n    {json.dumps(loss)};" in body
