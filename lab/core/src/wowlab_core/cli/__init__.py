@@ -2036,6 +2036,21 @@ from wowlab_core.cli._cmd_sv import (
     _SV_TIMING as _SV_TIMING,
 )
 from wowlab_core.cli._cmd_sv import (
+    _UNREADABLE_BACKUP as _UNREADABLE_BACKUP,
+)
+from wowlab_core.cli._cmd_sv import (
+    _UNREADABLE_LOSS as _UNREADABLE_LOSS,
+)
+from wowlab_core.cli._cmd_sv import (
+    _UNREADABLE_TOO_LARGE as _UNREADABLE_TOO_LARGE,
+)
+from wowlab_core.cli._cmd_sv import (
+    _UNREADABLE_WHAT as _UNREADABLE_WHAT,
+)
+from wowlab_core.cli._cmd_sv import (
+    _UNREADABLE_WITH_ORPHANS as _UNREADABLE_WITH_ORPHANS,
+)
+from wowlab_core.cli._cmd_sv import (
     LuaBoolNode as LuaBoolNode,
 )
 from wowlab_core.cli._cmd_sv import (
@@ -2066,7 +2081,13 @@ from wowlab_core.cli._cmd_sv import (
     SvMergeReport as SvMergeReport,
 )
 from wowlab_core.cli._cmd_sv import (
+    SvReadFailure as SvReadFailure,
+)
+from wowlab_core.cli._cmd_sv import (
     SvValue as SvValue,
+)
+from wowlab_core.cli._cmd_sv import (
+    UnreadableOpt as UnreadableOpt,
 )
 from wowlab_core.cli._cmd_sv import (
     _character_sv as _character_sv,
@@ -2105,6 +2126,9 @@ from wowlab_core.cli._cmd_sv import (
     _latest_in as _latest_in,
 )
 from wowlab_core.cli._cmd_sv import (
+    _limit_words as _limit_words,
+)
+from wowlab_core.cli._cmd_sv import (
     _link_out_of_install as _link_out_of_install,
 )
 from wowlab_core.cli._cmd_sv import (
@@ -2123,6 +2147,9 @@ from wowlab_core.cli._cmd_sv import (
     _merge_target as _merge_target,
 )
 from wowlab_core.cli._cmd_sv import (
+    _mib_or_bytes as _mib_or_bytes,
+)
+from wowlab_core.cli._cmd_sv import (
     _no_account_notes as _no_account_notes,
 )
 from wowlab_core.cli._cmd_sv import (
@@ -2136,6 +2163,9 @@ from wowlab_core.cli._cmd_sv import (
 )
 from wowlab_core.cli._cmd_sv import (
     _print_merge as _print_merge,
+)
+from wowlab_core.cli._cmd_sv import (
+    _read_failure as _read_failure,
 )
 from wowlab_core.cli._cmd_sv import (
     _read_sv as _read_sv,
@@ -2187,6 +2217,12 @@ from wowlab_core.cli._cmd_sv import (
 )
 from wowlab_core.cli._cmd_sv import (
     _sv_row as _sv_row,
+)
+from wowlab_core.cli._cmd_sv import (
+    _sv_unreadable as _sv_unreadable,
+)
+from wowlab_core.cli._cmd_sv import (
+    _unreadable_caveat as _unreadable_caveat,
 )
 from wowlab_core.cli._cmd_sv import (
     _value_node as _value_node,
@@ -2252,7 +2288,19 @@ from wowlab_core.cli._common import (
     _LOG_HANDLER as _LOG_HANDLER,
 )
 from wowlab_core.cli._common import (
+    _LUA_CUT_OFF as _LUA_CUT_OFF,
+)
+from wowlab_core.cli._common import (
     _LUA_REFUSAL_WORDS as _LUA_REFUSAL_WORDS,
+)
+from wowlab_core.cli._common import (
+    _LUA_TOKEN_KEPT as _LUA_TOKEN_KEPT,
+)
+from wowlab_core.cli._common import (
+    _LUA_UNCLOSED_STRING as _LUA_UNCLOSED_STRING,
+)
+from wowlab_core.cli._common import (
+    _LUA_UNCLOSED_TABLE as _LUA_UNCLOSED_TABLE,
 )
 from wowlab_core.cli._common import (
     _NAME_THE_INSTALL as _NAME_THE_INSTALL,
@@ -2472,6 +2520,9 @@ from wowlab_core.cli._common import (
 )
 from wowlab_core.cli._common import (
     _local_time as _local_time,
+)
+from wowlab_core.cli._common import (
+    _lua_refusal_why as _lua_refusal_why,
 )
 from wowlab_core.cli._common import (
     _lua_refusal_words as _lua_refusal_words,
