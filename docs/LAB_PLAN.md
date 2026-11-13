@@ -1462,6 +1462,12 @@ it is implied. Every command that prints data has `--json`. Exit codes:
 - **Write commands.** A command that writes (through `guard`) never picks a flavor by itself. With several flavors and no `--flavor` or `WOWLAB_FLAVOR`, it fails as today. The error now lists each flavor with the exact command line to copy.
 - **`wowlab ui`** shows a flavor picker in its header when the install has more than one flavor. Every run from every tab passes the picked flavor as `--flavor`. The picker starts on the only flavor that has characters, else on the first flavor whose `.build.info` row has a version, else on the first flavor. It keeps the choice while the page is open. With one flavor, the picker is not shown.
 
+*Amended 2026-11-12 (owner decision, option (a) of M16-124):* `snap create` with several flavors and no `--flavor` or `WOWLAB_FLAVOR` used to fail with the several-flavors error. A snapshot only reads the install and writes into wowlab's own store, so it now takes one snapshot of each flavor, in the order discovery lists them, and says which flavor each one is.
+- **Text.** One line, `<n> flavors in <root>: one snapshot of each.`, then each snapshot's usual block, whose second line names its flavor folder and version. `-m` and `--screenshots` apply to every snapshot. When wowlab cannot confirm a flavor's client was closed, that note starts with the flavor folder.
+- **`--json`.** `SnapCreateReport`: `{"snapshots": [<manifest>, ...]}`, one manifest per flavor in the same order, each with its `flavor_folder`. With one flavor, or with one named by `--flavor` or `WOWLAB_FLAVOR`, the command prints the bare manifest, as before.
+- **An error** stops the run. Snapshots already taken stay in the store, and the error's note names the flavor that was not snapshotted and each snapshot already taken, or says that none was (`ErrorReport.notes` under `--json`).
+- **Everything else is unchanged.** Read commands such as `cvar list` keep the one-flavor rule, the character reads keep their own pick above, and a command that writes into an install still never picks a flavor by itself.
+
 
 *Amended 2026-09-27 (owner decision after the PR #68 reviews):* a
 whole-snapshot `wowlab snap restore` (no `--paths`) skips every file whose

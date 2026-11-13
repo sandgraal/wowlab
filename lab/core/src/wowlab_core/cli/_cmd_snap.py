@@ -10,6 +10,8 @@ from pydantic import Field
 from wowlab_core import (
     firstrun,
     guard,
+    install,
+    layout,
     luadata,
     profiles,
     snaparchive,
@@ -47,17 +49,19 @@ from wowlab_core.cli._common import (
     _bytes,
     _client_running,
     _confirm,
+    _discover,
     _emit,
     _emit_manifest,
+    _given_flavor,
     _handled,
     _note,
-    _open,
     _Out,
     _pre_write_ids,
     _safe,
     _say,
     _say_notes,
     _say_prose,
+    _select_flavor,
     snap_app,
 )
 
@@ -136,18 +140,52 @@ def snap_create(
     json_out: JsonOpt = False,
 ) -> None:
     """Snapshot a flavor's WTF/, Interface/ and Fonts/ into the store (reads the
-    install only). Labels starting with `profile:` or `deleted-profile:` are
-    `wowlab profile`'s and are refused.
+    install only). With several flavors and no --flavor, takes one snapshot of
+    each flavor and says which flavor each one is. Labels starting with
+    `profile:` or `deleted-profile:` are `wowlab profile`'s and are refused.
 
     \f
-    JSON: the manifest (snapshot.Manifest)."""
+    JSON: the manifest (snapshot.Manifest) when one flavor is snapshotted;
+    SnapCreateReport, one manifest per flavor, when several are."""
     if message.startswith(profiles.RESERVED_LABEL_PREFIXES):
         raise CliError(
             f"labels starting with {' or '.join(profiles.RESERVED_LABEL_PREFIXES)} belong to "
             "`wowlab profile`; use `wowlab profile save` or choose another label",
             EXIT_USAGE,
         )
-    inst, chosen, lay = _open(root, flavor)
+    inst, _ = _discover(root)
+    if _given_flavor(flavor) is None and len(inst.flavors) > 1:
+        _snap_every_flavor(inst, message, screenshots, json_out)
+        return
+    chosen = _select_flavor(inst, flavor)
+    manifest = _snap_one(inst, chosen, message, screenshots, several=False)
+    if json_out:
+        _emit_manifest(manifest)
+        return
+    _say_created(manifest, inst, chosen)
+
+
+class SnapCreateReport(_Out):
+    """`wowlab snap create --json` on an install with several flavors and no
+    `--flavor` (M16-124): one manifest per flavor, in the order discovery
+    lists the flavors. Each manifest's `flavor_folder` says which flavor it
+    is. With one flavor, or one named, the command prints the bare manifest
+    instead."""
+
+    snapshots: list[snapshot.Manifest]
+
+
+def _snap_one(
+    inst: install.Install,
+    chosen: install.Flavor,
+    message: str,
+    screenshots: bool,
+    *,
+    several: bool,
+) -> snapshot.Manifest:
+    """One snapshot of `chosen` into wowlab's own store: the install is only
+    read (L1)."""
+    lay = layout.Layout.for_flavor(chosen, inst.root)
     running = _client_running(inst, chosen)
     # The one sequence a first run of `doctor` uses too (M13-04): refuse a
     # store that holds the install with nothing created (M10-19), then take
@@ -163,14 +201,25 @@ def snap_create(
         client_running=running,
     )
     if running is not False:
-        _note(
-            "wowlab could not confirm the client was closed: SavedVariables on disk are as of "
-            "its last logout or /reload, and the client overwrites them at its next logout, "
-            "/reload or exit."
-        )
-    if json_out:
-        _emit_manifest(manifest)
-        return
+        if several:
+            _note(
+                "{}: wowlab could not confirm the client was closed: SavedVariables on disk "
+                "are as of its last logout or /reload, and the client overwrites them at its "
+                "next logout, /reload or exit.",
+                chosen.folder,
+            )
+        else:
+            _note(
+                "wowlab could not confirm the client was closed: SavedVariables on disk are as "
+                "of its last logout or /reload, and the client overwrites them at its next "
+                "logout, /reload or exit."
+            )
+    return manifest
+
+
+def _say_created(
+    manifest: snapshot.Manifest, inst: install.Install, chosen: install.Flavor
+) -> None:
     s = _summary(manifest)
     _say(f"Snapshot {manifest.id}")
     _say(f"  {chosen.folder} ({chosen.version or 'no version'}) in {inst.root}")
@@ -178,6 +227,36 @@ def snap_create(
         _say(f"  label: {manifest.label}")
     _say(f"  captured: {', '.join(manifest.subtrees)}")
     _say(f"  {s.files} file(s), {_bytes(s.bytes)}")
+
+
+def _snap_every_flavor(
+    inst: install.Install, message: str, screenshots: bool, json_out: bool
+) -> None:
+    """`snap create` with several flavors and none named: one snapshot of
+    each, in discovery's order (owner decision, 2026-11-12, M16-124). A
+    snapshot only reads the install, so taking every flavor's is safe; a
+    write still needs the player to name its flavor. An error stops the run,
+    and its notes name the snapshots already taken."""
+    taken: list[tuple[install.Flavor, snapshot.Manifest]] = []
+    if not json_out:
+        _say(f"{len(inst.flavors)} flavors in {inst.root}: one snapshot of each.")
+    for chosen in inst.flavors:
+        try:
+            manifest = _snap_one(inst, chosen, message, screenshots, several=True)
+        except Exception as exc:
+            if taken:
+                done = ", ".join(f"{m.id} ({f.folder})" for f, m in taken)
+                exc.add_note(
+                    f"{chosen.folder} was not snapshotted; snapshots already taken: {done}"
+                )
+            else:
+                exc.add_note(f"{chosen.folder} was not snapshotted; no snapshot was taken")
+            raise
+        taken.append((chosen, manifest))
+        if not json_out:
+            _say_created(manifest, inst, chosen)
+    if json_out:
+        _emit(SnapCreateReport(snapshots=[m for _, m in taken]))
 
 
 @snap_app.command("list", short_help="Every snapshot, oldest first.")
