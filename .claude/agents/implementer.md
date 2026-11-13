@@ -97,6 +97,9 @@ the workflow document point here.
      under `wowlab_core/cli/`: every top-level name a module there defines
      must be re-exported from `wowlab_core.cli`, and the import grep above
      does not select this test (2026-11-13: four tickets missed it in a row);
+   - `tests/scripts/test_release.py` when the diff adds or renames a
+     `--json` model, or a command's `--help` names one: the release notes
+     must list every model the help names (2026-11-13, M16-124);
    - `make test-parser` when the diff touches `lab/core/tests/fixtures/**`;
    - `tests/scripts/test_release.py` when it touches `.github/rulesets/` or
      `.github/release-notes.md`;
