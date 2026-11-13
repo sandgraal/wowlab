@@ -367,11 +367,11 @@
     listed.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     for (const [key, item] of listed) {
       if (typeof key !== "string" || key === "") continue;
-      let node = root;
+      let treeNode = root;
       let path = "";
       for (const part of key.split("/")) {
         path = path ? path + "/" + part : part;
-        let child = node.index.get(part);
+        let child = treeNode.index.get(part);
         if (!child) {
           const top = path.split("/")[0];
           const inFlavor = flavors.has(top);
@@ -384,18 +384,18 @@
             flavor: inFlavor ? top : null,
             rel: inFlavor ? path.slice(top.length + 1) : path,
           };
-          node.index.set(part, child);
-          node.children.push(child);
+          treeNode.index.set(part, child);
+          treeNode.children.push(child);
         }
-        node = child;
+        treeNode = child;
       }
-      node.item = item;
+      treeNode.item = item;
     }
     return root;
   }
 
-  function isFolder(node) {
-    return node.children.length > 0 || (node.item !== null && node.item.kind === "folder");
+  function isFolder(treeNode) {
+    return treeNode.children.length > 0 || (treeNode.item !== null && treeNode.item.kind === "folder");
   }
 
   function filters() {
@@ -417,13 +417,13 @@
     return typeof verdict.level === "string" ? verdict.level : "";
   }
 
-  function matches(node, filter) {
+  function matches(treeNode, filter) {
     if (filter.level) {
       const keys = explorer.choices.get(filter.level) || new Set([filter.level]);
-      if (!node.item || !keys.has(filterKey(node.item.verdict))) return false;
+      if (!treeNode.item || !keys.has(filterKey(treeNode.item.verdict))) return false;
     }
-    if (filter.text && !node.path.toLowerCase().includes(filter.text)) return false;
-    if (filter.gaps && !(explorer.gapHits && explorer.gapHits.has(node.path))) return false;
+    if (filter.text && !treeNode.path.toLowerCase().includes(filter.text)) return false;
+    if (filter.gaps && !(explorer.gapHits && explorer.gapHits.has(treeNode.path))) return false;
     return true;
   }
 
@@ -433,58 +433,58 @@
     const keep = new Set();
     const active = Boolean(filter.level || filter.text || filter.gaps);
     let matched = 0;
-    function walk(node) {
-      const hit = !active || matches(node, filter);
-      if (hit && node.item && node.path !== "") matched += 1;
+    function walk(treeNode) {
+      const hit = !active || matches(treeNode, filter);
+      if (hit && treeNode.item && treeNode.path !== "") matched += 1;
       let any = hit;
-      for (const child of node.children) {
+      for (const child of treeNode.children) {
         if (walk(child)) any = true;
       }
-      if (any) keep.add(node);
+      if (any) keep.add(treeNode);
       return any;
     }
     walk(root);
     return { keep: keep, active: active, matched: matched };
   }
 
-  function isOpen(node, active) {
-    return active ? !explorer.closedWhileFiltering.has(node.path) : explorer.open.has(node.path);
+  function isOpen(treeNode, active) {
+    return active ? !explorer.closedWhileFiltering.has(treeNode.path) : explorer.open.has(treeNode.path);
   }
 
-  function drawNode(node, view) {
+  function drawNode(treeNode, view) {
     // Plain nested lists of buttons (EV-27): no tree role, whose arrow keys
     // the page does not offer. A folder's twisty carries aria-expanded.
     const li = make("li");
     const row = make("div");
     row.className = "row";
-    row.dataset.path = node.path;
-    if (explorer.selected === node.path) row.classList.add("selected");
-    const children = node.children.filter((child) => view.keep.has(child));
-    const open = isOpen(node, view.active);
+    row.dataset.path = treeNode.path;
+    if (explorer.selected === treeNode.path) row.classList.add("selected");
+    const children = treeNode.children.filter((child) => view.keep.has(child));
+    const open = isOpen(treeNode, view.active);
     if (children.length) {
       const twisty = make("button", open ? "▾" : "▸");
       twisty.type = "button";
       twisty.className = "twisty";
       twisty.setAttribute("aria-expanded", open ? "true" : "false");
-      twisty.setAttribute("aria-label", (open ? "Close " : "Open ") + visible(node.name));
-      twisty.addEventListener("click", () => toggle(node, view.active));
+      twisty.setAttribute("aria-label", (open ? "Close " : "Open ") + visible(treeNode.name));
+      twisty.addEventListener("click", () => toggle(treeNode, view.active));
       row.appendChild(twisty);
     } else {
       const gap = make("span");
       gap.className = "twisty-gap";
       row.appendChild(gap);
     }
-    const folder = isFolder(node);
-    const name = make("button", visible(node.name) + (folder ? "/" : ""));
+    const folder = isFolder(treeNode);
+    const name = make("button", visible(treeNode.name) + (folder ? "/" : ""));
     name.type = "button";
     name.className = folder ? "name folder" : "name";
-    name.title = visible(node.path || node.name);
-    name.addEventListener("click", () => select(node));
+    name.title = visible(treeNode.path || treeNode.name);
+    name.addEventListener("click", () => select(treeNode));
     row.appendChild(name);
-    if (node.item) {
-      for (const mark of badges(node.item.verdict, true)) row.appendChild(mark);
-      if (node.item.note) {
-        const note = make("span", shown(node.item.note));
+    if (treeNode.item) {
+      for (const mark of badges(treeNode.item.verdict, true)) row.appendChild(mark);
+      if (treeNode.item.note) {
+        const note = make("span", shown(treeNode.item.note));
         note.className = "note";
         row.appendChild(note);
       }
@@ -539,11 +539,11 @@
     explorerSay(view.active ? view.matched + " of " + total + " paths match." : total + " paths.", false);
   }
 
-  function toggle(node, active) {
+  function toggle(treeNode, active) {
     const set = active ? explorer.closedWhileFiltering : explorer.open;
-    const has = set.has(node.path);
-    if (has) set.delete(node.path);
-    else set.add(node.path);
+    const has = set.has(treeNode.path);
+    if (has) set.delete(treeNode.path);
+    else set.add(treeNode.path);
     drawTree();
   }
 
@@ -817,26 +817,26 @@
     });
   }
 
-  async function select(node) {
+  async function select(treeNode) {
     const report = explorer.report;
     if (!report) return;
-    explorer.selected = node.path;
+    explorer.selected = treeNode.path;
     markSelected();
     const seq = ++explorer.explainSeq;
-    byId("explain-title").textContent = visible(node.name) + (isFolder(node) ? "/" : "");
+    byId("explain-title").textContent = visible(treeNode.name) + (isFolder(treeNode) ? "/" : "");
     // Focus moves to what was picked, so the details are the next Tab stops
     // rather than the rest of the tree (EV-27).
     byId("explain-title").focus();
-    byId("explain-path").textContent = visible(node.path);
+    byId("explain-path").textContent = visible(treeNode.path);
     byId("explain-verdict").replaceChildren();
     byId("explain-facts").replaceChildren();
     byId("explain-snapshot").replaceChildren();
     byId("explain-hints").replaceChildren();
     byId("explain-preview").replaceChildren();
     explainSay("Asking wowlab explain…", false);
-    const target = node.path ? report.install_root + sep + node.path.split("/").join(sep) : report.install_root;
+    const target = treeNode.path ? report.install_root + sep + treeNode.path.split("/").join(sep) : report.install_root;
     const params = { path: target, root: report.install_root };
-    if (node.flavor) params.flavor = node.flavor;
+    if (treeNode.flavor) params.flavor = treeNode.flavor;
     // Partial: `explain` exits 1 for a path that matches nothing (M16-18),
     // and its report still says why. Any other error prints an error report
     // (no `result`) in place of it: the pane shows the error then.
@@ -2710,8 +2710,12 @@
 
   // Runs one part of the page. When it throws, or the promise it returns
   // fails, the error goes in that part's own line and nothing else stops.
+  function drawFailed(error) {
+    return "This part of the page could not be drawn: " + shown(String(error));
+  }
+
   function alone(sayIn, draw) {
-    const failed = (error) => sayIn("This part of the page could not be drawn: " + error, true);
+    const failed = (error) => sayIn(drawFailed(error), true);
     try {
       const done = draw();
       if (done && typeof done.then === "function") done.then(undefined, failed);
@@ -3350,13 +3354,13 @@
 
   // The deepest node of the tree on the way to `key`, opened and picked.
   function patchDayReveal(key) {
-    let node = explorer.root;
+    let treeNode = explorer.root;
     for (const part of key.split("/")) {
-      const child = node.index.get(part);
+      const child = treeNode.index.get(part);
       if (!child) break;
-      node = child;
+      treeNode = child;
     }
-    const parts = node.path ? node.path.split("/") : [];
+    const parts = treeNode.path ? treeNode.path.split("/") : [];
     explorer.open.add("");
     for (let at = 1; at < parts.length; at++) {
       const above = parts.slice(0, at).join("/");
@@ -3364,10 +3368,10 @@
       explorer.closedWhileFiltering.delete(above);
     }
     drawTree();
-    if (node.path !== key) {
+    if (treeNode.path !== key) {
       explorerSay("The Explorer does not list " + visible(key) + "; it shows the nearest folder it lists.", false);
     }
-    select(node);
+    select(treeNode);
   }
 
   // ─── backups on the Account tab (M17-04, §19 CW-3) ───
@@ -3817,7 +3821,7 @@
     try {
       await loadHub();
     } catch (error) {
-      hubSay("This part of the page could not be drawn: " + error, true);
+      hubSay(drawFailed(error), true);
     }
     await loadTree();
   }

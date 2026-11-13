@@ -6,12 +6,22 @@ HTMLOptionsCollection, `childNodes` and `querySelectorAll(...)` a NodeList,
 `children`, `rows` and `cells` an HTMLCollection, and none of them is an
 Array. The throw stopped the page's start-up, so the Account tab listed no
 character. The Node runs of page.js in the other `test_ui_*` files did not
-see it because their stand-in DOM handed back real Arrays; it now hands back
-a collection that is not one (`DomList` in `test_ui_explorer.py`), and this
-file holds the two checks that do not need a server:
+see it because their stand-in DOM handed back real Arrays.
 
-- page.js, read as text, calls no Array method on a DOM collection;
-- the stand-in's collections refuse Array methods, as a browser's do.
+What covers what:
+
+- The stand-in DOM (`DomList` in `test_ui_explorer.py`, and its copy in
+  `test_ui_confirm.py`) now hands back a collection that is not an Array for
+  `options`, `childNodes` and `querySelectorAll(...)`, so a Node run that
+  reaches such a call fails as the browser does. Its `children` is still a
+  plain Array (the stand-in's own code edits it as one), and it has no
+  `rows`, `cells`, `selectedOptions` or `getElementsBy*`.
+- The static check below, on page.js as text, covers all of those, the
+  ones the stand-in does not model included. It reads a receiver by name:
+  a collection held in a variable first (`const o = s.options; o.some(...)`)
+  is seen only by a Node run, and only for what the stand-in models.
+- The last test here checks that the stand-in's collections refuse Array
+  methods, as a browser's do.
 """
 
 from __future__ import annotations
@@ -75,7 +85,7 @@ _NO_FOR_EACH = (
 # listed here, with what it is.
 _AMBIGUOUS = r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.(children|rows)"
 _DATA = {
-    "node.children": "a tree node the explorer builds from `tree --json` (an Array)",
+    "treeNode.children": "a tree node the explorer builds from `tree --json` (an Array)",
     "report.rows": "the rows of `char list --json`",
     "hub.report.rows": "the hub's filtered copy of those rows (an Array)",
 }
@@ -136,6 +146,7 @@ def test_every_data_receiver_listed_is_still_in_the_page() -> None:
         "row.cells.map((c) => c.textContent);",
         "byId('hub-table').rows.some((r) => r);",
         "box.children.filter((c) => c.hidden);",
+        "const shown = node.children.filter((c) => !c.hidden);",
         "document.getElementsByTagName('li').map((li) => li);",
     ],
     ids=lambda s: s.split("(")[0][:40],
@@ -152,7 +163,7 @@ def test_the_check_finds_the_calls_constructed(line: str) -> None:
         "for (const o of select.options) o.selected = false;",
         "table.querySelectorAll('button')[at].focus();",
         "list.querySelectorAll('li').forEach((li) => li.remove());",
-        "const kept = node.children.filter((c) => keep.has(c));",
+        "const kept = treeNode.children.filter((c) => keep.has(c));",
         "while (select.options.length > 1) select.remove(1);",
     ],
     ids=lambda s: s.split("(")[0][:40],
