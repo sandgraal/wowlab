@@ -2315,6 +2315,7 @@
         hub.note = reply.error ? shown(reply.error) : "";
         fillHubFilters();
         drawHub();
+        takeBackups(report);
       })();
       hub.asked = asked;
     }
@@ -2564,6 +2565,166 @@
   byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
   byId("tab-looks").addEventListener("click", () => showTab("looks"));
+
+  // ─── backups on the Account tab (M17-04, §19 CW-3) ───
+  // One line per flavor the hub's report lists (`backups`): how old the
+  // newest backup is, and, when the report says the game updated since it,
+  // the prompt to take one. Back up now runs `snap create` for that flavor,
+  // named with --flavor, which writes only into wowlab's own store, then
+  // `snap diff` against the backup the line named, whose plan lines (each
+  // key, macro and CVar by name) are shown as the CLI printed them. Restore
+  // opens the Commands tab on `snap restore` with the backup's id filled
+  // in: the plan and Confirm are that tab's, unchanged. Which snapshot is a
+  // backup, and whether the game updated, are the report's; the page only
+  // says how long ago a time was.
+
+  const backup = {
+    lines: [], // the report's `backups`, each line as the page last drew it
+    error: "", // the report's `backup_error`
+    busy: false, // a Back up now in progress; every button waits for it
+  };
+
+  function backupSay(text, isError) {
+    const node = byId("backup-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function takeBackups(report) {
+    const lines = Array.isArray(report.backups) ? report.backups : [];
+    backup.lines = lines.filter((b) => b && typeof b === "object" && typeof b.flavor === "string" && b.flavor !== "");
+    backup.error = typeof report.backup_error === "string" ? report.backup_error : "";
+    if (backup.error) backupSay(shown(backup.error), true);
+    drawBackups();
+  }
+
+  // How long ago an ISO 8601 time was, in words, then the local time.
+  function backupAge(iso) {
+    const at = typeof iso === "string" ? Date.parse(iso) : NaN;
+    if (Number.isNaN(at)) return null;
+    const minutes = Math.floor(Math.max(0, Date.now() - at) / 60000);
+    let words;
+    if (minutes < 1) words = "just now";
+    else if (minutes < 60) words = count(minutes, "minute", "minutes") + " ago";
+    else if (minutes < 48 * 60) words = count(Math.floor(minutes / 60), "hour", "hours") + " ago";
+    else words = count(Math.floor(minutes / 1440), "day", "days") + " ago";
+    return words + " (" + localTime(at * 1e6) + ")";
+  }
+
+  function backupLine(line, several) {
+    const item = make("li");
+    item.className = "backup-line";
+    const where = several ? visible(line.flavor) + ": " : "";
+    let text;
+    if (hubStr(line.snapshot_id)) {
+      const age = backupAge(line.created_at);
+      text = where + "Last backup " + (age || "at a time wowlab cannot read");
+      if (hubStr(line.snapshot_version)) text += ", taken on version " + visible(line.snapshot_version);
+      text += ".";
+    } else {
+      text = where + "No backup yet.";
+    }
+    item.appendChild(make("span", text));
+    if (line.game_updated === true) {
+      const now = hubStr(line.version) ? ": it is now version " + visible(line.version) : "";
+      const prompt = make("strong", " The game updated since your last backup" + now + ".");
+      prompt.className = "backup-updated";
+      item.appendChild(prompt);
+    }
+    const actions = make("span");
+    actions.className = "backup-actions";
+    const take = make("button", "Back up now");
+    take.type = "button";
+    take.className = "backup-now";
+    if (several) take.title = "Back up " + visible(line.flavor);
+    take.disabled = backup.busy;
+    take.addEventListener("click", () => backUp(line));
+    actions.appendChild(take);
+    if (hubStr(line.snapshot_id)) {
+      const restore = make("button", "Restore this backup…");
+      restore.type = "button";
+      restore.className = "backup-restore";
+      restore.title = "Opens the Commands tab, where you see what restoring would change before anything does";
+      restore.disabled = backup.busy;
+      restore.addEventListener("click", () => restoreBackup(line));
+      actions.appendChild(restore);
+    }
+    item.appendChild(actions);
+    return item;
+  }
+
+  // The lines of the flavors the hub's flavor filter shows.
+  function drawBackups() {
+    const box = byId("backup-lines");
+    const flavor = byId("hub-flavor").value;
+    const several = backup.lines.length > 1;
+    box.replaceChildren(
+      ...backup.lines.filter((b) => !flavor || "f:" + b.flavor === flavor).map((b) => backupLine(b, several)),
+    );
+  }
+
+  byId("hub-flavor").addEventListener("change", () => drawBackups());
+
+  async function backUp(line) {
+    if (backup.busy) return;
+    backup.busy = true;
+    drawBackups();
+    const diff = byId("backup-diff");
+    diff.hidden = true;
+    diff.textContent = "";
+    const name = visible(line.flavor);
+    try {
+      backupSay("Backing up " + name + "…", false);
+      const made = await runJson(["snap", "create"], { flavor: line.flavor }, false, true);
+      const manifest = made.data;
+      if (!manifest || typeof manifest !== "object" || !hubStr(manifest.id)) {
+        backupSay(made.error ? shown(made.error) : "wowlab snap create printed something this page does not know.", true);
+        return;
+      }
+      const before = hubStr(line.snapshot_id);
+      // The line names the backup just taken, as its manifest records it.
+      line.snapshot_id = manifest.id;
+      line.created_at = manifest.created_at;
+      line.snapshot_version = hubStr(manifest.flavor_version);
+      line.game_updated = false;
+      const done = "Backed up " + name + " as " + visible(manifest.id) + ".";
+      if (!before) {
+        backupSay(done + " It is the first backup of " + name + " here, so there is nothing to compare it with.", false);
+        return;
+      }
+      const changes = await runJson(["snap", "diff"], { a: before, b: manifest.id }, false, true);
+      const lines = changes.data && Array.isArray(changes.data.plan_lines)
+        ? changes.data.plan_lines.filter((l) => typeof l === "string")
+        : null;
+      if (lines === null) {
+        const why = changes.error ? shown(changes.error) : "wowlab snap diff printed something this page does not know.";
+        backupSay(done + " What changed since the previous backup cannot be shown: " + why, true);
+        return;
+      }
+      diff.textContent = lines.map(shown).join("\n");
+      diff.hidden = lines.length === 0;
+      backupSay(done + " What changed since the previous backup:", false);
+    } finally {
+      backup.busy = false;
+      drawBackups();
+    }
+  }
+
+  // Opens the Commands tab on `snap restore` with the backup's id: the
+  // player asks for the plan there, and Confirm runs it, as for any change.
+  function restoreBackup(line) {
+    const button = Array.from(byId("commands").querySelectorAll("button"))
+      .find((b) => b.textContent === "snap restore" && !b.disabled);
+    if (!button) {
+      backupSay("This page does not offer snap restore: run wowlab snap restore " + visible(line.snapshot_id) + " in a terminal.", true);
+      return;
+    }
+    button.click();
+    const field = inputs.find((entry) => entry.param.name === "snapshot_id");
+    if (field) field.input.value = line.snapshot_id;
+    showTab("commands");
+    byId("run").focus();
+  }
 
   // ─── the command list ───
 

@@ -5210,6 +5210,30 @@ character, and `--notes` the standing notes. Clicking a recorded row (or its
 name, a button) opens the Character tab on that character, moving the
 header's flavor to the row's.
 
+*Amended 2026-11-13 (M17-04), CW-3 as built.* A *backup* is a snapshot of
+one flavor of this install in wowlab's store that is not a saved profile
+and was not added by `snap import`: one the player took, the first run's,
+or the write gate's pre-write snapshot (`wowlab_core.lastbackup`). The game
+*updated* since it when the flavor's version from discovery differs from
+the version the newest backup recorded; with either unknown, nothing is
+said. `char list --summary --json` carries `backups`, one line per listed
+flavor (the client's version, the newest backup's id, time and version, and
+`game_updated`), or `backup_error` when the store cannot be listed; the
+text output is unchanged. The Account tab draws a Backup panel from it
+above the table: per flavor (filtered by the hub's flavor filter), the
+newest backup's age and version, "The game updated since your last backup"
+when `game_updated`, **Back up now** and, with a backup, **Restore this
+backup…**. Back up now runs `snap create --flavor <that flavor> --json`
+(no confirm: it writes only into the store) and then `snap diff <the line's
+backup> <the new one> --json`, and shows its `plan_lines`; with no earlier
+backup it says there is nothing to compare. Restore opens the Commands tab
+on `snap restore` with the id filled in and runs nothing; the plan and
+Confirm are that tab's (§16.1), unchanged. `doctor`'s next steps gain the
+item `backup`, listed only as `stale` when the game updated since the
+newest backup of a flavor: "Backup: the game updated since your last
+snapshot", both versions, and `wowlab snap create` (with `--flavor` on an
+install with several) as the fix.
+
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 
 **Order.** The wave starts after M16-05 (the launch-client session and

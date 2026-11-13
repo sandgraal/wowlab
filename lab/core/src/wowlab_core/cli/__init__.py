@@ -677,6 +677,9 @@ from wowlab_core.cli._cmd_char import (
     CharShowReport as CharShowReport,
 )
 from wowlab_core.cli._cmd_char import (
+    CharSummaryBackup as CharSummaryBackup,
+)
+from wowlab_core.cli._cmd_char import (
     CharSummaryProfession as CharSummaryProfession,
 )
 from wowlab_core.cli._cmd_char import (
