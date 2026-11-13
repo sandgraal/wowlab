@@ -108,6 +108,14 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
         "--source-ref refs/tags/v<version>",
         "needs the network",
     ),
+    (  # M17-09: the Windows app's own attestation
+        "docs/INSTALL.md",
+        "gh attestation verify wowlab-<version>-windows-x64.zip "
+        "--repo sandgraal/wowlab "
+        "--signer-workflow sandgraal/wowlab/.github/workflows/release.yml "
+        "--source-ref refs/tags/v<version>",
+        "needs the network",
+    ),
     ("docs/INSTALL.md", "git clone https://github.com/sandgraal/wowlab", _FROM_SOURCE),
     ("docs/INSTALL.md", "cd wowlab", _FROM_SOURCE),
     ("docs/INSTALL.md", "uv sync --frozen", _FROM_SOURCE),

@@ -46,8 +46,10 @@ RELEASE = ROOT / ".github" / "workflows" / "release.yml"
 APP_WORKFLOW = ROOT / ".github" / "workflows" / "macos-app.yml"
 
 # ADR-0038 item 4: changing either is a PR that says why.
+# M17-09 re-pinned the spec for a comment only: it names what the Windows
+# build is (the `wowlab/` folder itself); no line PyInstaller runs changed.
 PYINSTALLER = "pyinstaller==6.22.3"
-SPEC_SHA256 = "636731bca366c78fca23afa93dd4f9bfb0a64a7d38e13295ce937c36560257a0"
+SPEC_SHA256 = "cfe15166047a3d39473aeb48dc40ea0fa4b48a48d73e278bd72e2b990abd70a5"
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -177,8 +179,17 @@ def test_the_launcher_imports_only_what_it_needs() -> None:
             imported |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    # No network module, no update check: the command and a subprocess for open.
-    assert imported == {"__future__", "subprocess", "sys", "collections.abc", "wowlab_core.cli"}
+    # No network module, no update check: the command, a subprocess for open,
+    # and os for PYTHONIOENCODING (M17-09).
+    assert imported == {
+        "__future__",
+        "os",
+        "subprocess",
+        "sys",
+        "collections.abc",
+        "typing",
+        "wowlab_core.cli",
+    }
 
 
 # ─── the launcher ────────────────────────────────────────────────────────────
@@ -572,6 +583,10 @@ def test_the_attach_job_checks_attests_then_uploads_and_runs_no_repository_code(
 FAKE_GH = Path(__file__).resolve().with_name("_fake_gh.py")
 TAG = "v9.9.9"
 ZIP = "wowlab-9.9.9-macos-arm64.zip"
+# The Windows app's zip, which `windows_app_release` may have attached first
+# (M17-09).
+OTHER_ZIP = "wowlab-9.9.9-windows-x64.zip"
+OTHER_BYTES = b"constructed windows zip\n"
 WHEEL = "wowlab_core-9.9.9-py3-none-any.whl"
 SDIST = "wowlab_core-9.9.9.tar.gz"
 ZIP_BYTES = b"constructed zip\n"
@@ -584,7 +599,9 @@ def _sha(data: bytes) -> str:
 
 
 EXPECTED = f"{WHEEL_SHA}  {WHEEL}\n{SDIST_SHA}  {SDIST}\n".encode()
-WITH_APP = EXPECTED + f"{_sha(ZIP_BYTES)}  {ZIP}\n".encode()
+APP_LINE = f"{_sha(ZIP_BYTES)}  {ZIP}\n".encode()
+OTHER_LINE = f"{_sha(OTHER_BYTES)}  {OTHER_ZIP}\n".encode()
+WITH_APP = EXPECTED + APP_LINE
 
 
 def _run_attach(
@@ -593,9 +610,15 @@ def _run_attach(
     *,
     artifact: bytes = ZIP_BYTES,
     corrupt: str | None = None,
+    job: str = "app_release",
+    zip_name: str = ZIP,
+    zip_bytes: bytes = ZIP_BYTES,
+    other_zip: str = OTHER_ZIP,
 ) -> tuple[list[str], dict[str, bytes], list[list[str]]]:
-    """Run app_release's steps; the steps that ran (the last one failed if
-    the job failed), the release's assets after, and the `gh` calls."""
+    """Run an attach job's steps (`app_release` unless `job` names
+    `windows_app_release`, with its own zip); the steps that ran (the last one
+    failed if the job failed), the release's assets after, and the `gh`
+    calls. `artifact` is what the download step puts in place."""
     ws, temp, assets, bin_dir = (tmp_path / n for n in ("ws", "temp", "assets", "bin"))
     for folder in (ws, temp, assets, bin_dir):
         folder.mkdir()
@@ -619,20 +642,21 @@ def _run_attach(
         "SDIST": SDIST,
         "WHEEL_SHA256": WHEEL_SHA,
         "SDIST_SHA256": SDIST_SHA,
-        "APP_ZIP": ZIP,
-        "APP_SHA256": _sha(ZIP_BYTES),
+        "APP_ZIP": zip_name,
+        "APP_SHA256": _sha(zip_bytes),
+        "OTHER_ZIP": other_zip,
         "FAKE_GH_ASSETS": str(assets),
         "FAKE_GH_LOG": str(log),
     }
     if corrupt:
         env["FAKE_GH_CORRUPT_UPLOAD"] = corrupt
     ran: list[str] = []
-    for i, step in enumerate(_jobs(RELEASE)["app_release"]["steps"]):
+    for i, step in enumerate(_jobs(RELEASE)[job]["steps"]):
         name = step.get("name") or step["uses"].split("@")[0]
         ran.append(name)
         if step.get("uses", "").startswith("actions/download-artifact@"):
             (ws / "app").mkdir()
-            (ws / "app" / ZIP).write_bytes(artifact)
+            (ws / "app" / zip_name).write_bytes(artifact)
             continue
         if "uses" in step:  # the attestation: nothing to run here
             continue
@@ -646,6 +670,8 @@ def _run_attach(
             timeout=60,
             check=False,
         )
+        # What the step printed, for a test that checks a message (M17-09).
+        (tmp_path / f"step{i}.log").write_bytes(done.stdout + done.stderr)
         if done.returncode != 0:
             ran[-1] += " (failed)"
             break
@@ -811,6 +837,7 @@ def test_the_smoke_test_passes_against_the_unfrozen_launcher(tmp_path: Path) -> 
     for line in (
         f"ok: --version -> wowlab {__version__}",
         f"ok: -P -m wowlab_core --version -> wowlab {__version__}",
+        "ok: -P -m wowlab_core with PYTHONIOENCODING=utf-8 writes UTF-8",
         "ok: GET of the link -> 200",
         "ok: a wrong boot key -> 403",
         "ok: doctor ran through the page",
