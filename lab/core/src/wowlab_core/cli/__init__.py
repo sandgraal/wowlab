@@ -623,6 +623,12 @@ from wowlab_core.cli._cmd_char import (
     _GEAR_SPEC_NOTE as _GEAR_SPEC_NOTE,
 )
 from wowlab_core.cli._cmd_char import (
+    _HISTORY_FEW as _HISTORY_FEW,
+)
+from wowlab_core.cli._cmd_char import (
+    _HISTORY_NOTES as _HISTORY_NOTES,
+)
+from wowlab_core.cli._cmd_char import (
     _INSTALL_ADVICE as _INSTALL_ADVICE,
 )
 from wowlab_core.cli._cmd_char import (
@@ -636,6 +642,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     CharGearReport as CharGearReport,
+)
+from wowlab_core.cli._cmd_char import (
+    CharHistoryReport as CharHistoryReport,
 )
 from wowlab_core.cli._cmd_char import (
     CharListFlavor as CharListFlavor,
@@ -683,7 +692,13 @@ from wowlab_core.cli._cmd_char import (
     _char_names as _char_names,
 )
 from wowlab_core.cli._cmd_char import (
+    _currency_value as _currency_value,
+)
+from wowlab_core.cli._cmd_char import (
     _file_note as _file_note,
+)
+from wowlab_core.cli._cmd_char import (
+    _gear_change_words as _gear_change_words,
 )
 from wowlab_core.cli._cmd_char import (
     _gear_line as _gear_line,
@@ -693,6 +708,21 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _header_lines as _header_lines,
+)
+from wowlab_core.cli._cmd_char import (
+    _history_head as _history_head,
+)
+from wowlab_core.cli._cmd_char import (
+    _history_item as _history_item,
+)
+from wowlab_core.cli._cmd_char import (
+    _history_lines as _history_lines,
+)
+from wowlab_core.cli._cmd_char import (
+    _history_names as _history_names,
+)
+from wowlab_core.cli._cmd_char import (
+    _history_summary as _history_summary,
 )
 from wowlab_core.cli._cmd_char import (
     _named as _named,
@@ -719,6 +749,9 @@ from wowlab_core.cli._cmd_char import (
     _say_char_binds as _say_char_binds,
 )
 from wowlab_core.cli._cmd_char import (
+    _say_char_history as _say_char_history,
+)
+from wowlab_core.cli._cmd_char import (
     _say_char_macros as _say_char_macros,
 )
 from wowlab_core.cli._cmd_char import (
@@ -741,6 +774,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     char_gear as char_gear,
+)
+from wowlab_core.cli._cmd_char import (
+    char_history as char_history,
 )
 from wowlab_core.cli._cmd_char import (
     char_list as char_list,
@@ -861,6 +897,12 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _SYNC_NOTE as _SYNC_NOTE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _SYNC_UNSET as _SYNC_UNSET,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _SYNC_UNSET_ONE as _SYNC_UNSET_ONE,
 )
 from wowlab_core.cli._cmd_doctor import (
     _THE_GAME as _THE_GAME,

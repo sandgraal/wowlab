@@ -99,7 +99,10 @@ class SyncCVar(_Out):
     file: str  # relative to the flavor folder
     account: str | None
     name: str
-    value: str | None  # None: not set in this file (the client default applies)
+    # None: no line in this file. That is not "off" and not a known default:
+    # a client may read such a setting as on, or may not have it at all
+    # (docs/LAB_FORMATS.md §5, §7, amended 2026-11-12).
+    value: str | None
 
 
 class DoctorFlavor(_Out):
@@ -1256,6 +1259,16 @@ def _print_game_data(g: GameDataReport) -> str:
 
 
 _NUMBER_WORDS = {2: "two", 3: "three", 4: "four"}
+# What a sync setting with no line means (M16-127). Not "the client's
+# default": on one client, two such settings read as on and the third did
+# not exist, so no default is promised and no flavor is named (L6).
+_SYNC_UNSET = (
+    "with no line, the client may treat a setting as on or may not have it at all, "
+    "and wowlab cannot tell which"
+)
+_SYNC_UNSET_ONE = (
+    "the client may treat it as on or may not have it at all; wowlab cannot tell which"
+)
 # What the sync lines themselves do not say (they say what sync replaces).
 _SYNC_NOTE = (
     "Which other *-cache files server sync replaces at login, besides key bindings, macros "
@@ -1388,8 +1401,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
             _say_prose(
                 f"  Server sync: the {_NUMBER_WORDS.get(names, str(names))} sync settings wowlab "
                 f"reads are not set in {' or '.join(files)} (when on, the server can replace "
-                "your bindings, macros or settings at login; not set is the client's default, "
-                "and wowlab cannot tell whether that default is on)",
+                f"your bindings, macros or settings at login; {_SYNC_UNSET})",
                 hang="    ",
                 keep=files,
             )
@@ -1401,9 +1413,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
             )
             for sync in f.sync_cvars:
                 value = (
-                    f'"{sync.value}"'
-                    if sync.value is not None
-                    else "not set (the client's default, and wowlab cannot tell whether it is on)"
+                    f'"{sync.value}"' if sync.value is not None else f"not set ({_SYNC_UNSET_ONE})"
                 )
                 _say(f"    {sync.file}: {sync.name} {value}")
     if any(f.sync_cvars for f in report.flavors):
