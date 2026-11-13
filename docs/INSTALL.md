@@ -49,8 +49,10 @@ You need [uv](https://docs.astral.sh/uv/). It brings Python 3.12 with it.
 installs the current release, and the release page
 (https://github.com/sandgraal/wowlab/releases) carries the wheel, the sdist
 and `SHA256SUMS`. To check a download, put the three files in one folder and
-run `sha256sum -c SHA256SUMS` (on macOS `shasum -a 256 -c SHA256SUMS`);
-each file has to print `OK`. On Windows run
+run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
+`shasum -a 256 -c SHA256SUMS --ignore-missing`); each file has to print
+`OK`. (`--ignore-missing` skips the Mac app's line when you did not
+download it.) On Windows run
 `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and
 compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
@@ -72,10 +74,11 @@ checked:
 
 1. Download the wheel, the sdist and `SHA256SUMS` from the release page into
    one empty folder, and open a terminal there.
-2. Check them. Run `sha256sum -c SHA256SUMS` (macOS:
-   `shasum -a 256 -c SHA256SUMS`; Windows: `Get-FileHash` as above); each
-   file has to print `OK`. Then, for a release after v0.1.0, check where the
-   wheel was built (next paragraph):
+2. Check them. Run `sha256sum -c SHA256SUMS --ignore-missing` (macOS:
+   `shasum -a 256 -c SHA256SUMS --ignore-missing`; Windows: `Get-FileHash`
+   as above); each file has to print `OK`. (`--ignore-missing` skips the
+   Mac app's line when you did not download it.) Then, for a release after
+   v0.1.0, check where the wheel was built (next paragraph):
 
    <!-- not-run: needs the network -->
    ```bash
@@ -106,6 +109,67 @@ of that release's tag; with them the command prints
 anywhere else. (With `--repo` alone it would accept a file signed by any
 workflow in the repository.) v0.1.0 was published before attestations were
 added, so it has none: for it, `SHA256SUMS` is the check.
+
+### The Mac app (Apple silicon), no terminal needed
+
+From the first release after v0.1.0, the release page also carries
+`wowlab-<version>-macos-arm64.zip`: wowlab as a Mac app, with its own Python
+inside, for Macs with Apple silicon (M1 and later). Intel Macs use the
+`uv tool install` line above. The app is the same wowlab as the wheel, built
+from it by the release workflow; it never updates itself and makes no
+network request of its own. To get a newer version, download the newer zip.
+The zip is attached a little after the rest of the release; a release
+without it is one whose app build failed, and the wheel is unaffected.
+
+1. Download the zip from the release page and double-click it in Finder. It
+   unpacks to `wowlab.app`. (Safari may unpack it for you and remove the
+   zip; to check the download first, as below, keep the zip.)
+2. Drag `wowlab.app` into your Applications folder. Open it from there, not
+   from Downloads: started from Downloads, macOS runs it from a temporary
+   copy, and the window it opens in the next step may not find it.
+3. Double-click it. The app is not signed by an Apple developer account
+   (that costs money and an identity check), so the first time macOS
+   refuses to open it. On macOS 15 (Sequoia) and later, Control-click and
+   Open no longer get past this; instead:
+   - In the message that says Apple could not verify `wowlab`, click
+     **Done**.
+   - Open **System Settings → Privacy & Security** and scroll down to
+     **Security**. It says that `wowlab` was blocked; click **Open Anyway**
+     and confirm with your password or Touch ID.
+   - Double-click the app again and choose **Open Anyway** in the message
+     that follows.
+
+   macOS remembers this; later double-clicks open it straight away. (These
+   steps are the ones macOS 15 shows for an app from outside the App Store;
+   they are not yet confirmed on this app on every macOS version.)
+4. A Terminal window opens and runs `wowlab ui`, and your browser opens the
+   explorer. The window is the server: it shows what wowlab is doing, and
+   closing it (or pressing Ctrl-C in it) stops wowlab. If Terminal asks
+   whether to terminate the running process when you close it, click
+   **Terminate**.
+
+From a terminal the app is the ordinary `wowlab` command:
+`/Applications/wowlab.app/Contents/MacOS/wowlab --version` prints its
+version, and every other command works the same way.
+
+**Check the app's download.** The zip's line is in the release's
+`SHA256SUMS`, and the zip carries its own build-provenance attestation, as
+the wheel does. Both checks need a terminal; skip them only if you trust
+the release page. In the folder holding the zip and `SHA256SUMS`, run
+`shasum -a 256 -c SHA256SUMS --ignore-missing` (the zip's line has to print
+`OK`) and:
+
+<!-- not-run: needs the network -->
+```bash
+gh attestation verify wowlab-<version>-macos-arm64.zip \
+  --repo sandgraal/wowlab \
+  --signer-workflow sandgraal/wowlab/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
+```
+
+Some antivirus tools flag apps built the way this one is, whatever is in
+them. If yours does, check the hash and the attestation as above; a file
+that passes both is the one the release workflow built.
 
 **From source**, if you want the development version:
 

@@ -29,6 +29,14 @@ dev = [
   # (M16-51, ADR-0012); the same pin as lab/core/build-constraints.txt, which a test checks
   "hatchling==1.33.0",
 ]
+# Build-time only (ADR-0038): the release workflow freezes the released wheel
+# into the macOS app (M17-08) with this group, installed into a clean virtual
+# environment beside the wheel. Never a runtime dependency, never imported by
+# wowlab_core, not installed by `uv sync` (only `dev` is a default group).
+# tests/packaging/test_macos_app.py pins the version; a bump is a PR that says why.
+packaging = [
+  "pyinstaller==6.22.3",
+]
 
 # ─── ruff ────────────────────────────────────────────────────────────────────
 [tool.ruff]
@@ -73,6 +81,8 @@ ignore = [
 "conftest.py" = "py39"
 # make test-clean runs on the system python3, not under `uv run` (M13-81).
 "scripts/clean_test_artifacts.py" = "py39"
+# The smoke test's browser runs on whatever `python3` the runner's PATH has (M17-08).
+"scripts/record_url.py" = "py39"
 
 [tool.ruff.lint.isort]
 known-first-party = ["wowlab_core"]
@@ -93,7 +103,8 @@ python_version = "3.12"
 # tool for the install's archives (M15-03; it reads the install and writes a fixture), and
 # the font check (M16-51; it vouches for the third-party font files in the package),
 # and the grader diff gate (M16-40; it holds graders of the load-bearing files to marker removal),
-# and the test-artifact cleaner (M13-81; it deletes directories).
+# and the test-artifact cleaner (M13-81; it deletes directories),
+# and the frozen app's launcher and smoke test (M17-08; a release asset is built and checked with them).
 files = [
   "lab/core/src",
   "scripts/lab_capture.py",
@@ -105,6 +116,9 @@ files = [
   "scripts/check_fonts.py",
   "scripts/check_grader_diff.py",
   "scripts/clean_test_artifacts.py",
+  "scripts/app_smoke.py",
+  "scripts/record_url.py",
+  "packaging/launcher.py",
 ]
 exclude = ["\\.claude/worktrees", "\\.venv"]
 warn_unreachable = true

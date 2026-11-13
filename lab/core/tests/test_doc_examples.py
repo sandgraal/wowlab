@@ -98,6 +98,14 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
         "uv tool install --python 3.12 ./wowlab_core-<version>-py3-none-any.whl",
         "an install, from the network",
     ),
+    (  # M17-08: the Mac app's own attestation
+        "docs/INSTALL.md",
+        "gh attestation verify wowlab-<version>-macos-arm64.zip "
+        "--repo sandgraal/wowlab "
+        "--signer-workflow sandgraal/wowlab/.github/workflows/release.yml "
+        "--source-ref refs/tags/v<version>",
+        "needs the network",
+    ),
     ("docs/INSTALL.md", "git clone https://github.com/sandgraal/wowlab", _FROM_SOURCE),
     ("docs/INSTALL.md", "cd wowlab", _FROM_SOURCE),
     ("docs/INSTALL.md", "uv sync --frozen", _FROM_SOURCE),
