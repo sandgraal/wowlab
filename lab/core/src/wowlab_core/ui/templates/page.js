@@ -2874,6 +2874,34 @@
     return td;
   }
 
+  // The advice is the CLI's text, which marks a command with backticks
+  // (M17-14): each marked part is drawn as code, never the backticks as
+  // text, and the fix command, where the advice names it, gets its Copy
+  // button there. A fix command the advice does not name follows it, once.
+  function hubAdvice(td, advice, command) {
+    let named = false;
+    const fix = () => {
+      td.appendChild(make("code", visible(command)));
+      td.appendChild(copyButton(command, "Copy " + command));
+      named = true;
+    };
+    // split() with one capture group: the odd entries are the marked parts.
+    const parts = (advice || "").split(/`([^`\n]+)`/);
+    parts.forEach((part, i) => {
+      if (i % 2 === 0) {
+        if (part) td.appendChild(make("span", visible(part)));
+      } else if (command && part === command && !named) {
+        fix();
+      } else {
+        td.appendChild(make("code", visible(part)));
+      }
+    });
+    if (command && !named) {
+      if (advice) td.appendChild(make("span", " "));
+      fix();
+    }
+  }
+
   // A folder with no lab record, or a file that could not be read: the
   // report's words across the columns after the folders.
   function hubSpan(row) {
@@ -2881,13 +2909,8 @@
     td.colSpan = HUB_COLUMNS.length - 3;
     td.className = "hub-advice";
     if (row.state === "no_lab_record") {
-      td.appendChild(make("span", "No lab record: " + (hubStr(row.advice) ? visible(row.advice) : "")));
-      if (hubStr(row.fix_command)) {
-        td.appendChild(make("span", " "));
-        td.appendChild(make("code", visible(row.fix_command)));
-        td.appendChild(make("span", " "));
-        td.appendChild(copyButton(row.fix_command, "Copy " + row.fix_command));
-      }
+      td.appendChild(make("span", "No lab record: "));
+      hubAdvice(td, hubStr(row.advice), hubStr(row.fix_command));
     } else {
       td.textContent = "Not read: " + (hubStr(row.error) ? shown(row.error) : "no reason given");
     }
