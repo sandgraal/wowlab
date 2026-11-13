@@ -638,17 +638,30 @@ _M16_21_IDS = frozenset({"plan-box", "plan-heading", "plan-lines", "result-detai
 # What M16-114 added: the header's flavor picker, shown with several flavors.
 _M16_114_CLASSES = frozenset({"run-flavor"})
 _M16_114_IDS = frozenset({"run-flavor-box", "run-flavor"})
+# What M17-01 added: the Account tab, the home tab, and the table it draws.
+_M17_01_CLASSES = frozenset({"hub-table"})
+_M17_01_JS_IDS = frozenset(
+    {"tab-account", "hub-flavor-box", "hub-flavor", "hub-class", "hub-status", "hub-table"}
+)
+_M17_01_IDS = _M17_01_JS_IDS | {"account-view"}
+_M17_01_JS_CLASSES = frozenset(
+    {"hub", "hub-advice", "hub-none", "hub-open", "hub-row", "hub-row-bare", "hub-sort"}
+)
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
     html_classes, html_ids = _html_names(_template("page.html"))
     assert html_classes == (
-        (_HTML_CLASSES_BEFORE - {"crest"}) | _SIGIL_CLASSES | _M16_21_CLASSES | _M16_114_CLASSES
+        (_HTML_CLASSES_BEFORE - {"crest"})
+        | _SIGIL_CLASSES
+        | _M16_21_CLASSES
+        | _M16_114_CLASSES
+        | _M17_01_CLASSES
     )
-    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS
+    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS
     js_classes, js_ids = _js_names(_template("page.js"))
-    assert js_classes == _JS_CLASSES_BEFORE
-    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS
+    assert js_classes == _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES
+    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_JS_IDS
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -779,8 +792,30 @@ _WORDS_BEFORE = (
 )
 
 
+# What M17-01 changed: the tabs' order (the Account tab first, Explorer
+# after Character), and the Account panel's words, before the explorer's.
+_TABS_BEFORE = ["Explorer", "Gaps", "Commands", "Character", "Looks"]
+_TABS_M17_01 = ["Account", "Character", "Explorer", "Gaps", "Commands", "Looks"]
+_ACCOUNT_WORDS = [
+    "Account",
+    "Every character folder in your game folder, in every flavor, as the lab-addon last saved "
+    "it: at logout or",
+    "/reload",
+    ", never the session in progress. Read only: this tab runs",
+    "wowlab char list --summary",
+    "and nothing else. Pick a character to open it in the Character tab.",
+    "Flavor",
+    "Class",
+    "[aria-label] Characters",
+]
+
+
 def test_no_sentence_of_the_page_changed() -> None:
-    assert _words(_template("page.html")) == list(_WORDS_BEFORE)
+    before = list(_WORDS_BEFORE)
+    at = before.index(_TABS_BEFORE[0])
+    assert before[at : at + len(_TABS_BEFORE)] == _TABS_BEFORE
+    expected = before[:at] + _TABS_M17_01 + _ACCOUNT_WORDS + before[at + len(_TABS_BEFORE) :]
+    assert _words(_template("page.html")) == expected
 
 
 # ─── the sigil ───────────────────────────────────────────────────────────────

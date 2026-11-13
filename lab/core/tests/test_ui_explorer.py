@@ -277,8 +277,10 @@ def test_the_explorer_page_is_served_with_a_csp_that_hashes_it(server: Any) -> N
     flat = " ".join(" ".join(v) for v in directives.values())
     # `data:` appears only as the whole value of `font-src`.
     assert "unsafe" not in flat and flat.count("data:") == 1 and "http" not in flat
-    # The page is the explorer first: its view is not hidden, the commands are.
-    assert re.search(r'<section id="explorer-view"[^>]*\bhidden\b', body) is None
+    # The page is the Account tab first (M17-01; it was the explorer): its
+    # view is not hidden, the explorer's and the commands' are.
+    assert re.search(r'<section id="account-view"[^>]*\bhidden\b', body) is None
+    assert re.search(r'<section id="explorer-view"[^>]*\bhidden\b', body) is not None
     assert re.search(r'<section id="commands-view"[^>]*\bhidden\b', body) is not None
 
 
@@ -1200,11 +1202,13 @@ def _ancestors(path: str) -> set[str]:
 
 def test_the_first_view_opens_wtf_and_addons(server: Any, install: Path, tmp_path: Path) -> None:
     """Owner, 2026-10-16: the tree opens on the flavor folder with `WTF/` and
-    `Interface/AddOns/` expanded. The explorer, not the commands, is shown."""
+    `Interface/AddOns/` expanded. Since M17-01 the Account tab is the one
+    shown first (page.html hides the explorer's view; `test_ui_account.py`
+    grades it); the explorer's tree is read at the start all the same."""
     scenario, first = _scenario(server, [], [])
     out = _drive(tmp_path / "node", scenario)
     view = out["first"]
-    assert view["explorerHidden"] is False
+    assert view["explorerHidden"] is True
     rows = {r["path"]: r for r in _in_flavor(out, view["rows"], first["flavor_folder"])}
     assert rows[""]["expanded"] == "true", "the flavor folder is the open root"
     for open_folder in ("WTF", "Interface", "Interface/AddOns"):

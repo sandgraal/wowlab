@@ -358,6 +358,286 @@ def _unseen_words(n: int) -> str:
     )
 
 
+# ─── char list --summary: the account hub's table (M17-01) ───────────────────
+
+
+class CharSummaryProfession(_Out):
+    """One profession as the record holds it: its skill line, the name of
+    that line in the `SkillLine` table cached for the installed version
+    (None when none is cached or it has no such row), and the skill and its
+    current cap."""
+
+    skill_line: int | None
+    name: str | None
+    rank: int | None
+    max_rank: int | None
+
+
+class CharSummaryRow(_Out):
+    """One character folder in `char list --summary --json` (M17-01), as the
+    UI's Account tab draws it. `state` is `recorded` (the folder's
+    `WowLab.lua` was read), `no_lab_record` (the folder holds none: `advice`
+    and `fix_command` say what puts one there) or `not_read` (`error` says
+    why). For a recorded row each value is either set or its `<value>_absent`
+    says why the record leaves it out; for the other states every value and
+    every reason is None. Names come only from game tables already cached
+    for the flavor's installed version (`version`); nothing is fetched."""
+
+    flavor: layout.FsText | None
+    version: str | None  # the flavor's installed version, which the names are read for
+    account: layout.FsText
+    realm_folder: layout.FsText
+    label: layout.FsText  # the character folder's name
+    shape: Literal["realm_name", "numeric_folder"]
+    file: layout.FsText
+    # The file's modification time: the client's last logout or /reload,
+    # unless something wrote the file since. None when no file was read.
+    mtime_ns: int | None
+    state: Literal["recorded", "no_lab_record", "not_read"]
+    error: str | None = None
+    advice: str | None = None
+    fix_command: str | None = None
+    record_schema: int | None = None
+    client_build: str | None = None
+    older_client: bool | None = None
+    level: int | None = None
+    level_absent: str | None = None
+    class_id: int | None = None
+    class_file: str | None = None
+    class_name: str | None = None
+    class_absent: str | None = None
+    race_id: int | None = None
+    race_name: str | None = None
+    race_absent: str | None = None
+    spec_id: int | None = None
+    spec_name: str | None = None
+    spec_absent: str | None = None
+    # `GetAverageItemLevel`'s equipped figure, as recorded in `gear.average`.
+    item_level: labaddon.Number | None = None
+    item_level_absent: str | None = None
+    professions: list[CharSummaryProfession] | None = None
+    professions_absent: str | None = None
+
+
+class CharSummaryReport(_Out):
+    """`wowlab char list --summary --json` (M17-01): one row per character
+    folder `char list` lists, every flavor of an install with several unless
+    --flavor names one, the `<Realm>/<First>/` folders left out (the
+    lab-addon never writes there). The flavors, the account and the places
+    wowlab could not look inside are `char list --json`'s. The command exits
+    1 when a row is `not_read` or `not_looked_at` is not empty."""
+
+    flavor_folder: str | None
+    flavors: list[CharListFlavor]
+    account: layout.FsText | None
+    rows: list[CharSummaryRow]
+    not_looked_at: list[labaddon.NotLookedAt]
+    notes: list[str]
+
+
+_FIX_COMMAND = "wowlab addon install lab"
+_SUMMARY_ADVICE = (
+    f"run `{_FIX_COMMAND}`, then log in on this character and log out once (or /reload)"
+)
+_SUMMARY_NOTES = [
+    "Last saved is the file's modification time: the character's last logout or /reload, "
+    "unless something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy).",
+    _CHAR_NOTES[0],
+    "Names of classes, races, specs and professions come from game tables wowlab has already "
+    "downloaded for the installed version (wowlab db2 fetch); otherwise the ids are shown.",
+    "Item level is the client's equipped average as recorded.",
+    _CHAR_LIST_NOTES[2],
+]
+
+
+def _section_absent(section: object) -> str:
+    """Why a record holds no such section: the addon's reason, or that the
+    file does not hold it."""
+    if section is None:
+        return labaddon.NOT_IN_FILE
+    reason = getattr(section, "absent", None)
+    return str(reason) if reason is not None else labaddon.NOT_IN_FILE
+
+
+def _skill_names(version: str | None, lines: set[int]) -> dict[int, str]:
+    """Each skill line's name in the `SkillLine` table cached for `version`."""
+    found: dict[int, str] = {}
+    if version is None or not lines:
+        return found
+    try:
+        rows = gamedata.cached_rows("SkillLine", version)
+        if rows is None:
+            return found
+        for row in rows:
+            raw = row.get("ID") or ""
+            if not raw.isdigit() or int(raw) not in lines:
+                continue
+            name = (row.get("DisplayName_lang") or "").strip()
+            if name:
+                found[int(raw)] = name
+    except (ValueError, OSError, gamedata.GameDataError):
+        return {}
+    return found
+
+
+def _summary_row(e: labaddon.CharacterFile, version: str | None) -> CharSummaryRow:
+    """The hub's row for one `survey` row read with its record."""
+    base: dict[str, object] = {
+        "flavor": e.flavor,
+        "version": version,
+        "account": e.account,
+        "realm_folder": e.realm_folder,
+        "label": e.label,
+        "shape": e.shape,
+        "file": e.file,
+        "mtime_ns": e.mtime_ns,
+    }
+    if e.no_lab_record is not None:
+        return CharSummaryRow.model_validate(
+            base
+            | {
+                "state": "no_lab_record",
+                "advice": _SUMMARY_ADVICE,
+                "fix_command": _FIX_COMMAND,
+            }
+        )
+    record = e.record
+    if record is None:
+        error = e.error or "the record was not kept"
+        if e.place in _BLOCKED_PLACE:
+            error = f"could not look inside {_BLOCKED_PLACE[e.place]} ({error})"
+        return CharSummaryRow.model_validate(base | {"state": "not_read", "error": error})
+    identity = labaddon.identity_of(record)
+    spec = gear.spec_of(record)
+    names = _char_names(version, spec, identity)
+    level = dressing.level_of(record)
+    out: dict[str, object] = base | {
+        "state": "recorded",
+        "record_schema": e.record_schema,
+        "client_build": e.client_build,
+        "older_client": e.older_client,
+        "level": level,
+        "level_absent": labaddon.level_absent_of(record) if level is None else None,
+        "class_id": identity.class_id,
+        "class_file": identity.class_file,
+        "class_name": names.class_name,
+        "class_absent": identity.class_id_absent,
+        "race_id": identity.race_id,
+        "race_name": names.race,
+        "race_absent": identity.race_id_absent,
+        "spec_id": spec.id,
+        "spec_name": names.spec,
+        "spec_absent": None if spec.id is not None else (spec.absent or "not returned"),
+    }
+    section = record.gear
+    if isinstance(section, labaddon.Gear):
+        average = gear.average_of(section)
+        out["item_level"] = average.equipped
+        if average.equipped is None:
+            out["item_level_absent"] = average.absent or "not returned"
+    else:
+        out["item_level_absent"] = _section_absent(section)
+    held = record.professions
+    if isinstance(held, labaddon.Professions):
+        lines = {p.skill_line for p in held.list_ if p.skill_line is not None}
+        named = _skill_names(version, lines)
+        out["professions"] = [
+            CharSummaryProfession(
+                skill_line=p.skill_line,
+                name=named.get(p.skill_line) if p.skill_line is not None else None,
+                rank=p.rank,
+                max_rank=p.max_rank,
+            )
+            for p in held.list_
+        ]
+    else:
+        out["professions_absent"] = _section_absent(held)
+    return CharSummaryRow.model_validate(out)
+
+
+def _summary_value(value: object, name: str | None = None) -> str:
+    """A hub value in the text form: the name, else the id, else "not
+    recorded"."""
+    if name:
+        return name
+    if value is not None:
+        return f"id {value}"
+    return "not recorded"
+
+
+def _profession_words(p: CharSummaryProfession) -> str:
+    name = p.name or (
+        f"skill line {p.skill_line}" if p.skill_line is not None else "skill line not recorded"
+    )
+    rank = "skill not recorded" if p.rank is None else str(p.rank)
+    if p.max_rank is not None:
+        rank += f" of {p.max_rank}"
+    return f"{name} ({rank})"
+
+
+def _summary_lines(row: CharSummaryRow) -> list[str]:
+    """The text form of one hub row: what it records, then when it was saved."""
+    if row.state == "no_lab_record":
+        return [f"no lab record: {row.advice}"]
+    if row.state == "not_read":
+        return [f"not read: {row.error}"]
+    level = "not recorded" if row.level is None else str(row.level)
+    klass = _summary_value(row.class_id, row.class_name or row.class_file)
+    race = _summary_value(row.race_id, row.race_name)
+    spec = _summary_value(row.spec_id, row.spec_name)
+    ilvl = "not recorded" if row.item_level is None else f"{float(row.item_level):.1f}"
+    first = f"level {level}, class {klass}, race {race}, spec {spec}, item level {ilvl}"
+    if row.professions is None:
+        professions = "professions: not recorded"
+    elif not row.professions:
+        professions = "professions: none"
+    else:
+        professions = "professions: " + ", ".join(_profession_words(p) for p in row.professions)
+    when = "time unknown" if row.mtime_ns is None else _local_time(row.mtime_ns)
+    return [first, professions, f"last logout or /reload: {when}"]
+
+
+def _say_summary(
+    report: CharSummaryReport, every: bool, show_notes: bool, typed: str | None = None
+) -> None:
+    """`char list --summary`'s text: each flavor's characters, account by
+    account, three lines each. `typed` is --account as given: a flavor that
+    has no such account folder is headed so, as the plain list heads it."""
+    if not report.rows:
+        where = f"account {report.account}" if report.account is not None else "any account"
+        if every:
+            where += " of any flavor"
+        if report.not_looked_at:
+            text = (
+                f"No character folder was found in {where}, but "
+                f"{_unseen_words(len(report.not_looked_at))}."
+            )
+        else:
+            text = f"No character folder was found in {where} ({_INSTALL_ADVICE})."
+        _say(_player_copy(text, keep=[report.account]))
+    for flavor in report.flavors:
+        rows = [r for r in report.rows if r.flavor == flavor.folder]
+        if every:
+            heading = f"Flavor {flavor.folder}"
+            if flavor.version:
+                heading += f" ({flavor.version})"
+            if flavor.account_found is False:
+                heading += f": no account {typed if typed is not None else report.account}"
+            elif not rows:
+                heading += _player_copy(": no character folder")
+            _say(heading)
+        for account in dict.fromkeys(r.account for r in rows):
+            mine = [r for r in rows if r.account == account]
+            _say(f"Account {account}: " + _plural(len(mine), "character folder"))
+            for row in mine:
+                _say(f"  {row.realm_folder}/{row.label}")
+                for line in _summary_lines(row):
+                    _say_prose(line, indent="    ", hang="      ")
+    if report.rows and report.not_looked_at:
+        _say(f"{_unseen_words(len(report.not_looked_at))}.")
+    _say_notes(report.notes, show_notes)
+
+
 @char_app.command("list", short_help="Every character with a lab-addon record.")
 @_handled
 def char_list(
@@ -376,18 +656,37 @@ def char_list(
             "time, summary and any error stay. Text output is the same either way.",
         ),
     ] = False,
+    summary: Annotated[
+        bool,
+        typer.Option(
+            "--summary",
+            help="One entry per character: level, class, race, spec, item level, "
+            "professions and when it was last saved, or what to do when it has no lab "
+            "record.",
+        ),
+    ] = False,
+    notes_out: Annotated[
+        bool,
+        typer.Option(
+            "--notes",
+            help="With --summary, also print the standing notes; without it, one line "
+            "after the answer counts them. The plain list always prints its notes.",
+        ),
+    ] = False,
 ) -> None:
     """Every character folder, in every account unless --account names one.
     With several flavors and no --flavor, every flavor's, under its name.
     For a folder with a WowLab.lua: when the file was last written, and its
     schema, the client that saved it and the spec, or why it could not be
     read. For one without: "no lab record", and how many CVars, macros and
-    SavedVariables files its other files hold. A file or
+    SavedVariables files its other files hold. With --summary, what each
+    character's record says instead (the Account tab of wowlab ui shows the
+    same); --notes then prints the standing notes. A file or
     place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed.
 
     \f
-    JSON: CharListReport."""
+    JSON: CharListReport; with --summary, CharSummaryReport."""
     inst, _ = _discover(root)
     every = _given_flavor(flavor) is None and len(inst.flavors) > 1
     chosen_ones = list(inst.flavors) if every else [_select_flavor(inst, flavor)]
@@ -403,7 +702,7 @@ def char_list(
     for chosen in chosen_ones:
         try:
             folder, mine, hidden, looked = _char_list_flavor(
-                inst, chosen, account, root, json_out and not brief
+                inst, chosen, account, root, summary or (json_out and not brief)
             )
         except CliError as exc:
             # With every flavor listed, a flavor without that account is
@@ -447,7 +746,25 @@ def char_list(
         notes=notes,
         installed_version=one.version if one is not None else None,
     )
-    if json_out:
+    if summary:
+        versions = {f.folder: f.version for f, _ in shown}
+        hub = CharSummaryReport(
+            flavor_folder=report.flavor_folder,
+            flavors=report.flavors,
+            account=report.account,
+            rows=[
+                _summary_row(e, versions.get(e.flavor or ""))
+                for e in entries
+                if not _first_name_folder(e)
+            ],
+            not_looked_at=unseen,
+            notes=_SUMMARY_NOTES,
+        )
+        if json_out:
+            _emit(hub)
+        else:
+            _say_summary(hub, every, notes_out, account)
+    elif json_out:
         _emit(report)
     elif not entries:
         where = f"account {acct_folder}" if acct_folder is not None else "any account"

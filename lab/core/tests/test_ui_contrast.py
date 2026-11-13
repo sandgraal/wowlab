@@ -737,6 +737,7 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
     assert len(re.findall(r"<h1\b", html)) == 1
     panels = _Headings(html).panels
     assert set(panels) == {
+        "account-view",
         "explorer-view",
         "gaps-view",
         "commands-view",
@@ -807,6 +808,11 @@ async function main() {
       const context = await browser.newContext({ viewport: { width: 320, height: 800 }, colorScheme: scheme });
       const page = await context.newPage();
       await page.goto(urls[scheme]);
+      // The Account tab opens first (M17-01): its table, drawn.
+      await page.waitForSelector("#hub-table table", { timeout: 60000 });
+      out.push(await measure(page, scheme + " account"));
+
+      await page.click("#tab-explorer");
       await page.waitForSelector("#tree li", { timeout: 60000 });
       await page.locator("#tree .name").first().click();
       await page.waitForFunction(() => document.querySelector("#explain-facts").children.length > 0, null, { timeout: 60000 });
@@ -879,7 +885,7 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
         pytest.skip(out["skip"])
     assert "error" not in out, out["error"]
     states = out["states"]
-    assert len(states) == 10
+    assert len(states) == 12
     wide = [s for s in states if s["scrollWidth"] != s["clientWidth"]]
     assert wide == [], wide
     assert all(s["clientWidth"] == 320 for s in states), states

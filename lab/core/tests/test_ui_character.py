@@ -303,11 +303,11 @@ def _tab_requests(out: dict[str, Any], start: int) -> list[dict[str, Any]]:
 # ─── the tab ─────────────────────────────────────────────────────────────────
 
 
-def test_the_character_tab_is_the_fourth_and_starts_hidden(server: Any) -> None:
+def test_the_character_tab_is_the_second_and_starts_hidden(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
-    # The Looks tab (M14-04) comes after it.
-    assert tabs[:4] == ["explorer", "gaps", "commands", "character"]
+    # After the Account tab, the home tab, since M17-01 (it was the fourth).
+    assert tabs[:2] == ["account", "character"]
     assert re.search(r'<section id="character-view"[^>]*\bhidden\b', body)
     for name in ("char-picker", "char-status", "char-header", "char-gear", "char-panels"):
         assert f'id="{name}"' in body, name

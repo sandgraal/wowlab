@@ -176,9 +176,11 @@ def test_one_flavor_shows_no_picker_and_adds_no_flavor(
     out = _drive(tmp_path / "node", scenario)
     assert out["first"]["boxHidden"] is True
     runs = _runs(out)
-    # One `char list`: the tab's, with no flavor; none at the start.
+    # Besides the Account tab's `char list --summary` (M17-01), one `char
+    # list`: the tab's, with no flavor; none at the start.
     assert [r for r in runs if r["command"] == ["char", "list"]] == [
-        {"command": ["char", "list"], "params": _list(None)}
+        {"command": ["char", "list"], "params": {"summary": True}},
+        {"command": ["char", "list"], "params": _list(None)},
     ]
     # Only the picked character's reads name a flavor: the one `char list` gave.
     reads = [list(c) for c in PICK_READS]
@@ -199,9 +201,11 @@ def test_two_flavors_show_the_picker_on_the_one_with_characters_constructed(
     assert out["first"]["boxHidden"] is False
     assert out["first"]["options"] == [EMPTY, FLAVOR]
     assert out["first"]["value"] == FLAVOR
-    # The start was read from one `char list` run with no flavor, after the tree.
+    # The start was read from one `char list` run with no flavor, after the
+    # tree, which comes after the Account tab's run (M17-01).
     runs = _runs(out)
-    assert runs[:2] == [
+    assert runs[0] == {"command": ["char", "list"], "params": {"summary": True}}
+    assert runs[1:3] == [
         {"command": ["tree"], "params": {"whole_install": True, "explain": True}},
         {"command": ["char", "list"], "params": _list(None)},
     ]
@@ -286,14 +290,19 @@ def test_every_run_carries_the_picked_flavor_constructed(
         {"command": ["cvar", "list"], "params": {"flavor": FLAVOR}}
     ]
     # Every run after the start that takes --flavor carried one; the whole
-    # install's tree, which refuses it, never did.
+    # install's tree, which refuses it, and the Account tab's `char list
+    # --summary` (M17-01), which reads every flavor, never did.
     takes = {
         tuple(c["path"])
         for c in _send(server, "GET", "/api/commands").json()["commands"]
         if any(p["name"] == "flavor" for p in c["params"])
     }
     runs = _runs(out)
-    for body in runs[2:]:
+    summary = [b for b in runs if b["params"].get("summary")]
+    assert summary == [{"command": ["char", "list"], "params": {"summary": True}}]
+    for body in runs[3:]:
+        if body["params"].get("summary"):
+            continue
         if tuple(body["command"]) in takes and body["params"].get("whole_install") is not True:
             assert body["params"].get("flavor") in (FLAVOR, EMPTY), body
     assert all("flavor" not in b["params"] for b in runs if b["params"].get("whole_install"))

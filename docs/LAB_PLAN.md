@@ -5188,6 +5188,28 @@ snapshots that wowlab already has, and writes only through `guard`.
 | CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
 | CW-7 | Owner and volunteers: one retail capture from the owner's own install (M17-10), and one human Windows run (M13-02) recruited through M16-32's announcement | — | owner |
 
+*Amended 2026-11-12 (M17-01), CW-1 as built.* The Account tab is the
+UI's first tab and opens by default; the order is Account, Character,
+Explorer, Gaps, Commands, Looks. It is drawn from one run of the new read
+command `wowlab char list --summary --json` (`CharSummaryReport`), which the
+page runs with no `--flavor` whatever the header's flavor says, so every
+flavor's characters are listed; `/api/run` runs it, and the server gains no
+endpoint. One row per character folder `char list` lists, the
+`<Realm>/<First>/` folders left out (the lab-addon never writes there). A
+row is `recorded` (level from `talents.legacy.player_level`, class and race
+from `identity` (schema 4 only), spec, `gear.average.equipped`, professions,
+the file's modification time), `no_lab_record` (with `advice` and
+`fix_command`, `wowlab addon install lab`) or `not_read` (with `error`).
+Each value a record leaves out has a `<value>_absent` reason, which the page
+shows as "not recorded" with the reason as the cell's title. Class, race,
+spec and profession names come only from game tables already cached for the
+flavor's installed version (`SkillLine`'s `DisplayName_lang` for
+professions); otherwise the ids are shown. Gold is not in the table: no
+schema records it yet (M17-06). The text form prints three lines per
+character, and `--notes` the standing notes. Clicking a recorded row (or its
+name, a button) opens the Character tab on that character, moving the
+header's flavor to the row's.
+
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 
 **Order.** The wave starts after M16-05 (the launch-client session and

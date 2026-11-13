@@ -651,7 +651,8 @@ def test_the_looks_tab_starts_hidden_and_runs_nothing_until_asked(
 ) -> None:
     body = _shell(served).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
-    assert tabs == ["explorer", "gaps", "commands", "character", "looks"]
+    # The Account tab (M17-01) is first; Looks stays last.
+    assert tabs == ["account", "character", "explorer", "gaps", "commands", "looks"]
     assert re.search(r'<section id="looks-view"[^>]*\bhidden\b', body)
     scenario, _ = _scenario(served, [{"looks_tab": True}])
     out = _drive(tmp_path / "node", scenario)
