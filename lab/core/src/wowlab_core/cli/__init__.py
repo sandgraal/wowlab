@@ -611,6 +611,9 @@ from wowlab_core.cli._cmd_char import (
     _FIRST_NAME_FOLDER as _FIRST_NAME_FOLDER,
 )
 from wowlab_core.cli._cmd_char import (
+    _FIX_COMMAND as _FIX_COMMAND,
+)
+from wowlab_core.cli._cmd_char import (
     _GEAR_LEVEL_NOTE as _GEAR_LEVEL_NOTE,
 )
 from wowlab_core.cli._cmd_char import (
@@ -627,6 +630,12 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _NAME_TABLES as _NAME_TABLES,
+)
+from wowlab_core.cli._cmd_char import (
+    _SUMMARY_ADVICE as _SUMMARY_ADVICE,
+)
+from wowlab_core.cli._cmd_char import (
+    _SUMMARY_NOTES as _SUMMARY_NOTES,
 )
 from wowlab_core.cli._cmd_char import (
     CharBindsFile as CharBindsFile,
@@ -722,6 +731,9 @@ from wowlab_core.cli._cmd_char import (
     _placement_lines as _placement_lines,
 )
 from wowlab_core.cli._cmd_char import (
+    _profession_words as _profession_words,
+)
+from wowlab_core.cli._cmd_char import (
     _row_words as _row_words,
 )
 from wowlab_core.cli._cmd_char import (
@@ -734,13 +746,31 @@ from wowlab_core.cli._cmd_char import (
     _say_record as _say_record,
 )
 from wowlab_core.cli._cmd_char import (
+    _say_summary as _say_summary,
+)
+from wowlab_core.cli._cmd_char import (
+    _section_absent as _section_absent,
+)
+from wowlab_core.cli._cmd_char import (
     _shows_counts as _shows_counts,
+)
+from wowlab_core.cli._cmd_char import (
+    _skill_names as _skill_names,
 )
 from wowlab_core.cli._cmd_char import (
     _slot_label as _slot_label,
 )
 from wowlab_core.cli._cmd_char import (
     _source_words as _source_words,
+)
+from wowlab_core.cli._cmd_char import (
+    _summary_lines as _summary_lines,
+)
+from wowlab_core.cli._cmd_char import (
+    _summary_row as _summary_row,
+)
+from wowlab_core.cli._cmd_char import (
+    _summary_value as _summary_value,
 )
 from wowlab_core.cli._cmd_char import (
     _unseen_words as _unseen_words,
