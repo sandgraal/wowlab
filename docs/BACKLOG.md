@@ -77,6 +77,8 @@ Two criteria were met by close equivalents, not literally:
 - **"A fresh user"** was a throwaway `HOME` on the owner's Mac, not a separate account.
 - **"A tag that does not match publishes nothing"** is shown by `release_check.py` and `tests/scripts/test_release.py`, not by pushing a wrong tag. Under the rulesets a tag is permanent.
 
+
+*Note 2026-11-12:* the owner turned immutable releases off so the macOS app and Windows binary can be attached after publishing (ADR-0031 amendment of 2026-11-12, M17-08); the `immutable-releases` step above no longer applies.
 ---
 
 ## [x] M13-04 — First-run flow
