@@ -6,7 +6,7 @@
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
-<h3 align="center">Every character on your account in one place, and a UI you can always put back.</h3>
+<h3 align="center">Every character you have played on this computer in one place, and a UI you can put back.</h3>
 
 <p align="center">
   <a href="#-what-it-does">What it does</a> ·
@@ -18,16 +18,16 @@
 
 **wowlab** is a free companion for World of Warcraft that runs on your own computer. It reads your game folder, never the game itself, and gives you:
 
-- 🧙 **All your characters in one place.** `wowlab ui` opens on the Account tab: every character on your account, in every game version you have installed, with level, class, spec, item level and professions. Sort by any column, filter by class, and click a character for its gear, keys and macros.
-- 🛟 **A UI you can always put back.** A snapshot saves your settings, keybinds, macros, addons and their saved settings. Take one before patch day or an addon update; afterwards, see what changed, and put it all back with `wowlab undo`.
-- 📈 **Each character over time.** `wowlab char history` reads your snapshots back: level, item level and spec at each save, and the gear and currencies that changed.
-- 🧩 **A patch-day check.** `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters load it.
-- 🎹 **A keybind coach.** `wowlab binds coach` reads your own combat log and shows the spells you cast most on your hardest keys.
+- 🧙 **All your characters in one place.** 🆕 `wowlab ui` opens on the Account tab: every character you have played on this computer, in every game version you have installed, as of its last logout, with level, class, spec, item level and professions. Sort by any column, filter by class, and click a character for its gear, keys and macros.
+- 🛟 **A UI you can put back.** A snapshot saves your settings, keybinds, macros, addons and their saved settings. Take one before patch day or an addon update; afterwards, take another and `wowlab snap diff` shows what changed between them, and `wowlab snap restore` puts the files back. `wowlab undo` reverses wowlab's own last change.
+- 📈 **Each character over time.** 🆕 `wowlab char history` reads your snapshots back, one row per snapshot you took: level, item level and spec, and the gear and currencies that changed.
+- 🧩 **A patch-day check.** 🆕 `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters have it turned on.
+- 🎹 **A keybind coach.** `wowlab binds coach` reads your own combat log and shows the spells you cast most on awkward keys. It needs combat logging turned on in the game and the lab-addon's record of your action bars.
 
-Your characters appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back.
+Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
 
 > [!NOTE]
-> The v0.1.0 release has snapshots and undo, the file explorer and the keybind coach. The Account and Character tabs, `char history` and `addons check` are on `main` and arrive with the next release. To try them now, [run it from source](#-running-it-from-source).
+> The install line below installs v0.1.0, which has snapshots and undo, the file explorer and the keybind coach. Everything marked 🆕 on this page (the Account, Character and Looks tabs, `char history`, `char list --summary`, `addons check` and more) is on `main` and arrives with the next release, together with a Mac app for Apple silicon ([the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)). To try them now, [run it from source](#-running-it-from-source). In v0.1.0, `wowlab doctor` also asks wago.tools whether your game version is listed; add `--offline` to skip that.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
@@ -43,7 +43,7 @@ The `#sha256=` part is the download's fingerprint, the same as its line in the r
 <!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
-wowlab ui            # every character in one place, in your browser
+wowlab ui            # the browser view; every character in one place arrives with the next release
 wowlab snap create   # back up your setup before patch day or an addon update
 ```
 
@@ -65,10 +65,11 @@ wowlab snap create   # back up your setup before patch day or an addon update
 
 <!-- PLACEHOLDER for the owner: a screenshot of the Account tab goes here. -->
 
-- 🏰 **Account**, the home tab: every character, sortable and filterable. A character with nothing recorded yet says how to fix that.
-- 🧙 **Character**: one character's gear with item-quality colours, every key and what it does, every macro with the checker's findings, and a **See it dressed** link.
+- 🏰 **Account** 🆕, the home tab: every character, sortable and filterable. A character with nothing recorded yet says how to fix that.
+- 🧙 **Character** 🆕: one character's gear with item-quality colours, every key and what it does, every macro with the checker's findings, and a **See it dressed** link.
+- 🎨 **Looks** 🆕: every race's customization options and your saved looks, the same page `wowlab looks page` makes.
 - 🗂️ **Explorer** and **Gaps**: every file in your install, what it is, who writes it and whether it is safe to touch, and the files wowlab does not know yet.
-- ⌨️ **Commands**: run any wowlab command from the page. One that changes files shows its plan first and runs only when you press **Confirm**.
+- ⌨️ **Commands**: run any wowlab command from the page. One that changes files shows its plan first and runs only when you press **Confirm** 🆕.
 
 `wowlab ui` changes game files only when you confirm a plan it showed you.
 
@@ -101,12 +102,12 @@ wowlab is built and tested on Forever on macOS; retail and Windows SavedVariable
 
 | You're thinking… | wowlab's answer |
 |---|---|
-| **"I have alts everywhere and lose track of them."** | The 🆕 Account tab lists every character in one table: level, class, spec, item level, professions, and when you last logged out on it. |
-| **"Patch day broke my UI."** | Take a snapshot before patch day or an addon update. If something goes wrong, `wowlab undo` puts every file back exactly as it was, and 🆕 `wowlab addons check` shows which addons are out of date. |
-| **"What is `config-cache.wtf`, and is it safe to change?"** | `wowlab explain config-cache.wtf` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. A bare file name is enough: it finds every file by that name. |
+| **"I have alts everywhere and lose track of them."** | The 🆕 Account tab lists every character you have played on this computer in one table, as of its last logout: level, class, spec, item level, professions, and when you last logged out on it. |
+| **"Patch day broke my UI."** | Take a snapshot before patch day or an addon update. If something goes wrong, take another and `wowlab snap diff` shows what changed, `wowlab snap restore` puts the files back (files added since are left alone), and 🆕 `wowlab addons check` shows which addons are out of date. |
+| **"What is `config-cache.wtf`, and is it safe to change?"** | `wowlab explain config-cache.wtf` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. 🆕 A bare file name is enough: it finds every file by that name. |
 | **"My addon settings are a mess."** | Read any addon's saved settings as plain text, with nothing executed and nothing changed. Merge one addon's settings between characters without touching the rest. |
 | **"I play on the Forever beta and nothing is documented."** | wowlab was built against a real Forever install: its folder layout, file formats and combat log are written up in plain words. |
-| **"My macros and keybinds grew over years."** | `wowlab macros check` finds broken spell names, overlong and duplicate macros, and macros on no action bar. `wowlab binds coach` reads your own combat log and shows the spells you cast most on your worst keys. |
+| **"My macros and keybinds grew over years."** | `wowlab macros check` finds broken spell names, overlong and duplicate macros, and macros on no action bar. `wowlab binds coach` reads your own combat log and shows the spells you cast most on awkward keys. |
 | **"I want to see my character without logging in."** | The lab-addon records your gear, talents and more at logout. `wowlab char show` and the 🆕 Character tab read it back offline, and 🆕 `wowlab char history` shows how it changed from one snapshot to the next. |
 
 ## ✨ What it does
@@ -120,7 +121,7 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
 | 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install with whether each is safe to touch. It also runs wowlab's commands, and a command that changes files gets a plan-then-Confirm step 🆕. Exactly which commands, and how that step works, is spelled out under **`wowlab ui`**, near the top of this page. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
-| 🧩 | **Patch-day check** 🆕. Every addon against your game version: out of date, missing an addon it needs, loaded on demand, and which characters load it. | `wowlab addons check` |
+| 🧩 | **Patch-day check** 🆕. Every addon against your game version: out of date, missing an addon it needs, loaded on demand, and which characters have it turned on. | `wowlab addons check` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
@@ -131,7 +132,7 @@ Features marked 🆕 are on `main` and arrive with the next release.
 |---|---|---|
 | 📸 | **Snapshots.** Save your whole setup (settings, keybinds, macros, addons and their saved data) and compare any two snapshots, down to the individual addon setting. | `wowlab snap create` · `snap diff A B` |
 | ↩️ | **Undo, for real.** Put a snapshot back, or undo the last change. You see the plan first, and it refuses while the game is running. Putting a whole snapshot back never deletes files added since it was taken; the plan lists them as left alone. | `wowlab snap restore` · `wowlab undo` |
-| 🏷️ | **After the launch rename.** When a beta launches, the game's folder gets a new name. Log in once on the launched game, then put a snapshot or a profile into the new folder, or into another install folder, on this computer or, after `snap export` and `snap import`, on another: you name the target, and the plan shows both folders and which account folder goes where. Character settings go to the same realm and character only. | `snap restore <id> --into-flavor <folder>` · `--into-root <path>` · `snap export <id> <file>` · `snap import <file>` · `profile apply <name> --into-flavor <folder>` |
+| 🏷️ | **After the launch rename** 🆕. When a beta launches, the game's folder gets a new name. Log in once on the launched game, then put a snapshot or a profile into the new folder, or into another install folder, on this computer or, after `snap export` and `snap import`, on another: you name the target, and the plan shows both folders and which account folder goes where. Character settings go to the same realm and character only. | `snap restore <id> --into-flavor <folder>` · `--into-root <path>` · `snap export <id> <file>` · `snap import <file>` · `profile apply <name> --into-flavor <folder>` |
 | 🎛️ | **Profiles.** Save named UI setups (`raid`, `clean`, `gamepad`) and switch between them with one command. You see the plan first, applying one also deletes files created since it was saved, and `wowlab undo` reverses it. On the Forever launch client (tested 2026-11-12), settings and a character's own key bindings and macros put back this way survived the next login; account-wide key bindings are not yet confirmed. Action bars and talents are kept by the server, but a bar button holding a macro runs whichever macro is now at that place in your list, so adding or removing macros can change what it does. | `wowlab profile save` · `profile apply` |
 | 🔀 | **Merge addon settings.** Copy one addon's settings between characters, or from a snapshot, without clobbering the rest. Conflicts are listed and never guessed, and it first checks that the client has been loading saved data correctly. | `wowlab sv merge` |
 
@@ -140,12 +141,12 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | | Feature | Command |
 |---|---|---|
 | 🧩 | **The lab-addon.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out or `/reload`, and wowlab reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
-| 🏰 | **The Account tab** 🆕. The home tab of the browser view: every character in every game version you have installed, with level, class, race, spec, item level, professions and when you last logged out on it. Sort by any column, filter by game version or class, and click a character to open it. Also on the command line. | `wowlab ui` · `wowlab char list --summary` |
-| 📈 | **A character over time** 🆕. One row per save from your snapshots: level, item level and spec, and the gear and currencies that changed since the save before. | `wowlab char history` |
+| 🏰 | **The Account tab** 🆕. The home tab of the browser view: every character you have played on this computer, in every game version you have installed, as of its last logout, with level, class, race, spec, item level, professions and when you last logged out on it. Sort by any column, filter by game version or class, and click a character to open it. Also on the command line. | `wowlab ui` · `wowlab char list --summary` |
+| 📈 | **A character over time** 🆕. One row per snapshot you took: level, item level and spec, and the gear and currencies that changed since the one before. | `wowlab char history` |
 | 🧙 | **The Character tab** 🆕. Pick a character in the browser view and see its gear with item-quality colours, every key and what it does, and every macro with the checker's findings, and a **See it dressed** link that opens an outside dressing room in your own browser. Read-only: it never changes a file. | `wowlab ui` |
 | 🎒 | **Gear, keys and macros from the command line** 🆕. The same three views as text or JSON. | `wowlab char gear` · `char binds` · `char macros` |
 | 🧹 | **Macro checker.** Broken spell names, overlong and duplicate macros, macros on no action bar. | `wowlab macros check` |
-| 🎹 | **Keybind coach.** From your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used. Read-only, with an editable "awkward key" table. | `wowlab binds coach` |
+| 🎹 | **Keybind coach.** From your own combat log: spells cast often on awkward keys, spells cast with no bind, and binds never used. Read-only, with an editable "awkward key" table. It needs combat logging turned on in the game and the lab-addon's record of your action bars. | `wowlab binds coach` |
 | 🎨 | **Customization looks.** Browse every race's customization options from the game's own tables, save and compare looks, import one from a character, and open it all as a local web page (inside the browser view too 🆕). Data only: it never touches the game. | `wowlab looks races` · `save` · `compare` · `page` |
 
 <details>

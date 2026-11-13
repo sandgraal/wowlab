@@ -80,7 +80,8 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "README.md",
-        "wowlab ui            # every character in one place, in your browser",
+        "wowlab ui            # the browser view; every character in one place arrives with the "
+        "next release",
         _NO_EXIT,
     ),
     ("README.md", "git clone https://github.com/sandgraal/wowlab && cd wowlab", _FROM_SOURCE),

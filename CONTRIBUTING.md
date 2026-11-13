@@ -41,10 +41,11 @@ You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12), git, a
 system Python 3.9 or later for the agent hooks, and Go for two pre-commit
 hooks; `docs/SETUP.md` lists the versions and installs them without a
 package manager. On macOS and Linux, `make setup` does the rest: `uv sync
---frozen`, the tracked git hooks, the pre-commit hook environments and
-`.env`. On Windows without `make`, run `uv sync --frozen`, `git config
-core.hooksPath .githooks` and `uv run --frozen pre-commit install-hooks`
-yourself, and copy `.env.example` to `.env`. A game install is not needed
+--frozen`, the tracked git hooks, the pre-commit hook environments,
+`.env` and the pinned Lua linter (selene). On Windows without `make`, run
+`uv sync --frozen`, `git config core.hooksPath .githooks`, `uv run --frozen
+pre-commit install-hooks` and `uv run --frozen python
+scripts/fetch_selene.py` yourself, and copy `.env.example` to `.env`. A game install is not needed
 to run the tests.
 
 | Target | What it does |

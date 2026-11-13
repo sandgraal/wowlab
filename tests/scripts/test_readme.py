@@ -231,7 +231,7 @@ def test_the_first_screen_says_what_it_was_tested_on() -> None:
 ROADMAP = WIKI + "/Roadmap"
 LEADS = (
     "**All your characters in one place.**",
-    "**A UI you can always put back.**",
+    "**A UI you can put back.**",
     "`wowlab char history`",
     "`wowlab addons check`",
     "`wowlab binds coach`",
