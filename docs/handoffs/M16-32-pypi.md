@@ -98,7 +98,10 @@ which only `v*` tags may deploy to.
 - Then, in a follow-up PR, INSTALL.md and README.md gain the PyPI lines
   (`uvx wowlab doctor`, `uv tool install wowlab`). M16-32 stays open until
   they land. (The bare `uvx wowlab doctor` question above was decided on
-  2026-11-13: the distribution is `wowlab`.)
+  2026-11-13: the distribution is `wowlab`.) Beside those lines goes the
+  upgrade note, because `uv tool install wowlab` over v0.1.0 stops with
+  "Executable already exists: wowlab" and `uv tool upgrade wowlab-core`
+  finds nothing to upgrade: "Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first."
 - The download count for the gate adds PyPI's figures from pypistats.org
   (ADR-0031, later amendment of 2026-10-21); that is the remaining
   `M13-gate.md` part of M16-32, not done here.

@@ -33,6 +33,8 @@ With [uv](https://docs.astral.sh/uv/) installed:
 {{INSTALL}}
 ```
 
+Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
+
 Then run `wowlab --version` and `wowlab doctor --offline`.
 
 ## The Mac app (Apple silicon)

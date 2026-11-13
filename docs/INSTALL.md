@@ -58,6 +58,8 @@ compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
 the owner create a `v*` tag (`docs/handoffs/M13-03.md`).
 
+Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
+
 The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
 that hash. The v0.1.0 line's hash was taken from that release's
 `SHA256SUMS`. From the next release on, the release workflow hashes the
