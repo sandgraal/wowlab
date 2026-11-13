@@ -5188,6 +5188,8 @@ snapshots that wowlab already has, and writes only through `guard`.
 | CW-6 | Whether the lab-addon records what CW-1 and CW-2 need (gold, last played, item level); a schema change only if it does not | lab-addon, M16-45 | S |
 | CW-7 | Owner and volunteers: one retail capture from the owner's own install (M17-10), and one human Windows run (M13-02) recruited through M16-32's announcement | — | owner |
 
+*CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
+
 **Order.** The wave starts after M16-05 (the launch-client session and
 its capture). v0.2 (M16-33, M16-32) ships before the wave's review
 (M17-12). *Owner decision, 2026-11-12:* the wave runs before v0.2
