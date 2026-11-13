@@ -85,6 +85,7 @@ class SvReadFailure(_Out):
     """One SavedVariables file `sv list --unreadable` could not read (M16-131)."""
 
     path: str  # as in `files`, relative to the flavor folder
+    backup: bool  # a `.lua.bak`, the game's previous save, which it does not load
     # `refused`: not data the SavedVariables parser accepts; `too_large`: past
     # one of the parser's bounds (size, depth, budget), so not checked;
     # `not_opened`: the file could not be opened to read.
@@ -141,15 +142,29 @@ UnreadableOpt = Annotated[
         "say), each with where and why. Reads every file.",
     ),
 ]
+# The caveat when a listed file is one the game loads (not a `.lua.bak`)
+# and was refused or could not be opened.
 _UNREADABLE_LOSS = (
-    "If the game cannot load such a file either, the addon starts with its default settings, "
-    "and the game writes them over the file at the next logout or /reload [verify]."
+    "If the game cannot load such a file either, whatever saved it (an addon, or the game's "
+    "own interface) finds no saved settings, and most addons then start from their defaults; "
+    "the game saves what it then holds over the file at the next logout or /reload [verify]. "
+    "wowlab snap create keeps a copy of each listed file, and of its .lua.bak, as it is now."
+)
+# The caveat when every such file was only past a bound (`too_large`).
+_UNREADABLE_TOO_LARGE = (
+    "wowlab did not check a file this large; that says nothing about whether the game loads it."
+)
+# Said after the reason of a listed `.lua.bak`.
+_UNREADABLE_BACKUP = (
+    "This is the game's backup copy, which it does not load; it is replaced at a later "
+    "save [verify]."
 )
 _UNREADABLE_WHAT = (
-    "Each file is read as data and never run. wowlab refuses a few things the game never "
-    "writes into saved data (a long comment, a long-bracket string, a function), so a file "
-    "someone edited by hand may be listed here and still load in the game. A backup taken now "
-    "(wowlab snap create) keeps a copy of every listed file as it is."
+    "Each file is read as data and never run. wowlab is stricter than the game in places: it "
+    "refuses things the game is not known to write (a long comment, a long-bracket string, a "
+    "function) and number spellings not yet seen in a real file, such as an infinite value "
+    "[verify]. So a file edited by hand, or one holding such a number, may be listed here and "
+    "still load in the game."
 )
 _UNREADABLE_WITH_ORPHANS = "--unreadable and --orphans are separate lists: give one of them"
 
@@ -297,11 +312,11 @@ def _read_failure(lay: layout.Layout, f: layout.SavedVariablesFile) -> SvReadFai
     except FileNotFoundError:
         return None
     except luadata.LuaLimitError as exc:
-        limit = exc.message.replace(" (MAX_COST)", "")
         return SvReadFailure(
             path=f.path,
+            backup=f.backup,
             kind="too_large",
-            reason=f"it is beyond what wowlab reads ({limit}), so it was not checked",
+            reason=f"{_limit_words(exc.message)}, so wowlab did not check it",
             line=None,
             column=None,
             detail=exc.message,
@@ -309,8 +324,11 @@ def _read_failure(lay: layout.Layout, f: layout.SavedVariablesFile) -> SvReadFai
     except luadata.LuaDataError as exc:
         return SvReadFailure(
             path=f.path,
+            backup=f.backup,
             kind="refused",
-            reason=_lua_refusal_why(exc),
+            # The size the listing found: a value cut short at the end of
+            # the file is named as cut off.
+            reason=_lua_refusal_why(exc, f.size),
             line=exc.line,
             column=exc.column,
             detail=str(exc),
@@ -319,12 +337,48 @@ def _read_failure(lay: layout.Layout, f: layout.SavedVariablesFile) -> SvReadFai
         said = exc.strerror or str(exc)
         return SvReadFailure(
             path=f.path,
+            backup=f.backup,
             kind="not_opened",
             reason=f"wowlab could not open it: {said}",
             line=None,
             column=None,
             detail=said,
         )
+    return None
+
+
+def _mib_or_bytes(n: int) -> str:
+    mib = 1024 * 1024
+    return f"{n // mib:,} MiB" if n % mib == 0 else _bytes(n)
+
+
+def _limit_words(message: str) -> str:
+    """Which of the parser's bounds a file is past, in player words; the
+    parser's own message stays in `detail`."""
+    if message.startswith(("document is ", "file is ")):
+        return f"it is larger than wowlab reads (over {_mib_or_bytes(luadata.MAX_FILE_BYTES)})"
+    if message.startswith("tables nested deeper"):
+        return f"it holds tables nested more than {luadata.MAX_DEPTH} deep"
+    if message.startswith("document over the parse budget"):
+        return "it holds too much data for wowlab to hold in memory"
+    if message.startswith("number literal of"):
+        return f"it holds a number written with more than {luadata.MAX_NUMBER_CHARS:,} characters"
+    if message.startswith("string literal over"):
+        return (
+            f"it holds a text value larger than wowlab reads "
+            f"(over {_mib_or_bytes(luadata.MAX_STRING_BYTES)})"
+        )
+    return "it is beyond what wowlab reads"
+
+
+def _unreadable_caveat(failures: Sequence[SvReadFailure]) -> str | None:
+    """The one caveat for this result: the possible loss when a file the
+    game loads was refused or not opened; else, when one was past a bound,
+    that wowlab did not check it; else (only `.lua.bak` files) none."""
+    if any(not r.backup and r.kind in ("refused", "not_opened") for r in failures):
+        return _UNREADABLE_LOSS
+    if any(r.kind == "too_large" for r in failures):
+        return _UNREADABLE_TOO_LARGE
     return None
 
 
@@ -344,7 +398,7 @@ def _sv_unreadable(
         failure = _read_failure(lay, f)
         if failure is not None:
             failed.append((f, failure))
-    caveat = _UNREADABLE_LOSS if failed else None
+    caveat = _unreadable_caveat([r for _, r in failed])
     standing = [_UNREADABLE_WHAT, _SV_TIMING, *no_account]
     report = SvListReport(
         flavor_folder=flavor_folder,
@@ -368,7 +422,10 @@ def _sv_unreadable(
         )
         for f, failure in failed:
             _say(_sv_row(f))
-            _say_prose(failure.reason + ".", indent="    ", hang="    ")
+            why = failure.reason + "."
+            if failure.backup:
+                why += " " + _player_copy(_UNREADABLE_BACKUP)
+            _say_prose(why, indent="    ", hang="    ")
     _say_notes(standing, notes_out, caveat, keep=list(no_account))
 
 

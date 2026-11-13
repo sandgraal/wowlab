@@ -3015,10 +3015,19 @@
   // The sentence `sv list --orphans` prints with its list.
   const PATCH_DAY_REINSTALL =
     "If the addon is installed again it reads this file again, so deleting it loses those settings.";
-  // The caveat `sv list --unreadable` prints with its list, its unconfirmed
-  // part said as the card says it, once.
+  // The sentences `sv list --unreadable` prints with its list, their
+  // unconfirmed part said as the card says it, once: the possible loss
+  // (when a file the game loads was refused or not opened) and the copy
+  // a backup keeps, the line for a file past wowlab's bounds, and the line
+  // after a `.lua.bak` file's reason.
   const PATCH_DAY_UNREAD_LOSS =
-    "If the game cannot load such a file either, the addon starts with its default settings, and the game writes them over the file at the next logout or /reload";
+    "If the game cannot load such a file either, whatever saved it (an addon, or the game's own interface) finds no saved settings, and most addons then start from their defaults; the game saves what it then holds over the file at the next logout or /reload";
+  const PATCH_DAY_UNREAD_COPY =
+    "wowlab snap create keeps a copy of each listed file, and of its .lua.bak, as it is now.";
+  const PATCH_DAY_UNREAD_TOO_LARGE =
+    "wowlab did not check a file this large; that says nothing about whether the game loads it.";
+  const PATCH_DAY_UNREAD_BACKUP =
+    "This is the game's backup copy, which it does not load; it is replaced at a later save";
 
   function patchDaySay(text, isError) {
     const node = byId("patch-day-status");
@@ -3226,8 +3235,24 @@
   }
 
   // A file `sv list --unreadable` could not read, with its reason.
-  function patchDayUnread(read, failure) {
-    return patchDayItem(read.flavor, failure.path, failure.path, ": " + shown(failure.reason) + ".");
+  // "(not yet confirmed)" the first time the card says it, else nothing.
+  function patchDayUnsure(card) {
+    const unsure = card.unconfirmed ? "" : " (not yet confirmed)";
+    card.unconfirmed = true;
+    return unsure;
+  }
+
+  function patchDayUnread(read, failure, card) {
+    const backup = failure.backup === true ? " " + PATCH_DAY_UNREAD_BACKUP + patchDayUnsure(card) + "." : "";
+    return patchDayItem(read.flavor, failure.path, failure.path, ": " + shown(failure.reason) + "." + backup);
+  }
+
+  // The list's one caveat, by `sv list --unreadable`'s rule.
+  function patchDayUnreadNote(unread, card) {
+    if (unread.some((f) => f.backup !== true && (f.kind === "refused" || f.kind === "not_opened"))) {
+      return PATCH_DAY_UNREAD_LOSS + patchDayUnsure(card) + ". " + PATCH_DAY_UNREAD_COPY;
+    }
+    return unread.some((f) => f.kind === "too_large") ? PATCH_DAY_UNREAD_TOO_LARGE : null;
   }
 
   // `card.unconfirmed`: whether "(not yet confirmed)" was already said on
@@ -3269,10 +3294,8 @@
       unchecked.map((a) => patchDayUnchecked(read, a)).filter((line) => line !== null));
     const unread = read.unread || [];
     if (unread.length) {
-      const unsure = card.unconfirmed ? "" : " (not yet confirmed)";
-      card.unconfirmed = true;
-      patchDayList(item, "Saved data wowlab could not read", unread.map((f) => patchDayUnread(read, f)),
-        PATCH_DAY_UNREAD_LOSS + unsure + ".");
+      const lines = unread.map((f) => patchDayUnread(read, f, card));
+      patchDayList(item, "Saved data wowlab could not read", lines, patchDayUnreadNote(unread, card));
     }
     patchDayList(item, "Saved data no installed addon declares", files.map((f) => patchDayOrphan(read, f)),
       PATCH_DAY_REINSTALL);

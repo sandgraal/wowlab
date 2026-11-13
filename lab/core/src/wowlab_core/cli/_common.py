@@ -1097,7 +1097,7 @@ _LUA_REFUSAL_WORDS = {
     "calls are rejected (L3)": "it holds a function call, which saved data never does "
     "(wowlab reads the file as data and never runs it)",
     "bare identifiers are not values (L3)": "it holds a name where a value should be, which "
-    "saved data never does",
+    "the game is not known to write",
     "long comments are rejected (§6.4)": "it holds a long comment (--[[ ]]), which the "
     "client does not write",
     "long-bracket strings are rejected (§6.4)": "it holds a long-bracket string ([[ ]]), "
@@ -1109,6 +1109,14 @@ _LUA_REFUSAL_WORDS = {
 _UTF8_BOM = b"\xef\xbb\xbf"
 # The parser's refusal of a file that ends inside a table (M16-131).
 _LUA_UNCLOSED_TABLE = "unterminated table (end of input before its `}`)"
+# The parser's refusal of a string that reaches the end of the file.
+_LUA_UNCLOSED_STRING = "unterminated string"
+# What the parser adds to a message whose token it keeps only the start of.
+_LUA_TOKEN_KEPT = re.compile(
+    r"\A(?P<message>.*) \(a (?P<length>[0-9]+)-byte token; its first [0-9]+ bytes are kept\)\Z",
+    re.DOTALL,
+)
+_LUA_CUT_OFF = "it may have been cut off by a crash or a full disk during a save"
 
 
 def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
@@ -1118,30 +1126,36 @@ def _lua_refusal_words(exc: luadata.LuaDataError) -> str:
     return f"not SavedVariables data wowlab can read: {_lua_refusal_why(exc)}"
 
 
-def _lua_refusal_why(exc: luadata.LuaDataError) -> str:
+def _lua_refusal_why(exc: luadata.LuaDataError, size: int | None = None) -> str:
     """The reason `_lua_refusal_words` gives, on its own (`sv list
-    --unreadable` prints it under a file's row, M16-131)."""
+    --unreadable` prints it under a file's row, M16-131). `size`, the
+    file's length when the caller knows it: a refused token that runs to
+    the end of the file (a name, a number or an operator cut short) is then
+    named as cut off too. A string that reaches the end is, without it."""
     where = f"line {exc.line}, column {exc.column}"
+    kept = _LUA_TOKEN_KEPT.match(exc.message)
+    message = kept.group("message") if kept else exc.message
+    length = int(kept.group("length")) if kept else len(exc.token)
+    at_end = size is not None and exc.offset + length >= size
     if exc.offset == 0 and exc.token and _UTF8_BOM.startswith(exc.token[:3]):
         why = (
             "this file starts with a UTF-8 byte-order mark, which the client does not "
             "write; a text editor may have added it"
         )
     elif exc.token == b"":
-        why = (
-            f"the file ends early, at {where}: it may have been cut off by a crash or a "
-            "full disk during a save"
-        )
+        why = f"the file ends early, at {where}: {_LUA_CUT_OFF}"
     elif exc.message == _LUA_UNCLOSED_TABLE:
         # The parser names the table left open, not the end of the file.
-        why = (
-            f"the file ends before the table that opens at {where} is closed: it may have "
-            "been cut off by a crash or a full disk during a save"
-        )
+        why = f"the file ends before the table that opens at {where} is closed: {_LUA_CUT_OFF}"
+    elif message == _LUA_UNCLOSED_STRING:
+        # The parser names where the string opens; it runs to the end.
+        why = f"the file ends inside a text value that opens at {where}: {_LUA_CUT_OFF}"
+    elif at_end:
+        why = f"the file ends in the middle of a value, at {where}: {_LUA_CUT_OFF}"
     else:
         # The parser's own words, with no install value in them.
-        message = _LUA_REFUSAL_WORDS.get(exc.message) or _render(exc.message)
-        why = f"{message}, at {where}"
+        said = _LUA_REFUSAL_WORDS.get(message) or _render(message)
+        why = f"{said}, at {where}"
     return why
 
 

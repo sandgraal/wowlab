@@ -5326,25 +5326,53 @@ reads TOCs, not saved data): each SavedVariables file `sv list` would list
 `luadata.read` from the install root one folder at a time, as data and
 never run (L3), within the parser's own bounds, and nothing is written
 (L1). A file that does not read is listed with a kind (`refused`, with the
-parser's line and column; `too_large`, past a size, depth or budget bound,
-so not checked; `not_opened`), the reason in player words (the refusal
-words `sv dump` already prints, plus one more: a file that ends inside a
-table is named as cut off, since the parser reports the table's opening
-brace rather than the end) and the parser's own message. A file gone
-since the listing is not listed. `--unreadable` with `--orphans` is a usage
-error. JSON: `SvListReport` gains `unreadable` (false without the option)
-and `read_failures` (one `SvReadFailure` per listed file, in `files`'
-order), an additive change. With one or more listed, the one caveat is
-that if the game cannot load such a file either, the addon starts with its
-defaults and the game writes them over the file at its next save
-**[verify]**; the standing notes say that wowlab refuses a few things the
-client never writes (long comments and strings, functions), so a file
-edited by hand may be listed and still load. The card runs it per flavor
-after `sv list --orphans` and shows "Saved data wowlab could not read"
-(each file, opening the Explorer, with its reason) before the orphans,
-with that caveat under it and "(not yet confirmed)" said once per card.
-Every SavedVariables file of both real captures reads; the failures are
-graded on constructed files.
+parser's line and column; `too_large`, past a size, depth, budget, number
+or string bound, so not checked; `not_opened`), whether it is a `.lua.bak`
+(`backup`), the reason in player words and the parser's or the system's
+own message (`detail`).
+- Refusal words are those `sv dump` prints, with these additions. A file
+  is named as cut off by a crash or a full disk during a save when it ends
+  inside a table (the parser reports the table's opening brace), inside a
+  string (the parser reports where the string opens; also in `sv dump`), or
+  when the refused token runs to the end of the file as the listing sized
+  it (a name such as a cut `true`, a number, an operator; `sv dump` does
+  not know the size and keeps the parser's words for these). The parser's
+  "N-byte token" suffix is never shown. A bare name is "a name where a value
+  should be, which the game is not known to write" (also in `sv dump`).
+- Bounds in player words: "larger than wowlab reads (over 256 MiB)",
+  "tables nested more than 200 deep", "too much data for wowlab to hold in
+  memory", a number of more than 4,300 characters, a text value over
+  64 MiB; each "so wowlab did not check it".
+- A `.lua.bak` row adds: "This is the game's backup copy, which it does
+  not load; it is replaced at a later save" **[verify]**.
+- The one caveat: when a listed file the game loads (not a `.lua.bak`) was
+  refused or could not be opened, "If the game cannot load such a file
+  either, whatever saved it (an addon, or the game's own interface) finds
+  no saved settings, and most addons then start from their defaults; the
+  game saves what it then holds over the file at the next logout or
+  /reload **[verify]**. wowlab snap create keeps a copy of each listed file,
+  and of its .lua.bak, as it is now." Else, when one is past a bound,
+  "wowlab did not check a file this large; that says nothing about whether
+  the game loads it." Else (only `.lua.bak` files) none.
+- The standing note says wowlab is stricter than the game in places: it
+  refuses things the game is not known to write (a long comment, a
+  long-bracket string, a function) and number spellings not yet seen in a
+  real file, such as an infinite value **[verify]**, so a file edited by
+  hand, or one holding such a number, may be listed and still load.
+- "(not yet confirmed)" is said once per report, and once per card.
+
+A file gone since the listing is not listed. `--unreadable` with
+`--orphans` is a usage error. JSON: `SvListReport` gains `unreadable`
+(false without the option) and `read_failures` (one `SvReadFailure` per
+listed file, in `files`' order), an additive change; the `.lua.bak`
+sentence is not in `reason`, `backup` says it. The card runs it per flavor
+after `sv list --orphans`, again on every hub read (about 26 s for four
+valid 50 MB files, measured in review, against the 120 s run timeout; not
+cached), and shows "Saved data wowlab could not read" (each file, opening
+the Explorer, with its reason and the `.lua.bak` sentence) before the
+orphans, with the caveat under it by the same rule. Every SavedVariables
+file of both real captures reads; the failures are graded on constructed
+files, some of them a real capture cut short.
 
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 

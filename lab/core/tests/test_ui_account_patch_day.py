@@ -252,7 +252,9 @@ def test_the_two_dbm_addons_and_the_four_orphans_constructed(
 # ─── saved data wowlab could not read (M16-131) ──────────────────────────────
 
 UNREAD_HEAD = "Saved data wowlab could not read"
-LOSS = cli._UNREADABLE_LOSS.removesuffix(" [verify].")
+# The CLI's sentences, split where the card says "(not yet confirmed)" once.
+LOSS, COPY = cli._UNREADABLE_LOSS.split(" [verify]. ")
+BACKUP = cli._UNREADABLE_BACKUP.removesuffix(" [verify].")
 # Constructed (labelled): a file cut off inside its table, and one holding a
 # function, written into the copy of the beta flavor's account folder.
 BROKEN = {
@@ -309,7 +311,7 @@ def test_files_wowlab_could_not_read_are_listed_with_why_constructed(
     ]
     assert unread[0]["title"] == f"Show {BETA}/{ACCOUNT_SV}/Cutoff.lua in the Explorer"
     # "(not yet confirmed)" once on the card: the first list said it.
-    assert beta["notes"][1] == LOSS + "."
+    assert beta["notes"][1] == LOSS + ". " + COPY
     every = [n for b in blocks.values() for n in b["notes"]]
     assert sum("(not yet confirmed)" in n for n in every) == 1
 
@@ -322,8 +324,54 @@ def test_the_unreadable_list_alone_says_not_yet_confirmed_constructed(
     _edited(scenario, lambda report: None)
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
     assert beta["what"] == [UNREAD_HEAD]
-    assert beta["notes"] == [LOSS + " (not yet confirmed)."]
+    assert beta["notes"] == [LOSS + " (not yet confirmed). " + COPY]
     assert beta["clear"] == ["All 2 addons are current for this game version."]
+
+
+def test_a_broken_backup_alone_gives_no_loss_caveat_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Domain review of M16-131: the game does not load a `.lua.bak`, so a
+    broken one alone says what it is and not the possible loss."""
+    rel = f"{ACCOUNT_SV}/Cutoff.lua.bak"
+    (both / BETA / rel).write_bytes(b'Cutoff = {\n  ["a"] = 1,\n')
+    scenario = _scenario(server, [{"patch_day": True}])
+    _edited(scenario, lambda report: None)
+    beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
+    assert beta["what"] == [UNREAD_HEAD]
+    assert beta["notes"] == []
+    [line] = beta["items"]
+    assert line["name"] == rel
+    assert line["text"].endswith(". " + BACKUP + " (not yet confirmed).")
+
+
+def test_a_file_past_a_bound_gets_its_own_line_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Constructed: the beta flavor's report edited to list one capture file
+    as past a bound, as `sv list --unreadable` reports one."""
+    scenario = _scenario(server, [{"patch_day": True}])
+    _edited(scenario, lambda report: None)
+    run = _run(scenario, SV_LIST, BETA, UNREADABLE)
+    report = json.loads(run["stdout"])
+    report["read_failures"] = [
+        {
+            "path": ORPHAN_FILES[0],
+            "backup": False,
+            "kind": "too_large",
+            "reason": "it is larger than wowlab reads (over 256 MiB), so wowlab did not check it",
+            "line": None,
+            "column": None,
+            "detail": "file is 300 bytes, over the 256-byte bound",
+        }
+    ]
+    run["stdout"] = json.dumps(report)
+    beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
+    assert beta["notes"] == [cli._UNREADABLE_TOO_LARGE]
+    assert [i["text"] for i in beta["items"]] == [
+        f"{ORPHAN_FILES[0]}: it is larger than wowlab reads (over 256 MiB), so wowlab did not "
+        "check it."
+    ]
 
 
 def test_a_failed_unreadable_read_is_said_constructed(
@@ -616,6 +664,10 @@ def test_the_card_section_runs_only_its_three_reads() -> None:
     # The orphan list's sentence is the CLI's own; so is the unreadable
     # list's, its unconfirmed part said as the card says it.
     assert json.dumps(cli._ORPHAN_REINSTALL) in body
-    loss, verify = cli._UNREADABLE_LOSS.rsplit(" ", 1)
-    assert verify == "[verify]."
-    assert f"const PATCH_DAY_UNREAD_LOSS =\n    {json.dumps(loss)};" in body
+    for name, text in (
+        ("LOSS", LOSS),
+        ("COPY", COPY),
+        ("TOO_LARGE", cli._UNREADABLE_TOO_LARGE),
+        ("BACKUP", BACKUP),
+    ):
+        assert f"const PATCH_DAY_UNREAD_{name} =\n    {json.dumps(text)};" in body, name

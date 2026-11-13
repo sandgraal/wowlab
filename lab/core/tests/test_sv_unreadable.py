@@ -151,10 +151,134 @@ def test_a_file_past_the_size_bound_is_not_checked_constructed(
     checked, not parsed."""
     (flavor / SV_DIR / "Huge.lua").write_bytes(b"Huge = " + b"1" * 64 + b"\n")
     monkeypatch.setattr(luadata, "MAX_FILE_BYTES", 32)
-    [failure] = [f for f in _unreadable().read_failures if f.path.endswith("Huge.lua")]
+    report = _unreadable()
+    [failure] = [f for f in report.read_failures if f.path.endswith("Huge.lua")]
     assert failure.kind == "too_large" and failure.line is None
-    assert failure.reason.startswith("it is beyond what wowlab reads (")
-    assert failure.reason.endswith("), so it was not checked")
+    assert failure.reason == (
+        "it is larger than wowlab reads (over 32 bytes), so wowlab did not check it"
+    )
+    assert failure.detail.startswith("file is 72 bytes, over the 32-byte bound")
+    # Every listed file was only past a bound: that caveat, not the loss.
+    assert {f.kind for f in report.read_failures} == {"too_large"}
+    assert report.notes[0] == cli._UNREADABLE_TOO_LARGE
+    assert cli._UNREADABLE_LOSS not in report.notes
+
+
+def test_the_size_bound_in_player_words() -> None:
+    mib = 1024 * 1024
+    assert cli._limit_words(f"file is {300 * mib} bytes, over the {256 * mib}-byte bound") == (
+        "it is larger than wowlab reads (over 256 MiB)"
+    )
+    assert cli._limit_words(f"tables nested deeper than {luadata.MAX_DEPTH}") == (
+        "it holds tables nested more than 200 deep"
+    )
+    assert cli._limit_words("document over the parse budget of 1150000000 (MAX_COST)") == (
+        "it holds too much data for wowlab to hold in memory"
+    )
+
+
+def test_tables_nested_too_deep_are_not_checked_constructed(root: Path, flavor: Path) -> None:
+    depth = luadata.MAX_DEPTH + 1
+    (flavor / SV_DIR / "Deep.lua").write_bytes(b"Deep = " + b"{" * depth + b"}" * depth + b"\n")
+    report = _unreadable()
+    [failure] = report.read_failures
+    assert failure.kind == "too_large"
+    assert failure.reason == "it holds tables nested more than 200 deep, so wowlab did not check it"
+    assert "MAX_" not in failure.reason
+    assert report.notes[0] == cli._UNREADABLE_TOO_LARGE
+
+
+# ─── cut off inside a value (code review of M16-131) ────────────────────────
+# Constructed from a real capture (L8): the captured DBM-StatusBarTimers.lua
+# cut short at a point inside one value, written into the copy.
+
+TIMERS = f"{SV_DIR}/DBM-StatusBarTimers.lua"
+
+
+@pytest.mark.parametrize(
+    ("marker", "into", "words"),
+    [
+        (b'["TimerPoint"] = "TOPRIGHT"', 21, "the file ends inside a text value that opens at"),
+        (b'["HugeBarsEnabled"] = true', 24, "the file ends in the middle of a value, at"),
+        (b'["EndColorPR"] = 0.5', 19, "the file ends in the middle of a value, at"),
+        (b'["TimerY"] = -260', 14, "the file ends in the middle of a value, at"),
+        (b'["TimerY"] = -260', 15, "the file ends before the table that opens at"),
+    ],
+    ids=[
+        "inside-a-string-constructed",
+        "inside-true-constructed",
+        "inside-a-number-constructed",
+        "after-a-minus-constructed",
+        "inside-a-negative-number-constructed",
+    ],
+)
+def test_a_cut_inside_a_value_is_named_cut_off(
+    root: Path, flavor: Path, marker: bytes, into: int, words: str
+) -> None:
+    data = (CAPTURE / "forever" / TIMERS).read_bytes()
+    (flavor / TIMERS).write_bytes(data[: data.index(marker) + into])
+    [failure] = _unreadable().read_failures
+    assert failure.kind == "refused"
+    assert failure.reason.startswith(words)
+    assert failure.reason.endswith(
+        ": it may have been cut off by a crash or a full disk during a save"
+    )
+
+
+def test_a_long_string_cut_off_says_nothing_of_the_parser_constructed(
+    root: Path, flavor: Path
+) -> None:
+    (flavor / SV_DIR / "Long.lua").write_bytes(b'Long = {\n  ["a"] = "' + b"x" * 80)
+    [failure] = _unreadable().read_failures
+    assert failure.reason == (
+        "the file ends inside a text value that opens at line 2, column 11: it may have been "
+        "cut off by a crash or a full disk during a save"
+    )
+    assert "token" in failure.detail and "token" not in failure.reason
+
+
+def test_a_value_cut_mid_file_is_not_called_cut_off_constructed(root: Path, flavor: Path) -> None:
+    """A name where a value should be, with more of the file after it."""
+    (flavor / SV_DIR / "Named.lua").write_bytes(b'Named = {\n  ["a"] = yes,\n}\n')
+    [failure] = _unreadable().read_failures
+    assert failure.reason == (
+        "it holds a name where a value should be, which the game is not known to write, at "
+        "line 2, column 11"
+    )
+
+
+# ─── a broken .lua.bak (domain review of M16-131) ───────────────────────────
+
+
+def test_a_broken_backup_alone_gives_no_loss_caveat_constructed(root: Path, flavor: Path) -> None:
+    (flavor / SV_DIR / "Cutoff.lua.bak").write_bytes(b'Cutoff = {\n  ["a"] = 1,\n')
+    report = _unreadable()
+    [failure] = report.read_failures
+    assert failure.backup is True and failure.kind == "refused"
+    assert cli._UNREADABLE_LOSS not in report.notes
+    assert cli._UNREADABLE_TOO_LARGE not in report.notes
+    assert report.notes[0] == cli._UNREADABLE_WHAT
+    out = ok("sv", "list", "--unreadable")
+    text = " ".join(ln.strip() for ln in out.splitlines())
+    assert (
+        "This is the game's backup copy, which it does not load; it is replaced at a later "
+        "save (not yet confirmed)." in text
+    )
+    assert "If the game cannot load" not in text
+    assert text.count("(not yet confirmed)") == 1
+
+
+def test_a_broken_backup_beside_a_broken_file_says_not_yet_confirmed_once_constructed(
+    root: Path, flavor: Path
+) -> None:
+    _broken(flavor)
+    (flavor / SV_DIR / "Cutoff.lua.bak").write_bytes(b'Cutoff = {\n  ["a"] = 1,\n')
+    report = _unreadable()
+    assert report.notes[0] == cli._UNREADABLE_LOSS
+    for args in (["--unreadable"], ["--unreadable", "--notes"]):
+        text = " ".join(ln.strip() for ln in ok("sv", "list", *args).splitlines())
+        assert text.count("(not yet confirmed)") == 1
+        assert "[verify]" not in text
 
 
 def test_a_file_that_cannot_be_opened_is_listed_constructed(
