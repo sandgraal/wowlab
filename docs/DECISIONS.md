@@ -315,6 +315,15 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 - *`sv dump` only inside the install.* From the UI, `sv dump` always runs with `--install-only`, which the server adds and the form cannot remove. The flag measures against the install wowlab finds by itself (`WOWLAB_WOW_ROOT` or the default places, as `wowlab ui` does), not against a `--root` the page names: a `--root` that names a different install is refused, and no install found is refused, both with exit 3. A file whose resolved path is outside the install is refused with exit 3 before it is read, no byte of it is echoed, and the checked real path is the one read. Residual: a component swapped for a link between the check and the open (EV-24, open-then-verify).
 - *Caching and leakage.* Every response, the exchange included, carries `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`, and no CORS header. Neither key is ever logged.
 
+**Amendment (2026-11-12; Accepted 2026-11-12 — owner decision in session ("accept the ADR-0029 amendment"); the status edit was made by the conductor on the owner's explicit instruction. Records the owner's rulings of 2026-11-11, from M16-113 (#495) and its security review): the link lasts until Ctrl-C, and the session key travels in a header.**
+- *What the owner ruled.* After a reload showed "This wowlab ui link was already used": "i dont need this level of protection … get rid of this requirement". On the security review: the link's exposure in the browser's process arguments, "Accept, single user"; a cookie on `127.0.0.1` being sent to every port, "Fix it".
+- *The link is never spent.* `wowlab ui` still opens `http://127.0.0.1:<port>/?boot=<key>`. The boot key opens only `GET`/`HEAD /`, only as the whole query, and keeps working until the process stops. `POST /api/session`, the one-time spend and its lock are gone (the route answers 404).
+- *Where the session key lives.* Only the link's page holds it, in `<meta id="wowlab-session">`, served `no-store`, `Cross-Origin-Resource-Policy: same-origin` and without CORS. The page removes the element, keeps the key in `localStorage` (per origin, port included), drops the query with `history.replaceState` before its first request, and sends the key on every request in the `X-Wowlab-Session` header with `credentials: "omit"`. There is no cookie. A `token` query field, when present, still decides on its own.
+- *A reload and a second tab work.* `GET`/`HEAD /` with no query serves the keyless shell, which passes the Host and Origin checks as before; the page reads the key from `localStorage`. A page with no key shows one player sentence (the page's own text, after `/api/commands` refuses it), and a wrong or earlier server's `boot` gets the same sentence from the server as a plain-text 403.
+- *Cross-origin requests.* Another site cannot add the custom header without a preflight, and the preflight is refused (bad Origin) with no `Access-Control-*` header. Host and Origin checks are unchanged.
+- *Sentences this replaces.* In the 2026-10-27 amendment, "works once", "spent", "the one exchange", "a reload needs a new `wowlab ui`" and its 403 sentence no longer hold. The decision's "every request must carry it" now reads "every request but `GET`/`HEAD /` must carry the session key, in the `X-Wowlab-Session` header or the `token` field".
+- *Accepted residual (owner, 2026-11-11).* The link sits in the browser's process arguments, readable by another account on the same machine, and opens a session until Ctrl-C. Keys live in memory only, so a new `wowlab ui` makes new keys and the old link opens nothing. README and INSTALL keep the single-user-machine note. LAB_PLAN's `wowlab ui` amendment of 2026-11-11 records the same design.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
@@ -346,6 +355,8 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 **Amended by (2026-10-19; Accepted with ADR-0034 the same day):** ADR-0034 admits one vendored third-party JavaScript library (three.js, pinned) under its own rules; ADR-0033 keeps the CASC reader in Python, so no binding is admitted.
 
 **Amended by (2026-10-26; Accepted with ADR-0035 the same day):** ADR-0035 admits third-party font files (twelve pinned OFL WOFF2 files) as package data under its own rules. They are data, not a language.
+
+**Amended by (2026-11-12; Accepted with ADR-0038 the same day):** ADR-0038 admits PyInstaller as a build-time toolchain only, in the release workflow and under `packaging/`, for the macOS app and the Windows binary that ADR-0031's amendment of 2026-11-12 allows. It is never a runtime dependency.
 
 ---
 
@@ -389,6 +400,16 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 **Amendment (2026-10-21, owner decision in session; Accepted 2026-10-21 — owner: "marked all amendments Accepted"; the status edit was made by the conductor on the owner's explicit instruction):** two changes, both from the outside evaluation. (1) **The gate starts at v0.2.** "Thirty days after the first public release" becomes "thirty days after the first release verified on the launch client of the flavor the fixtures come from" (v0.2, `docs/LAB_PLAN.md` §18). The thresholds are unchanged. The window as written fell across the gap between the beta closing and launch, when the audience had no client to run it on. GitHub's traffic and clone counts are recorded beside the gate's counts and are not part of the threshold. (2) **PyPI.** The same wheel the release workflow builds is also published to PyPI by that workflow, with trusted publishing, so `uvx wowlab doctor` and `uv tool install wowlab` work. Nothing else in Distribution changes: no installer and no signed or frozen binary until the gate passes and a further ADR says so. The release may be announced before the gate. Source: the outside evaluation panel and the owner's answers of 2026-10-21 (`docs/handoffs/outside-evaluation-2026-10.md`, "Owner decisions").
 
 **Amendment (2026-10-21, later; Accepted 2026-10-21 — owner decision in session, answering the conductor's question after code review; the status edit was made by the conductor on the owner's explicit instruction):** to item (2) of the amendment above. The gate's download count is GitHub's release-asset downloads plus PyPI's downloads of the same versions, read by hand at the gate from the public figures on pypistats.org. "From GitHub's own counts" is read that way. The issues and discussions threshold is unchanged.
+
+**Amendment (2026-11-12, M17-07; Accepted 2026-11-12 — owner decision in session ("accept all", 2026-11-12, M17-13); the status edit was made by the conductor on the owner's explicit instruction):** double-click distribution. The owner picked the companion wave on 2026-11-12 (`docs/LAB_PLAN.md` §19, CW-5), whose audience does not use a terminal. Distribution, as amended on 2026-10-21, keeps "no installer and no signed or frozen binary until the gate passes and a further ADR says so". The gate starts at v0.2, which has not shipped. This amendment is that further ADR for two artefacts only, before the gate:
+1. **A macOS app.** A zipped `wowlab.app` that starts `wowlab ui` from the released version, attached to each release with its hash in `SHA256SUMS` and the attestations M16-43 set up. It needs no git clone, no editable install and no typing in a terminal. It is built by the tool ADR-0038 names (if accepted), from the tagged source, in the release workflow, and carries its own Python. This departs from §19 CW-5 and M17-08, which describe a *launcher* based on the owner's `install-wowlab-app.sh`: that script needs git, uv and a clone, and runs `git pull` at each start, which is an auto-update this amendment forbids. What the script gets right is kept: the app opens a Terminal window that shows the server and stops it when closed (ADR-0038, item 3). It is built for Apple Silicon only (`arm64`); Intel Macs keep the wheel.
+2. **A Windows frozen binary.** `wowlab.exe` (with its folder, zipped), built the same way and attached the same way. Double-clicking it opens the UI.
+
+Both stay **unsigned and unnotarised** (an ad-hoc signature, which Apple Silicon needs to run any app and which carries no identity, is not signing in this sense). The release notes and `INSTALL.md` say how to open an unsigned app on each system, in the steps the current macOS and Windows versions show (checked when M17-08 and M17-09 land, since macOS 15 changed them), and how to check the hash. Signing costs money and an identity process and needs its own ADR.
+
+Unchanged: the wheel and the sdist stay the primary distribution, and PyPI joins them when M16-32 publishes; no installer (no `.pkg`, `.msi` or other package that runs code at install time; the artefacts are plain `.zip` files); the gate, its thresholds and its counts (the two new downloads count as release-asset downloads); "Supported platforms" — a platform stays "untested" in the README until CI runs the suite on it **and** a human has run the first-run flow; the trust model, L1 to L8, and every other clause. Neither artefact may add a network call, an auto-updater or anything that runs at login.
+
+Consequences: a release grows by two downloads of tens of megabytes each, and the release workflow gains build jobs on `macos-latest` and `windows-latest` with the same permissions rules as the existing release job (`contents: write` only where the upload happens, pinned actions, `security-reviewer`). The wheel and sdist release does not wait on these builds: they are attached after it, and a failed build leaves the release without that one download and is reported. Antivirus and Gatekeeper warnings on unsigned builds become a support topic; INSTALL.md answers it once. If the owner rejects this amendment, M17-08 and M17-09 are not built and nothing else in M17 changes.
 
 ---
 
@@ -511,3 +532,85 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 **Decision:** A feature may record other players' character, realm and guild names, and the player's own note and rating about them, under these terms. (1) **Local only.** Records are written only on the player's own machine: in a SavedVariables file the lab-addon writes, and under the Lab's user data directory. Copies the snapshot store takes of those files are local storage under this term, and so is any local display of them (`sv dump`, `--json`, `wowlab ui`). Nothing uploads them: ADR-0019 and ADR-0031 are unchanged, and the `char advise --send` packet of ADR-0032 never carries a name recorded under this ADR. (2) **Opt-in per feature.** A feature that records names is off until the player turns it on, and its `--help` and the notice shown when it is turned on say what it keeps and where. The "What leaves your machine" block stays about network traffic only. (3) **Records stay out of the repository.** No fixture, test, capture, review probe or document holds a crew-book or comp-builder record taken from a real install, nor another player's name or note from one; tests of these features use constructed records, labelled as such (L8). This narrows nothing in ADR-0019's 2026-10-17 amendment for other files: the capture tool gains a rule that refuses, or empties, a record of these features before a capture is committed. (4) **Shared output.** `doctor --redact` and anything else the Lab asks a player to share leave these records out, always (ADR-0031). `snap export`, which the player runs to move their own snapshots between their own machines, includes them, and says so when it does. (5) **Visible and deletable.** The player can list what is stored and delete it, per player and all at once, through a command; deleting a SavedVariables-held record goes through `guard` (ADR-0021) like any other write. Deletion clears the live files only: earlier snapshots keep their copies until the player removes those snapshots and `snap gc` drops the unreferenced objects, and the delete command says so. GUIDs, chat text and whispers stay out of scope: this ADR covers names, roles and levels as the game shows them, and the player's own notes about them.
 
 **Consequences:** crew-book and comp-builder can be picked for a wave once this ADR is accepted. Each needs a lab-addon schema change recording what it adds, the capture-tool rule of term (3), the delete command, and the opt-in. ADR-0026 carries an "Amended by" line for this ADR. The capture review and `doctor --redact` take on one more kind of record to keep out, so a missed record in a capture is a leak (AGENTS.md "Stop and ask"). Nothing changes for features that do not record names.
+
+## ADR-0037 — Crash recovery is frozen at what M16-69 and M16-90 deliver
+
+**Status:** Accepted (2026-11-11; proposed 2026-11-11). This is an owner decision. The owner said in session "draft the crash-recovery freeze ADR, no outside users for now but in future yes", then chose "Accept it now". The conductor made the status edit on the owner's explicit instruction.
+
+**Context:**
+- **What is built.** The write gate (ADR-0021, L2) already recovers from a single failure at any point in a change. A change is snapshotted before it writes, journaled, replaced atomically and undoable. `doctor` reports an interrupted change with the exact `wowlab undo --expect <id>` line.
+- **Where recent work has gone.** The work since 2026-11-04 has gone mostly to compound failures:
+  - a change killed between the temp cleanup and its snapshot (LAB_PLAN §6.10 (a), M16-69, M16-93T);
+  - an undo killed while undoing an interrupted change (a1, M16-100T);
+  - a failed snapshot or a killed transaction closed on top of an interrupted change (a2, M16-108T, with M16-107T);
+  - a whole restore that would bring back a temp an earlier change left behind (M16-87T, M16-87).
+- **What that costs.** Each case added:
+  - a journal field or state;
+  - a `doctor` wording;
+  - an undo-target rule;
+  - two to four graders, under the separation that ADR-0013 imposes on `guard.py`;
+  - and often a second round when a reviewer found the rule incomplete.
+
+  On 2026-11-11 alone, §6.10 gained (a2) and its clarification, two [TEST] PRs (#491, #492) and an owner ruling given twice, all for failures that need two faults in a row.
+- **Who the tool is for.** It has one user today, the owner, and no outside users (owner, 2026-11-11). Outside users are wanted later.
+- **The risk.** The undo rules are becoming hard for anyone, reviewers included, to hold in their head. That is itself a safety risk: a rule nobody can reason about is where the next wrong restore comes from.
+
+**Decision:**
+- **The automatic recovery of the write gate is frozen** at what these tickets deliver: M16-69 (with M16-107T and M16-108T, as LAB_PLAN §6.10 (a), (a1) and (a2) specify) and M16-90.
+- **After them, a compound failure gets no new journal field, record state, undo-target rule or `doctor` wording of its own.** A compound failure is one that needs a second fault on top of an unsettled first. Examples:
+  - a kill or failure during the recovery of an earlier one;
+  - a damaged or hand-edited journal or snapshot store;
+  - a missing manifest;
+  - any record `doctor` cannot classify with the rules already written.
+- **Instead it gets one generic answer, built once, as an M16 ticket:**
+  - `undo` refuses and changes nothing, as it already does when it cannot be sure.
+  - `doctor` reports one problem. It says wowlab cannot work out safely what this change did. It says the snapshots are kept. It names the newest snapshot that `snap verify` finds whole, and it ends with `wowlab snap restore <id> --dry-run` for the player to inspect before restoring.
+- **What the freeze does not touch:**
+  - It limits recovery *automation* only, never safety. L1, L2, snapshot-before-write, the journal, atomic replace and "refuse when unsure" are unchanged.
+  - A bug in a case that is already handled is still fixed, and it is graded as before.
+  - A security finding in the gate is still fixed.
+- **M16-87T and M16-87 are deferred under this ADR.** They cover a temp brought back by a whole restore after a separate cleanup removed it. They stay in the backlog as unpicked and are re-entered only by the trigger below.
+- **The freeze is lifted for a specific case** by a new owner decision recorded as an amendment here, and only when one of these happens:
+  - a player, the owner or later an outside user, actually hits that case and reports it;
+  - outside users are invited. The owner wants that later, and the conductor then reviews the frozen cases with the owner before the invitation.
+
+**Consequences:**
+- **Easier:**
+  - the M16 wave can close after M16-69 and M16-90 without an open-ended tail of crash tickets;
+  - §6.10 stops growing, and can be rewritten as one current section with its amendment history moved to an appendix;
+  - reviewers no longer need to propose new compound cases as findings. A reviewer who finds one reports it as "frozen under ADR-0037", which the conductor records without a fix round.
+- **Harder:** a rare compound failure now ends in a manual `snap restore` rather than a one-line `undo`. The player must read a plan and choose, which is slower but never silently wrong.
+- **Must now be true:**
+  - the generic `doctor` answer exists before the freeze is cited to close any compound case;
+  - it is graded once, against a damaged-journal and a missing-manifest case (constructed, L8 boundary);
+  - its wording follows the existing `doctor` rules: no ticket or module ids, and the command last.
+
+---
+
+## ADR-0038 — The double-click builds are made with PyInstaller, in one-folder mode, from the released wheel
+
+**Status:** Accepted (2026-11-12; proposed 2026-11-12) — owner decision in session ("accept all", 2026-11-12, M17-13); the status edit was made by the conductor on the owner's explicit instruction
+
+**Context:** ADR-0031's amendment of 2026-11-12 (M17-07, Proposed) allows a macOS app and a Windows frozen binary as release assets. ADR-0030 says a build toolchain needs its own ADR naming its purpose, where it lives, how it is verified and what it may not do. wowlab is pure Python 3.12 with no C extension of its own; its runtime dependencies are the list in `docs/LAB_PLAN.md` §6, plus package data (the UI templates, the vendored three.js of ADR-0034, the fonts of ADR-0035). The candidates:
+Each candidate below is described as its maintainers' documentation describes it, recalled on 2026-11-12 and not re-read for this text; the owner or the build ticket checks the points that decide it.
+- **A launcher only** (the owner's `install-wowlab-app.sh` made into an app): no frozen Python; it needs uv and a network fetch at first start, and the script as it stands needs git and a clone and pulls at each start (an auto-update, which ADR-0031's amendment forbids).
+- **PyInstaller** (GPL with a bootloader exception that allows distributing the built app under any licence, as recalled). Widely used for pure-Python apps; builds a `.app` on macOS and an `.exe` on Windows from one spec; needs no compiler. Its *one-file* mode unpacks to a temporary folder at each start and is widely reported to draw more antivirus flags than *one-folder* mode, which also starts faster.
+- **Nuitka** compiles to C. Smaller and faster binaries, but it needs a C compiler on each runner, builds take minutes to tens of minutes, and its output is harder to review.
+- **Briefcase** (BeeWare) makes platform-native app bundles around an embedded Python, with installers (`.msi`, `.pkg`) by default and, as recalled, a plain zip option. It brings its own project layout and app template, a second structure to keep beside `pyproject.toml`.
+- **An embedded CPython** (python.org's Windows embeddable zip, or a python-build-standalone build) with the wheel installed into it and a small launcher. Nothing is frozen, so nothing unpacks at runtime; but it needs a launcher of its own on each system (a `.cmd` shows a console window; a native launcher is a second toolchain), and there is no common macOS form.
+- **cx_Freeze** and **PyOxidizer**: cx_Freeze is close to PyInstaller with a smaller user base; PyOxidizer has had no maintained release for some time (as recalled).
+
+**Decision:** If the owner accepts ADR-0031's amendment of 2026-11-12, both artefacts are built with **PyInstaller**, one pinned version, in **one-folder** mode:
+1. **Where it lives.** Only in the release workflow and under `packaging/`: one spec file and the launcher (Python, item 3). It is a build-time dependency only, in a dependency group of its own; it is never a runtime dependency and never imported by `wowlab_core`.
+2. **Input.** The wheel the same workflow built for the tag, installed into a clean virtual environment on the runner. Never the working tree, never an editable install.
+3. **Output and what a double-click does.** `wowlab.app` (zipped, `arm64`) on `macos-latest`, a `wowlab` folder with `wowlab.exe` (zipped) on `windows-latest`; each hashed into `SHA256SUMS` and attested like the wheel. Both are **console** builds of the ordinary `wowlab` CLI, so `wowlab.exe --version` and every command work from a terminal as they do from the wheel. A double-click starts it with no arguments, which today prints help and exits (`no_args_is_help`); so the build's entry point is a small launcher in `packaging/` that runs `wowlab ui` when it gets no arguments and passes any arguments through unchanged. The `wowlab` command installed from the wheel is not changed. On Windows the double-click opens a console window that shows the server; closing it or pressing Ctrl-C stops it. On macOS the `.app`'s executable is the same launcher: started with no arguments and no terminal attached (a double-click from Finder), it runs `open -a Terminal` on its own executable, a plain command from Python with no AppleScript (so no new language under ADR-0030 and no Automation permission prompt), and exits; started again inside Terminal, it has a terminal attached and runs `wowlab ui` there, so it never opens a second window. The effect matches the owner's script: a visible window that stops the server when closed. Either way the browser opens as `wowlab ui` opens it today, and no server is left running unseen.
+4. **How it is verified.** CI runs each build on its runner and checks `--version` against the tag. It then starts `wowlab ui` through the launcher (on Windows with no arguments; on macOS with the `ui` argument, since with no arguments and no terminal it would open Terminal) with `BROWSER` set to a small recorder, a test helper that writes the URL it is given to a file and exits 0. Python's `webbrowser` honours `BROWSER` and treats exit 0 as opened, so no real browser starts and no option is added to `wowlab ui`. The test reads the URL, key included, from that file, fetches the page, then stops the server. The Terminal hand-off on macOS is checked by the owner opening the app once (M17-08). A test pins the PyInstaller version and the spec file's hash; changing either is a PR that says why. The owner opens the macOS app once on their Mac before the first release that carries it (M17-08); Windows stays "untested" until M13-02's human run.
+5. **What it may not do.** No one-file mode and no UPX compression (`upx=False` in the spec, which the spec-hash test pins), no signing with a borrowed or self-made certificate (the ad-hoc signature PyInstaller applies on macOS, which carries no identity and which Apple Silicon requires, is allowed), no hidden imports beyond what the spec lists and a test checks, no runtime hooks that change what the Lab does, no auto-update and no network access of its own. The built app reads and writes exactly what the wheel does (L1, L2).
+
+**Consequences:**
+- Two more runners per release (`macos-latest`, `windows-latest`) and a few minutes of build time. The wheel and sdist are released first; each app is attached when its build and smoke test pass.
+- Each download is tens of megabytes, because it carries Python. The wheel stays the small, preferred install for anyone with a terminal.
+- Unsigned builds draw Gatekeeper and SmartScreen warnings, and some antivirus engines flag PyInstaller apps whatever their content; one-folder mode, no UPX and published hashes reduce this, and `INSTALL.md` explains it. A reported false positive is answered with the hash and the attestation, and reported to the antivirus vendor by the owner if it persists.
+- On acceptance, ADR-0030 gains an "Amended by" line for this ADR and its list gains "PyInstaller, build-time only, in the release workflow, under ADR-0038", and `AGENTS.md` "Conventions" names it the same way (as for ADR-0034 and ADR-0035). M17-08's text is aligned with ADR-0031's amendment (the app is frozen, not a launcher over a clone).
+- Intel Macs get no app download; they use the wheel. Adding `universal2` or an Intel runner is a later amendment.
+- If a later need (a smaller download, signing, an installer) outgrows this, a new ADR replaces this one; the artefacts' names and the smoke test stay.

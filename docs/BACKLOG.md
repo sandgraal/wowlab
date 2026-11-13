@@ -1491,8 +1491,8 @@ Reviewed by `code-reviewer` and `security-reviewer`. User-facing: two new comman
 
 ---
 
-## [ ] M16-05 — Owner: the launch-client session
-**Size:** S · **owner** · **Depends on:** M16-45, M16-46, and the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
+## [x] M16-05 — Owner: the launch-client session
+**Size:** S · **owner** · **Depends on:** the launch · **Sources:** product:F2, F6; raider:F5; addon-author:F5 (EV-03)
 
 Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's runbook on the launch client and records:
 - the flavor folder, the product code and the interface number;
@@ -1500,6 +1500,8 @@ Within 48 hours of the launch date the owner confirms, the owner reruns M10-03's
 - one logout capture through `scripts/lab_capture.py`, with provenance rows (L8).
 
 The same session runs the binding and macro persistence tests (`docs/handoffs/M13-07.md`, `docs/handoffs/M14-binds-persist.md`), plus two questions: is the edit-mode cache kept, and is `Config.wtf` synced? It also runs `docs/handoffs/M14-macro-place.md`. No retail and no Windows captures are taken (owner decision, 2026-10-21).
+
+*Amended 2026-11-12:* this ticket no longer waits for M16-45 and M16-46. The session ran on schema 4 that day, and the lab-addon loaded and recorded.
 
 **Acceptance:** the answers go into `docs/LAB_FORMATS.md` §6 and §7 as dated amendments, and the capture lands with its provenance rows. The README's profile row says what survives login.
 
@@ -2330,14 +2332,16 @@ The archive holds the same settings and saved data as the store, but is created 
 
 **Acceptance:** strict xfail on `main`; reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
-**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T · **Sources:** as M16-69T
+## [x] M16-69 — [IMPL] Leftover temp files are cleaned before the pre-write snapshot
+**Size:** S · **Depends on:** M16-69T, M16-93T, M16-100T, M16-107T, M16-108T · **Sources:** as M16-69T
 
 **Owner question (2026-11-10), answered 2026-11-11:** M16-69T's graders pin the outcome (no stored snapshot holds a removed leftover), not an order. Under §6.10 item 2's rule that each removal is journaled and fsynced before its unlink, cleaning first means a record exists before its snapshot does. What should a record mean if wowlab is killed between the cleanup and the snapshot? The reviewers recommend that it changed no player file: `undo` closes it without restoring anything and never brings the temps back, and `doctor` says the change stopped before touching anything. The alternative is to snapshot first, leaving out only the temps about to be removed. The answer becomes a dated LAB_PLAN §6.10 amendment and a crash grader before this ticket is dispatched.
 
 **Owner answer (2026-11-11):** yes to the reviewers' recommendation: a record killed between the cleanup and the snapshot changed no player file. It is LAB_PLAN §6.10's 2026-11-11 amendment (a). Its crash grader is M16-93T. Amendment (a1) and its undo-target rule also land here, graded by M16-100T: a killed undo leaves D visible, undo records carry `undoes`, and `undo` passes over the closed killed undo.
 
-**Acceptance:** M16-69T's, M16-93T's and M16-100T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
+**Owner answers (2026-11-11, the #490 code review):** "Skip it", then "Skip all, show D". Every closed record that never took a snapshot is passed over (LAB_PLAN §6.10 (a2)), graded by M16-108T.
+
+**Acceptance:** M16-69T's, M16-93T's, M16-100T's, M16-107T's and M16-108T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [x] M16-70T — [TEST] Journal record ids are ASCII digits only
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-13 security review (2026-11-10)
@@ -2499,14 +2503,14 @@ Its header also prints the raw journal state: `cli._undo_lines`, `Undo <id> ("<l
 **Acceptance:** a constructed test on a real `rollback_incomplete` record pins the plan lines and the header. No state constant appears in text output. `--json` is unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
 
 ## [ ] M16-87T — [TEST] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3)
+**Size:** S · **Depends on:** M16-69 · **Sources:** the M16-69T security review (#444, LOW 3) · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 A leftover `.wowlab-*.tmp` whose unlink failed stays on disk, in `temps_left`, and in that change's pre-write snapshot. Losslessness requires this (M16-69T grader 2). Suppose a later change removes it, and the player then restores the earlier snapshot whole. The file comes back, and no later cleanup considers it again. A whole restore should leave out any entry whose path an earlier record of the flavor lists in `temps` or `temps_left`, judged by the journal and not by the name. Or the restoring record lists such paths in its own `temps_left`. This touches `guard.py`, so the graders land first.
 
 **Acceptance:** strict-xfail graders on main for the scenario above, activated by M16-87 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
 ## [ ] M16-87 — [IMPL] A whole restore never brings back a temp the journal left behind
-**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T
+**Size:** S · **Depends on:** M16-87T · **Sources:** as M16-87T · **owner** (deferred under ADR-0037, 2026-11-11: picked again only when someone actually hits the case, or before outside users are invited)
 
 **Acceptance:** M16-87T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
 
@@ -2536,7 +2540,7 @@ The gate's check took 2.764 s. After at least three nightly runs, set each basel
 
 # M16 follow-ups found in review (filed 2026-11-10, fifth batch)
 
-## [ ] M16-90T — [TEST] `history()` refuses a journal record whose paths are not plain flavor-relative names
+## [x] M16-90T — [TEST] `history()` refuses a journal record whose paths are not plain flavor-relative names
 **Size:** S · **Depends on:** M16-84 · **Sources:** the M16-84T security review (#453); the #455 review
 
 A probe showed that main's `guard.history()` returns whatever strings a record on disk holds in `paths[].path`, `temps_left` and `created_dirs`, for example `../../etc/passwd` followed by an ESC sequence. `_public()` also copies `temps_removed` and `flavor_path` unchecked. The graders cover every path field `_public()` exposes: `paths[].path`, `created_dirs`, `temps_removed` and `temps_left` must pass `_check_rel`. `flavor_path` is absolute by design but must hold no control or bidi character, because `undo`'s plan header prints it. M16-84's `paths_left` is already graded by M16-84T. `_JournalRecord` checks only the hashes and the format, and `_load_journal` runs no `_check_rel` on any path field. `undo()` checks paths later; `history()` never does, so `doctor` and `undo`'s plan can show a planted path. This is `guard.py`, which is load-bearing (ADR-0013), so the graders land first. They cover a record whose path fields hold traversal, absolute, UNC, control-character and bidi values, and expect `history()` to raise `GuardError` ("a damaged record is an error, never skipped") with the install and the store unchanged.
@@ -2545,7 +2549,7 @@ A probe showed that main's `guard.history()` returns whatever strings a record o
 
 **Acceptance:** strict-xfail graders on main, activated by M16-90 by marker deletion only. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names, and the gate refuses such a flavor
+## [x] M16-90 — [IMPL] `history()` refuses a journal record whose paths are not plain flavor-relative names, and the gate refuses such a flavor
 **Size:** S · **Depends on:** M16-90T · **Sources:** as M16-90T
 
 **Acceptance:** M16-90T's graders activated by marker deletion only; the full suite green (`guard.py`); reviewed by `code-reviewer` and `security-reviewer`.
@@ -2605,12 +2609,14 @@ Under `WTF/Account/<acct>/`, a link at the place of a client-written file still 
 
 # M16 follow-ups found in review (filed 2026-11-11, sixth batch)
 
-## [ ] M16-96 — CLI `undo` closes any open record that names no file
+## [x] M16-96 — CLI `undo` closes any open record that names no file
 **Size:** XS · **Depends on:** M16-69 · **Sources:** the M16-93T code review (#462)
 
 `cli.undo` returns early, printing "changed no files", whenever the most recent record has no paths and no `created_dirs`, whatever its state. It never calls `guard.undo`. An `open` record of that shape can then never be closed from the CLI, and `doctor` keeps reporting it with exit 1 and the undo line. An example is a change killed during its cleanup after its snapshot and record were written. M16-69 must close the record it kills between the cleanup and the snapshot (M16-93T's CLI grader). This ticket covers every other open record that names no file. If M16-69 lands a general fix, this ticket is closed against it.
 
 **Acceptance:** a constructed `open` record with no paths, `undo --expect <id> --yes` closes it, and `doctor` then exits 0. Reviewed by `code-reviewer`.
+
+*Closed 2026-11-12 against M16-69 (#490):* `cli.undo` no longer returns early for an `open` record with no paths and no folders; it closes it through `guard.undo`.
 
 ## [x] M16-97 — The relogin and server-sync note shows whenever a synced file is listed
 **Size:** XS · **Depends on:** nothing · **Sources:** the M16-92 implementer's report and domain review (#465)
@@ -2724,11 +2730,442 @@ Reviewed by `code-reviewer` and `domain-reviewer`.
 
 Reviewed by `code-reviewer`.
 
+# M16 process and scope (filed 2026-11-11, owner decisions: ADR-0037 and the conductor's review)
+
+## [x] M16-109 — `doctor`'s one answer for a failure wowlab cannot work out
+**Size:** S · **Depends on:** M16-69, M16-90 · **Sources:** ADR-0037 (accepted 2026-11-11)
+
+ADR-0037 freezes automatic crash recovery. Every compound failure then gets one generic answer instead of a rule of its own. Examples of a compound failure:
+- a damaged or hand-edited journal or snapshot store;
+- a record whose pre-write snapshot cannot be read;
+- a record `doctor` cannot classify with the written rules.
+
+The answer:
+- `undo` refuses and changes nothing, as today.
+- `doctor` reports one problem and exits 1. The problem says wowlab cannot work out safely what this change did, and that the snapshots are kept. It names the newest snapshot that `snap verify` finds whole, and ends with `wowlab snap restore <id> --dry-run`.
+- `--json` gains a problem kind for it.
+- The wording follows the `doctor` rules: no ticket or module ids, and the command last.
+
+This does not touch `guard.py`. `doctor` reads only. If the implementer finds a `guard.py` change is needed, stop and report.
+
+**Acceptance:**
+- Constructed tests (L8 boundary) for a damaged journal record and for a missing manifest. Each gives that one problem, exit 1 and the right snapshot id.
+- With no whole snapshot left, the problem says so and offers no command.
+- `doctor --redact` covers the snapshot id.
+- The change is listed as user-facing (wiki: doctor).
+- Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [x] M16-110 — LAB_PLAN §6.10 as one current section
+**Size:** S · **Depends on:** M16-69, M16-90, M16-108T · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+§6.10 is the write gate's spec. It has grown into a base text followed by dated amendments, with (a), (a1) and (a2) alone covering one rule in three places, so a reader cannot tell what is true without reading all of it in order.
+- Rewrite §6.10 as one section that states only what is true on `main`. Do this after M16-69 and M16-90 merge.
+- Move the dated amendments, unchanged, to a new appendix with a one-line pointer from §6.10.
+- Every owner decision keeps its date and its words in the appendix. The section cites them by date where a rule came from one.
+- Change no rule. Anything that turns out ambiguous or contradictory is reported, not resolved.
+- Do the same for any other LAB_PLAN section with more than three dated amendments, listed in the report first and done only on the conductor's go.
+
+**Acceptance:**
+- The doc tests pass. Every `§6.10 (a…)` reference elsewhere in `docs/` and in test docstrings still resolves, to the appendix where needed.
+- A side-by-side table in the PR maps every rule in the old text to its place in the new one.
+- Reviewed by `code-reviewer` and `security-reviewer`; the gate's spec is security-relevant.
+
+## [x] M16-111 — Split `cli.py` by command group
+**Size:** M · **Depends on:** M16-69 · **Sources:** the conductor's review of 2026-11-11 (owner: "agree with all")
+
+`lab/core/src/wowlab_core/cli.py` is about 14,000 lines in one module. Split it into a package `wowlab_core/cli/` with one module per command group:
+- `snap`
+- `undo` and `doctor`
+- `char`
+- `binds`
+- `macros`
+- `sv`
+- `filemap`
+- `ui` launch
+- the shared helpers and error handling
+
+`wowlab_core.cli` stays the import path, and its public names (`app` and anything a test imports) are re-exported. This is a mechanical move:
+- no behaviour, help-text or output change;
+- no renamed option;
+- no new dependency.
+
+Coordinate with open PRs that touch `cli.py`, at least #379 (M16-45): land it when none is mid-review, or rebase them after.
+
+**Acceptance:**
+- `make ci` green with no test changed except import paths, if any. Name any test whose import changed.
+- `wowlab --help` and every subcommand's `--help` output is byte-identical before and after. Compare by script and paste the result in the PR.
+- The 1 MB file-size hook entry for `cli.py` is moved or removed.
+- Reviewed by `code-reviewer`.
+
+## [x] M16-114 — With several flavors, characters are still found, and `wowlab ui` can pick a flavor
+**Size:** M · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11; LAB_PLAN §16 (CLI conventions), amendment of 2026-11-11
+
+Implement the amendment:
+- `WOWLAB_FLAVOR`;
+- `char list` across all flavors, with the one-flavor-with-characters rule for the other `char` commands;
+- write commands never pick a flavor, and their error lists each flavor with its command line;
+- the `wowlab ui` header flavor picker, passed as `--flavor` on every run.
+
+M16-113 changes `ui/__init__.py` and `page.js` at the same time, so keep to the header and run-argv code and leave the boot/session code alone. Whichever merges second rebases.
+
+**Acceptance:**
+- **Tests (constructed, L8 boundary)** on an install with two flavors, characters in one:
+  - `char list` labels its rows by flavor, and `--json` carries `flavor`;
+  - `char show` uses the one flavor with characters and says so;
+  - a write command with no flavor fails and lists the command lines;
+  - `WOWLAB_FLAVOR`, and `--flavor` winning over it;
+  - a bad `WOWLAB_FLAVOR` errors and lists the flavors.
+- **UI tests:** the picker appears only with several flavors, starts on the right flavor, and every run argv carries `--flavor`.
+- **User-facing:** listed in the PR (wiki: ui, char, getting started).
+- **Reviews:** `code-reviewer`, `domain-reviewer` (flavors) and `security-reviewer` (ui).
+
+# M16 owner testing (filed 2026-11-11)
+
+## [x] M16-112 — Discovery searches more folders for the install, and says where it looked
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 (install at `/Games/World of Warcraft` not found); LAB_PLAN §6.1, amendment of 2026-11-11
+
+Implement §6.1's amendment of 2026-11-11 in `install.default_roots` and in the error that discovery raises when it finds nothing.
+- **macOS search:** `/Applications`, `/Applications/Games`, `/Games`, `~/Applications`, `~/Games`, `/Users/Shared`, then `/Volumes/*` and each volume's `Applications/` and `Games/`. Links under `/Volumes` are skipped.
+- **Windows:** `<drive>\Games` is added after the existing three.
+- **The no-install error** lists every location checked, and gives the `--root` and `WOWLAB_WOW_ROOT` lines to copy.
+
+Keep `default_roots` testable without the real filesystem: the platform, the home directory, the `/Volumes` listing and the drives are all injectable, as `drives` and `environ` already are. Constructed tests only (L8 boundary: folder layouts, no game data).
+
+**Acceptance:**
+- **Order:** tests pin the order for macOS and Windows.
+- **Two locations:** with two installs present, the first in the order wins.
+- **`/Volumes`:** a link entry is skipped, and an unreadable entry is skipped without an error.
+- **No home:** the `~` entries are skipped.
+- **Error text:** the no-install error lists the checked locations and the two commands.
+- **Unchanged:** the explicit root and `WOWLAB_WOW_ROOT` are still final. Every existing discovery test passes unchanged.
+- **Docs:** the CLI `--root` help still reads true.
+- **User-facing:** listed in the PR (wiki: install, getting started).
+- **Reviews:** `code-reviewer` and `domain-reviewer` (install discovery).
+
+## [x] M16-113 — `wowlab ui`: the link and a reload keep working until Ctrl-C
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's test of 2026-11-11 ("get rid of this requirement"); LAB_PLAN, `wowlab ui` amendment of 2026-11-11
+
+Replace the one-time boot key (M16-42) with a session that lasts as long as the `wowlab ui` process, as the amendment says:
+- the link `wowlab ui` opens works, and keeps working;
+- a reload works, and so does a second tab in the same browser;
+- other origins and processes are still refused;
+- Ctrl-C ends it.
+
+Remove the "already used" page, its terminal notice, and the `--help` and docs text that say a reload needs a new `wowlab ui`.
+
+**Acceptance:**
+- **Reload works:** a reload of the shell, and a second request without the query, are served when they carry the session.
+- **Refusals:** a request with no session and no token is refused. So is a request whose Origin or Host is not the server's own.
+- **New server, new session:** a request carrying the session of an earlier server is refused.
+- **Tests:** existing UI tests updated where they pinned the one-time behaviour. In this PR, name each test that changed and why.
+- **User-facing:** listed in the PR (wiki: ui).
+- **Reviews:** `code-reviewer` and `security-reviewer`.
+
+## [x] M16-115T — [TEST] A record naming a temp outside the flavor is damaged (item 2 amended)
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (e1); the owner's answer of 2026-11-11 ("A") to the M16-90 implementer's block
+
+In `lab/core/tests/test_guard_owner_decisions.py`, `test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist` covers the `NEVER_LOOKED_UP` cases: outside the allowlist, at the install root, under `Data/`, another flavor folder, outside the install, absolute, UNC. For those cases only, expect the forged record to be refused as damaged. Both routes (`transaction()` and `undo()`) raise `GuardError` naming the damaged record, before any write, snapshot or lookup of the forged path. The install, the journal and the store are left unchanged. Keep every other case exactly as it is. The amended cases are strict xfail "M16-90 not implemented", activated by M16-90 by marker deletion.
+
+**Acceptance:** strict xfail on main for the right reason; the other cases unchanged and passing. Reviewed by `code-reviewer` and `security-reviewer`.
+
 # M16 owner answer (filed 2026-11-11, seventh batch)
 
-## [ ] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
+## [x] M16-100T — [TEST] A killed undo leaves the change it was undoing visible to `doctor`
 **Size:** XS · **Depends on:** M16-93T · **Sources:** the owner's answer of 2026-11-11 ("yes"); LAB_PLAN §6.10, amendment of 2026-11-11 (a1); the M16-93T code review (#462)
 
 M16-93T's undo-route graders kill an `undo` of an interrupted change D between its cleanup and its snapshot. The CLI grader (`test_constructed_cli_undo_closes_the_killed_record_and_doctor_is_clean_after`) then requires `doctor` to exit 0, which (a1) now forbids for the undo route. Change the graders so that, after the killed record is closed, `doctor` reports D again with exit 1 and D's own `wowlab undo --expect <D id>` line, and a further `wowlab undo --expect <D id> --yes` settles it and leaves `doctor` clean. *Owner ruling (2026-11-11, "1 yes"), spelled out in LAB_PLAN §6.10 (a1):* `wowlab undo` passes over the closed killed undo K, which never took a snapshot, and any record that only closes K. The plan offered is D's, and `--expect <D id>` is accepted. `doctor` names both D and K. Undo records carry `undoes`. Also grade four further cases: a normally completed undo, even one that changed no file, is never passed over; `--expect` naming D while a record newer than D that is not passed over exists is a mismatch; `history()` refuses an `undoes` that names no earlier record; and the transaction route is unchanged. The transaction route keeps today's expectation. This is a `guard.py` grader change, so it lands as its own [TEST] change, with the strict-xfail markers kept ("M16-69 not implemented").
 
 **Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [x] M16-107T — [TEST] The journal-keys grader expects `undoes` on an undo record
+**Size:** XS · **Depends on:** nothing · **Sources:** LAB_PLAN §6.10 (a1); the M16-69 implementer's report (2026-11-11)
+
+`test_guard_snapshot_kind.py::test_constructed_journal_record_is_unchanged` (M16-09T) pinned the exact key set of every journal record, the undo scenario's included, so no M16-69 could pass it and M16-100T's graders together. The undo case expects `JOURNAL_KEYS | {"undoes"}`, with `undoes` naming the record it undid, strict xfail "M16-69 not implemented". The other cases assert `undoes` is absent.
+
+**Acceptance:** strict xfail on main for the right reason; reviewed by `code-reviewer`. (PR #491.)
+
+## [x] M16-108T — [TEST] Every closed record that never took a snapshot is passed over
+**Size:** XS · **Depends on:** M16-100T · **Sources:** the owner's answers of 2026-11-11 to the M16-69 code review (#490: "Skip it", then "Skip all, show D"); LAB_PLAN §6.10 amendment (a2)
+
+The #490 code review found that under (a1) a closed record that never took a snapshot locks `undo` out of every earlier change when it has no `undoes`. That happens when the gate closes a record itself after its pre-write snapshot fails, and when a killed transaction is closed by `undo`. (a2) passes over every such record. Change M16-93T's transaction-route grader so that, after the killed K is closed, the target is the interrupted change D before it, not K. `doctor` then reports D with D's own `wowlab undo --expect <D id>` line and names K, and exits 1. A further `wowlab undo --expect <D id> --yes` settles D and leaves `doctor` clean. Add graders for the failed-snapshot route: a change whose pre-write snapshot raises `SnapshotError` after a cleanup leaves the change before it as the target, so `--expect <earlier id>` is accepted and `doctor` reports nothing new. Also grade that an `open` K, still unclosed, stays the target. This is a `guard.py` grader change, with strict-xfail markers "M16-69 not implemented".
+
+**Acceptance:** strict xfail on main with the right failure text under `--runxfail`. Reviewed by `code-reviewer` and `security-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, tenth batch)
+
+## [x] M16-116 — `char list --account X --json` says which flavors lack the account
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-114 domain re-review (#496)
+
+With several flavors, `wowlab char list --account X` prints "Flavor F (v): no account X" for a flavor without X, but `--json` leaves F out of `flavors[]`, so a script cannot tell "no account X there" from "flavor not looked at". Keep F in `flavors[]` with `characters: 0` and a field that says the account was not found there (for example `account_found: false`), present on every flavor entry when `--account` is given. Text output unchanged.
+
+**Acceptance:** a test on the M16-114 two-flavor setup (`test_cli_flavors.py`) for text and `--json`; the command reference regenerated; user-facing change listed in the PR. Reviewed by `code-reviewer`.
+
+## [x] M16-117T — [TEST] Flatten `JOURNAL_SCENARIO_PARAMS` and drop its RUF034 ignore
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-69 PR (#490), lint note
+
+Deleting the M16-107T marker left `JOURNAL_SCENARIO_PARAMS` in `lab/core/tests/test_guard_snapshot_kind.py` with a conditional whose two branches are equal, and root `pyproject.toml` carries a per-file `RUF034` ignore for it. Replace the conditional with the plain value and remove the ignore. Nothing a test asserts changes. It is a `guard.py` grader, so it lands as its own [TEST] change.
+
+**Acceptance:** the file's collected test ids and outcomes are identical before and after (`pytest --collect-only -q` and a run, pasted); `make lint` clean without the ignore. Reviewed by `code-reviewer`.
+
+## [x] M16-118 — `doctor` says "version unknown" in words when `.build.info` has no row for a flavor
+**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-11 (`_classic_beta_` beside `_forever_`)
+
+For a flavor whose product has no `.build.info` row, `wowlab doctor` prints "Flavor _classic_beta_: product …, version no version in .build.info". Say it as a sentence a player can act on: the version is unknown because `.build.info` lists no row for that product, which happens when the Battle.net app has not installed or updated that flavor; reads still work and nothing is wrong with the install. `--json` unchanged (`version: null`).
+
+**Acceptance:** a pinned wording test on a constructed flavor folder with no matching row (an L8 boundary input); `domain-reviewer` confirms the explanation; user-facing change listed in the PR. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, eleventh batch)
+
+## [x] M16-120 — `guard.py` docstrings state the (a2) undo-target rule
+**Size:** XS · **Depends on:** nothing · **Sources:** the M16-110 reviews (#501)
+
+`guard.py`'s module docstring (around line 191) says a record "is passed over when it has `undoes`, never took a snapshot … and is closed", and `undo()`'s docstring (around line 3280) speaks of "a closed undo that never took its snapshot". Both describe (a1)'s narrower rule. `_passed_over` implements (a2) (LAB_PLAN §6.10, "The undo target"): no `undoes` condition. Rewrite those docstrings to state §6.10's rule. Comments and docstrings only; no code, no grader.
+
+**Acceptance:** `git diff` shows only docstring/comment lines in `guard.py`; `make ci` green (a `guard.py` change). Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [x] M16-121 — The old "no version in .build.info" words, made to match M16-118
+**Size:** XS · **Depends on:** M16-111 · **Sources:** the M16-118 implementer's report and reviews (#504)
+
+M16-118 changed `doctor`'s flavor line. The old wording is still in the first-run section's flavor label (`firstrun.flavor_label`, "(wow_x, no version in .build.info)"), in `doctor`'s `Game data: no version to look up (.build.info has no version for product '…')` line (which now sits under "has no row" text for the same flavor), in the `--build` refusal in the CLI, and in `gamedata.py` and `addoninstall.py`. Make each say what is actually true, using the same three cases as M16-118 (no row, a row with a blank version, no product), or point to the explanation `doctor` already prints, without repeating it ("one fact lives in one place").
+
+**Acceptance:** pinned wording tests for each changed message (constructed boundary inputs, as in `test_doctor_version_words.py`); `--json` unchanged; user-facing changes listed. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+# M16 follow-ups (filed 2026-11-12, twelfth batch: the owner's macOS test and the conductor's smoke test)
+
+## [ ] M16-122 — `doctor` names the wowlab version that is running
+**Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-12
+
+The owner's `wowlab` on PATH was the installed 0.1.0rc1 release while the clone was at `main`, so every fix tested looked unfixed, and nothing said so. `doctor`, text and `--json`, names the running wowlab's version and where it runs from: the package location, and whether it is an editable install of a source checkout. When the source checkout it runs from has a different version, or when `wowlab` is run from inside a checkout that is not the one installed, it says so in one line and names the command to run that checkout instead (`uv run wowlab …`). No network call.
+
+**Acceptance:** constructed tests for an installed copy, an editable install and a run from a different checkout; `--json` gains the fields, listed as user-facing; `doctor --redact` covers the path. Reviewed by `code-reviewer`.
+
+## [ ] M16-123 — `doctor` does not offer a lab-addon install into a flavor whose version is unknown
+**Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
+
+For a flavor whose version is unknown (no `.build.info` row, a blank version, or no product; M16-118), `doctor`'s next steps say "Lab-addon: not installed. Close the game, then run `wowlab addon install lab --flavor _x_`". That install is refused, because the TOC's `## Interface:` cannot be filled (M16-121). The next step should say instead that the lab-addon cannot be installed there until the game version is known, and point at the flavor's explanation above it rather than repeat it. The owner's `_classic_beta_` hits this.
+
+**Acceptance:** a constructed test (a no-row flavor beside a real one, as in `test_doctor_version_words.py`): no `addon install` line for that flavor, the real flavor's line unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
+
+## [ ] M16-124 — `snap create` with several flavors
+**Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
+
+With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and lists `--flavor` commands, from the one-flavor rule in `_select_flavor` (`cli/_common.py`) that read commands such as `cvar list` share too. `snap create` writes only into wowlab's own store, never into the install, and the character reads already pick a flavor themselves (M16-114). Decide, and record in LAB_PLAN §6.11, one of:
+- (a) `snap create` with no `--flavor` snapshots every flavor, one snapshot each;
+- (b) it uses the same pick as the character reads (the only flavor with character folders), and says which;
+- (c) unchanged.
+
+The conductor recommends (a). The owner decides (a "stop and ask" item: it changes what a command does by default).
+
+**Acceptance:** per the owner's choice, with tests on the two-flavor setup of `test_cli_flavors.py`; user-facing change listed. Reviewed by `code-reviewer`.
+
+---
+
+## [x] M16-125 — The launch-client capture lands, and the file map follows M16-05
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
+
+M16-05's capture of the Forever launch client (build 1.60.1.70888, macOS) is staged on the owner's machine: 33 files, scrubbed by `scripts/lab_capture.py`, with its provenance rows printed by the tool.
+- Move it into the corpus as its own run folder (`macos-70888/`, laid out as `macos/forever/...` in the staging, per the fixtures README's "one run per top-level folder" rule), with one provenance row per file.
+- Whatever it shows that the parsers or `docs/LAB_FORMATS.md` did not expect is reported, not special-cased (L4).
+- `filemap.toml` and the regenerated `docs/LAB_FILE_MAP.md` take the results of `docs/LAB_FORMATS.md` §6 and §7 (amended 2026-11-12): the character `bindings-cache.wtf` exists when character-specific key bindings are on (its **[verify]** is resolved); on the launch client, offline edits to this character's `bindings-cache.wtf` survived login with `synchronizeBindings` on and off; offline edits to its `macros-cache.txt` survived login in two runs (`synchronizeMacros` does not answer there); offline edits to `Config.wtf` and the account `config-cache.wtf` survived one login with `synchronizeConfig` on. The account `bindings-cache.wtf`, the account `macros-cache.txt` and the character `config-cache.wtf` were not tested: keep their wording as it is. Wording for players follows `.claude/rules/player-copy.md`; the Edit column is unchanged unless the reviewers agree.
+
+**Acceptance:** `make test-parser` green with the new root; every new file has a row; `filemap.py --check` and `test_filemap.py` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (fixtures).
+
+---
+
+## [x] M16-126 — The capture tool refuses other players' chat, and stops mistaking a bitfield for an email
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's launch-client session of 2026-11-12 (M16-05)
+
+Two findings from the M16-05 capture, both in `scripts/lab_capture.py`:
+- **Other players' chat.** The automatic SavedVariables pick chose a UI addon's file as "colour and link escapes". The file held chat history: guild lines in the form `|Hchannel:GUILD|h[Guild]|h |Hplayer:<name-realm>…|h[<name>]|h: <message>`, with other players' names and words. The tool only printed a `look` line for free text. A file holding a `|Hplayer:` link whose name is not the captured character's (or chat-channel lines carrying another speaker) is refused, as an unmapped GUID is, and the automatic pick passes it over with that reason. `--pseudonymise-other-players` stays for combat logs only unless the reviewers decide otherwise.
+- **False positive.** The character `config-cache.wtf` was refused for "email address x1": the `closedInfoFrames` CVar is a packed bitfield whose bytes matched the pattern (`…@@@@<x>@<y>.<z>@@…`). The email check does not fire on a CVar value made of such packed bytes, or the CVar is blanked by default; the choice is recorded. A real email in a CVar value is still refused.
+
+**Acceptance:** tests on constructed inputs, labelled (hostile-input tests are allowed constructed, L8); the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the tool's refusal and pick-over lines.
+
+---
+
+## [ ] M16-127 — `doctor` lists the sync settings the client has
+**Size:** XS · **Depends on:** nothing · **Sources:** `code-reviewer` on PR #513 (M16-05)
+
+`doctor` prints `synchronizeMacros` with "not set (the client's default, and wowlab cannot tell whether it is on)" (`_SYNC_CVARS` in `cli/_cmd_doctor.py`). On the Forever launch client, build 70888, that CVar does not answer `GetCVar` at all (`docs/LAB_FORMATS.md` §5, §7, amended 2026-11-12), so the line suggests a default that does not exist. `synchronizeBindings` and `synchronizeConfig` read `"1"` with no line in any file. Without hard-coding a flavor or build (L6): a CVar with no line is described as possibly absent on this client rather than as on by default, or the absent default for `synchronizeBindings` and `synchronizeConfig` is stated as observed on one client, worded per `.claude/rules/player-copy.md`.
+
+**Acceptance:** tests on constructed `Config.wtf` and `config-cache.wtf`, labelled; `make ci` green. Reviewed by `code-reviewer`. User-facing: `doctor`'s sync lines.
+
+---
+
+## [ ] M16-128 — The capture tool finds the owner's own GUIDs in every file, and closes the remaining chat, GUID and HonorBound gaps
+**Size:** S · **Depends on:** nothing · **Sources:** `security-reviewer` and `code-reviewer` on PR #514 (M16-126); the M16-125 leak of 2026-11-12
+
+On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-list-order.txt` reached a pushed branch, because `GUID_RE` needs `Player-`. M16-126 maps and refuses bare GUIDs in that one file. What is left, in `scripts/lab_capture.py`:
+- **Every file.** Discovery knows the owner's own GUIDs. Search every captured file for each one's exact text, with and without the `Player-` prefix, in any case, and rewrite it to the pseudonym; a bare `<n>-<hex>` pattern stays too common to match blindly.
+- **Speaker after own link.** After the owner's own speaker link, another `Name:` on the same line still passes. Refuse it.
+- **Link label and closer.** A `|h` inside a channel label, or upper-case `|H` closers, end the link early. Use a label of `\[[^\]\r\n]*\]` and a case-insensitive closer.
+- **Bare GUID tokens.** In `character-list-order.txt`, refuse any unmapped `[0-9]+-[0-9A-Fa-f]{6,}` token, whatever its boundaries.
+- **The HonorBound rule fails open** (`security-reviewer` on M16-125). `honorbound_scan` leaves the hash in place, with no edit and no refusal, for a tab or `,` before `h=`, `h = `, `H=`, leading space or a tab after `#HB3`, `#hb3`, `#HB4` and a UTF-8 BOM. Match `^\s*#HB\d+\s` without regard to case, accept `[ \t;,]` before the key and spaces around `=`, strip a BOM, and refuse any `#HB<n>` line whose `h` was not replaced.
+
+**Acceptance:** constructed tests for each case, labelled; the existing capture tests stay green; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: refusal lines only.
+
+---
+
+## [ ] M16-129 — The case-folding symlink test skips on a case-insensitive volume
+**Size:** XS · **Depends on:** nothing · **Sources:** every local run of 2026-11-12
+
+`tests/scripts/test_lab_capture_symlinked_wtf.py::test_constructed_symlinked_wtf_in_another_case_stops_the_capture` fails in its own setup on macOS (`FileExistsError` making `WTF` beside `wtf`), on `main` too. Skip it when the temporary directory folds case, as the existing "temporary volume folds case" skips do. CI on Linux keeps running it.
+
+**Acceptance:** the test skips on a case-insensitive volume and runs on Linux; `make test-fast` green on macOS. Reviewed by `code-reviewer`.
+
+---
+
+# M17 — the companion wave
+
+Spec: `docs/LAB_PLAN.md` §19. *Owner pick, 2026-11-12, in session ("go with the companion wave, file the tickets"), from the product review (`docs/handoffs/review-2026-11-12.md`).* It is picked in place of resuming M15, whose open tickets (M15-06 to M15-13) stay where they are, unscheduled. M16's open tickets keep their order. M17-01 and M17-02 depend on M16-05, so the wave starts once the launch-client capture lands; the review closes only after v0.2 (M16-32, M16-33). *Owner decision, 2026-11-12, in session ("before v0.2 ships"):* M17 runs alongside M16 and does not wait for v0.2, as Wave 3 overlapped once (§14.8).
+
+**The aim.** `wowlab ui` becomes the player's account companion: every character in one place, each character's history, a UI that cannot be lost, and a patch-day check. The CLI stays the power-user layer. No invariant moves. Everything here reads lab-addon records and snapshots that wowlab already keeps, and anything written into an install goes through `guard`. No ticket changes what `guard.py` or `luadata.py` does. If one turns out to need that, a `T` grader ticket is split off and lands first (ADR-0013).
+
+**The bar for this wave.** A ticket here changes what a player sees. Follow-ups found in review are filed only if they change what a player sees or block a ticket in this wave; anything else goes in the review's notes for M17-12.
+
+## [ ] M17-01 — The account hub: the UI's home tab
+**Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-1, §14.4
+
+A new first tab, **Account**, which opens by default; Explorer moves after Character.
+- One row per character folder that `labaddon.survey` finds, across every flavor (as `char list` does since M16-114 and M16-116). The row shows name, realm folder, flavor, level, class, race, spec, average item level (equipped, from the `gear` section's `average`), professions, and when it was last saved (the file's mtime, labelled "last logout or /reload").
+- A folder with no lab record gets a row that says so, with the one action that fixes it (`wowlab addon install lab`, then log in and out once).
+- Sortable by every column and filterable by flavor and class. Clicking a row opens the Character tab on that character.
+- Values the record leaves out read "not recorded", never a blank or a zero.
+- The page builds the table from a `--json` command the UI already runs, or from one new read command `char list --summary --json`, which the CLI also gets in text form. No new server endpoint beyond what `/api/run` runs.
+
+**Acceptance:** UI tests over the fixtures' characters (both schemas present, and one folder with no record); keyboard and screen-reader behaviour as M16-29 and M16-30 set it; reflows at 320 px; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (UI). User-facing: a new home tab; `char list --summary`.
+
+---
+
+## [ ] M17-02 — `char history`: a character over time, from snapshots
+**Size:** M · **Depends on:** M16-05 · **Sources:** §19 CW-2
+
+Every snapshot already holds each character's `WowLab.lua`. `wowlab char history [--character X]` reads that file from every snapshot in the store (read-only, through the store's objects, never the install), plus the live file, and prints one row per distinct record: date, level, average item level, spec, the gear slots that changed (by item name from the link, with the item level), and the currencies that changed.
+- Records with the same save time are shown once.
+- A snapshot whose copy cannot be read is listed with the reason and does not stop the others.
+- `--json` returns the rows.
+- Needs no new store and no change to `snapshot.py`'s format. If it turns out to need one, stop and report.
+
+**Acceptance:** tests on a store built from the fixture records across at least three snapshots, including an unreadable one and a schema change between them; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: a new command.
+
+---
+
+## [ ] M17-03 — The timeline in the Character tab
+**Size:** M · **Depends on:** M17-01, M17-02, M17-04 · **Sources:** §19 CW-2 (after M17-01 and M17-04: all three edit the UI templates)
+
+A **History** panel on the Character tab, built from `char history --json`:
+- a small chart of average item level and level over time, and of gold once M17-06 records it;
+- under it, the change list (gear slots, spec, currencies) newest first, in player words.
+
+With fewer than two records, the panel says what makes history appear: take snapshots, log out between sessions. Charts are inline SVG drawn by the page's own JavaScript, with no new library (ADR-0027, ADR-0034 covers only the viewer library).
+
+**Acceptance:** UI tests with zero, one and several records; the chart has a text alternative (a table) that a screen reader reaches; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the Character tab.
+
+---
+
+## [ ] M17-04 — Back up before patch day: one button, and a "the game updated" prompt
+**Size:** S · **Depends on:** M17-01 · **Sources:** §19 CW-3
+
+On the Account tab:
+- a **Back up now** button that runs `snap create` (wowlab's own store only, no confirm step needed, as today) and then shows the diff against the previous snapshot as M16-10's plan lines by name;
+- a line with the latest snapshot's age;
+- a prompt when the client's build (from discovery) differs from the build recorded in the latest snapshot: "The game updated since your last backup".
+- The latest snapshot's **Undo / restore** goes through the existing confirm flow (M14), unchanged.
+
+The CLI's `doctor` next steps (M16-37) gain the same "game updated since your last snapshot" line.
+
+**Acceptance:** UI and CLI tests on a store whose latest snapshot names another build; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the Account tab; `doctor`.
+
+---
+
+## [ ] M17-05 — The patch-day card
+**Size:** S · **Depends on:** M17-01, M17-04 · **Sources:** §19 CW-4 (after M17-04: both add to the Account tab)
+
+A card on the Account tab from `addons check --json` (M16-34) and `sv list --orphans`:
+- the addons that are out of date for this client;
+- the addons missing a dependency;
+- SavedVariables files that fail to parse, each with its reason.
+
+Each line opens the Explorer on the file. Read-only. With nothing found, the card says "All N addons are current for this client".
+
+**Acceptance:** UI test on the fixtures (the two DBM addons, the four orphans); `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the Account tab.
+
+---
+
+## [ ] M17-06 — The lab-addon records gold
+**Size:** S · **Depends on:** M16-05 · **Sources:** §19 CW-6 · **owner** (a capture after one logout)
+
+The hub and the timeline need the character's money, which no schema records today. Add a `money` section (`GetMoney()`, copper as an integer) to the lab-addon. It goes in schema 5 if M16-45 has not merged by the time this ticket starts, and in schema 6 if it has (ADR-0026, §13.1 rules for a schema change). Like every new API call, it is **[verify]**, sits in a section `/wowlab skip` can turn off, and gets a runbook step. The reader in `labaddon.py` and M17-01, M17-02 and M17-03 show gold once it is recorded, and "not recorded" before that. Time played is out of scope: `RequestTimePlayed` prints to chat, and §18.1 item 9 and M16-45 keep the lab-addon's chat output to one line per addon version.
+
+**Acceptance:** static addon tests and reader tests on a constructed record (labelled), then the owner's capture closes the [verify]; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the lab-addon; gold in the hub and the timeline.
+
+---
+
+## [x] M17-07 — ADR-0031 amendment: double-click distribution
+**Size:** XS · **Depends on:** nothing · **Sources:** §19 CW-5 · **owner** (drafts reviewed by the owner)
+
+The conductor drafts, with `/adr amend 0031`, a Proposed amendment that permits, besides the wheel and PyPI:
+- a macOS launcher app attached to each release;
+- a Windows frozen binary built in CI.
+
+Both are built from the tagged source, with `SHA256SUMS` and attestations as M16-43 set up. The amendment also names the build tool for the Windows binary, which needs its own ADR under ADR-0030 (a build toolchain). The conductor drafts that ADR in the same PR, Proposed, with the candidates and a recommendation. The README still says "untested" for every platform without a human run.
+
+**Acceptance:** the PR with both Proposed texts merges. Acceptance is M17-13, a separate owner ticket, so no build starts on a Proposed text.
+
+---
+
+## [ ] M17-08 — The macOS app, as a release asset
+**Size:** S · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038
+
+*Aligned 2026-11-12 with ADR-0031's amendment and ADR-0038 (both accepted): the app is a frozen PyInstaller build, not a launcher over a clone.* The owner's `install-wowlab-app.sh` is the model for what a double-click does (a visible Terminal window that stops the server when closed), not for how the app is built:
+- the release workflow builds an `arm64` `wowlab.app` from the tagged wheel with PyInstaller, one-folder, under ADR-0038's rules (the spec and the Python launcher under `packaging/`), and attaches it zipped to the release with its hash in `SHA256SUMS` and an attestation, as M16-43 set up for the wheel;
+- it needs no git clone, no editable install and no typing in a terminal, and it never pulls or updates itself.
+
+Signing and notarisation are out of scope; the release notes say how to open an unsigned app.
+
+**Acceptance:** the workflow builds the app on a release-candidate tag; the CI smoke test of ADR-0038 item 4 passes; the owner opens it once on their Mac (the Terminal hand-off), recorded in the PR. Reviewed by `code-reviewer` and `security-reviewer` (workflow). User-facing: a new download on the release page; INSTALL.md.
+
+---
+
+## [ ] M17-09 — The Windows frozen binary
+**Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038 (one-folder; the launcher runs `ui` with no arguments; smoke test item 4, with the recorder as a single executable file on Windows)
+
+Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release with its hash, and smoke-test `wowlab --version` and `wowlab ui` headless on `windows-latest`. Double-clicking it opens the UI. Windows stays "untested" in the README until M13-02's human run.
+
+**Acceptance:** built and smoke-tested in CI on a release-candidate tag; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new download; INSTALL.md.
+
+---
+
+## [ ] M17-10 — Owner: a retail capture
+**Size:** S · **Depends on:** nothing · **Sources:** §19 CW-7 · **owner** (a capture on retail)
+
+The M10-03 runbook on the owner's retail install, through `scripts/lab_capture.py`, as a `macos-retail` fixture root with provenance rows: discovery, `.flavor.info`, the account tree, one character with the lab-addon after one logout. The README's "retail untested" line changes only after the readers pass on it. Findings that contradict `docs/LAB_FORMATS.md` are handled as AGENTS.md "Stop and ask" says.
+
+**Acceptance:** the fixture merges with provenance; `make test-parser` green on it; any reader failure is filed as its own ticket.
+
+---
+
+## [ ] M17-11 — The README and the wiki say what the companion does
+**Size:** S · **Depends on:** M17-01, M17-03, M17-04, M16-33 · **Sources:** §19, M16-33
+
+The first screen leads with the account hub and the backup button, with one screenshot of each from the fixtures. The command reference gains `char history` and `char list --summary`. The wiki rows go in `docs/handoffs/wiki-pending.md`.
+
+**Acceptance:** `tests/scripts/test_readme.py` green; README examples run as tests (M16-20). Reviewed by `code-reviewer`. User-facing: the README.
+
+---
+
+## [ ] M17-12 — M17 review
+**Size:** S · **Depends on:** M17-01, M17-02, M17-03, M17-04, M17-05, M17-06, M17-07, M17-08, M17-09, M17-10, M17-11, M17-13, M16-32, M16-33 · **Sources:** ADR-0024
+
+The conductor writes `docs/handoffs/M17-review.md`. It leads with users: release downloads (GitHub and PyPI), stars, and issue and discussion authors who are not the owner. Then it covers what shipped and what is left. It stops dispatch until the owner picks the next wave.
+
+**Acceptance:** the review merges.
+
+---
+
+## [x] M17-13 — Owner: accept or amend the packaging ADRs
+**Size:** XS · **Depends on:** M17-07 · **Sources:** §19 CW-5, ADR-0030 · **owner** (a decision on each text)
+
+The owner accepts, amends or rejects each Proposed text M17-07 merged: the ADR-0031 amendment and the build-tool ADR. The conductor makes the status edits only on the owner's explicit instruction (`.claude/rules/docs.md`). M17-08 and M17-09 start only after this.
+
+**Acceptance:** both ADRs carry the owner's decision, dated.

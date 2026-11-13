@@ -145,8 +145,9 @@ class BuildNotPublished(GameDataError):  # noqa: N818 - name fixed by docs/LAB_P
         self.product = product
         where = f" (product {product!r})" if product else ""
         if version is None:
+            # True whichever way the version is unknown (M16-121).
             message = (
-                f"flavor{where} has no version in .build.info, so there is no build to look up"
+                f"the version of the flavor{where} is unknown, so there is no build to look up"
             )
         else:
             message = f"build {version!r}{where} is not published by the game data source"

@@ -49,10 +49,10 @@ The seam (the docs leave these names open; M13-24 builds to them)
 - The server object has ``token: str`` (``secrets.token_urlsafe(32)``),
   ``url: str``, exactly ``http://127.0.0.1:<port>/?token=<token>``, the URL
   ``wowlab ui`` opens, and ``wowlab_argv: Sequence[str]``, the resolved prefix.
-  *Amended by M16-42:* ``url`` is ``http://127.0.0.1:<port>/?boot=<boot>``,
-  ``boot`` a one-time key the page exchanges once, at ``POST /api/session``,
-  for ``token``, which is in that one response body and nowhere else
-  (``test_ui_local_exposure.py``).
+  *Amended by M16-42 and M16-113:* ``url`` is
+  ``http://127.0.0.1:<port>/?boot=<boot>``; the shell served for ``boot``
+  sets an ``HttpOnly``, ``SameSite=Strict`` session cookie accepted in place
+  of ``token``, which is in no response (``test_ui_local_exposure.py``).
 - A run is stopped with its whole process tree (grandchildren included) when
   it passes ``timeout_s``, when its output passes ``output_cap_bytes`` (read
   as a stream: the cap bounds memory, and the process is killed there), and
@@ -77,8 +77,9 @@ exit 0, as ``log tail --follow`` does, after ``server_close()``.
 The HTTP surface:
 
 - The token travels as the query parameter ``token`` on every request. It
-  appears in no response body or header, no response sets a cookie, and no
-  run gets it in its argv or environment.
+  appears in no response body or header, no response sets a cookie (since
+  M16-113, but the shell served for the boot key, which sets the session
+  cookie), and no run gets it in its argv or environment.
 - ``Host`` must be ``127.0.0.1:<port>`` or ``localhost:<port>``. An
   ``Origin``, when present, must equal ``"http://" + Host``.
 - ``GET /api/commands`` returns ``{"commands": [{"path": [str, ...], ...}]}``.
@@ -562,12 +563,14 @@ def test_token_is_random_urlsafe_and_only_in_the_url(recorder: Recorder) -> None
         assert one.boot != two.boot
 
 
+# M16-113: `GET` and `HEAD` of `/` with no query serve the shell, which holds
+# no key (a reload); `test_ui_local_exposure.py` grades that.
 _NO_TOKEN_PATHS = [
-    ("GET", "/"),
+    ("POST", "/"),
     ("GET", "/api/commands"),
     ("POST", "/api/run"),
     ("GET", "/no-such-page"),
-    ("HEAD", "/"),
+    ("HEAD", "/api/commands"),
 ]
 
 
@@ -578,11 +581,7 @@ def test_a_request_without_the_token_is_refused(
     body = json.dumps({"command": ["echo"], "params": {"path": "x"}}).encode()
     reply = _send(planted, method, path, body=body if method == "POST" else None)
     assert reply.status == 403
-    if path == "/":
-        # M16-42: the page a reload asks for answers the player a sentence,
-        # as plain text (test_ui_local_exposure.py); every other path JSON.
-        assert reply.all("Content-Type") == ["text/plain; charset=utf-8"]
-    elif method != "HEAD":
+    if method != "HEAD":
         assert reply.error() == "token"
     assert recorder.calls() == []
 
@@ -619,7 +618,7 @@ def test_the_token_never_appears_in_a_log_line(
     _send(planted, "GET", _target(planted, "/"))
     _send(planted, "GET", _target(planted, "/api/commands"))
     _send(planted, "GET", _target(planted, "/no-such-page"))
-    _send(planted, "GET", _target(planted, "/../cli.py"))
+    _send(planted, "GET", _target(planted, "/../guard.py"))
     _send(planted, "GET", _target(planted, "/"), host="evil.example")
     _send(planted, "GET", _target(planted, "/"), origin="http://evil.example")
     _send(planted, "POST", _target(planted, "/api/run"), body=b"{not json")
@@ -801,7 +800,7 @@ def _assorted_replies(server: Any) -> list[tuple[str, Reply]]:
         ("bad host", _send(server, "GET", _target(server, "/"), host="evil.example")),
         ("bad origin", _send(server, "GET", _target(server, "/"), origin="http://evil.example")),
         ("not found", _send(server, "GET", _target(server, "/no-such-page"))),
-        ("traversal", _send(server, "GET", _target(server, "/../cli.py"))),
+        ("traversal", _send(server, "GET", _target(server, "/../guard.py"))),
         ("excluded", _run(server, ["danger"], {})),
         ("not a command", _run(server, ["grp"], {})),
         ("unknown parameter", _run(server, ["echo"], {"bogus": "x"})),
@@ -1421,7 +1420,10 @@ def test_static_files_are_the_package_templates(planted: Any) -> None:
 
 def _package_files() -> list[Path]:
     package = Path(importlib.import_module("wowlab_core").__file__ or "").parent
-    return sorted(p for p in package.iterdir() if p.is_file())
+    files = [p for p in package.iterdir() if p.is_file()]
+    # cli.py became the cli/ package (M16-111): its modules are package files too.
+    files += [p for p in (package / "cli").iterdir() if p.is_file()]
+    return sorted(files)
 
 
 def test_static_files_vouch_only_for_templates(
@@ -1456,18 +1458,18 @@ def test_a_package_file_that_is_not_a_template_is_not_served(planted: Any) -> No
 
 
 _TRAVERSALS = [
-    "/../cli.py",
-    "/./cli.py",
-    "/..%2fcli.py",
-    "/%2e%2e/cli.py",
-    "/%2e%2e%2fcli.py",
-    "/%252e%252e%252fcli.py",
-    "/static/../../cli.py",
-    "/static/..%2f..%2fcli.py",
-    "/static/%2e%2e/%2e%2e/cli.py",
-    "/..\\cli.py",
-    "/%5c..%5ccli.py",
-    "/static/..%5c..%5ccli.py",
+    "/../guard.py",
+    "/./guard.py",
+    "/..%2fguard.py",
+    "/%2e%2e/guard.py",
+    "/%2e%2e%2fguard.py",
+    "/%252e%252e%252fguard.py",
+    "/static/../../guard.py",
+    "/static/..%2f..%2fguard.py",
+    "/static/%2e%2e/%2e%2e/guard.py",
+    "/..\\guard.py",
+    "/%5c..%5cguard.py",
+    "/static/..%5c..%5cguard.py",
     "//etc/passwd",
     "/etc/passwd",
     "/../../../../../../../../etc/passwd",
@@ -1475,7 +1477,7 @@ _TRAVERSALS = [
     "/C:/Windows/win.ini",
     "/C:%5cWindows%5cwin.ini",
     "/%00",
-    "/cli.py%00.html",
+    "/guard.py%00.html",
     "/..",
     "/.",
     "/~/.ssh/id_rsa",
@@ -1646,6 +1648,6 @@ def test_serving_and_running_write_no_file(
         assert _send(server, "GET", _target(server, "/api/commands")).status == 200
         assert _argv_of(_run(server, ["echo"], {"path": "x", "tag": ["a"]}))[0] == "echo"
         assert _run(server, ["danger"], {}).status == 403
-        assert _send(server, "GET", "/").status == 403
-        assert _send(server, "GET", _target(server, "/../cli.py")).status in (400, 403, 404)
+        assert _send(server, "GET", "/api/commands").status == 403
+        assert _send(server, "GET", _target(server, "/../guard.py")).status in (400, 403, 404)
     assert _listing(root) == before

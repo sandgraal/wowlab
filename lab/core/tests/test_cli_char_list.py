@@ -229,9 +229,12 @@ def test_char_list_json_validates(flavor: Path) -> None:
     assert [e.character for e in report.characters] == [BARE[0][0], SECOND, FIRST, BARE[1][0]]
     # `read_all` is given no installed version, so its rows leave
     # `older_client` None; `char list` compares with the installed one (M16-06).
-    assert [e.model_copy(update={"older_client": None}) for e in _lab_entries(report)] == (
-        labaddon.read_all(Layout(flavor))
-    )
+    # `char list` names each row's flavor folder; `read_all` reads one (M16-114).
+    assert {e.flavor for e in report.characters} == {FLAVOR}
+    unflavored = [
+        e.model_copy(update={"older_client": None, "flavor": None}) for e in _lab_entries(report)
+    ]
+    assert unflavored == labaddon.read_all(Layout(flavor))
     assert {e.shape for e in _lab_entries(report)} == {"numeric_folder"}
     assert '"shape": "numeric_folder"' in result.stdout
     for entry in _lab_entries(report):

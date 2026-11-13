@@ -59,7 +59,11 @@ install and scrubs identity from it per `docs/LAB_PLAN.md` §8:
   account, guild or community GUID, a
   surviving identity string in any casing or embedding (CVar names included),
   or an unblanked identity CVar is refused: nothing is written for it and the
-  exit status is non-zero.
+  exit status is non-zero. So is a file holding other players' chat (M16-126):
+  a player link to anyone but the owner's characters, any Battle.net link or
+  name token, or a `|Hchannel:` line whose speaker is not the owner's own
+  player link (PLAYER_LINK_RE). The email check passes over the
+  `x@y` a packed bitfield CVar spells (PACKED_VALUE_RE).
 
 Free text (M16-44): the patterns above cannot see other people's words. So
 the automatic SavedVariables selection never picks a chat-log, mail or notes
@@ -138,6 +142,60 @@ IDENTITY_CVARS: tuple[str, ...] = _redact.IDENTITY_CVARS
 EMAIL_RE: re.Pattern[bytes] = _redact.EMAIL_RE
 BATTLETAG_RE: re.Pattern[bytes] = _redact.BATTLETAG_RE
 GUID_RE: re.Pattern[bytes] = _redact.GUID_RE
+# `character-list-order.txt` (M16-126, from the M16-125 review): each line is
+# `<n> <realm-id>-<8 hex> <n>`, and the middle field is a Player GUID without
+# its `Player-` prefix, which GUID_RE needs. The file lists the account's own
+# characters, so discovery takes every such field as an own GUID, and the
+# scrub maps it to the bare form of that GUID's pseudonym; any one it cannot
+# map refuses the file. Only in that file: elsewhere `<n>-<hex>` is too common.
+BARE_GUID_RE = re.compile(rb"(?<![0-9A-Za-z\-])[0-9]+-[0-9A-Fa-f]{8,}(?![0-9A-Za-z\-])")
+CHARACTER_LIST_NAME = "character-list-order.txt"
+# M16-128: what refuses in that file once the scrub has run: any token of this
+# shape, whatever stands around it and however short its hex, that is not
+# exactly the bare form of a pseudonym. Discovery still takes only the bounded
+# BARE_GUID_RE fields as own GUIDs, so anything it did not take refuses here.
+BARE_GUID_TOKEN_RE = re.compile(rb"[0-9]+-[0-9A-Fa-f]{6,}")
+BARE_GUID_LABEL = "player GUID without its prefix, not mapped"
+# M16-128, after an unprefixed own GUID reached a pushed branch on 2026-11-12:
+# each of the owner's own GUIDs (every one discovery collected) is searched
+# for in every captured file as its exact text, `<realm-id>-<hex>`, with or
+# without the `Player-` prefix, in any case and whatever stands around it,
+# and rewritten to its pseudonym (the bare form where the prefix was absent).
+# A bare `<n>-<hex>` pattern stays too common to match blindly; an exact own
+# GUID is not. One still in the output after the scrub (an edit dropped for
+# overlapping a vocabulary span or another edit) refuses the file.
+OWN_GUID_LABEL = "the owner's own GUID not replaced"
+OWN_GUID_LOW_MIN = 8  # hex digits; a shorter hex part is too common to hunt alone
+_PLAYER_PREFIX = b"PLAYER-"
+
+
+def _guid_bytes(guid: bytes | str) -> bytes:
+    """A GUID as bytes (`str` from a caller is ASCII)."""
+    return guid.encode("ascii", errors="replace") if isinstance(guid, str) else guid
+
+
+def _alternation(texts: Iterable[bytes]) -> re.Pattern[bytes] | None:
+    """Any of `texts`, any case, longest first; None when there are none."""
+    ordered = sorted(texts, key=lambda text: (-len(text), text))
+    if not ordered:
+        return None
+    return re.compile(b"|".join(re.escape(text) for text in ordered), re.IGNORECASE)
+
+
+def _own_guid_pattern(guids: dict[bytes, bytes]) -> re.Pattern[bytes] | None:
+    """Group 1 the optional `Player-` prefix, group 2 the body of one own GUID.
+
+    `guids` is keyed by upper-cased `PLAYER-<realm-id>-<hex>`. Longest body first."""
+    bodies = sorted(
+        (key[len(_PLAYER_PREFIX) :] for key in guids if key.startswith(_PLAYER_PREFIX)),
+        key=lambda body: (-len(body), body),
+    )
+    if not bodies:
+        return None
+    alternation = b"|".join(re.escape(body) for body in bodies)
+    return re.compile(rb"(Player-)?(%s)" % alternation, re.IGNORECASE)
+
+
 ACCOUNT_GUID_RE: re.Pattern[bytes] = _redact.ACCOUNT_GUID_RE
 GUILD_GUID_RE: re.Pattern[bytes] = _redact.GUILD_GUID_RE
 CLUB_GUID_RE: re.Pattern[bytes] = _redact.CLUB_GUID_RE
@@ -433,6 +491,111 @@ OTHER_GUID_LABEL = "other player's GUID without a unit name"
 # or one character long cannot be searched for without matching the log's own
 # text: the log is refused rather than written unchecked. Count only.
 OTHER_UNCHECKABLE_LABEL = "other player's name cannot be checked"
+# Other players' chat, in any file (M16-126). A UI addon's SavedVariables can
+# keep chat history: `|Hchannel:GUILD|h[Guild]|h |Hplayer:<Name-Realm>:...|h[<Name>]|h:
+# <message>`. The free-text note cannot be trusted to catch it (a short line
+# is not "free text"), and the message is someone else's words. So the file is
+# refused, as an unmapped GUID is, and the automatic SavedVariables pick
+# passes it over with this reason:
+# - a player link (`|Hplayer:`, `|HplayerCommunity:`, `|HplayerGM:`) whose
+#   target is not one of the owner's characters. The target is `Name` or
+#   `Name-Realm` up to the first `:` or `|`; with a realm, name and realm must
+#   both match one character folder (any spelling of the folder's realm), so
+#   a namesake on another realm is someone else. Case and normal form are
+#   ignored. An empty target, or one holding `%` (a format string in addon
+#   text), names nobody;
+# - any Battle.net link (`|HBNplayer:`, `|HBNplayerCommunity:`) and any
+#   Battle.net name token (`|Kq12|k`): a Battle.net friend, never the
+#   character captured;
+# - a `|Hchannel:` link followed by anything but the owner's own player link
+#   (colour codes skipped) or the end of the string or line. The client writes
+#   every chat line's speaker as a player link, so a plain-text speaker (in
+#   any colour, bracket, spacing, realm or colon) is not the owner's line and
+#   refuses, whoever it names. A speaker that is another player's link is
+#   counted once, by the first rule.
+# The link types beyond `player`, `BNplayer` and `channel` (the `Community`
+# and `GM` forms, the `|K` token) were named by a reviewer from memory of the
+# client's interface code, not from a capture [verify]. Counts only: an
+# offset would point at someone's message. `--pseudonymise-other-players`
+# does not apply: it rewrites a name, and a chat line's words stay someone
+# else's words whatever the name says.
+PLAYER_LINK_RE = re.compile(rb"\|+H(?i:player(?:Community|GM)?):([^:|]*)")
+BNET_RE = re.compile(rb"\|+H(?i:BNplayer(?:Community)?):|\|+K[a-zA-Z][0-9]+\|+k")
+# M16-128: the label's `[...]` is taken whole (`\[[^\]\r\n]*\]`), so a `|h`
+# inside a channel's name does not end the link early, and the closers are
+# matched in either case (`|H` as well as `|h`). Each step of the label loop is
+# an atomic group and every pipe run is possessive, so a line of `[a][a]...`
+# or of `||||...` with no closer fails in linear time instead of trying every
+# way to split it (code review of M16-128: exponential before).
+# A bracket never spans another `[`, so an unclosed `[` is given up at the next
+# one: many unclosed `[` on one long line stay linear.
+_LINK_LABEL = rb"(?:(?>\[[^\]\[\r\n]*+\]|[^|\r\n]|\|++(?![hH])))*"
+_LINK_DATA = rb"(?:(?>[^|\r\n]++|\|++(?![hH])))*"
+CHANNEL_LINK_RE = re.compile(
+    rb"\|+H(?i:channel):" + _LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH][ \t]*+"
+    rb"(?:\|++[cC](?:[0-9A-Fa-f]{8}|n[A-Za-z0-9_]++:)[ \t]*+)*+"
+)
+# Any channel link opener: one CHANNEL_LINK_RE cannot read (no closer, or a
+# label it cannot take whole) refuses, as a plain-text speaker does.
+CHANNEL_OPEN_RE = re.compile(rb"\|+H(?i:channel):")
+# The rest of a player link after its target, through its closing `|h`: the
+# link data, `|h`, the label (a `[...]` taken whole, colour codes allowed
+# around it) and `|h`. Closers in either case.
+_LINK_REST_RE = re.compile(_LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH]")
+# A speaker link's colon right after it: colour resets and spaces, then `:`.
+_SPEAKER_COLON_RE = re.compile(rb"(?:[ \t]|\|++[rR])*+(?::|\xef\xbc\x9a)")
+# A link followed by ` <word>:` (`|h says: ...`) is a speaker link too.
+_SPEAKER_WORD_RE = re.compile(
+    rb"(?:[ \t]|\|++[rR])*+[A-Za-z\x80-\xff]++(?:-[A-Za-z0-9\x80-\xff' ]*+)?"
+    rb"(?:\]|\|++[rR])*+[ \t]*+(?::|\xef\xbc\x9a)"
+)
+# What may stand between the start of a line and a link that starts it: indent,
+# a table key, a quote, colour codes, a chat timestamp (`[12:30]`, coloured or not).
+_LINE_LEAD_RE = re.compile(
+    rb"[ \t{,]*+(?:\[[^\]\r\n]*+\][ \t]*+=[ \t]*+)?[\"']?(?:\|++[cC][0-9A-Fa-f]{8})*+"
+    rb"(?:(?:\|++[cC][0-9A-Fa-f]{8})?\[[0-9:. ]++\](?:\|++[rR])?[ \t]*+)?"
+    rb"(?:\|++[cC][0-9A-Fa-f]{8})*+"
+)
+# M16-128: after the owner's own speaker link (one right after a channel link,
+# one followed by its colon or by ` <word>:`, or one that starts its line),
+# another `Name:` on the same line is someone else's line: a letter (any
+# script), an optional `-Realm` (letters, digits, spaces, apostrophes), an
+# optional closing bracket or colour reset, optional spaces, then an ASCII or
+# full-width colon. Stricter than a name check, as the plain-text speaker rule
+# is: the owner's own message holding `word:` (or `says:`) refuses too.
+_SECOND_SPEAKER_RE = re.compile(
+    rb"[A-Za-z\x80-\xff](?:-[A-Za-z0-9\x80-\xff' ]*+)?(?:\]|\|++[rR])*+[ \t]*+(?::|\xef\xbc\x9a)"
+)
+_LINE_END_RE = re.compile(rb"[\r\n]|\Z")
+# What may follow a channel link when it has no speaker (a channel list, or a
+# "joined channel" line ending in the link): the end, a quote, a bracket or a
+# line break.
+_NO_SPEAKER = frozenset(b"\"']\r\n")
+OTHER_CHAT_LABEL = "another player's name or chat line"
+BNET_LINK_LABEL = "Battle.net friend link or name"
+# A packed bitfield CVar (`closedInfoFrames "@@R@@@@@P@@B@@@@@@APH"`): the
+# client writes six bits per byte as `@` (0x40) plus the bits, so the value
+# is bytes 0x40..0x7F, and a single `@` between two letters looks like `x@y`
+# to EMAIL_RE (M16-126: a launch-client `config-cache.wtf` was refused for
+# it). The launch client's value also holds a raw C0 control byte (0x02;
+# CVar values may carry them), so C0 bytes are packed bytes too, except the
+# line breaks, which end the SET line. An email match is not counted when it
+# lies in the quoted value of a `SET` line of a config file, that value is
+# made only of packed bytes and holds `@@` (an address holds one `@`), and
+# the match touches another `@` on either side. A dotted domain, digits, `-`
+# or `+` are outside the packed bytes, so such an address still refuses; so
+# does one with no `@@` in its value or standing apart from the `@` runs.
+# Known gap, accepted because the real value has this shape: an address of
+# letters only with no dot, or with a control byte where its dot would be
+# (`"@@@john@gmail\x01com@@"`), glued to the `@` runs of an otherwise
+# packed value, is not refused. Chosen over blanking `closedInfoFrames` by
+# default: blanking hides a non-identity value from the corpus, and only that
+# one CVar, where this covers every packed CVar.
+_PACKED_BYTE = rb"[\x00-\x09\x0b\x0c\x0e-\x1f\x40-\x7f]"
+PACKED_VALUE_RE = re.compile(
+    _LINE_START + rb'SET[ \t]+[A-Za-z0-9_.]+[ \t]+"((?=%s*@@)%s*)"' % (_PACKED_BYTE, _PACKED_BYTE),
+    re.IGNORECASE,
+)
 # Invented GUIDs for other players: a server id no real GUID of the owner's
 # pseudonyms uses (theirs are Player-9999-...), numbered in order of first
 # appearance, so nothing about the real value survives.
@@ -627,6 +790,7 @@ class Identity:
         loose: Iterable[str] = (),
         groups: Iterable[str] = (),
         account_names: Iterable[str] = (),
+        own_characters: Iterable[str | tuple[str, str | None]] = (),
     ) -> None:
         """`realm_aliases`: other spellings of a realm in `realms` (a grouped
         folder's casing), given that realm's pseudonym. `loose`: second names of
@@ -637,6 +801,12 @@ class Identity:
         so adding one never renumbers a folder's pseudonym. One that is a
         folder's name or another value in another casing is an alias of it:
         same pseudonym, counted once.
+        `own_characters`: the owner's character folders, as (name, realm
+        folder), or (name, None) or a bare name when the realm is unknown (a
+        `<First>-<Second>` folder). Not scrubbed (they are public); a player
+        link to one of them is the owner's own (M16-126): `Name-Realm` needs
+        the realm to match when it is known. `characters` and their
+        pseudonyms count as known on any realm.
         """
         self.names: dict[str, str] = {}
         self._show_names = show_names
@@ -658,8 +828,21 @@ class Identity:
         }
         spelled = [p for p in map(_loose_pattern, self._ordered(loose)) if p is not None]
         self._loose = re.compile(b"|".join(spelled), re.IGNORECASE) if spelled else None
+        anywhere: set[str] = set()  # own names whose realm is unknown
+        pairs: set[tuple[str, str]] = set()  # (name, realm form), folded
+        for own in own_characters:
+            own_name, own_realm = (own, None) if isinstance(own, str) else own
+            if own_realm is None:
+                anywhere.add(_fold(own_name))
+            else:
+                folded = _fold(own_name)
+                pairs.update((folded, _fold(form)) for form in _realm_forms(own_realm))
         for i, character in enumerate(self._ordered(characters)):
             self._add_name(character, _shaped(character, "Labchar", i), "character")
+            anywhere.update((_fold(character), _fold(self.names[character])))
+        self._own_anywhere = frozenset(anywhere)
+        self._own_pairs = frozenset(pairs)
+        self._own_names = self._own_anywhere | {own_name for own_name, _ in pairs}
         for i, extra in enumerate(self._ordered(extras)):
             self._add_name(extra, _shaped(extra, "Labname", i), "extra name")
         ordered_accounts = self._ordered(accounts)
@@ -679,11 +862,23 @@ class Identity:
                 self._add_account(name, index)
                 index += 1
 
-        canonical = sorted({guid.upper() for guid in guids})
+        # Some older review probes pass `str` GUIDs; take them as their ASCII bytes.
+        canonical = sorted({_guid_bytes(guid).upper() for guid in guids})
         self.guids: dict[bytes, bytes] = {
             guid: b"Player-9999-%08X" % (i + 1) for i, guid in enumerate(canonical)
         }
         self._pseudo_guids = frozenset(self.guids.values())
+        self._own_guid = _own_guid_pattern(self.guids)
+        # Hardening (security review of M16-128): each own GUID's hex part on
+        # its own, in any case, anywhere, so an unpadded realm id, a split
+        # field, an odd separator, a Unicode dash or percent-encoding around it
+        # still loses it. Maps to the pseudonym's hex part.
+        self._own_low: dict[bytes, bytes] = {}
+        for key, pseudonym in self.guids.items():
+            low = key.rpartition(b"-")[2]
+            if len(low) >= OWN_GUID_LOW_MIN:
+                self._own_low.setdefault(low, pseudonym.rpartition(b"-")[2])
+        self._own_low_re = _alternation(self._own_low)
 
         self.cvars = tuple(dict.fromkeys(cvars))
         names = b"|".join(re.escape(c.encode()) for c in self.cvars)
@@ -919,6 +1114,8 @@ class Identity:
         unit_guids: Sequence[tuple[int, int, bytes]] = (),
         timestamps: Sequence[tuple[int, int, bytes]] = (),
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
+        bare_guids: bool = False,
+        honorbound: Sequence[tuple[int, int, bytes, str]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -930,7 +1127,12 @@ class Identity:
         (UnitGuids), and `timestamps` its shifted timestamps (TimeShift); both are
         claimed with the player GUIDs. `country_tags` are `.build.info`'s geoip and
         account countries replaced by placeholders (country_scan), claimed in the
-        same pass.
+        same pass. Own GUIDs are rewritten in every file, with or without their
+        `Player-` prefix (OWN_GUID_LABEL). `bare_guids` marks
+        `character-list-order.txt`, where any `<n>-<hex>` token left unmapped
+        refuses (BARE_GUID_TOKEN_RE). `honorbound` are a
+        `macros-cache.txt`'s `#HB<n>` hash values replaced by `0`s
+        (honorbound_scan), claimed in the same pass.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -960,6 +1162,17 @@ class Identity:
             for m in self._cvar_value.finditer(data):
                 claim(m.start(1), m.end(1), b"", "cvar")
             close_pass()
+        # The owner's own GUIDs first, as exact text anywhere (OWN_GUID_LABEL).
+        if self._own_guid is not None:
+            for m in self._own_guid.finditer(data):
+                pseudonym = self.guids[_PLAYER_PREFIX + m.group(2).upper()]
+                new = pseudonym if m.group(1) else pseudonym[len(_PLAYER_PREFIX) :]
+                claim(m.start(), m.end(), new, "guid")
+            close_pass()  # a pass of its own: GUID_RE below matches the same spans
+        if self._own_low_re is not None:
+            for m in self._own_low_re.finditer(data):
+                claim(m.start(), m.end(), self._own_low[m.group(0).upper()], "guid")
+            close_pass()
         for m in GUID_RE.finditer(data):
             key = m.group(0).upper()
             if key in self.guids:
@@ -970,7 +1183,7 @@ class Identity:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
             claim(start, end, new, "timestamp")
-        for start, end, new, reason in country_tags:
+        for start, end, new, reason in (*country_tags, *honorbound):
             claim(start, end, new, reason)
         close_pass()
         if others is not None:
@@ -1033,6 +1246,24 @@ class Identity:
         folded = self._folded_hits(scrubbed, [*written, *toc_out])
         if folded:
             problems.append(f"{FOLDED_SURVIVOR_LABEL} x{folded}")
+        kept = list(self._own_guid.finditer(scrubbed)) if self._own_guid is not None else []
+        whole = [m.span() for m in kept]
+        if self._own_low_re is not None:
+            kept += [
+                m
+                for m in self._own_low_re.finditer(scrubbed)
+                if not _overlaps(whole, m.start(), m.end())
+            ]
+        if kept:
+            kept.sort(key=lambda m: m.start())
+            problems.append(_located(OWN_GUID_LABEL, scrubbed, kept))
+        if bare_guids:
+            mapped = {guid[len(_PLAYER_PREFIX) :] for guid in self._pseudo_guids}
+            unmapped = [
+                m for m in BARE_GUID_TOKEN_RE.finditer(scrubbed) if m.group(0) not in mapped
+            ]
+            if unmapped:
+                problems.append(_located(BARE_GUID_LABEL, scrubbed, unmapped))
         return ScrubResult(scrubbed, tuple(edits), tuple(problems), tuple(notes))
 
     def stray_in_combat_log(
@@ -1083,6 +1314,78 @@ class Identity:
             pseudo_guids=others.pseudo_guids if others is not None else frozenset(),
         )
 
+    def _other_chat(self, scrubbed: bytes) -> int:
+        """Player links naming someone other than the owner's characters, and
+        chat-channel lines whose speaker is not the owner's own link
+        (PLAYER_LINK_RE, CHANNEL_LINK_RE)."""
+
+        def nobody(target: bytes) -> bool:
+            return not target or b"%" in target
+
+        def own(target: bytes) -> bool:
+            name, hyphen, realm = target.decode("utf-8", errors="replace").partition("-")
+            if not hyphen:
+                return _fold(name) in self._own_names
+            return (_fold(name), _fold(realm)) in self._own_pairs or (
+                _fold(name) in self._own_anywhere
+            )
+
+        def second_speaker(link: re.Match[bytes], *, after_channel: bool) -> bool:
+            """Another `Name:` later on the line of the owner's own speaker link."""
+            rest = _LINK_REST_RE.match(scrubbed, link.end())
+            if rest is None:
+                return False
+            at = rest.end()
+            # CR searched back only as far as the last LF: linear on LF-only files.
+            lf = scrubbed.rfind(b"\n", 0, link.start())
+            line_start = max(lf, scrubbed.rfind(b"\r", lf + 1, link.start())) + 1
+            speaker = (
+                after_channel
+                or _LINE_LEAD_RE.fullmatch(scrubbed, line_start, link.start()) is not None
+                or _SPEAKER_WORD_RE.match(scrubbed, at) is not None
+            )
+            colon = _SPEAKER_COLON_RE.match(scrubbed, at)
+            if colon is None and not speaker:
+                return False  # not a speaker: a link inside some other text
+            if colon is not None:
+                at = colon.end()
+            end = _LINE_END_RE.search(scrubbed, at)
+            stop = end.start() if end is not None else len(scrubbed)
+            return _SECOND_SPEAKER_RE.search(scrubbed, at, stop) is not None
+
+        linked = 0
+        owned: dict[int, re.Match[bytes]] = {}  # own speaker links, by offset
+        for m in PLAYER_LINK_RE.finditer(scrubbed):
+            if nobody(m.group(1)):
+                continue
+            if own(m.group(1)):
+                owned[m.start()] = m
+            else:
+                linked += 1
+        spoken = 0
+        after_channel: set[int] = set()
+        channels: list[Span] = []
+        for m in CHANNEL_LINK_RE.finditer(scrubbed):
+            channels.append(m.span())
+            at = m.end()
+            if at == len(scrubbed) or scrubbed[at] in _NO_SPEAKER:
+                continue  # no speaker: a channel list or a "joined" line
+            link = PLAYER_LINK_RE.match(scrubbed, at)
+            if link is not None and not nobody(link.group(1)):
+                after_channel.add(link.start())
+                continue  # a player link: own (checked below), or counted above
+            spoken += 1
+        # A channel link the pattern cannot read is not trusted to have no speaker.
+        spoken += sum(
+            1
+            for m in CHANNEL_OPEN_RE.finditer(scrubbed)
+            if not _inside(channels, m.start(), m.end())
+        )
+        for start, link in owned.items():
+            if second_speaker(link, after_channel=start in after_channel):
+                spoken += 1
+        return linked + spoken
+
     def _inspect(
         self,
         scrubbed: bytes,
@@ -1107,8 +1410,22 @@ class Identity:
         ) -> Iterator[re.Match[bytes]]:
             return (m for m in matches if not _overlaps(spans, m.start(), m.end()))
 
-        report(problems, "email address", EMAIL_RE.finditer(scrubbed))
+        packed = [m.span(1) for m in PACKED_VALUE_RE.finditer(scrubbed)] if config else []
+
+        def address(m: re.Match[bytes]) -> bool:
+            """Not a bitfield's `x@y` (see PACKED_VALUE_RE)."""
+            start, end = m.span()
+            glued = scrubbed[start - 1 : start] == b"@" or scrubbed[end : end + 1] == b"@"
+            return not (glued and _inside(packed, start, end))
+
+        report(problems, "email address", filter(address, EMAIL_RE.finditer(scrubbed)))
         report(problems, "home path", HOME_RE.finditer(scrubbed))
+        chat = self._other_chat(scrubbed)
+        if chat:
+            problems.append(f"{OTHER_CHAT_LABEL} x{chat}")
+        bnet = len(BNET_RE.findall(scrubbed))
+        if bnet:
+            problems.append(f"{BNET_LINK_LABEL} x{bnet}")
         report(problems, "BattleTag", BATTLETAG_RE.finditer(scrubbed))
         report(
             problems,
@@ -1765,6 +2082,64 @@ class CountryScan:
     edits: tuple[tuple[int, int, bytes, str], ...]  # (start, end, placeholder, reason)
     # (refusal label, count) of key occurrences that are not a whole token of a Tags cell
     unplaced: tuple[tuple[str, int], ...]
+
+
+# HonorBound (an addon) writes a `#HB3 l=…;s=…;p=…;u=…;n=…;h=<hex>` line into
+# a macro body (M16-125 security review). How the `h=` hash is made is
+# unknown, and it may be derived from the character's GUID, so in
+# `macros-cache.txt` the value of `h=` in an HonorBound line is replaced byte
+# for byte with `0`s of the same length. Nothing else in the line or the file
+# is touched.
+# M16-128 (security reviews of M16-125 and M16-128: the rule failed open),
+# fail closed: in `macros-cache.txt`, an HonorBound line is any line (split at
+# CR, LF or both) holding `#HB<digits>` anywhere (spaces allowed after `#`), in any case, with `#` or the
+# full-width number sign U+FF03 (so a BOM, NBSP, indent or `/say ` before it changes
+# nothing). In the text after that tag, the key is `h` in either case, at its
+# start or after a space, tab, NBSP, `;` or `,`, with spaces or tabs allowed
+# around `=`. After the scrub an HonorBound line refuses the file
+# (HONORBOUND_UNREPLACED_LABEL, count only: an offset would point at the hash)
+# when it still holds a run of 8 or more hex digits that is not all `0`s, or
+# has no non-empty `h` value made only of `0`s.
+HONORBOUND_TAG_RE = re.compile(rb"(?:#|\xef\xbc\x83)\s*HB[0-9]+", re.IGNORECASE)
+HONORBOUND_FIELD_RE = re.compile(rb"(?:^|(?<=[ \t;,\xa0]))h[ \t]*=[ \t]*([^;,\s]*)", re.IGNORECASE)
+_HEX_RUN_RE = re.compile(rb"[0-9A-Fa-f]{8,}")
+HONORBOUND_PLACEHOLDER_BYTE = b"0"
+HONORBOUND_REASON = "honorbound"
+HONORBOUND_UNREPLACED_LABEL = "HonorBound line whose hash was not replaced"
+MACROS_NAME = "macros-cache.txt"
+
+
+def _honorbound_lines(data: bytes) -> Iterator[tuple[bytes, int, bytes]]:
+    """(line, offset of the text after its tag, that text) of every HonorBound line."""
+    for line in _LINE_TEXT_RE.finditer(data):
+        tag = HONORBOUND_TAG_RE.search(line.group(0))
+        if tag is not None:
+            yield line.group(0), line.start() + tag.end(), line.group(0)[tag.end() :]
+
+
+def honorbound_scan(data: bytes) -> tuple[tuple[int, int, bytes, str], ...]:
+    """(start, end, placeholder, reason) for the `h=` value of every HonorBound line."""
+    edits: list[tuple[int, int, bytes, str]] = []
+    for _, base, body in _honorbound_lines(data):
+        for m in HONORBOUND_FIELD_RE.finditer(body):
+            start, end = m.span(1)
+            if start < end:
+                placeholder = HONORBOUND_PLACEHOLDER_BYTE * (end - start)
+                edits.append((base + start, base + end, placeholder, HONORBOUND_REASON))
+    return tuple(edits)
+
+
+def honorbound_unreplaced(scrubbed: bytes) -> int:
+    """HonorBound lines in `scrubbed` that keep a non-zero hex run of 8 or more
+    digits, or have no non-empty `h` value made only of `0`s."""
+    count = 0
+    for line, _, body in _honorbound_lines(scrubbed):
+        values = [m.group(1) for m in HONORBOUND_FIELD_RE.finditer(body)]
+        zeroed = any(v and not v.strip(HONORBOUND_PLACEHOLDER_BYTE) for v in values)
+        live = any(run.strip(b"0") for run in _HEX_RUN_RE.findall(line))
+        if live or not zeroed:
+            count += 1
+    return count
 
 
 def _lines_with_offsets(data: bytes) -> Iterator[tuple[int, bytes]]:
@@ -2835,6 +3210,8 @@ def process(
         unit_guids=located.edits if located is not None else (),
         timestamps=stamped.edits if stamped is not None else (),
         country_tags=countries.edits if countries is not None else (),
+        bare_guids=name == CHARACTER_LIST_NAME,
+        honorbound=honorbound_scan(original) if name == MACROS_NAME else (),
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -2879,6 +3256,9 @@ def process(
     if countries is not None:
         # Counts only: an offset would point at the country.
         kept_whole.extend(f"{label} x{count}" for label, count in countries.unplaced)
+    if name == MACROS_NAME and (unreplaced := honorbound_unreplaced(result.data)):
+        # Count only: an offset would point at the hash.
+        kept_whole.append(f"{HONORBOUND_UNREPLACED_LABEL} x{unreplaced}")
     # Any SavedVariables-named file, `.lua.old` and `.lua~` too (`name` is folded).
     lua_text = kind == "savedvariables" or ".lua" in name
     if lua_text and (free := free_text_offsets(result.data)):
@@ -2937,6 +3317,7 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
             ("unit-guid", "unit-guids-rewritten"),
             ("geoip", "geoip-country-replaced"),
             ("acct", "acct-country-replaced"),
+            (HONORBOUND_REASON, "honorbound-hash-replaced"),
         )
         if result.count(reason)
     ]
@@ -2997,6 +3378,21 @@ def _trim_account_piece(text: str) -> str:
     return piece
 
 
+def _own_guid_arg(value: str) -> bytes:
+    """A `--own-guid` value as `Player-<n>-<hex>`: the prefix is added when it is
+    missing (M16-128 security review: a bare value was silently ignored).
+    Anything else stops the run, without echoing the value."""
+    raw = value.strip().encode("utf-8", errors="replace")
+    if GUID_RE.fullmatch(raw):
+        return raw
+    if BARE_GUID_RE.fullmatch(raw):
+        return b"Player-" + raw
+    raise CaptureError(
+        "an --own-guid value is not a Player GUID (`Player-<realm-id>-<hex>`, or the "
+        "same without `Player-`); the value is not shown"
+    )
+
+
 def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Namespace) -> Identity:
     """The identity map of the whole install: what the scrub rewrites and refuses.
 
@@ -3014,8 +3410,11 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
     """
     accounts: set[str] = set()
     pairs: set[tuple[str, str]] = set()  # (character, realm) folders that exist
+    # For the chat check: a grouped folder's second name is not a realm.
+    own_characters: set[tuple[str, str | None]] = set()
     groups: set[str] = set()  # the digits-only folders
     configs: list[Path] = []
+    lists: list[Path] = []  # character-list-order.txt: own GUIDs without `Player-`
 
     # Every folder under the root that has WTF/Account, whether or not it is
     # still an installed flavor: an uninstalled product leaves WTF/ behind, and
@@ -3078,6 +3477,9 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
             accounts.add(account.name)
             in_account = listed(account)
             configs.extend(config_files(in_account))
+            lists.extend(
+                p for p in in_account if p.name.casefold() == CHARACTER_LIST_NAME and p.is_file()
+            )
             for realm in folders(in_account):
                 if realm.name.casefold() == SAVED_VARIABLES_DIR.casefold():
                     continue
@@ -3089,13 +3491,15 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                         split = split_character_folder(character.name)
                         if split is not None:
                             pairs.add(split)
+                            own_characters.add((split[0], None))
                         configs.extend(config_files(listed(character)))
                     continue
                 for character in folders(listed(realm)):
                     pairs.add((character.name, realm.name))
+                    own_characters.add((character.name, realm.name))
                     configs.extend(config_files(listed(character)))
 
-    guids: set[bytes] = {g.encode() for g in args.own_guid or []}
+    guids: set[bytes] = {_own_guid_arg(g) for g in args.own_guid or []}
     account_names: set[str] = set()
     for config in configs:
         try:
@@ -3127,6 +3531,17 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                 if piece:
                     account_names.add(piece)
 
+    for order in lists:
+        try:
+            data = read_bytes(order)
+        except OSError as error:
+            raise CaptureError(
+                f"a {CHARACTER_LIST_NAME} could not be read ({type(error).__name__}); the "
+                "character GUIDs it lists would be missing from the identity map, so nothing "
+                "is captured"
+            ) from None
+        guids.update(b"Player-" + m.group(0) for m in BARE_GUID_RE.finditer(data))
+
     own: set[tuple[bytes, bytes]] = set()
     for character_name, realm_name in pairs:
         for normal in ("NFC", "NFD"):
@@ -3156,6 +3571,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
         show_names=args.show_map,
         groups=groups,
         account_names=account_names,
+        own_characters=own_characters,
     )
 
 

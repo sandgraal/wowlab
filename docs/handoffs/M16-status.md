@@ -1,78 +1,78 @@
-# M16 status: before the first dispatch
+# M16 status and plan: stopping point of 2026-11-12
 
-Written by the conductor on 2026-10-21, for the session that runs
-`/conduct next` when work resumes. No M16 ticket has been dispatched yet.
-Read this first, then `docs/LAB_PLAN.md` §18 and the M16 section of
-`docs/BACKLOG.md`. Delete this file once M16's first batch has merged.
+Written by the conductor on 2026-11-12, for the next session that runs
+`/conduct next`. It replaces the 2026-10-21 version of this file. Read it
+first, then `AGENTS.md`, `docs/AGENT_WORKFLOW.md`, and the M16 section of
+`docs/BACKLOG.md`.
 
 ## Where things stand
 
-`main` is at 05ea27d. Two merges on 2026-10-21 got it there.
+`main` is at 737399d or later. Two PRs stay open: #379 (M16-45), which waits
+on the owner, and the draft #427 (`docs/readme-daily-2026-11-10`), left
+from the deleted daily wiki job; the owner can close it. No agent is running, and no scheduled
+check-in is pending.
 
-**#322** brought in the outside evaluation and its follow-on:
-- the evaluation itself: `docs/handoffs/outside-evaluation-2026-10.md`, with ten seat reports beside it;
-- the owner's answers to its questions, and the M16 wave;
-- `.claude/rules/player-copy.md`;
-- the accepted 2026-10-21 amendments to ADR-0013, ADR-0026, ADR-0031 and ADR-0032.
+The owner tested on macOS on 2026-11-12, against `main` run from the clone
+with `uv run wowlab`, and reported that things look good. The conductor
+smoke-tested the CLI on a constructed install. It checked macOS discovery
+under `~/Games`, `char list` across flavors, `doctor` on a leftover flavor,
+`snap create` / `snap list`, and `undo` on an empty journal. The run found
+the three usability issues filed as M16-122 to M16-124.
 
-**#323** bumped certifi to 2026.10.19 for GHSA-6q48-6c7w-9gw2. Trivy fails on any branch cut before cd6f2c5 until it merges `main`.
+### Merged on 2026-11-11 and 2026-11-12
 
-The frontier's counts come from the backlog's ticks only. `session_start.py`'s `merged_ticket_ids` calls `gh pr list`, which uses GraphQL. Cloud sessions refuse GraphQL with a 403, so the function returns nothing there. Tick merged tickets promptly, or a merged ticket shows as ready again. This is a harness follow-up for the owner.
+- **Write gate (`guard.py`):**
+  - leftover temp files are cleaned up before the pre-write snapshot (M16-69);
+  - a closed record that never took a snapshot is passed over by `undo` (§6.10 (a1), (a2));
+  - damaged journal records and flavor paths with control or format characters are refused (M16-90, (e), (e1));
+  - its docstrings now state the current rule (M16-120).
+- **Spec:**
+  - LAB_PLAN §6.10 is rewritten as one current section. Its dated amendments moved unchanged to Appendix A, and a key resolves the old references (M16-110).
+  - ADR-0037 (accepted) freezes automatic crash recovery. Compound failures get `doctor`'s one generic answer (M16-109).
+- **What the owner hit on macOS, all fixed:**
+  - discovery searches about six folders, including `~/Games` and `/Volumes/*` last, and lists them when nothing is found (M16-112);
+  - the `wowlab ui` link, a reload and a second tab work until Ctrl-C. This replaced the one-time key, and the ADR-0029 amendment is accepted (M16-113);
+  - characters are found across flavors, `WOWLAB_FLAVOR` was added, and the UI gained a "Runs use flavor" picker (M16-114, M16-116).
+- **`doctor`:**
+  - a flavor with an unknown version is explained in words, in all three cases (no product, no row, blank version), in text and in `--json`, everywhere the old "no version in .build.info" appeared (M16-118, M16-121);
+  - a failure it cannot work out gets one answer that names a whole snapshot of this install to restore (M16-109).
+- **Code layout:** `cli.py` (14,844 lines) is now the `wowlab_core/cli/` package, one module per command group, with help output byte-identical (M16-111).
+  - Tests patch names on `cli` as before. `_Package` in `cli/__init__.py` passes a patch on to every module that holds the name.
+  - A new top-level name that a test reads or patches must be re-exported in `cli/__init__.py`. `test_cli_package.py` fails until it is.
+- **CI:** Windows CI was red on `main` after #496 and was fixed in #499. A PR that adds tests reaching the write gate now waits for `lab (windows)`.
 
-The frontier on `main`: 49 tickets are eligible. 35 are M16, 13 are M13 follow-ups (M13-61 to M13-81), and the last is M15-05. M16-01 is done (the owner accepted all the amendments). M15-05 is ready. M15-06 to M15-09 wait on M15-05 and M16-47. M13-76 is blocked on M16-02, which absorbs it.
+### Owner decisions recorded
 
-## Open PRs to settle before or beside the first batch
+- ADR-0037 is accepted (2026-11-11).
+- The ADR-0029 amendment of 2026-11-12 is accepted.
+- The M16-90 legacy risk is accepted (§6.10, under the `flavor_path` rule): a pre-M16-90 record whose `flavor_path` holds a refused character makes the journal unreadable, and that blocks changes on every install sharing the store. Review it with ADR-0037's frozen cases before outside users are invited.
+- Keep the grader gate (`scripts/check_grader_diff.py`), 2026-11-11 (recorded in the message of commit f16d802, #493).
+- The process rules are in `docs/AGENT_WORKFLOW.md`:
+  - the review-round cap;
+  - owner questions carry their consequences;
+  - conductor housekeeping: worktrees, Dependabot, status messages, per-agent `TMPDIR`, fresh conductor worktrees, keeping an implementer's worktree until its reviews end, and waiting for Windows on write-gate tests.
 
-| PR | What | Action |
-|---|---|---|
-| #320 | M15-05 `casc` encoding/root, 5 behind `main` | Finish it (§17.9: Wave 6 pauses *after* M15-05). Merge `main` in, re-run the reviews per its ticket, merge. |
-| #321 | Wiki job's README one-liner, 2 behind | Check it is still true on `main`; merge or close. The next daily run replaces it if closed. |
-| #310, #311 | Dependabot groups, 12 behind; both change `uv.lock` | `@dependabot rebase` was requested on both on 2026-10-21 (certifi changed `uv.lock`). Review once rebased. |
+## Plan for the next session
 
-## First batch
+1. **Usability fixes from the 2026-11-12 test.** All three are ready and independent:
+   - M16-122: `doctor` names the version that is running;
+   - M16-123: `doctor` stops offering a lab-addon install into a flavor whose version is unknown;
+   - M16-124: `snap create` with several flavors.
 
-Dispatch everything ready, with these exceptions.
+   Dispatch them in parallel. M16-122 and M16-123 both touch `cli/_cmd_doctor.py`, so expect a small merge.
+2. **M16-88** (XS): re-record the performance baselines from `ubuntu-latest`. It is ready.
+3. **Owner-blocked, in this order:**
+   - The **schema-5 capture** unblocks M16-45 (#379), then M16-46, M16-48, M16-55, M16-58 and M16-64. When #379 resumes, merge `main` into it: its `cli.py` hunks now belong in `cli/_cmd_binds.py` and `cli/_cmd_char.py`, and any new name a test reads goes into `cli/__init__.py` (#508 has the map).
+   - The owner tickets: M13-02, M13-07, M13-13, M13-62, M13-64, M13-66, M13-79, M16-32, M16-33, M16-38, M16-87T/87. M16-87T/87 are deferred under ADR-0037.
+4. **M16-47, the wave review**, once the M16-45 family is done. Write `docs/handoffs/M16-review.md` and stop dispatch until the owner picks the next wave: resume M15 (the CASC/model chain) or tag v0.2.
 
-**Serial on `cli.py`.** Run M16-14, M16-15, M16-16, M16-18, M16-19 and M16-22 one at a time. Start with M16-15, because M16-16 depends on it.
+### Things to know before dispatching
 
-**The M13 follow-ups run beside M16.** They are small fixes to shipped behaviour. Four of them touch the same command as an M16 ticket, so pair or order each one:
-- M13-72 (`char list --json`) goes before M16-35, which changes `char list`.
-- M13-74 (`sv merge --expect`) lands with or before M16-12, as the synthesis asked.
-- M13-73 and M13-77 (`char binds`) go before M16-36 and M16-16.
-- M13-80 (the identity record in `looks import-char`) can share a reviewer with M16-31.
+- **The owner's installed `wowlab` can be stale.** `~/.local/bin/wowlab` was the 0.1.0rc1 release, which hid every fix until the owner ran `uv run wowlab` from the clone. M16-122 addresses this. Until then, ask the owner to run from the clone, or to reinstall with `uv tool install --force --editable ./lab/core`. Their clone is on an external drive, so an editable install works only while that drive is mounted.
+- **Linux has no default install locations.** A smoke test in a cloud container must set `WOWLAB_WOW_ROOT`, or call `install.default_roots("darwin", home=…, volumes=…)` directly.
+- **Wiki:** user-facing rows for today's PRs are added to `docs/handoffs/wiki-pending.md`. The owner updates the wiki from that file.
 
-M13-76 closes with M16-02. Dispatch the other M13 tickets freely.
+## Cleanup done at this stopping point
 
-**Load-bearing twins first.**
-- M16-03T, M16-09T, M16-11T, M16-23T and M16-26T go to `test-writer`.
-- M16-39T is graders only.
-- Each `[IMPL]` twin waits for its `[TEST]` twin to merge.
-
-**Do the cheap trust fix early.** Dispatch M16-02 in the first batch. Seven panel seats found the problem, and M13-76 closes with it.
-
-**M16-45 waits for `domain-reviewer`.** It shows as ready, but its "Before dispatch" note asks `domain-reviewer` to check the `CLICK` premise first: GSE-style buttons may carry text the player typed. Run that check as a short dispatch and act on the answer before the implementer starts.
-
-**Owner tickets are not agent work.**
-- M16-32 (Discussions, the announcement, PyPI) needs owner steps.
-- M16-38 (the `@live` L1 sweep) is run by the owner.
-
-**M16-05 waits on the launch.** It depends on M16-45, M16-46 and the launch date, which the owner has not confirmed. 2026-11-04 came from the panel's web search and has not been checked against a second source. Ask the owner.
-
-## Known environment notes
-
-- In a cloud container running as root, `tests/repo/test_wiki_daily_outside.py::…[read-only-as-user-fails]` fails. That failure is environmental and does not happen in CI. M13-81 part D (added 2026-10-21) skips it under uid 0.
-- `make ci` stops at `lint-lua` where selene is not installed. Run `make selene` first, or rely on CI.
-- Until M16-07 lands, `wowlab doctor` contacts wago.tools. Agents testing by hand pass `--offline` (ADR-0012).
-- The panel's sandbox script is reusable for hands-on checks:
-  - Run `eval "$(bash docs/handoffs/outside-evaluation-2026-10/_make_sandbox.sh <name> [macos-70450])"`.
-  - It builds an install from the real fixtures, with an isolated `HOME` and `XDG_*`, under `$WOWLAB_SANDBOXES`. That defaults to `$TMPDIR/wowlab-sandboxes`, never inside the checkout.
-  - Then run `wowlab` with `uv run --project <repo>`.
-  - `_brief.md` is the panel's historical brief. Its `$EVAL` and `/home/user/wowlab` paths were that container's.
-- The shell hook blocks a redirect to a path held in a variable (`> "$F"`). Use a literal path, a `python3 -c` write, or the Write tool.
-
-## Owner actions outstanding
-
-- Confirm the Forever launch date (M16-05).
-- M16-32: enable Discussions and set up PyPI trusted publishing.
-- Delete `.claude/hooks/precommit_gate.py` with `git rm` from a terminal. It has been unregistered since 2026-10-17, and the shell guard blocks agents from removing it.
-- The remote branch `claude/vibrant-albattani-hoh9lm` is fully merged (0 ahead of `main`). This session's delete was refused, so remove it from the GitHub UI.
+- Agent worktrees were removed; `git worktree list` shows only the locked worktrees of agents from earlier sessions.
+- Merged remote branches were left in place. Deleting them is an owner action (`git push origin --delete <branch>`).

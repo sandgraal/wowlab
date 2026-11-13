@@ -191,6 +191,25 @@ frontier. A ticket that touches path handling, `guard`, `snapshot` or
 
 **Review rounds (2026-10-17, owner decision; ADR-0013 amendment).** A reviewer runs `make ci` once, on its first round; a re-check runs only what the fix touches. A re-check goes to the same reviewer, names the fixes, and returns one short report. After a rebase the shepherd runs `git range-diff` on the branch's own patch before and after: every commit unchanged merges without a re-check, a changed commit gets a re-check on its differing hunks. A defect the branch neither introduces nor makes worse, whose fix lives outside its files, is reported "Off the branch" and filed by the conductor; it never holds the merge, while a caller the branch broke, a doc it made stale or an unlisted user-facing change stays a finding. A bot finding that every dispatched independent reviewer saw and did not count gets, once the conductor confirms that from the reports, a "seen by the reviewers, not held" reply and no fix.
 
+**Review-round cap (2026-11-11, owner decision).**
+- **When the cap applies.** Once a branch has had one fix round for Low or polish findings, any later Low or polish finding is recorded as a follow-up ticket or as a note in the batched backlog PR. It never starts another fix round.
+- **Documentation.** A finding below Medium in documentation (handoffs, runbooks, README, LAB_PLAN wording) never blocks a merge.
+- **Exceptions.** A finding that a reviewer rates Medium or higher, a security finding, a regression the branch introduces, and an unlisted user-facing change are fixed as before, with the two-round rule unchanged.
+- **Frozen compound failures.** A compound failure frozen under ADR-0037 is reported as "frozen under ADR-0037". The conductor records it and starts no fix round.
+
+**Owner questions (2026-11-11, owner decision).**
+- **Consequences come with the question.** When the conductor asks the owner for a ruling, the question lists what else the answer changes: the other cases the rule reaches, the graders on `main` it contradicts, and the user-facing text it changes. A ruling given without that list may need to be asked again, as the (a2) ruling did.
+- **Outside users.** There are none yet, by owner decision. Outside users are wanted later, and before they are invited the conductor reviews ADR-0037's frozen cases with the owner.
+
+**Conductor housekeeping (2026-11-11, owner decision).**
+- **Worktrees.** The conductor removes a worktree as soon as its agent has reported and its branch is pushed, keeping only those of agents still running or still owed a fix round. The once-per-session `git worktree list` check stays as a backstop. On 2026-11-11, 236 leftover worktrees filled the disk and broke a reviewer's run.
+- **Dependabot.** Open Dependabot PRs are checked at every check-in. They merge when green on current `main`. When a bump breaks lint or tests, the conductor fixes it on the PR branch, or files a ticket the same day.
+- **Status messages.** The conductor's messages to the owner carry decisions needed, blockers, and what merged. Agent ids and internal state stay out of them.
+- **Keep an implementer's worktree until its PR's reviews are done (2026-11-12).** A fix round goes back to the implementer that has the context; once its worktree is removed it cannot be resumed and a fresh agent has to start cold (M16-118, #504). Reviewers' worktrees can go as soon as they report.
+- **Temp folders (2026-11-12).** Every dispatch brief names the agent's own `TMPDIR`, `<scratchpad>/tmp-<ticket-or-PR>` (for example `tmp-m1690`, `tmp-cr498`). The agent creates it and removes only it. On 2026-11-11 two agents shared `<scratchpad>/tmp`, and one's cleanup deleted the other's test files mid-run (#494).
+- **Commits from a conductor worktree (2026-11-12).** The conductor makes each commit from a fresh worktree on `origin/main` or the PR head, checks `git diff --cached --stat` before committing, and removes that worktree once the branch is pushed, before any agent pushes to the same branch. A reused worktree's stale index reverted an agent's work twice on 2026-11-11 (efac00c, aefdc32).
+- **Windows before merging a test that writes (2026-11-12).** `lab (windows)` is not a required check, but a PR that adds tests reaching the write gate waits for it (this narrows "Nothing blocks on it" under *Windows after merge* above). #496 merged with it still running, and two of its tests failed on the Windows runner, whose process table can read as unknown; `main` stayed red there until #499.
+
 **Shared scratchpad (2026-10-15).** Parallel agents share one session
 scratchpad and overwrote each other's `ci.log` and PR-body files. Every agent
 keeps its files in a subfolder named after its ticket or PR

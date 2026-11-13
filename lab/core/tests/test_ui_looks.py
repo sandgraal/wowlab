@@ -557,12 +557,12 @@ function looksView() {
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (String(url).startsWith("/api/looks-page?")) {
+  if (String(url).startsWith("/api/looks-page")) {
     requests.push({ url: String(url), body: body });
     const held = scenario.looks_page;
     return answer(held.body, held.ok);
   }
-  if (body && String(url).startsWith("/api/run?")) {
+  if (body && String(url).startsWith("/api/run")) {
     for (const held of scenario.held || []) {
       if (canon(held.command) === canon(body.command) && canon(held.params) === canon(body.params || {})) {
         requests.push({ url: String(url), body: body });
@@ -651,7 +651,8 @@ def test_the_looks_tab_starts_hidden_and_runs_nothing_until_asked(
 ) -> None:
     body = _shell(served).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
-    assert tabs == ["explorer", "gaps", "commands", "character", "looks"]
+    # The Account tab (M17-01) is first; Looks stays last.
+    assert tabs == ["account", "character", "explorer", "gaps", "commands", "looks"]
     assert re.search(r'<section id="looks-view"[^>]*\bhidden\b', body)
     scenario, _ = _scenario(served, [{"looks_tab": True}])
     out = _drive(tmp_path / "node", scenario)

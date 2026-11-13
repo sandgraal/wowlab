@@ -26,17 +26,33 @@
 // script only lays it out. Nothing read from a run is ever parsed as HTML:
 // text goes in through textContent only. The home folder is shown as "~".
 (function () {
-  // The opened URL carries a one-time boot key, which `start` exchanges once
-  // for the session key every request carries (M16-42). The query leaves the
-  // address bar, and so the history, before the first request; the session
-  // key is kept in this closure only, never in storage or the page's URL,
-  // and is never read from that URL either.
-  const boot = new URLSearchParams(window.location.search).get("boot") || "";
-  let token = "";
+  // The session key (M16-113). The page served for the link `wowlab ui`
+  // opened holds it in one <meta> element, which is read and removed here;
+  // it is kept in localStorage, which belongs to this origin alone (this
+  // server's port included), so a reload and a second tab, which get the
+  // page with no key in it, send it too. It is never read from the URL. The
+  // link's query leaves the address bar, and so the history, before the
+  // first request. Every request sends the key in a header, never a cookie.
+  const STORE = "wowlab-session";
+  let session = "";
+  const given = document.getElementById("wowlab-session");
+  if (given) {
+    session = given.getAttribute("content") || "";
+    given.remove();
+  }
+  try {
+    if (session) window.localStorage.setItem(STORE, session);
+    else session = window.localStorage.getItem(STORE) || "";
+  } catch (error) {
+    // No storage (a locked-down browser): this tab keeps the key it was given.
+  }
   if (window.location.search && window.history && typeof window.history.replaceState === "function") {
     window.history.replaceState(null, "", "/");
   }
-  const api = (path) => path + "?token=" + encodeURIComponent(token);
+  const api = (path) => path;
+  const keyed = (headers) => Object.assign({ "X-Wowlab-Session": session }, headers || {});
+  const NO_SESSION =
+    "This page needs the link wowlab ui opened. Open that link again, or, if wowlab ui was stopped, start it again.";
   const byId = (id) => document.getElementById(id);
   // The one outside origin the page may link to (M15-02; ADR-0019's and
   // ADR-0031's amendments of 2026-10-19): the dressing room `char gear --json`
@@ -148,8 +164,10 @@
   // One run through /api/run: {data} with the parsed --json output, or
   // {error} with what to tell the player. With `partial`, a run that ended
   // with an error and still printed its JSON report gives both (`char list`
-  // lists the characters it could read and exits 1 for the others).
-  async function runJson(command, params, partial) {
+  // lists the characters it could read and exits 1 for the others). With
+  // `everyFlavor`, the header's flavor is not added: the run reads every
+  // flavor folder (the Account tab's `char list --summary`, M17-01).
+  async function runJson(command, params, partial, everyFlavor) {
     let reply;
     let result;
     try {
@@ -157,8 +175,8 @@
         method: "POST",
         cache: "no-store",
         credentials: "omit",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: command, params: params }),
+        headers: keyed({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) }),
       });
       result = await reply.json();
     } catch (error) {
@@ -186,6 +204,97 @@
     } catch (_) {
       return { error: "wowlab " + command.join(" ") + " did not print JSON." };
     }
+  }
+
+  // ─── the flavor every run uses (M16-114) ───
+
+  // With several flavor folders, the header's picker names the flavor every
+  // run passes as --flavor: each command that declares --flavor gets it,
+  // unless its own field names one or it reads every flavor folder already
+  // (`tree --install`, `doctor --redact` or `--redact-name`). The picker
+  // starts on the only flavor that has characters, else on the first whose
+  // .build.info row has a version, else on the first, as `char list --json`
+  // reports them (on the one it listed, when $WOWLAB_FLAVOR named one), and
+  // keeps the choice while the page is open. With one flavor folder it is
+  // not shown and no run gets --flavor from it.
+  const runFlavor = {
+    picked: "", // the flavor folder picked; "" with one flavor folder or before the start
+    settle: null,
+    ready: null, // settled once the start is known; the Character tab waits for it
+    filled: false,
+  };
+  runFlavor.ready = new Promise((resolve) => {
+    runFlavor.settle = resolve;
+  });
+  // A run with one of these set (a flag, or a list with a value) reads every
+  // flavor folder and refuses --flavor: `tree --install`, `doctor --redact`
+  // and `doctor --redact-name`, which implies `--redact`.
+  const EVERY_FLAVOR = ["whole_install", "redact", "redact_name"];
+  // The tab shown (`showTab`): a new flavor rereads the Character tab only
+  // while it is shown.
+  let tabShown = "account";
+
+  function takesFlavor(path) {
+    const key = JSON.stringify(path);
+    const command = offeredCommands.find((c) => c && JSON.stringify(c.path) === key);
+    return (
+      Boolean(command) && Array.isArray(command.params) &&
+      command.params.some((p) => p && p.name === "flavor" && !p.refused)
+    );
+  }
+
+  // The parameters of one run, with the picked flavor added where it goes.
+  function withFlavor(path, params) {
+    const given = params || {};
+    if (!runFlavor.picked || !takesFlavor(path)) return given;
+    if (typeof given.flavor === "string" && given.flavor !== "") return given;
+    const set = (value) => value === true || (Array.isArray(value) && value.length > 0);
+    if (EVERY_FLAVOR.some((name) => set(given[name]))) return given;
+    return Object.assign({}, given, { flavor: runFlavor.picked });
+  }
+
+  function startFlavor(flavors, report) {
+    if (report && typeof report.flavor_folder === "string" && flavors.includes(report.flavor_folder)) {
+      return report.flavor_folder;
+    }
+    const seen = report && Array.isArray(report.flavors)
+      ? report.flavors.filter((f) => f && typeof f.folder === "string" && flavors.includes(f.folder))
+      : [];
+    const having = seen.filter((f) => typeof f.characters === "number" && f.characters > 0);
+    // A place in another flavor that `char list` could not look inside may
+    // hold characters too: then no flavor is "the only one with characters".
+    const blind = report && Array.isArray(report.not_looked_at)
+      ? report.not_looked_at.some((n) => n && n.flavor !== (having[0] && having[0].folder))
+      : false;
+    if (having.length === 1 && !blind) return having[0].folder;
+    const versioned = flavors.find((folder) =>
+      seen.some((f) => f.folder === folder && typeof f.version === "string" && f.version !== ""));
+    return versioned || flavors[0];
+  }
+
+  async function fillRunFlavors(flavors) {
+    if (runFlavor.filled) return;
+    runFlavor.filled = true;
+    const box = byId("run-flavor-box");
+    if (flavors.length < 2) {
+      box.hidden = true;
+      runFlavor.settle();
+      return;
+    }
+    // Asked before any flavor is picked: every flavor's characters.
+    const reply = await runJson(["char", "list"], { brief: true }, true);
+    const start = startFlavor(flavors, reply.data);
+    const picker = byId("run-flavor");
+    picker.replaceChildren();
+    for (const folder of flavors) {
+      const option = make("option", visible(folder));
+      option.value = folder;
+      picker.appendChild(option);
+    }
+    picker.value = start;
+    runFlavor.picked = start;
+    box.hidden = false;
+    runFlavor.settle();
   }
 
   // ─── the explorer ───
@@ -513,11 +622,13 @@
     if (seq !== explorer.treeSeq) return;
     if (reply.error) {
       explorerSay(shown(reply.error), true);
+      runFlavor.settle();
       return;
     }
     const report = reply.data;
     if (!report || !Array.isArray(report.items) || !Array.isArray(report.flavor_folders)) {
       explorerSay("wowlab tree printed something this page does not know.", true);
+      runFlavor.settle();
       return;
     }
     explorer.report = report;
@@ -527,6 +638,7 @@
     explorer.closedWhileFiltering = new Set();
     byId("tree-root").textContent = shown(report.install_root);
     fillFlavors(explorer.flavors);
+    fillRunFlavors(explorer.flavors);
     fillLevels(report);
     drawTree();
     const notes = [];
@@ -1115,6 +1227,9 @@
     asked: null, // the one `char list` run; asked again after a failure
     entries: [], // its characters, latest-written first
     flavor: null, // the flavor folder it read
+    // The character the Account tab opened (M17-01): its account, realm or
+    // digits folder and folder name, picked once the list is read.
+    want: null,
     seq: 0, // bumped by every pick, so a reply that arrives late draws nothing
     binds: null, // the picked character's CharBindsReport, for the keys filters
     macros: null, // its CharMacrosReport, for the findings filter
@@ -1151,6 +1266,18 @@
   // never picked, so it gets no record panels.
   function bare(entry) {
     return Boolean(entry) && entry.no_lab_record !== null && entry.no_lab_record !== undefined;
+  }
+
+  // Whether `entry` is the character the Account tab asked to open.
+  // The flavor counts when both name one: the same folders in another
+  // flavor are another character.
+  function isWanted(entry, want) {
+    const asked = want === undefined ? character.want : want;
+    if (!asked) return false;
+    if (asked.flavor && typeof entry.flavor === "string" && entry.flavor && entry.flavor !== asked.flavor) {
+      return false;
+    }
+    return entry.account === asked.account && entry.realm_folder === asked.realm_folder && entry.label === asked.label;
   }
 
   // A row `char gear` can be asked about: read, with its folders named.
@@ -1198,9 +1325,13 @@
 
   function loadCharacters() {
     if (!character.asked) {
-      character.asked = (async () => {
+      const asked = (async () => {
         charSay("Reading the lab-addon's files…", false);
+        // The header's flavor is known first, so the list is that flavor's.
+        await runFlavor.ready;
         const reply = await runJson(["char", "list"], { brief: true }, true);
+        // Another flavor was picked while this one was read.
+        if (character.asked !== asked) return;
         const report = reply.data;
         if (!report || !Array.isArray(report.characters)) {
           character.asked = null;
@@ -1210,6 +1341,7 @@
         character.note = reply.error ? shown(reply.error) : "";
         fillPicker(report);
       })();
+      character.asked = asked;
     }
     return character.asked;
   }
@@ -1230,8 +1362,14 @@
       }
       picker.appendChild(option);
     });
-    const first = character.entries.findIndex(readable);
+    const asked = character.want;
+    const wanted = character.entries.findIndex((e) => readable(e) && isWanted(e));
+    character.want = null;
+    const first = wanted >= 0 ? wanted : character.entries.findIndex(readable);
     picker.disabled = first < 0;
+    // The Account tab asked for a character this list does not hold: no
+    // other one is read in its place (`openCharacter` says why).
+    if (asked && wanted < 0) return;
     if (first < 0 && character.note) {
       charNote();
       return;
@@ -1249,6 +1387,32 @@
     charNote();
     picker.value = String(first);
     pickCharacter(character.entries[first]);
+  }
+
+  // Another flavor in the header: what was read or planned for the last one
+  // goes, and the Character tab, when it is shown, reads the new one.
+  byId("run-flavor").addEventListener("change", () => switchRunFlavor(byId("run-flavor").value));
+
+  function switchRunFlavor(folder) {
+    if (!explorer.flavors.includes(folder) || folder === runFlavor.picked) return;
+    byId("run-flavor").value = folder;
+    runFlavor.picked = folder;
+    clearConfirm();
+    character.seq += 1;
+    character.asked = null;
+    character.entries = [];
+    character.flavor = null;
+    character.binds = null;
+    character.macros = null;
+    character.note = "";
+    byId("char-picker").replaceChildren();
+    byId("char-header").replaceChildren();
+    byId("char-gear").replaceChildren();
+    clearDressing();
+    byId("char-keys").replaceChildren();
+    byId("char-macros").replaceChildren();
+    charSay("", false);
+    if (tabShown === "character") loadCharacters();
   }
 
   byId("char-picker").addEventListener("change", () => {
@@ -1276,7 +1440,9 @@
     charSay("Reading the gear, keys and macros of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
-    if (character.flavor) params.flavor = character.flavor;
+    // The flavor the list read, else (every flavor listed) the row's own.
+    const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
+    if (flavor) params.flavor = flavor;
     for (const load of [loadGear, loadKeys, loadMacros]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -1999,7 +2165,7 @@
     let reply;
     let result;
     try {
-      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit" });
+      reply = await fetch(api("/api/looks-page"), { cache: "no-store", credentials: "omit", headers: keyed() });
       result = await reply.json();
     } catch (error) {
       return { error: "The request failed: " + error };
@@ -2059,21 +2225,344 @@
 
   byId("looks-write").addEventListener("click", () => writeLooks());
 
+  // ─── the account hub (M17-01, §19 CW-1) ───
+  // The home tab: one row per character folder in every flavor, from one
+  // run of `char list --summary --json`, which reads every flavor folder
+  // whatever the header's flavor says. Every value, and every word about a
+  // folder without a lab record (`advice`, `fix_command`), is the report's;
+  // this script sorts, filters and lays the rows out, and says "not
+  // recorded" for a value the record leaves out (the report's reason is the
+  // cell's title). A recorded row opens the Character tab on that
+  // character. Nothing here edits anything.
+
+  const hub = {
+    asked: null, // the one `char list --summary` run; asked again after a failure
+    report: null, // its CharSummaryReport
+    note: "", // what the run said on stderr when it exited with an error
+    sort: { key: "saved", descending: true },
+  };
+  const NOT_RECORDED = "not recorded";
+
+  function hubSay(text, isError) {
+    const node = byId("hub-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  const hubNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const hubStr = (v) => (typeof v === "string" && v !== "" ? v : null);
+
+  function hubClass(row) {
+    if (hubStr(row.class_name)) return row.class_name;
+    if (hubStr(row.class_file)) return row.class_file;
+    return hubNum(row.class_id) !== null ? "class " + row.class_id : null;
+  }
+
+  function hubNamed(name, id, word) {
+    if (hubStr(name)) return name;
+    return hubNum(id) !== null ? word + " " + id : null;
+  }
+
+  function hubProfession(p) {
+    if (!p || typeof p !== "object") return "";
+    const name = hubNamed(p.name, p.skill_line, "skill line") || "skill line " + NOT_RECORDED;
+    const rank = hubNum(p.rank) === null ? NOT_RECORDED : String(p.rank);
+    return name + " " + rank + (hubNum(p.max_rank) === null ? "" : "/" + p.max_rank);
+  }
+
+  function hubProfessions(row) {
+    if (!Array.isArray(row.professions)) return null;
+    return row.professions.length ? row.professions.map(hubProfession).join(", ") : "none";
+  }
+
+  // The columns: what each shows (null: not recorded, `why` gives the
+  // report's reason) and the value it sorts by (null sorts last).
+  const HUB_COLUMNS = [
+    { key: "name", label: "Character", value: (r) => r.label },
+    { key: "realm", label: "Realm folder", value: (r) => r.realm_folder },
+    { key: "flavor", label: "Flavor", value: (r) => hubStr(r.flavor) || "" },
+    { key: "level", label: "Level", value: (r) => hubNum(r.level), why: (r) => r.level_absent },
+    { key: "class", label: "Class", value: hubClass, why: (r) => r.class_absent },
+    { key: "race", label: "Race", value: (r) => hubNamed(r.race_name, r.race_id, "race"), why: (r) => r.race_absent },
+    { key: "spec", label: "Spec", value: (r) => hubNamed(r.spec_name, r.spec_id, "spec"), why: (r) => r.spec_absent },
+    {
+      key: "ilvl", label: "Item level", value: (r) => hubNum(r.item_level), why: (r) => r.item_level_absent,
+      text: (v) => v.toFixed(1), title: (v) => "equipped average, rounded to one decimal; exact: " + String(v),
+    },
+    { key: "professions", label: "Professions", value: hubProfessions, why: (r) => r.professions_absent },
+    { key: "saved", label: "Last logout or /reload", value: (r) => hubNum(r.mtime_ns), text: localTime },
+  ];
+
+  const recorded = (row) => row.state === "recorded";
+
+  function loadHub() {
+    if (!hub.asked) {
+      const asked = (async () => {
+        hubSay("Reading every character's lab-addon file…", false);
+        const reply = await runJson(["char", "list"], { summary: true }, true, true);
+        const report = reply.data;
+        if (!report || !Array.isArray(report.rows)) {
+          hub.asked = null;
+          hubSay(reply.error ? shown(reply.error) : "wowlab char list printed something this page does not know.", true);
+          return;
+        }
+        hub.report = {
+          rows: report.rows.filter(
+            (r) => r && typeof r === "object" && typeof r.label === "string" && typeof r.account === "string" &&
+              typeof r.realm_folder === "string",
+          ),
+        };
+        hub.note = reply.error ? shown(reply.error) : "";
+        fillHubFilters();
+        drawHub();
+      })();
+      hub.asked = asked;
+    }
+    return hub.asked;
+  }
+
+  function hubOption(select, value, text) {
+    const option = make("option", text);
+    option.value = value;
+    select.appendChild(option);
+  }
+
+  // The filters list only what the rows hold: each flavor with a row, and
+  // each class a row names, plus "not recorded" when a row names none.
+  function fillHubFilters() {
+    const rows = hub.report.rows;
+    const flavors = [...new Set(rows.map((r) => hubStr(r.flavor)).filter(Boolean))];
+    const flavorPicker = byId("hub-flavor");
+    flavorPicker.replaceChildren();
+    hubOption(flavorPicker, "", "All");
+    for (const folder of flavors) hubOption(flavorPicker, "f:" + folder, visible(folder));
+    byId("hub-flavor-box").hidden = flavors.length < 2;
+    const classPicker = byId("hub-class");
+    classPicker.replaceChildren();
+    hubOption(classPicker, "", "All");
+    const classes = [...new Set(rows.map(hubClass).filter((c) => c !== null))].sort();
+    for (const name of classes) hubOption(classPicker, "c:" + name, visible(name));
+    if (rows.some((r) => hubClass(r) === null)) hubOption(classPicker, "none", NOT_RECORDED);
+  }
+
+  function hubShown() {
+    const flavor = byId("hub-flavor").value;
+    const klass = byId("hub-class").value;
+    return hub.report.rows.filter((r) => {
+      if (flavor && "f:" + hubStr(r.flavor) !== flavor) return false;
+      if (klass === "none") return hubClass(r) === null;
+      return !klass || "c:" + hubClass(r) === klass;
+    });
+  }
+
+  // Sorted by the chosen column; a value not recorded sorts last either
+  // way, and a tie goes by the folder name.
+  function hubSorted(rows) {
+    const column = HUB_COLUMNS.find((c) => c.key === hub.sort.key) || HUB_COLUMNS[0];
+    const key = (r, c) => {
+      const v = recorded(r) || c.key === "name" || c.key === "realm" || c.key === "flavor" ? c.value(r) : null;
+      return typeof v === "string" ? v.toLowerCase() : v;
+    };
+    const order = hub.sort.descending ? -1 : 1;
+    const compare = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+    return rows.slice().sort((a, b) => {
+      const x = key(a, column);
+      const y = key(b, column);
+      if (x !== y) {
+        if (x === null) return 1;
+        if (y === null) return -1;
+        const by = compare(x, y);
+        if (by) return by * order;
+      }
+      return compare(key(a, HUB_COLUMNS[0]), key(b, HUB_COLUMNS[0]));
+    });
+  }
+
+  function sortWords() {
+    const column = HUB_COLUMNS.find((c) => c.key === hub.sort.key) || HUB_COLUMNS[0];
+    return column.label.toLowerCase() + (hub.sort.descending ? ", descending" : ", ascending");
+  }
+
+  // The header: a sort button per column. The sorted column says so as
+  // `aria-sort` (set as a property) and with an arrow the eye sees.
+  function hubHead() {
+    const head = make("thead");
+    const tr = make("tr");
+    for (const column of HUB_COLUMNS) {
+      const th = make("th");
+      th.scope = "col";
+      const on = column.key === hub.sort.key;
+      th.ariaSort = on ? (hub.sort.descending ? "descending" : "ascending") : null;
+      const button = make("button", column.label);
+      button.type = "button";
+      button.className = "hub-sort";
+      button.title = "Sort by " + column.label.toLowerCase();
+      if (on) {
+        const mark = make("span", hub.sort.descending ? " ▼" : " ▲");
+        mark.ariaHidden = "true";
+        button.appendChild(mark);
+      }
+      button.addEventListener("click", () => {
+        if (hub.sort.key === column.key) hub.sort.descending = !hub.sort.descending;
+        else hub.sort = { key: column.key, descending: column.key === "saved" };
+        drawHub(column.key);
+      });
+      th.appendChild(button);
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    return head;
+  }
+
+  // One cell: the value, or "not recorded" with the report's reason as its title.
+  function hubCell(column, row) {
+    const td = make("td");
+    const value = column.value(row);
+    if (value === null || value === undefined) {
+      td.textContent = NOT_RECORDED;
+      td.className = "hub-none";
+      const why = column.why ? column.why(row) : null;
+      if (typeof why === "string" && why) td.title = shown(why);
+    } else {
+      td.textContent = column.text ? column.text(value) : visible(String(value));
+      if (column.title) td.title = column.title(value);
+    }
+    return td;
+  }
+
+  // A folder with no lab record, or a file that could not be read: the
+  // report's words across the columns after the folders.
+  function hubSpan(row) {
+    const td = make("td");
+    td.colSpan = HUB_COLUMNS.length - 3;
+    td.className = "hub-advice";
+    if (row.state === "no_lab_record") {
+      td.appendChild(make("span", "No lab record: " + (hubStr(row.advice) ? visible(row.advice) : "")));
+      if (hubStr(row.fix_command)) {
+        td.appendChild(make("span", " "));
+        td.appendChild(make("code", visible(row.fix_command)));
+        td.appendChild(make("span", " "));
+        td.appendChild(copyButton(row.fix_command, "Copy " + row.fix_command));
+      }
+    } else {
+      td.textContent = "Not read: " + (hubStr(row.error) ? shown(row.error) : "no reason given");
+    }
+    return td;
+  }
+
+  function hubRow(row) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    if (!recorded(row)) {
+      tr.classList.add("hub-row-bare");
+      for (const column of HUB_COLUMNS.slice(0, 3)) tr.appendChild(hubCell(column, row));
+      tr.appendChild(hubSpan(row));
+      return tr;
+    }
+    // The name is a button, so a keyboard reaches the row; a click anywhere
+    // on the row opens the character too.
+    const name = make("td");
+    const open = make("button", visible(row.label));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Open in the Character tab";
+    name.appendChild(open);
+    tr.appendChild(name);
+    for (const column of HUB_COLUMNS.slice(1)) tr.appendChild(hubCell(column, row));
+    tr.addEventListener("click", () => openCharacter(row));
+    return tr;
+  }
+
+  // Draws the table; `focusKey`, when given, puts focus back on that
+  // column's sort button, which the redraw replaced.
+  function drawHub(focusKey) {
+    const box = byId("hub-table");
+    const all = hub.report.rows.length;
+    if (!all) {
+      box.replaceChildren();
+      hubSay(hub.note || "wowlab char list found no character folder. Run wowlab char list in a terminal for what to do.", Boolean(hub.note));
+      return;
+    }
+    const rows = hubShown();
+    const table = make("table");
+    table.className = "char-table hub";
+    const caption = make("caption", "Characters, sorted by " + sortWords());
+    caption.className = "unseen";
+    table.appendChild(caption);
+    table.appendChild(hubHead());
+    const body = make("tbody");
+    for (const row of hubSorted(rows)) body.appendChild(hubRow(row));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    if (focusKey) {
+      const at = HUB_COLUMNS.findIndex((c) => c.key === focusKey);
+      const button = table.querySelectorAll("button.hub-sort")[at];
+      if (button) button.focus();
+    }
+    const counted = rows.length === all
+      ? (all === 1 ? "1 character folder." : all + " character folders.")
+      : "Showing " + rows.length + " of " + all + " character folders.";
+    hubSay(hub.note ? counted + " " + hub.note : counted, Boolean(hub.note));
+  }
+
+  byId("hub-flavor").addEventListener("change", () => {
+    if (hub.report) drawHub();
+  });
+  byId("hub-class").addEventListener("change", () => {
+    if (hub.report) drawHub();
+  });
+
+  // Opens the Character tab on `row`: the header's flavor moves to the
+  // row's (with several flavors), and the picker takes that character once
+  // its list is read. Focus goes to the picker, which names it. When the
+  // tab's list does not hold that character (the header could not move to
+  // its flavor), the status says so; no other character stands in for it.
+  async function openCharacter(row) {
+    await runFlavor.ready;
+    const flavor = hubStr(row.flavor);
+    const want = { flavor: flavor, account: row.account, realm_folder: row.realm_folder, label: row.label };
+    character.want = want;
+    if (flavor && runFlavor.picked && flavor !== runFlavor.picked) switchRunFlavor(flavor);
+    showTab("character");
+    await loadCharacters();
+    character.want = null;
+    const at = character.entries.findIndex((e) => readable(e) && isWanted(e, want));
+    if (at < 0) {
+      // A list that could not be read has said so already.
+      if (character.asked) {
+        character.note =
+          visible(String(row.label)) + (flavor ? " (" + visible(flavor) + ")" : "") +
+          " is not in this tab's list of characters, so it was not opened: the tab is reading another flavor.";
+        charNote();
+      }
+    } else if (byId("char-picker").value !== String(at)) {
+      // The list was read before: pick the character in it.
+      byId("char-picker").value = String(at);
+      pickCharacter(character.entries[at]);
+    }
+    byId("char-picker").focus();
+  }
+
   // ─── tabs ───
 
   function showTab(name) {
-    for (const which of ["explorer", "gaps", "commands", "character", "looks"]) {
+    tabShown = name;
+    for (const which of TABS) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
       byId(which + "-view").hidden = !on;
     }
+    if (name === "account") loadHub();
     if (name === "gaps") loadGaps();
     if (name === "character") loadCharacters();
   }
+  // The tabs in their order; the first is shown when the page opens.
+  const TABS = ["account", "character", "explorer", "gaps", "commands", "looks"];
+  byId("tab-account").addEventListener("click", () => showTab("account"));
+  byId("tab-character").addEventListener("click", () => showTab("character"));
   byId("tab-explorer").addEventListener("click", () => showTab("explorer"));
   byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
-  byId("tab-character").addEventListener("click", () => showTab("character"));
   byId("tab-looks").addEventListener("click", () => showTab("looks"));
 
   // ─── the command list ───
@@ -2256,7 +2745,7 @@
         empty.input.focus();
         return;
       }
-      body = { command: command.path, params: collect() };
+      body = { command: command.path, params: withFlavor(command.path, collect()) };
     }
     clearConfirm();
     const seq = ++runSeq;
@@ -2271,7 +2760,7 @@
         method: "POST",
         cache: "no-store",
         credentials: "omit",
-        headers: { "Content-Type": "application/json" },
+        headers: keyed({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
       const result = await reply.json();
@@ -2293,7 +2782,7 @@
       say(outcome ? outcome.text : "", Boolean(outcome && outcome.alert));
       // A field changed while the plan ran: the form no longer says what was
       // planned, so nothing is offered until the plan is shown again.
-      if (stage === "plan" && JSON.stringify(collect()) === JSON.stringify(body.params)) {
+      if (stage === "plan" && JSON.stringify(withFlavor(command.path, collect())) === JSON.stringify(body.params)) {
         showOffer(result.confirm, command, body.params);
       } else if (stage === "plan") {
         confirmSay("A field changed while the plan ran: show the plan again to be offered Confirm.");
@@ -2314,62 +2803,22 @@
     }
   }
 
-  // The boot exchange: the one-time key from the opened URL for the session
-  // key. True when the page holds a session key afterwards.
-  async function start() {
-    if (token) return true;
-    if (!boot) {
-      const none = "This page was opened without its key: stop wowlab ui with Ctrl-C and start it again.";
-      say(none, true);
-      explorerSay(none, true);
-      return false;
-    }
-    let reply;
-    try {
-      reply = await fetch("/api/session?boot=" + encodeURIComponent(boot), {
-        method: "POST",
-        cache: "no-store",
-        credentials: "omit",
-      });
-    } catch (error) {
-      say("The server could not be reached: " + error, true);
-      explorerSay("The server could not be reached: " + error, true);
-      return false;
-    }
-    let data = null;
-    try {
-      data = await reply.json();
-    } catch (error) {
-      data = null;
-    }
-    if (!reply.ok || !data || typeof data.token !== "string" || !data.token) {
-      const refused =
-        data && data.error === "boot_spent"
-          ? "This link was already used, so this page cannot start. If you did not open it " +
-            "twice, something else on this computer may have: stop wowlab ui with Ctrl-C and " +
-            "start it again."
-          : "The server refused to start this page (" + reply.status + ").";
-      say(refused, true);
-      explorerSay(refused, true);
-      return false;
-    }
-    token = data.token;
-    return true;
-  }
-
   async function load() {
-    if (!(await start())) return;
+    // With no key the server refuses, and the 403 below says what to do.
     let reply;
     try {
-      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit" });
+      reply = await fetch(api("/api/commands"), { cache: "no-store", credentials: "omit", headers: keyed() });
     } catch (error) {
       say("The server could not be reached: " + error, true);
       explorerSay("The server could not be reached: " + error, true);
+      hubSay("The server could not be reached: " + error, true);
       return;
     }
     if (!reply.ok) {
-      say("The server refused the request (" + reply.status + ").", true);
-      explorerSay("The server refused the request (" + reply.status + ").", true);
+      const refused = reply.status === 403 ? NO_SESSION : "The server refused the request (" + reply.status + ").";
+      say(refused, true);
+      explorerSay(refused, true);
+      hubSay(refused, true);
       return;
     }
     const data = await reply.json();
@@ -2390,6 +2839,8 @@
       }
       list.appendChild(button);
     }
+    // The home tab first, then the whole install's tree, one run at a time.
+    await loadHub();
     await loadTree();
   }
 
@@ -2495,7 +2946,8 @@
   }
 
   // Whether a failed run printed only its error report on stdout: an object
-  // with exactly `kind`, `message` and `exit_code`, the run's own exit code.
+  // with exactly `kind`, `message` and `exit_code`, the run's own exit code,
+  // and optionally `notes`, an array (the lines after the error).
   function errorReport(result) {
     if (result.exit_code === 0 || typeof result.stdout !== "string") return false;
     let value;
@@ -2506,7 +2958,8 @@
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const keys = Object.keys(value).sort().join(",");
-    return keys === "exit_code,kind,message" && value.exit_code === result.exit_code;
+    const notes = keys === "exit_code,kind,message,notes" && Array.isArray(value.notes);
+    return (keys === "exit_code,kind,message" || notes) && value.exit_code === result.exit_code;
   }
 
   // Shows one run's stdout under "Details": a tree when it is one JSON

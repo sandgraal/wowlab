@@ -115,7 +115,7 @@ function charView() {
 const plainFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (body && String(url).startsWith("/api/run?")) {
+  if (body && String(url).startsWith("/api/run")) {
     for (const held of scenario.held || []) {
       if (canon(held.command) === canon(body.command) && canon(held.params) === canon(body.params || {})) {
         requests.push({ url: String(url), body: body });
@@ -303,11 +303,11 @@ def _tab_requests(out: dict[str, Any], start: int) -> list[dict[str, Any]]:
 # ─── the tab ─────────────────────────────────────────────────────────────────
 
 
-def test_the_character_tab_is_the_fourth_and_starts_hidden(server: Any) -> None:
+def test_the_character_tab_is_the_second_and_starts_hidden(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
-    # The Looks tab (M14-04) comes after it.
-    assert tabs[:4] == ["explorer", "gaps", "commands", "character"]
+    # After the Account tab, the home tab, since M17-01 (it was the fourth).
+    assert tabs[:2] == ["account", "character"]
     assert re.search(r'<section id="character-view"[^>]*\bhidden\b', body)
     for name in ("char-picker", "char-status", "char-header", "char-gear", "char-panels"):
         assert f'id="{name}"' in body, name
@@ -489,7 +489,7 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
     # anyway (the command list, the explorer's tree) or one of the four.
     for request in out["requests"]:
         if request["body"] is None:
-            assert request["url"].startswith("/api/commands?"), request
+            assert request["url"].startswith("/api/commands"), request
         else:
             assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
     # All four are read commands the server offers, not excluded and not a

@@ -61,7 +61,7 @@ OVERLAYS = ("", "macos-70450", "macos-70058")
 runner = CliRunner()
 
 # Environment variables the player sets, named in help on purpose.
-ENV_NAMES = frozenset({"WOWLAB_WOW_ROOT", "NO_COLOR"})
+ENV_NAMES = frozenset({"WOWLAB_WOW_ROOT", "WOWLAB_FLAVOR", "NO_COLOR"})
 
 
 # ─── the patterns ────────────────────────────────────────────────────────────
@@ -373,10 +373,13 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["addons", "check", "--notes"],
         ["log", "tail"],
         ["char", "list"],
+        ["char", "list", "--summary"],
+        ["char", "list", "--summary", "--notes"],
         ["char", "show"],
         ["char", "gear"],
         ["char", "binds"],
         ["char", "macros"],
+        ["char", "history"],
         *[
             [*cmd, "--character", c]
             for c in chars
@@ -385,6 +388,7 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
                 ["char", "gear"],
                 ["char", "binds"],
                 ["char", "macros"],
+                ["char", "history"],
                 ["binds", "list"],
                 ["macros", "list"],
                 ["macros", "check"],

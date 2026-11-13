@@ -481,8 +481,9 @@ def interface_version(version: str | None) -> int:
     the version must be 1 to `MAX_VERSION_DIGITS` ASCII digits."""
     if version is None:
         raise AddonVersionError(
-            "the flavor has no version in .build.info, so the TOC's ## Interface: cannot be "
-            "filled; nothing was changed"
+            # True whichever way the version is unknown (M16-121).
+            "the flavor's version is unknown, so the TOC's ## Interface: cannot be filled; "
+            "nothing was changed"
         )
     parts = version.split(".")
     if len(parts) < 3 or not all(

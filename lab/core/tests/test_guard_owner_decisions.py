@@ -1922,8 +1922,10 @@ NOT_A_TEMP = (
     "unc-path",
     "through-a-link",
 )
-# These fail a write rule on their spelling alone, so they are listed in
-# `temps_left` without being looked up (clarified 2026-09-22).
+# These fail a write rule on their spelling alone, so they are never looked
+# up (clarified 2026-09-22). They are not plain flavor-relative names, so a
+# record naming one is damaged: the next enter refuses it instead of listing
+# it in `temps_left` (§6.10 as amended 2026-11-11, (e1); the owner's "A").
 NEVER_LOOKED_UP = frozenset(
     {
         "outside-the-allowlist",
@@ -1976,10 +1978,32 @@ class LookupSpy:
         return call
 
 
+def _not_a_temp_param(case: str) -> Any:
+    """The case as a parameter; a case (e1) amended carries the marker
+    M16-90 deletes."""
+    if case in NEVER_LOOKED_UP:
+        return pytest.param(
+            case,
+            id=f"constructed-{case}",
+        )
+    return pytest.param(case, id=f"constructed-{case}")
+
+
+def _damaged_record_file(store: Path, left: str) -> Path:
+    """The one journal record the forgery rewrote to name `left`."""
+    named = [
+        p
+        for p in journal_files(store)
+        if p.suffix == ".json" and any(s in p.read_bytes() for s in spellings(left))
+    ]
+    assert len(named) == 1, f"one record names the forged temp {left!r}: {named}"
+    return named[0]
+
+
 @pytest.mark.parametrize(
     "route", [pytest.param(r, id=f"constructed-{r}") for r in ("transaction", "undo")]
 )
-@pytest.mark.parametrize("case", [pytest.param(c, id=f"constructed-{c}") for c in NOT_A_TEMP])
+@pytest.mark.parametrize("case", [_not_a_temp_param(c) for c in NOT_A_TEMP])
 def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlist(
     guard: Any,
     tmp_path: Path,
@@ -1997,10 +2021,22 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     a directory, another name, a path outside the allowlist or the install,
     through a link, or forged to point elsewhere) is left alone and listed in
     `temps_left`, and the transaction carries on. The other leftover, a
-    genuine one, is removed in the same enter."""
+    genuine one, is removed in the same enter.
+
+    Amended 2026-11-11 (§6.10 (e1), the owner's "A"): a record naming a
+    path that is not a plain flavor-relative name (the `NEVER_LOOKED_UP`
+    cases: outside the allowlist, at the install root, under `Data/`, in
+    another flavor folder, outside the install, absolute, UNC) is damaged.
+    Both routes raise a plain `GuardError` naming that record, the forged
+    path is never looked up, and the install, the journal and the snapshot
+    store are left as they were: the genuine leftover is not removed
+    either."""
     store = tmp_path / "store"
     lo = leave_temps(children, tmp_path, flavor, store)
     left = _not_a_temp(case, lo, world, install_root, flavor, store)
+    if case in NEVER_LOOKED_UP:
+        _assert_refused_as_damaged(guard, world, flavor, store, left, route)
+        return
     expected = content(world)
     del expected[G.flavor_key(lo.a_rel)]
     watched: set[str] = set()
@@ -2027,6 +2063,59 @@ def test_constructed_cleanup_removes_only_regular_temp_files_inside_the_allowlis
     assert left in record.temps_left, (left, record.temps_left)
     assert left not in record.temps_removed
     assert content(world) == expected, "only the genuine leftover is gone"
+
+
+def _assert_refused_as_damaged(
+    guard: Any, world: Path, flavor: Flavor, store: Path, left: str, route: str
+) -> None:
+    """§6.10 (e1): the record naming `left` is damaged. `route` raises a
+    plain `GuardError` naming it, before any lookup of `left`, any write,
+    snapshot or journal record: no `SnapshotStore.create` call, and the
+    install and the store unchanged down to mtime and mode."""
+    damaged = _damaged_record_file(store, left)
+    watched: set[str] = set()
+    if not left.startswith("//"):
+        for base in (flavor.path, flavor.path.resolve()):
+            watched.add(os.path.normpath(base / left))
+    spy = LookupSpy(watched, "constructed-server", [world, world.resolve()])
+    # mtime and mode too, so a write that was made and undone still shows.
+    install_before, store_before = strict_state(world), strict_state(store)
+    journal_before = sorted(p.name for p in journal_files(store))
+    wrote: list[str] = []
+    snapshots: list[str] = []
+    real_create = SnapshotStore.create
+
+    def create_spy(self: SnapshotStore, *args: Any, **kwargs: Any) -> Any:
+        snapshots.append(f"SnapshotStore.create{args!r}")
+        return real_create(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(SnapshotStore, "create", create_spy)
+        spy.arm(patched)
+        if route == "undo":
+            exc = attempt(lambda: guard.undo(store=store))
+        else:
+
+            def next_change() -> None:
+                with guard.transaction(flavor, label="next", store=store) as tx:
+                    wrote.append("body")
+                    tx.write(FONT, SECOND_FONT)
+
+            exc = attempt(next_change)
+    assert spy.seen == [], "a path that fails a write rule is never looked up"
+    assert exc is not None, (
+        f"{route}: a record naming {left!r} is damaged (§6.10 (e1)); the gate carried on"
+    )
+    assert_plain_guard_error(guard, exc, route)
+    assert not isinstance(exc, guard.ChangedSinceSnapshotError), f"{route}: {exc}"
+    text = error_text(exc)
+    assert damaged.name in text, f"the refusal names the damaged record {damaged.name}: {text}"
+    assert "damaged" in text, f"the refusal says the record is damaged: {text}"
+    assert wrote == [], "the transaction body never ran"
+    assert snapshots == [], "the refusal comes before any snapshot"
+    assert strict_state(world) == install_before, "the refusal touched the install"
+    assert strict_state(store) == store_before, "the refusal touched the journal or the store"
+    assert sorted(p.name for p in journal_files(store)) == journal_before, "nothing was journaled"
 
 
 def test_constructed_cleanup_rechecks_the_directory_chain_around_the_unlink(

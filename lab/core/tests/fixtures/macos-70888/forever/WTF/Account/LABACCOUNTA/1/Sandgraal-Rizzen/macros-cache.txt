@@ -1,0 +1,114 @@
+VER 3 010000000000001D " " "136220"
+#showtooltip Summon Succubus
+/cast Summon Succubus
+END
+VER 3 0100000000000002 " " "134400"
+#showtooltip Corruption
+/cast [@mouseover,harm,nodead][harm,nodead] Corruption
+END
+VER 3 0100000000000003 " " "134400"
+#showtooltip Bane of Agony
+/cast [@mouseover,harm,nodead][harm,nodead] Bane of Agony
+END
+VER 3 0100000000000004 " " "134400"
+#showtooltip Fear
+/cast [@mouseover,harm,nodead][harm,nodead] Fear
+END
+VER 3 0100000000000005 " " "134400"
+#showtooltip Immolate
+/cast [@mouseover,harm,nodead][harm,nodead] Immolate
+END
+VER 3 0100000000000006 " " "134400"
+#showtooltip Life Tap
+/cast Life Tap
+END
+VER 3 0100000000000007 " " "134400"
+#showtooltip Curse of Weakness
+/cast [@mouseover,harm,nodead][harm,nodead] Curse of Weakness
+END
+VER 3 0100000000000008 " " "134400"
+#showtooltip Drain Soul
+/cast [@mouseover,harm,nodead][harm,nodead] Drain Soul
+END
+VER 3 010000000000000C " " "134400"
+#showtooltip Summon Voidwalker
+/cast Summon Voidwalker
+END
+VER 3 010000000000000D " " "134400"
+#showtooltip Health Funnel
+/cast Health Funnel
+END
+VER 3 010000000000000E " " "136169"
+#showtooltip Drain Life
+/cast [@mouseover,harm,nodead][harm,nodead] Drain Life
+END
+VER 3 010000000000000F " " "136147"
+#showtooltip Howl of Terror
+/cast Howl of Terror
+END
+VER 3 0100000000000010 " " "136145"
+#showtooltip Death Coil
+/cast [@mouseover,harm,nodead][harm,nodead] Death Coil
+END
+VER 3 0100000000000011 " " "136135"
+#showtooltip Banish
+/cast [@mouseover,harm,nodead][harm,nodead] Banish
+END
+VER 3 0100000000000012 " " "136121"
+#showtooltip Shadow Ward
+/use Shadow Ward
+END
+VER 3 0100000000000013 " " "136225"
+#showtooltip Curse of Recklessness
+/cast [@mouseover,harm,nodead][harm,nodead] Curse of Recklessness
+END
+VER 3 0100000000000014 " " "135827"
+#showtooltip Searing Pain
+/cast [@mouseover,harm,nodead][harm,nodead] Searing Pain
+END
+VER 3 0100000000000015 " " "136130"
+#showtooltip Curse of the Elements
+/cast [@mouseover,harm,nodead][harm,nodead] Curse of the Elements
+END
+VER 3 0100000000000016 " " "136191"
+#showtooltip Shadowburn
+/cast [@mouseover,harm,nodead][harm,nodead] Shadowburn
+END
+VER 3 0100000000000017 " " "136148"
+#showtooltip Unending Breath
+/cast [@mouseover,help,nodead][@target,help,nodead][@player] Unending Breath
+END
+VER 3 0100000000000018 " " "136210"
+#showtooltip Create Soulstone
+/cast Create Soulstone
+END
+VER 3 0100000000000019 " " "136185"
+#showtooltip Demon Armor
+/cast Demon Armor
+END
+VER 3 010000000000001A " " "136186"
+#showtooltip Rain of Fire
+/cast Rain of Fire
+END
+VER 3 010000000000001B " " "136223"
+#showtooltip Ritual of Summoning
+/cast Ritual of Summoning
+END
+VER 3 010000000000001C " " "133741"
+#showtooltip Summon Incubus
+/cast Summon Incubus
+END
+VER 3 0100000000000001 " " "134400"
+#showtooltip Shadow Bolt
+/cast [@mouseover,harm,nodead][harm,nodead] Shadow Bolt
+END
+VER 3 0100000000000020 "aa wowlab two" "134400"
+/kneel
+END
+VER 3 010000000000001E "HonorBound Save" "134400"
+#HonorBound save data. Do not edit or delete this macro: a changed line is ignored and your pledge may be lost.
+#HB3 l=1;s=282;p=43863;u=553;n=392;h=0000000000000000
+END
+VER 3 010000000000001F "zz wowlab one" "134400"
+/dance
+END

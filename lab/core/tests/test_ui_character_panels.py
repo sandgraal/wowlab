@@ -128,7 +128,7 @@ const flight = { now: 0, max: 0, started: [], busy: [] };
 const quickFetch = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (!String(url).startsWith("/api/run?")) return quickFetch(url, opts);
+  if (!String(url).startsWith("/api/run")) return quickFetch(url, opts);
   if (scenario.max_runs && flight.now >= scenario.max_runs) {
     requests.push({ url: String(url), body: body });
     flight.busy.push(body);
@@ -939,7 +939,7 @@ def test_the_panels_request_only_read_commands_cross_capture(
             assert body["params"] in (_gear_params(PICKED), _gear_params(NEWER)), body
     for request in out["requests"]:
         if request["body"] is None:
-            assert request["url"].startswith("/api/commands?"), request
+            assert request["url"].startswith("/api/commands"), request
         else:
             assert tuple(request["body"]["command"]) in READS | {("tree",)}, request
     offered = {tuple(c["path"]): c for c in scenario["commands"]["commands"]}

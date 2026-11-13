@@ -158,7 +158,7 @@ commit is graded. Yours: PR title and body, thread replies, clean rebases,
 `uv.lock` regeneration, `ruff format` output, and prose in comments and
 docstrings. Not yours, however small and whatever prompted it (a thread, a
 red check, a rebase conflict): any other change under `lab/*/src/` or
-`scripts/`, including a `cli.py` docstring (Typer prints it as help text);
+`scripts/`, including a docstring in the `cli/` package (Typer prints it as help text);
 any change under `lab/*/tests/` or `tests/` — new tests, changed or deleted
 assertions, parametrize lists, skip/xfail markers, `conftest.py`, fixtures;
 anything that changes what a check enforces — `pyproject.toml`, `Makefile`,

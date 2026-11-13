@@ -360,6 +360,8 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "store.last_transaction.flavor_folder": REDACT,
     "store.last_transaction.paths_left.path": REDACT,
     "store.last_transaction.paths_left.now": AS_IS,
+    # Journal record ids, as `store.last_transaction.id` (2026-11-11 (a1)).
+    "store.last_transaction.passed_over": REDACT,
     # Store-relative paths: object names and snapshot ids (M16-41).
     "store.exposure.entries": REDACT,
     "problems": REDACT,
@@ -373,6 +375,13 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     # A command line: it holds the caller's --root, a path.
     "next_steps.command": REDACT,
     "next_steps.fix": REDACT,
+    # A failure wowlab cannot work out (ADR-0037): the cause is a closed
+    # literal; the record id, the snapshot id and the command naming it are
+    # redacted like `store.last_transaction.id` and `problems`.
+    "cannot_work_out.cause": AS_IS,
+    "cannot_work_out.record_id": REDACT,
+    "cannot_work_out.snapshot_id": REDACT,
+    "cannot_work_out.command": REDACT,
     # The first run (M13-04) is skipped under --redact (conductor decision,
     # M13-09): no scan, no question, no snapshot. Dropped here as well, so
     # a first-run report can never reach a redacted one.

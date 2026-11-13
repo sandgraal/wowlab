@@ -29,7 +29,7 @@ from pathlib import Path
 
 CORE = Path(__file__).resolve().parents[2]  # lab/core
 PYPROJECT = CORE / "pyproject.toml"
-CLI = CORE / "src" / "wowlab_core" / "cli.py"
+CLI = CORE / "src" / "wowlab_core" / "cli" / "_common.py"
 
 # The first typer release that ships `typer._click` (verified as the
 # docstring says).

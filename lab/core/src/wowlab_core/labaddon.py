@@ -1987,6 +1987,10 @@ class CharacterFile(BaseModel):
     error: str | None = None
     same_as: FsText | None = None
     no_lab_record: FolderFacts | None = None
+    # The flavor folder the row is in, as `wowlab char list` sets it on
+    # every row (M16-114: it lists every flavor of an install that has
+    # several); None from `survey` itself, which reads one flavor.
+    flavor: FsText | None = None
 
     @model_validator(mode="after")
     def _read_or_error(self) -> Self:
@@ -2037,6 +2041,9 @@ class NotLookedAt(BaseModel):
     path: FsText
     reason: str
     account: FsText | None = None
+    # The flavor folder `path` is in, as `wowlab char list` sets it
+    # (M16-114); None from `survey` itself.
+    flavor: FsText | None = None
 
 
 class AllCharacters(BaseModel):

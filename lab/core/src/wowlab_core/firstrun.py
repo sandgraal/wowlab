@@ -281,8 +281,8 @@ def pointing_lines() -> list[str]:
         '      macOS or Linux:  export WOWLAB_WOW_ROOT="<that folder>"',
         '      Windows PowerShell:  $env:WOWLAB_WOW_ROOT = "<that folder>"  (or setx '
         'WOWLAB_WOW_ROOT "<that folder>" to keep it, then open a new terminal)',
-        "  --root wins over WOWLAB_WOW_ROOT. Without either, wowlab looks only where the game "
-        "installs by default.",
+        "  --root wins over WOWLAB_WOW_ROOT. Without either, wowlab looks only in the usual "
+        "install folders.",
     ]
 
 
@@ -325,8 +325,10 @@ def _and(names: Sequence[str]) -> str:
 
 def flavor_label(folder: str, product: str, version: str | None) -> str:
     """A flavor folder with its product code and version, as the scan and the
-    flavor prompt show it."""
-    return f"{folder} ({product or 'no product'}, {version or 'no version in .build.info'})"
+    flavor prompt show it. An unknown version is "version unknown", true
+    whichever way it is unknown (no product, no `.build.info` row for it, a
+    row with a blank version); `doctor`'s flavor lines say which (M16-121)."""
+    return f"{folder} ({product or 'no product'}, {version or 'version unknown'})"
 
 
 def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:

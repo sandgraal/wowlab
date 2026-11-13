@@ -52,6 +52,13 @@ condition is kept.
 | #433 | M16-72 | `snap diff` notes a SavedVariables side over 256 MiB; `--redact` handles `file://` and drive letters | the `snap diff` section; the doctor `--redact` page, if it shows a `file://` example |
 | #437 | M16-76 | `snap export` archive members unpack 0600 | the snapshot/export page, if it describes file modes |
 | #438 | M16-77 | A manifest with non-ASCII digits, or a date that is not its id's, counts as damaged | Snapshots-and-Undo, if it lists why a manifest counts as damaged |
+| #494 | M16-112 | Discovery searches more folders (macOS `~/Games`, `/Volumes/*` last; Windows `<drive>\\Games`) and lists them when no install is found; `--json` errors gain `notes` | Getting-Started; Installing and Troubleshooting; CLI-Reference (regenerate) |
+| #495 | M16-113 | The `wowlab ui` link, a reload and a second tab work until Ctrl-C; the "already used" page is gone | the `wowlab ui` page |
+| #496 | M16-114 | Characters across flavors: `char list` lists every flavor; `WOWLAB_FLAVOR`; the UI's "Runs use flavor" picker ; every command's `--flavor` help names `$WOWLAB_FLAVOR` | Lab-Addon-and-Characters; Command-Reference (`char list`); CLI-Reference (regenerate); the `wowlab ui` page |
+| #498 | M16-90 | A damaged journal record, and an install path with a control or format character, are refused | Snapshots-and-Undo; Installing and Troubleshooting |
+| #502 | M16-109 | `doctor`'s one answer when it cannot work out what a change did, naming a whole snapshot to restore | Snapshots-and-Undo; the doctor page |
+| #504, #510 | M16-118, M16-121 | "version unknown" explained in words (doctor, first run, `db2 --build`, `addon install`); `doctor --json` `game_data.detail` names the case, and `lab_addon.detail` carries the new text | the doctor page; Getting-Started (first run); Command-Reference (`db2`) |
+| #505 | M16-116 | `char list --account X --json`: every flavor listed, with `account_found` | Command-Reference (`char list`) |
 
 ## Merged between the last wiki pass (2026-10-22 09:07) and 2026-11-04
 

@@ -151,6 +151,13 @@ button, select, input, textarea { font: inherit; color: var(--text); }
 }
 .banner p { margin: var(--space-1) 0 0; color: var(--text-muted); font-size: 15px; line-height: 22px; max-width: 46rem; }
 .banner .tabs { align-self: flex-end; }
+/* The flavor every run uses, shown only with several flavors (M16-114). */
+.run-flavor {
+  display: inline-flex; align-items: center; gap: var(--space-2); padding-bottom: var(--space-4);
+  font-family: var(--font-display); font-size: 15px; line-height: 20px; font-weight: 500; letter-spacing: 0.05em;
+  color: var(--brass);
+}
+.run-flavor[hidden] { display: none; }
 .tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .tab {
   padding: var(--space-2) var(--space-4) calc(var(--space-2) + 2px); cursor: pointer;
@@ -197,7 +204,7 @@ main { padding: var(--space-5) var(--space-6) var(--space-7); }
   color: var(--brass);
 }
 .toolbar label[hidden] { display: none; }
-.toolbar select, .toolbar input, .field input, .field textarea {
+.toolbar select, .toolbar input, .field input, .field textarea, .run-flavor select {
   background: var(--surface-sunken); border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2); min-height: 32px;
   font-family: var(--font-serif); font-size: 15px; line-height: 22px; font-weight: 400; letter-spacing: normal;
@@ -528,6 +535,24 @@ pre:empty { display: none; }
 .macro-findings, .macro-slots { padding-left: var(--space-5); }
 .macro-finding { color: var(--ruin); }
 .macro-clean { margin: var(--space-1) 0; color: var(--text-muted); }
+
+/* ─── the Account tab (M17-01): every character in one table, which
+   scrolls in its own labelled, focusable box on a narrow window ─── */
+#hub-status { margin: 0; color: var(--text-muted); flex-basis: 100%; font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+#hub-status:empty { display: none; }
+#hub-status.error { color: var(--ruin); }
+.hub-table { max-width: 100%; overflow-x: auto; padding: var(--space-3) var(--space-4); }
+.hub-table .char-table th { white-space: nowrap; }
+.hub-sort, .hub-open {
+  padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  font: inherit; letter-spacing: inherit; color: inherit;
+}
+.hub-open { text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.hub-row:not(.hub-row-bare) { cursor: pointer; }
+.hub-row:not(.hub-row-bare):hover { background: var(--hover); }
+.hub-none { color: var(--text-muted); font-style: italic; }
+.hub-advice code { font-family: var(--font-mono); font-size: 14px; unicode-bidi: isolate; overflow-wrap: anywhere; }
+.hub-advice .copy { margin-left: var(--space-2); }
 
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
