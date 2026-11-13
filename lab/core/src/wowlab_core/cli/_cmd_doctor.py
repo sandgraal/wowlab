@@ -2,17 +2,22 @@
 (ADR-0037) and its next steps (M16-111)."""
 
 import hashlib
+import json
 import os
+import re
 import shlex
 import sys
+import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from importlib import metadata
 from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
 from pydantic import Field
 
+import wowlab_core
 from wowlab_core import (
     addoninstall,
     combatlog,
@@ -232,6 +237,35 @@ class NextStep(_Out):
     fix: str | None = None
 
 
+# How the running wowlab is installed (M16-122): `installed`, a copy, as a
+# release installs it; `editable`, an editable install of a source checkout,
+# which runs the checkout's code as it is now; `not_installed`, code run from
+# a folder with no install record for it.
+WowlabInstall = Literal["installed", "editable", "not_installed"]
+
+
+class RunningWowlab(_Out):
+    """The wowlab that is running and where it runs from (M16-122): the
+    version `wowlab --version` prints, read with no network request."""
+
+    version: str
+    # The folder wowlab's code is loaded from.
+    package: str
+    install: WowlabInstall
+    # The folder the text names: the source checkout the code is in, else
+    # the Python environment it is installed in.
+    location: str
+    # The source checkout the code is in (a folder holding
+    # lab/core/pyproject.toml for wowlab-core), and the version that file
+    # gives now; None for an installed copy.
+    checkout: str | None
+    checkout_version: str | None
+    # The source checkout the current folder is in, when it is not
+    # `checkout`, and its version; None otherwise.
+    other_checkout: str | None
+    other_checkout_version: str | None
+
+
 class DoctorReport(_Out):
     """`wowlab doctor --json`."""
 
@@ -239,6 +273,8 @@ class DoctorReport(_Out):
     found_by: str | None
     install_error: str | None
     locations: Locations | None
+    # The wowlab that is running (M16-122).
+    wowlab: RunningWowlab
     flavors: list[DoctorFlavor]
     other_dirs: list[str]
     client: ClientReport | None
@@ -506,6 +542,130 @@ def _store_report() -> StoreReport:
     )
 
 
+# ─── doctor: the wowlab that is running (M16-122) ───────────────────────────
+
+_DIST = "wowlab-core"
+_CHECKOUT_PROJECT = ("lab", "core", "pyproject.toml")
+
+
+def _checkout_version(folder: Path) -> str | None:
+    """The version `folder`'s lab/core/pyproject.toml gives, when `folder` is
+    a wowlab source checkout (that file names the project wowlab-core); None
+    otherwise, and when it cannot be read."""
+    try:
+        data = tomllib.loads(folder.joinpath(*_CHECKOUT_PROJECT).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict) or project.get("name") != _DIST:
+        return None
+    version = project.get("version")
+    return version if isinstance(version, str) else ""
+
+
+def _checkout_of(start: Path) -> tuple[Path, str] | None:
+    """The wowlab source checkout `start` is in (itself or a folder above
+    it), with its version (empty when its pyproject.toml gives none)."""
+    for folder in (start, *start.parents):
+        version = _checkout_version(folder)
+        if version is not None:
+            return folder, version
+    return None
+
+
+def _checkout_holding(package: Path) -> tuple[Path, str] | None:
+    """The source checkout whose own source folder `package` is
+    (`<checkout>/lab/core/src/wowlab_core`), with its version; None for a
+    copy installed anywhere else, a checkout's own environment included."""
+    if len(package.parents) < 4:
+        return None
+    root = package.parents[3]
+    if root.joinpath("lab", "core", "src", package.name) != package:
+        return None
+    version = _checkout_version(root)
+    return (root, version) if version is not None else None
+
+
+_PRE = {"alpha": "a", "a": "a", "beta": "b", "b": "b", "c": "rc", "rc": "rc", "pre": "rc"}
+_PRE_RE = re.compile(r"[-_.]?(alpha|beta|pre|rc|a|b|c)[-_.]?(\d*)")
+_POST_RE = re.compile(r"[-_.]?(post|dev)[-_.]?(\d*)")
+
+
+def _normal_version(v: str) -> str:
+    """`v` in one spelling for the common forms the packaging rules allow:
+    `0.2.0-rc.1` as `0.2rc1`, `V1.0.0` as `1`."""
+    v = v.strip().lower().removeprefix("v")
+    release = re.match(r"\d+(?:\.\d+)*", v)
+    if release is None:
+        return v
+    head = [str(int(p)) for p in release.group().split(".")]
+    while len(head) > 1 and head[-1] == "0":
+        head.pop()
+    rest = v[release.end() :]
+    rest = _PRE_RE.sub(lambda m: _PRE[m.group(1)] + (m.group(2) or "0"), rest, count=1)
+    rest = _POST_RE.sub(lambda m: f".{m.group(1)}{m.group(2) or '0'}", rest)
+    return ".".join(head) + rest
+
+
+def _wowlab_probe() -> tuple[str, Path, str | None, bool, Path, Path]:
+    """What `_running_wowlab` is given on this machine: the version, the
+    package folder, the install record's direct_url.json (None when there
+    is none), whether an install record was found, the current folder and
+    the Python environment's folder. No network request."""
+    package = Path(wowlab_core.__file__).resolve().parent
+    try:
+        dist = metadata.distribution(_DIST)
+    except metadata.PackageNotFoundError:
+        found, direct_url = False, None
+    else:
+        found, direct_url = True, dist.read_text("direct_url.json")
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:  # the current folder was removed
+        cwd = package
+    return wowlab_core.__version__, package, direct_url, found, cwd, Path(sys.prefix)
+
+
+def _editable(direct_url: str | None) -> bool:
+    """Whether an install record's direct_url.json marks an editable install."""
+    if direct_url is None:
+        return False
+    try:
+        data = json.loads(direct_url)
+    except ValueError:
+        return False
+    info = data.get("dir_info") if isinstance(data, dict) else None
+    return isinstance(info, dict) and info.get("editable") is True
+
+
+def _running_wowlab(
+    version: str, package: Path, direct_url: str | None, found: bool, cwd: Path, prefix: Path
+) -> RunningWowlab:
+    """The running wowlab, from what `_wowlab_probe` read (M16-122)."""
+    kind: WowlabInstall = (
+        "not_installed" if not found else "editable" if _editable(direct_url) else "installed"
+    )
+    mine = _checkout_holding(package)
+    here = _checkout_of(cwd)
+    other = here if here is not None and (mine is None or here[0] != mine[0]) else None
+    if mine is not None:
+        location = mine[0]
+    elif package.is_relative_to(prefix):
+        location = prefix
+    else:
+        location = package.parent
+    return RunningWowlab(
+        version=version,
+        package=str(package),
+        install=kind,
+        location=str(location),
+        checkout=str(mine[0]) if mine is not None else None,
+        checkout_version=mine[1] if mine is not None else None,
+        other_checkout=str(other[0]) if other is not None else None,
+        other_checkout_version=other[1] if other is not None else None,
+    )
+
+
 def _doctor(
     root: Path | None,
     check_builds: bool,
@@ -628,6 +788,7 @@ def _doctor(
         found_by=found_by,
         install_error=install_error,
         locations=locations,
+        wowlab=_running_wowlab(*_wowlab_probe()),
         flavors=flavors,
         other_dirs=list(inst.other_dirs) if inst is not None else [],
         client=client,
@@ -1389,6 +1550,49 @@ def _unknown_version(product: str | None, matching_rows: int) -> str:
     )
 
 
+def _run_checkout(checkout: str) -> str:
+    """The command that runs `doctor` from the source checkout `checkout`,
+    quoted for this machine's shell."""
+    argv = ["uv", "run", "--project", checkout, "wowlab", "doctor"]
+    return _powershell_join(argv) if _shell() == "powershell" else shlex.join(argv)
+
+
+def _print_wowlab(w: RunningWowlab) -> None:
+    """Which wowlab is running and where from (M16-122), then a line for a
+    checkout whose version differs from it, and one for a checkout the
+    current folder is in that it does not run from."""
+    if w.install == "editable":
+        where = f"an editable install of the source checkout at {w.checkout or w.location}"
+    elif w.install == "installed":
+        where = f"installed in {w.location}"
+    else:
+        where = f"run from {w.location}, with no install record"
+    # One line, as the install's and the store's: a path is not wrapped.
+    _say(f"wowlab: version {w.version}, {where}")
+    if (
+        w.install != "installed"
+        and w.checkout is not None
+        and w.checkout_version
+        and _normal_version(w.checkout_version) != _normal_version(w.version)
+    ):
+        command = _run_checkout(w.checkout)
+        _say_prose(
+            f"  The checkout is at version {w.checkout_version} now, but this run reports "
+            f"{w.version}: to run the checkout as it is, run `{command}`.",
+            hang="    ",
+            keep=[command],
+        )
+    if w.other_checkout is not None:
+        command = _run_checkout(w.other_checkout)
+        version = f" (version {w.other_checkout_version})" if w.other_checkout_version else ""
+        _say_prose(
+            f"  The current folder is in a wowlab source checkout{version}, which this "
+            f"wowlab does not run from: to run that checkout, run `{command}`.",
+            hang="    ",
+            keep=[command],
+        )
+
+
 def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
     """The doctor report as text, its problems and then its next steps
     last (M16-37), then its standing notes behind --notes (`_say_notes`). The first run's section, said only
@@ -1470,6 +1674,7 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 what = p.name or (p.exe.name if p.exe else "?")
                 where = f" in {p.flavor_folder}" if p.flavor_folder else ""
                 _say(f"  pid {p.pid}: {p.state.value} {what}{where}")
+    _print_wowlab(report.wowlab)
     store = report.store
     _say(f"Snapshot store: {store.path}" + ("" if store.exists else " (not created yet)"))
     damaged = f"{len(store.damaged)} damaged" if store.damaged else "none damaged"

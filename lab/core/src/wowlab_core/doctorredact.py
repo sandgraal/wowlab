@@ -313,6 +313,17 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "locations.searched": REDACT,
     "locations.could_not_check.location": REDACT,
     "locations.could_not_check.reason": REDACT,
+    # The wowlab that is running (M16-122): how it is installed is a closed
+    # literal; its folders can name the home folder or the login, and the
+    # versions are text.
+    "wowlab.version": REDACT,
+    "wowlab.package": REDACT,
+    "wowlab.install": AS_IS,
+    "wowlab.location": REDACT,
+    "wowlab.checkout": REDACT,
+    "wowlab.checkout_version": REDACT,
+    "wowlab.other_checkout": REDACT,
+    "wowlab.other_checkout_version": REDACT,
     "flavors.folder": REDACT,
     "flavors.product": REDACT,
     "flavors.version": REDACT,

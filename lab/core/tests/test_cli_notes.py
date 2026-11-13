@@ -106,6 +106,14 @@ def make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Pat
             "exposure",
             lambda self: snapshot.StoreExposure(checked=True, count=0, entries=()),
         )
+        # Which wowlab runs, and from where, depends on the machine and how
+        # it was installed: one answer, an installed copy in the sandbox. Its
+        # own tests are in test_doctor_running_wowlab.py (M16-122).
+        env = tmp_path / "env"
+        package = env / "lib" / "python3.12" / "site-packages" / "wowlab_core"
+        package.mkdir(parents=True)  # so `_known_paths` finds it, for Windows
+        probe = ("0.1.0", package, None, True, tmp_path, env)
+        monkeypatch.setattr(cli, "_wowlab_probe", lambda: probe)
         return root
 
     return build

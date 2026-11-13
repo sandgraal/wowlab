@@ -893,7 +893,13 @@ from wowlab_core.cli._cmd_db2 import (
     db2_head as db2_head,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _CHECKOUT_PROJECT as _CHECKOUT_PROJECT,
+)
+from wowlab_core.cli._cmd_doctor import (
     _COMBATLOG_HOW as _COMBATLOG_HOW,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _DIST as _DIST,
 )
 from wowlab_core.cli._cmd_doctor import (
     _JOURNAL_STATE_WORDS as _JOURNAL_STATE_WORDS,
@@ -909,6 +915,15 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _OFFLINE_DEPRECATED as _OFFLINE_DEPRECATED,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _POST_RE as _POST_RE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _PRE as _PRE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _PRE_RE as _PRE_RE,
 )
 from wowlab_core.cli._cmd_doctor import (
     _RECORD_HOW as _RECORD_HOW,
@@ -992,6 +1007,9 @@ from wowlab_core.cli._cmd_doctor import (
     NextStepState as NextStepState,
 )
 from wowlab_core.cli._cmd_doctor import (
+    RunningWowlab as RunningWowlab,
+)
+from wowlab_core.cli._cmd_doctor import (
     StoreReport as StoreReport,
 )
 from wowlab_core.cli._cmd_doctor import (
@@ -999,6 +1017,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     UncheckedLocation as UncheckedLocation,
+)
+from wowlab_core.cli._cmd_doctor import (
+    WowlabInstall as WowlabInstall,
 )
 from wowlab_core.cli._cmd_doctor import (
     _ask as _ask,
@@ -1011,6 +1032,15 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _characters_step as _characters_step,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _checkout_holding as _checkout_holding,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _checkout_of as _checkout_of,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _checkout_version as _checkout_version,
 )
 from wowlab_core.cli._cmd_doctor import (
     _choose_flavor as _choose_flavor,
@@ -1035,6 +1065,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _doctor_redacted as _doctor_redacted,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _editable as _editable,
 )
 from wowlab_core.cli._cmd_doctor import (
     _exposure_line as _exposure_line,
@@ -1094,6 +1127,9 @@ from wowlab_core.cli._cmd_doctor import (
     _no_version_cause as _no_version_cause,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _normal_version as _normal_version,
+)
+from wowlab_core.cli._cmd_doctor import (
     _offers_undo as _offers_undo,
 )
 from wowlab_core.cli._cmd_doctor import (
@@ -1109,10 +1145,19 @@ from wowlab_core.cli._cmd_doctor import (
     _print_next_steps as _print_next_steps,
 )
 from wowlab_core.cli._cmd_doctor import (
+    _print_wowlab as _print_wowlab,
+)
+from wowlab_core.cli._cmd_doctor import (
     _read_left as _read_left,
 )
 from wowlab_core.cli._cmd_doctor import (
     _rollback_unfinished as _rollback_unfinished,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _run_checkout as _run_checkout,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _running_wowlab as _running_wowlab,
 )
 from wowlab_core.cli._cmd_doctor import (
     _snapshot_unreadable as _snapshot_unreadable,
@@ -1134,6 +1179,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _wowlab_command as _wowlab_command,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _wowlab_probe as _wowlab_probe,
 )
 from wowlab_core.cli._cmd_doctor import (
     doctor as doctor,

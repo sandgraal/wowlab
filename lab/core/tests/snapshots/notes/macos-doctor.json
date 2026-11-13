@@ -3,6 +3,16 @@
   "found_by": "$WOWLAB_WOW_ROOT",
   "install_error": null,
   "locations": null,
+  "wowlab": {
+    "version": "0.1.0",
+    "package": "<tmp>/env/lib/python3.12/site-packages/wowlab_core",
+    "install": "installed",
+    "location": "<tmp>/env",
+    "checkout": null,
+    "checkout_version": null,
+    "other_checkout": null,
+    "other_checkout_version": null
+  },
   "flavors": [
     {
       "folder": "_classic_beta_",
