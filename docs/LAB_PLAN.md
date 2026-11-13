@@ -5255,17 +5255,20 @@ tree is asked for beside them). Per flavor (filtered by the hub's flavor
 filter):
 - when the client's interface is unknown, first: "wowlab cannot tell
   which addons are out of date: it cannot work out this game's interface
-  version", whatever else is listed; otherwise `addons check`'s caveat for
-  this result, when its notes are more than the four standing ones;
+  version", whatever else is listed (`addons check`'s other caveat, about
+  unreadable `AddOns.txt` files, concerns characters the card does not
+  show, and is not shown);
 - with the interface known, a count: an addon is current when the client
   loads a TOC of it (`selection` is not `no_toc`) and every TOC in
-  `counted_tocs` is `matches`; "All N addons are current for this client",
-  or "N of M addons are current; K could not be checked";
+  `counted_tocs` is `matches`; "All N addons are current for this game
+  version", or "N of M addons are current for this game version; K could
+  not be checked";
 - "Made for another game version" (`out_of_date`, `no_toc_for_client`):
   the interfaces the TOC lists and the game's, with "so the game lists it
   as out of date" when every listed interface is lower, then "The game
   skips these unless "Load out of date AddOns" is ticked in its AddOns
-  list" **[verify]**;
+  list" **[verify]** (the card says "(not yet confirmed)" once, on the
+  first flavor's list);
 - "Needs an addon that will not load" (`missing_dependencies`,
   `unloadable_dependencies`);
 - "Could not be checked": no TOC named after the folder, a TOC that could

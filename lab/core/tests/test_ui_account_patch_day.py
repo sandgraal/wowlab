@@ -2,7 +2,7 @@
 per flavor, the addons `addons check` finds out of date for this client or
 missing a required addon, and the SavedVariables files `sv list --orphans`
 finds that no installed addon declares, each line opening the Explorer on
-its file; with nothing found, "All N addons are current for this client".
+its file; with nothing found, "All N addons are current for this game version".
 
 The page is driven under Node with the harness of `test_ui_account.py`,
 fed what the real CLI printed through the real server. The install is that
@@ -187,7 +187,7 @@ def test_the_two_dbm_addons_and_the_four_orphans_constructed(
     out = _drive(tmp_path / "node", scenario)
     beta = _blocks(out)[BETA]
     assert beta["errors"] == []
-    assert beta["clear"] == ["0 of 2 addons are current."]
+    assert beta["clear"] == ["0 of 2 addons are current for this game version."]
     assert beta["what"] == [
         "Made for another game version",
         "Needs an addon that will not load",
@@ -277,7 +277,7 @@ def test_with_nothing_found_the_card_says_all_are_current_constructed(
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
     assert beta["items"] == [] and beta["what"] == [] and beta["errors"] == []
     assert beta["notes"] == []
-    assert beta["clear"] == ["All 2 addons are current for this client."]
+    assert beta["clear"] == ["All 2 addons are current for this game version."]
 
 
 def test_addons_that_cannot_be_checked_are_listed_and_counted_constructed(
@@ -294,7 +294,9 @@ def test_addons_that_cannot_be_checked_are_listed_and_counted_constructed(
     scenario = _scenario(server, [{"patch_day": True}])
     _edited(scenario, edit)
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
-    assert beta["clear"] == ["0 of 2 addons are current; 2 could not be checked."]
+    assert beta["clear"] == [
+        "0 of 2 addons are current for this game version; 2 could not be checked."
+    ]
     assert beta["what"] == ["Could not be checked"]
     assert [i["text"] for i in beta["items"]] == [
         "DBM-Brawlers has no TOC file named after its folder, so the game does not load it.",
@@ -314,7 +316,9 @@ def test_a_toc_with_no_interface_line_is_not_current_constructed(
     scenario = _scenario(server, [{"patch_day": True}])
     _edited(scenario, edit)
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
-    assert beta["clear"] == ["1 of 2 addons are current; 1 could not be checked."]
+    assert beta["clear"] == [
+        "1 of 2 addons are current for this game version; 1 could not be checked."
+    ]
     assert [i["text"] for i in beta["items"]] == [
         "DBM-Challenges has no Interface line in its TOC file."
     ]
@@ -333,7 +337,7 @@ def test_an_older_interface_is_one_the_game_lists_as_out_of_date_constructed(
     scenario = _scenario(server, [{"patch_day": True}])
     _edited(scenario, edit)
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
-    assert beta["clear"] == ["1 of 2 addons are current."]
+    assert beta["clear"] == ["1 of 2 addons are current for this game version."]
     assert beta["what"] == ["Made for another game version"]
     assert [i["text"] for i in beta["items"]] == [
         "DBM-Brawlers lists interface 11507; this game is 16001, so the game lists it as out "
@@ -341,20 +345,41 @@ def test_an_older_interface_is_one_the_game_lists_as_out_of_date_constructed(
     ]
 
 
-def test_the_check_caveat_for_this_result_is_shown_constructed(
+def test_not_yet_confirmed_is_said_once_per_card_constructed(
     server: Any, both: Path, tmp_path: Path
 ) -> None:
+    """Both flavors list an addon made for another game version (the other
+    flavor's first addon marked so, constructed): the caveat under each list,
+    "(not yet confirmed)" only on the first."""
+    scenario = _scenario(server, [{"patch_day": True}])
+    run = _run(scenario, CHECK, FOREVER)
+    report = json.loads(run["stdout"])
+    assert report["check"]["addons"], "the other flavor has addons"
+    report["check"]["addons"][0]["out_of_date"] = True
+    run["stdout"] = json.dumps(report)
+    blocks = _blocks(_drive(tmp_path / "node", scenario))
+    skips = 'The game skips these unless "Load out of date AddOns" is ticked in its AddOns list'
+    assert blocks[BETA]["notes"][0] == skips + " (not yet confirmed)."
+    assert blocks[FOREVER]["notes"][0] == skips + "."
+    every = [n for b in blocks.values() for n in b["notes"]]
+    assert sum("(not yet confirmed)" in n for n in every) == 1
+
+
+def test_the_check_caveat_about_characters_is_not_shown_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """`addons check`'s caveat about unreadable AddOns.txt files concerns
+    the characters it lists, which the card does not show."""
     caveat = "1 AddOns.txt file could not be read, so the characters shown may be incomplete."
 
     def edit(report: dict[str, Any]) -> None:
         report["notes"] = [caveat, *report["notes"]]
 
     scenario = _scenario(server, [{"patch_day": True}])
-    standing = json.loads(_run(scenario, CHECK, BETA)["stdout"])["notes"]
-    assert len(standing) == 4, "the page counts the standing notes"
     _edited(scenario, edit)
     beta = _blocks(_drive(tmp_path / "node", scenario))[BETA]
-    assert beta["notes"] == [caveat]
+    assert beta["notes"] == []
+    assert beta["clear"] == ["All 2 addons are current for this game version."]
 
 
 def test_an_unknown_interface_comes_first_even_beside_an_orphan_constructed(
