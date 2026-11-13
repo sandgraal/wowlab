@@ -6,22 +6,48 @@
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
-<h3 align="center">Ever wondered what all those files in your WoW folder actually are?</h3>
+<h3 align="center">Every character on your account in one place, and a UI you can always put back.</h3>
 
 <p align="center">
-  <a href="#-what-it-does-today">What it does</a> ·
+  <a href="#-what-it-does">What it does</a> ·
   <a href="#-the-safety-promises">Safety promises</a> ·
-  <a href="#-where-it-is-now">Where it is now</a> ·
-  <a href="#-whats-planned-next">What's next</a> ·
-  <a href="#-the-full-vision">The full vision</a> ·
-  <a href="https://github.com/sandgraal/wowlab/wiki">The wiki</a>
+  <a href="#-running-it-from-source">Run it from source</a> ·
+  <a href="https://github.com/sandgraal/wowlab/wiki">The wiki</a> ·
+  <a href="https://github.com/sandgraal/wowlab/wiki/Roadmap">What's next</a>
 </p>
 
-**wowlab** reads your World of Warcraft install and tells you what every file in it is, who writes it, and whether it is safe to touch. It snapshots your whole setup (settings, keybinds, macros, addons and their saved data), lets you switch UI profiles or merge addon settings, and puts everything back with `wowlab undo`. It is a command-line tool with a local browser view, and it runs only on your own machine, against your own install.
+**wowlab** is a free companion for World of Warcraft that runs on your own computer. It reads your game folder, never the game itself, and gives you:
 
-> **Your WoW folder, finally explained, and every change undoable.**
+- 🧙 **All your characters in one place.** `wowlab ui` opens on the Account tab: every character on your account, in every game version you have installed, with level, class, spec, item level and professions. Sort by any column, filter by class, and click a character for its gear, keys and macros.
+- 🛟 **A UI you can always put back.** A snapshot saves your settings, keybinds, macros, addons and their saved settings. Take one before patch day or an addon update; afterwards, see what changed, and put it all back with `wowlab undo`.
+- 📈 **Each character over time.** `wowlab char history` reads your snapshots back: level, item level and spec at each save, and the gear and currencies that changed.
+- 🧩 **A patch-day check.** `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters load it.
+- 🎹 **A keybind coach.** `wowlab binds coach` reads your own combat log and shows the spells you cast most on your hardest keys.
 
-**🛡️ What it will and will not do** ([ADR-0031](docs/DECISIONS.md)):
+Your characters appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back.
+
+> [!NOTE]
+> The v0.1.0 release has snapshots and undo, the file explorer and the keybind coach. The Account and Character tabs, `char history` and `addons check` are on `main` and arrive with the next release. To try them now, [run it from source](#-running-it-from-source).
+
+**📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
+
+<!-- not-run: an install, from the network -->
+```bash
+uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256=a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639
+```
+
+The `#sha256=` part is the download's fingerprint, the same as its line in the release's `SHA256SUMS`. `uv tool install` does not check it for you: [the install guide](docs/INSTALL.md) shows how to check the download and install that very file, and what to do when your game is not in the usual place.
+
+**⚔️ The first three commands:**
+
+<!-- not-run: `wowlab ui` does not exit -->
+```bash
+wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
+wowlab ui            # every character in one place, in your browser
+wowlab snap create   # back up your setup before patch day or an addon update
+```
+
+**🛡️ What it will and will not do:**
 
 - **Read-only by default.** Looking at your install never writes to it: no temp, cache or lock file.
 - **Every command that changes files in your install asks first** (unless you pass `--yes`), refuses while the game is running, and goes through one write gate that takes a snapshot before it writes. `wowlab undo` reverses the change.
@@ -35,39 +61,14 @@
 - A dressing-room link opens in your own browser, and only when you click it, carrying your character's race, body type, class, level and equipped item and bonus ids to that site: public game ids only, never a name. wowlab itself makes no request to it.
 <!-- network:end -->
 
-**📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
+**🖥️ `wowlab ui`** opens your browser on a page only this computer can reach, and keeps working until you stop it with Ctrl-C. If no browser opens, paste the link it prints. When your game is not in the usual place, set `WOWLAB_WOW_ROOT` first ([the install guide](docs/INSTALL.md) shows how).
 
-<!-- not-run: an install, from the network -->
-```bash
-uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256=a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639
-```
+<!-- PLACEHOLDER for the owner: a screenshot of the Account tab goes here. -->
 
-The `#sha256=` part is the wheel's hash, the same as its line in the release's `SHA256SUMS`. The release page carries the wheel, the sdist and `SHA256SUMS`; [`docs/INSTALL.md`](docs/INSTALL.md) says how to check them and install the very file you checked (`uv tool install` does not check that hash itself), and how to run from a source checkout instead.
-
-**⚔️ The first three commands:**
-
-<!-- not-run: `wowlab ui` does not exit -->
-```bash
-wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
-wowlab ui            # the explorer in your browser: every file in your install, and whether it is safe to touch
-wowlab snap create   # snapshot your setup before you experiment
-```
-
-> [!NOTE]
-> This page describes `main`. The v0.1.0 release has the explorer and the read commands. The things marked 🆕 below (the confirm step in the browser view, the Character tab, `char gear`, `char binds`, `char macros`) are on `main` and arrive with the next release. To try them now, [run from source](#-running-it-from-source).
-
-**🖥️ Using the explorer** (`wowlab ui`):
-
-<!-- not-run: `wowlab ui` does not exit -->
-```bash
-wowlab ui
-```
-
-It picks a free port on this machine only, opens your browser on a link that, like a reload of the page, keeps working until you stop it with Ctrl-C. If no browser opens, paste the link it prints. `wowlab ui` takes no `--root`: when your install is not in a default place, set `WOWLAB_WOW_ROOT` first (see [`docs/INSTALL.md`](docs/INSTALL.md)).
-
-- 🗂️ **Explorer.** Your install as a tree, one folder at a time. Most files carry a badge such as *wowlab can edit*, *wowlab never changes it* or *unknown*; a link, a file the server may overwrite, and the one folder wowlab never uses get their own. Click a file for what it is, who writes it, its file-map row, and whether the copy on disk still matches your latest snapshot. Below that, the commands that act on the file, written for your shell; **Copy** gives the exact line. For a file wowlab has a read command for (settings, binds, macros, saved data, the addon list, the install, the combat log), **Preview** runs it and shows the result as a tree.
-- 🕳️ **Gaps.** The files the file map does not know yet, grouped by folder, the same list as `wowlab filemap gaps`.
-- ⌨️ **Commands.** Runs this wowlab's commands with `--json` and shows the result. A command that asks before changing anything runs first as a plan that changes nothing, and runs for real only when you press **Confirm** under it; the result names the change's journal record, which `wowlab undo` reverses. Only two of them refuse when something changed after the plan: `undo`, when a newer change has been journaled, and `sv merge`, when its target file changed or what it merges from did. The others apply what is there when you confirm, after the snapshot that `wowlab undo` restores from.
+- 🏰 **Account**, the home tab: every character, sortable and filterable. A character with nothing recorded yet says how to fix that.
+- 🧙 **Character**: one character's gear with item-quality colours, every key and what it does, every macro with the checker's findings, and a **See it dressed** link.
+- 🗂️ **Explorer** and **Gaps**: every file in your install, what it is, who writes it and whether it is safe to touch, and the files wowlab does not know yet.
+- ⌨️ **Commands**: run any wowlab command from the page. One that changes files shows its plan first and runs only when you press **Confirm**.
 
 `wowlab ui` changes game files only when you confirm a plan it showed you.
 
@@ -76,7 +77,7 @@ It picks a free port on this machine only, opens your browser on a link that, li
 
 &nbsp;
 
-It runs every wowlab command except `ui` itself, `log tail --follow`, `looks page --out` and `snap export`. The commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), run directly. A command that asks before changing anything (`--yes`) runs first as a plan that changes nothing, and runs for real only when you confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove` change your install through the same write gate as on the command line, which takes a snapshot first, so `wowlab undo` reverses them. It listens only on this machine. The link it opens, a reload of the page and a second tab keep working until you stop `wowlab ui` with Ctrl-C; a new `wowlab ui` makes a new link, and the old one stops working. It is made for a single-user machine. **On a shared Linux machine**, other accounts can see that link in their process listing for a while (a newly started browser can keep it in its command line), and can open it too, until you stop `wowlab ui`. From the page, `sv dump` reads only files inside your install.
+It runs every wowlab command except `ui` itself, `log tail --follow`, `looks page --out` and `snap export`. The commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), run directly. A command that asks before changing anything (`--yes`) runs first as a plan that changes nothing, and runs for real only when you confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove` change your install through the same write gate as on the command line, which takes a snapshot first, so `wowlab undo` reverses them. Two of them refuse when something changed after the plan: `undo`, when a newer change has been recorded, and `sv merge`, when its target file or what it merges from changed. The others apply what is there when you confirm. It listens only on this machine. The link it opens, a reload of the page and a second tab keep working until you stop `wowlab ui` with Ctrl-C; a new `wowlab ui` makes a new link, and the old one stops working. It is made for a single-user machine. **On a shared Linux machine**, other accounts can see that link in their process listing for a while (a newly started browser can keep it in its command line), and can open it too, until you stop `wowlab ui`. From the page, `sv dump` reads only files inside your install.
 
 </details>
 
@@ -84,7 +85,7 @@ It runs every wowlab command except `ui` itself, `log tail --follow`, `looks pag
 
 | | Status |
 |---|---|
-| macOS | **Supported.** CI runs the test suite on macOS, and a first run on a real Mac install is recorded in [`docs/handoffs/M13-10-macos.md`](docs/handoffs/M13-10-macos.md). |
+| macOS | **Supported.** CI runs the test suite on macOS, and [a first run on a real Mac install is recorded](docs/handoffs/M13-10-macos.md). |
 | Windows | **Untested.** CI runs the test suite on Windows, but nobody has yet run the first-run flow on a real Windows install. |
 | Linux | **Untested.** CI runs the test suite on Linux, but there is no native Linux client (Wine or Proton) and nobody has run wowlab against one. |
 
@@ -100,14 +101,15 @@ wowlab is built and tested on Forever on macOS; retail and Windows SavedVariable
 
 | You're thinking… | wowlab's answer |
 |---|---|
-| **"I broke my UI and I don't know how."** | Take a snapshot before you experiment. If something goes wrong, `wowlab undo` puts every file back exactly as it was. |
+| **"I have alts everywhere and lose track of them."** | The 🆕 Account tab lists every character in one table: level, class, spec, item level, professions, and when you last logged out on it. |
+| **"Patch day broke my UI."** | Take a snapshot before patch day or an addon update. If something goes wrong, `wowlab undo` puts every file back exactly as it was, and 🆕 `wowlab addons check` shows which addons are out of date. |
 | **"What is `config-cache.wtf`, and is it safe to change?"** | `wowlab explain config-cache.wtf` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. A bare file name is enough: it finds every file by that name. |
 | **"My addon settings are a mess."** | Read any addon's saved settings as plain text, with nothing executed and nothing changed. Merge one addon's settings between characters without touching the rest. |
 | **"I play on the Forever beta and nothing is documented."** | wowlab was built against a real Forever install: its folder layout, file formats and combat log are written up in plain words. |
 | **"My macros and keybinds grew over years."** | `wowlab macros check` finds broken spell names, overlong and duplicate macros, and macros on no action bar. `wowlab binds coach` reads your own combat log and shows the spells you cast most on your worst keys. |
-| **"I want to see my character without logging in."** | The lab-addon records your gear, talents and more at logout. `wowlab char show` and the 🆕 Character tab read it back offline. |
+| **"I want to see my character without logging in."** | The lab-addon records your gear, talents and more at logout. `wowlab char show` and the 🆕 Character tab read it back offline, and 🆕 `wowlab char history` shows how it changed from one snapshot to the next. |
 
-## ✨ What it does today
+## ✨ What it does
 
 Features marked 🆕 are on `main` and arrive with the next release.
 
@@ -116,8 +118,9 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | | Feature | Command |
 |---|---|---|
 | 🔍 | **Explain any file.** Every path in your install mapped: what it is, who writes it, when, and whether wowlab may edit it. | `wowlab explain PATH` · `wowlab tree --explain` |
-| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install with whether each is safe to touch. It also runs wowlab's commands, and a command that changes files gets a plan-then-Confirm step 🆕. Exactly which commands, and how that step works, is spelled out under **Using the explorer**, near the top of this page. | `wowlab ui` |
+| 🖥️ | **The explorer in your browser.** A local page, served only to this machine, that shows every file in your install with whether each is safe to touch. It also runs wowlab's commands, and a command that changes files gets a plan-then-Confirm step 🆕. Exactly which commands, and how that step works, is spelled out under **`wowlab ui`**, near the top of this page. | `wowlab ui` |
 | 🩺 | **Health check and first run.** Finds your install, its flavors and versions, whether the game is running, and your server-sync settings. On a first run it says what wowlab will and won't do and offers a first snapshot. `--redact` prints output safe to paste into an issue. | `wowlab doctor` · `wowlab doctor --redact` |
+| 🧩 | **Patch-day check** 🆕. Every addon against your game version: out of date, missing an addon it needs, loaded on demand, and which characters load it. | `wowlab addons check` |
 | 📜 | **Read your saved data.** Addon SavedVariables, CVars, keybinds, macros and your addon list, as readable text or JSON. | `wowlab sv dump` · `cvar` · `binds` · `macros` · `addons` |
 | 📚 | **Game data.** Any game table for your exact build, from [wago.tools](https://wago.tools), cached forever and keyed by build. | `wowlab db2 fetch TABLE` |
 | ⚔️ | **Combat log.** A streaming combat-log reader and a live `tail` that follows the game as it writes, even across new log files. | `wowlab log tail --follow` |
@@ -137,6 +140,8 @@ Features marked 🆕 are on `main` and arrive with the next release.
 | | Feature | Command |
 |---|---|---|
 | 🧩 | **The lab-addon.** wowlab's own small in-game addon records a character's gear, talents, customization, collections, currencies and professions (never a name) when you log out or `/reload`, and wowlab reads them back offline. | `wowlab addon install lab` · `wowlab char show` |
+| 🏰 | **The Account tab** 🆕. The home tab of the browser view: every character in every game version you have installed, with level, class, race, spec, item level, professions and when you last logged out on it. Sort by any column, filter by game version or class, and click a character to open it. Also on the command line. | `wowlab ui` · `wowlab char list --summary` |
+| 📈 | **A character over time** 🆕. One row per save from your snapshots: level, item level and spec, and the gear and currencies that changed since the save before. | `wowlab char history` |
 | 🧙 | **The Character tab** 🆕. Pick a character in the browser view and see its gear with item-quality colours, every key and what it does, and every macro with the checker's findings, and a **See it dressed** link that opens an outside dressing room in your own browser. Read-only: it never changes a file. | `wowlab ui` |
 | 🎒 | **Gear, keys and macros from the command line** 🆕. The same three views as text or JSON. | `wowlab char gear` · `char binds` · `char macros` |
 | 🧹 | **Macro checker.** Broken spell names, overlong and duplicate macros, macros on no action bar. | `wowlab macros check` |
@@ -187,7 +192,31 @@ Snapshot store: … (not created yet)
 | 🚫 | **No Lua is ever run.** | Addon data is read as data by a strict parser. Functions or code in a saved file are refused, never executed. |
 | 🧱 | **Nothing is lost.** | The parsers keep every byte they don't understand. An unedited file comes back byte for byte. |
 | 🏠 | **Stays on your machine.** | No accounts, no server, no uploads. Everything wowlab sends over the network is listed once, under "What leaves your machine" at the top. |
-| ⛔ | **Clearly out of bounds, permanently.** | No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks ([ADR-0023](docs/DECISIONS.md)). wowlab only changes what the game itself treats as your settings. |
+| ⛔ | **Clearly out of bounds, permanently.** | No memory reading, no injection, no packet tampering, no input automation, no touching game `Data/` or executables, no bypassing integrity checks. wowlab only changes what the game itself treats as your settings. |
+
+## 🧭 What's next
+
+wowlab grows one step at a time, and each step is picked after the last one ships. What is planned, and the longer list of ideas behind it, is on [the wiki's Roadmap page](https://github.com/sandgraal/wowlab/wiki/Roadmap). Nothing there is promised until it is on `main`.
+
+## 🚀 Running it from source
+
+> [!NOTE]
+> Players install a release with the one `uv tool install` line at the top of this page. Running from source is for trying `main` or working on wowlab. There is no hosted version, and nothing is uploaded either way.
+
+You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12) and git.
+
+<!-- not-run: a source checkout, from the network -->
+```bash
+git clone https://github.com/sandgraal/wowlab && cd wowlab
+uv sync --frozen
+uv run wowlab doctor        # finds your install and checks everything
+uv run wowlab --help        # every command
+```
+
+Every `wowlab …` command on this page and on the wiki works the same from a checkout: put `uv run` in front of it. Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([the install guide](docs/INSTALL.md)). To work on wowlab itself (the tests, the developer commands, machine setup), see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+> [!TIP]
+> Exit codes: `0` ok, `1` error (and `explain` of a path that matches nothing), `2` usage, `3` refused by the write gate. Only these six commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
 
 ## ⚙️ How it works
 
@@ -210,155 +239,6 @@ flowchart LR
 ```
 
 Flavor folders, product codes and build numbers are **discovered from your install**, never hard-coded, so wowlab works the same on retail and on *World of Warcraft: Forever*. The details: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) (the spec), [`docs/LAB_FILE_MAP.md`](docs/LAB_FILE_MAP.md) (every path) and [`docs/LAB_FORMATS.md`](docs/LAB_FORMATS.md) (every file format).
-
-## 🧭 Where it is now
-
-wowlab grows in **waves**: the owner picks each one after reviewing the last.
-
-```mermaid
-flowchart LR
-    W1["<b>Waves 1 to 3</b><br/>library and CLI, write gate,<br/>snapshots, profiles, sv merge,<br/>lab-addon, character list"]:::done
-    W4["<b>Wave 4 · v0.1.0</b><br/>first run, explorer,<br/>macro checker, keybind coach"]:::done
-    W5["<b>Wave 5 · on main</b><br/>confirm step in the browser,<br/>Character tab: gear, keys, macros"]:::done
-    W6["<b>Wave 6 · paused</b><br/>character studio,<br/>the data half"]:::next
-    W7["<b>Wave 7 · planned</b><br/>the viewer in<br/>the Character tab"]:::plan
-    W1 --> W4 --> W5 --> W6 -.-> W7
-    classDef done fill:#2b2410,stroke:#f3c969,color:#fff1c2
-    classDef next fill:#10263a,stroke:#5ec8ff,color:#e6f6ff
-    classDef plan fill:#1c1c24,stroke:#6b7390,color:#cfd6ea,stroke-dasharray:4 3
-```
-
-- ✅ **Waves 1 to 3** are done. Wave 3 was trimmed on 2026-10-14: its game-table database, talent planner and alt-dashboard are deferred, because players already have good talent planners.
-- ✅ **Wave 4 is the first public release, v0.1** (owner decision, 2026-10-13; [ADR-0031](docs/DECISIONS.md)). **v0.1.0 is out**: install it with the one `uv tool install` line above and check the download against the published SHA-256 sums ([the release page](https://github.com/sandgraal/wowlab/releases/tag/v0.1.0)). No installer, no app store, no hosted version. The promise does not change: reading never writes, every change to your install asks first, a snapshot comes before it and `wowlab undo` reverses it, and nothing is uploaded.
-- ✅ **Wave 5 is on `main`**, aimed at the second public release: the confirm step for all six commands that change your install, `looks page` inside the browser view, `wowlab char gear`, `char binds` and `char macros`, and the Character tab.
-- 🧭 **Wave 6 is paused** (picked 2026-10-19, paused 2026-10-21 while the next release is prepared): the data half of the character studio, of which only the archive reader is on `main`. See below.
-
-| | Still open before the next release | |
-|---|---|---|
-| 🪟 | **Windows, tested** | CI already runs the test suite on Windows. Windows is called supported once a person has run the first run on a real Windows install; v0.1 ships with it untested. |
-
-Thirty days after the first release, the owner checks GitHub's own counts (no telemetry). If they show little use beyond the owner, meaning fewer than 50 downloads or fewer than 5 issues or discussions from other people, the owner may freeze the public side: releases stay up, no new public features are added, and wowlab goes back to being a personal lab. The plan and its tickets: [`docs/LAB_PLAN.md`](docs/LAB_PLAN.md) §15 and [`docs/BACKLOG.md`](docs/BACKLOG.md).
-
-## 🔮 What's planned next
-
-These are specified or ticketed. Each is built only after the owner's go-ahead, and none of them is on `main` yet, except the first step below and the archive reader of the second.
-
-### 🎭 See your character in its gear
-
-The owner's ask: *see the character model with its gear, like the character screen in the game.* It comes in two steps.
-
-- **The quick step, on `main`: a "See it dressed" button.** The addon records your race, body type and class, and the Character tab has a button under the gear table that opens Wowhead's dressing room in your own browser, at an address built from that and the item and bonus ids already in your record (`wowlab char gear --json` gives it as `dressing`). wowlab itself makes no request; the link carries your character's race, body type, class, level and equipped item and bonus ids, never a name, realm or account. When there is no address (no identity in the record, a game version the room is not known for, nothing the room can place), the tab lists the item ids with a Copy button instead. Whether the room draws a Forever character's items is still to be tried.
-- **The full step: the character studio.** Your character drawn in the browser from your own game files. Wave 6 is the data half, ticketed as M15-03 onward: reading the install's game archives with a pure-Python reader (read-only; `Data/` is never edited, [ADR-0033](docs/DECISIONS.md)), decoding models, skins and textures, joining the game tables that turn a character's record into its model, and a command that extracts them to wowlab's own data folder. Wave 7 is planned as the viewer in the Character tab, drawn by a pinned copy of three.js that ships inside the package, so the page makes no request to a CDN ([ADR-0034](docs/DECISIONS.md)). Of this, only the archive reader is on `main`, in the library and read-only; no command uses it yet, so no wowlab command reads `Data/`. The rest is not built yet.
-
-### 🛠️ Fix your keys and macros, with help
-
-The Keys and Macros panels today are read-only. The plan is to make them places where you change and improve things:
-
-- **Apply halves of the coaches.** Keybind and macro fixes written through the write gate, with a snapshot first and `wowlab undo` after. Two owner tests decide the shape: whether the client keeps an edited `bindings-cache.wtf` and `macros-cache.txt`. If it does not, wowlab prints the corrected text for you to apply in game.
-- **Proposals, not direct writes.** Any suggestion, from you or from a model, becomes a small proposal file that a strict validator checks against your own character's data before anything is planned.
-- **Advice from the assistant of your choice.** `char advise` (stage one) writes an *advice packet*, one text file you take to whichever assistant you use by hand. A second, opt-in stage ([ADR-0032](docs/DECISIONS.md)) could send that packet for you to a model you configured yourself, showing the exact bytes first. It is off until you turn it on, and it is the only exception to "nothing is uploaded".
-
-## 🌌 The full vision
-
-Here is what wowlab could become as the ideas on [the menu](docs/LAB_IDEAS.md) are built. It is a menu, not a promise: each wave is picked one at a time, and nothing here is built without a ticket.
-
-<details open>
-<summary><b>🧙 Your character, offline</b></summary>
-
-- **Plan builds without logging in.** Capture a character and plan talents and gear offline, including Forever's own talent systems (`char-planner`). Export to SimulationCraft and run sims locally (`simc-bridge`).
-- **Go further in 3D.** Beyond the viewer: design outfits; pose the character, light it and turn it around; export it to 3D formats or a printable model (`character-studio`, `photo-studio`, `char-export`).
-- **Every alt at a glance.** A dashboard over every character; a timeline of how each one grew; scheduled archives of your full state (`alt-dashboard`, `digital-twin`, `time-capsule`).
-- **Collect smarter.** What's left to collect and the cheapest order to get it; what in your bags is dead weight across every alt, and where to send it (`collection-router`, `bag-triage`).
-- **Learn your class faster.** Nightly flashcards built from your spellbook, your talents, boss abilities and what actually killed you (`drill-cards`).
-- **Tell your character's story.** A printable book and roleplay profile with your gear, portrait, firsts, zones and notable fights (`codex`). Also a D&D-style sheet, and a roguelike seeded by your real gear (`tabletop-sheet`, `roguelike-me`).
-- **Customize from inspiration.** Match a concept image to the customization choices and appearances you own (`look-from-image`).
-
-</details>
-
-<details>
-<summary><b>🎛️ Your UI, keybinds and settings</b></summary>
-
-- **Your whole setup as a file.** Describe CVars, binds, macros and addon settings in one file, then plan, apply and roll back, with drift detection (`wow-as-code`).
-- **Look and feel.** Reversible font and texture packs, and nameplates designed outside the game with a live preview (`skin-packs`, `nameplate-designer`).
-
-</details>
-
-<details>
-<summary><b>🧰 Addons</b></summary>
-
-- **Install and update addons safely.** From GitHub, CurseForge or Wago, pinned and undoable, including the addon's saved data (`addon-manager`).
-- **Know where your addons came from.** Compare every file to its upstream release and flag repacks or local edits (`addon-provenance`).
-- **Will it break on Forever?** A static scan for the TOC version, removed APIs, the build-number trap and calls that go secret in combat (`addon-audit`).
-- **Is the game really loading your saved data?** A doctor check that catches the SavedVariables loader bug if it ever returns (`sv-health`).
-- **For addon authors.** Scaffolding, type stubs from the game's own API docs, a headless test harness, an in-game REPL, and an agent-friendly server over your install (`addon-kit`, `api-types`, `addon-harness`, `dev-console`, `api-rag`, `lab-mcp`).
-
-</details>
-
-<details>
-<summary><b>📚 Game data and the world</b></summary>
-
-- **Query the game like a database.** SQL over every game table, across builds; relationship graphs of items, spells, quests, NPCs and zones (`db2lake`, `azeroth-graph`).
-- **See what changed in each beta build.** Automatic changelogs of the tables you care about, and hotfixes overlaid (`build-diff`, `hotfix-reader`).
-- **Fill in Forever's missing quests.** Record givers, turn-ins and objectives as you play, exported as corrections Questie can use (`quest-recorder`).
-- **Auction-house memory.** Your own price history, linked to patch changes that move prices (`market-memory`).
-- **Lore answers with sources.** Questions answered only from quest, NPC and gossip text in the game's tables, with citations (`lore-companion`).
-
-</details>
-
-<details>
-<summary><b>📡 Live, fun and forensic</b></summary>
-
-- **Stream overlays and smart-home triggers.** A local event feed from your saved data and combat log, driving OBS, Stream Deck, Home Assistant or Discord (`event-bus`, `overlay-sinks`).
-- **Your play, visualized.** Fight replays and generative art from combat logs, heatmaps of where you've been, dashboards over your sessions (`log2art`, `zone-heatmap`, `play-lake`).
-- **Tidy screenshots.** Tagged by character, zone and date, and searchable (`screenshot-organizer`).
-- **Why did it crash?** Crash reports linked to the addons, settings and zone at the time (`crash-forensics`).
-- **Play between sessions.** Offline mini-games or planners whose results your addon picks up at next login (`companion-loop`).
-
-</details>
-
-<details>
-<summary><b>👥 Social (waiting on a privacy decision)</b></summary>
-
-- **Remember good groups.** Who you grouped with, their role and your notes (`crew-book`), and which dungeon groups your online guild could form right now (`comp-builder`). These store other players' names, so they wait for their own privacy decision: opt-in, local only, never exported.
-
-</details>
-
-## 🚀 Running it from source
-
-> [!NOTE]
-> Players install a release with the one `uv tool install` line at the top of this page. Running from source is for trying `main` or working on wowlab. There is no hosted version, and nothing is uploaded either way.
-
-You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12). A game install is not needed to run the tests.
-
-<!-- not-run: a source checkout, from the network -->
-```bash
-git clone https://github.com/sandgraal/wowlab && cd wowlab
-make setup
-uv run wowlab doctor        # finds your install and checks everything
-uv run wowlab --help        # every command
-```
-
-Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([`docs/INSTALL.md`](docs/INSTALL.md), [`.env.example`](.env.example)). Machine setup without a package manager: [`docs/SETUP.md`](docs/SETUP.md).
-
-> [!TIP]
-> Exit codes: `0` ok, `1` error (and `explain` of a path that matches nothing), `2` usage, `3` refused by the write gate. Only these six commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
-
-<details>
-<summary><b>Developer commands</b></summary>
-
-| Target | What it does |
-|---|---|
-| `make lint` | ruff check, ruff format check, `mypy --strict`. The commit gate. |
-| `make test` | The full pytest suite. Anything marked `live` is excluded and never runs in CI. |
-| `make test-fast` | A quicker local run while you work: the suite without the review probes (`lab/core/tests/review/`) and the `serial` pass, on at most 4 workers. Never the proof of done; `make test` and CI run everything. |
-| `make test-clean` | Removes pytest's temp dirs and `.pytest_cache`, prunes the uv cache, and prints the sizes before and after. Do not run it while tests run. |
-| `make test-parser` | Parser fixtures and round-trip suites. Required green for any parser change. |
-| `make hooks-test` | The agent hook scripts under Python 3.12 and 3.9. |
-| `make ci` | Everything CI runs. Every stage runs even if one fails, then a summary of each stage's result. |
-
-Use `make test-fast` while iterating and `make test` (or `make ci`) before a change is done; run `make test-clean` when the temp dir or the uv cache has grown.
-
-</details>
 
 ## 🏗️ How it's built
 

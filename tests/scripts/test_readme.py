@@ -14,6 +14,8 @@ The first screen is everything above the marker comment the README carries
   `windows.yml`), and macOS is called "Supported" only while its recorded
   first run on a real install (`MACOS_RECORD`) exists and is linked;
 - the statements ADR-0029's and ADR-0031's owner rulings ask for are there.
+- the first screen leads with what a player gets, names no ticket or ADR,
+  and the roadmap is a link to the wiki's Roadmap page (M16-33).
 
 Reads README.md and the workflow files; writes only a copy of the README
 into `tmp_path` for the wiki checker.
@@ -224,17 +226,46 @@ def test_the_first_screen_says_what_it_was_tested_on() -> None:
     assert TESTED_ON in _first_screen()
 
 
-def test_the_wave_6_sentences_match_main() -> None:
-    """The archive reader is on `main` (`casc.py`), and no command reads `Data/`."""
+# M16-33: the first screen leads with what a player gets (every character in
+# one place, a UI that can be put back), and the roadmap lives on the wiki.
+ROADMAP = WIKI + "/Roadmap"
+LEADS = (
+    "**All your characters in one place.**",
+    "**A UI you can always put back.**",
+    "`wowlab char history`",
+    "`wowlab addons check`",
+    "`wowlab binds coach`",
+)
+
+
+def test_the_first_screen_leads_with_the_player_features() -> None:
+    screen = _first_screen()
+    install = screen.index(INSTALL_V010)
+    for phrase in LEADS:
+        assert phrase in screen, phrase
+        assert screen.index(phrase) < install, f"{phrase} comes before the install line"
+    assert "opens on the Account tab" in screen
+    assert "`wowlab addon install lab`, then log out or `/reload` once" in screen
+    # What a snapshot cannot hold is said where the promise is made.
+    assert "Action bars and talents are kept on Blizzard's servers" in screen
+
+
+def test_the_roadmap_lives_on_the_wiki() -> None:
+    """The waves, the plans and the full vision moved to the wiki's Roadmap page."""
     readme = _readme()
-    assert (ROOT / "lab" / "core" / "src" / "wowlab_core" / "casc.py").is_file()
-    assert "None of this is built yet" not in readme
-    assert "when the first reader ships" not in readme
-    assert "Wave 6 · picked" not in readme and "Wave 6 is picked" not in readme
-    assert "Wave 6 · under way" not in readme and "Wave 6 is under way" not in readme
-    assert "Wave 6 · paused" in readme and "Wave 6 is paused" in readme
-    assert "only the archive reader is on `main`" in readme
-    assert "no command uses it yet, so no wowlab command reads `Data/`" in readme
+    assert f"]({ROADMAP})" in readme or f'href="{ROADMAP}"' in readme
+    for gone in ("The full vision", "What's planned next", "Where it is now", "Wave 6"):
+        assert gone not in readme, gone
+
+
+def test_the_player_part_names_no_ticket_or_decision() -> None:
+    """Player copy names no ticket, ADR or invariant id (.claude/rules/player-copy.md).
+
+    A link's target may be a document path; what a player reads may not."""
+    screen = _first_screen()
+    shown = re.sub(r"\]\([^)]*\)", "]", re.sub(r"<!--.*?-->", "", screen, flags=re.DOTALL))
+    for pattern in (r"\bM\d{2}-\d+", r"\bADR-\d{4}", r"\bL[1-8]\b"):
+        assert not re.search(pattern, shown), pattern
 
 
 def test_redacted_output_is_not_promised_for_later() -> None:

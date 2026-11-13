@@ -35,6 +35,32 @@ packets, input automation, editing `Data/` or executables) is declined
 without discussion. That is not a judgment of the idea; it does not belong
 in this repository.
 
+## Setting up a checkout
+
+You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12), git, a
+system Python 3.9 or later for the agent hooks, and Go for two pre-commit
+hooks; `docs/SETUP.md` lists the versions and installs them without a
+package manager. On macOS and Linux, `make setup` does the rest: `uv sync
+--frozen`, the tracked git hooks, the pre-commit hook environments and
+`.env`. On Windows without `make`, run `uv sync --frozen`, `git config
+core.hooksPath .githooks` and `uv run --frozen pre-commit install-hooks`
+yourself, and copy `.env.example` to `.env`. A game install is not needed
+to run the tests.
+
+| Target | What it does |
+|---|---|
+| `make lint` | ruff check, ruff format check, `mypy --strict`. The commit gate. |
+| `make test` | The full pytest suite. Anything marked `live` is excluded and never runs in CI. |
+| `make test-fast` | A quicker local run while you work: the suite without the review probes (`lab/core/tests/review/`) and the `serial` pass, on at most 4 workers. Never the proof of done; `make test` and CI run everything. |
+| `make test-clean` | Removes pytest's temp dirs and `.pytest_cache`, prunes the uv cache, and prints the sizes before and after. Do not run it while tests run. |
+| `make test-parser` | Parser fixtures and round-trip suites. Required green for any parser change. |
+| `make hooks-test` | The agent hook scripts under Python 3.12 and 3.9. |
+| `make ci` | Everything CI runs. Every stage runs even if one fails, then a summary of each stage's result. |
+
+Use `make test-fast` while iterating and `make test` (or `make ci`) before a
+change is done; run `make test-clean` when the temp dir or the uv cache has
+grown.
+
 ## Doing work
 
 ```bash
