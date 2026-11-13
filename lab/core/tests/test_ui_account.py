@@ -489,3 +489,34 @@ def test_the_tab_runs_only_char_list_and_holds_no_rules() -> None:
     # The advice and the command are the report's, never the page's.
     assert "addon install" not in body
     assert "innerHTML" not in body and "setAttribute" not in body
+
+
+def test_a_row_in_a_flavor_the_header_cannot_move_to_opens_no_other_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Code review of M17-01: the beta character's row is made to name a
+    flavor the tree does not list (constructed), so the header stays on the
+    beta flavor, whose list holds the same folders under another flavor.
+    The tab says the character is not in its list, and no character's
+    record is read in its place."""
+    scenario = _scenario(server, [{"hub_open": 1}], ((FIRST, ACCOUNT, BETA),), tree=True)
+    run = _summary_run(scenario)
+    report = json.loads(run["stdout"])
+    gone = "_gone_"
+    first = next(r for r in report["rows"] if r["label"] == FIRST.split("/")[1])
+    first["flavor"] = gone
+    run["stdout"] = json.dumps(report)
+    out = _drive(tmp_path / "node", scenario)
+    [opened] = out["steps"]
+    assert opened["runFlavor"] == BETA
+    assert opened["char"]["hidden"] is False
+    assert opened["char"]["status"] == (
+        f"{FIRST.split('/')[1]} ({gone}) is not in this tab's list of characters, so it was not "
+        "opened: the tab is reading another flavor."
+    )
+    assert opened["char"]["statusError"] is True
+    # Only the tab's list was read: no gear, keys or macros of anyone.
+    assert _bodies(opened["newRequests"]) == [
+        {"command": ["char", "list"], "params": dict(BRIEF, flavor=BETA)}
+    ]
+    assert opened["char"]["header"] == "" and opened["char"]["rows"] == []

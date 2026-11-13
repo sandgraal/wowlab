@@ -1269,12 +1269,15 @@
   }
 
   // Whether `entry` is the character the Account tab asked to open.
-  function isWanted(entry) {
-    const want = character.want;
-    return (
-      Boolean(want) && entry.account === want.account && entry.realm_folder === want.realm_folder &&
-      entry.label === want.label
-    );
+  // The flavor counts when both name one: the same folders in another
+  // flavor are another character.
+  function isWanted(entry, want) {
+    const asked = want === undefined ? character.want : want;
+    if (!asked) return false;
+    if (asked.flavor && typeof entry.flavor === "string" && entry.flavor && entry.flavor !== asked.flavor) {
+      return false;
+    }
+    return entry.account === asked.account && entry.realm_folder === asked.realm_folder && entry.label === asked.label;
   }
 
   // A row `char gear` can be asked about: read, with its folders named.
@@ -1359,10 +1362,14 @@
       }
       picker.appendChild(option);
     });
+    const asked = character.want;
     const wanted = character.entries.findIndex((e) => readable(e) && isWanted(e));
     character.want = null;
     const first = wanted >= 0 ? wanted : character.entries.findIndex(readable);
     picker.disabled = first < 0;
+    // The Account tab asked for a character this list does not hold: no
+    // other one is read in its place (`openCharacter` says why).
+    if (asked && wanted < 0) return;
     if (first < 0 && character.note) {
       charNote();
       return;
@@ -2507,22 +2514,31 @@
 
   // Opens the Character tab on `row`: the header's flavor moves to the
   // row's (with several flavors), and the picker takes that character once
-  // its list is read. Focus goes to the picker, which names it.
+  // its list is read. Focus goes to the picker, which names it. When the
+  // tab's list does not hold that character (the header could not move to
+  // its flavor), the status says so; no other character stands in for it.
   async function openCharacter(row) {
     await runFlavor.ready;
-    character.want = { account: row.account, realm_folder: row.realm_folder, label: row.label };
     const flavor = hubStr(row.flavor);
+    const want = { flavor: flavor, account: row.account, realm_folder: row.realm_folder, label: row.label };
+    character.want = want;
     if (flavor && runFlavor.picked && flavor !== runFlavor.picked) switchRunFlavor(flavor);
     showTab("character");
     await loadCharacters();
-    if (character.want) {
-      // The list was read before: pick the character in it.
-      const at = character.entries.findIndex((e) => readable(e) && isWanted(e));
-      character.want = null;
-      if (at >= 0) {
-        byId("char-picker").value = String(at);
-        pickCharacter(character.entries[at]);
+    character.want = null;
+    const at = character.entries.findIndex((e) => readable(e) && isWanted(e, want));
+    if (at < 0) {
+      // A list that could not be read has said so already.
+      if (character.asked) {
+        character.note =
+          visible(String(row.label)) + (flavor ? " (" + visible(flavor) + ")" : "") +
+          " is not in this tab's list of characters, so it was not opened: the tab is reading another flavor.";
+        charNote();
       }
+    } else if (byId("char-picker").value !== String(at)) {
+      // The list was read before: pick the character in it.
+      byId("char-picker").value = String(at);
+      pickCharacter(character.entries[at]);
     }
     byId("char-picker").focus();
   }

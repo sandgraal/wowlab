@@ -301,3 +301,31 @@ def test_the_hub_reads_nothing_into_the_install_constructed(both: Path) -> None:
     assert summary()[0] == 0
     assert run("char", "list", "--summary").exit_code == 0
     assert tree() == before
+
+
+def test_an_empty_result_says_how_to_get_a_record_constructed(both: Path) -> None:
+    """No character folder in the flavor: the plain list's advice, in the
+    summary's words too (code review of M17-01)."""
+    shutil.rmtree(both / FOREVER / "WTF" / "Account" / LAUNCH_ACCOUNT / "1")
+    done = run("char", "list", "--summary", "--flavor", FOREVER)
+    assert done.exit_code == 0, done.output
+    assert done.stdout.splitlines()[0] == (
+        "No character folder was found in any account (install the lab-addon with "
+        "`wowlab addon install lab`, log in on the character, then log out or /reload)."
+    )
+
+
+def test_a_flavor_without_the_account_is_headed_so_constructed(both: Path) -> None:
+    done = runner.invoke(
+        cli.app, ["char", "list", "--summary", "--account", ACCOUNT], terminal_width=200
+    )
+    assert done.exit_code == 0, done.output
+    assert f"Flavor {FOREVER} ({LAUNCH_VERSION}): no account {ACCOUNT}" in done.stdout
+    assert "no character folder" not in done.stdout
+
+
+def test_the_notes_help_says_what_it_does_on_char_list() -> None:
+    done = runner.invoke(cli.app, ["char", "list", "--help"], terminal_width=200)
+    words = " ".join(done.stdout.split())
+    assert "With --summary, also print the standing notes" in words
+    assert "The plain list always prints its notes." in words

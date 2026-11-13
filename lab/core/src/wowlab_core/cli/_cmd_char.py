@@ -437,7 +437,7 @@ _SUMMARY_ADVICE = (
 )
 _SUMMARY_NOTES = [
     "Last saved is the file's modification time: the character's last logout or /reload, "
-    "unless something wrote the file since (a wowlab restore, undo or sv merge, or a copy).",
+    "unless something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy).",
     _CHAR_NOTES[0],
     "Names of classes, races, specs and professions come from game tables wowlab has already "
     "downloaded for the installed version (wowlab db2 fetch); otherwise the ids are shown.",
@@ -593,20 +593,34 @@ def _summary_lines(row: CharSummaryRow) -> list[str]:
     return [first, professions, f"last logout or /reload: {when}"]
 
 
-def _say_summary(report: CharSummaryReport, every: bool, show_notes: bool) -> None:
+def _say_summary(
+    report: CharSummaryReport, every: bool, show_notes: bool, typed: str | None = None
+) -> None:
     """`char list --summary`'s text: each flavor's characters, account by
-    account, three lines each."""
+    account, three lines each. `typed` is --account as given: a flavor that
+    has no such account folder is headed so, as the plain list heads it."""
     if not report.rows:
         where = f"account {report.account}" if report.account is not None else "any account"
-        _say(_player_copy(f"No character folder was found in {where}.", keep=[report.account]))
+        if every:
+            where += " of any flavor"
+        if report.not_looked_at:
+            text = (
+                f"No character folder was found in {where}, but "
+                f"{_unseen_words(len(report.not_looked_at))}."
+            )
+        else:
+            text = f"No character folder was found in {where} ({_INSTALL_ADVICE})."
+        _say(_player_copy(text, keep=[report.account]))
     for flavor in report.flavors:
         rows = [r for r in report.rows if r.flavor == flavor.folder]
         if every:
             heading = f"Flavor {flavor.folder}"
             if flavor.version:
                 heading += f" ({flavor.version})"
-            if not rows:
-                heading += ": no character folder"
+            if flavor.account_found is False:
+                heading += f": no account {typed if typed is not None else report.account}"
+            elif not rows:
+                heading += _player_copy(": no character folder")
             _say(heading)
         for account in dict.fromkeys(r.account for r in rows):
             mine = [r for r in rows if r.account == account]
@@ -615,7 +629,7 @@ def _say_summary(report: CharSummaryReport, every: bool, show_notes: bool) -> No
                 _say(f"  {row.realm_folder}/{row.label}")
                 for line in _summary_lines(row):
                     _say_prose(line, indent="    ", hang="      ")
-    if report.not_looked_at:
+    if report.rows and report.not_looked_at:
         _say(f"{_unseen_words(len(report.not_looked_at))}.")
     _say_notes(report.notes, show_notes)
 
@@ -647,7 +661,14 @@ def char_list(
             "record.",
         ),
     ] = False,
-    notes_out: NotesOpt = False,
+    notes_out: Annotated[
+        bool,
+        typer.Option(
+            "--notes",
+            help="With --summary, also print the standing notes; without it, one line "
+            "after the answer counts them. The plain list always prints its notes.",
+        ),
+    ] = False,
 ) -> None:
     """Every character folder, in every account unless --account names one.
     With several flavors and no --flavor, every flavor's, under its name.
@@ -738,7 +759,7 @@ def char_list(
         if json_out:
             _emit(hub)
         else:
-            _say_summary(hub, every, notes_out)
+            _say_summary(hub, every, notes_out, account)
     elif json_out:
         _emit(report)
     elif not entries:
