@@ -121,8 +121,22 @@ def test_every_publish_waits_for_the_release_environment() -> None:
         "release": "release",
         "app": None,
         "app_smoke": None,
-        "app_release": "release",
+        # The one exception, by owner decision (2026-11-12, M17-08): attaching
+        # the macOS app runs on its own once `release` is published. It is
+        # gated by `release` itself, which the owner approved for this `v*`
+        # tag in the same run, and its write permissions are its own.
+        "app_release": None,
     }
+    attach = jobs["app_release"]
+    assert "release" in attach["needs"]
+    assert "if" not in attach  # the implicit success(): only after `release` succeeded
+    assert attach["permissions"] == {
+        "contents": "write",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    data = _workflow()
+    assert data.get("on", data.get(True)) == {"push": {"tags": ["v*"]}}
 
 
 def test_every_action_is_pinned_to_a_commit() -> None:
@@ -148,8 +162,9 @@ def test_no_secret_but_the_job_token_and_only_where_it_publishes() -> None:
     assert holders == [
         ("release", "Create the release"),
         # M17-08: reads the published SHA256SUMS, then uploads the app and the new sums.
-        ("app_release", "SHA256SUMS on the release, with the zip's line added"),
-        ("app_release", "Upload the app and SHA256SUMS"),
+        ("app_release", "The release's SHA256SUMS is one this job may write"),
+        ("app_release", "Upload the app, unless the release has it"),
+        ("app_release", "Upload SHA256SUMS with the zip's line"),
     ]
     for name, job in _jobs().items():
         assert "github.token" not in str(job.get("env", {})), name
@@ -334,7 +349,10 @@ def test_bootstrap_applies_the_rulesets_and_the_release_environment() -> None:
     assert '"reviewers":[{"type":"User","id":$owner_id}]' in text
     assert '"custom_branch_policies":true' in text
     assert "-f name='v*' -f type=tag" in text
-    assert "gh api -X PUT repos/$REPO/immutable-releases" in text
+    # Immutable releases stay off: the macOS app is attached after publishing
+    # (owner decision 2026-11-12, M17-08). The script reports, never enables.
+    assert "immutable-releases" in text
+    assert not re.search(r"-X\s+PUT\s+\S*immutable-releases", text)
 
 
 def test_the_release_environment_allows_no_admin_bypass() -> None:

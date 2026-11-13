@@ -402,18 +402,23 @@ jobs:
   # test fails its own job, visibly, skips this one, and leaves the release
   # as published. Like `release`, it checks out nothing and runs no
   # repository code: it checks the zip against the hash `app` recorded (a job
-  # output, never the artifact's own word), checks that the release's
-  # SHA256SUMS is still the one `build` wrote, attests the zip, and uploads
-  # the zip and SHA256SUMS with the zip's line added. Its upload is a publish,
-  # so it waits for the owner's approval of the `release` environment too.
+  # output, never the artifact's own word), checks what the release already
+  # holds, attests the zip, and uploads the zip and SHA256SUMS with the zip's
+  # line added. It is safe to re-run: a zip or a SHA256SUMS already there is
+  # checked and left as it is, and anything else there is refused.
+  #
+  # No environment, by owner decision (2026-11-12, M17-08, after the
+  # security review of 657bddd): attaching the app runs on its own. What
+  # gates it is `needs: release`, which the owner approved through the
+  # `release` environment for this `v*` tag in this same run; its write
+  # permissions are its own, and nothing else in the run gets them.
   app_release:
     name: Attach the macOS app to the release
     needs: [version, build, app, app_smoke, release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: release
     permissions:
-      contents: write # gh release download/upload: SHA256SUMS and the zip on the release
+      contents: write # gh release view/download/upload: the zip and SHA256SUMS on the release
       id-token: write # attest-build-provenance: the OIDC token Sigstore signs with
       attestations: write # attest-build-provenance: stores the attestation on the repository
     env:
@@ -435,25 +440,62 @@ jobs:
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected-app")" -eq 1
           cd app
           sha256sum -c "$RUNNER_TEMP/expected-app"
-      # The release's SHA256SUMS has to be exactly the wheel's and the
-      # sdist's lines as `build` hashed them; the zip's line is added to that.
-      - name: SHA256SUMS on the release, with the zip's line added
+      # What the release's SHA256SUMS may be before this job writes it:
+      # exactly the wheel's and the sdist's lines as `build` hashed them
+      # (the zip's line is then added), those lines and the zip's (a re-run:
+      # nothing to do), or missing (it is written whole). Anything else is
+      # refused before anything is uploaded.
+      - name: The release's SHA256SUMS is one this job may write
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
+          cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > "$RUNNER_TEMP/with-app"
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+            echo "the release has no SHA256SUMS; it is written whole"
+            echo write > "$RUNNER_TEMP/sums-action"
+            exit 0
+          fi
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/published"
-          cmp "$RUNNER_TEMP/expected" "$RUNNER_TEMP/published/SHA256SUMS"
-          cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > app/SHA256SUMS
-          cat app/SHA256SUMS
+          if cmp -s "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/published/SHA256SUMS"; then
+            echo "SHA256SUMS already lists the zip"
+            echo keep > "$RUNNER_TEMP/sums-action"
+          elif cmp -s "$RUNNER_TEMP/expected" "$RUNNER_TEMP/published/SHA256SUMS"; then
+            echo write > "$RUNNER_TEMP/sums-action"
+          else
+            echo "the release's SHA256SUMS is not the one the build wrote; refusing" >&2
+            exit 1
+          fi
       - name: Attest the app
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: app/wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip
-      - name: Upload the app and SHA256SUMS
+      # A zip already on the release (a re-run) has to be this one: it is
+      # downloaded and checked against the build's hash, and left as it is.
+      - name: Upload the app, unless the release has it
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "app/$APP_ZIP"
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber app/SHA256SUMS
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if printf '%s\n' "$assets" | grep -Fqx -- "$APP_ZIP"; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APP_ZIP" --dir "$RUNNER_TEMP/present"
+            cd "$RUNNER_TEMP/present"
+            sha256sum -c "$RUNNER_TEMP/expected-app"
+            echo "the release already has this $APP_ZIP; not uploading it again"
+          else
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "app/$APP_ZIP"
+          fi
+      # Written, then read back from the release and compared.
+      - name: Upload SHA256SUMS with the zip's line
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(cat "$RUNNER_TEMP/sums-action")" = write ]; then
+            cp "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/SHA256SUMS"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/SHA256SUMS"
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/after"
+          cmp "$RUNNER_TEMP/with-app" "$RUNNER_TEMP/after/SHA256SUMS"
+          cat "$RUNNER_TEMP/after/SHA256SUMS"

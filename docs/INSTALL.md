@@ -49,8 +49,10 @@ You need [uv](https://docs.astral.sh/uv/). It brings Python 3.12 with it.
 installs the current release, and the release page
 (https://github.com/sandgraal/wowlab/releases) carries the wheel, the sdist
 and `SHA256SUMS`. To check a download, put the three files in one folder and
-run `sha256sum -c SHA256SUMS` (on macOS `shasum -a 256 -c SHA256SUMS`);
-each file has to print `OK`. On Windows run
+run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
+`shasum -a 256 -c SHA256SUMS --ignore-missing`); each file has to print
+`OK`. (`--ignore-missing` skips the Mac app's line when you did not
+download it.) On Windows run
 `Get-FileHash -Algorithm SHA256 <file>` in PowerShell for each file and
 compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
@@ -72,12 +74,11 @@ checked:
 
 1. Download the wheel, the sdist and `SHA256SUMS` from the release page into
    one empty folder, and open a terminal there.
-2. Check them. Run `sha256sum -c SHA256SUMS` (macOS:
-   `shasum -a 256 -c SHA256SUMS`; Windows: `Get-FileHash` as above); each
-   file has to print `OK`. From the release that carries the Mac app (below),
-   add `--ignore-missing`, which skips the app's line when you did not
-   download it. Then, for a release after v0.1.0, check where the
-   wheel was built (next paragraph):
+2. Check them. Run `sha256sum -c SHA256SUMS --ignore-missing` (macOS:
+   `shasum -a 256 -c SHA256SUMS --ignore-missing`; Windows: `Get-FileHash`
+   as above); each file has to print `OK`. (`--ignore-missing` skips the
+   Mac app's line when you did not download it.) Then, for a release after
+   v0.1.0, check where the wheel was built (next paragraph):
 
    <!-- not-run: needs the network -->
    ```bash

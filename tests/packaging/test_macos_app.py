@@ -22,8 +22,10 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.util
+import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -443,7 +445,8 @@ def test_the_app_is_attached_after_the_release_only_when_built_and_smoked() -> N
     # job, visibly, and this one is skipped; the release stands.
     assert "if" not in attach
     assert "continue-on-error" not in attach
-    assert attach["environment"] == "release"
+    # No environment, by owner decision (2026-11-12): it is gated by `release`.
+    assert "environment" not in attach
     assert attach["permissions"] == {
         "contents": "write",
         "id-token": "write",
@@ -474,34 +477,205 @@ def test_the_attach_job_checks_attests_then_uploads_and_runs_no_repository_code(
         in (checked["run"])
     )
     assert 'sha256sum -c "$RUNNER_TEMP/expected-app"' in checked["run"]
-    sums = steps[names.index("SHA256SUMS on the release, with the zip's line added")]
-    assert sums["env"] == {"GH_TOKEN": "${{ github.token }}"}
-    run = " ".join(sums["run"].split())
-    # The published SHA256SUMS is exactly what `build` hashed before the zip's
-    # line joins it.
+    sums = steps[names.index("The release's SHA256SUMS is one this job may write")]
+    # The wheel's and the sdist's lines come from `build`'s outputs.
     assert (
         'printf \'%s  %s\\n\' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" '
         '> "$RUNNER_TEMP/expected"'
     ) in sums["run"]
-    assert '--pattern SHA256SUMS --dir "$RUNNER_TEMP/published"' in run
-    assert 'cmp "$RUNNER_TEMP/expected" "$RUNNER_TEMP/published/SHA256SUMS"' in run
-    assert 'cat "$RUNNER_TEMP/expected" "$RUNNER_TEMP/expected-app" > app/SHA256SUMS' in run
     attest = steps[names.index("Attest the app")]
     assert attest["with"] == {
         "subject-path": "app/wowlab-${{ needs.version.outputs.version }}-macos-arm64.zip"
     }
     assert "env" not in attest
-    upload = steps[names.index("Upload the app and SHA256SUMS")]
-    assert upload["env"] == {"GH_TOKEN": "${{ github.token }}"}
-    assert upload["run"].splitlines() == [
-        'gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "app/$APP_ZIP"',
-        'gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber app/SHA256SUMS',
-    ]
-    # Checked, then the sums, then attested, then uploaded: a failed check or
-    # attestation uploads nothing.
-    order = [steps.index(s) for s in (checked, sums, attest, upload)]
+    upload_app = steps[names.index("Upload the app, unless the release has it")]
+    upload_sums = steps[names.index("Upload SHA256SUMS with the zip's line")]
+    for step in (sums, upload_app, upload_sums):
+        assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    # Checked, then what the release holds, then attested, then uploaded: a
+    # failed check or attestation uploads nothing.
+    order = [steps.index(s) for s in (checked, sums, attest, upload_app, upload_sums)]
     assert order == sorted(order)
     assert order[-1] == len(steps) - 1
+
+
+# ── app_release, run: its shell steps against a stand-in `gh` ──
+# Each case is `constructed`: a release's assets as files, the zip as a few
+# bytes. The job's own `run` text is executed, step by step, the way the
+# runner does (`bash --noprofile --norc -eo pipefail`); `uses` steps are
+# played by the harness (the artifact is put in place, the attestation is
+# recorded).
+
+FAKE_GH = Path(__file__).resolve().with_name("_fake_gh.py")
+TAG = "v9.9.9"
+ZIP = "wowlab-9.9.9-macos-arm64.zip"
+WHEEL = "wowlab_core-9.9.9-py3-none-any.whl"
+SDIST = "wowlab_core-9.9.9.tar.gz"
+ZIP_BYTES = b"constructed zip\n"
+WHEEL_SHA = "a" * 64
+SDIST_SHA = "b" * 64
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+EXPECTED = f"{WHEEL_SHA}  {WHEEL}\n{SDIST_SHA}  {SDIST}\n".encode()
+WITH_APP = EXPECTED + f"{_sha(ZIP_BYTES)}  {ZIP}\n".encode()
+
+
+def _run_attach(
+    tmp_path: Path,
+    published: dict[str, bytes],
+    *,
+    artifact: bytes = ZIP_BYTES,
+    corrupt: str | None = None,
+) -> tuple[list[str], dict[str, bytes], list[list[str]]]:
+    """Run app_release's steps; the steps that ran (the last one failed if
+    the job failed), the release's assets after, and the `gh` calls."""
+    ws, temp, assets, bin_dir = (tmp_path / n for n in ("ws", "temp", "assets", "bin"))
+    for folder in (ws, temp, assets, bin_dir):
+        folder.mkdir()
+    for name, data in published.items():
+        (assets / name).write_bytes(data)
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_GH}" "$@"\n', encoding="utf-8")
+    gh.chmod(0o755)
+    if shutil.which("sha256sum") is None:
+        shim = bin_dir / "sha256sum"
+        shim.write_text('#!/bin/sh\nexec shasum -a 256 "$@"\n', encoding="utf-8")
+        shim.chmod(0o755)
+    log = tmp_path / "gh.log"
+    log.touch()
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "RUNNER_TEMP": str(temp),
+        "GITHUB_REPOSITORY": "owner/repo",
+        "TAG": TAG,
+        "WHEEL": WHEEL,
+        "SDIST": SDIST,
+        "WHEEL_SHA256": WHEEL_SHA,
+        "SDIST_SHA256": SDIST_SHA,
+        "APP_ZIP": ZIP,
+        "APP_SHA256": _sha(ZIP_BYTES),
+        "FAKE_GH_ASSETS": str(assets),
+        "FAKE_GH_LOG": str(log),
+    }
+    if corrupt:
+        env["FAKE_GH_CORRUPT_UPLOAD"] = corrupt
+    ran: list[str] = []
+    for i, step in enumerate(_jobs(RELEASE)["app_release"]["steps"]):
+        name = step.get("name") or step["uses"].split("@")[0]
+        ran.append(name)
+        if step.get("uses", "").startswith("actions/download-artifact@"):
+            (ws / "app").mkdir()
+            (ws / "app" / ZIP).write_bytes(artifact)
+            continue
+        if "uses" in step:  # the attestation: nothing to run here
+            continue
+        script = tmp_path / f"step{i}.sh"
+        script.write_text(step["run"], encoding="utf-8")
+        done = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+            cwd=ws,
+            env=env,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if done.returncode != 0:
+            ran[-1] += " (failed)"
+            break
+    after = {p.name: p.read_bytes() for p in assets.iterdir()}
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    return ran, after, calls
+
+
+def _uploads(calls: list[list[str]]) -> list[str]:
+    return [Path(c[-1]).name for c in calls if c[:2] == ["release", "upload"]]
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="the job's steps are bash")
+
+
+@posix_only
+def test_constructed_attach_to_a_fresh_release(tmp_path: Path) -> None:
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": EXPECTED})
+    assert not any(r.endswith("(failed)") for r in ran), ran
+    assert after == {"SHA256SUMS": WITH_APP, ZIP: ZIP_BYTES}
+    assert _uploads(calls) == [ZIP, "SHA256SUMS"]
+    clobber = next(c for c in calls if c[:2] == ["release", "upload"] and "SHA256SUMS" in c[-1])
+    assert "--clobber" in clobber
+    # Read back after writing.
+    assert calls[-1][:2] == ["release", "download"]
+
+
+@posix_only
+def test_constructed_a_rerun_after_success_uploads_nothing(tmp_path: Path) -> None:
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": WITH_APP, ZIP: ZIP_BYTES})
+    assert not any(r.endswith("(failed)") for r in ran), ran
+    assert after == {"SHA256SUMS": WITH_APP, ZIP: ZIP_BYTES}
+    assert _uploads(calls) == []
+
+
+@posix_only
+def test_constructed_a_rerun_after_the_zip_went_up_writes_only_the_sums(tmp_path: Path) -> None:
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": EXPECTED, ZIP: ZIP_BYTES})
+    assert not any(r.endswith("(failed)") for r in ran), ran
+    assert after == {"SHA256SUMS": WITH_APP, ZIP: ZIP_BYTES}
+    assert _uploads(calls) == ["SHA256SUMS"]
+
+
+@posix_only
+def test_constructed_a_different_zip_on_the_release_is_refused(tmp_path: Path) -> None:
+    other = b"another zip\n"
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": EXPECTED, ZIP: other})
+    assert ran[-1] == "Upload the app, unless the release has it (failed)"
+    assert after == {"SHA256SUMS": EXPECTED, ZIP: other}
+    assert _uploads(calls) == []
+
+
+@posix_only
+def test_constructed_missing_sums_are_written_whole(tmp_path: Path) -> None:
+    ran, after, calls = _run_attach(tmp_path, {})
+    assert not any(r.endswith("(failed)") for r in ran), ran
+    assert after == {"SHA256SUMS": WITH_APP, ZIP: ZIP_BYTES}
+    assert _uploads(calls) == [ZIP, "SHA256SUMS"]
+
+
+@posix_only
+@pytest.mark.parametrize(
+    "sums",
+    [
+        b"",
+        EXPECTED + b"extra line\n",
+        f"{'c' * 64}  {WHEEL}\n{SDIST_SHA}  {SDIST}\n".encode(),
+        EXPECTED + f"{'d' * 64}  {ZIP}\n".encode(),
+    ],
+    ids=["empty", "extra", "other-wheel-hash", "other-zip-line"],
+)
+def test_constructed_foreign_sums_are_refused_before_any_upload(
+    tmp_path: Path, sums: bytes
+) -> None:
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": sums})
+    assert ran[-1] == "The release's SHA256SUMS is one this job may write (failed)"
+    assert after == {"SHA256SUMS": sums}
+    assert _uploads(calls) == []
+
+
+@posix_only
+def test_constructed_an_artifact_that_is_not_the_built_zip_is_refused(tmp_path: Path) -> None:
+    ran, after, calls = _run_attach(tmp_path, {"SHA256SUMS": EXPECTED}, artifact=b"swapped\n")
+    assert ran[-1] == "The zip is the one the build hashed (failed)"
+    assert after == {"SHA256SUMS": EXPECTED}
+    assert calls == []
+
+
+@posix_only
+def test_constructed_sums_that_read_back_different_fail_the_job(tmp_path: Path) -> None:
+    ran, after, _ = _run_attach(tmp_path, {"SHA256SUMS": EXPECTED}, corrupt="SHA256SUMS")
+    assert ran[-1] == "Upload SHA256SUMS with the zip's line (failed)"
+    assert after["SHA256SUMS"] != WITH_APP
 
 
 # ─── the smoke test and the recorder ─────────────────────────────────────────
