@@ -126,6 +126,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Superseded by (in part):** ADR-0030 (accepted 2026-09-30) replaces the rule for admitting a second language. The measurement requirement stays for languages added for performance in the core.
 
+*Amendment of 2026-11-13 (Accepted 2026-11-13; owner decision in session: "Rename to wowlab", then "approved and accepted"; the status edit was made by the conductor on the owner's explicit instruction):* the distribution is renamed from `wowlab-core` to `wowlab` (M16-32, PR #548), so that a player can type `uvx wowlab ui` once it is on PyPI (ADR-0031, amendment of 2026-10-21). The import package stays `wowlab_core` and the console script stays `wowlab`; only the project name, and with it the wheel and sdist file names and the `uv tool` environment name, change. Releases up to v0.1.0 keep their published `wowlab_core-…` asset names. Upgrading from v0.1.0 needs `uv tool uninstall wowlab-core` first, which INSTALL.md and the release notes say. `wowlab doctor` still recognises a checkout made before the rename.
+
 ---
 
 ## ADR-0021 — Every write into a game install goes through one write gate
