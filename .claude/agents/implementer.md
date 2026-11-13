@@ -93,6 +93,10 @@ the workflow document point here.
    - always, for every diff: `tests/repo` and `lab/core/tests/test_write_sites.py`
      (the repo-wide write-site, no-FFI and every-file scans; 294 tests, about
      30 seconds);
+   - `lab/core/tests/test_cli_package.py` when the diff touches any module
+     under `wowlab_core/cli/`: every top-level name a module there defines
+     must be re-exported from `wowlab_core.cli`, and the import grep above
+     does not select this test (2026-11-13: four tickets missed it in a row);
    - `make test-parser` when the diff touches `lab/core/tests/fixtures/**`;
    - `tests/scripts/test_release.py` when it touches `.github/rulesets/` or
      `.github/release-notes.md`;
