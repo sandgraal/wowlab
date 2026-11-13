@@ -5245,6 +5245,27 @@ newest backup of a flavor: "Backup: the game updated since your last
 snapshot", both versions, and `wowlab snap create` (with `--flavor` on an
 install with several) as the fix.
 
+*Amended 2026-11-13 (M17-05), CW-4 as built.* The Account tab's
+**Patch day** card sits between the Backup panel and the table. After
+the hub's report, and before the Explorer's tree, the page runs, for each
+flavor in the report's `flavors`, `addons check --flavor <f> --json` and
+`sv list --orphans --flavor <f> --json`, one at a time, and again whenever
+the hub's report is read again. Per flavor (filtered by the hub's flavor
+filter) it lists the addons out of date for this client (`out_of_date`,
+with the TOC's interface and the client's, or `no_toc_for_client`), the
+addons missing a required addon (`missing_dependencies` and
+`unloadable_dependencies`), and the SavedVariables files no installed
+addon declares, with their size and why: no addon of that name is
+installed, or it is installed and declares no saved data at the file's
+scope (the page matches names with ASCII letters folded against
+`addons check`'s own list). No command reports SavedVariables files that
+fail to parse, so the card's third list is the orphans, as the ticket's
+acceptance names them. Each line's name opens the Explorer on the file
+(the TOC, the addon folder, or the SavedVariables file), once the tree is
+read. With nothing found it says "All N addons are current for this
+client"; with the client's interface unknown it says wowlab cannot tell.
+Read-only.
+
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 
 **Order.** The wave starts after M16-05 (the launch-client session and
