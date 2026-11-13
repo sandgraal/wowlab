@@ -392,14 +392,18 @@ jobs:
           test -d "$RUNNER_TEMP/dist/wowlab/_internal"
           "$RUNNER_TEMP/venv/Scripts/python.exe" -I -c 'import struct, sys; d = open(sys.argv[1], "rb").read(4096); o = struct.unpack_from("<I", d, 60)[0]; assert d[o:o + 4] == b"PE\0\0" and struct.unpack_from("<H", d, o + 4)[0] == 0x8664, "not an x64 executable"' "$RUNNER_TEMP/dist/wowlab/wowlab.exe"
       # The zip holds the one folder, `wowlab/`, with forward-slash names, as
-      # Python's zipfile writes it (Git for Windows has no zip command).
+      # Python's zipfile writes it (Git for Windows has no zip command). The
+      # hash is taken from standard input: given a Windows path, which has
+      # backslashes, sha256sum starts its line with a `\`.
       - name: Zip the app and record its SHA-256
         id: zip
         working-directory: ${{ runner.temp }}/dist
         run: |
           mkdir "$RUNNER_TEMP/app"
           "$RUNNER_TEMP/venv/Scripts/python.exe" -I -m zipfile -c "$RUNNER_TEMP/app/$APP_ZIP" wowlab
-          echo "app_sha256=$(sha256sum "$RUNNER_TEMP/app/$APP_ZIP" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          sum="$(sha256sum < "$RUNNER_TEMP/app/$APP_ZIP" | cut -d' ' -f1)"
+          printf '%s\n' "$sum" | grep -Eqx '[0-9a-f]{64}'
+          echo "app_sha256=$sum" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-app
