@@ -2934,21 +2934,21 @@ M16-118 changed `doctor`'s flavor line. The old wording is still in the first-ru
 
 # M16 follow-ups (filed 2026-11-12, twelfth batch: the owner's macOS test and the conductor's smoke test)
 
-## [ ] M16-122 — `doctor` names the wowlab version that is running
+## [x] M16-122 — `doctor` names the wowlab version that is running
 **Size:** XS · **Depends on:** nothing · **Sources:** the owner's macOS test of 2026-11-12
 
 The owner's `wowlab` on PATH was the installed 0.1.0rc1 release while the clone was at `main`, so every fix tested looked unfixed, and nothing said so. `doctor`, text and `--json`, names the running wowlab's version and where it runs from: the package location, and whether it is an editable install of a source checkout. When the source checkout it runs from has a different version, or when `wowlab` is run from inside a checkout that is not the one installed, it says so in one line and names the command to run that checkout instead (`uv run wowlab …`). No network call.
 
 **Acceptance:** constructed tests for an installed copy, an editable install and a run from a different checkout; `--json` gains the fields, listed as user-facing; `doctor --redact` covers the path. Reviewed by `code-reviewer`.
 
-## [ ] M16-123 — `doctor` does not offer a lab-addon install into a flavor whose version is unknown
+## [x] M16-123 — `doctor` does not offer a lab-addon install into a flavor whose version is unknown
 **Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
 
 For a flavor whose version is unknown (no `.build.info` row, a blank version, or no product; M16-118), `doctor`'s next steps say "Lab-addon: not installed. Close the game, then run `wowlab addon install lab --flavor _x_`". That install is refused, because the TOC's `## Interface:` cannot be filled (M16-121). The next step should say instead that the lab-addon cannot be installed there until the game version is known, and point at the flavor's explanation above it rather than repeat it. The owner's `_classic_beta_` hits this.
 
 **Acceptance:** a constructed test (a no-row flavor beside a real one, as in `test_doctor_version_words.py`): no `addon install` line for that flavor, the real flavor's line unchanged. Reviewed by `code-reviewer` and `domain-reviewer`.
 
-## [ ] M16-124 — `snap create` with several flavors
+## [x] M16-124 — `snap create` with several flavors
 **Size:** XS · **Depends on:** nothing · **Sources:** the conductor's smoke test of 2026-11-12
 
 With two flavor folders and no `--flavor`, `wowlab snap create` exits 2 and lists `--flavor` commands, from the one-flavor rule in `_select_flavor` (`cli/_common.py`) that read commands such as `cvar list` share too. `snap create` writes only into wowlab's own store, never into the install, and the character reads already pick a flavor themselves (M16-114). Decide, and record in LAB_PLAN §6.11, one of:
@@ -3017,12 +3017,21 @@ On 2026-11-12 an unprefixed character GUID (`<realm-id>-<8 hex>`) in `character-
 
 ---
 
-## [ ] M16-130 — `char list --help` describes what it lists
+## [x] M16-130 — `char list --help` describes what it lists
 **Size:** XS · **Depends on:** nothing · **Sources:** `domain-reviewer` on PR #527 (2026-11-13)
 
 `char list`'s short help says "Every character with a lab-addon record." (`cli/_cmd_char.py`). Since M16-35 it lists every character folder, with "no lab record" rows, and the Account tab shows the same. A player reading `wowlab --help` is told the opposite of what they see. Reword it per `.claude/rules/player-copy.md`, and check `char list --summary`'s help says the same.
 
 **Acceptance:** the help-drift and player-copy tests pass; `make ci` green. Reviewed by `code-reviewer`. User-facing: `char list --help`.
+
+---
+
+## [ ] M16-131 — SavedVariables files that fail to read, on the patch-day card
+**Size:** S · **Depends on:** M17-05 · **Sources:** `domain-reviewer` and `code-reviewer` on M17-05 (2026-11-13)
+
+M17-05's ticket asked the patch-day card for "SavedVariables files that fail to parse"; no command reports them, so the card shipped with orphaned files instead (recorded in LAB_PLAN §19). A SavedVariables file with a syntax error leaves its addon with empty settings, and the client overwrites the file at the next logout, which is a real loss on patch day **[verify]**. Add a read (for example `sv list --unreadable`, or a field on `addons check`) that parses each SavedVariables file with `luadata` (no Lua is executed, L3) and reports the ones that fail, with the position; then add the list to the card. Reads only (L1).
+
+**Acceptance:** tests on constructed broken files (labelled), and the real fixtures all read; the card lists the failures with their reasons; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the new read and the card's list.
 
 ---
 
@@ -3074,7 +3083,7 @@ With fewer than two records, the panel says what makes history appear: take snap
 
 ---
 
-## [ ] M17-04 — Back up before patch day: one button, and a "the game updated" prompt
+## [x] M17-04 — Back up before patch day: one button, and a "the game updated" prompt
 **Size:** S · **Depends on:** M17-01 · **Sources:** §19 CW-3
 
 On the Account tab:
@@ -3138,7 +3147,7 @@ Signing and notarisation are out of scope; the release notes say how to open an 
 
 ---
 
-## [ ] M17-09 — The Windows frozen binary
+## [x] M17-09 — The Windows frozen binary
 **Size:** M · **Depends on:** M17-13 · **Sources:** §19 CW-5, ADR-0031 (amendment of 2026-11-12), ADR-0038 (one-folder; the launcher runs `ui` with no arguments; smoke test item 4, with the recorder as a single executable file on Windows)
 
 Build `wowlab.exe` in CI with the tool the ADR names, attach it to the release with its hash, and smoke-test `wowlab --version` and `wowlab ui` headless on `windows-latest`. Double-clicking it opens the UI. Windows stays "untested" in the README until M13-02's human run.

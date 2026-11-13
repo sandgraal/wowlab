@@ -5275,6 +5275,48 @@ dates only, in a closed set of elements (`svg`, `polyline`, `circle`,
 `text`) and attributes, hidden from screen readers; no new library, and
 gold is not charted until a record holds it (M17-06).
 
+*Amended 2026-11-13 (M17-05), CW-4 as built.* The Account tab's
+**Patch day** card sits between the Backup panel and the table. Once
+the hub's report is read, the page starts, for each flavor in the
+report's `flavors`, `addons check --flavor <f> --json` and
+`sv list --orphans --flavor <f> --json`, one at a time, and again whenever
+the hub's report is read again; nothing waits for them (the Explorer's
+tree is asked for beside them). Per flavor (filtered by the hub's flavor
+filter):
+- when the client's interface is unknown, first: "wowlab cannot tell
+  which addons are out of date: it cannot work out this game's interface
+  version", whatever else is listed (`addons check`'s other caveat, about
+  unreadable `AddOns.txt` files, concerns characters the card does not
+  show, and is not shown);
+- with the interface known, a count: an addon is current when the client
+  loads a TOC of it (`selection` is not `no_toc`) and every TOC in
+  `counted_tocs` is `matches`; "All N addons are current for this game
+  version", or "N of M addons are current for this game version; K could
+  not be checked";
+- "Made for another game version" (`out_of_date`, `no_toc_for_client`):
+  the interfaces the TOC lists and the game's, with "so the game lists it
+  as out of date" when every listed interface is lower, then "The game
+  skips these unless "Load out of date AddOns" is ticked in its AddOns
+  list" **[verify]** (the card says "(not yet confirmed)" once, on the
+  first flavor's list);
+- "Needs an addon that will not load" (`missing_dependencies`,
+  `unloadable_dependencies`);
+- "Could not be checked": no TOC named after the folder, a TOC that could
+  not be read (with its error), or no `## Interface:` line;
+- "Saved data no installed addon declares": each orphan with its size and
+  why (no addon of that name is installed, or it is installed and declares
+  no saved data at the file's scope; names matched with ASCII letters
+  folded, `wtfconfig.fold_name`'s rule, against `addons check`'s list),
+  then the CLI's sentence that deleting such a file loses those settings.
+
+`sv list --orphans --json` does not mark its own caveat, so the page
+shows none from it; the folders it leaves out (no TOC, TOC not read) are on
+the "Could not be checked" list. No command reports SavedVariables files
+that fail to parse, so the card's last list is the orphans, as the
+ticket's acceptance names them. Each line's name opens the Explorer on the
+file (the TOC, the addon folder, or the SavedVariables file), once the
+tree is read. Read-only.
+
 *CW-5, amended 2026-11-12 (M17-13):* ADR-0031's amendment of that date and ADR-0038 are accepted. The macOS download is a frozen PyInstaller app, not a launcher over a clone; the owner's `install-wowlab-app.sh` is the model only for what a double-click does. M17-08 and M17-09 carry the details.
 
 **Order.** The wave starts after M16-05 (the launch-client session and

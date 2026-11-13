@@ -510,7 +510,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # that it never passes `out` is graded in test_ui_looks.py. The Account
     # tab's Take a backup now (M17-04) runs `snap create`, which writes only into
     # wowlab's own store, then the read `snap diff`; that only it runs them,
-    # always with --flavor, is graded in test_ui_account_backup.py.
+    # always with --flavor, is graded in test_ui_account_backup.py. Its
+    # patch-day card (M17-05) runs the reads `addons check` and `sv list
+    # --orphans`; that only it runs them is graded in
+    # test_ui_account_patch_day.py.
     assert {("tree",), ("explain",)} <= used, used
     assert used <= {
         ("install", "show"),
@@ -525,6 +528,8 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("looks", "page"),
         ("snap", "create"),
         ("snap", "diff"),
+        ("addons", "check"),
+        ("sv", "list"),
     }, used
     for path in used:
         assert path in offered, path

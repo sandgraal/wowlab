@@ -684,7 +684,9 @@ def _say_summary(
     _say_notes(report.notes, show_notes)
 
 
-@char_app.command("list", short_help="Every character with a lab-addon record.")
+@char_app.command(
+    "list", short_help="Every character folder, and its lab-addon record if it has one."
+)
 @_handled
 def char_list(
     account: Annotated[
