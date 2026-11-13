@@ -33,7 +33,13 @@
 <main>
 <section id="account-view" role="tabpanel" aria-labelledby="tab-account">
 <h2 class="unseen">Account</h2>
-<p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. Read only: this tab runs <code>wowlab char list --summary</code> and nothing else. Pick a character to open it in the Character tab.</p>
+<p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. This tab reads with <code>wowlab char list --summary</code>; only Take a backup now writes, with <code>wowlab snap create</code>, and only into wowlab's own store, never your game folder. Pick a character to open it in the Character tab.</p>
+<div id="backup" class="panel backup" role="region" aria-labelledby="backup-heading">
+<h3 id="backup-heading">Backup</h3>
+<ul id="backup-lines" class="backup-lines"></ul>
+<p id="backup-status" role="status"></p>
+<pre id="backup-diff" class="plan-lines" hidden></pre>
+</div>
 <div class="toolbar panel">
 <label id="hub-flavor-box">Flavor <select id="hub-flavor"></select></label>
 <label>Class <select id="hub-class"></select></label>

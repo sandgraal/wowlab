@@ -647,6 +647,13 @@ _M17_01_IDS = _M17_01_JS_IDS | {"account-view"}
 _M17_01_JS_CLASSES = frozenset(
     {"hub", "hub-advice", "hub-none", "hub-open", "hub-row", "hub-row-bare", "hub-sort"}
 )
+# What M17-04 added: the Account tab's backup panel, a line per flavor.
+_M17_04_CLASSES = frozenset({"backup", "backup-lines"})
+_M17_04_JS_IDS = frozenset({"backup-lines", "backup-status", "backup-diff"})
+_M17_04_IDS = _M17_04_JS_IDS | {"backup", "backup-heading"}
+_M17_04_JS_CLASSES = frozenset(
+    {"backup-line", "backup-updated", "backup-actions", "backup-now", "backup-restore"}
+)
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
@@ -657,11 +664,12 @@ def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
         | _M16_21_CLASSES
         | _M16_114_CLASSES
         | _M17_01_CLASSES
+        | _M17_04_CLASSES
     )
-    assert html_ids == _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS
+    assert html_ids == (_HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS | _M17_04_IDS)
     js_classes, js_ids = _js_names(_template("page.js"))
-    assert js_classes == _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES
-    assert js_ids == _JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_JS_IDS
+    assert js_classes == _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES | _M17_04_JS_CLASSES
+    assert js_ids == (_JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_JS_IDS | _M17_04_JS_IDS)
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -801,9 +809,14 @@ _ACCOUNT_WORDS = [
     "Every character folder in your game folder, in every flavor, as the lab-addon last saved "
     "it: at logout or",
     "/reload",
-    ", never the session in progress. Read only: this tab runs",
+    ", never the session in progress. This tab reads with",
     "wowlab char list --summary",
-    "and nothing else. Pick a character to open it in the Character tab.",
+    "; only Take a backup now writes, with",
+    "wowlab snap create",
+    ", and only into wowlab's own store, never your game folder. Pick a character to open it "
+    "in the Character tab.",
+    # M17-04: the backup panel's heading; its lines are the script's.
+    "Backup",
     "Flavor",
     "Class",
     "[aria-label] Characters",

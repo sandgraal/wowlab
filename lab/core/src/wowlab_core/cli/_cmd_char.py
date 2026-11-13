@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
+from pydantic import Field
 
 from wowlab_core import (
     addoninstall,
@@ -18,6 +19,7 @@ from wowlab_core import (
     itemlink,
     keymap,
     labaddon,
+    lastbackup,
     layout,
     luadata,
     macrocheck,
@@ -419,6 +421,22 @@ class CharSummaryRow(_Out):
     professions_absent: str | None = None
 
 
+class CharSummaryBackup(_Out):
+    """For one flavor of `char list --summary --json` (M17-04, the Account
+    tab's backup line): the client's version as discovery reads it, the
+    newest backup of the flavor in wowlab's store (`lastbackup`: one the
+    player took, the first run's, or the write gate's before a change; never
+    a profile or an imported one), or None for each `snapshot_*` field when
+    there is none, and whether the game updated since that backup."""
+
+    flavor: layout.FsText
+    version: str | None
+    snapshot_id: str | None = None
+    created_at: str | None = None  # UTC, ISO 8601, as the manifest records it
+    snapshot_version: str | None = None  # the client's version the backup recorded
+    game_updated: bool = False
+
+
 class CharSummaryReport(_Out):
     """`wowlab char list --summary --json` (M17-01): one row per character
     folder `char list` lists, every flavor of an install with several unless
@@ -433,6 +451,10 @@ class CharSummaryReport(_Out):
     rows: list[CharSummaryRow]
     not_looked_at: list[labaddon.NotLookedAt]
     notes: list[str]
+    # Each listed flavor's backup line (M17-04), in the order of `flavors`;
+    # empty, with `backup_error` saying why, when the store cannot be read.
+    backups: list[CharSummaryBackup] = Field(default_factory=list)
+    backup_error: str | None = None
 
 
 _FIX_COMMAND = "wowlab addon install lab"
@@ -595,6 +617,30 @@ def _summary_lines(row: CharSummaryRow) -> list[str]:
         professions = "professions: " + ", ".join(_profession_words(p) for p in row.professions)
     when = "time unknown" if row.mtime_ns is None else _local_time(row.mtime_ns)
     return [first, professions, f"last logout or /reload: {when}"]
+
+
+def _summary_backups(
+    root: Path, flavors: Sequence[install.Flavor]
+) -> tuple[list[CharSummaryBackup], str | None]:
+    """Each flavor's backup line (M17-04): reads wowlab's store only."""
+    try:
+        manifests, imported = lastbackup.store_listing(snapshot.SnapshotStore())
+    except (OSError, snapshot.SnapshotError) as exc:
+        return [], f"wowlab could not read its snapshot store: {exc}"
+    lines: list[CharSummaryBackup] = []
+    for f in flavors:
+        latest = lastbackup.latest_backup(manifests, root, f.folder, imported)
+        lines.append(
+            CharSummaryBackup(
+                flavor=f.folder,
+                version=f.version,
+                snapshot_id=latest.id if latest is not None else None,
+                created_at=latest.created_at if latest is not None else None,
+                snapshot_version=latest.flavor_version if latest is not None else None,
+                game_updated=lastbackup.game_updated(latest, f.version),
+            )
+        )
+    return lines, None
 
 
 def _say_summary(
@@ -760,6 +806,8 @@ def char_list(
             not_looked_at=unseen,
             notes=_SUMMARY_NOTES,
         )
+        backups, backup_error = _summary_backups(inst.root, [f for f, _ in shown])
+        hub = hub.model_copy(update={"backups": backups, "backup_error": backup_error})
         if json_out:
             _emit(hub)
         else:

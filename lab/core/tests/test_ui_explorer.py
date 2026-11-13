@@ -480,7 +480,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
     # binds` and `char macros` (M14-09), all four read commands; that only
     # that tab runs them is graded in test_ui_character.py. The Looks tab (M14-04) runs `looks page`, which
     # writes only under the data folder's pages/ (owner ruling 2026-10-15);
-    # that it never passes `out` is graded in test_ui_looks.py.
+    # that it never passes `out` is graded in test_ui_looks.py. The Account
+    # tab's Take a backup now (M17-04) runs `snap create`, which writes only into
+    # wowlab's own store, then the read `snap diff`; that only it runs them,
+    # always with --flavor, is graded in test_ui_account_backup.py.
     assert {("tree",), ("explain",)} <= used, used
     assert used <= {
         ("install", "show"),
@@ -492,6 +495,8 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("char", "binds"),
         ("char", "macros"),
         ("looks", "page"),
+        ("snap", "create"),
+        ("snap", "diff"),
     }, used
     for path in used:
         assert path in offered, path

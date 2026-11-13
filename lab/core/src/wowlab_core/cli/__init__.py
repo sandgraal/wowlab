@@ -677,6 +677,9 @@ from wowlab_core.cli._cmd_char import (
     CharShowReport as CharShowReport,
 )
 from wowlab_core.cli._cmd_char import (
+    CharSummaryBackup as CharSummaryBackup,
+)
+from wowlab_core.cli._cmd_char import (
     CharSummaryProfession as CharSummaryProfession,
 )
 from wowlab_core.cli._cmd_char import (
@@ -795,6 +798,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _source_words as _source_words,
+)
+from wowlab_core.cli._cmd_char import (
+    _summary_backups as _summary_backups,
 )
 from wowlab_core.cli._cmd_char import (
     _summary_lines as _summary_lines,
@@ -1023,6 +1029,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _ask as _ask,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _backup_step as _backup_step,
 )
 from wowlab_core.cli._cmd_doctor import (
     _cannot_work_out as _cannot_work_out,

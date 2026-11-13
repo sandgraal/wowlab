@@ -554,6 +554,19 @@ pre:empty { display: none; }
 .hub-advice code { font-family: var(--font-mono); font-size: 14px; unicode-bidi: isolate; overflow-wrap: anywhere; }
 .hub-advice .copy { margin-left: var(--space-2); }
 
+/* ─── the Account tab's backups (M17-04): a line per flavor, the prompt
+   when the game updated, and what changed since the previous backup ─── */
+.backup { padding: var(--space-3) var(--space-4); }
+.backup h3 { margin: 0 0 var(--space-2); }
+.backup-lines { margin: 0; padding: 0; list-style: none; }
+.backup-line { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.backup-updated { color: var(--order); }
+.backup-actions { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); margin-left: var(--space-3); }
+#backup-status { margin: var(--space-2) 0 0; color: var(--text-muted); overflow-wrap: anywhere; }
+#backup-status:empty { display: none; }
+#backup-status.error { color: var(--ruin); }
+.backup .plan-lines { margin: var(--space-2) 0 0; }
+
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
 #looks-status { margin: 0; color: var(--text-muted); flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }

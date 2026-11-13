@@ -27,6 +27,7 @@ from wowlab_core import (
     guard,
     install,
     labaddon,
+    lastbackup,
     layout,
     longpath,
     process,
@@ -206,9 +207,12 @@ class CannotWorkOut(_Out):
 
 
 # What each "Next steps" item of `doctor` is about (M16-37).
-NextStepItem = Literal["install", "lab_addon", "characters", "combat_log"]
+# `backup` (M17-04) is listed only when the game updated since the newest
+# backup of the flavor (`lastbackup`), as `stale`.
+NextStepItem = Literal["install", "lab_addon", "characters", "combat_log", "backup"]
 # `ok`: nothing to do; `missing`: not there yet; `stale`: the lab-addon is
-# made for another client version; `unknown`: wowlab cannot tell.
+# made for another client version, or the newest backup was taken on
+# another one; `unknown`: wowlab cannot tell.
 NextStepState = Literal["ok", "missing", "stale", "unknown"]
 
 
@@ -720,6 +724,11 @@ def _doctor(
     else:
         game = _game_data(inst.flavors, check_builds)
         several = len(inst.flavors) > 1
+        try:
+            manifests, imported = lastbackup.store_listing(snapshot.SnapshotStore())
+        except (OSError, snapshot.SnapshotError):
+            # The store's own section says what is wrong with it.
+            manifests, imported = (), frozenset()
         for f in inst.flavors:
             lay = layout.Layout.for_flavor(f, inst.root)
             try:
@@ -743,6 +752,9 @@ def _doctor(
             steps += _flavor_steps(
                 lay, f.folder, lab_addon, several, given_root, version_known=f.version is not None
             )
+            latest = lastbackup.latest_backup(manifests, inst.root, f.folder, imported)
+            if lastbackup.game_updated(latest, f.version):
+                steps.append(_backup_step(f.folder, several, given_root, latest, f.version))
         if not inst.flavors:
             # With folders not taken, the refusal's words, each reason
             # included, so the text and `--json` say why (M13-56).
@@ -1129,6 +1141,27 @@ def _combat_log_step(lay: layout.Layout, folder: str) -> NextStep:
     )
 
 
+def _backup_step(
+    folder: str,
+    several: bool,
+    root: str | None,
+    latest: snapshot.Manifest | None,
+    version: str | None,
+) -> NextStep:
+    """The game updated since the newest backup of the flavor (M17-04): the
+    two versions, and the command that takes a new one."""
+    command = _wowlab_command(["snap", "create"], folder, several, root)
+    before = latest.flavor_version if latest is not None else None
+    return NextStep(
+        item="backup",
+        flavor_folder=folder,
+        state="stale",
+        command=command,
+        detail=f"your last snapshot was taken on version {before}; the game is now {version}",
+        fix=f"Take a backup now: run `{command}`.",
+    )
+
+
 def _flavor_steps(
     lay: layout.Layout,
     folder: str,
@@ -1180,6 +1213,8 @@ def _next_step_answer(step: NextStep) -> str:
             said += ")"
         case "combat_log", "missing":
             said = "Combat log: none under Logs/"
+        case "backup", _:
+            said = "Backup: the game updated since your last snapshot"
         case _:
             said = "Combat log: wowlab cannot tell whether one is there"
     if step.detail:
