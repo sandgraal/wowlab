@@ -385,3 +385,126 @@ def test_suggested_lines_go_before_a_double_dash_constructed() -> None:
     result = run("cvar", "get", "--", "x")
     assert result.exit_code == 2
     assert f"`wowlab cvar get --flavor {FLAVOR} -- x`" in result.stderr
+
+
+# ─── snap create takes one snapshot per flavor (M16-124) ─────────────────────
+# Owner decision, 2026-11-12: with several flavors and none named, `snap
+# create` snapshots every flavor, one snapshot each, and says which flavor
+# each one is. A snapshot only reads the install; reads such as `cvar list`
+# keep the one-flavor rule.
+
+
+def _install_state(root: Path) -> dict[str, tuple[bytes | None, int]]:
+    """Every path under the install with its bytes (None for a folder) and
+    its modification time in nanoseconds."""
+    return {
+        str(p.relative_to(root)): (
+            None if p.is_dir() else p.read_bytes(),
+            p.stat().st_mtime_ns,
+        )
+        for p in sorted(root.rglob("*"))
+    }
+
+
+def test_snap_create_snapshots_every_flavor_constructed(two_flavors: Path) -> None:
+    before = _install_state(two_flavors)
+    result = run("snap", "create", "-m", "both")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert f"2 flavors in {two_flavors}: one snapshot of each." in result.stdout
+    assert f"  {FLAVOR} ({VERSION}) in {two_flavors}" in result.stdout
+    assert f"  {EMPTY} (no version) in {two_flavors}" in result.stdout
+    assert result.stdout.count("Snapshot ") == 2
+    listed = json.loads(run("snap", "list", "--json").stdout)["snapshots"]
+    assert sorted(s["flavor_folder"] for s in listed) == sorted([FLAVOR, EMPTY])
+    assert {s["label"] for s in listed} == {"both"}
+    for s in listed:
+        assert f"Snapshot {s['id']}" in result.stdout
+    # L1: the install is only read; every snapshot went to wowlab's own store.
+    assert _install_state(two_flavors) == before
+
+
+def test_snap_create_json_lists_one_manifest_per_flavor_constructed(two_flavors: Path) -> None:
+    from wowlab_core import snapshot
+    from wowlab_core.cli._cmd_snap import SnapCreateReport
+
+    before = _install_state(two_flavors)
+    result = run("snap", "create", "--json")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    report = SnapCreateReport.model_validate_json(result.stdout)
+    folders = [f.folder for f in install.discover(two_flavors).flavors]
+    assert [m.flavor_folder for m in report.snapshots] == folders
+    assert sorted(folders) == sorted([FLAVOR, EMPTY])
+    store = snapshot.SnapshotStore()
+    for m in report.snapshots:
+        assert store.show(m.id) == m
+        assert all(sub.startswith(f"{m.flavor_folder}/") for sub in m.subtrees)
+    assert len({m.id for m in report.snapshots}) == 2
+    assert _install_state(two_flavors) == before
+    assert two_flavors not in store.path.parents
+
+
+@pytest.mark.parametrize("by_env", [False, True], ids=["option", "env"])
+def test_snap_create_named_flavor_takes_one_constructed(
+    monkeypatch: pytest.MonkeyPatch, by_env: bool
+) -> None:
+    if by_env:
+        monkeypatch.setenv(install.ENV_FLAVOR, FLAVOR)
+        result = run("snap", "create", "--json")
+    else:
+        result = run("snap", "create", "--json", "--flavor", FLAVOR)
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    manifest = json.loads(result.stdout)
+    assert "snapshots" not in manifest  # the bare manifest, as with one flavor
+    assert manifest["flavor_folder"] == FLAVOR
+    assert len(json.loads(run("snap", "list", "--json").stdout)["snapshots"]) == 1
+    text = run("snap", "create", "--flavor", EMPTY)
+    assert text.exit_code == 0, (text.stdout, text.stderr)
+    assert "one snapshot of each" not in text.stdout
+    assert text.stdout.count("Snapshot ") == 1
+
+
+def test_snap_create_unconfirmed_client_names_each_flavor_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from wowlab_core.cli import _cmd_snap
+
+    monkeypatch.setattr(_cmd_snap, "_client_running", lambda inst, chosen: None)
+    result = run("snap", "create")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    for folder in (FLAVOR, EMPTY):
+        assert f"{folder}: wowlab could not confirm the client was closed" in result.stderr
+
+
+def test_snap_create_error_names_the_snapshots_already_taken_constructed(
+    monkeypatch: pytest.MonkeyPatch, two_flavors: Path
+) -> None:
+    """A capture that fails on the second flavor (an OSError injected for
+    it): the run exits 1, and its error says which flavor was not
+    snapshotted and which snapshot was already taken."""
+    from wowlab_core import firstrun
+    from wowlab_core.cli import _cmd_snap
+
+    first, second = (f.folder for f in install.discover(two_flavors).flavors)
+    real = firstrun.snapshot_flavor
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        if args[2].folder == second:
+            raise OSError("constructed read error")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_cmd_snap.firstrun, "snapshot_flavor", failing)
+    result = run("snap", "create", "--json")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    error = json.loads(result.stdout)
+    taken = json.loads(run("snap", "list", "--json").stdout)["snapshots"]
+    assert [s["flavor_folder"] for s in taken] == [first]
+    note = f"{second} was not snapshotted; snapshots already taken: {taken[0]['id']} ({first})"
+    assert error["notes"] == [note]
+    assert note in result.stderr
+
+
+def test_read_commands_keep_the_one_flavor_rule_after_snap_create_constructed() -> None:
+    assert run("snap", "create").exit_code == 0
+    result = run("cvar", "list")
+    assert result.exit_code == 2
+    assert f"`wowlab cvar list --flavor {FLAVOR}`" in result.stderr
