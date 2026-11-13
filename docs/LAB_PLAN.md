@@ -1676,8 +1676,11 @@ decimal:
 
 The calibration loop took 0.216 to 0.375 s CPU on those runners, and the
 gate's check took 2.764, 3.467, 2.438 and 1.993 s of wall-clock time, under
-the 5 s limit each time. The ratios moved by up to about 30 % from one run
-to the next (`sv dump --json`: 1.39 to 1.85).
+the 5 s limit each time. From one run to the next a ratio moved by up to
+about a third (`sv dump --json`: 1.39 to 1.85; `addons list`: 1.42 to 1.93;
+`--version`: 1.32 to 1.77). Every table in this section that lists the
+commands is checked against `BASELINE` by `tests/scripts/test_perf_budget.py`,
+on its last column.
 
 The first baselines, replaced by the ones above, were provisional. They were set
 on the development container on 2026-11-10 from five runs of the
