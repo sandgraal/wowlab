@@ -89,18 +89,11 @@ def test_constructed_two_macros_each_counted(tmp_path: Path) -> None:
     "line",
     [
         b"/say h=" + HASH,  # not an #HB3 line
-        b"/say #HB3 l=1;h=" + HASH,  # #HB3 not at the line start
         b"#HB l=1;h=" + HASH,  # no version number
-        b"#HB3x l=1;h=" + HASH,  # the tag runs on
     ],
-    # M16-128 moved the indented and `#HB2` cases out of this list: they are
-    # HonorBound lines now (test_lab_capture_own_guids.py).
-    ids=[
-        "constructed-say",
-        "constructed-mid-line",
-        "constructed-no-version",
-        "constructed-tag-run-on",
-    ],
+    # M16-128 moved the indented, `#HB2`, mid-line and run-on tag cases out of
+    # this list: they are HonorBound lines now (test_lab_capture_own_guids.py).
+    ids=["constructed-say", "constructed-no-version"],
 )
 def test_constructed_lookalikes_are_untouched(tmp_path: Path, line: bytes) -> None:
     original = _macros(line)

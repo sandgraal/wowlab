@@ -165,12 +165,21 @@ BARE_GUID_LABEL = "player GUID without its prefix, not mapped"
 # GUID is not. One still in the output after the scrub (an edit dropped for
 # overlapping a vocabulary span or another edit) refuses the file.
 OWN_GUID_LABEL = "the owner's own GUID not replaced"
+OWN_GUID_LOW_MIN = 8  # hex digits; a shorter hex part is too common to hunt alone
 _PLAYER_PREFIX = b"PLAYER-"
 
 
 def _guid_bytes(guid: bytes | str) -> bytes:
     """A GUID as bytes (`str` from a caller is ASCII)."""
     return guid.encode("ascii", errors="replace") if isinstance(guid, str) else guid
+
+
+def _alternation(texts: Iterable[bytes]) -> re.Pattern[bytes] | None:
+    """Any of `texts`, any case, longest first; None when there are none."""
+    ordered = sorted(texts, key=lambda text: (-len(text), text))
+    if not ordered:
+        return None
+    return re.compile(b"|".join(re.escape(text) for text in ordered), re.IGNORECASE)
 
 
 def _own_guid_pattern(guids: dict[bytes, bytes]) -> re.Pattern[bytes] | None:
@@ -514,27 +523,42 @@ PLAYER_LINK_RE = re.compile(rb"\|+H(?i:player(?:Community|GM)?):([^:|]*)")
 BNET_RE = re.compile(rb"\|+H(?i:BNplayer(?:Community)?):|\|+K[a-zA-Z][0-9]+\|+k")
 # M16-128: the label's `[...]` is taken whole (`\[[^\]\r\n]*\]`), so a `|h`
 # inside a channel's name does not end the link early, and the closers are
-# matched in either case (`|H` as well as `|h`).
+# matched in either case (`|H` as well as `|h`). Each step of the label loop is
+# an atomic group and every pipe run is possessive, so a line of `[a][a]...`
+# or of `||||...` with no closer fails in linear time instead of trying every
+# way to split it (code review of M16-128: exponential before).
+_LINK_LABEL = rb"(?:(?>\[[^\]\r\n]*+\]|[^|\r\n]|\|++(?![hH])))*"
+_LINK_DATA = rb"(?:(?>[^|\r\n]++|\|++(?![hH])))*"
 CHANNEL_LINK_RE = re.compile(
-    rb"\|+H(?i:channel):[^|\r\n]*\|+[hH]"
-    rb"(?:\[[^\]\r\n]*\]|[^|\r\n]|\|+(?![hH]))*\|+[hH][ \t]*"
-    rb"(?:\|+[cC](?:[0-9A-Fa-f]{8}|n[A-Za-z0-9_]+:)[ \t]*)*"
+    rb"\|+H(?i:channel):" + _LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH][ \t]*+"
+    rb"(?:\|++[cC](?:[0-9A-Fa-f]{8}|n[A-Za-z0-9_]++:)[ \t]*+)*+"
 )
+# Any channel link opener: one CHANNEL_LINK_RE cannot read (no closer, or a
+# label it cannot take whole) refuses, as a plain-text speaker does.
+CHANNEL_OPEN_RE = re.compile(rb"\|+H(?i:channel):")
 # The rest of a player link after its target, through its closing `|h`: the
 # link data, `|h`, the label (a `[...]` taken whole, colour codes allowed
 # around it) and `|h`. Closers in either case.
-_LINK_REST_RE = re.compile(
-    rb"(?:[^|\r\n]|\|+(?![hH]))*\|+[hH](?:\[[^\]\r\n]*\]|[^|\r\n]|\|+(?![hH]))*\|+[hH]"
+_LINK_REST_RE = re.compile(_LINK_DATA + rb"\|++[hH]" + _LINK_LABEL + rb"\|++[hH]")
+# A speaker link's colon right after it: colour resets and spaces, then `:`.
+_SPEAKER_COLON_RE = re.compile(rb"(?:[ \t]|\|++[rR])*+(?::|\xef\xbc\x9a)")
+# A link followed by ` <word>:` (`|h says: ...`) is a speaker link too.
+_SPEAKER_WORD_RE = re.compile(rb"(?:[ \t]|\|++[rR])*+[A-Za-z\x80-\xff]++[ \t]*+(?::|\xef\xbc\x9a)")
+# What may stand between the start of a line and a link that starts it: indent,
+# a table key, a quote, colour codes.
+_LINE_LEAD_RE = re.compile(
+    rb"[ \t{,]*+(?:\[[^\]\r\n]*+\][ \t]*+=[ \t]*+)?[\"']?(?:\|++[cC][0-9A-Fa-f]{8})*+"
 )
-# What may stand between a speaker link and its colon: colour resets and spaces.
-_SPEAKER_COLON_RE = re.compile(rb"(?:[ \t]|\|+[rR])*(?::|\xef\xbc\x9a)")
 # M16-128: after the owner's own speaker link (one right after a channel link,
-# or followed by its colon), another `Name:` on the same line is someone
-# else's line: a letter (any script), an optional closing bracket or colour
-# reset, optional spaces, then an ASCII or full-width colon. Stricter than a
-# name check, as the plain-text speaker rule is: the owner's own message
-# holding `word:` refuses too.
-_SECOND_SPEAKER_RE = re.compile(rb"[A-Za-z\x80-\xff](?:\]|\|+[rR])*[ \t]*(?::|\xef\xbc\x9a)")
+# one followed by its colon or by ` <word>:`, or one that starts its line),
+# another `Name:` on the same line is someone else's line: a letter (any
+# script), an optional `-Realm` (letters, digits, spaces, apostrophes), an
+# optional closing bracket or colour reset, optional spaces, then an ASCII or
+# full-width colon. Stricter than a name check, as the plain-text speaker rule
+# is: the owner's own message holding `word:` (or `says:`) refuses too.
+_SECOND_SPEAKER_RE = re.compile(
+    rb"[A-Za-z\x80-\xff](?:-[A-Za-z0-9\x80-\xff' ]*+)?(?:\]|\|++[rR])*+[ \t]*+(?::|\xef\xbc\x9a)"
+)
 _LINE_END_RE = re.compile(rb"[\r\n]|\Z")
 # What may follow a channel link when it has no speaker (a channel list, or a
 # "joined channel" line ending in the link): the end, a quote, a bracket or a
@@ -838,6 +862,16 @@ class Identity:
         }
         self._pseudo_guids = frozenset(self.guids.values())
         self._own_guid = _own_guid_pattern(self.guids)
+        # Hardening (security review of M16-128): each own GUID's hex part on
+        # its own, in any case, anywhere, so an unpadded realm id, a split
+        # field, an odd separator, a Unicode dash or percent-encoding around it
+        # still loses it. Maps to the pseudonym's hex part.
+        self._own_low: dict[bytes, bytes] = {}
+        for key, pseudonym in self.guids.items():
+            low = key.rpartition(b"-")[2]
+            if len(low) >= OWN_GUID_LOW_MIN:
+                self._own_low.setdefault(low, pseudonym.rpartition(b"-")[2])
+        self._own_low_re = _alternation(self._own_low)
 
         self.cvars = tuple(dict.fromkeys(cvars))
         names = b"|".join(re.escape(c.encode()) for c in self.cvars)
@@ -1128,6 +1162,10 @@ class Identity:
                 new = pseudonym if m.group(1) else pseudonym[len(_PLAYER_PREFIX) :]
                 claim(m.start(), m.end(), new, "guid")
             close_pass()  # a pass of its own: GUID_RE below matches the same spans
+        if self._own_low_re is not None:
+            for m in self._own_low_re.finditer(data):
+                claim(m.start(), m.end(), self._own_low[m.group(0).upper()], "guid")
+            close_pass()
         for m in GUID_RE.finditer(data):
             key = m.group(0).upper()
             if key in self.guids:
@@ -1201,7 +1239,16 @@ class Identity:
         folded = self._folded_hits(scrubbed, [*written, *toc_out])
         if folded:
             problems.append(f"{FOLDED_SURVIVOR_LABEL} x{folded}")
-        if self._own_guid is not None and (kept := list(self._own_guid.finditer(scrubbed))):
+        kept = list(self._own_guid.finditer(scrubbed)) if self._own_guid is not None else []
+        whole = [m.span() for m in kept]
+        if self._own_low_re is not None:
+            kept += [
+                m
+                for m in self._own_low_re.finditer(scrubbed)
+                if not _overlaps(whole, m.start(), m.end())
+            ]
+        if kept:
+            kept.sort(key=lambda m: m.start())
             problems.append(_located(OWN_GUID_LABEL, scrubbed, kept))
         if bare_guids:
             mapped = {guid[len(_PLAYER_PREFIX) :] for guid in self._pseudo_guids}
@@ -1282,8 +1329,17 @@ class Identity:
             if rest is None:
                 return False
             at = rest.end()
+            line_start = (
+                max(scrubbed.rfind(b"\n", 0, link.start()), scrubbed.rfind(b"\r", 0, link.start()))
+                + 1
+            )
+            speaker = (
+                after_channel
+                or _LINE_LEAD_RE.fullmatch(scrubbed, line_start, link.start()) is not None
+                or _SPEAKER_WORD_RE.match(scrubbed, at) is not None
+            )
             colon = _SPEAKER_COLON_RE.match(scrubbed, at)
-            if colon is None and not after_channel:
+            if colon is None and not speaker:
                 return False  # not a speaker: a link inside some other text
             if colon is not None:
                 at = colon.end()
@@ -1302,7 +1358,9 @@ class Identity:
                 linked += 1
         spoken = 0
         after_channel: set[int] = set()
+        channels: list[Span] = []
         for m in CHANNEL_LINK_RE.finditer(scrubbed):
+            channels.append(m.span())
             at = m.end()
             if at == len(scrubbed) or scrubbed[at] in _NO_SPEAKER:
                 continue  # no speaker: a channel list or a "joined" line
@@ -1311,6 +1369,12 @@ class Identity:
                 after_channel.add(link.start())
                 continue  # a player link: own (checked below), or counted above
             spoken += 1
+        # A channel link the pattern cannot read is not trusted to have no speaker.
+        spoken += sum(
+            1
+            for m in CHANNEL_OPEN_RE.finditer(scrubbed)
+            if not _inside(channels, m.start(), m.end())
+        )
         for start, link in owned.items():
             if second_speaker(link, after_channel=start in after_channel):
                 spoken += 1
@@ -2020,35 +2084,37 @@ class CountryScan:
 # `macros-cache.txt` the value of `h=` in an HonorBound line is replaced byte
 # for byte with `0`s of the same length. Nothing else in the line or the file
 # is touched.
-# M16-128 (security review of M16-125: the rule failed open): an HonorBound
-# line is any line matching `^\s*#HB\d+\s` in any case, after a UTF-8 BOM is
-# stripped (`#HB3`, `#hb3`, `#HB4`, indented, a tab after the tag). The key is
-# `h` in either case, at the start of the body or after a space, tab, `;` or
-# `,`, with spaces or tabs allowed around `=`. After the scrub, any HonorBound
-# line with no such `h` field, or with an `h` value that is not all `0`s,
-# refuses the file (HONORBOUND_UNREPLACED_LABEL, count only: an offset would
-# point at the hash).
-HONORBOUND_LINE_RE = re.compile(rb"\s*#HB[0-9]+\s", re.IGNORECASE)
-HONORBOUND_FIELD_RE = re.compile(rb"(?:^|(?<=[ \t;,]))h[ \t]*=[ \t]*([^;,\s]*)", re.IGNORECASE)
+# M16-128 (security reviews of M16-125 and M16-128: the rule failed open),
+# fail closed: in `macros-cache.txt`, an HonorBound line is any line (split at
+# CR, LF or both) holding `#HB<digits>` anywhere, in any case, with `#` or the
+# full-width number sign U+FF03 (so a BOM, NBSP, indent or `/say ` before it changes
+# nothing). In the text after that tag, the key is `h` in either case, at its
+# start or after a space, tab, NBSP, `;` or `,`, with spaces or tabs allowed
+# around `=`. After the scrub an HonorBound line refuses the file
+# (HONORBOUND_UNREPLACED_LABEL, count only: an offset would point at the hash)
+# when it still holds a run of 8 or more hex digits that is not all `0`s, or
+# has no non-empty `h` value made only of `0`s.
+HONORBOUND_TAG_RE = re.compile(rb"(?:#|\xef\xbc\x83)HB[0-9]+", re.IGNORECASE)
+HONORBOUND_FIELD_RE = re.compile(rb"(?:^|(?<=[ \t;,\xa0]))h[ \t]*=[ \t]*([^;,\s]*)", re.IGNORECASE)
+_HEX_RUN_RE = re.compile(rb"[0-9A-Fa-f]{8,}")
 HONORBOUND_PLACEHOLDER_BYTE = b"0"
 HONORBOUND_REASON = "honorbound"
 HONORBOUND_UNREPLACED_LABEL = "HonorBound line whose hash was not replaced"
 MACROS_NAME = "macros-cache.txt"
 
 
-def _honorbound_bodies(data: bytes) -> Iterator[tuple[int, bytes]]:
-    """(offset, body) of every HonorBound line: what follows its `#HB<n>` tag."""
-    for offset, line in _lines_with_offsets(data):
-        skip = len(_BOM) if offset == 0 and line.startswith(_BOM) else 0
-        m = HONORBOUND_LINE_RE.match(line, skip)
-        if m is not None:
-            yield offset + m.end(), line[m.end() :]
+def _honorbound_lines(data: bytes) -> Iterator[tuple[bytes, int, bytes]]:
+    """(line, offset of the text after its tag, that text) of every HonorBound line."""
+    for line in _LINE_TEXT_RE.finditer(data):
+        tag = HONORBOUND_TAG_RE.search(line.group(0))
+        if tag is not None:
+            yield line.group(0), line.start() + tag.end(), line.group(0)[tag.end() :]
 
 
 def honorbound_scan(data: bytes) -> tuple[tuple[int, int, bytes, str], ...]:
     """(start, end, placeholder, reason) for the `h=` value of every HonorBound line."""
     edits: list[tuple[int, int, bytes, str]] = []
-    for base, body in _honorbound_bodies(data):
+    for _, base, body in _honorbound_lines(data):
         for m in HONORBOUND_FIELD_RE.finditer(body):
             start, end = m.span(1)
             if start < end:
@@ -2058,11 +2124,14 @@ def honorbound_scan(data: bytes) -> tuple[tuple[int, int, bytes, str], ...]:
 
 
 def honorbound_unreplaced(scrubbed: bytes) -> int:
-    """HonorBound lines in `scrubbed` with no `h` field or a non-placeholder `h` value."""
+    """HonorBound lines in `scrubbed` that keep a non-zero hex run of 8 or more
+    digits, or have no non-empty `h` value made only of `0`s."""
     count = 0
-    for _, body in _honorbound_bodies(scrubbed):
+    for line, _, body in _honorbound_lines(scrubbed):
         values = [m.group(1) for m in HONORBOUND_FIELD_RE.finditer(body)]
-        if not values or any(v.strip(HONORBOUND_PLACEHOLDER_BYTE) for v in values):
+        zeroed = any(v and not v.strip(HONORBOUND_PLACEHOLDER_BYTE) for v in values)
+        live = any(run.strip(b"0") for run in _HEX_RUN_RE.findall(line))
+        if live or not zeroed:
             count += 1
     return count
 
@@ -3303,6 +3372,21 @@ def _trim_account_piece(text: str) -> str:
     return piece
 
 
+def _own_guid_arg(value: str) -> bytes:
+    """A `--own-guid` value as `Player-<n>-<hex>`: the prefix is added when it is
+    missing (M16-128 security review: a bare value was silently ignored).
+    Anything else stops the run, without echoing the value."""
+    raw = value.strip().encode("utf-8", errors="replace")
+    if GUID_RE.fullmatch(raw):
+        return raw
+    if BARE_GUID_RE.fullmatch(raw):
+        return b"Player-" + raw
+    raise CaptureError(
+        "an --own-guid value is not a Player GUID (`Player-<realm-id>-<hex>`, or the "
+        "same without `Player-`); the value is not shown"
+    )
+
+
 def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Namespace) -> Identity:
     """The identity map of the whole install: what the scrub rewrites and refuses.
 
@@ -3409,7 +3493,7 @@ def discover_identity(root: Path, flavors: Sequence[Flavor], args: argparse.Name
                     own_characters.add((character.name, realm.name))
                     configs.extend(config_files(listed(character)))
 
-    guids: set[bytes] = {g.encode() for g in args.own_guid or []}
+    guids: set[bytes] = {_own_guid_arg(g) for g in args.own_guid or []}
     account_names: set[str] = set()
     for config in configs:
         try:

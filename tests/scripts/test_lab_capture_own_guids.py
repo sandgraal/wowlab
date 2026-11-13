@@ -146,6 +146,10 @@ def _chat(data: bytes) -> list[str]:
         GUILD + OWN_LINK + b" Quillmoss\xef\xbc\x9a hi",  # U+FF1A, full-width colon
         OWN_LINK + b": ok Quillmoss: secret",
         GUILD + OWN_LINK + b": ok\\nQuillmoss: yo",
+        GUILD + OWN_LINK + b": ok Quillmoss-Area52: secret",
+        GUILD + OWN_LINK + b": ok [Quillmoss-Area52]: secret",
+        GUILD + OWN_LINK + b": ok Quillmoss-Area 52: secret",
+        OWN_LINK + b" says: ok Quillmoss: secret",
     ],
     ids=[
         "constructed-plain-speaker-after-own-link",
@@ -155,6 +159,10 @@ def _chat(data: bytes) -> list[str]:
         "constructed-fullwidth-colon",
         "constructed-own-speaker-without-channel",
         "constructed-escaped-newline-then-speaker",
+        "constructed-realm-ending-in-a-digit",
+        "constructed-bracketed-realm-ending-in-a-digit",
+        "constructed-realm-with-space-and-digits",
+        "constructed-says-word-then-second-speaker",
     ],
 )
 def test_constructed_a_second_speaker_after_the_own_link_refuses(line: bytes) -> None:
@@ -289,6 +297,13 @@ def _unreplaced(outcome: lab_capture.Outcome) -> list[str]:
         b"#HB4 l=1;h=" + HASH,
         b"#HB2 l=1;h=" + HASH,
         b"#HB3 h=" + HASH,
+        b"/say #HB3 l=1;h=" + HASH,
+        b"#HB3x l=1;h=" + HASH,
+        b"\xc2\xa0#HB3 l=1;h=" + HASH,
+        b"#HB3 l=1;\xc2\xa0h=" + HASH,
+        b"\xef\xbc\x83HB3 l=1;h=" + HASH,
+        b"#HB3;h=" + HASH,
+        b"\xef\xbb\xbf#HB3 l=1;h=" + HASH,
     ],
     ids=[
         "constructed-comma-tab-before-key",
@@ -303,6 +318,13 @@ def _unreplaced(outcome: lab_capture.Outcome) -> list[str]:
         "constructed-hb4",
         "constructed-hb2",
         "constructed-first-field",
+        "constructed-mid-line-tag",
+        "constructed-tag-run-on",
+        "constructed-nbsp-before-tag",
+        "constructed-nbsp-before-key",
+        "constructed-fullwidth-number-sign",
+        "constructed-semicolon-after-tag",
+        "constructed-mid-file-bom",
     ],
 )
 def test_constructed_honorbound_hash_replaced_in_every_spelling(
@@ -330,12 +352,18 @@ def test_constructed_honorbound_line_after_a_bom(tmp_path: Path) -> None:
         b"#HB3 l=1;hash=" + HASH,
         b"#HB3 l=1|h=" + HASH,  # a separator the rule does not know
         b"#HB3 l=1;h:" + HASH,
+        b"#HB3 l=1;h=" + ZEROS + b";k=" + HASH,  # a decoy zero `h`, the hash elsewhere
+        b"#HB3;h=",  # an empty `h`
+        b"#HB3 l=1;h=0;q=" + HASH.upper(),
     ],
     ids=[
         "constructed-xh",
         "constructed-hash-key",
         "constructed-pipe-separator",
         "constructed-colon-not-equals",
+        "constructed-decoy-zero",
+        "constructed-empty-h",
+        "constructed-short-zero-upper-hash",
     ],
 )
 def test_constructed_honorbound_line_without_a_replaced_h_refuses(
@@ -361,3 +389,104 @@ def test_constructed_honorbound_refusal_counts_lines(tmp_path: Path) -> None:
 def test_constructed_honorbound_lines_outside_macros_are_not_checked(tmp_path: Path) -> None:
     outcome = _process(b"#HB3 l=1;xh=" + HASH + b"\n", tmp_path, name="bindings-cache.wtf")
     assert not _unreplaced(outcome)
+
+
+def test_constructed_honorbound_in_a_cr_only_file(tmp_path: Path) -> None:
+    original = b'VER 3 0000000000000001 "pvp" "134400"\r#HB3 l=1;h=' + HASH + b"\r/cast X\rEND\r"
+    outcome = _process(original, tmp_path)
+    assert outcome.result.data == original.replace(HASH, ZEROS)
+    assert not _unreplaced(outcome)
+
+
+def test_constructed_honorbound_lookalike_hash_in_a_cr_only_file_refuses(tmp_path: Path) -> None:
+    original = b"#HB3 l=1;xh=" + HASH + b"\r/cast X\r"
+    assert _unreplaced(_process(original, tmp_path))
+
+
+# ─── review round 1: own-GUID hardening and --own-guid ───────────────────────
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"Player-04321-00C0FFEE",  # padded realm id
+        b"realm=4321;hex=00c0ffee",  # split fields
+        b"4321_00C0FFEE",  # odd separator
+        b"4321\xe2\x80\x9000C0FFEE",  # U+2010 hyphen
+        b"Player%2D4321%2D00C0FFEE",  # percent-encoded
+    ],
+    ids=[
+        "constructed-padded-realm",
+        "constructed-split-fields",
+        "constructed-underscore",
+        "constructed-unicode-dash",
+        "constructed-percent-encoded",
+    ],
+)
+def test_constructed_own_guid_hex_part_rewritten_alone(data: bytes) -> None:
+    result = Identity(guids=[GUID]).scrub(b'x = "' + data + b'"\n')
+    assert b"00C0FFEE" not in result.data.upper()
+    assert b"00000001" in result.data
+    assert not _own_guid_problems(result.problems)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("4321-00C0FFEE", b"Player-4321-00C0FFEE"),
+        ("Player-4321-00C0FFEE", b"Player-4321-00C0FFEE"),
+        ("player-4321-00c0ffee", b"player-4321-00c0ffee"),
+    ],
+    ids=["constructed-bare", "constructed-prefixed", "constructed-lower-case"],
+)
+def test_constructed_own_guid_argument_accepts_bare_or_prefixed(
+    value: str, expected: bytes
+) -> None:
+    assert lab_capture._own_guid_arg(value) == expected
+
+
+@pytest.mark.parametrize("value", ["Thrallmar", "4321", "Player-x-00C0FFEE", "4321-00C0"])
+def test_constructed_own_guid_argument_refuses_anything_else_without_echoing(value: str) -> None:
+    with pytest.raises(lab_capture.CaptureError) as caught:
+        lab_capture._own_guid_arg(value)
+    assert value not in str(caught.value)
+
+
+# ─── review round 1: speakers and channel links ──────────────────────────────
+
+
+def test_constructed_own_link_starting_a_line_is_a_speaker() -> None:
+    identity = Identity(own_characters=[("Thrallmar", "Area 52")])
+    data = b'\t"' + OWN_LINK + b' hi there, Quillmoss: secret",\n'
+    problems = identity.scrub(data).problems
+    assert [p for p in problems if p.startswith(lab_capture.OTHER_CHAT_LABEL)]
+
+
+def test_constructed_a_channel_link_without_a_closer_refuses() -> None:
+    assert _chat(b"|Hchannel:GUILD[Guild] Quillmoss: hi")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        b"||Hchannel:x||h" + b"[a]" * 400,
+        b"|Hchannel:x" + b"|" * 400 + b"x",
+        b"|Hchannel:x|h" + b"|" * 400 + b"x",
+        OWN_LINK[: OWN_LINK.index(b"|h")] + b"|" * 400 + b"x",
+        b"|Hplayer:Thrallmar|h" + b"[a]" * 400,
+    ],
+    ids=[
+        "constructed-unclosed-label-run",
+        "constructed-pipe-run-in-channel-data",
+        "constructed-pipe-run-in-channel-label",
+        "constructed-pipe-run-in-own-link-data",
+        "constructed-unclosed-label-run-in-own-link",
+    ],
+)
+def test_constructed_hostile_link_text_scrubs_in_linear_time(line: bytes) -> None:
+    import time
+
+    identity = Identity(own_characters=[("Thrallmar", "Area 52")])
+    started = time.perf_counter()
+    identity.scrub(b'x = "' + line + b'"\n')
+    assert time.perf_counter() - started < 1.0
