@@ -10,8 +10,8 @@ backs up your settings and can put them back.
   and `wowlab undo` reverses the change.
 - **Nothing leaves your computer.** The only network traffic is downloading
   public game tables, and only when you ask for them. Nothing is uploaded.
-- **No game files are touched.** wowlab never reads the game's memory and
-  never edits the game program or its data files.
+- **The game itself is never touched.** wowlab never reads the game's
+  memory and never edits the game program or its data files.
 
 ## Install
 
@@ -29,8 +29,9 @@ character, and **Take a backup now** saves your setup.
 If you installed v0.1.0, which was called `wowlab-core`, run
 `uv tool uninstall wowlab-core` first.
 
-There is also a Mac app and a Windows app, which need no terminal. They are
-on the [releases page](https://github.com/sandgraal/wowlab/releases), along
+There is also a Mac app, for Apple silicon only, and a Windows app, which
+no person has yet tried on a real Windows install. Neither needs a
+terminal. They are on the [releases page](https://github.com/sandgraal/wowlab/releases), along
 with a way to check that a download is the one wowlab's release workflow
 built.
 

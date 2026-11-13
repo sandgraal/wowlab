@@ -83,13 +83,13 @@ The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SU
 
 ## Changes to `--json` output
 
-Scripts that read `wowlab … --json` depend on the models behind it. Each release lists here every model whose shape changed, what changed, and what a script reading it has to do. Compared with v0.1.0, every change below adds something: no field was removed or renamed. A few behaviours change, and each one says so below: `explain`'s exit code, `snap create` with several game versions, `binds coach`'s `chosen_by`, and `looks import-char`'s class. New fields that are often empty are left out of the JSON when empty, so for most installs the output is what it was plus the new fields.
+Scripts that read `wowlab … --json` depend on the models behind it. Each release lists here every model whose shape changed, what changed, and what a script reading it has to do. Compared with v0.1.0, every change below adds something: no field was removed or renamed. A few behaviours change, and each one says so below: `explain`'s exit code, `snap create` and `char list` with several game versions, `char list` listing every character folder, `binds coach`'s `chosen_by`, and `looks import-char`'s class. New fields that are often empty are left out of the JSON when empty, so for most installs the output is what it was plus the new fields.
 
 New models, with nothing existing changed:
 
 - `AddonsCheckReport` (`addons check --json`): each addon against this game version, with its interface, dependencies and the characters that have it turned on.
 - `CharSummaryReport` (`char list --summary --json`): the Account tab's table, one row per character.
-- `CharGearReport` (`char gear --json`): one character's equipped gear slot by slot, each item link decoded with the raw link beside it. It also has `identity` (described under `CharShowReport`) and `dressing`: either `{url, site, note}`, the address of an outside dressing room (Wowhead's) built from public game ids only, or `{items, note}`, the item ids with the reason there is no address. `wowlab ui`'s Character tab shows the address as a **See it dressed** link, which opens only when you click it; wowlab requests nothing.
+- `CharGearReport` (`char gear --json`): one character's equipped gear slot by slot. Each slot has the item link decoded (`slot_name`, `item_id`, `name`, `colour`, `quality`, `enchant_id`, `gem_ids`, `suffix_id`, `spec_id`, `bonus_ids`, `upgrade`) with `raw_link` beside it. The average item level has `absent`, the reason when there is none. It also has `identity` (described under `CharShowReport`) and `dressing`: either `{url, site, note}`, the address of an outside dressing room (Wowhead's) built from public game ids only, or `{items, note}`, the item ids with the reason there is no address. `wowlab ui`'s Character tab shows the address as a **See it dressed** link, which opens only when you click it; wowlab requests nothing.
 - `CharBindsReport` (`char binds --json`): one row per key on one binding command, with the slot it presses, what the lab-addon's record says that slot holds, and which sources have it; plus `left_out_note`, the sentence about bindings the record left out.
 - `CharMacrosReport` (`char macros --json`): every account and character macro with its body, where it may sit, and the `macros check` findings for it. `placement.status` is `unconfirmed` or `none`; `confirmed` exists in the model but is not produced yet.
 - `CharHistoryReport` (`char history --json`): one character over time, one row per distinct save, oldest first, and the copies that could not be read, with the reason.
@@ -145,13 +145,15 @@ Fields added to existing models:
   - `installed_version`.
   - Each character gains `flavor`, `record_schema`, `client_build`, `older_client` and `no_lab_record`.
   - Records skipped as not looked at gain `flavor`.
+  - **Behaviour change:** it now lists every character folder, not only those with a lab-addon file. A folder without one has a row with `place` `"no_lab_file"` (a new value), `no_lab_record` saying what its other files hold, and `record`, `summary` and `mtime_ns` null.
+  - **Behaviour change:** with several game versions and none named, it lists them all and the top-level `flavor_folder` is null; each row names its own `flavor`.
+  - A v0.1.0 script that reads `record` on every row, or treats `flavor_folder` as always a string, needs a change: skip rows whose `place` is `"no_lab_file"`, and allow a null `flavor_folder`.
 - `CharShowReport` (`char show --json`):
   - `installed_version`.
   - `older_client`, true when the record was written by an older game version.
   - `lab_addon`, the installed lab-addon against this game version.
   - `identity`, the character's race, body type and class as `{race_id, sex, sex_raw, class_id, class_file}`, each beside its `<field>_absent` reason. A record from an older lab-addon has every value absent: reinstall it with `wowlab addon install lab`, then log in and out.
   - In text, `char show` prints one new `Identity:` line.
-- `CharShowReport`, `CharListReport` and `CharGearReport`: each gear slot gains `slot_name`, `raw_link`, `item_id`, `name`, `colour`, `quality`, `enchant_id`, `gem_ids`, `suffix_id`, `spec_id`, `bonus_ids` and `upgrade`, decoded from the item link. The average item level gains `absent`, the reason when there is none.
 - `BindsCoachReport` (`binds coach --json`):
   - **Value change:** `chosen_by` is `"newest schema"` where it was `"latest"`. A script that compared it with `"latest"` should compare with `"newest schema"`.
   - `log.chosen_by` can also be `"caster name"`.

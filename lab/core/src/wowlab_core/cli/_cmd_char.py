@@ -252,9 +252,10 @@ class CharListFlavor(_Out):
 
 
 class CharListReport(_Out):
-    """`wowlab char list --json`: every character folder with a `WowLab.lua`
-    in the flavor (or in `--account`), as `labaddon.survey` gives them, each
-    with its record and summary or the reason it could not be read, and
+    """`wowlab char list --json`: every character folder in the flavor (or
+    in `--account`), as `labaddon.survey(every_folder=True)` gives them: one
+    with a `WowLab.lua` with its record and summary or the reason it could
+    not be read, one without with `place` `no_lab_file` (M16-35), and
     every place where character folders can be that wowlab could not look
     inside. With `--brief` every `record` is None and the rest is the same:
     a record runs to tens of KB, and the UI's picker needs none. The command
