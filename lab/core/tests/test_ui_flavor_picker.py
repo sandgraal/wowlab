@@ -40,7 +40,7 @@ function flavorView() {
   return {
     boxHidden: box ? box.hidden : null,
     value: picker ? picker.value : null,
-    options: picker ? picker.options.map((o) => o.value) : null,
+    options: picker ? Array.from(picker.options, (o) => o.value) : null,
   };
 }
 """

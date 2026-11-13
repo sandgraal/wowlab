@@ -635,6 +635,17 @@ _HARNESS = r"""
 const fs = require("fs");
 const vm = require("vm");
 const scenario = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+// `options` and `querySelectorAll` hand back a collection that is not an
+// Array, as a browser's do (the hub-filter crash, owner report 2026-11-13).
+class DomList {
+  constructor(items) {
+    items.forEach((x, i) => { this[i] = x; });
+    Object.defineProperty(this, "length", { value: items.length });
+    Object.defineProperty(this, "_items", { value: items });
+  }
+  item(i) { return this._items[i] || null; }
+  [Symbol.iterator]() { return this._items[Symbol.iterator](); }
+}
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
@@ -662,9 +673,9 @@ class El {
   fire(ev) { for (let at = this; at; at = at.parentElement) for (const fn of at.listeners[ev] || []) fn({ type: ev, target: this, preventDefault() {}, stopPropagation() {} }); }
   focus() { this.focused += 1; }
   all() { const o = []; for (const c of this.children) o.push(c, ...c.all()); return o; }
-  querySelectorAll(sel) { return this.all().filter((e) => e.tagName === sel); }
+  querySelectorAll(sel) { return new DomList(this.all().filter((e) => e.tagName === sel)); }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
-  get options() { return this.children.filter((c) => c.tagName === "option"); }
+  get options() { return new DomList(this.children.filter((c) => c.tagName === "option")); }
 }
 const ids = {};
 for (const id of scenario.ids) { const el = new El("div"); el.id = id; ids[id] = el; }
@@ -685,7 +696,7 @@ const doc = {
   createElement: (t) => new El(String(t).toLowerCase()),
   createTextNode: (t) => Object.assign(new El("#text"), { _text: String(t) }),
   createDocumentFragment: () => new El("#fragment"),
-  querySelectorAll: () => [],
+  querySelectorAll: () => new DomList([]),
   addEventListener() {},
 };
 const win = { location: { search: "?boot=k" }, addEventListener() {} };

@@ -659,8 +659,10 @@ def test_the_card_section_runs_only_its_three_reads() -> None:
     # ("(not yet confirmed)" is player copy, not the confirm step.)
     for word in (r"\bconfirm\b", r"\byes\b", "innerHTML", "setAttribute", r"fetch\("):
         assert not re.search(word, body), word
-    # The hub starts the card and waits for none of it, as for its backups.
-    assert "takePatchDay(report);" in script and "await takePatchDay" not in script
+    # The hub starts the card and waits for none of it, as for its backups;
+    # a failure in it is the card's own (the hub-filter crash, 2026-11-13).
+    assert "alone(patchDaySay, () => takePatchDay(report));" in script
+    assert "await takePatchDay" not in script
     # The orphan list's sentence is the CLI's own; so is the unreadable
     # list's, its unconfirmed part said as the card says it.
     assert json.dumps(cli._ORPHAN_REINSTALL) in body

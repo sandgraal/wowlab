@@ -681,6 +681,22 @@ const FORBIDDEN_TAGS = ["a", "area", "form", "iframe", "frame", "img", "image", 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SVG_TAGS = ["svg", "polyline", "circle", "text"];
 const SVG_ATTRS = ["viewBox", "aria-hidden", "points", "cx", "cy", "r", "x", "y"];
+// What a browser hands back for `select.options`, `childNodes` and
+// `querySelectorAll`: an indexed, iterable collection that is not an Array,
+// so an Array method the page calls on one throws here as it does in a
+// browser (the hub-filter crash, owner report 2026-11-13: the stand-in once
+// returned Arrays, and `options.some` passed here and threw in the browser).
+// A NodeList has `forEach`; an HTMLOptionsCollection has not.
+class DomList {
+  constructor(items, nodeList) {
+    items.forEach((x, i) => { this[i] = x; });
+    Object.defineProperty(this, "length", { value: items.length });
+    Object.defineProperty(this, "_items", { value: items });
+    if (nodeList) Object.defineProperty(this, "forEach", { value: (fn, that) => items.forEach((x, i) => fn.call(that, x, i, this)) });
+  }
+  item(i) { return this._items[i] || null; }
+  [Symbol.iterator]() { return this._items[Symbol.iterator](); }
+}
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.parentElement = null; this._text = "";
@@ -715,7 +731,7 @@ class El {
   insertAdjacentHTML() { throw new Error("HTML sink: insertAdjacentHTML"); }
   get open() { return this._open; }
   set open(v) { const was = this._open; this._open = Boolean(v); if (was !== this._open) this.fire("toggle"); }
-  get childNodes() { return this.children; }
+  get childNodes() { return new DomList(this.children, true); }
   get firstChild() { return this.children[0] || null; }
   get lastChild() { return this.children[this.children.length - 1] || null; }
   _adopt(c) {
@@ -755,9 +771,9 @@ class El {
   contains(o) { return o === this || this.all().includes(o); }
   closest(sel) { let e = this; while (e) { if (matchSel(e, sel)) return e; e = e.parentElement; } return null; }
   all() { const o = []; for (const c of this.children) { o.push(c, ...c.all()); } return o; }
-  querySelectorAll(sel) { return this.all().filter((e) => matchSel(e, sel)); }
+  querySelectorAll(sel) { return new DomList(this.all().filter((e) => matchSel(e, sel)), true); }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
-  get options() { return this.children.filter((c) => c.tagName === "option"); }
+  get options() { return new DomList(this.children.filter((c) => c.tagName === "option"), false); }
   remove(i) {
     if (i === undefined) { if (this.parentElement) this.parentElement.removeChild(this); return; }
     const o = this.options[i]; this.children.splice(this.children.indexOf(o), 1);
@@ -861,7 +877,7 @@ const documentStub = {
   },
   createTextNode: (t) => Object.assign(new El("#text"), { _text: String(t) }),
   createDocumentFragment: () => new El("#fragment"),
-  querySelectorAll: (sel) => everywhere().filter((e) => matchSel(e, sel)),
+  querySelectorAll: (sel) => new DomList(everywhere().filter((e) => matchSel(e, sel)), true),
   querySelector: (sel) => everywhere().find((e) => matchSel(e, sel)) || null,
   addEventListener(ev, fn) { (docListeners[ev] = docListeners[ev] || []).push(fn); },
   removeEventListener(ev, fn) { docListeners[ev] = (docListeners[ev] || []).filter((f) => f !== fn); },
@@ -944,8 +960,8 @@ function snap() {
   const pick = (id, f) => (ids[id] ? f(ids[id]) : null);
   return { rows: rows(), treeRoot: pick("tree-root", (e) => e.textContent), status: pick("explorer-status", (e) => e.textContent),
     flavorBoxHidden: pick("flavor-box", (e) => e.hidden), explorerHidden: pick("explorer-view", (e) => e.hidden),
-    levels: ids["level-filter"].options.map((o) => o.value),
-    levelTexts: ids["level-filter"].options.map((o) => o.textContent) };
+    levels: Array.from(ids["level-filter"].options, (o) => o.value),
+    levelTexts: Array.from(ids["level-filter"].options, (o) => o.textContent) };
 }
 // The detail pane: every element whose id starts with "explain", with what
 // the page drew inside it.

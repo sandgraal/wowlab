@@ -2708,6 +2708,18 @@
 
   const recorded = (row) => row.state === "recorded";
 
+  // Runs one part of the page. When it throws, or the promise it returns
+  // fails, the error goes in that part's own line and nothing else stops.
+  function alone(sayIn, draw) {
+    const failed = (error) => sayIn("This part of the page could not be drawn: " + error, true);
+    try {
+      const done = draw();
+      if (done && typeof done.then === "function") done.then(undefined, failed);
+    } catch (error) {
+      failed(error);
+    }
+  }
+
   function loadHub() {
     if (!hub.asked) {
       const asked = (async () => {
@@ -2726,10 +2738,14 @@
           ),
         };
         hub.note = reply.error ? shown(reply.error) : "";
-        fillHubFilters();
-        drawHub();
-        takeBackups(report);
-        takePatchDay(report);
+        // Each card fails on its own: an error in one is said in that card,
+        // and the others, and the rest of the page, still load.
+        alone(hubSay, () => {
+          fillHubFilters();
+          drawHub();
+        });
+        alone(backupSay, () => takeBackups(report));
+        alone(patchDaySay, () => takePatchDay(report));
       })();
       hub.asked = asked;
     }
@@ -2748,7 +2764,8 @@
     const rows = hub.report.rows;
     // A report read again keeps the filters picked, when it still lists them.
     const keep = (picker, value) => {
-      picker.value = picker.options.some((o) => o.value === value) ? value : "";
+      // `options` is an HTMLOptionsCollection, not an Array: no `.some`.
+      picker.value = Array.from(picker.options).some((o) => o.value === value) ? value : "";
     };
     const pickedFlavor = byId("hub-flavor").value;
     const pickedClass = byId("hub-class").value;
@@ -3797,7 +3814,11 @@
       list.appendChild(button);
     }
     // The home tab first, then the whole install's tree, one run at a time.
-    await loadHub();
+    try {
+      await loadHub();
+    } catch (error) {
+      hubSay("This part of the page could not be drawn: " + error, true);
+    }
     await loadTree();
   }
 
