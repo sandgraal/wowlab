@@ -56,6 +56,9 @@ from _common import (
 )
 
 EVENT = "PreToolUse"
+_MOVES_PATHS = re.compile(r"(HOME|PWD|OLDPWD|CDPATH)=")
+_GLOB = re.compile(r"[*?\[{]")
+_ASSIGN_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 _ALLOWED_MUTATIONS = ("addPullRequestReviewThreadReply", "resolveReviewThread")
 _GRAPHQL_REFUSAL = (
     "GraphQL mutations change repo state without a prompt; only the "
@@ -529,7 +532,27 @@ def _cd_target(seg: list[str], cwd: str) -> str | None:
     i = command_position(seg, "cd")
     if i is None:
         return None
-    rest = [a for a in seg[i + 1 :] if not a.startswith("-")]
+    if "-" in seg[i + 1 :]:
+        # `cd -` returns to $OLDPWD, which the guard does not track; it was
+        # read as `cd ~` (review of 2026-11-13).
+        deny(EVENT, "`cd -` cannot be followed; cd to a literal path.")
+    rest: list[str] = []
+    args = seg[i + 1 :]
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if a and set(a) <= {">", "<", "&", "|"}:
+            j += 2  # a redirect and its target
+            continue
+        if a.isdigit() and j + 1 < len(args) and set(args[j + 1]) <= {">", "<", "&", "|"}:
+            j += 1  # the fd number of `2>/dev/null`
+            continue
+        if not a.startswith("-"):
+            rest.append(a)
+        j += 1
+    if len(rest) > 1:
+        # zsh's `cd old new` substitutes inside $PWD (review of 2026-11-13).
+        deny(EVENT, "`cd` with two paths cannot be followed; cd to one literal path.")
     target = rest[0] if rest else str(Path.home())
     expanded, ok = expand_vars(target, cwd)
     if not ok:
@@ -553,6 +576,34 @@ def _inspect(
     # Every path this command line writes, with the cd chain followed, so a
     # gh api graphql query file written earlier in the same line is refused:
     # the hook reads the file before the shell runs (2026-10-19, M14-02 notes).
+    # A change to these moves where a later path lands in a way the guard
+    # does not model (`HOME=$PWD; echo > ~/AGENTS.md`, `CDPATH=.claude; cd
+    # agents`), so it is refused in any form (review of 2026-11-13).
+    # Only the assignment words that lead a segment (or follow `export`)
+    # change this shell; `env HOME=x cmd` and a quoted `'HOME='` argument do
+    # not, and stay allowed.
+    for seg in segments:
+        words = seg[1:] if seg and seg[0] == "export" else seg
+        for tok in words:
+            if not _ASSIGN_WORD.match(tok):
+                break
+            if _MOVES_PATHS.match(tok):
+                deny(
+                    EVENT,
+                    f"this guard does not follow a change to {tok.split('=')[0]}; "
+                    "set it in a separate command.",
+                )
+        # Directory changes other than a plain (or wrapped) `cd`: the guard
+        # would check later relative paths against the wrong folder
+        # (review of 2026-11-13).
+        for word in ("pushd", "popd", "chdir"):
+            if command_position(seg, word) is not None:
+                deny(EVENT, f"`{word}` cannot be followed; use cd with a literal path.")
+        if command_position(seg, "eval") is not None:
+            for inner in inner_commands(seg):
+                inner_segments = split_segments(inner) or []
+                if any(command_position(s, "cd") is not None for s in inner_segments):
+                    deny(EVENT, "`cd` inside eval cannot be followed; cd directly.")
     written: set[str] = set(outer_written)
     scan_cwd = cwd
     for seg in segments:
@@ -580,6 +631,14 @@ def _inspect(
                 deny(
                     EVENT,
                     f"cannot resolve the variable in write target {target!r}; use a literal path.",
+                )
+            if _GLOB.search(expanded):
+                # The shell expands these against files that exist
+                # (`.cla[u]de/settings.json`), so the path checked is not
+                # the path written (review of 2026-11-13).
+                deny(
+                    EVENT,
+                    f"write target {target!r} has a glob or brace pattern; use a literal path.",
                 )
             _root, rel = relative_to_checkout(expanded, cwd)
             reason = shell_write_denial(rel, agent_type)
