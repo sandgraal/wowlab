@@ -87,6 +87,11 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     ("README.md", "wowlab ui", _NO_EXIT),
     ("README.md", "git clone https://github.com/sandgraal/wowlab && cd wowlab", _FROM_SOURCE),
     ("README.md", "make setup", _FROM_SOURCE),
+    (  # M16-32: the PyPI line, before the first PyPI release
+        "docs/INSTALL.md",
+        "uvx --from wowlab-core wowlab doctor",
+        "needs the network, and a PyPI release that is not out yet",
+    ),
     (
         "docs/INSTALL.md",
         "gh attestation verify wowlab_core-<version>-py3-none-any.whl "
