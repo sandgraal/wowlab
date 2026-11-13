@@ -654,6 +654,20 @@ _M17_04_IDS = _M17_04_JS_IDS | {"backup", "backup-heading"}
 _M17_04_JS_CLASSES = frozenset(
     {"backup-line", "backup-updated", "backup-actions", "backup-now", "backup-restore"}
 )
+# What M17-05 added: the Account tab's patch-day card, a block per flavor.
+_M17_05_CLASSES = frozenset({"patch-day", "patch-day-intro", "patch-day-lines"})
+_M17_05_JS_IDS = frozenset({"patch-day-lines", "patch-day-status"})
+_M17_05_IDS = _M17_05_JS_IDS | {"patch-day", "patch-day-heading"}
+_M17_05_JS_CLASSES = frozenset(
+    {
+        "patch-day-item",
+        "patch-day-open",
+        "patch-day-what",
+        "patch-day-list",
+        "patch-day-error",
+        "patch-day-clear",
+    }
+)
 
 
 def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
@@ -665,11 +679,23 @@ def test_the_classes_and_ids_are_those_of_main_but_the_sigil() -> None:
         | _M16_114_CLASSES
         | _M17_01_CLASSES
         | _M17_04_CLASSES
+        | _M17_05_CLASSES
     )
-    assert html_ids == (_HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS | _M17_04_IDS)
+    assert html_ids == (
+        _HTML_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_IDS | _M17_04_IDS | _M17_05_IDS
+    )
     js_classes, js_ids = _js_names(_template("page.js"))
-    assert js_classes == _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES | _M17_04_JS_CLASSES
-    assert js_ids == (_JS_IDS_BEFORE | _M16_21_IDS | _M16_114_IDS | _M17_01_JS_IDS | _M17_04_JS_IDS)
+    assert js_classes == (
+        _JS_CLASSES_BEFORE | _M17_01_JS_CLASSES | _M17_04_JS_CLASSES | _M17_05_JS_CLASSES
+    )
+    assert js_ids == (
+        _JS_IDS_BEFORE
+        | _M16_21_IDS
+        | _M16_114_IDS
+        | _M17_01_JS_IDS
+        | _M17_04_JS_IDS
+        | _M17_05_JS_IDS
+    )
     # no sigil class collides with one the script uses
     assert not _SIGIL_CLASSES & js_classes
 
@@ -817,6 +843,13 @@ _ACCOUNT_WORDS = [
     "in the Character tab.",
     # M17-04: the backup panel's heading; its lines are the script's.
     "Backup",
+    # M17-05: the patch-day card's heading and intro; its lines are the script's.
+    "Patch day",
+    "Addons this client may not load, and saved data no installed addon uses, as",
+    "wowlab addons check",
+    "and",
+    "wowlab sv list --orphans",
+    "report them. Reads only. Pick a line to see its file in the Explorer.",
     "Flavor",
     "Class",
     "[aria-label] Characters",

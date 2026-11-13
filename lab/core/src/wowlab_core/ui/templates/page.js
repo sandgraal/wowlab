@@ -642,6 +642,7 @@
     fillRunFlavors(explorer.flavors);
     fillLevels(report);
     drawTree();
+    patchDayTreeRead();
     const notes = [];
     if (report.truncated) notes.push("The list stopped at its size limit.");
     if (Array.isArray(report.errors) && report.errors.length) {
@@ -2317,6 +2318,7 @@
         fillHubFilters();
         drawHub();
         takeBackups(report);
+        await takePatchDay(report);
       })();
       hub.asked = asked;
     }
@@ -2582,6 +2584,233 @@
   byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
   byId("tab-commands").addEventListener("click", () => showTab("commands"));
   byId("tab-looks").addEventListener("click", () => showTab("looks"));
+
+  // ─── the patch-day card on the Account tab (M17-05, §19 CW-4) ───
+  // Per flavor the hub's report lists: the addons `addons check` finds out
+  // of date for this client or missing a required addon, and the
+  // SavedVariables files `sv list --orphans` finds that no installed addon
+  // declares. Every judgement is the commands'; the page lays the lines out
+  // and says, from `addons check`'s own list, whether an orphan's addon is
+  // installed at all. Each line's name opens the Explorer on its file.
+  // Nothing here edits anything.
+
+  const patchDay = {
+    seq: 0, // the latest read; an earlier one still running draws nothing
+    flavors: [], // per flavor folder, what the two runs said
+    pending: null, // a path to show once the Explorer's tree is read
+  };
+
+  function patchDaySay(text, isError) {
+    const node = byId("patch-day-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  // The client compares addon names with ASCII letters folded, as wowlab does.
+  const patchDayFold = (name) => String(name).replace(/[A-Z]/g, (ch) => ch.toLowerCase());
+
+  function patchDayRead(folder, check, orphans) {
+    const read = { flavor: folder, addons: null, interface: null, checkError: "", files: null, filesError: "" };
+    const report = check.data && typeof check.data === "object" ? check.data.check : null;
+    if (report && typeof report === "object" && Array.isArray(report.addons)) {
+      read.addons = objects(report.addons).filter((a) => typeof a.name === "string" && typeof a.path === "string");
+      read.interface = hubNum(report.client_interface);
+    } else {
+      read.checkError = check.error ? shown(check.error) : "wowlab addons check printed something this page does not know.";
+    }
+    const listed = orphans.data;
+    if (listed && typeof listed === "object" && listed.orphans === true && Array.isArray(listed.files)) {
+      read.files = objects(listed.files).filter((f) => typeof f.path === "string" && f.path !== "");
+    } else {
+      read.filesError = orphans.error ? shown(orphans.error) : "wowlab sv list printed something this page does not know.";
+    }
+    return read;
+  }
+
+  // Reads every flavor the hub's report lists, one run at a time.
+  async function takePatchDay(report) {
+    const seq = ++patchDay.seq;
+    const folders = objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== "");
+    patchDay.flavors = [];
+    drawPatchDay();
+    if (!folders.length) {
+      patchDaySay("wowlab found no flavor folder to check.", false);
+      return;
+    }
+    patchDaySay("Checking addons and saved data…", false);
+    const read = [];
+    for (const folder of [...new Set(folders)]) {
+      const check = await runJson(["addons", "check"], { flavor: folder }, false, true);
+      const orphans = await runJson(["sv", "list"], { orphans: true, flavor: folder }, false, true);
+      if (seq !== patchDay.seq) return;
+      read.push(patchDayRead(folder, check, orphans));
+    }
+    patchDay.flavors = read;
+    patchDaySay("", false);
+    drawPatchDay();
+  }
+
+  // A line: its name as a button that opens the Explorer on `path` (from
+  // the flavor folder), then what is wrong, as text.
+  function patchDayItem(flavor, name, path, text) {
+    const item = make("li");
+    item.className = "patch-day-item";
+    const open = make("button", visible(name));
+    open.type = "button";
+    open.className = "patch-day-open";
+    open.title = "Show " + visible(flavor + "/" + path) + " in the Explorer";
+    open.addEventListener("click", () => patchDayOpen(flavor + "/" + path));
+    item.appendChild(open);
+    item.appendChild(make("span", text));
+    return item;
+  }
+
+  function patchDayList(box, what, items) {
+    if (!items.length) return;
+    const head = make("p", what);
+    head.className = "patch-day-what";
+    box.appendChild(head);
+    const list = make("ul");
+    list.className = "patch-day-list";
+    list.append(...items);
+    box.appendChild(list);
+  }
+
+  function patchDayToc(addon, file) {
+    return typeof file === "string" && file !== "" ? addon.path + "/" + file : addon.path;
+  }
+
+  function patchDayLate(read, addon) {
+    const tocs = objects(addon.tocs);
+    const client = read.interface === null ? "" : "; this client's is " + read.interface;
+    if (addon.out_of_date === true && tocs.length) {
+      const toc = tocs[0];
+      const declared = typeof toc.interface === "string" ? visible(toc.interface) : "another version";
+      return patchDayItem(read.flavor, addon.name, patchDayToc(addon, toc.file),
+        " is for interface " + declared + client + ".");
+    }
+    return patchDayItem(read.flavor, addon.name, addon.path,
+      " has " + count(tocs.length, "TOC file", "TOC files") + ", none for this client's interface" +
+      (read.interface === null ? "" : " " + read.interface) + ".");
+  }
+
+  function patchDayNeeds(read, addon) {
+    const missing = texts(addon.missing_dependencies).map(visible);
+    const unloadable = texts(addon.unloadable_dependencies).map(visible);
+    const counted = texts(addon.counted_tocs);
+    const parts = [];
+    if (missing.length) {
+      parts.push("needs " + missing.join(", ") + (missing.length === 1 ? ", which is not installed" : ", which are not installed"));
+    }
+    if (unloadable.length) {
+      parts.push((parts.length ? "and " : "needs ") + unloadable.join(", ") +
+        (unloadable.length === 1 ? ", which is installed but cannot load: its folder has no TOC file named after it"
+          : ", which are installed but cannot load: their folders have no TOC file named after them"));
+    }
+    return patchDayItem(read.flavor, addon.name, patchDayToc(addon, counted[0]), " " + parts.join(" ") + ".");
+  }
+
+  function patchDayOrphan(read, file) {
+    const name = typeof file.addon === "string" ? file.addon : "";
+    let why;
+    if (read.addons === null || !name) {
+      why = "no installed addon declares it.";
+    } else {
+      const folder = read.addons.find((a) => patchDayFold(a.name) === patchDayFold(name));
+      const scope = file.scope === "character" ? "per-character" : "account-wide";
+      why = folder
+        ? visible(folder.name) + " is installed but does not declare " + scope + " saved data."
+        : "no addon named " + visible(name) + " is installed.";
+    }
+    const size = hubNum(file.size) === null ? "" : " (" + pluralWord(file.size, " byte") + ")";
+    const previous = file.backup === true ? ", the previous save" : "";
+    return patchDayItem(read.flavor, file.path, file.path, size + previous + ": " + why);
+  }
+
+  function patchDayBlock(read, several) {
+    const item = make("li");
+    if (several) item.appendChild(make("h4", visible(read.flavor)));
+    const addons = read.addons || [];
+    const late = addons.filter((a) => a.out_of_date === true || a.no_toc_for_client === true);
+    const needy = addons.filter((a) =>
+      texts(a.missing_dependencies).length > 0 || texts(a.unloadable_dependencies).length > 0);
+    const files = read.files || [];
+    for (const error of [read.checkError, read.filesError]) {
+      if (!error) continue;
+      const said = make("p", error);
+      said.className = "patch-day-error";
+      item.appendChild(said);
+    }
+    patchDayList(item, "Out of date for this client", late.map((a) => patchDayLate(read, a)));
+    patchDayList(item, "Missing a required addon", needy.map((a) => patchDayNeeds(read, a)));
+    patchDayList(item, "Saved data no installed addon uses", files.map((f) => patchDayOrphan(read, f)));
+    if (read.addons !== null && !late.length && !needy.length && !files.length && !read.filesError) {
+      let text;
+      if (read.interface === null) {
+        text = "wowlab cannot tell whether your addons are current: it cannot work out this client's interface version.";
+      } else if (addons.length === 0) {
+        text = "No addons are installed, and no saved data is left without one.";
+      } else if (addons.length === 1) {
+        text = "Your one addon is current for this client.";
+      } else {
+        text = "All " + grouped(addons.length) + " addons are current for this client.";
+      }
+      const clear = make("p", text);
+      clear.className = "patch-day-clear";
+      item.appendChild(clear);
+    }
+    return item;
+  }
+
+  // The flavors the hub's flavor filter shows.
+  function drawPatchDay() {
+    const flavor = byId("hub-flavor").value;
+    const several = patchDay.flavors.length > 1;
+    byId("patch-day-lines").replaceChildren(
+      ...patchDay.flavors.filter((r) => !flavor || "f:" + r.flavor === flavor).map((r) => patchDayBlock(r, several)),
+    );
+  }
+
+  byId("hub-flavor").addEventListener("change", () => drawPatchDay());
+
+  // Opens the Explorer on a path from the install root; before its tree is
+  // read, once it is.
+  function patchDayOpen(key) {
+    showTab("explorer");
+    if (!explorer.root) {
+      patchDay.pending = key;
+      return;
+    }
+    patchDayReveal(key);
+  }
+
+  function patchDayTreeRead() {
+    const key = patchDay.pending;
+    patchDay.pending = null;
+    if (key !== null && tabShown === "explorer") patchDayReveal(key);
+  }
+
+  // The deepest node of the tree on the way to `key`, opened and picked.
+  function patchDayReveal(key) {
+    let node = explorer.root;
+    for (const part of key.split("/")) {
+      const child = node.index.get(part);
+      if (!child) break;
+      node = child;
+    }
+    const parts = node.path ? node.path.split("/") : [];
+    explorer.open.add("");
+    for (let at = 1; at < parts.length; at++) {
+      const above = parts.slice(0, at).join("/");
+      explorer.open.add(above);
+      explorer.closedWhileFiltering.delete(above);
+    }
+    drawTree();
+    if (node.path !== key) {
+      explorerSay("The Explorer does not list " + visible(key) + "; it shows the nearest folder it lists.", false);
+    }
+    select(node);
+  }
 
   // ─── backups on the Account tab (M17-04, §19 CW-3) ───
   // One line per flavor the hub's report lists (`backups`): how old the
