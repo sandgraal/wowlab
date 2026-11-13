@@ -64,7 +64,7 @@ _VIEW = r"""
 function hubView() {
   const box = ids["hub-table"];
   const trs = box.all().filter((e) => e.tagName === "tr" && has(e, "hub-row"));
-  const options = (id) => ids[id].options.map((o) => ({ value: o.value, text: o.textContent }));
+  const options = (id) => Array.from(ids[id].options, (o) => ({ value: o.value, text: o.textContent }));
   const active = documentStub.activeElement;
   return {
     hidden: ids["account-view"].hidden,

@@ -96,7 +96,7 @@ function charView() {
     tabSelected: ids["tab-character"].getAttribute("aria-selected"),
     status: ids["char-status"].textContent,
     statusError: has(ids["char-status"], "error"),
-    options: picker.options.map((o) => ({ text: o.textContent, value: o.value, disabled: o.disabled, title: o.title })),
+    options: Array.from(picker.options, (o) => ({ text: o.textContent, value: o.value, disabled: o.disabled, title: o.title })),
     pickerDisabled: picker.disabled,
     header: ids["char-header"].textContent,
     headerFacts: ids["char-header"].all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e.textContent),
