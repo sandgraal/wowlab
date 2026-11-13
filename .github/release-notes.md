@@ -1,21 +1,25 @@
 <!--
   Release-notes template, filled by .github/workflows/release.yml through
-  scripts/release_check.py (M13-03). Placeholders are TAG, VERSION and
+  scripts/release_check.py. Placeholders are TAG, VERSION and
   INSTALL, each in double braces; any other name in double braces fails the
   release before it is published. GitHub appends the list of merged pull
-  requests below this text.
+  requests below this text. The "Changes to `--json` output" section is the
+  list ADR-0031 asks a release to carry; player text carries no ticket or
+  ADR ids.
 -->
-wowlab {{VERSION}} runs on your own machine against your own World of Warcraft install. It is read-only by default. Every command that changes files asks first and goes through one write gate; a snapshot is taken before the change, and `wowlab undo` reverses it. The only network traffic is fetching public game tables, and nothing is uploaded (ADR-0031).
+wowlab {{VERSION}} runs on your own machine against your own World of Warcraft install. It is read-only by default. Every command that changes files asks first and goes through one write gate; a snapshot is taken before the change, and `wowlab undo` reverses it. The only network traffic is fetching public game tables, and nothing is uploaded.
 
 ## New in v0.2
 
 - **The Account tab.** `wowlab ui` now opens on a home tab that lists every character you have played on this computer, in every game version you have installed, as of its last logout: level, class, race, spec, item level, professions and when you last played it. Sort by any column, filter by class, and click a character to open it. A character with nothing recorded yet says how to fix that. The same table is on the command line as `wowlab char list --summary`.
-- **Take a backup now.** One button at the top of the Account tab saves your settings, keybinds, macros, addons and their saved settings into wowlab's own folder, never your game folder. After a patch the tab tells you the game updated since your last backup, and **Restore this backup…** shows what putting it back would change before anything changes. On the command line it is still `wowlab snap create`, which now backs up every game version you have installed when you do not name one.
+- **Take a backup now.** A button at the top of the Account tab, one for each game version you have installed, saves your settings, keybinds, macros, addons and their saved settings into wowlab's own folder, never your game folder. After a patch the tab tells you the game updated since your last backup, and **Restore this backup…** shows what putting it back would change before anything changes. On the command line it is still `wowlab snap create`, which now backs up every game version you have installed when you do not name one.
 - **The Patch day card.** Also on the Account tab: the addons that are out of date for your game version or missing an addon they need, a count of the ones that are fine, and the saved data that no installed addon claims or that wowlab cannot read. The addon check is also `wowlab addons check`.
-- **A character over time.** `wowlab char history` reads your backups back, plus the game's current file: one row per save, with level, item level and spec, and the gear and currencies that changed since the one before. The Character tab's **History** panel shows the same thing, with two small charts. It reads what the lab-addon (`wowlab addon install lab`) records at logout, so each backup you take adds a row.
-- **The Mac app and the Windows app.** If you would rather not use a terminal, download the app for your computer below (see the two sections under Install). The Mac app is for Apple silicon. The Windows app is untested: it is built and started by the release checks, but no person has yet run it on a real Windows install, so please report what happens.
+- **A character over time.** `wowlab char history` reads your backups back, plus the game's current file: one row per save, with level, item level and spec, and the gear and currencies that changed since the one before. The Character tab's **History** panel shows the same thing, with two small charts. It reads what the lab-addon (`wowlab addon install lab`) records, and the game saves that when you log out or type /reload. History appears once there are two different saves of a character, and the file in the game folder counts as one. So take a backup after you log out or /reload; a backup taken while you are still playing keeps the save from before.
+- **The Mac app and the Windows app.** If you would rather not use a terminal, download the app for your computer below (see the two sections under Install). The Mac app is for Apple silicon. The Windows app is untested: it is built and started by the release checks, but no person has yet run it on a real Windows install. If you try it, please report what happens, and include the output of `wowlab doctor --redact`, which leaves out your character, realm and account names.
 - **The package is now called `wowlab`.** v0.1.0 was published as `wowlab-core`. The command is still `wowlab`, and your snapshots, profiles and settings stay where they were. If you installed v0.1.0, run `uv tool uninstall wowlab-core` before you install this one.
-- **Saved data wowlab cannot read.** `wowlab sv list --unreadable` lists every SavedVariables file wowlab cannot read, for example one cut off during a save, with why, and where reading stopped when it can say. It only reads.
+- **`wowlab doctor` stays offline.** In v0.1.0, doctor asked wago.tools whether it lists your game version unless you added `--offline`. Now it makes no network request unless you add `--check-builds`.
+- **Saved data wowlab cannot read.** `wowlab sv list --unreadable` lists every SavedVariables file wowlab cannot read, for example one cut off during a save, with why, and where reading stopped when it can say. It only reads. `wowlab sv list --orphans` lists the saved data that no installed addon declares, with its size.
+- **Move a backup to another computer.** `wowlab snap export` writes one snapshot into a single file, and `wowlab snap import` reads it on the other computer.
 
 ## What is in it
 
@@ -23,15 +27,15 @@ It reads an install and tells you what every file is, keeps snapshots of your se
 
 - **Find and explain:** `doctor` (finds the install; a first run says what wowlab will do and offers a first snapshot), `install show`, `tree`, `explain` (what a file is, who writes it, whether it is safe to touch, with the snapshot facts and the commands that read it), `filemap gaps`.
 - **The explorer:** `wowlab ui` opens a view of the whole install in your browser. It runs the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), directly. A command that takes `--yes` runs first as a plan that changes nothing, and runs for real only when you press Confirm under it, through the same write gate as on the command line. It listens only on this machine behind a token.
-- **Snapshots and undo:** `snap create`, `snap list`, `snap show`, `snap diff`, `snap restore`, `snap verify`, `snap gc`, `undo`.
-- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list` and `macros check`, `addons`, `addons check` (v0.2), `sv list` (`--unreadable` in v0.2), `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
+- **Snapshots and undo:** `snap create`, `snap list`, `snap show`, `snap diff`, `snap restore`, `snap verify`, `snap gc`, `snap export` and `snap import` (both v0.2), `undo`.
+- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list` and `macros check`, `addons`, `addons check` (v0.2), `sv list` (`--orphans` and `--unreadable` in v0.2), `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
 - **Profiles and looks:** `profile save`, `apply`, `list`, `show`, `delete`; `looks import-char`, `options`, `races`, `compare`, `page`.
 - **Characters and game data:** `char list` (`--summary` in v0.2), `char show`, `char gear`, `char binds`, `char macros` and `char history` (all four v0.2), `db2 builds`, `db2 fetch`, `db2 head`, `log tail`.
 - **For bug reports:** `doctor --redact` prints output with no character, realm, account folder, BattleTag or home path in it; names it cannot find on its own, such as your guild's, go in `--redact-name`.
 
 **Platforms.** macOS is tested by hand on the owner's install. Windows and Linux are untested: CI runs the test suite on both, but nobody has yet run the first-run flow on a real Windows install, and there is no native Linux client. See the README's platform table before relying on either.
 
-**`--json`.** Every read command has a `--json` form backed by a Pydantic model named in its `--help` (`DoctorReport`, `ExplainReport`, `TreeReport`, `SnapListReport`, `RestoreReport`, `UndoReport`, `CVarListReport`, `CVarGetReport`, `BindsReport`, `BindsCoachReport`, `MacrosReport`, `MacrosCheckReport`, `AddonsReport`, `AddonsCheckReport` (v0.2), `AddonInstallReport`, `AddonRemoveReport`, `SvListReport`, `SvDumpReport`, `SvMergeReport`, `DiffReport`, `ProfileReport`, `ProfileListReport`, `ProfileApplyReport`, `ProfileDeleteReport`, `LookReport`, `LooksOptionsReport`, `LooksRacesReport`, `LooksCompareReport`, `LooksImportReport`, `LooksPageReport`, `CharListReport`, `CharSummaryReport` (v0.2, `char list --summary`), `CharShowReport`, `CharGearReport` (v0.2), `CharBindsReport` (v0.2), `CharMacrosReport` (v0.2), `CharHistoryReport` (v0.2), `BuildsReport`, `FetchReport`, `HeadReport`, `LogTailReport` (`LogTailLine` per line with `--follow`), `InstallTreeReport`, `LooksListReport`, and the `GapReport`, `Install`, `Manifest` (`snap create` and `snap show`), `SnapCreateReport` (v0.2, `snap create` with several flavors), `VerifyReport`, `GcReport`, `ExportReport` (`snap export`) and `ImportReport` (`snap import`) models, which their help names as `gaps.GapReport`, `install.Install`, `snapshot.Manifest`, `snapshot.VerifyReport`, `snapshot.GcReport`, `snaparchive.ExportReport` and `snaparchive.ImportReport`). The generated command reference on the wiki lists each one.
+**`--json`.** Every read command has a `--json` form backed by a Pydantic model named in its `--help` (`DoctorReport`, `ExplainReport`, `TreeReport`, `SnapListReport`, `RestoreReport`, `UndoReport`, `CVarListReport`, `CVarGetReport`, `BindsReport`, `BindsCoachReport`, `MacrosReport`, `MacrosCheckReport`, `AddonsReport`, `AddonsCheckReport` (v0.2), `AddonInstallReport`, `AddonRemoveReport`, `SvListReport`, `SvDumpReport`, `SvMergeReport`, `DiffReport`, `ProfileReport`, `ProfileListReport`, `ProfileApplyReport`, `ProfileDeleteReport`, `LookReport`, `LooksOptionsReport`, `LooksRacesReport`, `LooksCompareReport`, `LooksImportReport`, `LooksPageReport`, `CharListReport`, `CharSummaryReport` (v0.2, `char list --summary`), `CharShowReport`, `CharGearReport` (v0.2), `CharBindsReport` (v0.2), `CharMacrosReport` (v0.2), `CharHistoryReport` (v0.2), `BuildsReport`, `FetchReport`, `HeadReport`, `LogTailReport` (`LogTailLine` per line with `--follow`), `InstallTreeReport`, `LooksListReport`, and the `GapReport`, `Install`, `Manifest` (`snap create` and `snap show`), `SnapCreateReport` (v0.2, `snap create` with several flavors), `VerifyReport`, `GcReport`, `ExportReport` (v0.2, `snap export`) and `ImportReport` (v0.2, `snap import`) models, which their help names as `gaps.GapReport`, `install.Install`, `snapshot.Manifest`, `snapshot.VerifyReport`, `snapshot.GcReport`, `snaparchive.ExportReport` and `snaparchive.ImportReport`). The generated command reference on the wiki lists each one.
 
 **Fonts.** `wowlab ui` ships Alegreya and Alegreya SC (`OFL-Alegreya.txt`) and IBM Plex Mono (`OFL-IBMPlexMono.txt`) unchanged, under the SIL Open Font License 1.1.
 
@@ -45,7 +49,7 @@ With [uv](https://docs.astral.sh/uv/) installed:
 
 Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
 
-Then run `wowlab --version` and `wowlab doctor --offline`.
+Then run `wowlab --version` and `wowlab doctor`.
 
 ## The Mac app (Apple silicon)
 
@@ -79,19 +83,81 @@ The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SU
 
 ## Changes to `--json` output
 
-Scripts that read `wowlab … --json` depend on the models behind it. A release that changes a model's shape lists here each model, what changed, and what a script reading it has to do (ADR-0031).
+Scripts that read `wowlab … --json` depend on the models behind it. Each release lists here every model whose shape changed, what changed, and what a script reading it has to do. Compared with v0.1.0, every change below adds something: no field was removed or renamed. A few behaviours change, and each one says so below: `explain`'s exit code, `snap create` with several game versions, `binds coach`'s `chosen_by`, and `looks import-char`'s class. New fields that are often empty are left out of the JSON when empty, so for most installs the output is what it was plus the new fields.
 
-- `wowlab explain` now exits 1 for a path that matches nothing: outside the install, or nothing on disk under any reading of it, no file-map row, and no file or row by its name (M16-18). It exited 0 before; a script that runs `explain` on a path that may not exist must allow exit 1. `ExplainReport` (`explain --json`) gains `candidates` for a relative path with nothing on disk and no row: the files under the flavor folder whose last parts are the path's (`{path, flavor_folder, entry_id, doc_path}`), then the file-map rows that name it with no such file (`path` null). It is left out when empty, so every other path prints the same JSON as before. `sv dump FILE` also takes a name as `sv list` lists it (an addon name, a file name, or a path relative to its account folder), with new `--account` and `--character` options for a name several files have.
-- New in v0.2: `SnapCreateReport` (`snap create --json`, M16-124). On an install with several flavors, `snap create` with no `--flavor` and no `WOWLAB_FLAVOR` used to exit 2. It now takes one snapshot of each flavor and prints `{"snapshots": [<manifest>, ...]}`, one `snapshot.Manifest` per flavor in the order discovery lists them. With one flavor, or one named, it prints the bare manifest as before, and a script needs no change.
-- New in v0.2: `CharHistoryReport` (`char history --json`, M17-02), one character over time: one row per save of its lab-addon record, from every snapshot in the store and the file in the install, oldest first, each with its level, average item level, spec and the gear slots and currencies that changed from the save before, and the copies that could not be read with the reason. A new model; no existing one changes, and a script needs no change.
-- `SvListReport` (`sv list --json`) gains two fields (M16-131), for the new `sv list --unreadable`, which reads every SavedVariables file as data and lists those wowlab cannot read: `unreadable` (false without the option; with it, `files` holds only those files) and `read_failures`, one `SvReadFailure` per listed file in the same order, as `{path, backup, kind, reason, line, column, detail}`, where `backup` is true for a `.lua.bak` (the game's previous save, which it does not load), `kind` is `refused` (with the line and column the parser stopped at), `too_large` (past a bound, not checked) or `not_opened`, `reason` is the sentence the text output prints and `detail` the parser's or the system's own message. Without the option `read_failures` is empty; a script that reads this report needs no change.
-- New in v0.2: `CharGearReport` (`char gear --json`, M14-05), one character's equipped gear slot by slot, each item link decoded with the raw link beside it. A new model; no existing one changes, and a script needs no change.
-- `Install` (`install show --json`), `DoctorReport` (`doctor --json`) and `ExplainReport` (`explain --json`) gain `not_taken` (M13-45): for each folder named `_..._` that was not taken as a flavor, `{name, reason, target, note}`, where `reason` is `link`, `no_flavor_info`, `not_checked`, `flavor_info_changed` or `folder_changed` (M13-54: the folder itself was swapped while it was read), `target` is a link's text (or null) and `note` is the reason in the words the text output prints. It is a list in `Install` and `DoctorReport`, and in `ExplainReport` the one entry the path's first part names. It is left out when empty (or none), so an install with no such folder prints the same JSON as before. `other_dirs` is unchanged; a script needs no change.
-- `SvMergeReport` (`sv merge --json`) gains `target_sha256` (M14-03), the SHA-256 of the target file as the run read it, before the merge, and `merged_sha256` (M13-74), the SHA-256 of the bytes the merge writes or would write (null when unresolved conflicts stop it). Pass both back as `sv merge --expect <target_sha256>:<merged_sha256>` to write only if the file still holds those bytes and the merge would still write exactly those bytes, so a source character that logged out in between, or a snapshot id prefix that now names another snapshot, is refused too (else exit 3, nothing written). `UndoReport` is unchanged: its `undone` is what `undo --expect <journal id>` takes, which undoes only that record (else exit 3, nothing undone). Without `--expect` both commands behave as before; a script that reads these reports needs no change.
-- New in v0.2: `wowlab char binds --json` prints `CharBindsReport` (M14-06), one row per key on one binding command with the slot it presses, what the lab-addon record says that slot holds and which sources (the account and character `bindings-cache.wtf`, the record) have it. No existing model changed; `binds coach --json` is byte for byte what it was.
-- New in v0.2: `wowlab char macros --json` prints `CharMacrosReport` (M14-07), every macro of the account and character `macros-cache.txt` with its body, where it may sit, and the `macros check` findings for it. `placement.status` is `unconfirmed` (the candidate slots and the keys that reach them) or `none` (with the reason); `confirmed` is in the model, but nothing emits it until a capture settles which macro a slot names. A new model; `macros list --json` and `macros check --json` are byte for byte what they were.
-- `CharShowReport` (`char show --json`) and `CharGearReport` (`char gear --json`) gain one field each, `identity` (M15-01): the character's race, body type and class from the lab-addon's schema-4 `identity` record, as `{race_id, sex, sex_raw, class_id, class_file}`, each beside its `<field>_absent` reason (exactly one of the two is set). `sex` is the barber shop's `Enum.UnitSex` value (0 or 1) derived from `sex_raw`, `UnitSex()`'s own value. A record written by an older lab-addon (schema 1 to 3) reports every value absent with the reason; reinstall the lab-addon with `wowlab addon install lab` and log in and out to record it. No other field changes; a script that reads these reports needs no change. In text, `char show` prints one new `Identity:` line for a schema-4 record.
-- `CharGearReport` (`char gear --json`) gains one field, `dressing` (M15-02): either `{url, site, note}`, the address of an outside dressing room (Wowhead's) built from the character's race, body type, class, level and equipped item and bonus ids, which `wowlab ui`'s Character tab shows as a **See it dressed** link that opens in your own browser only when you click it (wowlab requests nothing), or `{items, note}`, the equipped item ids as text with the reason there is no address (no identity in the record, a client version no room is listed for, no item the room has a slot for, or a value the address cannot hold). The address carries public game ids only, never a name, realm, account or path. No other field changes; a script that reads this report needs no change. The text form of `char gear` is unchanged.
-- `CharBindsReport` (`char binds --json`) gains one field, `left_out_note` (M13-77): the sentence `char binds` prints for the bindings record's two left-out counts (`commands_left_out` and `keys_left_out`, both unchanged), word for word, which `wowlab ui`'s Keys panel now shows; null when the record has no bindings section. No other field changes; a script that reads this report needs no change. The text form of `char binds` is unchanged.
-- `BindsCoachReport` (`binds coach --json`, M16-36) changes two values and gains fields. Values: `chosen_by` is `"newest schema"` where it was `"latest"`: without `--character` the coach now judges the character whose record has the newest schema, then the one written last (`"--character"` is unchanged). `log.chosen_by` gains `"caster name"`: the log was chosen because its casts have the judged character's first name (`"newest"` and `"--log"` remain). New fields: `chosen_because` (why that character, or null with `--character`); `commands_unseen`, `keys_unseen` and `unseen` (the bindings record's left-out counts and the sentence printed before the findings; null without a bindings record); `never_cast_withheld` (true when "bound, never cast" is withheld under the minimum sample); `log.character_name`, `log.casters`, `log.caster_match` (`matches`, `first name shared`, `does not match`, `no casts`, `no caster name` or `no character`), `log.warning` and `log.scan_note`; `log.counts.source_names`; and `costs.table.never_cast_min_casts` (200 in the shipped key-cost table, which a player's own table may set). A script that compared `chosen_by` with `"latest"` should compare with `"newest schema"`; nothing else needs a change.
-- `LooksImportReport` (`looks import-char --json`) gains five fields (M13-80): `class_from`, where the look's class came from (`"--class"`, `"record"`, or null for no class); the class the lab-addon recorded in the character's schema-4 `identity` record, `recorded_class_id` and `recorded_class_file`, beside `recorded_class_absent`, the reason there is no recorded class id (an older lab-addon's record, schema 1 to 3, gives one); and `recorded_race_id`, the identity's race, which can differ from `record.race_id` when the customization record was carried from an earlier session (a remark then says the class may not be that of the character that made the look). Without `--class`, a schema-4 record's class is now the look's `class_id` (and the saved look's), where it used to be null; `--class` still wins, and a remark says when it names another class than the record's. No other field changes; a script that reads this report needs no change. The text form changes only for a schema-4 record: the class line shows the recorded class, and one remark says where it came from.
+New models, with nothing existing changed:
+
+- `AddonsCheckReport` (`addons check --json`): each addon against this game version, with its interface, dependencies and the characters that have it turned on.
+- `CharSummaryReport` (`char list --summary --json`): the Account tab's table, one row per character.
+- `CharGearReport` (`char gear --json`): one character's equipped gear slot by slot, each item link decoded with the raw link beside it. It also has `identity` (described under `CharShowReport`) and `dressing`: either `{url, site, note}`, the address of an outside dressing room (Wowhead's) built from public game ids only, or `{items, note}`, the item ids with the reason there is no address. `wowlab ui`'s Character tab shows the address as a **See it dressed** link, which opens only when you click it; wowlab requests nothing.
+- `CharBindsReport` (`char binds --json`): one row per key on one binding command, with the slot it presses, what the lab-addon's record says that slot holds, and which sources have it; plus `left_out_note`, the sentence about bindings the record left out.
+- `CharMacrosReport` (`char macros --json`): every account and character macro with its body, where it may sit, and the `macros check` findings for it. `placement.status` is `unconfirmed` or `none`; `confirmed` exists in the model but is not produced yet.
+- `CharHistoryReport` (`char history --json`): one character over time, one row per distinct save, oldest first, and the copies that could not be read, with the reason.
+- `SnapCreateReport` (`snap create --json` on an install with several game versions and none named). `snap create` used to exit 2 there. It now backs up each one and prints `{"snapshots": [<manifest>, ...]}`. With one game version, or one named, it prints the bare manifest as before.
+- `ExportReport` (`snap export --json`) and `ImportReport` (`snap import --json`), for the new commands that move a snapshot to another machine as one file and back.
+
+Fields added to existing models:
+
+- `DoctorReport` (`doctor --json`):
+  - `wowlab`: which wowlab is running and where it is installed from.
+  - `next_steps`: the "Next steps" the text output prints.
+  - `build_info_missing`: true when the install has no `.build.info`.
+  - `cannot_work_out`: when something failed that wowlab cannot explain, the newest whole snapshot it offers for a restore.
+  - `not_taken`: described under `Install` below.
+  - Each flavor gains `lab_addon`, the installed lab-addon against this game version.
+  - The last-change block gains `flavor_folder`, `snapshot_taken`, `created_dirs`, `temps_removed`, `passed_over` and `paths_left`.
+  - The snapshot store block gains `exposure`, which says whether anyone besides you can open the store.
+  - Doctor no longer goes online by default. Without `--check-builds`, each flavor's `game_data.status` is `not_checked`. In v0.1.0 that took `--offline`, which is still accepted and does nothing.
+- `Install` (`install show --json`), `DoctorReport` and `ExplainReport` gain `not_taken`: for each folder named `_..._` that was not taken as a game version, `{name, reason, target, note}`.
+  - `reason` is one of `link`, `no_flavor_info`, `not_checked`, `flavor_info_changed` or `folder_changed`.
+  - It is left out when there is no such folder, so most installs print the same JSON as before.
+- `ExplainReport` (`explain --json`):
+  - `candidates`: for a relative path with nothing on disk and no file-map row, the files whose last parts match it, then the rows that name it.
+  - The file-map row and the snapshot facts gain `notes`, `kind` (who took the snapshot) and `newer_pre_write`.
+  - **Exit code:** `wowlab explain` now exits 1 for a path that matches nothing; it exited 0 before. A script that runs it on a path that may not exist must allow exit 1.
+- `SvDumpReport` is unchanged. `sv dump` now also takes a name as `sv list` lists it: an addon name, a file name, or a path under its account folder. New `--account` and `--character` options pick between files that share a name.
+- `TreeReport` and `InstallTreeReport` (`tree --json`): each explained file gains `notes`.
+- `Manifest` (`snap create`, `snap show`): `kind`, who took the snapshot: `user`, `first-run`, `profile`, `pre-write` or `imported`. A snapshot taken by v0.1.0 has none.
+- `VerifyReport` (`snap verify --json`): `exposure`, as in `doctor`.
+- `DiffReport` (`snap diff --json`): `plan_lines`, the text output line by line, with keys, macros and settings by name.
+- `RestoreReport` (`snap restore --json`) and `ProfileApplyReport` (`profile apply --json`):
+  - `plan_lines`, as in `DiffReport`.
+  - `into`, only with `--into-flavor` or `--into-root`: where the snapshot was taken and the account folders mapped.
+- `UndoReport` (`undo --json`):
+  - `plan_lines`, as in `DiffReport`.
+  - `written_paths`, the files the undo wrote.
+  - `unlisted_written`, the files it wrote that the plan did not list.
+  - `undo --expect <journal id>` undoes only that record; otherwise it exits 3 and undoes nothing.
+- `AddonInstallReport` (`addon install --json`): `addon_version`, the version the installed lab-addon's TOC states, which is this wowlab's.
+- `AddonInstallReport`, `AddonRemoveReport`, `ProfileApplyReport` and `doctor`'s last-change block: each path left behind gains `exists` and `now`.
+- `SvListReport` (`sv list --json`):
+  - `orphans`, true with the new `--orphans` (only the files no installed addon declares).
+  - `unreadable`, true with the new `--unreadable`.
+  - `read_failures`, one per listed file with `--unreadable`: `{path, backup, kind, reason, line, column, detail}`. `kind` is `refused`, with the line and column where reading stopped, `too_large` (not checked) or `not_opened`.
+- `SvMergeReport` (`sv merge --json`):
+  - `target_sha256`, the target file as the run read it.
+  - `merged_sha256`, the bytes the merge writes or would write; null when unresolved conflicts stop it.
+  - `removed`, what the merge takes out of the target.
+  - `replace`, true with `--replace`.
+  - Pass the two hashes back as `sv merge --expect <target_sha256>:<merged_sha256>` to write only if nothing changed in between; otherwise it exits 3 and writes nothing.
+- `CharListReport` (`char list --json`):
+  - `flavors`, each game version listed with its version and how many character folders it has.
+  - `installed_version`.
+  - Each character gains `flavor`, `record_schema`, `client_build`, `older_client` and `no_lab_record`.
+  - Records skipped as not looked at gain `flavor`.
+- `CharShowReport` (`char show --json`):
+  - `installed_version`.
+  - `older_client`, true when the record was written by an older game version.
+  - `lab_addon`, the installed lab-addon against this game version.
+  - `identity`, the character's race, body type and class as `{race_id, sex, sex_raw, class_id, class_file}`, each beside its `<field>_absent` reason. A record from an older lab-addon has every value absent: reinstall it with `wowlab addon install lab`, then log in and out.
+  - In text, `char show` prints one new `Identity:` line.
+- `CharShowReport`, `CharListReport` and `CharGearReport`: each gear slot gains `slot_name`, `raw_link`, `item_id`, `name`, `colour`, `quality`, `enchant_id`, `gem_ids`, `suffix_id`, `spec_id`, `bonus_ids` and `upgrade`, decoded from the item link. The average item level gains `absent`, the reason when there is none.
+- `BindsCoachReport` (`binds coach --json`):
+  - **Value change:** `chosen_by` is `"newest schema"` where it was `"latest"`. A script that compared it with `"latest"` should compare with `"newest schema"`.
+  - `log.chosen_by` can also be `"caster name"`.
+  - New fields: `chosen_because`, `commands_unseen`, `keys_unseen`, `unseen` and `never_cast_withheld`.
+  - New in `log`: `character_name`, `casters`, `caster_match`, `warning` and `scan_note`.
+  - `log.counts.source_names` and `costs.table.never_cast_min_casts` are also new.
+- `LooksImportReport` (`looks import-char --json`):
+  - New fields: `class_from`, `recorded_class_id`, `recorded_class_file`, `recorded_class_absent` and `recorded_race_id`.
+  - **Value change:** without `--class`, a record that has the character's class now gives the look its `class_id`, where it used to be null. `--class` still wins.
