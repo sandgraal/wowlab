@@ -3222,3 +3222,40 @@ Graders, expected to fail until M18-01: a positional `nil,` inside a table parse
 Make M18-01T's graders pass by deleting their markers only. The patch-day card stops listing the game's own files as unreadable. No interpreter, no evaluation (L3); the fuzz corpus keeps passing.
 
 **Acceptance:** M18-01T's graders pass, markers deleted only; `make test-parser` and the full suite green; on the owner's install `sv list --unreadable` no longer lists `Blizzard_AuctionHouseUI.lua`, `Blizzard_CombatLog.lua`, `Auctionator.lua` or their `.bak` copies. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: the patch-day card; `sv dump` shows the holes.
+
+*Owner decision, 2026-11-14, in session ("mockup approved"):* the redesign is specified in `docs/design/COMPANION.md`. The UI tickets below share `ui/templates/page.js`, `page.css` and `page.html`, so they run one at a time in this order. Each is reviewed by `code-reviewer`, who also loads the real page in a headless browser on a fixture install (the #544 lesson: the Node stand-in hid a crash), and by `security-reviewer` for the templates. Behaviour the current tabs have is kept, moved, never dropped, unless a ticket says so.
+
+## [ ] M18-02 — Names by default: one offer to download the name tables
+**Size:** S · **Depends on:** nothing · **Sources:** `docs/design/COMPANION.md` (Words); ADR-0019, ADR-0022; L5
+
+Race, spec and profession names need `ChrRaces`, `ChrClasses`, `ChrSpecialization` and `SkillLine` cached for the game's build, which today means four `wowlab db2 fetch` commands nobody knows to run. Add one command, `wowlab names fetch`, that fetches whichever of the four are missing for each installed flavor's build through `wowlab_core.gamedata` (one request per table to wago.tools, keyed on the full build string as ADR-0022 keys the cache), never replacing a cached table (L5). `doctor` names it when a table is missing; `wowlab ui` runs it through its fixed-argv CLI path (ADR-0029), not a route of its own, so M18-04 can draw the button. Nothing is fetched without the player's command or click.
+
+**Acceptance:** tests with recorded responses (no live call in CI, ADR-0012); a `@live` test by hand; `doctor` and `char list --summary` text name the command when names are missing; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; `doctor` text.
+
+## [ ] M18-03 — The new shell: sections, tokens and fonts
+**Size:** M · **Depends on:** nothing · **owner** (until the owner accepts the ADR-0035 amendment of 2026-11-14) · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
+
+Replace Wellspring's chrome with the companion's: the header with the five sections (Characters, Backups, Addons, Keybinds, Advanced), the game picker named for people, the dark tokens, Inter and Sora under the ADR amendment. Today's tabs move into the sections as they are (Account content under Characters and Backups and Addons, Character under Characters, Keys under Keybinds, Explorer/Gaps/Commands/Looks under Advanced) so nothing is lost before M18-04 and M18-05 redraw them. The tab intros become a closed **About this data** disclosure.
+
+**Acceptance:** every existing UI test passes or is updated with a stated reason; the font hashes are pinned, and the implementer reports the font rows so the conductor fills the amendment's table on the branch; the page loads in a headless browser with no console error at 1440 px and 390 px; `make ci` green. User-facing: the whole UI.
+
+## [ ] M18-04 — The Characters home: status cards and character cards
+**Size:** M · **Depends on:** M18-03, M18-02 · **Sources:** `docs/design/COMPANION.md`; the mockup
+
+Two status cards (backup: when, what it holds, **Back up now** and **Restore…**; addons: "N of M addons load on this version" with one line that names what the rest are and whether anything needs fixing). Then one card per character: class stripe and level tile in the class colour, name, race and class, item level, the top professions as bars, last played, and a gain from history when there is one ("+6 levels this week"). Then a dashed **Missing a character?** card that says how a character appears. A card opens the character page. When names are missing, one line at the top offers the M18-02 download.
+
+**Acceptance:** page tests on the fixture installs for each card state (backup / no backup / game updated; names cached / not; a character with and without a lab record); headless-browser check; `make ci` green. User-facing: the home screen.
+
+## [ ] M18-05 — The character page
+**Size:** M · **Depends on:** M18-04 · **Sources:** `docs/design/COMPANION.md`; the mockup
+
+A header (level tile, name, race and class, item level, profession count, last played, the existing **See it dressed** link), gear in two columns with quality colours and empty slots, a Progress card (level and item level over the saves `char history` has), a **What changed** timeline in plain words, profession bars, and the action bar's keys 1 to 0 with what each casts. The full key table stays in Keybinds. Every caveat moves under **About this data**.
+
+**Acceptance:** page tests on the fixture characters; headless-browser check; `make ci` green. User-facing: the character page.
+
+## [ ] M18-06 — Characters kept only in a backup
+**Size:** S · **Depends on:** M18-04 · **Sources:** the mockup ("kept in your backup from Oct 19")
+
+A character whose lab record is no longer in the install (a closed beta, a deleted folder) but is held in a snapshot shows as a dimmed card on the home screen, labelled with the game version and the backup's date, and opens a read-only character page from that record. Reads the store only (L1); never restores anything by itself.
+
+**Acceptance:** tests on a constructed store holding a record the install lacks; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the home screen.
