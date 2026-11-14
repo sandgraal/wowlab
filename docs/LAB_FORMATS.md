@@ -92,7 +92,7 @@ number     := decimal int | decimal float | exponent form | hex int (0x…) | le
 
 `NAME` is a Lua identifier. `nil` is legal only as a top-level value.
 
-*Amended 2026-11-14 (owner's install, Forever 1.60.1.70938; contradicts the line above):* the client writes `nil` as a **positional** entry, a hole in a list, on its own line as `nil,`. It was seen in the game's own files: `Blizzard_AuctionHouseUI.lua` (`g_auctionHouseFilters.filters`, `false, false, false, false, nil, true, …`) and `Blizzard_CombatLog.lua` (a `nil,` between two colour tables), and in `Auctionator.lua` and both `.lua.bak` copies. A positional `nil` takes its index like any other positional entry, so the entries after it keep their numbers. The parser accepts it, keeps its text and position byte for byte (§4.4), and reports it as a value with no content (the hole), never as an error. A keyed `nil` (`["k"] = nil` or `k = nil`) and `nil` as a key are still unobserved and stay rejected.
+*Amended 2026-11-14 (owner's install, Forever 1.60.1.70938; contradicts the line above):* the client writes `nil` as a **positional** entry, a hole in a list, on its own line as `nil,`. Seen in the game's own files: `Blizzard_AuctionHouseUI.lua` (per character; `g_auctionHouseFilters.filters` reads `false, false, false, false, nil, true, …`) and `Blizzard_CombatLog.lua` (account; two holes between colour tables), in the account's `Auctionator.lua` (two holes back to back), and in the `.bak` copies `Blizzard_CombatLog.lua.bak` and `Auctionator.lua.bak`. The files show where the holes are written, not how the client reads them back: by the Lua 5.1 manual §2.5.7 (table constructors), a positional `nil` takes its index like any other positional entry, so the entries after it keep their numbers. The parser accepts a positional `nil`, keeps its text and position byte for byte (§4.4), and reports it as a value with no content (the hole), never as an error. A top-level `X = nil` stays accepted as before. Inside a table, a keyed `nil` (`["k"] = nil` or `k = nil`) and `nil` as a key are still unobserved and stay rejected.
 
 ### 4.2 What the client writes **[verify each against fixtures]**
 
@@ -117,6 +117,7 @@ OtherVar = "text"⏎
   including the last.
 - The array part (keys `1..n`) is written positionally with a `-- [n]`
   comment; everything else is `["string"]` or `[number]`.
+  A hole in the array part is written as a positional `nil,` (§4.1, amendment of 2026-11-14).
 - Strings are double-quoted. Escapes seen: `\"`, `\\`, `\n`, `\r`, and
   decimal `\ddd` for other control bytes. UTF-8 is written raw. A string can
   contain `|c…|r` colour codes, `|T…|t` texture tags and `|H…|h` links; they
