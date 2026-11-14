@@ -1,6 +1,6 @@
 [project]
 name = "wowlab"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-only library and CLI over a World of Warcraft install"
 # The PyPI page (M16-32). hatchling puts the readme in the sdist whatever
 # `only-include` below says, and in the wheel's METADATA as its description.
