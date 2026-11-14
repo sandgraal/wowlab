@@ -442,3 +442,28 @@ def test_summary_names_only_what_is_missing_constructed(
     assert "Names:" not in text
     assert json.loads(run("char", "list", "--summary", "--json").stdout)["names_missing"] == []
     assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("cell", "words"),
+    [(b"", "has no version in it"), (b"1.60.1", "not a full build string")],
+    ids=["no_version_constructed", "short_version_constructed"],
+)
+def test_a_version_it_cannot_use_is_said_and_nothing_is_asked(
+    root: Path, requests: list[httpx.Request], cell: bytes, words: str
+) -> None:
+    """Constructed: the version cell of `.build.info` emptied or cut short."""
+    info = root / ".build.info"
+    data = info.read_bytes()
+    assert data.count(VERSION.encode()) == 1
+    info.write_bytes(data.replace(VERSION.encode(), cell))
+    code, report = _fetch()
+    assert code == 1
+    (row,) = report.flavors
+    assert row.tables == [] and row.detail is not None and words in row.detail
+    assert requests == []
+    result = run("names", "fetch")
+    assert result.exit_code == 1
+    flat = " ".join(result.stdout.split())
+    assert flat.startswith(f"Names for {FLAVOR}") and "not downloaded, because" in flat
+    assert words in flat

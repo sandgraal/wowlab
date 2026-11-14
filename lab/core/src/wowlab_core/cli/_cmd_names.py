@@ -88,7 +88,12 @@ def _fetch_names(
         cause = _no_version_cause(f.folder, f.product, f.matching_rows)
         return NamesFlavor(folder=f.folder, version=None, tables=[], detail=cause), 0
     version = f.version
-    missing = set(gamedata.missing_tables(gamedata.NAME_TABLES, version, cache_dir=data.cache_dir))
+    try:
+        missing = set(
+            gamedata.missing_tables(gamedata.NAME_TABLES, version, cache_dir=data.cache_dir)
+        )
+    except ValueError as exc:  # a version that is not a full build string
+        return NamesFlavor(folder=f.folder, version=version, tables=[], detail=str(exc)), 0
     tables: list[NamesTable] = []
     fetched = 0
     for name in gamedata.NAME_TABLES:
@@ -128,6 +133,8 @@ def _names_lines(f: NamesFlavor) -> list[str]:
     if f.version is None:
         return [f"Names for {f.folder}: not downloaded, because {f.detail}."]
     head = f"Names for {f.folder} ({f.version})"
+    if not f.tables:
+        return [f"{head}: not downloaded, because {f.detail}."]
     got = [t for t in f.tables if t.status == "fetched"]
     had = [t for t in f.tables if t.status == "cached"]
     failed = [t for t in f.tables if t.status not in ("fetched", "cached")]
@@ -189,8 +196,7 @@ def names_fetch(
                 indent = line[: len(line) - len(line.lstrip(" "))]
                 _say_prose(line.lstrip(" "), indent=indent, hang="    ", keep=[row.folder])
     done = bool(flavors) and all(
-        f.version is not None and all(t.status in ("cached", "fetched") for t in f.tables)
-        for f in flavors
+        bool(f.tables) and all(t.status in ("cached", "fetched") for t in f.tables) for f in flavors
     )
     if not done:
         raise typer.Exit(EXIT_ERROR)
