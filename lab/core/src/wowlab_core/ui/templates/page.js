@@ -312,15 +312,20 @@
   // flavors the header's picker shows the names; with one, a line.
   const game = { versions: new Map(), folders: [] };
 
-  // `bare`: the name alone, without the patch (a character card's line).
-  function gameName(folder, bare) {
+  function gameName(folder) {
+    const named = gameWords(folder);
+    // The patch as players say it ("1.60.1"), without the build number.
+    const version = (game.versions.get(folder) || "").split(".").slice(0, 3).join(".");
+    return visible(version ? named + " \u00b7 " + version : named);
+  }
+
+  // The name alone, without the patch (`gameName`'s words, and a character
+  // card's line, M18-04). Not yet made visible: its callers do that.
+  function gameWords(folder) {
     const words = String(folder).split(/[_\s]+/).filter((w) => w !== "");
-    const named = words.length
+    return words.length
       ? "WoW " + words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
       : String(folder);
-    // The patch as players say it ("1.60.1"), without the build number.
-    const version = bare ? "" : (game.versions.get(folder) || "").split(".").slice(0, 3).join(".");
-    return visible(version ? named + " \u00b7 " + version : named);
   }
 
   // Each flavor's version from a `char list` report (`flavors`, M16-114).
@@ -2797,12 +2802,11 @@
         alone(hubSay, () => takeVersions(report));
         alone(cardsSay, () => takeHome(report));
         alone(backupSay, () => takeBackups(report));
+        alone(patchDaySay, () => takePatchDay(report));
         // The cards' gains are read once the patch-day reads are done, one
         // run at a time, so the page never holds more of the server's run
         // slots than before.
-        const checking = Promise.resolve().then(() => takePatchDay(report));
-        alone(patchDaySay, () => checking);
-        alone(cardsSay, () => checking.then(undefined, () => undefined).then(() => takeGains(report)));
+        alone(cardsSay, () => takeGains(report));
       })();
       hub.asked = asked;
     }
@@ -3509,7 +3513,7 @@
     const parts = [];
     const day = playedDay(row.mtime_ns);
     if (day) parts.push("Last played " + day);
-    if (several && hubStr(row.flavor)) parts.push(gameName(row.flavor, true));
+    if (several && hubStr(row.flavor)) parts.push(visible(gameWords(row.flavor)));
     foot.appendChild(make("span", parts.join(" · ")));
     const gain = make("span", homeView.gains.get(rowKey(row)) || "");
     gain.className = "card-gain";
@@ -3615,6 +3619,8 @@
   // card without a gain.
   async function takeGains(report) {
     const seq = homeView.gainSeq;
+    await (patchDay.reading || Promise.resolve());
+    if (seq !== homeView.gainSeq) return;
     for (const row of objects(report.rows).filter(recorded)) {
       const params = { character: row.realm_folder + "/" + row.label, account: row.account };
       if (hubStr(row.flavor)) params.flavor = row.flavor;
@@ -3659,6 +3665,7 @@
     seq: 0, // the latest read; an earlier one still running draws nothing
     flavors: [], // per flavor folder, what the two runs said
     pending: null, // a path to show once the Explorer's tree is read
+    reading: null, // the latest read, settled when it is done
   };
   // The sentence `sv list --orphans` prints with its list.
   const PATCH_DAY_REINSTALL =
@@ -3717,7 +3724,21 @@
   }
 
   // Reads every flavor the hub's report lists, one run at a time.
+  // `patchDay.reading` settles when it is done, however it ends: the home's
+  // gains wait for it.
   async function takePatchDay(report) {
+    let settle = null;
+    patchDay.reading = new Promise((resolve) => {
+      settle = resolve;
+    });
+    try {
+      await readPatchDay(report);
+    } finally {
+      settle();
+    }
+  }
+
+  async function readPatchDay(report) {
     const seq = ++patchDay.seq;
     const folders = objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== "");
     patchDay.flavors = [];

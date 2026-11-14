@@ -680,6 +680,16 @@ def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
     names = sorted(set(shipped["slots"].values()))
     assert len(names) == 19 and "Main Hand" in names and len(shipped["quality"]) >= 9
     templates = _templates()
+    # M18-04: two of WoW's class colours (COMPANION.md: Shaman 0070DD,
+    # Priest FFFFFF) are also quality colours, and the home's primary button
+    # says "Back up now", which reads as the Back slot. Neither is the gear
+    # table: the class tokens are declared one per line as `--class-<name>`,
+    # and the button's words are the design's. Both are taken out before the
+    # check, and nothing else is.
+    templates["page.css"] = re.sub(
+        r"^  --class-[a-z]+(?:-tile|-text)?: #[0-9a-f]{6};\n", "", templates["page.css"], flags=re.M
+    )
+    templates["page.html"] = templates["page.html"].replace(">Back up now<", "><")
     assert _table_leaks(templates) == []
 
 

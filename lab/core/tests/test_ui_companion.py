@@ -382,8 +382,15 @@ def test_the_looks_network_line_stays_beside_its_button() -> None:
         '<p class="looks-note">Downloads this version\'s public game tables from wago.tools, '
         "sending your game version.</p>\n"
     ) in html
+    # M18-04: the Characters home's Download names button sends the game
+    # version too, so its own network line stands beside it, the same way.
+    assert (
+        '<button id="names-fetch" type="button">Download names</button>\n'
+        '<p class="names-note">Downloads the game\'s public name tables from wago.tools, '
+        "sending your game version.</p>\n"
+    ) in html
     outside = re.sub(r'<details class="about">.*?</details>', "", html, flags=re.DOTALL)
-    assert outside.count("wago.tools") == 1
+    assert outside.count("wago.tools") == 2
 
 
 def test_the_keys_table_scrolls_inside_its_own_box() -> None:
