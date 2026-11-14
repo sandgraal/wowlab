@@ -54,6 +54,7 @@ from _luadata_oracle import (
     load,
     rebuild,
     source_tokens,
+    tables,
 )
 
 pytestmark = pytest.mark.parser
@@ -373,6 +374,60 @@ def test_constructed_ten_thousand_holes_parse_and_round_trip(luadata: Any) -> No
     assert doc.to_python() == {"X": {10_001: "last"}}
 
 
+# ── bounds: holes are charged and nested like any entry ─────────────────────
+
+
+@XFAIL
+@pytest.mark.parametrize(
+    "item",
+    [b"nil,\r\n", b"nil, "],
+    ids=["constructed-hole-per-line", "constructed-holes-on-one-line"],
+)
+def test_constructed_holes_are_charged_against_the_budget(
+    luadata: Any, item: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Modelled on `test_constructed_assignments_are_charged_like_entries`
+    (`test_luadata_budget_constructed.py`): with `MAX_COST` lowered, a few
+    holes fit, and a long run of them crosses the budget at a hole and
+    raises the bound error, not a grammar error. A hole is never free."""
+    monkeypatch.setattr(luadata, "MAX_COST", 20_000)
+    fits = luadata.parse(b"\r\nX = {\r\n" + item * 10 + b"}\r\n")
+    assert _holes(luadata, fits.assignments[0].value) == list(range(1, 11))
+    with pytest.raises(luadata.LuaLimitError) as caught:
+        luadata.parse(b"\r\nX = {\r\n" + item * 1000 + b"}\r\n")
+    err = caught.value
+    token = err.token if isinstance(err.token, bytes) else str(err.token).encode()
+    assert token.startswith(b"nil"), token
+    if item.endswith(b"\r\n"):
+        assert err.line >= 3 and err.column == 1, (err.line, err.column)
+    else:
+        assert err.line == 3 and (err.column - 1) % len(item) == 0, (err.line, err.column)
+
+
+def _nested_holes(depth: int) -> bytes:
+    """A hole at every level: `X = {nil, {nil, {…}}}`, `depth` tables deep."""
+    return _doc("X = " + "{nil, " * depth + "}" * depth)
+
+
+@XFAIL
+def test_constructed_a_hole_per_level_190_deep_parses(luadata: Any) -> None:
+    """Inside §6.4's depth bound of 200, as `test_depth_under_the_bound_parses`
+    grades the other nesting forms."""
+    doc = _faithful(luadata, _nested_holes(190))
+    found = list(tables(luadata, doc))
+    assert max(d for d, _t in found) == 190
+    assert all(_holes(luadata, t) == [1] for _d, t in found)
+
+
+@XFAIL
+def test_constructed_a_hole_per_level_10000_deep_raises_the_depth_bound(luadata: Any) -> None:
+    """Over the bound raises `LuaLimitError`; no `RecursionError` escapes."""
+    with pytest.raises(luadata.LuaLimitError) as caught:
+        luadata.parse(_nested_holes(10_000))
+    assert isinstance(caught.value, luadata.LuaDataError)
+    assert caught.value.line == 2
+
+
 @XFAIL
 def test_constructed_serialize_writes_a_positional_luanil_as_nil(luadata: Any) -> None:
     """The serializer side: a document whose positional entry is changed to
@@ -410,6 +465,20 @@ STILL_REFUSED = [
     # `nil` is a keyword, so `nil = 1` is no name key: refused at `nil`, or,
     # once `nil` is read as a hole, at the `=` that follows it.
     ("constructed-nil-as-name-key", _doc("X = {", "nil = 1,", "}"), [(3, 1, "nil"), (3, 5, "=")]),
+    # A positional `nil` is a literal, never an operand, a callee or an
+    # object: whatever follows it is refused, at the `nil` or at that token
+    # (security review of #560, round 1). `X = {` puts `nil` at column 6.
+    ("constructed-nil-plus", _doc("X = {nil + 1}"), [(2, 6, "nil"), (2, 10, "+")]),
+    ("constructed-nil-concat", _doc('X = {nil .. "a"}'), [(2, 6, "nil"), (2, 10, ".")]),
+    ("constructed-nil-or", _doc("X = {nil or 1}"), [(2, 6, "nil"), (2, 10, "or")]),
+    ("constructed-nil-call", _doc("X = {nil()}"), [(2, 6, "nil"), (2, 9, "(")]),
+    ("constructed-nil-call-string", _doc('X = {nil "s"}'), [(2, 6, "nil"), (2, 10, '"')]),
+    ("constructed-nil-call-table", _doc("X = {nil {}}"), [(2, 6, "nil"), (2, 10, "{")]),
+    ("constructed-nil-field", _doc("X = {nil.x}"), [(2, 6, "nil"), (2, 9, ".")]),
+    ("constructed-nil-index", _doc("X = {nil[1]}"), [(2, 6, "nil"), (2, 9, "[")]),
+    ("constructed-nil-method", _doc("X = {nil:m()}"), [(2, 6, "nil"), (2, 9, ":")]),
+    ("constructed-minus-nil", _doc("X = {-nil}"), [(2, 6, "-"), (2, 7, "nil")]),
+    ("constructed-not-nil", _doc("X = {not nil}"), [(2, 6, "not"), (2, 10, "nil")]),
 ]
 
 
