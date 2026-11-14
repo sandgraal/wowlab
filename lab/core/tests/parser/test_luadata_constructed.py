@@ -860,7 +860,6 @@ REJECTIONS: list[tuple[str, bytes, list[tuple[int, int, str]]]] = [
     ("bare-identifier-positional", _doc("X = {", "foo,", "}"), [(3, 1, "foo")]),
     ("bare-identifier-value", _doc("X = {", '["k"] = bar,', "}"), [(3, 9, "bar")]),
     ("bare-identifier-key", _doc("X = {", "[foo] = 1,", "}"), [(3, 2, "foo")]),
-    ("nil-positional", _doc("X = {", "nil,", "}"), [(3, 1, "nil")]),
     ("nil-value-string-key", _doc("X = {", '["k"] = nil,', "}"), [(3, 9, "nil")]),
     ("nil-value-name-key", _doc("X = {", "k = nil,", "}"), [(3, 5, "nil")]),
     ("nil-key", _doc("X = {", "[nil] = 1,", "}"), [(3, 2, "nil")]),

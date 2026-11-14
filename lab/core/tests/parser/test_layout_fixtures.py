@@ -69,9 +69,17 @@ FILES_ONLY_RUNS: dict[str, str] = {
         "M15-01: only the three WowLab.lua files committed (the account one and two "
         "characters'), laid out as macos-70425 is"
     ),
+    "macos-70938": (
+        "M18-01T: only the two game files holding a positional nil hole committed "
+        "(a character Blizzard_AuctionHouseUI.lua, the account Blizzard_CombatLog.lua), "
+        "laid out as macos-70425 is"
+    ),
 }
 INSTALL_ROOTS = sorted(p for p in PLATFORMS if (FIXTURES / p / ".build.info").is_file())
 BORROWED_ROOT = "macos"
+# A files-only run of the launch client (`_forever_`) borrows a launch-client
+# root: `macos/`'s `.build.info` names only the beta's flavor folder.
+BORROWED_ROOTS: dict[str, str] = {"macos-70938": "macos-70888"}
 
 
 @pytest.mark.parser
@@ -191,10 +199,10 @@ def test_end_to_end_through_discovery(platform: str, tmp_path: Path) -> None:
     files = [(p, p) for p in INSTALL_FILES if p.startswith(platform + "/")]
     shape = platform  # whose folders say which top folder is a flavor folder
     if platform in FILES_ONLY_RUNS:
-        shape = BORROWED_ROOT
+        shape = BORROWED_ROOTS.get(platform, BORROWED_ROOT)
         kinds = sorted({p.split("/")[1] for p, _ in files})
         borrowed = [".build.info"] + [f"{kind}/.flavor.info" for kind in kinds]
-        files = [(f"{BORROWED_ROOT}/{b}", f"{platform}/{b}") for b in borrowed] + files
+        files = [(f"{shape}/{b}", f"{platform}/{b}") for b in borrowed] + files
     for source, as_captured in files:
         captured = as_captured.split("/")
         parts = captured[1:]

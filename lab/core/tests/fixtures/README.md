@@ -198,6 +198,17 @@ the client:
   ones; no earlier run's pseudonym is claimed to be either. Both
   characters are of the first body type, so `UnitSex` 3 (the second body
   type, from memory) is still unobserved.
+  The M18-01T capture (build 70938, 2026-11-14) is an eighth run, kept in
+  `macos-70938/` (files-only, laid out as `macos-70425/` and declared in
+  `FILES_ONLY_RUNS`). Only the two game files that hold a positional `nil`
+  hole are committed: the character `Blizzard_AuctionHouseUI.lua` and the
+  account `Blizzard_CombatLog.lua`. The account `Blizzard_AuctionHouseUI.lua`
+  of the run has no hole and is not committed (build 70009's is). The
+  account `Auctionator.lua`, which holds two holes back to back
+  (`["default_quantities"]`, indices 5 and 6), was refused by the scrub tool
+  ("email address", 54 matches inside one encoded price-database string) and
+  is not committed; two holes in a row are graded on a constructed input
+  until a capture of it passes the scrub.
 - Combat logs from part 3 on are captured with shifted timestamps (M10-02
   follow-up 5, `timestamps-shifted`): every stamp and the file name moved by
   one secret offset per log, format kept, so neither the date nor the time
@@ -345,3 +356,5 @@ the client:
 | `macos-70888/forever/Interface/AddOns/Baganator/Baganator.toc` | toc | _forever_ | 1.60.1.70888 | macos | owner | owner | none | single-TOC addon; CRLF; M16-05 run of 2026-11-12, recaptured the same day |
 | `macos-70888/forever/Interface/AddOns/BanterBlocker/BanterBlocker.toc` | toc | _forever_ | 1.60.1.70888 | macos | owner | owner | none | multi-TOC addon (2 TOC files); CRLF; M16-05 run of 2026-11-12, recaptured the same day |
 | `macos-70888/forever/Interface/AddOns/BanterBlocker/BanterBlocker_Mainline.toc` | toc | _forever_ | 1.60.1.70888 | macos | owner | owner | none | multi-TOC addon (2 TOC files); CRLF; M16-05 run of 2026-11-12, recaptured the same day |
+| `macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/Blizzard_AuctionHouseUI.lua` | savedvariables | _forever_ | 1.60.1.70938 | macos | owner | owner | identity-rewritten: path only | requested with --sv; M18-01T capture run of 2026-11-14 (agent on the owner's install, `--kind _forever_=forever`, `--own-guid`); the game's own per-character file, 208 bytes, 21 lines, nesting depth 2; first positional `nil` hole in the corpus (`docs/LAB_FORMATS.md` §4.1, amendment of 2026-11-14): `g_auctionHouseFilters["filters"]` holds 12 positional entries, `false` ×4, `nil` (line 10, column 1, index 5), `true` ×7; a second variable `g_activeBidAuctionIDs` is an empty table written over two lines; no `-- [n]`, no comments, no indentation, ASCII only; byte-identical to the install's file (0 edits); CRLF; leading blank line |
+| `macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua` | savedvariables | _forever_ | 1.60.1.70938 | macos | owner | owner | identity-rewritten: path only | requested with --sv; chat-log, mail or notes addon (free text), confirmed with --confirm-free-text after reading every string (all are the game's default filter names, tooltips and event names); same M18-01T run; the game's own account file, 9543 bytes, 501 lines, nesting depth 6; two positional `nil` holes (lines 28 and 272, column 1), each index 3 of a `["schoolColoring"]` table (`Blizzard_CombatLog_Filters["filters"][1]["colors"]["schoolColoring"]` and `[2]`), between two colour tables (indices 2 and 4) and followed by number keys `[0]`, `[8]`, …; a second variable `Blizzard_CombatLog_Filter_Version = 4.3`; no `-- [n]`, no comments, no indentation, ASCII only; byte-identical to the install's file (0 edits); CRLF; leading blank line |

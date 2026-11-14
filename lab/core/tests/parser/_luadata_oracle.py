@@ -17,6 +17,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 INDEX = FIXTURES / "README.md"
 
@@ -38,6 +40,28 @@ def indexed(kind: str) -> list[str]:
         if line.startswith("|") and len(cells) > 1 and cells[1] == kind:
             found.append(cells[0].strip("`"))
     return found
+
+
+# The captures that hold a positional `nil` hole (docs/LAB_FORMATS.md §4.1,
+# amendment of 2026-11-14; M18-01T). Every corpus-wide grader takes them
+# through `graded()`; until M18-01 they are expected to fail there, and
+# M18-01 deletes the one marker line below (`_PENDING.update(...)`) and
+# nothing else here.
+NIL_HOLE_FIXTURES = (
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/"
+    "Blizzard_AuctionHouseUI.lua",
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua",
+)
+_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+_PENDING: dict[str, Any] = {}
+_PENDING.update(dict.fromkeys(NIL_HOLE_FIXTURES, _M18_01))
+
+
+def graded(kind: str) -> list[Any]:
+    """`indexed(kind)` as parametrize cases, with an expected-fail mark on a
+    fixture whose behaviour is not built yet (`_PENDING`). The ids are the
+    paths, as before."""
+    return [pytest.param(n, id=n, marks=_PENDING.get(n, ())) for n in indexed(kind)]
 
 
 def _b(value: Any) -> bytes:
