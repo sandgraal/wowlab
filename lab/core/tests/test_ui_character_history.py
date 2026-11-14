@@ -352,10 +352,11 @@ def test_the_changes_are_newest_first_in_player_words_cross_capture(
 
 # ─── zero and one save ───────────────────────────────────────────────────────
 
+# M18-03: Take a backup now moved from the Account tab to the Backups section.
 _FEW = (
     "History appears once there are two different saves of this character (the file in the game "
     "folder counts as one). The game saves it when you log out or type /reload; take a backup "
-    "after you log out or /reload (Take a backup now on the Account tab, or wowlab snap create); "
+    "after you log out or /reload (Take a backup now under Backups, or wowlab snap create); "
     "a backup taken while you are still playing keeps the save from before."
 )
 

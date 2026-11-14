@@ -4,54 +4,111 @@
 <meta charset="utf-8">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="dark">
 <title>wowlab</title>
 <style><!--wowlab:style--></style>
 </head>
 <body>
 <header class="banner">
-<svg class="sigil" viewBox="0 0 64 64" width="56" height="56" aria-hidden="true" focusable="false">
-<g class="ring" transform="rotate(-90 32 32)"><circle cx="32" cy="32" r="26" stroke-dasharray="46.45 8" stroke-dashoffset="-4"/></g>
-<g class="tick"><line x1="44.93" y1="37.36" x2="49.55" y2="39.27"/><line x1="37.36" y1="44.93" x2="39.27" y2="49.55"/><line x1="26.64" y1="44.93" x2="24.73" y2="49.55"/><line x1="19.07" y1="37.36" x2="14.45" y2="39.27"/><line x1="19.07" y1="26.64" x2="14.45" y2="24.73"/><line x1="26.64" y1="19.07" x2="24.73" y2="14.45"/><line x1="37.36" y1="19.07" x2="39.27" y2="14.45"/><line x1="44.93" y1="26.64" x2="49.55" y2="24.73"/></g>
-<path class="core" d="M32 21 L39 32 L32 43 L25 32 Z"/>
-<path class="fissure" d="M32 43 L32 58"/>
-</svg>
-<div class="banner-text">
-<h1>wowlab</h1>
-<p>What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.</p>
+<div class="bar">
+<h1 class="brand"><svg class="mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg>wowlab</h1>
+<div class="sections" role="tablist" aria-label="Sections">
+<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view">Characters</button>
+<button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
+<button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
+<button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
+<button id="sec-advanced" class="sec" type="button" role="tab" aria-selected="false" aria-controls="explorer-view gaps-view commands-view looks-view">Advanced</button>
 </div>
-<label id="run-flavor-box" class="run-flavor" hidden>Runs use flavor <select id="run-flavor"></select></label>
-<nav class="tabs" role="tablist" aria-label="Views">
-<button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">Account</button>
+<div class="game"><span class="game-dot" aria-hidden="true"></span><span id="game-name" class="game-name" hidden></span><label id="run-flavor-box" class="run-flavor" hidden><span class="unseen">Game version</span><select id="run-flavor"></select></label></div>
+</div>
+</header>
+<main>
+<nav id="characters-tabs" class="tabs" role="tablist" aria-label="Characters">
+<button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">All characters</button>
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
+</nav>
+<nav id="advanced-tabs" class="tabs" role="tablist" aria-label="Advanced" hidden>
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
 <button id="tab-gaps" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gaps-view">Gaps</button>
 <button id="tab-commands" class="tab" type="button" role="tab" aria-selected="false" aria-controls="commands-view">Commands</button>
 <button id="tab-looks" class="tab" type="button" role="tab" aria-selected="false" aria-controls="looks-view">Looks</button>
 </nav>
-</header>
-<main>
 <section id="account-view" role="tabpanel" aria-labelledby="tab-account">
-<h2 class="unseen">Account</h2>
-<p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. This tab reads with <code>wowlab char list --summary</code>; only Take a backup now writes, with <code>wowlab snap create</code>, and only into wowlab's own store, never your game folder. Pick a character to open it in the Character tab.</p>
-<div id="backup" class="panel backup" role="region" aria-labelledby="backup-heading">
-<h3 id="backup-heading">Backup</h3>
-<ul id="backup-lines" class="backup-lines"></ul>
-<p id="backup-status" role="status"></p>
-<pre id="backup-diff" class="plan-lines" hidden></pre>
-</div>
-<div id="patch-day" class="panel patch-day" role="region" aria-labelledby="patch-day-heading">
-<h3 id="patch-day-heading">Patch day</h3>
-<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
-<ul id="patch-day-lines" class="patch-day-lines"></ul>
-<p id="patch-day-status" role="status"></p>
-</div>
+<h2 class="page-title">Your characters</h2>
 <div class="toolbar panel">
 <label id="hub-flavor-box">Flavor <select id="hub-flavor"></select></label>
 <label>Class <select id="hub-class"></select></label>
 <p id="hub-status" role="status"></p>
 </div>
 <div id="hub-table" class="panel hub-table" role="region" aria-label="Characters" tabindex="0"></div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. This tab reads with <code>wowlab char list --summary</code>. Pick a character to open it in the Character tab.</p>
+</details>
+</section>
+<section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
+<h2 id="char-view-title" class="unseen">Character</h2>
+<div class="toolbar panel">
+<label>Character <select id="char-picker" disabled></select></label>
+<p id="char-status" role="status"></p>
+</div>
+<div id="char-panels" class="char-panels">
+<section id="char-gear-panel" class="panel char-panel">
+<div id="char-header"></div>
+<div id="char-gear"></div>
+<div id="char-dressing" class="char-dressing" hidden>
+<a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
+<p id="char-dressing-note" class="dressing-note"></p>
+<div id="char-dressing-items" class="dressing-items" hidden></div>
+</div>
+</section>
+<section id="char-history-panel" class="panel char-panel" aria-labelledby="char-history-title">
+<h3 id="char-history-title">History</h3>
+<div id="char-history"></div>
+</section>
+<section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title" hidden>
+<h3 id="char-keys-title">Keys</h3>
+<div class="toolbar char-filters">
+<label>Find <input id="char-keys-filter" type="search" placeholder="key, command or what it does" autocomplete="off" spellcheck="false"></label>
+<label class="check"><input id="char-keys-disagree" type="checkbox"> Disagreements only</label>
+</div>
+<div id="char-keys" role="region" aria-label="Key bindings" tabindex="0"></div>
+<p class="char-read-only">Read only in this version: this panel changes no binding. Changing keys from here is planned for a later wave.</p>
+</section>
+<section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title">
+<h3 id="char-macros-title">Macros</h3>
+<div class="toolbar char-filters">
+<label class="check"><input id="char-macros-findings" type="checkbox"> Findings only</label>
+</div>
+<div id="char-macros"></div>
+<p class="char-read-only">Read only in this version: this panel changes no macro. Changing macros from here is planned for a later wave.</p>
+</section>
+</div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and, under History, its earlier saves that your backups hold. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
+</details>
+</section>
+<section id="backups-view" role="tabpanel" aria-labelledby="sec-backups" hidden>
+<h2 class="page-title">Backups</h2>
+<div id="backup" class="panel backup" role="region" aria-labelledby="backup-heading">
+<h3 id="backup-heading">Backup</h3>
+<ul id="backup-lines" class="backup-lines"></ul>
+<p id="backup-status" role="status"></p>
+<pre id="backup-diff" class="plan-lines" hidden></pre>
+</div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Only Take a backup now writes, with <code>wowlab snap create</code>, and only into wowlab's own store, never your game folder.</p>
+</details>
+</section>
+<section id="addons-view" role="tabpanel" aria-labelledby="sec-addons" hidden>
+<h2 class="page-title">Addons</h2>
+<div id="patch-day" class="panel patch-day" role="region" aria-labelledby="patch-day-heading">
+<h3 id="patch-day-heading">Patch day</h3>
+<ul id="patch-day-lines" class="patch-day-lines"></ul>
+<p id="patch-day-status" role="status"></p>
+</div>
+<details class="about"><summary>About this data</summary>
+<p class="patch-day-intro">Addons the game may skip, and saved data no installed addon declares, as wowlab reads them from your files. Reads only. Pick a line to see its file in the Explorer.</p>
+</details>
 </section>
 <section id="explorer-view" role="tabpanel" aria-labelledby="tab-explorer" hidden>
 <div class="toolbar panel">
@@ -77,15 +134,19 @@
 <p id="explain-status" role="status"></p>
 </aside>
 </div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.</p>
+</details>
 </section>
 <section id="gaps-view" role="tabpanel" aria-labelledby="tab-gaps" hidden>
 <h2 class="unseen">Gaps</h2>
-<p class="intro">Paths in the install that no file-map row describes, grouped under the row of the folder they are in and ranked by how many files they hold, then paths only a catch-all row describes, folders labelled whole and not looked inside, and links, which are never followed. Read only.</p>
 <p id="gaps-status" role="status"></p>
 <div id="gaps-body"></div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Paths in the install that no file-map row describes, grouped under the row of the folder they are in and ranked by how many files they hold, then paths only a catch-all row describes, folders labelled whole and not looked inside, and links, which are never followed. Read only.</p>
+</details>
 </section>
 <section id="commands-view" role="tabpanel" aria-labelledby="tab-commands" hidden>
-<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Two of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code>, when its target file changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages), run directly.</p>
 <div class="commands-body">
 <nav id="commands" class="panel" aria-label="Commands"></nav>
 <section id="detail" class="panel">
@@ -109,56 +170,21 @@
 <pre id="stderr"></pre>
 </section>
 </div>
-</section>
-<section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
-<h2 class="unseen">Character</h2>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and, under History, its earlier saves that your backups hold. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
-<div class="toolbar panel">
-<label>Character <select id="char-picker" disabled></select></label>
-<p id="char-status" role="status"></p>
-</div>
-<div id="char-panels" class="char-panels">
-<section id="char-gear-panel" class="panel char-panel">
-<div id="char-header"></div>
-<div id="char-gear"></div>
-<div id="char-dressing" class="char-dressing" hidden>
-<a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
-<p id="char-dressing-note" class="dressing-note"></p>
-<div id="char-dressing-items" class="dressing-items" hidden></div>
-</div>
-</section>
-<section id="char-history-panel" class="panel char-panel" aria-labelledby="char-history-title">
-<h3 id="char-history-title">History</h3>
-<div id="char-history"></div>
-</section>
-<section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title">
-<h3 id="char-keys-title">Keys</h3>
-<div class="toolbar char-filters">
-<label>Find <input id="char-keys-filter" type="search" placeholder="key, command or what it does" autocomplete="off" spellcheck="false"></label>
-<label class="check"><input id="char-keys-disagree" type="checkbox"> Disagreements only</label>
-</div>
-<div id="char-keys" role="region" aria-label="Key bindings" tabindex="0"></div>
-<p class="char-read-only">Read only in this version: this panel changes no binding. Changing keys from here is planned for a later wave.</p>
-</section>
-<section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title">
-<h3 id="char-macros-title">Macros</h3>
-<div class="toolbar char-filters">
-<label class="check"><input id="char-macros-findings" type="checkbox"> Findings only</label>
-</div>
-<div id="char-macros"></div>
-<p class="char-read-only">Read only in this version: this panel changes no macro. Changing macros from here is planned for a later wave.</p>
-</section>
-</div>
+<details class="about"><summary>About this data</summary>
+<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Six commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Two of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code>, when its target file changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages), run directly.</p>
+</details>
 </section>
 <section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
 <h2 class="unseen">Looks</h2>
-<p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Download tables and write the page runs that command. It downloads the build's public game tables from wago.tools when wowlab does not have them yet, sending your game version, then writes <code>pages/looks.html</code> in wowlab's own data folder, never touching your game folder, and shows that file here. The page itself runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
 <div class="toolbar panel">
 <button id="looks-write" type="button">Download tables and write the page</button>
 <p id="looks-status" role="status"></p>
 </div>
 <div id="looks-where" class="looks-where" hidden></div>
 <iframe id="looks-frame" class="looks-frame" sandbox="allow-scripts" title="The looks page" hidden></iframe>
+<details class="about"><summary>About this data</summary>
+<p class="intro">The page <code>wowlab looks page</code> writes: the races, body types, classes and customization options of the build's tables, and your saved looks checked against that build. Download tables and write the page runs that command. It downloads the build's public game tables from wago.tools when wowlab does not have them yet, sending your game version, then writes <code>pages/looks.html</code> in wowlab's own data folder, never touching your game folder, and shows that file here. The page itself runs in a closed frame: only its own script, no network requests, and nothing it can reach on this page.</p>
+</details>
 </section>
 </main>
 <p id="copy-status" class="unseen" role="status"></p>

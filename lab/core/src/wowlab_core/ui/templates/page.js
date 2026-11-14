@@ -277,25 +277,67 @@
     if (runFlavor.filled) return;
     runFlavor.filled = true;
     const box = byId("run-flavor-box");
+    game.folders = flavors.slice();
     if (flavors.length < 2) {
       box.hidden = true;
+      showGame();
       runFlavor.settle();
       return;
     }
     // Asked before any flavor is picked: every flavor's characters.
     const reply = await runJson(["char", "list"], { brief: true }, true);
+    takeVersions(reply.data);
     const start = startFlavor(flavors, reply.data);
     const picker = byId("run-flavor");
     picker.replaceChildren();
     for (const folder of flavors) {
-      const option = make("option", visible(folder));
+      const option = make("option", gameName(folder));
       option.value = folder;
       picker.appendChild(option);
     }
     picker.value = start;
     runFlavor.picked = start;
     box.hidden = false;
+    showGame();
     runFlavor.settle();
+  }
+
+  // ─── the game in the header (M18-03) ───
+  // The game being read, named for people: "WoW" and the flavor folder's
+  // words, capitalised, then the patch of the version `char list` read from
+  // .build.info ("WoW Classic Era" and its patch). Nothing about a flavor is known here:
+  // the name is made from whatever folder discovery reported. With several
+  // flavors the header's picker shows the names; with one, a line.
+  const game = { versions: new Map(), folders: [] };
+
+  function gameName(folder) {
+    const words = String(folder).split(/[_\s]+/).filter((w) => w !== "");
+    const named = words.length
+      ? "WoW " + words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+      : String(folder);
+    // The patch as players say it ("1.60.1"), without the build number.
+    const version = (game.versions.get(folder) || "").split(".").slice(0, 3).join(".");
+    return visible(version ? named + " \u00b7 " + version : named);
+  }
+
+  // Each flavor's version from a `char list` report (`flavors`, M16-114).
+  function takeVersions(report) {
+    if (!report || !Array.isArray(report.flavors)) return;
+    for (const f of report.flavors) {
+      if (!f || typeof f.folder !== "string" || f.folder === "") continue;
+      if (typeof f.version === "string" && f.version !== "") game.versions.set(f.folder, f.version);
+      if (!game.folders.includes(f.folder)) game.folders.push(f.folder);
+    }
+    showGame();
+  }
+
+  function showGame() {
+    const picker = byId("run-flavor");
+    for (const option of picker.options) option.textContent = gameName(option.value);
+    const line = byId("game-name");
+    const one = game.folders.length === 1 ? game.folders[0] : null;
+    line.textContent = one === null ? "" : gameName(one);
+    line.hidden = one === null || !byId("run-flavor-box").hidden;
   }
 
   // ─── the explorer ───
@@ -1416,7 +1458,7 @@
     byId("char-macros").replaceChildren();
     byId("char-history").replaceChildren();
     charSay("", false);
-    if (tabShown === "character") loadCharacters();
+    if (tabShown === "character" || tabShown === "keybinds") loadCharacters();
   }
 
   byId("char-picker").addEventListener("change", () => {
@@ -2153,7 +2195,7 @@
   const HISTORY_FEW =
     "History appears once there are two different saves of this character (the file in the game " +
     "folder counts as one). The game saves it when you log out or type /reload; take a backup after " +
-    "you log out or /reload (Take a backup now on the Account tab, or wowlab snap create); a backup " +
+    "you log out or /reload (Take a backup now under Backups, or wowlab snap create); a backup " +
     "taken while you are still playing keeps the save from before.";
 
   async function loadHistory(entry, params, seq) {
@@ -2748,6 +2790,7 @@
           fillHubFilters();
           drawHub();
         });
+        alone(hubSay, () => takeVersions(report));
         alone(backupSay, () => takeBackups(report));
         alone(patchDaySay, () => takePatchDay(report));
       })();
@@ -3011,15 +3054,55 @@
   }
 
   // ─── tabs ───
+  // The header's five sections (M18-03), each a group of views: Characters (the
+  // table of every character and the character page), Backups, Addons,
+  // Keybinds (the character page's keys alone) and Advanced (Explorer, Gaps,
+  // Commands, Looks). A section with more than one view has its own row of
+  // tabs. `showTab` shows one view and marks its section and its tab.
+  const SECTIONS = {
+    characters: ["account", "character"],
+    backups: ["backups"],
+    addons: ["addons"],
+    keybinds: ["keybinds"],
+    advanced: ["explorer", "gaps", "commands", "looks"],
+  };
+  // The views with a tab, in their order; the first is shown when the page opens.
+  const TABS = ["account", "character", "explorer", "gaps", "commands", "looks"];
+  // Every view's element. Keybinds shows the character page's own element
+  // with its keys panel alone, so the picker and the keys are one.
+  const VIEWS = ["account", "character", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const CHARACTER_PANELS = ["char-gear-panel", "char-history-panel", "char-macros-panel"];
+  // The view each section showed last, so going back to it lands there.
+  const sectionShown = { characters: "account", advanced: "explorer" };
+
+  function sectionOf(name) {
+    for (const section of Object.keys(SECTIONS)) {
+      if (SECTIONS[section].includes(name)) return section;
+    }
+    return "characters";
+  }
 
   function showTab(name) {
     tabShown = name;
+    const section = sectionOf(name);
+    sectionShown[section] = name;
+    for (const which of Object.keys(SECTIONS)) {
+      const on = which === section;
+      byId("sec-" + which).setAttribute("aria-selected", on ? "true" : "false");
+    }
+    byId("characters-tabs").hidden = section !== "characters";
+    byId("advanced-tabs").hidden = section !== "advanced";
     for (const which of TABS) {
       const on = which === name;
       byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
-      byId(which + "-view").hidden = !on;
     }
-    if (name === "account") {
+    const keys = name === "keybinds";
+    const element = keys ? "character" : name;
+    for (const which of VIEWS) byId(which + "-view").hidden = which !== element;
+    byId("char-keys-panel").hidden = !keys;
+    for (const panel of CHARACTER_PANELS) byId(panel).hidden = keys;
+    byId("char-view-title").textContent = keys ? "Keybinds" : "Character";
+    if (name === "account" || name === "backups" || name === "addons") {
       // A run from the Commands tab may have changed the store or the
       // install since the report was read (M17-04): read it again.
       if (backup.stale && !backup.busy) {
@@ -3029,16 +3112,13 @@
       loadHub();
     }
     if (name === "gaps") loadGaps();
-    if (name === "character") loadCharacters();
+    if (name === "character" || keys) loadCharacters();
   }
-  // The tabs in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "explorer", "gaps", "commands", "looks"];
-  byId("tab-account").addEventListener("click", () => showTab("account"));
-  byId("tab-character").addEventListener("click", () => showTab("character"));
-  byId("tab-explorer").addEventListener("click", () => showTab("explorer"));
-  byId("tab-gaps").addEventListener("click", () => showTab("gaps"));
-  byId("tab-commands").addEventListener("click", () => showTab("commands"));
-  byId("tab-looks").addEventListener("click", () => showTab("looks"));
+  for (const section of Object.keys(SECTIONS)) {
+    byId("sec-" + section).addEventListener("click", () =>
+      showTab(sectionShown[section] || SECTIONS[section][0]));
+  }
+  for (const which of TABS) byId("tab-" + which).addEventListener("click", () => showTab(which));
 
   // ─── the patch-day card on the Account tab (M17-05, §19 CW-4) ───
   // Per flavor the hub's report lists: the addons `addons check` finds made

@@ -1,13 +1,13 @@
-"""The Wellspring fonts in `wowlab ui`'s own style (M16-51, ADR-0035).
+"""The companion's fonts in `wowlab ui`'s own style (M16-51, M18-03, ADR-0035).
 
-Twelve WOFF2 files and two SIL Open Font License texts live in
+Eight WOFF2 files and three SIL Open Font License texts live in
 `wowlab_core/ui/templates/fonts/`, copied unchanged from the URLs of
-ADR-0035's table and its amendment of 2026-10-26. The sizes and SHA-256 of
-all fourteen are held here, copied from the ADR, and nothing else may sit in
-the folder. The served shell carries one `@font-face` per font file, its
+ADR-0035's table as amended on 2026-11-14 (Inter and Sora replaced
+Alegreya and Alegreya SC; IBM Plex Mono stayed). The sizes and SHA-256 of
+all eleven are held here, and nothing else may sit in the folder. The served shell carries one `@font-face` per font file, its
 bytes as a base64 `data:` URL after `page.css` and the colour rules, and the
 CSP gains exactly `font-src data:`. The wheel and the sdist carry the
-fourteen files byte for byte.
+eleven files byte for byte.
 
 `scripts/check_fonts.py` compares the same pins with the bytes the URLs
 serve; it is run by hand, never here (ADR-0012). The test below only checks
@@ -39,73 +39,9 @@ ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES = ROOT / "lab" / "core" / "src" / "wowlab_core" / "ui" / "templates"
 FONTS = TEMPLATES / "fonts"
 
-# ADR-0035's table, in its order (file names from the amendment of 2026-10-26):
-# file -> (family, style, weight, subset, bytes, SHA-256).
+# ADR-0035's table as amended on 2026-11-14 (M18-03), in its order of family,
+# style, weight and subset: file -> (family, style, weight, subset, bytes, SHA-256).
 FONT_PINS: dict[str, tuple[str, str, str, str, int, str]] = {
-    "alegreya-latin.woff2": (
-        "Alegreya",
-        "normal",
-        "400 900",
-        "latin",
-        43476,
-        "2431eca3ed8ed66e713cf7093d170d77a083a793a5f19a615506d63770abd973",
-    ),
-    "alegreya-latin-ext.woff2": (
-        "Alegreya",
-        "normal",
-        "400 900",
-        "latin-ext",
-        37856,
-        "16b24f84da5ac12dc79ea1060e3fd4e299f19146f607021f81bcf0b8123fe5bd",
-    ),
-    "alegreya-italic-latin.woff2": (
-        "Alegreya",
-        "italic",
-        "400 900",
-        "latin",
-        44456,
-        "1846c307495f922d3fc00ce3c32aaaba8eefc7c348425a8244a7ffc63ddc0993",
-    ),
-    "alegreya-italic-latin-ext.woff2": (
-        "Alegreya",
-        "italic",
-        "400 900",
-        "latin-ext",
-        38316,
-        "3b6ec2f8e48aff730aaebeb52423ba2f7967c5b80b1727907e4b1154786fd54c",
-    ),
-    "alegreya-sc-500-latin.woff2": (
-        "Alegreya SC",
-        "normal",
-        "500",
-        "latin",
-        30880,
-        "98b4a138b6117d621a122a7c8590aa945720e4953d926b921a61e0d3f96a02c9",
-    ),
-    "alegreya-sc-500-latin-ext.woff2": (
-        "Alegreya SC",
-        "normal",
-        "500",
-        "latin-ext",
-        31944,
-        "fae2927855146328875e379a3f0dcd5ab26629413347838b32190ea441b1a4b7",
-    ),
-    "alegreya-sc-700-latin.woff2": (
-        "Alegreya SC",
-        "normal",
-        "700",
-        "latin",
-        30660,
-        "988821cdcc03a1c0f7587143e4d921582595c5bcd803061863f7c3be7dd0d4b8",
-    ),
-    "alegreya-sc-700-latin-ext.woff2": (
-        "Alegreya SC",
-        "normal",
-        "700",
-        "latin-ext",
-        31656,
-        "42e3b3a35260c3626cb1e5fb71a134da3e856a8820d4ab757261fc383aa762f5",
-    ),
     "ibm-plex-mono-400-latin.woff2": (
         "IBM Plex Mono",
         "normal",
@@ -138,14 +74,47 @@ FONT_PINS: dict[str, tuple[str, str, str, str, int, str]] = {
         13432,
         "6bb06407c97584b0867a959e05e8874693bfeb8c317de190811c51598f2d99ea",
     ),
+    "inter-latin.woff2": (
+        "Inter",
+        "normal",
+        "400 600",
+        "latin",
+        48432,
+        "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4",
+    ),
+    "inter-latin-ext.woff2": (
+        "Inter",
+        "normal",
+        "400 600",
+        "latin-ext",
+        85272,
+        "a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2",
+    ),
+    "sora-latin.woff2": (
+        "Sora",
+        "normal",
+        "600 700",
+        "latin",
+        25240,
+        "3902474d3ece89c8580d5ef3325cf58753e6e45a86f9957b4dacc4fce2e7fde1",
+    ),
+    "sora-latin-ext.woff2": (
+        "Sora",
+        "normal",
+        "600 700",
+        "latin-ext",
+        12116,
+        "8d9b4a4136bf8cf8b00c65978e7801c372d14ed901fa387cc7352a40b96cd006",
+    ),
 }
-# The amendment's licence pins: file -> (bytes, SHA-256).
+# The licence pins: file -> (bytes, SHA-256).
 LICENCE_PINS: dict[str, tuple[int, str]] = {
-    "OFL-Alegreya.txt": (4395, "f6f60d5d4cf4f4b1fc4e41353c897a2f5a16e6396c0cd8fa8bdfd2f4586a9a68"),
     "OFL-IBMPlexMono.txt": (
         4456,
         "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
     ),
+    "OFL-Inter.txt": (4377, "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57"),
+    "OFL-Sora.txt": (4385, "ba0b9729c9428ba79a0459ab8ec575791b51509dbec213e383d0316d37fec299"),
 }
 PINNED_FONT_SHA256 = frozenset(pin[5] for pin in FONT_PINS.values())
 
@@ -169,7 +138,7 @@ RANGES = {
 # written only with `U+`, hex digits, commas, spaces and dashes.
 FONT_FACE = re.compile(
     r"@font-face \{"
-    r' font-family: "(Alegreya|Alegreya SC|IBM Plex Mono)";'
+    r' font-family: "(IBM Plex Mono|Inter|Sora)";'
     r" font-style: (normal|italic);"
     r" font-weight: ([0-9]{3}(?: [0-9]{3})?);"
     r' src: url\(data:font/woff2;base64,([A-Za-z0-9+/]+={0,2})\) format\("woff2"\);'
@@ -179,12 +148,12 @@ FONT_FACE = re.compile(
 
 def without_font_faces(body: str) -> str:
     """`body` with its `@font-face` rules taken out, after checking they are
-    exactly twelve whole rules of `FONT_FACE`, each with one `data:` URL that
-    decodes to one of the twelve pinned files, each file once. What is left
+    exactly eight whole rules of `FONT_FACE`, each with one `data:` URL that
+    decodes to one of the eight pinned files, each file once. What is left
     is graded as if the fonts were not there (`test_ui_explorer.py`)."""
-    assert body.lower().count("@font-face") == 12
+    assert body.lower().count("@font-face") == len(FONT_PINS) == 8
     found = list(FONT_FACE.finditer(body))
-    assert len(found) == 12
+    assert len(found) == 8
     digests = [
         hashlib.sha256(base64.b64decode(m.group(4), validate=True)).hexdigest() for m in found
     ]
@@ -199,7 +168,7 @@ def _sha_file(path: Path) -> str:
 # ─── the files ───────────────────────────────────────────────────────────────
 
 
-def test_the_fonts_folder_holds_exactly_the_fourteen_pinned_files() -> None:
+def test_the_fonts_folder_holds_exactly_the_eleven_pinned_files() -> None:
     assert sorted(p.name for p in FONTS.iterdir()) == sorted([*FONT_PINS, *LICENCE_PINS])
     for name, (*_, size, sha) in FONT_PINS.items():
         path = FONTS / name
@@ -211,8 +180,9 @@ def test_the_fonts_folder_holds_exactly_the_fourteen_pinned_files() -> None:
         assert path.is_file() and not path.is_symlink(), name
         assert (path.stat().st_size, _sha_file(path)) == (size, sha), name
         assert b"SIL OPEN FONT LICENSE Version 1.1" in path.read_bytes(), name
-    # ADR-0035, Decision 1: "Total: 345,620 bytes."
-    assert sum(pin[4] for pin in FONT_PINS.values()) == 345620
+    # ADR-0035's amendment of 2026-11-14: the total stays under 450,000 bytes.
+    total = sum(pin[4] for pin in FONT_PINS.values())
+    assert total == 227436 and total < 450_000
 
 
 def test_the_hand_run_check_holds_the_same_pins() -> None:
@@ -225,7 +195,7 @@ def test_the_hand_run_check_holds_the_same_pins() -> None:
     script = {pin.name: (pin.size, pin.sha256) for pin in module.PINS}
     held = {name: (pin[4], pin[5]) for name, pin in FONT_PINS.items()} | LICENCE_PINS
     assert script == held
-    assert [pin.name for pin in module.PINS][:12] == list(FONT_PINS)
+    assert [pin.name for pin in module.PINS][:8] == list(FONT_PINS)
     for pin in module.PINS:
         assert pin.url.startswith(
             ("https://fonts.gstatic.com/s/", "https://raw.githubusercontent.com/google/fonts/")
@@ -307,9 +277,9 @@ def test_the_served_shell_carries_one_font_face_per_file_and_font_src_data(
     assert style.startswith(head)
     rules = style[len(head) :]
     faces = list(FONT_FACE.finditer(rules))
-    assert len(faces) == 12 and style.count("@font-face") == 12
+    assert len(faces) == 8 and style.count("@font-face") == 8
     assert FONT_FACE.sub("", rules).strip() == (
-        "/* the Wellspring fonts, from this package's fonts/ folder (SIL OFL 1.1) */"
+        "/* the companion's fonts, from this package's fonts/ folder (SIL OFL 1.1) */"
     )
     for match, (name, pin) in zip(faces, FONT_PINS.items(), strict=True):
         family, font_style, weight, b64, ranges = match.groups()
@@ -380,7 +350,7 @@ def test_the_dev_hatchling_is_the_release_builds_pin() -> None:
     assert version("hatchling") == release
 
 
-def test_the_wheel_and_sdist_carry_the_fourteen_files(
+def test_the_wheel_and_sdist_carry_the_eleven_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Builds both as the release does (`.github/workflows/release.yml`): the

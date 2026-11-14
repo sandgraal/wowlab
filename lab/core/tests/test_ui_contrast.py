@@ -549,25 +549,26 @@ def _failures(pairs: list[Pair]) -> list[str]:
     )
 
 
-def test_the_sheet_declares_two_schemes_and_every_region_has_surfaces() -> None:
+def test_the_sheet_declares_one_dark_scheme_and_every_region_has_surfaces() -> None:
+    # M18-03: the companion design has one dark theme (Wellspring had two).
     rules = _rules()
     schemes = _schemes(rules)
-    assert set(schemes) == {"dark", "light"}
+    assert set(schemes) == {"dark"}
     for scheme in schemes.values():
         surfaces = _surfaces(rules, scheme)
         assert all(surfaces.values()), surfaces
 
 
-def test_every_text_colour_meets_aa_on_every_surface_in_both_schemes() -> None:
+def test_every_text_colour_meets_aa_on_every_surface_in_every_scheme() -> None:
     pairs = _text_pairs()
-    assert {p.scheme for p in pairs} == {"dark", "light"}
+    assert {p.scheme for p in pairs} == {"dark"}
     assert len(pairs) > 100
     assert _failures(pairs) == []
 
 
-def test_every_focus_ring_meets_three_to_one_in_both_schemes() -> None:
+def test_every_focus_ring_meets_three_to_one_in_every_scheme() -> None:
     pairs = _focus_pairs()
-    assert {p.scheme for p in pairs} == {"dark", "light"}
+    assert {p.scheme for p in pairs} == {"dark"}
     assert {p.what for p in pairs} >= {
         "focus ring (parchment)",
         "focus ring (chrome)",
@@ -576,12 +577,11 @@ def test_every_focus_ring_meets_three_to_one_in_both_schemes() -> None:
     assert _failures(pairs) == []
 
 
-def test_the_focus_ring_is_the_wellspring_everywhere() -> None:
-    """M16-52 (WELLSPRING.md, "Focus and states"): every focusable element
-    shows one 2px solid `wellspring` ring, offset 2px, the Codex and the gear
-    table included. M16-30's region rings (ink on the parchment, gold on the
-    gear) are gone, so the focus-ring test above grades this one ring on
-    every region's surfaces."""
+def test_the_focus_ring_is_one_ring_everywhere() -> None:
+    """M16-52 kept one focus ring for every focusable element, 2px solid,
+    offset 2px, the detail pane and the gear table included; the focus-ring
+    test above grades this one ring on every region's surfaces. M18-03 draws
+    it in the companion's `link` colour (it was Wellspring's `wellspring`)."""
     rules = _rules()
     focus = [
         (selector, rule)
@@ -592,64 +592,58 @@ def test_the_focus_ring_is_the_wellspring_everywhere() -> None:
     ]
     assert [s for s, _ in focus] == [":focus-visible"], focus
     ring = focus[0][1].decls
-    assert ring["outline"] == "2px solid var(--wellspring)"
+    assert ring["outline"] == "2px solid var(--link)"
     assert ring["outline-offset"] == "2px"
 
 
 def test_the_grader_sees_a_failing_pair_constructed() -> None:
     """The grade fails when it should: a ring drawn in the hairline token
-    (`rule`, decorative, never a state) on the Codex is caught on every one
-    of its surfaces, in both schemes."""
+    (`line`, decorative, never a state) on the detail pane is caught on every
+    one of its surfaces, in every scheme."""
     rules = _rules()
     for name, scheme in _schemes(rules).items():
-        hairline = _colours("var(--rule)", scheme)[0][0]
+        hairline = _colours("var(--line)", scheme)[0][0]
         codex = _surfaces(rules, scheme)["parchment"]
         bad = [Pair(name, ":focus-visible", "ring", hairline, back, 3.0) for back in codex]
         assert len(_failures(bad)) == len(set(codex)), name
 
 
-# ─── the token pairs WELLSPRING.md names (M16-52) ────────────────────────────
+# ─── the token pairs of the companion design (M18-03) ───────────────────────
 
-# Each token's usage note in docs/design/wellspring-tokens.json names the
-# grounds it is drawn on. These are those pairs, by token name, resolved in
-# each scheme the sheet declares: the text pairs at 4.5:1, the control
-# borders, the badge borders and the focus ring at 3:1 (WELLSPRING.md,
-# "Contrast"). The quality colours are not here: the sheet declares none.
-_GROUNDS = (
-    "ground",
-    "ground-deep",
-    "surface",
-    "surface-raised",
-    "surface-sunken",
-    "hover",
-    "selected",
-)
+# COMPANION.md names the grounds each token is drawn on: text and `muted` on
+# every ground, `faint` at 12 px and up on `bar` and the cards, the accent
+# fill under its own dark text, the force colours on their own grounds, and
+# the focus ring (`link`) at 3:1 on every surface it can land on. The control
+# border is graded at 3:1 on the grounds a field sits on. Wellspring's pairs
+# (M16-52) went with its tokens.
+_GROUNDS = ("bg", "bar", "surface", "hover", "selected")
 _FORCES = ("order", "ruin", "void", "stone", "astral", "blight")
 _TOKEN_PAIRS: list[tuple[str, tuple[str, ...], float]] = [
     ("text", _GROUNDS, 4.5),
-    ("text-muted", _GROUNDS, 4.5),
-    ("brass", _GROUNDS, 4.5),
-    # as text, on the ground and the surfaces, not on `ground-deep`
-    ("wellspring", ("ground", "surface", "surface-raised", "surface-sunken", "selected"), 4.5),
-    ("on-wellspring", ("wellspring",), 4.5),
-    ("on-heraldry", ("heraldry",), 4.5),
+    ("muted", _GROUNDS, 4.5),
+    ("faint", ("bg", "bar", "surface", "hover"), 4.5),
+    ("accent", ("bg", "bar", "surface"), 4.5),
+    ("ok", ("bg", "bar", "surface"), 4.5),
+    ("link", _GROUNDS, 4.5),
+    ("prof", ("bg", "bar", "surface"), 4.5),
+    ("on-accent", ("accent",), 4.5),
     ("ruin", (*_GROUNDS, "ruin-bg"), 4.5),
     *[(force, (f"{force}-bg",), 4.5) for force in _FORCES],
     *[(f"{force}-border", (f"{force}-bg",), 3.0) for force in _FORCES],
-    *[(f"jt-{kind}", ("surface-sunken",), 4.5) for kind in ("key", "string", "number", "literal")],
+    *[(f"jt-{kind}", ("bar",), 4.5) for kind in ("key", "string", "number", "literal")],
     ("gear-text", ("gear-ground", "gear-detail"), 4.5),
     ("gear-muted", ("gear-ground", "gear-detail"), 4.5),
     ("gear-heading", ("gear-ground", "gear-detail"), 4.5),
-    ("rule-strong", ("surface", "surface-sunken"), 3.0),
+    ("control", ("bar", "surface"), 3.0),
     # the focus ring, on every surface it can land on
-    ("wellspring", (*_GROUNDS, "gear-ground", "gear-detail"), 3.0),
+    ("link", (*_GROUNDS, "gear-ground", "gear-detail"), 3.0),
 ]
 
 
-def test_every_token_pair_the_design_names_meets_its_ratio_in_both_themes() -> None:
+def test_every_token_pair_the_design_names_meets_its_ratio() -> None:
     rules = _rules()
     schemes = _schemes(rules)
-    assert set(schemes) == {"dark", "light"}
+    assert set(schemes) == {"dark"}
     pairs: list[Pair] = []
     for name, scheme in schemes.items():
         for fore, backs, need in _TOKEN_PAIRS:
@@ -659,17 +653,17 @@ def test_every_token_pair_the_design_names_meets_its_ratio_in_both_themes() -> N
                 (ground, under), *more = _colours(f"var(--{back})", scheme)
                 assert under == 1.0 and not more, back
                 pairs.append(Pair(name, f"--{fore} on --{back}", "token", front, ground, need))
-    assert len(pairs) == 2 * sum(len(backs) for _fore, backs, _need in _TOKEN_PAIRS)
+    assert len(pairs) == sum(len(backs) for _fore, backs, _need in _TOKEN_PAIRS)
     assert _failures(pairs) == []
 
 
 def test_constructed_the_token_grader_fails_a_bad_pair() -> None:
-    """The pair grade above fails when it should: `brass-deep`, which is
-    ornament and never text, does not read as text on the Bastion ground."""
-    scheme = _schemes(_rules())["light"]
-    deep = _colours("var(--brass-deep)", scheme)[0][0]
-    ground = _colours("var(--ground)", scheme)[0][0]
-    assert _failures([Pair("light", "--brass-deep on --ground", "token", deep, ground, 4.5)])
+    """The pair grade above fails when it should: `line-strong`, which is a
+    border and never text, does not read as text on a card."""
+    scheme = _schemes(_rules())["dark"]
+    strong = _colours("var(--line-strong)", scheme)[0][0]
+    card = _colours("var(--surface)", scheme)[0][0]
+    assert _failures([Pair("dark", "--line-strong on --surface", "token", strong, card, 4.5)])
 
 
 # ─── reflow, forced colours, headings ────────────────────────────────────────
@@ -707,6 +701,7 @@ def test_forced_colours_mark_every_selection() -> None:
         ".row.selected",
         '#commands button[aria-pressed="true"]',
         '.tab[aria-selected="true"]',
+        '.sec[aria-selected="true"]',
     ):
         assert selector in marked, selector
     # each is a state the script really sets
@@ -736,12 +731,15 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
     html = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     assert len(re.findall(r"<h1\b", html)) == 1
     panels = _Headings(html).panels
+    # M18-03: Backups and Addons are views of their own.
     assert set(panels) == {
         "account-view",
+        "character-view",
+        "backups-view",
+        "addons-view",
         "explorer-view",
         "gaps-view",
         "commands-view",
-        "character-view",
         "looks-view",
     }
     for name, levels in panels.items():
@@ -812,6 +810,14 @@ async function main() {
       await page.waitForSelector("#hub-table table", { timeout: 60000 });
       out.push(await measure(page, scheme + " account"));
 
+      // M18-03: Backups and Addons are sections of their own, and the
+      // Advanced section holds Explorer, Gaps, Commands and Looks.
+      await page.click("#sec-backups");
+      out.push(await measure(page, scheme + " backups"));
+      await page.click("#sec-addons");
+      out.push(await measure(page, scheme + " addons"));
+
+      await page.click("#sec-advanced");
       await page.click("#tab-explorer");
       await page.waitForSelector("#tree li", { timeout: 60000 });
       await page.locator("#tree .name").first().click();
@@ -827,6 +833,7 @@ async function main() {
       await page.locator("#commands button:enabled").first().click();
       out.push(await measure(page, scheme + " commands"));
 
+      await page.click("#sec-characters");
       await page.click("#tab-character");
       await page.waitForSelector("#char-gear .gear-name", { timeout: 60000 });
       await page.locator("#char-gear .gear-name").first().click();
@@ -834,7 +841,10 @@ async function main() {
       // the gear (M16-53): measure once both panels have drawn.
       await page.waitForFunction(() => document.querySelector("#char-keys").children.length > 0 && document.querySelector("#char-macros").children.length > 0, null, { timeout: 60000 });
       out.push(await measure(page, scheme + " character"));
+      await page.click("#sec-keybinds");
+      out.push(await measure(page, scheme + " keybinds"));
 
+      await page.click("#sec-advanced");
       await page.click("#tab-looks");
       out.push(await measure(page, scheme + " looks"));
       await context.close();
@@ -885,7 +895,8 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
         pytest.skip(out["skip"])
     assert "error" not in out, out["error"]
     states = out["states"]
-    assert len(states) == 12
+    # Nine states per scheme since M18-03 (backups, addons and keybinds added).
+    assert len(states) == 18
     wide = [s for s in states if s["scrollWidth"] != s["clientWidth"]]
     assert wide == [], wide
     assert all(s["clientWidth"] == 320 for s in states), states
@@ -896,15 +907,27 @@ def test_nothing_is_wider_than_a_320px_window(tmp_path: Path, install: Path, ser
 
 
 def test_constructed_a_container_ground_does_not_hang_on_another_rule() -> None:
-    """`.jt-number` sits on the `.jt` box's ground (`surface-sunken`).
-    Giving `.toolbar select` (another rule that paints the same token) a text
-    colour of its own takes that ground out of the chrome's shared surfaces,
-    but `.jt-number` is still graded on it, as a child of `.jt`."""
-    rules = _rules()
+    """`.jt-number` sits on the `.jt` box's ground. Giving `.toolbar select`
+    (another rule that paints the same token) a text colour of its own takes
+    that ground out of the chrome's shared surfaces, but `.jt-number` is
+    still graded on it, as a child of `.jt`.
+
+    M18-03: the companion sheet paints the `.jt` ground (`bar`) on the header
+    too, a root of the chrome, so the real sheet can no longer take that
+    ground out of the chrome; the same sheet shape is constructed here, with
+    a ground only those two rules paint."""
+    rules = _parse(
+        ":root { color-scheme: dark; --ground: #0d1015; --sunk: #08090c; --text: #e7eaee;"
+        " --number: #f4c15d; }"
+        " html { background: var(--ground); }"
+        " .parchment { background-color: var(--ground); color: var(--text); }"
+        " .gear-table { background: var(--ground); color: var(--text); }"
+        " .toolbar select { background: var(--sunk); }"
+        " .jt { color: var(--text); background: var(--sunk); }"
+        " .jt-number { color: var(--number); }"
+    )
     scheme = _schemes(rules)["dark"]
-    jt = next(r for r in rules if ".jt" in r.selectors and "background" in r.decls)
-    assert jt.decls["background"] == "var(--surface-sunken)"
-    sunken = _colours(jt.decls["background"], scheme)[0][0]
+    sunken = _colours("var(--sunk)", scheme)[0][0]
     changed = [
         Rule(r.media, r.selectors, {**r.decls, "color": "var(--text)"})
         if ".toolbar select" in r.selectors
@@ -924,19 +947,19 @@ def test_constructed_a_container_ground_does_not_hang_on_another_rule() -> None:
 
 def test_constructed_a_colour_only_state_is_graded_on_its_own_ground() -> None:
     """A state that sets only a text colour is graded on the ground its plain
-    rule paints, in each scheme. Under Wellspring `#run:disabled` paints its
-    own ground (`surface-sunken`, as WELLSPRING.md has every disabled control
-    do), so it is graded there; with that ground taken away, constructed, it
-    is graded on the `wellspring` fill `#run` paints."""
+    rule paints, in each scheme. `#run:disabled` paints its own ground
+    (`bar`, as every disabled control does), so it is graded there; with that
+    ground taken away, constructed, it is graded on the `accent` fill `#run`
+    paints."""
     rules = _rules()
     run = next(r for r in rules if not r.media and "#run" in r.selectors)
     disabled = next(r for r in rules if not r.media and "#run:disabled" in r.selectors)
-    assert disabled.decls["background"] == "var(--surface-sunken)"
+    assert disabled.decls["background"] == "var(--bar)"
     colour_only = Rule("", ("#run:disabled",), {"color": disabled.decls["color"]})
     constructed = [r for r in rules if r is not disabled] + [colour_only]
     for name, scheme in _schemes(rules).items():
         ground = _colours(run.decls["background"], scheme)[0][0]
-        sunken = _colours("var(--surface-sunken)", scheme)[0][0]
+        sunken = _colours("var(--bar)", scheme)[0][0]
         real = {
             p.back for p in _text_pairs(rules) if p.scheme == name and p.selector == "#run:disabled"
         }
