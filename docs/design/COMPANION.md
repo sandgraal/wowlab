@@ -41,7 +41,7 @@ Radii: cards 14 px, buttons and rows 10 px, icon tiles 12 px. Spacing: 16 px bet
 
 **Class colours** (WoW's own): Warrior `#C69B6D`, Paladin `#F48CBA`, Hunter `#AAD372`, Rogue `#FFF468`, Priest `#FFFFFF`, Death Knight `#C41E3A`, Shaman `#0070DD`, Mage `#3FC7EB`, Warlock `#8788EE`, Monk `#00FF98`, Druid `#FF7C0A`, Demon Hunter `#A330C9`, Evoker `#33937F`. A character card has a 6 px stripe and a level tile in the class colour; class names in text use a lighter tint where the colour fails 4.5:1 on `surface`.
 
-**Item quality colours**, tuned for the dark surface (the game's own blues and purples are too dark to read here): Poor `#9d9d9d`, Common `#e7eaee`, Uncommon `#3ddc68`, Rare `#4da3ff`, Epic `#b970f7`, Legendary `#ff9a2e`; an empty slot `#5b6573` and the word "Empty".
+**Item quality colours**, tuned for the dark surface (the game's own blues and purples are too dark to read here): Poor `#9d9d9d`, Common `#e7eaee`, Uncommon `#3ddc68`, Rare `#4da3ff`, Epic `#b970f7`, Legendary `#ff9a2e`; an empty slot's border `#5b6573` (a decoration) and the word "Empty" in `faint` `#8a94a1`.
 
 **Type:** Sora (600, 700) for headings, names and big numbers; Inter (400, 500, 600) for everything else; IBM Plex Mono only in Advanced. Body 15 px, card titles 18 px, page titles 26–34 px.
 

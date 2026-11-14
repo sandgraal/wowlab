@@ -476,13 +476,6 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - The CSP gains the import map's hash and the vendored files' hashes (or the scoped `'self'`, if the owner rules so after the browser check) and nothing else; `frame-ancestors 'none'` and the token rules of ADR-0029 are unchanged.
 - A later wave that needs animation or a different library writes an amendment here.
 
-
-**Amendment (2026-11-14; Proposed — owner approved the M18 mockup in session, "mockup approved", which sets type in Inter and Sora; this amendment needs the owner's own "accept"):** the companion redesign (`docs/design/COMPANION.md`, M18) replaces the display and text faces.
-- *What changes.* Alegreya and Alegreya SC (eight files) leave the package with `OFL-Alegreya.txt`. In their place: **Inter** (text: 400, 500, 600) and **Sora** (display: 600, 700), each as Google Fonts serves them at versioned URLs, `latin` and `latin-ext` subsets, under the SIL Open Font License 1.1 with their licence texts beside them. IBM Plex Mono stays as it is. Where Google serves a weight range as one variable file, that one file counts once.
-- *What does not change.* Items 2 to 4 of the Decision hold word for word: unchanged files, `data:` URLs in the page's own hashed style, `font-src data:` and nothing more, a test pinning each file's SHA-256, `scripts/check_fonts.py` by hand only, no other page gains them.
-- *The table.* M18-03 adds the new rows (family, style, weight, subset, bytes, source URL, SHA-256) and the licence-text rows to this amendment in the same PR that adds the files, and removes the Alegreya rows' files. The total stays near the original 345,620 bytes; if it grows past 450,000 bytes, M18-03 stops and reports.
-- *Fallbacks.* Every rule names a fallback stack: `system-ui, -apple-system, "Segoe UI", sans-serif`.
-
 ---
 
 ## ADR-0035 — The Wellspring fonts ship inside the package and reach the page as `data:` URLs in its own style
@@ -531,6 +524,12 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 
 - *What `font-src data:` admits, said precisely.* The Consequences say only a stylesheet can name a `data:` font, and only the page's own. That is too narrow. `style-src` also admits the looks page's style by hash. A script admitted by hash could load a `data:` font through the `FontFace` API. The conclusion holds: only code written in this package and admitted by hash can name a font. No player or request text reaches a font source.
 - *ADR-0029.* Decision 2 says every rule of ADR-0029 stays as it is. Its CSP sentence ("allows the server itself and nothing else") does change, so ADR-0029 carries an "Amended by" line for this ADR. When M16-51 lands, three texts that repeat that sentence change with it: the module docstring of `wowlab_core/ui/__init__.py`, `docs/LAB_PLAN.md` §16.3 (the M14-04 paragraph), and the `ui` bullet in `.claude/rules/lab-load-bearing.md`.
+
+**Amendment (2026-11-14; Proposed — owner approved the M18 mockup in session, "mockup approved", which sets type in Inter and Sora; this amendment needs the owner's own "accept"):** the companion redesign (`docs/design/COMPANION.md`, M18) replaces the display and text faces.
+- *What changes.* Alegreya and Alegreya SC (eight files) leave the package with `OFL-Alegreya.txt`. In their place: **Inter** (text: 400, 500, 600) and **Sora** (display: 600, 700), each as Google Fonts serves them at versioned URLs, `latin` and `latin-ext` subsets, under the SIL Open Font License 1.1 with their licence texts beside them. IBM Plex Mono stays as it is. Where Google serves a weight range as one variable file, that one file counts once.
+- *What does not change.* Items 2 and 3 of the Decision, and item 4 except its fallback stack, hold word for word: unchanged files, `data:` URLs in the page's own hashed style, `font-src data:` and nothing more, a test pinning each file's SHA-256, `scripts/check_fonts.py` by hand only, no other page gains them.
+- *The table.* M18-03's implementer reports the new rows (family, style, weight, subset, bytes, source URL, SHA-256) and the licence-text rows, and the conductor adds them to this amendment on that PR's branch, in the same PR that adds the files and removes the Alegreya files. The total stays near the original 345,620 bytes; if it grows past 450,000 bytes, M18-03 stops and reports.
+- *Fallbacks.* Item 4's fallback stack (Palatino, Georgia, the system's serif) is replaced: a glyph outside the subsets, or a missing file, falls back to `system-ui, -apple-system, "Segoe UI", sans-serif`, and every rule names that stack.
 
 ## ADR-0036 — Other players' names may be stored on the player's own machine
 

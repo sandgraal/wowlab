@@ -3228,16 +3228,16 @@ Make M18-01T's graders pass by deleting their markers only. The patch-day card s
 ## [ ] M18-02 — Names by default: one offer to download the name tables
 **Size:** S · **Depends on:** nothing · **Sources:** `docs/design/COMPANION.md` (Words); ADR-0019, ADR-0022; L5
 
-Race, spec and profession names need `ChrRaces`, `ChrClasses`, `ChrSpecialization` and `SkillLine` cached for the game's build, which today means four `wowlab db2 fetch` commands nobody knows to run. Add one command, `wowlab names fetch`, that fetches whichever of the four are missing for each installed flavor's build (one request per table, to wago.tools, the build number its only parameter), never replacing a cached table (L5). `doctor` names it when a table is missing; `wowlab ui` exposes it as a server action the page can call (M18-04 draws the button). Nothing is fetched without the player's command or click.
+Race, spec and profession names need `ChrRaces`, `ChrClasses`, `ChrSpecialization` and `SkillLine` cached for the game's build, which today means four `wowlab db2 fetch` commands nobody knows to run. Add one command, `wowlab names fetch`, that fetches whichever of the four are missing for each installed flavor's build through `wowlab_core.gamedata` (one request per table to wago.tools, keyed on the full build string as ADR-0022 keys the cache), never replacing a cached table (L5). `doctor` names it when a table is missing; `wowlab ui` runs it through its fixed-argv CLI path (ADR-0029), not a route of its own, so M18-04 can draw the button. Nothing is fetched without the player's command or click.
 
 **Acceptance:** tests with recorded responses (no live call in CI, ADR-0012); a `@live` test by hand; `doctor` and `char list --summary` text name the command when names are missing; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; `doctor` text.
 
 ## [ ] M18-03 — The new shell: sections, tokens and fonts
-**Size:** M · **Depends on:** the ADR-0035 amendment of 2026-11-14 accepted by the owner · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
+**Size:** M · **Depends on:** nothing · **owner** (until the owner accepts the ADR-0035 amendment of 2026-11-14) · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
 
 Replace Wellspring's chrome with the companion's: the header with the five sections (Characters, Backups, Addons, Keybinds, Advanced), the game picker named for people, the dark tokens, Inter and Sora under the ADR amendment. Today's tabs move into the sections as they are (Account content under Characters and Backups and Addons, Character under Characters, Keys under Keybinds, Explorer/Gaps/Commands/Looks under Advanced) so nothing is lost before M18-04 and M18-05 redraw them. The tab intros become a closed **About this data** disclosure.
 
-**Acceptance:** every existing UI test passes or is updated with a stated reason; the font hashes are pinned and the amendment's table is filled; the page loads in a headless browser with no console error at 1440 px and 390 px; `make ci` green. User-facing: the whole UI.
+**Acceptance:** every existing UI test passes or is updated with a stated reason; the font hashes are pinned, and the implementer reports the font rows so the conductor fills the amendment's table on the branch; the page loads in a headless browser with no console error at 1440 px and 390 px; `make ci` green. User-facing: the whole UI.
 
 ## [ ] M18-04 — The Characters home: status cards and character cards
 **Size:** M · **Depends on:** M18-03, M18-02 · **Sources:** `docs/design/COMPANION.md`; the mockup
