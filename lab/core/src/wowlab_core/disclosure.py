@@ -33,7 +33,9 @@ ROWS: tuple[str, ...] = (
     "`doctor` makes no network request.",
     "`wowlab db2` and `wowlab looks` download public game data from wago.tools: its list "
     "of game versions, and tables for one version at a time. A table request names that "
-    "version: your installed one, or the one you give with `--build`.",
+    "version: your installed one, or the one you give with `--build`. `wowlab names "
+    "fetch` downloads the tables that name races, classes, specs and professions the same "
+    "way, for each version you have installed, and only the ones not already downloaded.",
     "A dressing-room link opens in your own browser, and only when you click it, "
     "carrying your character's race, body type, class, level and equipped item and "
     "bonus ids to that site: public game ids only, never a name. wowlab itself makes no "

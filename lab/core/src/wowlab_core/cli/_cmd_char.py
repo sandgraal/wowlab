@@ -37,6 +37,9 @@ from wowlab_core.cli._cmd_cvar import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _REINSTALL,
+    _names_line,
+    _names_missing,
+    _wowlab_command,
 )
 from wowlab_core.cli._cmd_macros import (
     _MACRO_FILE_TEXT,
@@ -438,6 +441,17 @@ class CharSummaryBackup(_Out):
     game_updated: bool = False
 
 
+class CharSummaryNames(_Out):
+    """For one flavor of `char list --summary --json` that has a recorded
+    character (M18-02): the name tables not cached for its version, read
+    from the cache only, and the command that downloads them."""
+
+    flavor: layout.FsText
+    version: str
+    tables: list[str]
+    command: str
+
+
 class CharSummaryReport(_Out):
     """`wowlab char list --summary --json` (M17-01): one row per character
     folder `char list` lists, every flavor of an install with several unless
@@ -456,6 +470,9 @@ class CharSummaryReport(_Out):
     # empty, with `backup_error` saying why, when the store cannot be read.
     backups: list[CharSummaryBackup] = Field(default_factory=list)
     backup_error: str | None = None
+    # The flavors with a recorded character whose names are not all
+    # downloaded (M18-02), in the order of `flavors`; empty when none is.
+    names_missing: list[CharSummaryNames] = Field(default_factory=list)
 
 
 _FIX_COMMAND = "wowlab addon install lab"
@@ -467,7 +484,7 @@ _SUMMARY_NOTES = [
     "unless something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy).",
     _CHAR_NOTES[0],
     "Names of classes, races, specs and professions come from game tables wowlab has already "
-    "downloaded for the installed version (wowlab db2 fetch); otherwise the ids are shown.",
+    "downloaded for the installed version (wowlab names fetch); otherwise the ids are shown.",
     "Item level is the client's equipped average as recorded.",
     _CHAR_LIST_NOTES[2],
 ]
@@ -644,6 +661,30 @@ def _summary_backups(
     return lines, None
 
 
+def _summary_names(
+    rows: Sequence[CharSummaryRow], flavors: Sequence[install.Flavor], root: Path | None
+) -> list[CharSummaryNames]:
+    """Each flavor with a recorded character whose name tables are not all
+    cached for its version (M18-02): the cache is read, nothing is fetched."""
+    recorded = {r.flavor for r in rows if r.state == "recorded"}
+    given = str(root) if root is not None and str(root) != "" else None
+    out: list[CharSummaryNames] = []
+    for f in flavors:
+        if f.folder not in recorded or f.version is None:
+            continue
+        missing = _names_missing(f.version)
+        if missing:
+            out.append(
+                CharSummaryNames(
+                    flavor=f.folder,
+                    version=f.version,
+                    tables=missing,
+                    command=_wowlab_command(["names", "fetch"], f.folder, False, given),
+                )
+            )
+    return out
+
+
 def _say_summary(
     report: CharSummaryReport, every: bool, show_notes: bool, typed: str | None = None
 ) -> None:
@@ -682,6 +723,10 @@ def _say_summary(
                     _say_prose(line, indent="    ", hang="      ")
     if report.rows and report.not_looked_at:
         _say(f"{_unseen_words(len(report.not_looked_at))}.")
+    if report.names_missing:
+        tables = list(dict.fromkeys(t for n in report.names_missing for t in n.tables))
+        command = report.names_missing[0].command
+        _say_prose(f"Names: {_names_line(tables, command)}", hang="  ", keep=[command])
     _say_notes(report.notes, show_notes)
 
 
@@ -810,7 +855,13 @@ def char_list(
             notes=_SUMMARY_NOTES,
         )
         backups, backup_error = _summary_backups(inst.root, [f for f, _ in shown])
-        hub = hub.model_copy(update={"backups": backups, "backup_error": backup_error})
+        hub = hub.model_copy(
+            update={
+                "backups": backups,
+                "backup_error": backup_error,
+                "names_missing": _summary_names(hub.rows, [f for f, _ in shown], root),
+            }
+        )
         if json_out:
             _emit(hub)
         else:

@@ -196,15 +196,17 @@ def test_every_recording_loads_and_all_empty_columns_are_text(
 
 def test_the_recordings_hold_twenty_all_empty_columns() -> None:
     """The count the ruling was made on (2026-09-30), so a new recording
-    that changes it is noticed."""
+    that changes it is noticed. M18-02 added `ChrClasses` and `ChrRaces` for
+    1.60.1.70058, byte-identical to their 1.60.1.70009 recordings: seven more
+    columns, in two more recordings, of the same tables."""
     columns = {}
     for table, build in _every_recording():
         header, records = _csv(_recording(table, build))
         for i, name in enumerate(header):
             if all(not record[i] for record in records):
                 columns[(table, build, name)] = True
-    assert len(columns) == 20
-    assert len({(t, b) for t, b, _ in columns}) == 9, "recordings"
+    assert len(columns) == 27
+    assert len({(t, b) for t, b, _ in columns}) == 11, "recordings"
     assert {t for t, _, _ in columns} == {
         "ChrClasses",
         "ChrRaces",
