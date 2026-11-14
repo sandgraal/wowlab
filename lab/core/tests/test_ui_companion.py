@@ -361,6 +361,20 @@ def test_no_sentence_is_dropped_and_each_sits_in_a_disclosure() -> None:
         assert sentence in abouts, sentence
 
 
+def test_the_looks_network_line_stays_beside_its_button() -> None:
+    """Review of M18-03: the one sentence saying what the Looks button sends
+    stays visible next to the button; the rest of the intro is under About
+    this data."""
+    html = _template("page.html")
+    assert (
+        '<button id="looks-write" type="button">Download tables and write the page</button>\n'
+        '<p class="looks-note">Downloads this version\'s public game tables from wago.tools, '
+        "sending your game version.</p>\n"
+    ) in html
+    outside = re.sub(r'<details class="about">.*?</details>', "", html, flags=re.DOTALL)
+    assert outside.count("wago.tools") == 1
+
+
 def test_the_keys_table_scrolls_inside_its_own_box() -> None:
     """M16-53's reflow rule is kept."""
     paints = {head: decls for media, head, decls in _rules(_css()) if not media}

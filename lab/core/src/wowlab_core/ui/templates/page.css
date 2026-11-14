@@ -521,6 +521,8 @@ pre:empty { display: none; }
 
 /* ─── the Looks tab: the page `looks page` wrote, in a sandboxed frame,
    drawn in its own style ─── */
+/* the one network sentence stays beside the button that sends it */
+.looks-note { margin: 0; color: var(--muted); font-size: 14px; }
 #looks-status { margin: 0; color: var(--muted); flex-basis: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
 #looks-status:empty { display: none; }
 #looks-status.error { color: var(--ruin); }
