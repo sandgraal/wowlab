@@ -37,16 +37,32 @@ The same backup from the command line is `wowlab snap create`. Take one before p
 Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
 
 > [!NOTE]
-> The install line below installs v0.2.1, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.2.1 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
+> The install lines below install v0.2.1, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.2.1 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
+
+To try wowlab without installing it, this downloads it from PyPI, the Python package index, and opens the browser view:
+
+<!-- not-run: from the network, and `wowlab ui` does not exit -->
+```bash
+uvx --python 3.12 wowlab ui
+```
+
+To install it, so that `wowlab` works in any new terminal (`uv tool upgrade wowlab` updates it later):
+
+<!-- not-run: an install, from the network -->
+```bash
+uv tool install --python 3.12 wowlab
+```
+
+Or install the release's own file from GitHub, named by its fingerprint:
 
 <!-- not-run: an install, from the network -->
 ```bash
 uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-py3-none-any.whl#sha256=b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5
 ```
 
-The `#sha256=` part is the download's fingerprint, the same as its line in the release's `SHA256SUMS`. `uv tool install` does not check it for you: [the install guide](docs/INSTALL.md) shows how to check the download and install that very file, and what to do when your game is not in the usual place.
+PyPI holds the same two files as the release, byte for byte. The `#sha256=` part is the download's fingerprint, the same as its line in the release's `SHA256SUMS`. `uv tool install` does not check it for you: [the install guide](docs/INSTALL.md) shows how to check the download and install that very file, how to compare PyPI's copy with the release, and what to do when your game is not in the usual place.
 
 **⚔️ The first three commands:**
 
@@ -211,7 +227,7 @@ wowlab grows one step at a time, and each step is picked after the last one ship
 ## 🚀 Running it from source
 
 > [!NOTE]
-> Players install a release with the one `uv tool install` line at the top of this page. Running from source is for trying `main` or working on wowlab. There is no hosted version, and nothing is uploaded either way.
+> Players install a release with the `uv tool install` lines at the top of this page. Running from source is for trying `main` or working on wowlab. There is no hosted version, and nothing is uploaded either way.
 
 You need [uv](https://docs.astral.sh/uv/) (it brings Python 3.12) and git.
 

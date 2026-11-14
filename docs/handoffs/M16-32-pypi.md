@@ -7,6 +7,29 @@ tag publishes the GitHub Release as before, and then the `pypi` job fails
 (PyPI refuses an upload from a workflow it does not trust). Nothing else in
 the run depends on it.
 
+## Status, 2026-11-14: the first upload happened
+
+The first PyPI upload was v0.2.1, on 2026-11-14, by the release workflow's
+`pypi` job (run 43543829799, attempt 2), through the trusted publisher. That
+upload created the `wowlab` project on PyPI, so the pending publisher of
+step 2 is now a normal publisher of the project, and the name is claimed.
+The conductor checked that PyPI's wheel and sdist SHA-256 equal the lines in
+the GitHub release's `SHA256SUMS` (wheel `b55b4ce6…`, sdist `21611c78…`),
+and that `uvx --python 3.12 wowlab --version` prints `wowlab 0.2.1`. PyPI
+holds a PEP 740 attestation for each file, from publisher GitHub
+`sandgraal/wowlab`, workflow `release.yml`, environment `release`
+(`https://pypi.org/integrity/wowlab/0.2.1/<file>/provenance`). The bare
+`uvx wowlab doctor` works: it resolves the `wowlab` project.
+
+The follow-up of section 3 is done in the `m16/32-pypi-install-lines`
+branch: README.md gives `uvx --python 3.12 wowlab ui` and
+`uv tool install --python 3.12 wowlab` above the v0.2.1 wheel line, and
+INSTALL.md has a "From PyPI" part saying how to compare PyPI's hashes with
+`SHA256SUMS`. Still open in section 3: checking the project's **Settings →
+Publishing** on pypi.org (an owner action), and the PyPI download count in
+`M13-gate.md`. The note below about `pyproject.toml` having no `readme` is
+stale: it gained one before v0.2.1.
+
 ## What the job does
 
 After `release` has published the GitHub Release, `pypi` downloads the
