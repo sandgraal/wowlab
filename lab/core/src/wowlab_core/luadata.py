@@ -8,14 +8,14 @@ read-only (L1). `serialize` turns a document back into bytes and writes
 nothing (writing into an install is `guard`'s, L2); it refuses anything
 that is not data, so its output always parses (L3 for writes).
 
-Grammar (LAB_FORMATS §4.1 with the 2026-09-22 amendments; the client's Lua
-is taken to be Lua 5.1, **[verify]** for Forever)::
+Grammar (LAB_FORMATS §4.1 with the 2026-09-22 and 2026-11-14 amendments; the
+client's Lua is taken to be Lua 5.1, **[verify]** for Forever)::
 
     document   := { trivia | assignment } trivia
     assignment := NAME "=" ( value | "nil" )
     value      := table | string | number | "true" | "false"
     table      := "{" { entry ("," | ";") } [ entry ] "}"
-    entry      := value                                     -- positional
+    entry      := ( value | "nil" )                         -- positional
                 | "[" ( string | number | "true" | "false" ) "]" "=" value
                 | NAME "=" value
     trivia     := whitespace | "--" line comment            -- long comments rejected
@@ -25,8 +25,8 @@ column (CRLF, LFCR, LF and CR each end one line, as in Lua 5.1; the column
 counts bytes) and the offending token: function definitions, calls,
 `setmetatable`, `..`, arithmetic, comparisons, `and`/`or`/`not`, bare
 identifiers as values, long-bracket strings and long comments, a raw NUL
-anywhere, statements other than a top-level assignment, `nil` inside a
-table, and any number spelling other than the ones below (so every
+anywhere, statements other than a top-level assignment, a keyed `nil`
+inside a table and `nil` as a key, and any number spelling other than the ones below (so every
 non-finite spelling, until a fixture shows the client writing one).
 
 Numbers: `-`? then a decimal integer, a decimal with a fractional part, either
@@ -50,6 +50,12 @@ document keeps the bytes after the last token in `tail`:
     assignment   lead NAME eq_lead "=" value
     value        lead <token>              (a table: lead "{" entries close_lead "}")
     entry        lead [ "[" key key_close_lead "]" | NAME ] eq_lead "=" value sep_lead sep
+
+A positional `nil` is a hole in a list (§4.1, amendment of 2026-11-14): an
+entry of style `positional` whose value is a `LuaNil`. It takes its index
+like any other positional entry (Lua 5.1 §2.5.7), so the entries after it
+keep theirs; it is a literal, never an operand, so whatever but a separator
+or `}` follows it is refused.
 
 A positional entry's leading bytes sit on the entry (its value's `lead` is
 `b""`); a keyed entry's value `lead` is the bytes between `=` and the value.
@@ -218,6 +224,10 @@ MAX_ENTRIES = MAX_COST // _C_SHORT_ENTRY_MAX
 # (`LFIELDS_PER_FLUSH` in lopcodes.h); §6.4 amendment item 6, **[verify]**.
 _LFIELDS_PER_FLUSH = 50
 
+# The refusal of a keyed `nil` inside a table (§4.1, amendment of 2026-11-14:
+# a positional `nil` is a hole and is accepted; a keyed one is unobserved).
+_NIL_REFUSED = "nil is legal only as a top-level value or a positional entry (§4.1)"
+
 
 # ── errors ──────────────────────────────────────────────────────────────────
 
@@ -353,7 +363,8 @@ class LuaBool(NamedTuple):
 
 
 class LuaNil(NamedTuple):
-    """`nil`; legal only as a top-level value (§4.1)."""
+    """`nil`: a top-level value, or a positional entry (a hole in a list,
+    §4.1 amendment of 2026-11-14). Never a key, never a keyed value."""
 
     lead: bytes | None
 
@@ -464,6 +475,10 @@ class LuaDocument(NamedTuple):
           the one Lua 5.1 would load: keyed entries are stored when reached,
           positional ones 50 at a time (before the next field once 50 are
           pending, and at the closing brace).
+        - A positional `nil` (a hole) takes its index and stores nothing
+          there, so the entries after it keep their numbers and a hole
+          inside the array part makes the table a `dict` (`{"a", nil, "c"}`
+          gives `{1: "a", 3: "c"}`); a trailing hole leaves a `list`.
         - Python's own key equality applies to the result: `[true]` and `[1]`
           are distinct Lua keys but collide in a `dict` (`True == 1`), and the
           later value wins.
@@ -659,7 +674,8 @@ _ENTRY = re.compile(
     rb"(" + _TRIVIA + rb")(?:(\})|"
     rb"(?:(?:\[(" + _TRIVIA + rb")(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))"
     rb"(" + _TRIVIA + rb")\]|(" + _NAME + rb"))(" + _TRIVIA + rb")=(?!=)(" + _TRIVIA + rb"))?"
-    rb"(?:(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb"))(" + _TRIVIA + rb")([,;]?)|(\{)))"
+    rb"(?:(?:(" + _STR + rb")|(" + _NUM + rb")|(" + _BOOL + rb")|(nil)(?![A-Za-z0-9_]))"
+    rb"(" + _TRIVIA + rb")([,;]?)|(\{)))"
 )
 # The common entry shapes, tried before `_ENTRY` because they match in
 # about half the time: whitespace, then an optional `["string"] = ` or
@@ -943,7 +959,7 @@ class _Diagnoser:
             if word == b"nil":
                 if allow_nil:
                     return "nil", e
-                self.fail(s, word, "nil is legal only as a top-level value (§4.1)")
+                self.fail(s, word, _NIL_REFUSED)
             if word == b"function":
                 self.fail(s, word, "function definitions are rejected (L3)")
             if word in _KEYWORDS:
@@ -1008,7 +1024,7 @@ class _Diagnoser:
                 self.value(p, allow_nil=False)  # a bare identifier: raises
             vkind, end = self.value(ne, allow_nil=False)
         else:
-            vkind, end = self.value(p, allow_nil=False)
+            vkind, end = self.value(p, allow_nil=True)  # positional: `nil` is a hole
         if vkind == "{":
             self.internal(pos)
         self.close(end, table_at)
@@ -1318,7 +1334,7 @@ class _Parser:
                     m = None  # a long match takes the full path, which checks every bound
                 if m is not None:
                     lead, ks, kn, ke, vl, vs, vn, vb, sep, vt = m.groups(b"")
-                    close = kl = kb = kc = kw = sl = b""
+                    close = kl = kb = kc = kw = sl = vnil = b""
                     if len(lead) > 1:
                         found = tget(lead)
                         if found is None:
@@ -1336,9 +1352,11 @@ class _Parser:
                         _Diagnoser(data).entry(pos, at)
                     if m.end() - pos > trivia_max and cost + m.end() - pos > budget:
                         self.cost_bound(pos)  # before copying the match
-                    (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, sl, sep, vt) = (
+                    (lead, close, kl, ks, kn, kb, kc, kw, ke, vl, vs, vn, vb, vnil, sl, sep, vt) = (
                         m.groups(b"")
                     )
+                    if vnil and (ks or kn or kb or kw):
+                        _Diagnoser(data).entry(pos, at)  # a keyed `nil`: refused at the `nil`
                     if close:
                         close_lead = share(lead)
                     else:
@@ -1459,7 +1477,7 @@ class _Parser:
                         if cm is not None:
                             comment = cm.group(1)
                             cost += _C_BYTES + len(comment)
-                    text_bytes = vs or vn or vb
+                    text_bytes = vs or vn or vb or vnil
                     if vs and b"\\" in vs:
                         cost += _C_ESCAPE * vs.count(b"\\")
                     shareable = style is _P and sep and not sl and comment is None and not dup
@@ -1485,6 +1503,9 @@ class _Parser:
                                     self.number_bound(m, 12)
                                 cost += _C_NODE + _C_STR + len(vn)
                                 value = _new(LuaNumber, (vl, vn.decode("ascii")))
+                            elif vnil:
+                                cost += _C_NODE
+                                value = _new(LuaNil, (vl,))
                             else:
                                 cost += _C_NODE
                                 value = _new(LuaBool, (vl, vb == b"true"))
@@ -1629,6 +1650,11 @@ def _table_to_python(table: LuaTable) -> object:
                 order[lua_key] = python_key
             stored[lua_key] = entry.value
     stored.update(pending)
+    # A positional `nil` (a hole) stores nothing at its key: Lua 5.1 assigns
+    # nil there, which also clears an earlier keyed value at that key.
+    holes = [k for k, v in stored.items() if type(v) is LuaNil]
+    for k in holes:
+        del order[k]
     if not order:
         return {}
     count = len(order)
@@ -1795,8 +1821,8 @@ def serialize(
     comments (a comment outside the document's `tail` must end with a line
     break inside its slot), `sep` is not `,`, `;` or empty (or is empty
     before another entry), `Entry.comment` is not one line comment, a
-    `raw`, key or name is not a literal the parser accepts, a `nil` is
-    inside a table, an empty lead would join a name to the value before it,
+    `raw`, key or name is not a literal the parser accepts, a keyed `nil`
+    is inside a table (a positional one is a hole and is written), an empty lead would join a name to the value before it,
     a node or slot is not exactly of the model's types (no subclasses of
     `bytes` or `str`), tables nest deeper than `MAX_DEPTH`, or the output
     grows over `MAX_FILE_BYTES` or certainly over the `MAX_COST` parse
@@ -1921,7 +1947,7 @@ class _Writer:
                 self.refuse(_token(truth), "a LuaBool's value is a bool")
         elif isinstance(value, LuaNil):
             if not allow_nil:
-                self.refuse(b"nil", "nil is legal only as a top-level value (§4.1)")
+                self.refuse(b"nil", _NIL_REFUSED)
             buf += b"nil"
         else:
             self.refuse(_token(value), "not a LuaTable, LuaString, LuaNumber, LuaBool or LuaNil")
@@ -2093,7 +2119,7 @@ class _Writer:
             elif isinstance(value, LuaTable):
                 self.table(value, depth + 1)
             else:
-                self.scalar(value, allow_nil=False)
+                self.scalar(value, allow_nil=kind is _P)  # a positional `nil` is a hole
             sep_lead = entry.sep_lead
             if sep_lead is not None:
                 if type(sep_lead) is bytes and sep_lead in known:

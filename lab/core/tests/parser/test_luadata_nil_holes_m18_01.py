@@ -59,7 +59,6 @@ from _luadata_oracle import (
 
 pytestmark = pytest.mark.parser
 
-XFAIL = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 
 AUCTION_HOUSE, COMBAT_LOG = NIL_HOLE_FIXTURES
 REAL_IDS = ["character-Blizzard_AuctionHouseUI", "account-Blizzard_CombatLog"]
@@ -173,7 +172,6 @@ def test_nil_hole_fixtures_are_what_the_graders_assume() -> None:
 # ── the real files ──────────────────────────────────────────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize("name", NIL_HOLE_FIXTURES, ids=REAL_IDS)
 def test_real_nil_hole_round_trips_byte_for_byte(luadata: Any, name: str) -> None:
     """L4: `serialize(parse(x)) == x`, and the document alone gives `x`
@@ -181,7 +179,6 @@ def test_real_nil_hole_round_trips_byte_for_byte(luadata: Any, name: str) -> Non
     _faithful(luadata, (FIXTURES / name).read_bytes())
 
 
-@XFAIL
 @pytest.mark.parametrize("name", NIL_HOLE_FIXTURES, ids=REAL_IDS)
 def test_real_nil_hole_reads_from_a_copy_and_round_trips(
     luadata: Any, name: str, tmp_path: Path
@@ -194,7 +191,6 @@ def test_real_nil_hole_reads_from_a_copy_and_round_trips(
     assert copy.read_bytes() == data
 
 
-@XFAIL
 @pytest.mark.parametrize("name", NIL_HOLE_FIXTURES, ids=REAL_IDS)
 def test_real_nil_hole_is_a_positional_entry_holding_luanil(luadata: Any, name: str) -> None:
     """The hole is reported as a value with no content: a positional entry
@@ -216,7 +212,6 @@ def test_real_nil_hole_is_a_positional_entry_holding_luanil(luadata: Any, name: 
         assert e.duplicate is False
 
 
-@XFAIL
 def test_real_auction_house_filters_keep_their_indices(luadata: Any) -> None:
     """`g_auctionHouseFilters["filters"]` is `false` x4, the hole, `true` x7:
     the hole is index 5 and the `true`s keep 6 to 12."""
@@ -233,7 +228,6 @@ def test_real_auction_house_filters_keep_their_indices(luadata: Any) -> None:
     assert [a.name for a in doc.assignments] == ["g_auctionHouseFilters", "g_activeBidAuctionIDs"]
 
 
-@XFAIL
 def test_real_auction_house_to_python_takes_what_lua_loads(luadata: Any) -> None:
     """Lua 5.1 stores nothing at the hole's key 5, so the keys are not
     exactly `1..n` and the table is a dict; 6 to 12 keep their numbers."""
@@ -246,7 +240,6 @@ def test_real_auction_house_to_python_takes_what_lua_loads(luadata: Any) -> None
     assert type(py["g_auctionHouseFilters"]["filters"]) is dict
 
 
-@XFAIL
 @pytest.mark.parametrize("which", [1, 2])
 def test_real_combat_log_hole_is_index_3_between_colour_tables(luadata: Any, which: int) -> None:
     """Each filter's `["colors"]["schoolColoring"]` holds two colour tables,
@@ -312,7 +305,6 @@ BOUNDARIES = [
 ]
 
 
-@XFAIL
 @pytest.mark.parametrize(
     ("data", "holes"), [(d, h) for _i, d, h, _p in BOUNDARIES], ids=[i for i, *_ in BOUNDARIES]
 )
@@ -328,7 +320,6 @@ def test_constructed_hole_round_trips_and_keeps_its_place(
             assert e.style == POSITIONAL and e.key is None
 
 
-@XFAIL
 @pytest.mark.parametrize(
     ("data", "expected"),
     [(d, p) for _i, d, _h, p in BOUNDARIES],
@@ -345,7 +336,6 @@ def test_constructed_hole_to_python_takes_what_lua_loads(
     assert type(got) is type(expected)
 
 
-@XFAIL
 def test_constructed_hole_in_a_nested_table_keeps_the_outer_indices(luadata: Any) -> None:
     data = _doc("X = {", "{", "nil,", "1,", "},", "nil,", "{", "2,", "nil,", "},", "}")
     doc = _faithful(luadata, data)
@@ -356,7 +346,6 @@ def test_constructed_hole_in_a_nested_table_keeps_the_outer_indices(luadata: Any
     assert doc.to_python() == {"X": {1: {2: 1}, 3: [2]}}
 
 
-@XFAIL
 def test_constructed_top_level_nil_and_a_hole_in_one_file(luadata: Any) -> None:
     """A top-level `X = nil` stays accepted beside a table with a hole."""
     doc = _faithful(luadata, _doc("X = nil", "Y = {", "nil,", "1,", "}"))
@@ -364,7 +353,6 @@ def test_constructed_top_level_nil_and_a_hole_in_one_file(luadata: Any) -> None:
     assert doc.to_python() == {"X": None, "Y": {2: 1}}
 
 
-@XFAIL
 def test_constructed_ten_thousand_holes_parse_and_round_trip(luadata: Any) -> None:
     """Boundary: a long run of holes is data, not a depth or recursion
     problem; the entry after them is index 10 001."""
@@ -377,7 +365,6 @@ def test_constructed_ten_thousand_holes_parse_and_round_trip(luadata: Any) -> No
 # ── bounds: holes are charged and nested like any entry ─────────────────────
 
 
-@XFAIL
 @pytest.mark.parametrize(
     "item",
     [b"nil,\r\n", b"nil, "],
@@ -409,7 +396,6 @@ def _nested_holes(depth: int) -> bytes:
     return _doc("X = " + "{nil, " * depth + "}" * depth)
 
 
-@XFAIL
 def test_constructed_a_hole_per_level_190_deep_parses(luadata: Any) -> None:
     """Inside §6.4's depth bound of 200, as `test_depth_under_the_bound_parses`
     grades the other nesting forms."""
@@ -419,7 +405,6 @@ def test_constructed_a_hole_per_level_190_deep_parses(luadata: Any) -> None:
     assert all(_holes(luadata, t) == [1] for _d, t in found)
 
 
-@XFAIL
 def test_constructed_a_hole_per_level_10000_deep_raises_the_depth_bound(luadata: Any) -> None:
     """Over the bound raises `LuaLimitError`; no `RecursionError` escapes."""
     with pytest.raises(luadata.LuaLimitError) as caught:
@@ -428,7 +413,6 @@ def test_constructed_a_hole_per_level_10000_deep_raises_the_depth_bound(luadata:
     assert caught.value.line == 2
 
 
-@XFAIL
 def test_constructed_serialize_writes_a_positional_luanil_as_nil(luadata: Any) -> None:
     """The serializer side: a document whose positional entry is changed to
     a `LuaNil` writes `nil` there, and reads back as the same hole."""
@@ -445,7 +429,6 @@ def test_constructed_serialize_writes_a_positional_luanil_as_nil(luadata: Any) -
     assert luadata.parse(out).to_python() == {"X": {1: "a", 3: "c"}}
 
 
-@XFAIL
 def test_constructed_keyed_nil_after_a_hole_is_refused_at_the_keyed_nil(luadata: Any) -> None:
     """Accepting the hole on line 3 does not loosen line 4: the refusal is
     at the keyed `nil`, not at the hole."""
