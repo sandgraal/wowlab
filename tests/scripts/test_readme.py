@@ -79,6 +79,8 @@ def _install_lines(text: str) -> list[str]:
 
 # M16-32: the PyPI lines, added once `wowlab` 0.2.1 was on PyPI (2026-11-14).
 TRY_PYPI = "uvx --python 3.12 wowlab ui"
+# The ticket's `uvx wowlab doctor`, shown alongside (conductor, 2026-11-14).
+CHECK_PYPI = "(or `uvx --python 3.12 wowlab doctor` for a quick check in the terminal)"
 INSTALL_PYPI = "uv tool install --python 3.12 wowlab"
 UPGRADE_NOTE = "Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first."
 
@@ -104,6 +106,8 @@ def test_the_pypi_lines_come_first_with_the_upgrade_note() -> None:
     for line in (TRY_PYPI, INSTALL_PYPI):
         assert f"\n{line}\n" in screen, f"{line} on the first screen, on a line of its own"
     assert screen.index(TRY_PYPI) < screen.index(INSTALL_PYPI) < screen.index(INSTALL_V021)
+    assert CHECK_PYPI in screen
+    assert screen.index(CHECK_PYPI) < screen.index(INSTALL_PYPI)
     assert UPGRADE_NOTE in screen
     # The distribution is `wowlab` since M16-32: no `--from wowlab-core` workaround is left.
     assert "--from wowlab-core" not in readme

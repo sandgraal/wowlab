@@ -41,7 +41,7 @@ Level, class, gear and the rest appear once wowlab's small in-game addon has rec
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
-To try wowlab without installing it, this downloads it from PyPI, the Python package index, and opens the browser view:
+To try wowlab without installing it, this downloads it from PyPI, the Python package index, and opens the browser view (or `uvx --python 3.12 wowlab doctor` for a quick check in the terminal):
 
 <!-- not-run: from the network, and `wowlab ui` does not exit -->
 ```bash

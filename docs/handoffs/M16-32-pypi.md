@@ -25,7 +25,10 @@ The follow-up of section 3 is done in the `m16/32-pypi-install-lines`
 branch: README.md gives `uvx --python 3.12 wowlab ui` and
 `uv tool install --python 3.12 wowlab` above the v0.2.1 wheel line, and
 INSTALL.md has a "From PyPI" part saying how to compare PyPI's hashes with
-`SHA256SUMS`. Still open in section 3: checking the project's **Settings →
+`SHA256SUMS`. README leads with `ui`, matching M17-11's first screen;
+`doctor` shown alongside (conductor, 2026-11-14): the README names
+`uvx --python 3.12 wowlab doctor` as the quick check, and INSTALL.md gives it
+in its "From PyPI" part. Still open in section 3: checking the project's **Settings →
 Publishing** on pypi.org (an owner action), and the PyPI download count in
 `M13-gate.md`. The note below about `pyproject.toml` having no `readme` is
 stale: it gained one before v0.2.1.

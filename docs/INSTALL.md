@@ -51,7 +51,9 @@ first, whichever way you install now.
 **From PyPI.** wowlab is on PyPI, the Python package index, under the
 name `wowlab`. To try it without installing it, run
 `uvx --python 3.12 wowlab ui`: uv downloads wowlab into its own cache and
-opens the browser view. To install it, run
+opens the browser view. For a quick check of what wowlab sees, in the
+terminal and without installing it, run `uvx --python 3.12 wowlab doctor`.
+To install it, run
 `uv tool install --python 3.12 wowlab`; later, `uv tool upgrade wowlab`
 updates it to the newest release. `--python 3.12` keeps wowlab on the Python
 it is developed on. Without it, uv uses a Python 3.12 or later that it
