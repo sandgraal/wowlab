@@ -213,6 +213,7 @@ from wowlab_core.cli import _cmd_binds
 from wowlab_core.cli import _cmd_macros
 from wowlab_core.cli import _cmd_addons
 from wowlab_core.cli import _cmd_db2
+from wowlab_core.cli import _cmd_names
 from wowlab_core.cli import _changes
 from wowlab_core.cli import _cmd_snap
 from wowlab_core.cli import _cmd_restore
@@ -680,6 +681,9 @@ from wowlab_core.cli._cmd_char import (
     CharSummaryBackup as CharSummaryBackup,
 )
 from wowlab_core.cli._cmd_char import (
+    CharSummaryNames as CharSummaryNames,
+)
+from wowlab_core.cli._cmd_char import (
     CharSummaryProfession as CharSummaryProfession,
 )
 from wowlab_core.cli._cmd_char import (
@@ -806,6 +810,9 @@ from wowlab_core.cli._cmd_char import (
     _summary_lines as _summary_lines,
 )
 from wowlab_core.cli._cmd_char import (
+    _summary_names as _summary_names,
+)
+from wowlab_core.cli._cmd_char import (
     _summary_row as _summary_row,
 )
 from wowlab_core.cli._cmd_char import (
@@ -918,6 +925,9 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _LOAD_OUT_OF_DATE as _LOAD_OUT_OF_DATE,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _NAME_TABLE_WORDS as _NAME_TABLE_WORDS,
 )
 from wowlab_core.cli._cmd_doctor import (
     _NUMBER_WORDS as _NUMBER_WORDS,
@@ -1122,6 +1132,15 @@ from wowlab_core.cli._cmd_doctor import (
 )
 from wowlab_core.cli._cmd_doctor import (
     _left_paths as _left_paths,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _name_words as _name_words,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _names_line as _names_line,
+)
+from wowlab_core.cli._cmd_doctor import (
+    _names_missing as _names_missing,
 )
 from wowlab_core.cli._cmd_doctor import (
     _newest_whole_snapshot as _newest_whole_snapshot,
@@ -1815,6 +1834,27 @@ from wowlab_core.cli._cmd_macros import (
 )
 from wowlab_core.cli._cmd_macros import (
     macros_list as macros_list,
+)
+from wowlab_core.cli._cmd_names import (
+    NamesFetchReport as NamesFetchReport,
+)
+from wowlab_core.cli._cmd_names import (
+    NamesFlavor as NamesFlavor,
+)
+from wowlab_core.cli._cmd_names import (
+    NamesTable as NamesTable,
+)
+from wowlab_core.cli._cmd_names import (
+    NamesTableStatus as NamesTableStatus,
+)
+from wowlab_core.cli._cmd_names import (
+    _fetch_names as _fetch_names,
+)
+from wowlab_core.cli._cmd_names import (
+    _names_lines as _names_lines,
+)
+from wowlab_core.cli._cmd_names import (
+    names_fetch as names_fetch,
 )
 from wowlab_core.cli._cmd_profile import (
     NameArg as NameArg,
@@ -2711,6 +2751,9 @@ from wowlab_core.cli._common import (
     main as main,
 )
 from wowlab_core.cli._common import (
+    names_app as names_app,
+)
+from wowlab_core.cli._common import (
     profile_app as profile_app,
 )
 from wowlab_core.cli._common import (
@@ -2732,6 +2775,7 @@ _PARTS = (
     _cmd_macros,
     _cmd_addons,
     _cmd_db2,
+    _cmd_names,
     _changes,
     _cmd_snap,
     _cmd_restore,

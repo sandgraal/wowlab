@@ -133,6 +133,7 @@ def test_commands_are_registered_in_the_order_they_were_before_the_split() -> No
         "addons",
         "addon",
         "db2",
+        "names",
         "snap",
         "log",
         "profile",

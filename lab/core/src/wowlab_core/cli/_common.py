@@ -330,6 +330,10 @@ addon_app = typer.Typer(
 db2_app = typer.Typer(
     help="Game data tables from wago.tools, cached by build.", no_args_is_help=True
 )
+names_app = typer.Typer(
+    help="The names of races, classes, specs and professions: one download per game version.",
+    no_args_is_help=True,
+)
 snap_app = typer.Typer(help="The snapshot store.", no_args_is_help=True)
 log_app = typer.Typer(help="The combat log (read only).", no_args_is_help=True)
 looks_app = typer.Typer(
@@ -366,6 +370,11 @@ app.add_typer(
 app.add_typer(addons_app, name="addons", short_help="Folders under Interface/AddOns/.")
 app.add_typer(addon_app, name="addon", short_help="Install or remove the lab-addon.")
 app.add_typer(db2_app, name="db2", short_help="Game data tables from wago.tools, cached by build.")
+app.add_typer(
+    names_app,
+    name="names",
+    short_help="Download the names of races, classes, specs and professions.",
+)
 app.add_typer(
     snap_app, name="snap", short_help="Snapshots of your settings, addons and saved data."
 )

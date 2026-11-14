@@ -69,7 +69,14 @@
         "expected": 16001,
         "version": null,
         "detail": null
-      }
+      },
+      "names_missing": [
+        "ChrRaces",
+        "ChrClasses",
+        "ChrSpecialization",
+        "SkillLine"
+      ],
+      "names_command": "wowlab names fetch"
     }
   ],
   "other_dirs": [],

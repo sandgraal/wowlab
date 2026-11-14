@@ -62,7 +62,7 @@ import threading
 import time
 import uuid
 import zlib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -80,6 +80,7 @@ __all__ = [
     "DOWNLOAD_DEADLINE_SECONDS",
     "MAX_BUILDS_BYTES",
     "MAX_TABLE_BYTES",
+    "NAME_TABLES",
     "Build",
     "BuildNotPublished",
     "CacheLocationError",
@@ -96,6 +97,7 @@ __all__ = [
     "builds",
     "cached_rows",
     "default_cache_dir",
+    "missing_tables",
     "resolve_build",
     "rows",
     "table",
@@ -937,6 +939,19 @@ def cached_rows(
     if not path.is_file():
         return None
     return _iter_rows(path)
+
+
+NAME_TABLES: tuple[str, ...] = ("ChrRaces", "ChrClasses", "ChrSpecialization", "SkillLine")
+"""The tables the names of races, classes, specs and professions are read
+from (M18-02). Table names, not game data and nothing about a flavor (L6)."""
+
+
+def missing_tables(names: Iterable[str], build: str, *, cache_dir: Path | None = None) -> list[str]:
+    """Which of ``names`` are not cached for exactly ``build``, in order: the
+    ones ``GameData.table`` would download. Never fetches and never writes.
+    Raises ``ValueError`` for a malformed key."""
+    base = cache_dir if cache_dir is not None else default_cache_dir()
+    return [name for name in names if not _table_path(base, name, build).exists()]
 
 
 def _sidecar_path(table_path: Path) -> Path:

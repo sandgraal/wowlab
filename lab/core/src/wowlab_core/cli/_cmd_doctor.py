@@ -121,6 +121,12 @@ class DoctorFlavor(_Out):
     sync_cvars: list[SyncCVar]
     # The installed lab-addon's ## Interface: against this client's (M16-06).
     lab_addon: addoninstall.LabAddonState
+    # The name tables (`gamedata.NAME_TABLES`) not cached for `version`, read
+    # from the cache only (M18-02); None when the version is unknown or the
+    # cache could not be read. `names_command` is the command that downloads
+    # them, set when one is missing.
+    names_missing: list[str] | None = None
+    names_command: str | None = None
 
 
 # What a file the rollback left holds as `doctor` reads it now (M16-84):
@@ -319,6 +325,44 @@ def _open_gamedata() -> Iterator[gamedata.GameData]:
         yield gamedata.GameData(source)
     finally:
         source.close()
+
+
+# What each name table names, in the player's words (M18-02); a table not
+# here is named by its own name.
+_NAME_TABLE_WORDS = {
+    "ChrRaces": "races",
+    "ChrClasses": "classes",
+    "ChrSpecialization": "specs",
+    "SkillLine": "professions",
+}
+
+
+def _name_words(tables: Sequence[str]) -> str:
+    """`races, classes and specs` for those three tables."""
+    said = [_NAME_TABLE_WORDS.get(t, t) for t in tables]
+    if len(said) <= 1:
+        return "".join(said)
+    return ", ".join(said[:-1]) + " and " + said[-1]
+
+
+def _names_missing(version: str | None) -> list[str] | None:
+    """The name tables not cached for `version`, from the cache alone: no
+    request, no write. None when there is no version or the cache cannot
+    be read."""
+    if version is None:
+        return None
+    try:
+        return gamedata.missing_tables(gamedata.NAME_TABLES, version)
+    except (ValueError, OSError):
+        return None
+
+
+def _names_line(missing: Sequence[str], command: str) -> str:
+    """What doctor and `char list --summary` say when a name table is missing."""
+    return (
+        f"wowlab shows ids for {_name_words(missing)} until you download their names "
+        f"once per game version: run `{command}`."
+    )
 
 
 def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
@@ -742,6 +786,7 @@ def _doctor(
                 problems.append(f"{f.folder}: cannot read the config files: {exc}")
                 sync = []
             lab_addon = addoninstall.lab_addon_state(f)
+            names_missing = _names_missing(f.version)
             flavors.append(
                 DoctorFlavor(
                     folder=f.folder,
@@ -752,6 +797,12 @@ def _doctor(
                     game_data=game[f.folder],
                     sync_cvars=sync,
                     lab_addon=lab_addon,
+                    names_missing=names_missing,
+                    names_command=(
+                        _wowlab_command(["names", "fetch"], f.folder, False, given_root)
+                        if names_missing
+                        else None
+                    ),
                 )
             )
             steps += _flavor_steps(
@@ -1664,6 +1715,12 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 "the first active one is shown"
             )
         _say(f"  Game data: {_print_game_data(f.game_data)}")
+        if f.names_missing and f.names_command:
+            _say_prose(
+                f"  Names: {_names_line(f.names_missing, f.names_command)}",
+                hang="    ",
+                keep=[f.names_command],
+            )
         reinstall = next(
             (
                 s.command
