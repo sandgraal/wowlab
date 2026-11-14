@@ -91,6 +91,7 @@ from typing import Any
 import pytest
 from _luadata_oracle import (
     FIXTURES,
+    NIL_HOLE_FIXTURES,
     POSITIONAL,
     STRING,
     document_tokens,
@@ -114,6 +115,20 @@ DBM = f"{SV_DIR}/DBM-StatusBarTimers.lua"
 NAMED = [RARESCANNER, RARESCANNER_BAK, GAMEPAD, SYNDICATOR, DBM]
 
 SAVEDVARIABLES = indexed("savedvariables")
+# M18-01T: the captures holding a positional `nil` hole do not read until
+# M18-01, which deletes the `PENDING_M18_01` assignment and each `marks=` line
+# below and nothing else (the marker blocks of scripts/check_grader_diff.py).
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+SAVEDVARIABLES_CASES = [
+    pytest.param(name, id=name) for name in SAVEDVARIABLES if name not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
+]
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ITEM_LINK = b"|cnIQ1:|Hitem:277114::::::::7:1490:::::::::|h[Apprentice's Skinning Satchel]|h|r"
@@ -160,7 +175,7 @@ def test_named_fixtures_are_what_the_graders_assume() -> None:
 # ── every indexed SavedVariables file ───────────────────────────────────────
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_rebuilds_byte_for_byte_from_the_document(
     luadata: Any, name: str
 ) -> None:
@@ -171,7 +186,7 @@ def test_real_savedvariables_rebuilds_byte_for_byte_from_the_document(
     assert rebuild(luadata, luadata.parse(data)) == data
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, name: str) -> None:
     """The structure, not only the bytes: names, key styles, key and value
     source text, separators, in file order. Nothing is dropped, merged,
@@ -180,7 +195,7 @@ def test_real_savedvariables_keeps_every_token_in_source_order(luadata: Any, nam
     assert document_tokens(luadata, luadata.parse(data)) == source_tokens(data)
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
     doc = luadata.parse(_read(name))
     assert len(doc.assignments) >= 1
@@ -188,14 +203,19 @@ def test_real_savedvariables_parses(luadata: Any, name: str) -> None:
         assert isinstance(assignment.name, str)
         assert IDENT.fullmatch(assignment.name)
     for e in _entries(luadata, doc):
-        assert isinstance(
-            e.value,
-            luadata.LuaTable | luadata.LuaString | luadata.LuaNumber | luadata.LuaBool,
-        ), "nil is legal only as a top-level value (§4.1)"
+        if isinstance(e.value, luadata.LuaNil):
+            # §4.1, amendment of 2026-11-14 (M18-01T): inside a table, `nil`
+            # is only a positional hole; a keyed `nil` stays refused.
+            assert e.style == POSITIONAL and e.key is None, "a nil inside a table is a hole"
+        else:
+            assert isinstance(
+                e.value,
+                luadata.LuaTable | luadata.LuaString | luadata.LuaNumber | luadata.LuaBool,
+            ), "a value is one of the five types of §6.4"
         assert e.sep == b",", "the client ends every entry with `,` (§4.2)"
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_read_equals_parse(luadata: Any, name: str) -> None:
     """`read()` gets a copy, never the committed fixture tree (a reader that
     wrote beside its file would pollute the corpus)."""
@@ -210,7 +230,7 @@ def test_real_savedvariables_read_equals_parse(luadata: Any, name: str) -> None:
     assert from_file.to_python() == from_bytes.to_python()
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_to_python_is_plain_data(luadata: Any, name: str) -> None:
     doc = luadata.parse(_read(name))
     py = doc.to_python()
@@ -231,7 +251,7 @@ def test_real_savedvariables_to_python_is_plain_data(luadata: Any, name: str) ->
     plain(py)
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_real_savedvariables_has_no_duplicate_flagged(luadata: Any, name: str) -> None:
     """The client writes a table from a Lua table, so its keys are unique;
     a flag on a real file is a false positive."""
@@ -240,7 +260,7 @@ def test_real_savedvariables_has_no_duplicate_flagged(luadata: Any, name: str) -
 
 
 @pytest.mark.parametrize("writable", [False, True], ids=["read-only-folder", "writable-folder"])
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_read_leaves_the_folder_untouched(
     luadata: Any, name: str, writable: bool, tmp_path: Path
 ) -> None:

@@ -110,11 +110,25 @@ from _luadata_edits import (
     table,
     tree_state,
 )
-from _luadata_oracle import indexed, load, rebuild
+from _luadata_oracle import NIL_HOLE_FIXTURES, indexed, load, rebuild
 
 pytestmark = pytest.mark.parser
 
 SAVEDVARIABLES = indexed("savedvariables")
+# M18-01T: the captures holding a positional `nil` hole do not read until
+# M18-01, which deletes the `PENDING_M18_01` assignment and each `marks=` line
+# below and nothing else (the marker blocks of scripts/check_grader_diff.py).
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+SAVEDVARIABLES_CASES = [
+    pytest.param(name, id=name) for name in SAVEDVARIABLES if name not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
+]
 CRLF = b"\r\n"
 FLAT_CRLF = reference_text(indent=b"", comments=False, eol=CRLF)
 TABS_LF = reference_text(indent=b"\t", comments=True, eol=b"\n")
@@ -152,7 +166,7 @@ def _forever_install(root: Path) -> Path:
     return install(root, {"_lab_one_": files})
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_serialize_parse_is_the_file_byte_for_byte(luadata: Any, name: str) -> None:
     """L4 and §6.4: `serialize(parse(x)) == x` for every indexed capture."""
     data = fixture(name)
@@ -161,7 +175,7 @@ def test_serialize_parse_is_the_file_byte_for_byte(luadata: Any, name: str) -> N
     assert out == data
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_serialize_read_copy_is_the_file_byte_for_byte(
     luadata: Any, name: str, tmp_path: Path
 ) -> None:
@@ -171,7 +185,7 @@ def test_serialize_read_copy_is_the_file_byte_for_byte(
     assert luadata.serialize(luadata.read(copy)) == fixture(name)
 
 
-@pytest.mark.parametrize("name", SAVEDVARIABLES)
+@pytest.mark.parametrize("name", SAVEDVARIABLES_CASES)
 def test_unmodified_file_ignores_constructed_sibling_style(
     luadata: Any, name: str, tmp_path: Path
 ) -> None:

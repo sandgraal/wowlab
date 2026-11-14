@@ -744,8 +744,10 @@ def test_serialize_refuses_what_is_not_data(
     a NUL, an operator), or a comment that does not end with a line break
     inside its slot (it would swallow what follows), a `sep` other than
     `,`, `;` or empty, an `Entry.comment` that is not one line comment, a
-    `raw`, key or name that is not a literal §4.1 accepts, or a `nil` inside
-    a table raises `LuaDataError`; no bytes come back, so L3 holds for
+    `raw`, key or name that is not a literal §4.1 accepts, or a keyed `nil`
+    inside a table (`nil-inside-a-table` keys it `["a"]`; a positional
+    `nil` is a hole and is written, §4.1 amendment of 2026-11-14, M18-01T)
+    raises `LuaDataError`; no bytes come back, so L3 holds for
     writes. `.token` is at most the first 40 bytes of the refused slot, and
     `.line` / `.column` are where it would start in the output (Lua line
     counting, 1-based, the column in bytes)."""

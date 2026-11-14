@@ -21,6 +21,29 @@ from wowlab_core import cli, luadata
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 SV_FILES = sorted(p for p in FIXTURES.rglob("*.lua*") if "SavedVariables" in p.parts)
 
+# M18-01T: the captures holding a positional `nil` hole (docs/LAB_FORMATS.md
+# §4.1, amendment of 2026-11-14) do not read until M18-01, which deletes the
+# `PENDING_M18_01` assignment and the `marks=` line below and nothing else
+# (the marker blocks of scripts/check_grader_diff.py).
+NIL_HOLE_FIXTURES = (
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/"
+    "Blizzard_AuctionHouseUI.lua",
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua",
+)
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+SV_CASES = [
+    pytest.param(p, id=p.relative_to(FIXTURES).as_posix())
+    for p in SV_FILES
+    if p.relative_to(FIXTURES).as_posix() not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        FIXTURES / name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
+]
+
 runner = CliRunner()
 
 
@@ -62,7 +85,7 @@ def test_there_are_fixtures_to_compare() -> None:
     assert len(SV_FILES) >= 10
 
 
-@pytest.mark.parametrize("sv", SV_FILES, ids=lambda p: str(p.relative_to(FIXTURES)))
+@pytest.mark.parametrize("sv", SV_CASES)
 def test_dump_json_is_byte_identical_to_the_iterencode_output(sv: Path) -> None:
     doc = luadata.read(sv)
     tops = [("variable", a.name, a.value) for a in doc.assignments]

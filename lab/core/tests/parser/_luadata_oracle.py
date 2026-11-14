@@ -40,6 +40,17 @@ def indexed(kind: str) -> list[str]:
     return found
 
 
+# The captures that hold a positional `nil` hole (docs/LAB_FORMATS.md §4.1,
+# amendment of 2026-11-14; M18-01T). Data only: the graders that take them
+# mark them pending themselves, in their own `test_*.py` modules, so M18-01
+# activates them by marker deletion alone (M16-40's gate freezes this file).
+NIL_HOLE_FIXTURES = (
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/"
+    "Blizzard_AuctionHouseUI.lua",
+    "macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua",
+)
+
+
 def _b(value: Any) -> bytes:
     """Trivia may be absent where the grammar has no such token (`None`)."""
     if value is None:
