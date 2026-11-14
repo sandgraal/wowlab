@@ -92,6 +92,8 @@ number     := decimal int | decimal float | exponent form | hex int (0x…) | le
 
 `NAME` is a Lua identifier. `nil` is legal only as a top-level value.
 
+*Amended 2026-11-14 (owner's install, Forever 1.60.1.70938; contradicts the line above):* the client writes `nil` as a **positional** entry, a hole in a list, on its own line as `nil,`. It was seen in the game's own files: `Blizzard_AuctionHouseUI.lua` (`g_auctionHouseFilters.filters`, `false, false, false, false, nil, true, …`) and `Blizzard_CombatLog.lua` (a `nil,` between two colour tables), and in `Auctionator.lua` and both `.lua.bak` copies. A positional `nil` takes its index like any other positional entry, so the entries after it keep their numbers. The parser accepts it, keeps its text and position byte for byte (§4.4), and reports it as a value with no content (the hole), never as an error. A keyed `nil` (`["k"] = nil` or `k = nil`) and `nil` as a key are still unobserved and stay rejected.
+
 ### 4.2 What the client writes **[verify each against fixtures]**
 
 ```

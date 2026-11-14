@@ -3202,3 +3202,23 @@ Two display bugs on the Account tab, both on `main`:
 - A character folder with no lab record shows the advice with literal backticks and then the command again: `hubSpan` in `ui/templates/page.js` appends `fix_command` after an `advice` that already names it. Show the command once, as code with its Copy button, and no backticks as text.
 
 **Acceptance:** a page test for each (the stand-in DOM for the second; a computed-style or CSS assertion for the first); `make ci` green. Reviewed by `code-reviewer`. User-facing: the Account tab.
+
+---
+
+# M18 — make the companion worth opening
+
+*Owner decision, 2026-11-14, in session ("yes"), after the conductor's look at `wowlab ui` on the owner's install found it reads like a debug console, shows ids instead of names, and raises a false alarm about the game's own files.* The first two tickets fix the false alarm (load-bearing `luadata.py`, so the grader lands first, ADR-0013). The redesign follows a mockup the owner approves before any UI ticket is filed.
+
+## [ ] M18-01T — [TEST] A `nil` hole in a list is read, kept and round-tripped
+**Size:** S · **Depends on:** nothing · **Sources:** `docs/LAB_FORMATS.md` §4.1 (amendment of 2026-11-14), §4.4; L3, L4, L8
+
+Graders, expected to fail until M18-01: a positional `nil,` inside a table parses; it keeps its index, so later positional entries keep theirs; `serialize(parse(x)) == x` byte for byte; the document model reports the hole as a value with no content; the CLI/JSON readers that walk values (`sv dump`, `sv list --unreadable`, `sv merge`) treat it as a hole, not an error; a keyed `nil` and `nil` as a key are still refused with a position. Real fixtures (L8): the owner's `Blizzard_AuctionHouseUI.lua` and `Blizzard_CombatLog.lua` from Forever 1.60.1.70938, through `scripts/lab_capture.py` with provenance rows; constructed boundary cases (a leading hole, two holes in a row, a trailing hole, a hole as the only entry) labelled as such.
+
+**Acceptance:** the graders are on `main`, marked expected-fail; `make test-parser` otherwise green. Reviewed by `code-reviewer` and `security-reviewer`.
+
+## [ ] M18-01 — [IMPL] `luadata` reads a `nil` hole in a list
+**Size:** S · **Depends on:** M18-01T · **Sources:** as M18-01T
+
+Make M18-01T's graders pass by deleting their markers only. The patch-day card stops listing the game's own files as unreadable. No interpreter, no evaluation (L3); the fuzz corpus keeps passing.
+
+**Acceptance:** M18-01T's graders pass, markers deleted only; `make test-parser` and the full suite green; on the owner's install `sv list --unreadable` no longer lists `Blizzard_AuctionHouseUI.lua` or `Blizzard_CombatLog.lua`. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: the patch-day card; `sv dump` shows the holes.
