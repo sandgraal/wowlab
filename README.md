@@ -2,7 +2,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.1.0"><img alt="First public release, v0.1.0" src="https://img.shields.io/badge/release-v0.1.0-2ea44f"></a>
+  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.2.1"><img alt="Current release, v0.2.1" src="https://img.shields.io/badge/release-v0.2.1-2ea44f"></a>
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -37,13 +37,13 @@ The same backup from the command line is `wowlab snap create`. Take one before p
 Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
 
 > [!NOTE]
-> The install line below installs v0.1.0, which has snapshots and undo, the file explorer and the keybind coach. Everything marked 🆕 on this page (the Account, Character and Looks tabs, `char history`, `char list --summary`, `addons check` and more) is on `main` and arrives with the next release, together with a Mac app for Apple silicon ([the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). To try them now, [run it from source](#-running-it-from-source). In v0.1.0, `wowlab doctor` also asks wago.tools whether your game version is listed; add `--offline` to skip that.
+> The install line below installs v0.2.1, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.2.1 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
 <!-- not-run: an install, from the network -->
 ```bash
-uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256=a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639
+uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-py3-none-any.whl#sha256=b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5
 ```
 
 The `#sha256=` part is the download's fingerprint, the same as its line in the release's `SHA256SUMS`. `uv tool install` does not check it for you: [the install guide](docs/INSTALL.md) shows how to check the download and install that very file, and what to do when your game is not in the usual place.
@@ -53,7 +53,7 @@ The `#sha256=` part is the download's fingerprint, the same as its line in the r
 <!-- not-run: `wowlab ui` does not exit -->
 ```bash
 wowlab doctor        # finds your install; on a first run, says what wowlab will do and offers a first snapshot
-wowlab ui            # the browser view; every character in one place arrives with the next release
+wowlab ui            # the browser view, opening on every character in one place
 wowlab snap create   # back up your setup before patch day or an addon update
 ```
 
@@ -120,7 +120,7 @@ wowlab is built and tested on Forever on macOS; retail and Windows SavedVariable
 
 ## ✨ What it does
 
-Features marked 🆕 are on `main` and arrive with the next release.
+Features marked 🆕 are new since v0.1.0.
 
 ### 🔍 Understand your install
 

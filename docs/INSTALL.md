@@ -45,11 +45,11 @@ Proton; wowlab finds those only when you point it at them.
 
 You need [uv](https://docs.astral.sh/uv/). It brings Python 3.12 with it.
 
-**From a release.** The README gives the one `uv tool install` line that
-installs the current release, and the release page
-(https://github.com/sandgraal/wowlab/releases) carries the wheel, the sdist
-and `SHA256SUMS`. To check a download, put the three files in one folder and
-run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
+**From a release.** The current release is v0.2.1. The README gives the
+one `uv tool install` line that installs it, and its release page
+(https://github.com/sandgraal/wowlab/releases/tag/v0.2.1) carries the wheel,
+the sdist, `SHA256SUMS` and the Mac and Windows apps. To check a download,
+put the wheel, the sdist and `SHA256SUMS` in one folder and run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
 `shasum -a 256 -c SHA256SUMS --ignore-missing`); each file has to print
 `OK`. (`--ignore-missing` skips the apps' lines when you did not
 download them.) On Windows run
@@ -62,7 +62,7 @@ Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
 
 The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
 that hash. The v0.1.0 line's hash was taken from that release's
-`SHA256SUMS`. From the next release on, the release workflow hashes the
+`SHA256SUMS`. Since v0.2.1, the release workflow hashes the
 wheel it has just built (the same file that goes into `SHA256SUMS` and onto
 the release page) and writes the install line, hash included, into the
 release notes, and the README's line is copied from there. `uv tool install`
@@ -97,10 +97,10 @@ checked:
    uv tool install --python 3.12 ./wowlab-<version>-py3-none-any.whl
    ```
 
-Replace `<version>` with the release's version, for example `0.2.0`.
+Replace `<version>` with the release's version, for example `0.2.1`.
 The v0.1.0 wheel has an older name: `wowlab_core-0.1.0-py3-none-any.whl`.
 
-**Check where a release was built.** From the first release after v0.1.0,
+**Check where a release was built.** Since v0.2.1,
 the wheel and the sdist each carry a signed build-provenance attestation:
 a record, signed through Sigstore and kept on GitHub, that names the
 repository, the workflow, the tag and the commit that built the file. The
@@ -115,8 +115,9 @@ added, so it has none: for it, `SHA256SUMS` is the check.
 
 ### The Mac app (Apple silicon), no terminal needed
 
-From the first release after v0.1.0, the release page also carries
-`wowlab-<version>-macos-arm64.zip`: wowlab as a Mac app, with its own Python
+Since v0.2.1, the release page also carries
+`wowlab-<version>-macos-arm64.zip`
+(for v0.2.1: [`wowlab-0.2.1-macos-arm64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip)): wowlab as a Mac app, with its own Python
 inside, for Macs with Apple silicon (M1 and later). Intel Macs use the
 `uv tool install` line above. The app is the same wowlab as the wheel, built
 from it by the release workflow; it never updates itself and makes no
@@ -180,7 +181,8 @@ Windows is untested (see Platforms above): CI builds this app and starts it
 on Windows, but nobody has yet run the first run below with it on a real
 Windows install.
 
-The release page also carries `wowlab-<version>-windows-x64.zip`: wowlab as
+Since v0.2.1, the release page also carries `wowlab-<version>-windows-x64.zip`
+(for v0.2.1: [`wowlab-0.2.1-windows-x64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip)): wowlab as
 a Windows program, with its own Python inside, for 64-bit Windows on an
 Intel or AMD processor. It is the same wowlab as the wheel, built from it by
 the release workflow; it never updates itself and makes no network request

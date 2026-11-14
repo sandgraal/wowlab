@@ -62,6 +62,19 @@ INSTALL_V010 = (
 # the line the script prints for a version names `wowlab-<version>-...`.
 INSTALL_V010_RENAMED = INSTALL_V010.replace("/wowlab_core-0.1.0-", "/wowlab-0.1.0-")
 
+# The SHA-256 of the v0.2.1 wheel as published: the wheel's line in the
+# release's own SHA256SUMS, downloaded on 2026-11-13 (M16-32). It is also the
+# hash in the release notes' install line, which the release workflow wrote.
+WHEEL_V021_SHA256 = "b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5"
+
+# The line the README gives for v0.2.1, copied byte for byte from the
+# published release notes (M16-32): what `install_line` prints for 0.2.1.
+INSTALL_V021 = (
+    "uv tool install --python 3.12 "
+    "https://github.com/sandgraal/wowlab/releases/download/v0.2.1/"
+    f"wowlab-0.2.1-py3-none-any.whl#sha256={WHEEL_V021_SHA256}"
+)
+
 
 # ─── the workflow ─────────────────────────────────────────────────────────────
 
