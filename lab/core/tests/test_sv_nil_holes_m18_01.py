@@ -42,9 +42,8 @@ from typer.testing import CliRunner
 
 from wowlab_core import cli, install, luadata
 
-XFAIL = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
-
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+XFAIL = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 ROOT_FILES = FIXTURES / "macos-70888"  # the launch client's .build.info / .flavor.info
 CAPTURE = FIXTURES / "macos-70938" / "forever"
 FLAVOR = "_forever_"  # the provenance rows' flavor folder; tests may name it (L6)
