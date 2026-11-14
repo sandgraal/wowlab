@@ -488,20 +488,28 @@ def _lua_text(raw: bytes) -> str:
 class _Keys:
     """A table's entries by Lua key: which entry Lua 5.1 loads for each key
     (keyed entries when reached, positional ones 50 at a time), in order of
-    first appearance."""
+    first appearance.
 
-    __slots__ = ("ids", "loaded", "npos", "positions", "table")
+    A positional `nil` (a hole, `docs/LAB_FORMATS.md` §4.1, amendment of
+    2026-11-14) takes its index and stores nothing there: Lua 5.1 assigns
+    nil, which clears the key. Such a key is not in `loaded`; `holes` maps it
+    to the `nil` entry that cleared it, the place a value for that key is
+    written so that it loads (an entry appended after the hole would be
+    cleared by it)."""
+
+    __slots__ = ("holes", "ids", "loaded", "npos", "positions", "table")
 
     def __init__(self, table: LuaTable) -> None:
         self.table = table
         self.ids: list[_KeyId] = []
         self.positions: list[int | None] = []
         self.loaded: dict[_KeyId, int] = {}
+        self.holes: dict[_KeyId, int] = {}
         pending: list[tuple[_KeyId, int]] = []
         npos = 0
         for index, entry in enumerate(table.entries):
             if len(pending) == _LFIELDS_PER_FLUSH:
-                self.loaded.update(pending)
+                self._store(pending)
                 pending.clear()
             position: int | None = None
             if entry.style is KeyStyle.POSITIONAL:
@@ -513,13 +521,23 @@ class _Keys:
             if position is not None:
                 pending.append((kid, index))
             else:
-                self.loaded[kid] = index
-        self.loaded.update(pending)
+                self._store([(kid, index)])
+        self._store(pending)
         self.npos = npos
+
+    def _store(self, stores: list[tuple[_KeyId, int]]) -> None:
+        entries = self.table.entries
+        for kid, index in stores:
+            if isinstance(entries[index].value, LuaNil):
+                self.loaded.pop(kid, None)
+                self.holes[kid] = index
+            else:
+                self.loaded[kid] = index
+                self.holes.pop(kid, None)
 
     def order(self) -> list[int]:
         """Indices of the loaded entries, in document order."""
-        return [i for i, kid in enumerate(self.ids) if self.loaded[kid] == i]
+        return [i for i, kid in enumerate(self.ids) if self.loaded.get(kid) == i]
 
     def value(self, kid: _KeyId) -> LuaValue | None:
         index = self.loaded.get(kid)
@@ -990,7 +1008,11 @@ class _Merger:
         them loads), and theirs' entries for those keys written where ours'
         list began, so the table holds exactly theirs' keys 1..`span`: an
         entry is positional while the keys run on from 1, and `[k] =` after
-        a gap, never renumbered. Returns (entries, entries to append after
+        a gap, never renumbered. When ours holds positional entries past
+        `span` (after a `nil` hole, `docs/LAB_FORMATS.md` §4.1 amendment of
+        2026-11-14), theirs' list is written as exactly `span` positional
+        entries, a `nil` hole for each key theirs lacks, so those later
+        entries keep their keys. Returns (entries, entries to append after
         them: theirs' list when ours had none, the table's `close_lead`).
 
         Index comments: a removed entry's trailing comment is at the front
@@ -1009,9 +1031,13 @@ class _Merger:
         at = [i for i, kid in enumerate(o.ids) if kid in listed]
         close = ours.close_lead
         if not at:  # ours has no list: theirs' is appended, as any new entry
-            return entries, self.written(theirs, t, ids, yours, False), close
+            return entries, self.written(theirs, t, ids, yours, False, False), close
         indexed = any(_INDEX_COMMENT.fullmatch(entries[i].comment or b"") for i in at)
-        written = self.written(theirs, t, ids, yours, indexed)
+        # Ours' positional entries are its keys 1..npos in source order, so
+        # its entries 1..span are all in `at` and come before any past
+        # `span`; those keep their keys only if exactly `span` positional
+        # entries are written in front of them.
+        written = self.written(theirs, t, ids, yours, indexed, o.npos > span)
         first = at[0]
         before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
         # What ends up in front of the slot after the written list: the last
@@ -1054,16 +1080,24 @@ class _Merger:
         ids: list[_KeyId],
         yours: list[LuaValue | None],
         indexed: bool,
+        holes: bool,
     ) -> list[Entry]:
-        """Theirs' entries for the keys `ids`: positional while the keys run
-        on from 1, `[k] =` after a gap; with `indexed`, each positional one
+        """Theirs' entries for the keys `ids` (1..span): positional while the
+        keys run on from 1, `[k] =` after a gap; with `holes`, every key is
+        positional and a gap is a positional `nil` (so exactly `span`
+        positional entries are written); with `indexed`, each positional one
         carries `-- [n]`."""
         out: list[Entry] = []
-        npos = 0  # every positional entry of ours is a key 1..span, so none is left
+        # Written where ours' list began: no positional entry of ours is in
+        # front of it (ours' entries 1..span are the ones replaced).
+        npos = 0
         for kid, value in zip(ids, yours, strict=True):
             if value is None:
-                continue
-            entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
+                if not holes:
+                    continue
+                entry = _new_entry(kid, None, npos, LuaNil(None))
+            else:
+                entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
             if entry.style is KeyStyle.POSITIONAL:
                 npos += 1
                 if indexed:
@@ -1088,6 +1122,21 @@ class _Merger:
             if merged is not entry.value and merged is not None:
                 entries[index] = entry._replace(value=merged)
                 changed = True
+        # A key theirs holds where ours has a hole (outside the array part):
+        # the value is written in the hole's place, where it loads.
+        filled: set[_KeyId] = set()
+        for index in t.order():
+            kid = t.ids[index]
+            hole = o.holes.get(kid)
+            if hole is None or kid in listed:
+                continue
+            filled.add(kid)
+            merged = self.slot(
+                None, theirs.entries[index].value, b.value(kid), path + t.spelled(index)
+            )
+            if merged is not None:
+                entries[hole] = entries[hole]._replace(value=_adopt(merged, entries[hole].value))
+                changed = True
         tail: list[Entry] = []
         npos = sum(e.style is KeyStyle.POSITIONAL for e in entries)
         if span and self.array(o, t, None if base is None else b, span, path):
@@ -1098,7 +1147,7 @@ class _Merger:
         added: list[Entry] = list(tail)
         for index in t.order():
             kid = t.ids[index]
-            if kid in o.loaded or kid in listed:
+            if kid in o.loaded or kid in listed or kid in filled:
                 continue
             like = theirs.entries[index]
             merged = self.slot(None, like.value, b.value(kid), path + t.spelled(index))
@@ -1242,6 +1291,11 @@ class _Placer:
             new = change(None, here)
             if new is None:
                 return value
+            hole = keys.holes.get(step.key_id)
+            if hole is not None:  # written in the hole's place, where it loads
+                entries = list(value.entries)
+                entries[hole] = entries[hole]._replace(value=_adopt(new, entries[hole].value))
+                return value._replace(entries=tuple(entries))
             entry = _new_entry(step.key_id, None, keys.npos, new, step.raw or None)
             return _appended(value, list(value.entries), [entry])
         entry = value.entries[index]
