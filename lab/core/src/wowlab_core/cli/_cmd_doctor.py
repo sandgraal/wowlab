@@ -361,7 +361,7 @@ def _names_line(missing: Sequence[str], command: str) -> str:
     """What doctor and `char list --summary` say when a name table is missing."""
     return (
         f"wowlab shows ids for {_name_words(missing)} until you download their names "
-        f"once: run `{command}`."
+        f"once per game version: run `{command}`."
     )
 
 

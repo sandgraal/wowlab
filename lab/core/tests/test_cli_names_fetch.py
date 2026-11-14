@@ -384,7 +384,7 @@ def test_doctor_names_the_command_when_a_table_is_missing(
     text = " ".join(run("doctor").stdout.split())
     assert (
         "Names: wowlab shows ids for races, classes, specs and professions until you "
-        f"download their names once: run `{COMMAND}`."
+        f"download their names once per game version: run `{COMMAND}`."
     ) in text
     assert requests == []  # doctor reads the cache only
 
@@ -424,7 +424,7 @@ def test_summary_names_the_command_when_names_are_missing(
     ]
     assert (
         "Names: wowlab shows ids for races, classes, specs and professions until you "
-        f"download their names once: run `{COMMAND}`."
+        f"download their names once per game version: run `{COMMAND}`."
     ) in " ".join(text.split())
     assert requests == []
 

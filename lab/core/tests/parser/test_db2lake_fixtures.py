@@ -194,7 +194,7 @@ def test_every_recording_loads_and_all_empty_columns_are_text(
                 assert _as_csv_cell(row[name], kind) == cell, name
 
 
-def test_the_recordings_hold_twenty_all_empty_columns() -> None:
+def test_the_recordings_hold_twenty_seven_all_empty_columns_in_eleven() -> None:
     """The count the ruling was made on (2026-09-30), so a new recording
     that changes it is noticed. M18-02 added `ChrClasses` and `ChrRaces` for
     1.60.1.70058, byte-identical to their 1.60.1.70009 recordings: seven more

@@ -167,8 +167,10 @@ def names_fetch(
     """Download the game tables that name races, classes, specs and
     professions, for each installed flavor's version (or only --flavor's).
     Only the tables not already downloaded are fetched, one request each,
-    from wago.tools; a table already downloaded is never replaced. Until
-    they are here, wowlab shows ids instead of names.
+    from wago.tools; when wago.tools has no such table, wowlab also
+    downloads its list of game versions to say why. A table already
+    downloaded is never replaced. Until they are here, wowlab shows ids
+    instead of names.
 
     \f
     JSON: NamesFetchReport."""
