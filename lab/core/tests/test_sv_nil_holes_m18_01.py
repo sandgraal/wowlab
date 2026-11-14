@@ -43,7 +43,6 @@ from typer.testing import CliRunner
 from wowlab_core import cli, install, luadata
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-XFAIL = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 ROOT_FILES = FIXTURES / "macos-70888"  # the launch client's .build.info / .flavor.info
 CAPTURE = FIXTURES / "macos-70938" / "forever"
 FLAVOR = "_forever_"  # the provenance rows' flavor folder; tests may name it (L6)
@@ -115,7 +114,6 @@ def _state(root: Path) -> dict[str, bytes | None]:
 # ── sv dump ─────────────────────────────────────────────────────────────────
 
 
-@XFAIL
 def test_sv_dump_json_shows_the_hole_at_its_index(flavor: Path) -> None:
     report = cli.SvDumpReport.model_validate_json(ok("sv", "dump", AH, "--json"))
     by_id = {v.id: v for v in report.values}
@@ -134,7 +132,6 @@ def test_sv_dump_json_shows_the_hole_at_its_index(flavor: Path) -> None:
     assert by_id[filters.parent].name == "g_auctionHouseFilters"  # type: ignore[index]
 
 
-@XFAIL
 def test_sv_dump_text_prints_the_hole_and_the_next_index(flavor: Path) -> None:
     lines = ok("sv", "dump", AH).splitlines()
     assert f"{FILTERS}[4] = false" in lines
@@ -144,7 +141,6 @@ def test_sv_dump_text_prints_the_hole_and_the_next_index(flavor: Path) -> None:
     assert not [ln for ln in lines if ln.startswith(f"{FILTERS}[13]")]
 
 
-@XFAIL
 def test_sv_dump_path_after_a_hole_names_the_lua_index(flavor: Path) -> None:
     """`[4]` of `schoolColoring` is the colour table after the hole at `[3]`."""
     path = 'Blizzard_CombatLog_Filters["filters"][1]["colors"]["schoolColoring"][4]["g"]'
@@ -153,7 +149,6 @@ def test_sv_dump_path_after_a_hole_names_the_lua_index(flavor: Path) -> None:
     assert ok("sv", "dump", CL, "--path", before) == f"{before} = 0.9\n"
 
 
-@XFAIL
 def test_sv_dump_json_of_the_combat_log_has_two_nil_rows(flavor: Path) -> None:
     report = cli.SvDumpReport.model_validate_json(ok("sv", "dump", CL, "--json"))
     nils = [v for v in report.values if isinstance(v.value, cli.LuaNilNode)]
@@ -170,7 +165,6 @@ def _unreadable() -> cli.SvListReport:
     return cli.SvListReport.model_validate_json(ok("sv", "list", "--unreadable", "--json"))
 
 
-@XFAIL
 def test_sv_list_unreadable_does_not_list_the_game_files_with_holes(flavor: Path) -> None:
     report = _unreadable()
     assert report.unreadable is True
@@ -198,7 +192,6 @@ def test_sv_list_unreadable_lists_a_keyed_nil_with_its_position_constructed(
     assert (failure.kind, failure.line, failure.column) == ("refused", 3, 9)
 
 
-@XFAIL
 def test_sv_list_unreadable_lists_only_the_keyed_nil_constructed(flavor: Path) -> None:
     _keyed_nil(flavor)
     report = _unreadable()
@@ -219,7 +212,6 @@ def _merge(*extra: str) -> Any:
     return run("sv", "merge", AH_NAME, "--from", OTHER, "--into", CHARACTER, *extra)
 
 
-@XFAIL
 def test_sv_merge_two_files_with_the_same_hole_finds_nothing_to_change(flavor: Path) -> None:
     _other(flavor, REAL_AH)
     before = _state(flavor.parent)
@@ -232,7 +224,6 @@ def test_sv_merge_two_files_with_the_same_hole_finds_nothing_to_change(flavor: P
     assert _state(flavor.parent) == before
 
 
-@XFAIL
 def test_sv_merge_conflict_after_a_hole_is_at_the_lua_index_constructed(flavor: Path) -> None:
     """Theirs differs at index 6 only. The array part is `1..4` on both
     sides (the hole is the first missing key), so `[6]` is merged as a key:
@@ -250,7 +241,6 @@ def test_sv_merge_conflict_after_a_hole_is_at_the_lua_index_constructed(flavor: 
     assert _state(flavor.parent) == before
 
 
-@XFAIL
 def test_sv_merge_a_filled_hole_is_one_list_conflict_naming_the_gap_constructed(
     flavor: Path,
 ) -> None:
@@ -269,7 +259,6 @@ def test_sv_merge_a_filled_hole_is_one_list_conflict_naming_the_gap_constructed(
     assert "a gap" not in conflict["theirs"]
 
 
-@XFAIL
 def test_svmerge_library_reads_the_hole_on_both_sides() -> None:
     """`svmerge.merge` on two parsed copies of the real file: nothing
     differs, and the merged document is the file's own bytes."""

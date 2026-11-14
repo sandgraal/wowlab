@@ -1112,8 +1112,8 @@ _LUA_REFUSAL_WORDS = {
     "long-bracket strings are rejected (§6.4)": "it holds a long-bracket string ([[ ]]), "
     "which the client does not write",
     "a NUL byte is rejected (§4.3)": "it holds a NUL byte, which the client does not write",
-    "nil is legal only as a top-level value (§4.1)": "it holds nil inside a table, which "
-    "the client does not write",
+    "nil is legal only as a top-level value or a positional entry (§4.1)": "it holds nil "
+    "under a key inside a table, which the client does not write",
 }
 _UTF8_BOM = b"\xef\xbb\xbf"
 # The parser's refusal of a file that ends inside a table (M16-131).
