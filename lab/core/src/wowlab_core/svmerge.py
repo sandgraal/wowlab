@@ -1008,7 +1008,11 @@ class _Merger:
         them loads), and theirs' entries for those keys written where ours'
         list began, so the table holds exactly theirs' keys 1..`span`: an
         entry is positional while the keys run on from 1, and `[k] =` after
-        a gap, never renumbered. Returns (entries, entries to append after
+        a gap, never renumbered. When ours holds positional entries past
+        `span` (after a `nil` hole, `docs/LAB_FORMATS.md` §4.1 amendment of
+        2026-11-14), theirs' list is written as exactly `span` positional
+        entries, a `nil` hole for each key theirs lacks, so those later
+        entries keep their keys. Returns (entries, entries to append after
         them: theirs' list when ours had none, the table's `close_lead`).
 
         Index comments: a removed entry's trailing comment is at the front
@@ -1027,9 +1031,13 @@ class _Merger:
         at = [i for i, kid in enumerate(o.ids) if kid in listed]
         close = ours.close_lead
         if not at:  # ours has no list: theirs' is appended, as any new entry
-            return entries, self.written(theirs, t, ids, yours, False), close
+            return entries, self.written(theirs, t, ids, yours, False, False), close
         indexed = any(_INDEX_COMMENT.fullmatch(entries[i].comment or b"") for i in at)
-        written = self.written(theirs, t, ids, yours, indexed)
+        # Ours' positional entries are its keys 1..npos in source order, so
+        # its entries 1..span are all in `at` and come before any past
+        # `span`; those keep their keys only if exactly `span` positional
+        # entries are written in front of them.
+        written = self.written(theirs, t, ids, yours, indexed, o.npos > span)
         first = at[0]
         before = [e for i, e in enumerate(entries) if i < first and o.ids[i] not in listed]
         # What ends up in front of the slot after the written list: the last
@@ -1072,16 +1080,24 @@ class _Merger:
         ids: list[_KeyId],
         yours: list[LuaValue | None],
         indexed: bool,
+        holes: bool,
     ) -> list[Entry]:
-        """Theirs' entries for the keys `ids`: positional while the keys run
-        on from 1, `[k] =` after a gap; with `indexed`, each positional one
+        """Theirs' entries for the keys `ids` (1..span): positional while the
+        keys run on from 1, `[k] =` after a gap; with `holes`, every key is
+        positional and a gap is a positional `nil` (so exactly `span`
+        positional entries are written); with `indexed`, each positional one
         carries `-- [n]`."""
         out: list[Entry] = []
-        npos = 0  # every positional entry of ours is a key 1..span, so none is left
+        # Written where ours' list began: no positional entry of ours is in
+        # front of it (ours' entries 1..span are the ones replaced).
+        npos = 0
         for kid, value in zip(ids, yours, strict=True):
             if value is None:
-                continue
-            entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
+                if not holes:
+                    continue
+                entry = _new_entry(kid, None, npos, LuaNil(None))
+            else:
+                entry = _new_entry(kid, theirs.entries[t.loaded[kid]], npos, value)
             if entry.style is KeyStyle.POSITIONAL:
                 npos += 1
                 if indexed:

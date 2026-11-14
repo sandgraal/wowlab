@@ -1035,6 +1035,11 @@ class _Diagnoser:
             self.unterminated(table_at)
         if kind in (",", ";", "}"):
             self.internal(pos)
+        if kind == "=" and self.data.endswith(b"nil", 0, pos):
+            # `nil = 1`: the value before `pos` ends in `nil`, which only the
+            # `nil` literal does (a string ends in a quote, a number in a
+            # digit, a boolean in `e`, a table in `}`). Refused at the `nil`.
+            self.fail(pos - 3, b"nil", "nil cannot be a key")
         self.fail_span(s, e, "expected `,`, `;` or `}` after a table entry")
 
     def unterminated(self, table_at: int) -> NoReturn:
