@@ -45,8 +45,38 @@ Proton; wowlab finds those only when you point it at them.
 
 You need [uv](https://docs.astral.sh/uv/). It brings Python 3.12 with it.
 
+Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core`
+first, whichever way you install now.
+
+**From PyPI.** wowlab is on PyPI, the Python package index, under the
+name `wowlab`. To try it without installing it, run
+`uvx --python 3.12 wowlab ui`: uv downloads wowlab into its own cache and
+opens the browser view. For a quick check of what wowlab sees, in the
+terminal and without installing it, run `uvx --python 3.12 wowlab doctor`.
+To install it, run
+`uv tool install --python 3.12 wowlab`; later, `uv tool upgrade wowlab`
+updates it to the newest release. `--python 3.12` keeps wowlab on the Python
+it is developed on. Without it, uv uses a Python 3.12 or later that it
+finds on your computer, and downloads one when it finds none.
+
+Since v0.2.1, PyPI's files are the release's files. The release workflow
+uploads to PyPI the very wheel and sdist it built for the GitHub release,
+after checking their SHA-256 against the values it recorded when it built
+them. To compare for yourself, open `https://pypi.org/pypi/wowlab/<version>/json` (for
+example `https://pypi.org/pypi/wowlab/0.2.1/json`): under `urls`, each file
+has its `filename` and, under `digests`, its `sha256`. Each must equal
+that file's line in the release's `SHA256SUMS`. For
+v0.2.1 they do: the wheel's is `b55b4ce6…`, the sdist's `21611c78…`. Because
+the bytes are the same, the `gh attestation verify` check below works on a
+wheel downloaded from PyPI too.
+
+PyPI also keeps its own signed attestation for each file, made when the
+release workflow uploaded it. It names the repository `sandgraal/wowlab`,
+the workflow `release.yml` and the environment `release`, and is at
+`https://pypi.org/integrity/wowlab/<version>/<file name>/provenance`.
+
 **From a release.** The current release is v0.2.1. The README gives the
-one `uv tool install` line that installs it, and its release page
+`uv tool install` line that installs its wheel, and its release page
 (https://github.com/sandgraal/wowlab/releases/tag/v0.2.1) carries the wheel,
 the sdist, `SHA256SUMS` and the Mac and Windows apps. To check a download,
 put the wheel, the sdist and `SHA256SUMS` in one folder and run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
@@ -57,8 +87,6 @@ download them.) On Windows run
 compare the hash with its line in `SHA256SUMS`. The release workflow builds
 every file from the tagged commit, and the repository's tag rules let only
 the owner create a `v*` tag (`docs/handoffs/M13-03.md`).
-
-Installed v0.1.0 (wowlab-core)? Run `uv tool uninstall wowlab-core` first.
 
 The install line ends in `#sha256=` and the wheel's SHA-256. Nobody types
 that hash. The v0.1.0 line's hash was taken from that release's

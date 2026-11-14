@@ -71,6 +71,12 @@ _FROM_SOURCE = "a source checkout, from the network"
 _NO_EXIT = "`wowlab ui` does not exit"
 _OWN_SHELL = "sets a variable on your own machine"
 SKIPS: tuple[tuple[str, str, str], ...] = (
+    (  # M16-32: the PyPI lines, after the first upload
+        "README.md",
+        "uvx --python 3.12 wowlab ui",
+        "from the network, and `wowlab ui` does not exit",
+    ),
+    ("README.md", "uv tool install --python 3.12 wowlab", "an install, from the network"),
     (
         "README.md",
         "uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/"
