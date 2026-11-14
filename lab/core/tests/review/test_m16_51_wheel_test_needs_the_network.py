@@ -1,5 +1,5 @@
 # Probe from review of m16/51-ui-fonts; reproduces test_ui_fonts.py's wheel test downloading hatchling from PyPI (ADR-0012: no live external calls from tests or CI).
-"""`test_the_wheel_and_sdist_carry_the_fourteen_files` runs `uv build` with
+"""`test_the_wheel_and_sdist_carry_the_eleven_files` runs `uv build` with
 build isolation, so uv resolves and downloads `hatchling` and its five
 dependencies from pypi.org into its cache on every machine whose cache does
 not hold them (a fresh CI runner included). With the network off and an
@@ -58,10 +58,10 @@ def _run_offline(test: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_constructed_control_the_offline_harness_runs_a_fonts_test(tmp_path: Path) -> None:
-    done = _run_offline("test_the_fonts_folder_holds_exactly_the_fourteen_pinned_files", tmp_path)
+    done = _run_offline("test_the_fonts_folder_holds_exactly_the_eleven_pinned_files", tmp_path)
     assert done.returncode == 0 and "1 passed" in done.stdout, done.stdout[-3000:]
 
 
 def test_the_wheel_test_passes_with_no_network_and_an_empty_uv_cache(tmp_path: Path) -> None:
-    done = _run_offline("test_the_wheel_and_sdist_carry_the_fourteen_files", tmp_path)
+    done = _run_offline("test_the_wheel_and_sdist_carry_the_eleven_files", tmp_path)
     assert done.returncode == 0 and "1 passed" in done.stdout, done.stdout[-3000:]

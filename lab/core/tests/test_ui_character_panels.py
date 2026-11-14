@@ -956,7 +956,7 @@ def test_the_panels_request_only_read_commands_cross_capture(
 def _character_section() -> str:
     html = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
     found = re.search(
-        r'<section id="character-view".*?\n</section>\n(?=<section id="looks)', html, re.S
+        r'<section id="character-view".*?\n</section>\n(?=<section id="backups-view")', html, re.S
     )
     assert found is not None
     return found.group(0)

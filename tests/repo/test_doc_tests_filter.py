@@ -58,10 +58,6 @@ DYNAMIC: dict[str, str] = {
     "lab/core/tests/review/test_review_m16_17_player_text_lint_misses_modules_and_docs_constructed.py": (
         "the same name-only glob as test_filemap.py's _SPEC_DOCS"
     ),
-    "lab/core/tests/test_ui_wellspring.py": (
-        "it reads docs/design/wellspring-tokens.json, which is not Markdown, so "
-        "the docs-only filter never skips a change to it"
-    ),
     "tests/repo/test_bidi_controls.py": (
         "the f-string is a constructed file name fed to the bidi scanner, not a path it opens"
     ),

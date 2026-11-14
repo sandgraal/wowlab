@@ -26,12 +26,14 @@ def ui_command() -> None:
     your browser got from that link. The link, a reload and a second tab
     keep working until you stop wowlab ui; a new wowlab ui makes a new link,
     and the old one stops working.
-    The page has five tabs. Explorer shows the whole install's files, each
+    The page has five sections. Characters lists every character and shows
+    one as the lab-addon last saved it. Backups shows your backups and takes one.
+    Addons lists the addons the game may skip. Keybinds shows a character's
+    key bindings. Advanced holds Explorer (the whole install's files, each
     with whether wowlab may edit it, and what a picked file is and who
-    writes it. Gaps lists the paths the file map does not describe.
-    Commands runs this wowlab's commands with --json. Character shows one
-    character as the lab-addon last saved it. Looks shows the page that
-    `wowlab looks page` writes.
+    writes it), Gaps (the paths the file map does not describe), Commands
+    (this wowlab's commands, run with --json) and Looks (the page that
+    `wowlab looks page` writes).
 
     On the Commands tab, a command that asks first (--yes) runs as a plan
     that changes nothing, and runs for real only when you press Confirm

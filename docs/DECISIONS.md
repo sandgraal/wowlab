@@ -529,6 +529,27 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - *What changes.* Alegreya and Alegreya SC (eight files) leave the package with `OFL-Alegreya.txt`. In their place: **Inter** (text: 400, 500, 600) and **Sora** (display: 600, 700), each as Google Fonts serves them at versioned URLs, `latin` and `latin-ext` subsets, under the SIL Open Font License 1.1 with their licence texts beside them. IBM Plex Mono stays as it is. Where Google serves a weight range as one variable file, that one file counts once.
 - *What does not change.* Items 2 and 3 of the Decision, and item 4 except its fallback stack, hold word for word: unchanged files, `data:` URLs in the page's own hashed style, `font-src data:` and nothing more, a test pinning each file's SHA-256, `scripts/check_fonts.py` by hand only, no other page gains them.
 - *The table.* M18-03's implementer reports the new rows (family, style, weight, subset, bytes, source URL, SHA-256) and the licence-text rows, and the conductor adds them to this amendment on that PR's branch, in the same PR that adds the files and removes the Alegreya files. The total stays near the original 345,620 bytes; if it grows past 450,000 bytes, M18-03 stops and reports.
+
+  The files as built by M18-03 (2026-11-14). Inter and Sora are variable fonts: Google serves one file per subset for the whole weight range, so each counts once. Total 227,436 bytes. Package names follow `<face>-<subset>.woff2`.
+
+  | Family | Style | Weight | Subset | Bytes | Source | SHA-256 |
+  |---|---|---|---|---|---|---|
+  | IBM Plex Mono | normal | 400 | latin | 14708 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2` | `08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7` |
+  | IBM Plex Mono | normal | 400 | latin-ext | 13348 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1iEq129k.woff2` | `6bc0f226a5b7884a8170e3f62c63d7675609d4631bdc5931b5cdab81821f00eb` |
+  | IBM Plex Mono | normal | 500 | latin | 14888 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwlBFgg.woff2` | `01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22` |
+  | IBM Plex Mono | normal | 500 | latin-ext | 13432 | `https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwl5FgtIU.woff2` | `6bb06407c97584b0867a959e05e8874693bfeb8c317de190811c51598f2d99ea` |
+  | Inter | normal | 400 600 | latin | 48432 | `https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2` | `c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4` |
+  | Inter | normal | 400 600 | latin-ext | 85272 | `https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa25L7W0Q5n-wU.woff2` | `a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2` |
+  | Sora | normal | 600 700 | latin | 25240 | `https://fonts.gstatic.com/s/sora/v17/xMQ9uFFYT72X5wkB_18qmnndmSdSnh2BAfO5mnuyOo1lfiQwV6-xo6eeIw.woff2` | `3902474d3ece89c8580d5ef3325cf58753e6e45a86f9957b4dacc4fce2e7fde1` |
+  | Sora | normal | 600 700 | latin-ext | 12116 | `https://fonts.gstatic.com/s/sora/v17/xMQ9uFFYT72X5wkB_18qmnndmSdSnh2BAfO5mnuyOo1lfiQwWa-xo6eeI7fM.woff2` | `8d9b4a4136bf8cf8b00c65978e7801c372d14ed901fa387cc7352a40b96cd006` |
+
+  Licence texts, from the same google/fonts commit as before (`OFL-Alegreya.txt` removed):
+
+  | File | Source | Bytes | SHA-256 |
+  |---|---|---|---|
+  | `OFL-IBMPlexMono.txt` | `https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ibmplexmono/OFL.txt` | 4456 | `7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da` |
+  | `OFL-Inter.txt` | `https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/inter/OFL.txt` | 4377 | `5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57` |
+  | `OFL-Sora.txt` | `https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/sora/OFL.txt` | 4385 | `ba0b9729c9428ba79a0459ab8ec575791b51509dbec213e383d0316d37fec299` |
 - *Fallbacks.* Item 4's fallback stack (Palatino, Georgia, the system's serif) is replaced: a glyph outside the subsets, or a missing file, falls back to `system-ui, -apple-system, "Segoe UI", sans-serif`, and every rule names that stack.
 
 ## ADR-0036 — Other players' names may be stored on the player's own machine
