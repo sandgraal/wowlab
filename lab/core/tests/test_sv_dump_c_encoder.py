@@ -30,7 +30,6 @@ NIL_HOLE_FIXTURES = (
     "Blizzard_AuctionHouseUI.lua",
     "macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua",
 )
-PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 SV_CASES = [
     pytest.param(p, id=p.relative_to(FIXTURES).as_posix())
     for p in SV_FILES
@@ -39,7 +38,6 @@ SV_CASES = [
     pytest.param(
         FIXTURES / name,
         id=name,
-        marks=PENDING_M18_01,
     )
     for name in NIL_HOLE_FIXTURES
 ]

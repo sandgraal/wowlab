@@ -118,14 +118,12 @@ SAVEDVARIABLES = indexed("savedvariables")
 # M18-01T: the captures holding a positional `nil` hole do not read until
 # M18-01, which deletes the `PENDING_M18_01` assignment and each `marks=` line
 # below and nothing else (the marker blocks of scripts/check_grader_diff.py).
-PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 SAVEDVARIABLES_CASES = [
     pytest.param(name, id=name) for name in SAVEDVARIABLES if name not in NIL_HOLE_FIXTURES
 ] + [
     pytest.param(
         name,
         id=name,
-        marks=PENDING_M18_01,
     )
     for name in NIL_HOLE_FIXTURES
 ]
