@@ -79,7 +79,7 @@ checked:
 2. Check them. Run `sha256sum -c SHA256SUMS --ignore-missing` (macOS:
    `shasum -a 256 -c SHA256SUMS --ignore-missing`; Windows: `Get-FileHash`
    as above); each file has to print `OK`. (`--ignore-missing` skips the
-   Mac app's line when you did not download it.) Then, for a release after
+   apps' lines when you did not download them.) Then, for a release after
    v0.1.0, check where the wheel was built (next paragraph):
 
    <!-- not-run: needs the network -->
