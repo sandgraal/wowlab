@@ -476,6 +476,13 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
 - The CSP gains the import map's hash and the vendored files' hashes (or the scoped `'self'`, if the owner rules so after the browser check) and nothing else; `frame-ancestors 'none'` and the token rules of ADR-0029 are unchanged.
 - A later wave that needs animation or a different library writes an amendment here.
 
+
+**Amendment (2026-11-14; Proposed — owner approved the M18 mockup in session, "mockup approved", which sets type in Inter and Sora; this amendment needs the owner's own "accept"):** the companion redesign (`docs/design/COMPANION.md`, M18) replaces the display and text faces.
+- *What changes.* Alegreya and Alegreya SC (eight files) leave the package with `OFL-Alegreya.txt`. In their place: **Inter** (text: 400, 500, 600) and **Sora** (display: 600, 700), each as Google Fonts serves them at versioned URLs, `latin` and `latin-ext` subsets, under the SIL Open Font License 1.1 with their licence texts beside them. IBM Plex Mono stays as it is. Where Google serves a weight range as one variable file, that one file counts once.
+- *What does not change.* Items 2 to 4 of the Decision hold word for word: unchanged files, `data:` URLs in the page's own hashed style, `font-src data:` and nothing more, a test pinning each file's SHA-256, `scripts/check_fonts.py` by hand only, no other page gains them.
+- *The table.* M18-03 adds the new rows (family, style, weight, subset, bytes, source URL, SHA-256) and the licence-text rows to this amendment in the same PR that adds the files, and removes the Alegreya rows' files. The total stays near the original 345,620 bytes; if it grows past 450,000 bytes, M18-03 stops and reports.
+- *Fallbacks.* Every rule names a fallback stack: `system-ui, -apple-system, "Segoe UI", sans-serif`.
+
 ---
 
 ## ADR-0035 — The Wellspring fonts ship inside the package and reach the page as `data:` URLs in its own style
