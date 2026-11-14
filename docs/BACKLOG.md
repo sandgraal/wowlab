@@ -3233,7 +3233,7 @@ Race, spec and profession names need `ChrRaces`, `ChrClasses`, `ChrSpecializatio
 **Acceptance:** tests with recorded responses (no live call in CI, ADR-0012); a `@live` test by hand; `doctor` and `char list --summary` text name the command when names are missing; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; `doctor` text.
 
 ## [ ] M18-03 — The new shell: sections, tokens and fonts
-**Size:** M · **Depends on:** nothing · **owner** (until the owner accepts the ADR-0035 amendment of 2026-11-14) · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
+**Size:** M · **Depends on:** nothing (the ADR-0035 amendment of 2026-11-14 was accepted by the owner the same day) · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
 
 Replace Wellspring's chrome with the companion's: the header with the five sections (Characters, Backups, Addons, Keybinds, Advanced), the game picker named for people, the dark tokens, Inter and Sora under the ADR amendment. Today's tabs move into the sections as they are (Account content under Characters and Backups and Addons, Character under Characters, Keys under Keybinds, Explorer/Gaps/Commands/Looks under Advanced) so nothing is lost before M18-04 and M18-05 redraw them. The tab intros become a closed **About this data** disclosure.
 
