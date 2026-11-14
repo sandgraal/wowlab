@@ -91,11 +91,11 @@ from typing import Any
 import pytest
 from _luadata_oracle import (
     FIXTURES,
+    NIL_HOLE_FIXTURES,
     POSITIONAL,
     STRING,
     document_tokens,
     entry,
-    graded,
     indexed,
     load,
     path,
@@ -115,7 +115,20 @@ DBM = f"{SV_DIR}/DBM-StatusBarTimers.lua"
 NAMED = [RARESCANNER, RARESCANNER_BAK, GAMEPAD, SYNDICATOR, DBM]
 
 SAVEDVARIABLES = indexed("savedvariables")
-SAVEDVARIABLES_CASES = graded("savedvariables")  # M18-01T: the nil-hole captures are pending
+# M18-01T: the captures holding a positional `nil` hole do not read until
+# M18-01, which deletes the `PENDING_M18_01` assignment and each `marks=` line
+# below and nothing else (the marker blocks of scripts/check_grader_diff.py).
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+SAVEDVARIABLES_CASES = [
+    pytest.param(name, id=name) for name in SAVEDVARIABLES if name not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
+]
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ITEM_LINK = b"|cnIQ1:|Hitem:277114::::::::7:1490:::::::::|h[Apprentice's Skinning Satchel]|h|r"

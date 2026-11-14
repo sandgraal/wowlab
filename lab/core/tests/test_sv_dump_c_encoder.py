@@ -23,22 +23,25 @@ SV_FILES = sorted(p for p in FIXTURES.rglob("*.lua*") if "SavedVariables" in p.p
 
 # M18-01T: the captures holding a positional `nil` hole (docs/LAB_FORMATS.md
 # §4.1, amendment of 2026-11-14) do not read until M18-01, which deletes the
-# one marker line below (`_PENDING.update(...)`) and nothing else here.
+# `PENDING_M18_01` assignment and the `marks=` line below and nothing else
+# (the marker blocks of scripts/check_grader_diff.py).
 NIL_HOLE_FIXTURES = (
     "macos-70938/forever/WTF/Account/LABACCOUNTA/1/Sandgraal-Rizzen/SavedVariables/"
     "Blizzard_AuctionHouseUI.lua",
     "macos-70938/forever/WTF/Account/LABACCOUNTA/SavedVariables/Blizzard_CombatLog.lua",
 )
-_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
-_PENDING: dict[str, pytest.MarkDecorator] = {}
-_PENDING.update(dict.fromkeys(NIL_HOLE_FIXTURES, _M18_01))
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
 SV_CASES = [
-    pytest.param(
-        p,
-        id=p.relative_to(FIXTURES).as_posix(),
-        marks=_PENDING.get(p.relative_to(FIXTURES).as_posix(), ()),
-    )
+    pytest.param(p, id=p.relative_to(FIXTURES).as_posix())
     for p in SV_FILES
+    if p.relative_to(FIXTURES).as_posix() not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        FIXTURES / name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
 ]
 
 runner = CliRunner()

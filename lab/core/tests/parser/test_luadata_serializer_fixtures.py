@@ -110,12 +110,25 @@ from _luadata_edits import (
     table,
     tree_state,
 )
-from _luadata_oracle import graded, indexed, load, rebuild
+from _luadata_oracle import NIL_HOLE_FIXTURES, indexed, load, rebuild
 
 pytestmark = pytest.mark.parser
 
 SAVEDVARIABLES = indexed("savedvariables")
-SAVEDVARIABLES_CASES = graded("savedvariables")  # M18-01T: the nil-hole captures are pending
+# M18-01T: the captures holding a positional `nil` hole do not read until
+# M18-01, which deletes the `PENDING_M18_01` assignment and each `marks=` line
+# below and nothing else (the marker blocks of scripts/check_grader_diff.py).
+PENDING_M18_01 = pytest.mark.xfail(strict=True, reason="M18-01 not implemented")
+SAVEDVARIABLES_CASES = [
+    pytest.param(name, id=name) for name in SAVEDVARIABLES if name not in NIL_HOLE_FIXTURES
+] + [
+    pytest.param(
+        name,
+        id=name,
+        marks=PENDING_M18_01,
+    )
+    for name in NIL_HOLE_FIXTURES
+]
 CRLF = b"\r\n"
 FLAT_CRLF = reference_text(indent=b"", comments=False, eol=CRLF)
 TABS_LF = reference_text(indent=b"\t", comments=True, eol=b"\n")
