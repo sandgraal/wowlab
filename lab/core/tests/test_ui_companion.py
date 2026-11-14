@@ -226,8 +226,19 @@ def test_the_header_has_the_mark_the_name_and_five_sections_in_order() -> None:
 def test_the_mark_is_inline_and_coloured_through_its_class() -> None:
     html = _template("page.html")
     svgs = re.findall(r"<svg\b[^>]*>.*?</svg>", html, flags=re.DOTALL)
-    assert len(svgs) == 1 and svgs[0] in _header()
-    svg = svgs[0]
+    # M18-04 adds the two status cards' icons on the Characters home: each is
+    # inline too, hidden from screen readers, and coloured through its class
+    # by the card's state.
+    marks = [s for s in svgs if s in _header()]
+    icons = [s for s in svgs if s not in _header()]
+    assert len(marks) == 1 and len(icons) == 2
+    for icon in icons:
+        assert re.match(
+            r'<svg class="status-mark"[^>]*aria-hidden="true"[^>]*focusable="false"', icon
+        )
+        assert "xmlns" not in icon
+        assert not re.search(r"\b(?:fill|stroke|style|color)=", icon)
+    svg = marks[0]
     assert re.match(r'<svg class="mark"[^>]*aria-hidden="true"[^>]*focusable="false"', svg), svg
     assert "xmlns" not in svg
     assert not re.search(r"\b(?:fill|stroke|style|color)=", svg), (

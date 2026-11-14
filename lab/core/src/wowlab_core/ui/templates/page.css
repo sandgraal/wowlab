@@ -50,6 +50,41 @@
   --gear-heading: var(--faint);
   --gear-row-rule: var(--line);
   --gear-detail: var(--surface);
+  --ok-ground: #13281d;
+  --accent-ground: #2a2412;
+  /* the class colours (COMPANION.md), each with the ground of its level tile
+     and, where the colour fails 4.5:1 on the cards, a lighter tint for text */
+  --class-warrior: #c69b6d;
+  --class-warrior-tile: #383431;
+  --class-paladin: #f48cba;
+  --class-paladin-tile: #423140;
+  --class-hunter: #aad372;
+  --class-hunter-tile: #333f32;
+  --class-rogue: #fff468;
+  --class-rogue-tile: #444630;
+  --class-priest: #ffffff;
+  --class-priest-tile: #44484e;
+  --class-deathknight: #c41e3a;
+  --class-deathknight-tile: #381b27;
+  --class-deathknight-text: #da7485;
+  --class-shaman: #0070dd;
+  --class-shaman-tile: #112b47;
+  --class-shaman-text: #4798e7;
+  --class-mage: #3fc7eb;
+  --class-mage-tile: #1d3d4a;
+  --class-warlock: #8788ee;
+  --class-warlock-tile: #2c304b;
+  --class-warlock-text: #9192ef;
+  --class-monk: #00ff98;
+  --class-monk-tile: #11483a;
+  --class-druid: #ff7c0a;
+  --class-druid-tile: #442e1d;
+  --class-demonhunter: #a330c9;
+  --class-demonhunter-tile: #311e43;
+  --class-demonhunter-text: #c072da;
+  --class-evoker: #33937f;
+  --class-evoker-tile: #1b3235;
+  --class-evoker-text: #58a696;
   --font-display: Sora, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-text: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -534,6 +569,176 @@ pre:empty { display: none; }
   border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--bar);
 }
 
+/* ─── the Characters home (M18-04): the names line, two status cards, the
+   character cards and the dashed "missing" card ─── */
+.names-offer {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-card);
+  background: var(--bar);
+}
+.names-say { margin: 0; flex: 1 1 20rem; }
+.names-note { margin: 0; flex-basis: 100%; color: var(--muted); font-size: 14px; }
+#names-fetch {
+  min-height: 44px; padding: 0 var(--space-4); cursor: pointer; font-weight: 500;
+  color: var(--text); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-row);
+}
+#names-fetch:hover:enabled { background: var(--hover); }
+#names-fetch:disabled { cursor: progress; color: var(--faint); }
+#names-status { margin: 0; flex-basis: 100%; color: var(--muted); overflow-wrap: anywhere; }
+#names-status:empty { display: none; }
+#names-status.error { color: var(--ruin); }
+.status-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.status-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 20px var(--space-5);
+}
+.status-icon {
+  flex: none; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  background: var(--bar);
+}
+.status-mark { display: block; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.status-ok .status-icon { background: var(--ok-ground); }
+.status-ok .status-mark { stroke: var(--ok); }
+.status-warn .status-icon { background: var(--accent-ground); }
+.status-warn .status-mark { stroke: var(--accent); }
+.status-words { flex: 1 1 200px; min-width: 0; }
+.status-title { margin: 0; font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.status-detail { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.status-detail:empty { display: none; }
+.status-said { margin: var(--space-1) 0 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.status-said:empty { display: none; }
+.status-said.error { color: var(--ruin); }
+.status-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.status-open {
+  min-height: 44px; padding: 0 var(--space-4); cursor: pointer; font-weight: 500; color: var(--text);
+  background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-row);
+}
+.status-open:hover { background: var(--hover); }
+.chars-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); margin-top: var(--space-3); }
+.chars-when { color: var(--muted); }
+.cards-status { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.cards-status:empty { display: none; }
+.cards-status.error { color: var(--ruin); }
+.char-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: var(--space-4); }
+.char-card {
+  position: relative; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card);
+}
+.char-card:hover:has(.card-open) { border-color: var(--line-strong); }
+.char-card:focus-within { border-color: var(--line-strong); }
+.card-stripe { height: 6px; background: var(--line-strong); }
+.card-body { display: flex; flex-direction: column; gap: var(--space-4); padding: 20px var(--space-5); }
+.card-head { display: flex; align-items: center; gap: 14px; }
+.card-level {
+  flex: none; width: 52px; height: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-weight: 700; font-size: 20px;
+  color: var(--text); background: var(--bar); border: 2px solid var(--line-strong);
+}
+.card-who { flex: 1; min-width: 0; }
+.card-name {
+  margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 18px; line-height: 24px;
+  overflow-wrap: anywhere; unicode-bidi: isolate;
+}
+.card-open {
+  padding: 0; border: 0; cursor: pointer; text-align: left; color: var(--text); background: none;
+  font: inherit; overflow-wrap: anywhere;
+}
+/* The name's button covers the whole card: a click anywhere opens it. */
+.card-open::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius-card); }
+.card-open:focus-visible { outline: none; }
+.card-open:focus-visible::after { outline: 2px solid var(--link); outline-offset: -2px; }
+.card-class { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.card-ilvl { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
+.card-ilvl-value { font-family: var(--font-display); font-weight: 600; font-size: 20px; line-height: 26px; }
+.card-ilvl-word { color: var(--muted); font-size: 12px; }
+.card-profs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; font-size: 13px; }
+.card-prof-head { display: flex; justify-content: space-between; gap: var(--space-2); }
+.card-prof-head span:first-child { overflow-wrap: anywhere; min-width: 0; }
+.card-prof-rank { color: var(--muted); }
+.bar-track { height: 5px; border-radius: 3px; background: var(--line); }
+.bar-fill { height: 5px; border-radius: 3px; background: var(--prof); }
+.card-foot {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-3);
+  padding-top: var(--space-3); border-top: 1px solid var(--line); color: var(--muted); font-size: 13px;
+}
+.card-gain { color: var(--ok); }
+.card-gain:empty { display: none; }
+.card-note { margin: 0; color: var(--muted); font-size: 14px; }
+.card-missing {
+  justify-content: center; gap: 10px; min-height: 180px; padding: var(--space-5);
+  background: transparent; border: 1.5px dashed var(--line-strong);
+}
+.card-missing .card-name { font-size: 16px; }
+.card-missing p { margin: 0; color: var(--muted); font-size: 14px; }
+.link-button {
+  align-self: flex-start; min-height: 44px; padding: 0; cursor: pointer; font-weight: 500;
+  color: var(--link); background: none; border: 0; text-decoration: underline; text-underline-offset: 3px;
+}
+.table-title {
+  margin: var(--space-4) 0 0; font-family: var(--font-display); font-size: 18px; line-height: 24px; font-weight: 600;
+}
+/* a character card in its class colour, and a profession bar's width in
+   five-percent steps (the page sets no style of its own) */
+.cls-warrior .card-stripe { background: var(--class-warrior); }
+.cls-warrior .card-level { color: var(--class-warrior); background: var(--class-warrior-tile); border-color: var(--class-warrior); }
+.cls-warrior .card-class { color: var(--class-warrior); }
+.cls-paladin .card-stripe { background: var(--class-paladin); }
+.cls-paladin .card-level { color: var(--class-paladin); background: var(--class-paladin-tile); border-color: var(--class-paladin); }
+.cls-paladin .card-class { color: var(--class-paladin); }
+.cls-hunter .card-stripe { background: var(--class-hunter); }
+.cls-hunter .card-level { color: var(--class-hunter); background: var(--class-hunter-tile); border-color: var(--class-hunter); }
+.cls-hunter .card-class { color: var(--class-hunter); }
+.cls-rogue .card-stripe { background: var(--class-rogue); }
+.cls-rogue .card-level { color: var(--class-rogue); background: var(--class-rogue-tile); border-color: var(--class-rogue); }
+.cls-rogue .card-class { color: var(--class-rogue); }
+.cls-priest .card-stripe { background: var(--class-priest); }
+.cls-priest .card-level { color: var(--class-priest); background: var(--class-priest-tile); border-color: var(--class-priest); }
+.cls-priest .card-class { color: var(--class-priest); }
+.cls-deathknight .card-stripe { background: var(--class-deathknight); }
+.cls-deathknight .card-level { color: var(--class-deathknight-text); background: var(--class-deathknight-tile); border-color: var(--class-deathknight); }
+.cls-deathknight .card-class { color: var(--class-deathknight-text); }
+.cls-shaman .card-stripe { background: var(--class-shaman); }
+.cls-shaman .card-level { color: var(--class-shaman-text); background: var(--class-shaman-tile); border-color: var(--class-shaman); }
+.cls-shaman .card-class { color: var(--class-shaman-text); }
+.cls-mage .card-stripe { background: var(--class-mage); }
+.cls-mage .card-level { color: var(--class-mage); background: var(--class-mage-tile); border-color: var(--class-mage); }
+.cls-mage .card-class { color: var(--class-mage); }
+.cls-warlock .card-stripe { background: var(--class-warlock); }
+.cls-warlock .card-level { color: var(--class-warlock-text); background: var(--class-warlock-tile); border-color: var(--class-warlock); }
+.cls-warlock .card-class { color: var(--class-warlock-text); }
+.cls-monk .card-stripe { background: var(--class-monk); }
+.cls-monk .card-level { color: var(--class-monk); background: var(--class-monk-tile); border-color: var(--class-monk); }
+.cls-monk .card-class { color: var(--class-monk); }
+.cls-druid .card-stripe { background: var(--class-druid); }
+.cls-druid .card-level { color: var(--class-druid); background: var(--class-druid-tile); border-color: var(--class-druid); }
+.cls-druid .card-class { color: var(--class-druid); }
+.cls-demonhunter .card-stripe { background: var(--class-demonhunter); }
+.cls-demonhunter .card-level { color: var(--class-demonhunter-text); background: var(--class-demonhunter-tile); border-color: var(--class-demonhunter); }
+.cls-demonhunter .card-class { color: var(--class-demonhunter-text); }
+.cls-evoker .card-stripe { background: var(--class-evoker); }
+.cls-evoker .card-level { color: var(--class-evoker-text); background: var(--class-evoker-tile); border-color: var(--class-evoker); }
+.cls-evoker .card-class { color: var(--class-evoker-text); }
+.fill-0 { width: 0%; }
+.fill-1 { width: 5%; }
+.fill-2 { width: 10%; }
+.fill-3 { width: 15%; }
+.fill-4 { width: 20%; }
+.fill-5 { width: 25%; }
+.fill-6 { width: 30%; }
+.fill-7 { width: 35%; }
+.fill-8 { width: 40%; }
+.fill-9 { width: 45%; }
+.fill-10 { width: 50%; }
+.fill-11 { width: 55%; }
+.fill-12 { width: 60%; }
+.fill-13 { width: 65%; }
+.fill-14 { width: 70%; }
+.fill-15 { width: 75%; }
+.fill-16 { width: 80%; }
+.fill-17 { width: 85%; }
+.fill-18 { width: 90%; }
+.fill-19 { width: 95%; }
+.fill-20 { width: 100%; }
+
 /* Narrow windows and 400% zoom: the header and the nav wrap, the Commands
    list stacks above its form, the gutters narrow, and nothing is wider
    than the window. */
@@ -548,6 +753,8 @@ pre:empty { display: none; }
   .char-panel, .parchment, #detail { padding: var(--space-3); }
   .gear-table th, .gear-table td { padding-left: var(--space-2); padding-right: var(--space-2); }
   .gear-detail td { padding-left: var(--space-4); }
+  .status-cards { grid-template-columns: minmax(0, 1fr); }
+  .status-card, .card-body { padding: var(--space-4); }
 }
 /* Forced colours (Windows High Contrast) drop backgrounds and box shadows,
    so a selection draws a system-colour outline instead. */

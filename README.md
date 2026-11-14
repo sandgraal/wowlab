@@ -18,20 +18,20 @@
 
 **wowlab** is a free companion for World of Warcraft that runs on your own computer. It reads your game folder, never the game itself.
 
-🧙 **All your characters in one place.** 🆕 `wowlab ui` opens on the Account tab: every character you have played on this computer, in every game version you have installed, as of its last logout, with level, class, race, spec, item level and professions. Sort by any column, filter by class, and click a character for its gear, keys, macros and history. Race, spec and profession names come from the game's own tables, which wowlab downloads from wago.tools only when you ask: run `wowlab db2 fetch ChrRaces`, `wowlab db2 fetch ChrSpecialization` and `wowlab db2 fetch SkillLine` once for each game version. Until then they show as numbers.
+🧙 **All your characters in one place.** 🆕 `wowlab ui` opens on Characters: a card for every character you have played on this computer, in every game version you have installed, as of its last logout, with its level, race and class, item level, top professions, when you last played it and what it gained this week. Click a card for its gear, keys, macros and history. Below the cards, the same characters in a table you can sort by any column and filter by class. Race, class and profession names come from the game's own tables, which wowlab downloads from wago.tools only when you ask: press **Download names** at the top of Characters, or run `wowlab names fetch`, once for each game version. Until then they show as numbers.
 
-<p align="center"><img src="docs/assets/readme-account-tab.svg" width="100%" alt="The Account tab: five characters. Four show level, spec, item level, professions and when they last logged out; two of them also show class and race, and two say not recorded there. The fifth has nothing recorded yet, and its row says how to fix that."></p>
+<p align="center"><img src="docs/assets/readme-account-tab.svg" width="100%" alt="The table of all characters: five characters. Four show level, spec, item level, professions and when they last logged out; two of them also show class and race, and two say not recorded there. The fifth has nothing recorded yet, and its row says how to fix that."></p>
 
-🛟 **A UI you can put back.** 🆕 **Take a backup now**, at the top of the same tab, saves your settings, keybinds, macros, addons and their saved settings into wowlab's own folder, never your game folder. After a patch the tab tells you the game updated since your last backup, and **Restore this backup…** opens the restore, where you see what putting it back would change before anything changes.
+🛟 **A UI you can put back.** 🆕 **Back up now**, at the top of Characters, saves your settings, keybinds, macros, addons and their saved settings into wowlab's own folder, never your game folder. The card beside it says how long ago your last backup was, and after a patch it tells you the game updated since then. **Restore…** opens the restore, where you see what putting it back would change before anything changes. Backups lists the backup of each game version, with the same buttons.
 
-<p align="center"><img src="docs/assets/readme-backup-now.svg" width="100%" alt="The Backup line: the last backup was taken just now, the game updated since then, and two buttons, Take a backup now and Restore this backup."></p>
+<p align="center"><img src="docs/assets/readme-backup-now.svg" width="100%" alt="The backup line under Backups: the last backup was taken just now, the game updated since then, and two buttons, Take a backup now and Restore this backup."></p>
 
 <p align="center"><sub>Both pictures are of a test copy of a Forever install.</sub></p>
 
 The same backup from the command line is `wowlab snap create`. Take one before patch day or an addon update; afterwards, take another and `wowlab snap diff` shows what changed between them, and `wowlab snap restore` puts the files back. `wowlab undo` reverses wowlab's own last change. And:
 
 - 📈 **Each character over time.** 🆕 `wowlab char history` reads your snapshots back, one row per snapshot you took: level, item level and spec, and the gear and currencies that changed.
-- 🧩 **A patch-day check.** 🆕 `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters have it turned on. The Account tab's Patch day card lists the addons with a problem, counts the ones that are current, and lists the saved data that no installed addon claims or that wowlab cannot read.
+- 🧩 **A patch-day check.** 🆕 `wowlab addons check` lists every addon against your game version: out of date, missing an addon it needs, and which characters have it turned on. In `wowlab ui`, a card at the top of Characters says how many of your addons load on this game version and whether anything needs fixing, and Addons lists the addons with a problem and the saved data that no installed addon claims or that wowlab cannot read.
 - 🎹 **A keybind coach.** `wowlab binds coach` reads your own combat log and shows the spells you cast most on awkward keys. It needs combat logging turned on in the game and the lab-addon's record of your action bars.
 
 Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
@@ -89,11 +89,11 @@ wowlab snap create   # back up your setup before patch day or an addon update
 
 **🖥️ `wowlab ui`** opens your browser on a page only this computer can reach, and keeps working until you stop it with Ctrl-C. If no browser opens, paste the link it prints. When your game is not in the usual place, set `WOWLAB_WOW_ROOT` first ([the install guide](docs/INSTALL.md) shows how).
 
-- 🏰 **Account** 🆕, the home tab: every character, sortable and filterable (the first picture above). A character with nothing recorded yet says how to fix that. Above the characters, the **Backup** line (the second picture) and the **Patch day** card.
-- 🧙 **Character** 🆕: one character's gear with item-quality colours, every key and what it does, every macro with the checker's findings, its **History** from your snapshots, and a **See it dressed** link.
-- 🎨 **Looks** 🆕: every race's customization options and your saved looks, the same page `wowlab looks page` makes.
-- 🗂️ **Explorer** and **Gaps**: every file in your install, what it is, who writes it and whether it is safe to touch, and the files wowlab does not know yet.
-- ⌨️ **Commands**: run any wowlab command from the page. One that changes files shows its plan first and runs only when you press **Confirm** 🆕.
+- 🏰 **Characters** 🆕, the home screen: a card for your backup and one for your addons, then a card for each character, and below them all your characters as a table you can sort and filter (the first picture above). A character with nothing recorded yet says how to fix that, and a last card says how a missing character shows up. Click a character to open its page: its gear with item-quality colours, every key and what it does, every macro with the checker's findings, its **History** from your snapshots, and a **See it dressed** link.
+- 🛟 **Backups** 🆕: the backup of each game version (the second picture), **Take a backup now**, what changed since the one before, and **Restore this backup…**.
+- 🧩 **Addons** 🆕: the patch-day check, the addons the game may skip and the saved data no installed addon declares.
+- ⌨️ **Keybinds** 🆕: every key of a character and what it does.
+- 🗂️ **Advanced**: **Explorer** and **Gaps**, every file in your install, what it is, who writes it and whether it is safe to touch, and the files wowlab does not know yet; **Commands**, to run any wowlab command from the page (one that changes files shows its plan first and runs only when you press **Confirm** 🆕); and 🆕 **Looks**, every race's customization options and your saved looks, the same page `wowlab looks page` makes.
 
 `wowlab ui` changes game files only when you confirm a plan it showed you.
 
@@ -126,7 +126,7 @@ wowlab is built and tested on Forever on macOS; retail and Windows SavedVariable
 
 | You're thinking… | wowlab's answer |
 |---|---|
-| **"I have alts everywhere and lose track of them."** | The 🆕 Account tab lists every character you have played on this computer in one table, as of its last logout: level, class, spec, item level, professions, and when you last logged out on it. |
+| **"I have alts everywhere and lose track of them."** | 🆕 Characters in `wowlab ui` shows a card for every character you have played on this computer, as of its last logout: level, race and class, item level, professions, when you last played it and what it gained this week. |
 | **"Patch day broke my UI."** | Take a snapshot before patch day or an addon update. If something goes wrong, take another and `wowlab snap diff` shows what changed, `wowlab snap restore` puts the files back (files added since are left alone), and 🆕 `wowlab addons check` shows which addons are out of date. |
 | **"What is `config-cache.wtf`, and is it safe to change?"** | `wowlab explain config-cache.wtf` answers that for any file in your install: what it is, who writes it, when, and whether editing it is safe. 🆕 A bare file name is enough: it finds every file by that name. |
 | **"My addon settings are a mess."** | Read any addon's saved settings as plain text, with nothing executed and nothing changed. Merge one addon's settings between characters without touching the rest. |

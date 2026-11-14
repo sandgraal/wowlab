@@ -34,7 +34,43 @@
 <button id="tab-looks" class="tab" type="button" role="tab" aria-selected="false" aria-controls="looks-view">Looks</button>
 </nav>
 <section id="account-view" role="tabpanel" aria-labelledby="tab-account">
+<div id="names-offer" class="names-offer" hidden>
+<p class="names-say"><strong>Names need a one-time download.</strong> <span id="names-why">Until then, cards show numbers where race, class and profession names go.</span></p>
+<button id="names-fetch" type="button">Download names</button>
+<p class="names-note">Downloads the game's public name tables from wago.tools, sending your game version.</p>
+<p id="names-status" role="status"></p>
+</div>
+<div class="status-cards" role="region" aria-label="Status">
+<div id="home-backup" class="panel status-card status-wait">
+<span class="status-icon" aria-hidden="true"><svg class="status-mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
+<div class="status-words">
+<p id="home-backup-title" class="status-title">Reading your backups…</p>
+<p id="home-backup-detail" class="status-detail"></p>
+<p id="home-backup-status" class="status-said" role="status"></p>
+</div>
+<div class="status-actions">
+<button id="home-restore" class="backup-restore" type="button" hidden>Restore…</button>
+<button id="home-backup-now" class="backup-now" type="button" disabled>Back up now</button>
+</div>
+</div>
+<div id="home-addons" class="panel status-card status-wait">
+<span class="status-icon" aria-hidden="true"><svg class="status-mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M4 7h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7z"/></svg></span>
+<div class="status-words">
+<p id="home-addons-title" class="status-title">Checking your addons…</p>
+<p id="home-addons-detail" class="status-detail"></p>
+</div>
+<div class="status-actions">
+<button id="home-addons-open" class="status-open" type="button">See addons</button>
+</div>
+</div>
+</div>
+<div class="chars-head">
 <h2 class="page-title">Your characters</h2>
+<span class="chars-when">as of each one's last logout</span>
+</div>
+<p id="cards-status" class="cards-status" role="status"></p>
+<div id="char-cards" class="char-cards"></div>
+<h3 class="table-title">All characters as a table</h3>
 <div class="toolbar panel">
 <label id="hub-flavor-box">Flavor <select id="hub-flavor"></select></label>
 <label>Class <select id="hub-class"></select></label>
@@ -43,6 +79,7 @@
 <div id="hub-table" class="panel hub-table" role="region" aria-label="Characters" tabindex="0"></div>
 <details class="about"><summary>About this data</summary>
 <p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. This tab reads with <code>wowlab char list --summary</code>. Pick a character to open it in the Character tab.</p>
+<p class="intro">A card's last played date is when the game last wrote that character's lab-addon file. Its gain (“+6 levels this week”) is shown when the newest save is from the last seven days: it compares that save with the last one before those days that your backups hold, or, when every save is from those days, with the first of them, and names that save's date when it is older than a week. The saves are read with <code>wowlab char history</code>. The backup card is the backup line of the game shown in the header; the addons card counts what <code>wowlab addons check</code> finds current for that game. Names of races, classes and professions come from game tables <code>wowlab names fetch</code> downloads once per game version.</p>
 </details>
 </section>
 <section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
