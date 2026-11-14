@@ -75,7 +75,12 @@ jobs:
     name: Lab suite
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The suite outgrew 30 minutes run one test at a time (v0.2.0's first
+    # tag run was cancelled at 30, 2026-11-13). It now runs as ci.yml's
+    # quality job does: everything not `serial` across the runner's cores,
+    # then the `serial` budget tests alone. Together they are every suite
+    # but @live, the parser suite included.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,8 +93,10 @@ jobs:
         run: uv sync --frozen
       - name: Generate a decimal-comma locale (serializer determinism graders)
         run: sudo locale-gen de_DE.UTF-8
-      - name: pytest (every suite but @live, the parser suite included)
-        run: uv run --frozen pytest -q
+      - name: pytest (parallel; every suite but @live and serial, the parser suite included)
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial"
+      - name: pytest (serial)
+        run: uv run --frozen pytest -q -m "serial and not live"
 
   # Builds and checks the files, records their SHA-256 as job outputs, and
   # uploads them. It never runs the built wheel: that happens in `smoke`, so
