@@ -339,9 +339,9 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "flavors.lab_addon.status": AS_IS,
     "flavors.lab_addon.version": REDACT,
     "flavors.lab_addon.detail": REDACT,
-    # The name tables missing from the cache (M18-02): table names, fixed
-    # text; the command holds the caller's --root, a path.
-    "flavors.names_missing": AS_IS,
+    # The name tables missing from the cache (M18-02): table names, redacted
+    # like any text; the command holds the caller's --root, a path.
+    "flavors.names_missing": REDACT,
     "flavors.names_command": REDACT,
     "other_dirs": REDACT,
     "not_taken.name": REDACT,

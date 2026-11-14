@@ -400,6 +400,7 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
+        ["names", "fetch"],
         ["looks", "races", "--build", TABLE_BUILD],
         ["looks", "options", "human", "--build", TABLE_BUILD],
         ["looks", "options", "human", "--sex", "0", "--build", TABLE_BUILD],
