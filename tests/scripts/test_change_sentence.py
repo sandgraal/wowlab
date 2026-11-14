@@ -64,18 +64,25 @@ def _page() -> str:
     return (TEMPLATES / "page.html").read_text(encoding="utf-8")
 
 
-def _banner() -> str:
-    match = re.search(r'<div class="banner-text">(.*?)</div>', _page(), re.S)
-    assert match is not None
-    return match.group(1)
-
-
-def _commands_intro() -> str:
+# M18-03: the banner's paragraph moved under the Explorer's About this data,
+# and every view's intro became the closed About this data at its end.
+def _about(view: str) -> str:
     match = re.search(
-        r'<section id="commands-view"[^>]*>\s*<p class="intro">(.*?)</p>', _page(), re.S
+        rf'<section id="{view}"[^>]*>.*?<details class="about"><summary>About this data'
+        r'</summary>\s*<p class="intro">(.*?)</p>',
+        _page(),
+        re.S,
     )
     assert match is not None
     return match.group(1)
+
+
+def _banner() -> str:
+    return _about("explorer-view")
+
+
+def _commands_intro() -> str:
+    return _about("commands-view")
 
 
 def _hint_note() -> str:

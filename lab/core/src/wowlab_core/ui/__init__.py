@@ -310,9 +310,11 @@ def _colour_rules() -> str:
     return "\n".join(rules) + "\n"
 
 
-# The Wellspring fonts (ADR-0035 and its amendment of 2026-10-26): twelve
-# WOFF2 files in `templates/fonts/`, copied unchanged from Google Fonts, each
-# written into the page's own style as one `@font-face` with a `data:` URL.
+# The companion's fonts (ADR-0035 and its amendments of 2026-10-26 and
+# 2026-11-14): eight WOFF2 files in `templates/fonts/`, copied unchanged from
+# Google Fonts, each written into the page's own style as one `@font-face`
+# with a `data:` URL. Inter and Sora are variable files: Google serves one
+# file per subset for the weight range, so the rule names the range.
 # The two `unicode-range` values are those of Google's stylesheet for the
 # `latin` and `latin-ext` subsets; a glyph outside both falls back, per
 # character, to the next face in the page's font stack.
@@ -327,18 +329,14 @@ _LATIN_EXT_RANGE = (
 )
 # File name, family, style, weight, unicode-range: ADR-0035's table, in its order.
 _FONTS: tuple[tuple[str, str, str, str, str], ...] = (
-    ("alegreya-latin.woff2", "Alegreya", "normal", "400 900", _LATIN_RANGE),
-    ("alegreya-latin-ext.woff2", "Alegreya", "normal", "400 900", _LATIN_EXT_RANGE),
-    ("alegreya-italic-latin.woff2", "Alegreya", "italic", "400 900", _LATIN_RANGE),
-    ("alegreya-italic-latin-ext.woff2", "Alegreya", "italic", "400 900", _LATIN_EXT_RANGE),
-    ("alegreya-sc-500-latin.woff2", "Alegreya SC", "normal", "500", _LATIN_RANGE),
-    ("alegreya-sc-500-latin-ext.woff2", "Alegreya SC", "normal", "500", _LATIN_EXT_RANGE),
-    ("alegreya-sc-700-latin.woff2", "Alegreya SC", "normal", "700", _LATIN_RANGE),
-    ("alegreya-sc-700-latin-ext.woff2", "Alegreya SC", "normal", "700", _LATIN_EXT_RANGE),
     ("ibm-plex-mono-400-latin.woff2", "IBM Plex Mono", "normal", "400", _LATIN_RANGE),
     ("ibm-plex-mono-400-latin-ext.woff2", "IBM Plex Mono", "normal", "400", _LATIN_EXT_RANGE),
     ("ibm-plex-mono-500-latin.woff2", "IBM Plex Mono", "normal", "500", _LATIN_RANGE),
     ("ibm-plex-mono-500-latin-ext.woff2", "IBM Plex Mono", "normal", "500", _LATIN_EXT_RANGE),
+    ("inter-latin.woff2", "Inter", "normal", "400 600", _LATIN_RANGE),
+    ("inter-latin-ext.woff2", "Inter", "normal", "400 600", _LATIN_EXT_RANGE),
+    ("sora-latin.woff2", "Sora", "normal", "600 700", _LATIN_RANGE),
+    ("sora-latin-ext.woff2", "Sora", "normal", "600 700", _LATIN_EXT_RANGE),
 )
 
 
@@ -347,7 +345,7 @@ def _font_rules() -> str:
     URL (ADR-0035). Only the package's own files are read; the family, style,
     weight and range are the constants above, so a rule holds nothing else."""
     folder = importlib.resources.files(__name__) / "templates" / "fonts"
-    rules = ["/* the Wellspring fonts, from this package's fonts/ folder (SIL OFL 1.1) */"]
+    rules = ["/* the companion's fonts, from this package's fonts/ folder (SIL OFL 1.1) */"]
     for name, family, style, weight, ranges in _FONTS:
         data = base64.b64encode((folder / name).read_bytes()).decode("ascii")
         rules.append(

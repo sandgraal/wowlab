@@ -774,7 +774,7 @@ def char_list(
     schema, the client that saved it and the spec, or why it could not be
     read. For one without: "no lab record", and how many CVars, macros and
     SavedVariables files its other files hold. With --summary, what each
-    character's record says instead (the Account tab of wowlab ui shows the
+    character's record says instead (Characters in wowlab ui shows the
     same); --notes then prints the standing notes. A file or
     place wowlab could not read or look inside is named on stderr and the
     command then exits 1; the others are still listed.

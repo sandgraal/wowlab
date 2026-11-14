@@ -1,5 +1,7 @@
 # Wellspring — the design of `wowlab ui`
 
+> **Superseded (2026-11-14, M18-03).** `docs/design/COMPANION.md` is the spec for `wowlab ui` now; `main` draws the companion design. This book, `wellspring-tokens.json`, `wellspring-components.css` and the two sigil files are kept as the record of the M16 design and no longer describe the page. Its fonts (Alegreya and Alegreya SC) left the package under ADR-0035's amendment of 2026-11-14.
+
 Owner request, 2026-10-26: redesign `wowlab ui` as a fantasy-themed app. This is the spec for that redesign; tickets M16-50 to M16-52 build it, and ADR-0035 (accepted 2026-10-26) decides how its fonts ship. Until M16-52 merges, `main` still draws the old look described by `lab/core/src/wowlab_core/ui/templates/page.css`.
 
 | File | What it is |

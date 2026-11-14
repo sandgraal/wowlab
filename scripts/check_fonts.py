@@ -1,14 +1,15 @@
-"""Check the pinned Wellspring fonts against their sources (ADR-0035, M16-51).
+"""Check the pinned UI fonts against their sources (ADR-0035, M16-51, M18-03).
 
-`wowlab ui` writes twelve WOFF2 files into its page's own style; they and
-their two SIL Open Font License texts live in
+`wowlab ui` writes eight WOFF2 files into its page's own style; they and
+their three SIL Open Font License texts live in
 `lab/core/src/wowlab_core/ui/templates/fonts/`, copied unchanged from the
-URLs below (ADR-0035's table and its amendment of 2026-10-26). This script
-downloads each URL and checks that the bytes served there, the pin below
-and the file in the package are one and the same.
+URLs below (ADR-0035's table and its amendments of 2026-10-26 and
+2026-11-14). This script downloads each URL and checks that the bytes
+served there, the pin below and the file in the package are one and the
+same.
 
 Run by hand, never in CI and never from a test (ADR-0012): it makes
-fourteen requests to fonts.gstatic.com and raw.githubusercontent.com. The
+eleven requests to fonts.gstatic.com and raw.githubusercontent.com. The
 offline check of the package files against the same pins is
 `lab/core/tests/test_ui_fonts.py`.
 
@@ -45,54 +46,6 @@ class Pin(NamedTuple):
 
 PINS: tuple[Pin, ...] = (
     Pin(
-        "alegreya-latin.woff2",
-        _GSTATIC + "alegreya/v41/4UaBrEBBsBhlBjvfkSLhx6g.woff2",
-        43476,
-        "2431eca3ed8ed66e713cf7093d170d77a083a793a5f19a615506d63770abd973",
-    ),
-    Pin(
-        "alegreya-latin-ext.woff2",
-        _GSTATIC + "alegreya/v41/4UaBrEBBsBhlBjvfkSLvx6jx4w.woff2",
-        37856,
-        "16b24f84da5ac12dc79ea1060e3fd4e299f19146f607021f81bcf0b8123fe5bd",
-    ),
-    Pin(
-        "alegreya-italic-latin.woff2",
-        _GSTATIC + "alegreya/v41/4UaHrEBBsBhlBjvfkSLk96rp5w.woff2",
-        44456,
-        "1846c307495f922d3fc00ce3c32aaaba8eefc7c348425a8244a7ffc63ddc0993",
-    ),
-    Pin(
-        "alegreya-italic-latin-ext.woff2",
-        _GSTATIC + "alegreya/v41/4UaHrEBBsBhlBjvfkSLk96Tp56N1.woff2",
-        38316,
-        "3b6ec2f8e48aff730aaebeb52423ba2f7967c5b80b1727907e4b1154786fd54c",
-    ),
-    Pin(
-        "alegreya-sc-500-latin.woff2",
-        _GSTATIC + "alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZZc-oU2SKo.woff2",
-        30880,
-        "98b4a138b6117d621a122a7c8590aa945720e4953d926b921a61e0d3f96a02c9",
-    ),
-    Pin(
-        "alegreya-sc-500-latin-ext.woff2",
-        _GSTATIC + "alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZZc-oU4SKqGFQ.woff2",
-        31944,
-        "fae2927855146328875e379a3f0dcd5ab26629413347838b32190ea441b1a4b7",
-    ),
-    Pin(
-        "alegreya-sc-700-latin.woff2",
-        _GSTATIC + "alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZYU_IU2SKo.woff2",
-        30660,
-        "988821cdcc03a1c0f7587143e4d921582595c5bcd803061863f7c3be7dd0d4b8",
-    ),
-    Pin(
-        "alegreya-sc-700-latin-ext.woff2",
-        _GSTATIC + "alegreyasc/v28/taiTGmRtCJ62-O0HhNEa-ZYU_IU4SKqGFQ.woff2",
-        31656,
-        "42e3b3a35260c3626cb1e5fb71a134da3e856a8820d4ab757261fc383aa762f5",
-    ),
-    Pin(
         "ibm-plex-mono-400-latin.woff2",
         _GSTATIC + "ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2",
         14708,
@@ -117,16 +70,46 @@ PINS: tuple[Pin, ...] = (
         "6bb06407c97584b0867a959e05e8874693bfeb8c317de190811c51598f2d99ea",
     ),
     Pin(
-        "OFL-Alegreya.txt",
-        _OFL + "alegreya/OFL.txt",
-        4395,
-        "f6f60d5d4cf4f4b1fc4e41353c897a2f5a16e6396c0cd8fa8bdfd2f4586a9a68",
+        "inter-latin.woff2",
+        _GSTATIC + "inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2",
+        48432,
+        "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4",
+    ),
+    Pin(
+        "inter-latin-ext.woff2",
+        _GSTATIC + "inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa25L7W0Q5n-wU.woff2",
+        85272,
+        "a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2",
+    ),
+    Pin(
+        "sora-latin.woff2",
+        _GSTATIC + "sora/v17/xMQ9uFFYT72X5wkB_18qmnndmSdSnh2BAfO5mnuyOo1lfiQwV6-xo6eeIw.woff2",
+        25240,
+        "3902474d3ece89c8580d5ef3325cf58753e6e45a86f9957b4dacc4fce2e7fde1",
+    ),
+    Pin(
+        "sora-latin-ext.woff2",
+        _GSTATIC + "sora/v17/xMQ9uFFYT72X5wkB_18qmnndmSdSnh2BAfO5mnuyOo1lfiQwWa-xo6eeI7fM.woff2",
+        12116,
+        "8d9b4a4136bf8cf8b00c65978e7801c372d14ed901fa387cc7352a40b96cd006",
     ),
     Pin(
         "OFL-IBMPlexMono.txt",
         _OFL + "ibmplexmono/OFL.txt",
         4456,
         "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    ),
+    Pin(
+        "OFL-Inter.txt",
+        _OFL + "inter/OFL.txt",
+        4377,
+        "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57",
+    ),
+    Pin(
+        "OFL-Sora.txt",
+        _OFL + "sora/OFL.txt",
+        4385,
+        "ba0b9729c9428ba79a0459ab8ec575791b51509dbec213e383d0316d37fec299",
     ),
 )
 

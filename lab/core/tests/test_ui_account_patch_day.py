@@ -148,11 +148,11 @@ def _blocks(out: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # ─── the card on the fixtures ────────────────────────────────────────────────
 
 
-def test_the_page_holds_the_card_on_the_account_tab(server: Any) -> None:
+def test_the_page_holds_the_card_in_the_addons_section(server: Any) -> None:
+    # M18-03: the card moved from the Account tab to the Addons section, as
+    # it was; its intro went under About this data.
     body = hub_tab._page(server).body.decode("utf-8")
-    view = body[
-        body.index('<section id="account-view"') : body.index('<section id="explorer-view"')
-    ]
+    view = body[body.index('<section id="addons-view"') : body.index('<section id="explorer-view"')]
     assert re.search(
         r'<div id="patch-day" class="panel patch-day" role="region" '
         r'aria-labelledby="patch-day-heading">',
@@ -160,8 +160,8 @@ def test_the_page_holds_the_card_on_the_account_tab(server: Any) -> None:
     )
     assert '<h3 id="patch-day-heading">Patch day</h3>' in view
     assert '<p id="patch-day-status" role="status"></p>' in view
-    # After the backup panel, before the characters' table.
-    assert view.index('id="backup"') < view.index('id="patch-day"') < view.index('id="hub-table"')
+    assert '<h2 class="page-title">Addons</h2>' in view
+    assert view.index('id="patch-day"') < view.index('<details class="about">')
 
 
 def test_the_card_reads_each_flavor_after_the_hub_beside_the_tree_constructed(

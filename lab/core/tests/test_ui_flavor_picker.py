@@ -41,6 +41,11 @@ function flavorView() {
     boxHidden: box ? box.hidden : null,
     value: picker ? picker.value : null,
     options: picker ? Array.from(picker.options, (o) => o.value) : null,
+    // M18-03: what the header shows for each game, and the one-game line.
+    labels: picker ? Array.from(picker.options, (o) => o.textContent) : null,
+    labelKids: picker ? Array.from(picker.options, (o) => o.children.length) : null,
+    gameHidden: ids["game-name"] ? ids["game-name"].hidden : null,
+    gameText: ids["game-name"] ? ids["game-name"].textContent : null,
   };
 }
 """
@@ -306,3 +311,95 @@ def test_every_run_carries_the_picked_flavor_constructed(
         if tuple(body["command"]) in takes and body["params"].get("whole_install") is not True:
             assert body["params"].get("flavor") in (FLAVOR, EMPTY), body
     assert all("flavor" not in b["params"] for b in runs if b["params"].get("whole_install"))
+
+
+# ─── the game named for people (M18-03) ──────────────────────────────────────
+
+
+def _patch(version: str | None) -> str:
+    """The patch the header shows: the version's first three parts."""
+    return ".".join((version or "").split(".")[:3])
+
+
+def test_two_flavors_are_named_for_people_in_the_picker_constructed(
+    server: Any, two: Path, tmp_path: Path
+) -> None:
+    """The picker's options keep the folder as their value and show "WoW",
+    the folder's words capitalised, and the patch; no folder name is shown."""
+    scenario = _scenario(server, [], [FLAVOR, EMPTY])
+    listed = json.loads(scenario["runs"][0]["stdout"])
+    versions = {f["folder"]: f["version"] for f in listed["flavors"]}
+    out = _drive(tmp_path / "node", scenario)
+    first = out["first"]
+    assert first["options"] == [EMPTY, FLAVOR]
+    assert first["labels"] == [
+        f"WoW Alpha · {_patch(versions[EMPTY])}",
+        f"WoW Classic Beta · {_patch(versions[FLAVOR])}",
+    ]
+    assert all("_" not in label for label in first["labels"])
+    # Text only: each option holds one string and no element.
+    assert first["labelKids"] == [0, 0]
+    # With the picker shown, the one-game line is hidden.
+    assert first["gameHidden"] is True
+
+
+def test_one_flavor_names_the_game_on_a_line(server: Any, install: Path, tmp_path: Path) -> None:
+    """With one flavor the picker is not filled and no `char list --brief`
+    runs: the version comes from the Characters table's own `char list
+    --summary`, which the scenario holds as the real CLI printed it. Without
+    that report the line says the game's name alone."""
+    scenario = _scenario(server, [], [])
+    summary = first_stage._run(server, ["char", "list"], {"summary": True}).json()
+    scenario["runs"].append(
+        {
+            "command": ["char", "list"],
+            "params": {"summary": True},
+            "stdout": summary["stdout"],
+            "exit_code": summary["exit_code"],
+        }
+    )
+    [only] = json.loads(summary["stdout"])["flavors"]
+    out = _drive(tmp_path / "node", scenario)
+    assert out["first"]["boxHidden"] is True
+    assert out["first"]["gameHidden"] is False
+    assert out["first"]["gameText"] == f"WoW Classic Beta · {_patch(only['version'])}"
+
+
+def test_a_hostile_version_is_drawn_inert_and_escaped_constructed(
+    server: Any, two: Path, tmp_path: Path
+) -> None:
+    """A version is the report's text (from .build.info): it goes through
+    `visible`, so a bidi override is shown as its code point, and through
+    `textContent`, so markup stays text. Constructed: the version is
+    replaced in the reports the page reads."""
+    hostile = "1.2.3" + first_stage.RLO + first_stage.IMG
+    scenario = _scenario(server, [], [FLAVOR, EMPTY])
+    for run in scenario["runs"]:
+        if run["command"] != ["char", "list"]:
+            continue
+        report = json.loads(run["stdout"])
+        for f in report.get("flavors", []):
+            if f["folder"] == EMPTY:
+                f["version"] = hostile
+        run["stdout"] = json.dumps(report)
+    out = _drive(tmp_path / "node", scenario)
+    label = out["first"]["labels"][0]
+    assert label == "WoW Alpha · 1.2.3⟨U+202E⟩" + first_stage.IMG
+    assert first_stage.RLO not in label
+    assert out["first"]["labelKids"][0] == 0
+
+
+def test_the_name_is_made_with_visible_and_written_as_text() -> None:
+    """Static: `gameName` returns `visible(...)`, and the functions that
+    write a name into the header use `make` and `textContent` only."""
+    script = (first_stage._TEMPLATES / "page.js").read_text(encoding="utf-8")
+    start = script.index("  function gameName(folder) {")
+    body = script[start : script.index("  // ─── the explorer ───", start)]
+    assert "return visible(version ? named" in body
+    fill = script[script.index("  async function fillRunFlavors(") : start]
+    for part in (body, fill):
+        assert "innerHTML" not in part and "insertAdjacentHTML" not in part
+        assert "outerHTML" not in part and "setAttribute" not in part
+    assert 'make("option", gameName(folder))' in fill
+    assert "option.textContent = gameName(option.value)" in body
+    assert 'line.textContent = one === null ? "" : gameName(one)' in body

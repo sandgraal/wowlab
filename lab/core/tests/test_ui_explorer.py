@@ -331,7 +331,7 @@ DRESSING_PARSE = "parsed = new URL(value);"
 def test_no_external_url_appears_in_the_page(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     # M16-51 (ADR-0035): `url(`, `@font-face` and `data:font` appear only in
-    # exactly twelve `@font-face` rules, each with one `src`, a
+    # exactly eight `@font-face` rules, each with one `src`, a
     # `data:font/woff2;base64,` URL that decodes to one of the pinned files;
     # every entry of `_EXTERNAL` is checked on the rest of the page.
     body = without_font_faces(body)
@@ -1922,9 +1922,11 @@ def test_badges_are_drawn_in_their_forces() -> None:
         assert glyph not in (_TEMPLATES / "page.html").read_text(encoding="utf-8")
 
 
+# M18-03 (ADR-0035's amendment of 2026-11-14): Sora and Inter, each falling
+# back to the system's sans-serif stack; IBM Plex Mono as before.
 _STACKS = {
-    "--font-display": '"Alegreya SC", "Palatino Linotype", Palatino, Georgia, serif',
-    "--font-serif": 'Alegreya, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
+    "--font-display": 'Sora, system-ui, -apple-system, "Segoe UI", sans-serif',
+    "--font-text": 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
     "--font-mono": '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace',
 }
 
@@ -1937,7 +1939,7 @@ def test_three_font_stacks_and_no_art_from_outside() -> None:
     root = _root_vars(css)
     for name, stack in _STACKS.items():
         assert root.get(name) == stack, name
-        assert stack.rsplit(",", 1)[-1].strip() in ("serif", "monospace"), name
+        assert stack.rsplit(",", 1)[-1].strip() in ("sans-serif", "monospace"), name
     families = re.findall(r"(?<![-\w])font-family\s*:\s*([^;}]+)", css)
     assert families
     assert {f.strip() for f in families} <= {f"var({name})" for name in _STACKS}, families

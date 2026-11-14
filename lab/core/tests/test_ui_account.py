@@ -256,9 +256,11 @@ def test_account_is_the_first_tab_and_opens_by_default(server: Any) -> None:
         r'<div id="hub-table"[^>]*role="region"[^>]*aria-label="Characters"[^>]*tabindex="0"', body
     )
     view = body[
-        body.index('<section id="account-view"') : body.index('<section id="explorer-view"')
+        body.index('<section id="account-view"') : body.index('<section id="character-view"')
     ]
-    assert '<h2 class="unseen">Account</h2>' in view
+    # M18-03: the view sits under the Characters section with a visible
+    # title (it was the Account tab, titled for screen readers only).
+    assert '<h2 class="page-title">Your characters</h2>' in view
     assert '<p id="hub-status" role="status"></p>' in view
     assert "<label>Class <select" in view and ">Flavor <select" in view
 
@@ -595,9 +597,11 @@ def test_the_hub_table_wraps_only_between_words() -> None:
     cell may break anywhere. The hub's cells, names and code wrap only
     between words, and the box scrolls sideways instead. The other tabs'
     tables keep the generic rule."""
-    import test_ui_wellspring as wellspring
+    # The sheet's reader moved with the design (M18-03: test_ui_wellspring.py
+    # became test_ui_companion.py).
+    import test_ui_companion as companion
 
-    rules = wellspring._rules(wellspring._css())
+    rules = companion._rules(companion._css())
     # The table's rules (the status line above it, `#hub-status`, is prose
     # and may break a long folder name anywhere).
     hub_rules = [(s, d) for m, s, d in rules if not m and ".hub" in s and "#hub-status" not in s]

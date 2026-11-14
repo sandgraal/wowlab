@@ -44,8 +44,8 @@ is a doctest file to it), and the other is prose written here. pytest is
 also kept out of the fixtures (`norecursedirs` in pyproject.toml, round 4);
 the fixture suites live beside it and read it as data.
 
-Outside the fixtures, only the twelve pinned font files of ADR-0035 are left
-out, by exact path (`PINNED_FONTS`, M16-51): they are binary fonts, held to
+Outside the fixtures, only the eight pinned font files of ADR-0035 are left
+out, by exact path (`PINNED_FONTS`, M16-51, M18-03): they are binary fonts, held to
 their SHA-256 by lab/core/tests/test_ui_fonts.py. Any other file beside them,
 another `.woff2` included, is scanned.
 """
@@ -75,7 +75,8 @@ FIXTURE_INDEX = FIXTURES + "README.md"
 CAPTURE_SUFFIXES = frozenset(
     {".lua", ".wtf", ".txt", ".csv", ".json", ".gz", ".info", ".html", ".toc", ".bak"}
 )
-# The twelve WOFF2 files of ADR-0035 (M16-51) are compressed binary fonts,
+# The eight WOFF2 files of ADR-0035 (M16-51; Inter and Sora since its
+# amendment of 2026-11-14, M18-03) are compressed binary fonts,
 # never text, copied unchanged from pinned URLs; their bytes are held to
 # their SHA-256 by lab/core/tests/test_ui_fonts.py, which also fails on any
 # other file in their folder, so a changed byte fails there. Only these exact
@@ -83,18 +84,14 @@ CAPTURE_SUFFIXES = frozenset(
 PINNED_FONTS = frozenset(
     "lab/core/src/wowlab_core/ui/templates/fonts/" + name + ".woff2"
     for name in (
-        "alegreya-latin",
-        "alegreya-latin-ext",
-        "alegreya-italic-latin",
-        "alegreya-italic-latin-ext",
-        "alegreya-sc-500-latin",
-        "alegreya-sc-500-latin-ext",
-        "alegreya-sc-700-latin",
-        "alegreya-sc-700-latin-ext",
         "ibm-plex-mono-400-latin",
         "ibm-plex-mono-400-latin-ext",
         "ibm-plex-mono-500-latin",
         "ibm-plex-mono-500-latin-ext",
+        "inter-latin",
+        "inter-latin-ext",
+        "sora-latin",
+        "sora-latin-ext",
     )
 )
 # The git index mode of a symlink, whose blob is the link's target text.
@@ -234,7 +231,7 @@ def _on_disk(root: Path, name: str, dirs: dict[Path, bool]) -> Path | None:
 
 def _scanned(name: str) -> bool:
     """Is the file scanned (everything but a capture under the fixtures and
-    the twelve pinned font files)?"""
+    the eight pinned font files)?"""
     if name in PINNED_FONTS:
         return False
     return not name.startswith(FIXTURES) or Path(name).suffix.lower() not in CAPTURE_SUFFIXES
@@ -322,11 +319,12 @@ def test_bidi_check_constructed_controls(tmp_path: Path) -> None:
     assert _scanned(FIXTURES + "notes.md")
     assert _scanned(FIXTURES + "conftest.py")
     fonts = "lab/core/src/wowlab_core/ui/templates/fonts/"
-    assert len(PINNED_FONTS) == 12
-    assert not _scanned(fonts + "alegreya-latin.woff2")
-    assert _scanned(fonts + "OFL-Alegreya.txt")
+    assert len(PINNED_FONTS) == 8
+    assert not _scanned(fonts + "inter-latin.woff2")
+    assert _scanned(fonts + "OFL-Inter.txt")
     assert _scanned(fonts + "planted.woff2")
-    assert _scanned(fonts.upper() + "ALEGREYA-LATIN.WOFF2")
+    assert _scanned(fonts + "alegreya-latin.woff2")
+    assert _scanned(fonts.upper() + "INTER-LATIN.WOFF2")
     assert _misplaced(FIXTURES + "notes.md")
     assert _misplaced(FIXTURES + "wago/test_x.py")
     assert not _misplaced(FIXTURE_INDEX)
