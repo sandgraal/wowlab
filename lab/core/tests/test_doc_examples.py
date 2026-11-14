@@ -74,14 +74,13 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     (
         "README.md",
         "uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/"
-        "v0.1.0/wowlab_core-0.1.0-py3-none-any.whl#sha256="
-        "a3c3bd86f98600f26db4cb10f69486cca7e1a62d032d0fe35b09c53fcc9be639",
+        "v0.2.1/wowlab-0.2.1-py3-none-any.whl#sha256="
+        "b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5",
         "an install, from the network",
     ),
     (
         "README.md",
-        "wowlab ui            # the browser view; every character in one place arrives with the "
-        "next release",
+        "wowlab ui            # the browser view, opening on every character in one place",
         _NO_EXIT,
     ),
     ("README.md", "git clone https://github.com/sandgraal/wowlab && cd wowlab", _FROM_SOURCE),
