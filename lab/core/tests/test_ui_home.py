@@ -782,3 +782,27 @@ def test_restore_not_offered_puts_no_id_on_the_home_card_constructed(
     assert status == "Restoring is not offered on this page. See Backups for details."
     assert made in step["backupStatus"]
     assert hub_tab._bodies(step["newRequests"]) == []
+
+
+def test_a_two_word_class_token_is_named_in_english_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Constructed (review round 2 on #566): with no name table cached, the
+    warlock's row given each two-word class token, and a one-word token for
+    comparison. Each card reads its English name, coloured by its class."""
+    scenario = _scenario(server, [{"home": True}])
+    report = _summary(scenario)
+    [warlock] = [r for r in report["rows"] if r["label"] == _names(WARLOCK)]
+    assert warlock["class_name"] is None
+    tokens = {"DEATHKNIGHT": "Death Knight", "DEMONHUNTER": "Demon Hunter", "WARRIOR": "Warrior"}
+    for at, token in enumerate(tokens):
+        row = copy.deepcopy(warlock)
+        row["label"] = f"Token{at}-Rizzen"
+        row["class_file"] = token
+        report["rows"].append(row)
+    _edit_summary(scenario, report)
+    view = _drive(tmp_path / "node", scenario)["steps"][0]["home"]
+    for at, (token, name) in enumerate(tokens.items()):
+        card = _card(view, f"Token{at}-Rizzen")
+        assert card["who"].split(" · ")[0] == name, card["who"]
+        assert f"cls-{token.lower()}" in card["cls"].split()

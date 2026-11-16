@@ -3171,6 +3171,9 @@
     "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "MONK",
     "DRUID", "DEMONHUNTER", "EVOKER",
   ];
+  // A class token's English name when no name table is cached and the
+  // token is not one capitalised word.
+  const TWO_WORD_CLASSES = { DEATHKNIGHT: "Death Knight", DEMONHUNTER: "Demon Hunter" };
   const HOME_ADDON = "lab"; // `addon install`'s one addon, the lab-addon
 
   function cardsSay(text, isError) {
@@ -3398,6 +3401,10 @@
   function cardClass(row) {
     if (hubStr(row.class_name)) return visible(row.class_name);
     if (hubStr(row.class_file)) {
+      // The two tokens that are two words in English; every other token is one.
+      if (Object.prototype.hasOwnProperty.call(TWO_WORD_CLASSES, row.class_file)) {
+        return TWO_WORD_CLASSES[row.class_file];
+      }
       const word = row.class_file.toLowerCase();
       return visible(word.charAt(0).toUpperCase() + word.slice(1));
     }
