@@ -156,11 +156,31 @@ def _patch_day(server: Any) -> list[dict[str, Any]]:
     return runs
 
 
-def _scenario(server: Any, steps: list[dict[str, Any]], *, reads: bool = True) -> dict[str, Any]:
+HOUR_NS = 3_600 * 10**9
+
+
+def _played_recently(scenario: dict[str, Any]) -> None:
+    """Constructed: each recorded row of the report played in the last few
+    hours, in the order the install's file times give (the warlock last),
+    so their gains are read whenever the test runs."""
+    report = _summary(scenario)
+    rows = [r for r in report["rows"] if r["state"] == "recorded"]
+    rows.sort(key=lambda r: r["mtime_ns"], reverse=True)
+    now = time.time_ns()
+    for at, row in enumerate(rows):
+        row["mtime_ns"] = now - (at + 1) * HOUR_NS
+    _edit_summary(scenario, report)
+
+
+def _scenario(
+    server: Any, steps: list[dict[str, Any]], *, reads: bool = True, recent: bool = True
+) -> dict[str, Any]:
     scenario = hub_tab._scenario(server, steps)
     if reads:
         scenario["runs"] += _patch_day(server)
         scenario["runs"].append(_history(server))
+    if recent:
+        _played_recently(scenario)
     return scenario
 
 
@@ -682,3 +702,83 @@ def test_the_page_names_every_class_colour_it_draws() -> None:
             assert f".cls-{name} .{part} {{" in css, (name, part)
     for step in range(21):
         assert f".fill-{step} {{ width: {step * 5}%; }}" in css
+
+
+# ─── review round 1 on #566 ──────────────────────────────────────────────────
+
+
+def test_gains_are_read_for_the_twelve_latest_played_this_week_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Constructed: the warlock's row copied fifteen times under other
+    names, fourteen played in the last fourteen hours and one ten days ago.
+    `char history` runs for the twelve played last, newest first, and for
+    no character last played more than a week ago."""
+    scenario = _scenario(server, [{"home": True}])
+    report = _summary(scenario)
+    [warlock] = [r for r in report["rows"] if r["label"] == _names(WARLOCK)]
+    now = time.time_ns()
+    copies = []
+    for at in range(15):
+        row = copy.deepcopy(warlock)
+        row["label"] = f"Copy{at:02d}-Rizzen"
+        row["mtime_ns"] = now - (at + 1) * HOUR_NS if at < 14 else now - 10 * DAY_NS
+        copies.append(row)
+    report["rows"] = [r for r in report["rows"] if r["state"] != "recorded"] + copies
+    _edit_summary(scenario, report)
+    out = _drive(tmp_path / "node", scenario)
+    asked = [
+        b["params"]["character"]
+        for b in hub_tab._bodies(out["requests"])
+        if b["command"] == HISTORY
+    ]
+    assert asked == [f"1/Copy{at:02d}-Rizzen" for at in range(12)]
+
+
+def test_no_gain_is_read_for_a_character_played_long_ago_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    # The install's own file times, months before any test run.
+    out = _drive(tmp_path / "node", _scenario(server, [{"home": True}], recent=False))
+    assert [b for b in hub_tab._bodies(out["requests"]) if b["command"] == HISTORY] == []
+    assert _card(out["steps"][0]["home"], _names(WARLOCK))["gain"] == ""
+
+
+def test_a_failed_backup_puts_no_path_on_the_home_card_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Constructed: `snap create` refused by a read-only store, its message
+    naming the store's folder. Backups shows it whole; the home card only
+    says where to look."""
+    scenario = _scenario(server, [{"home_click": "home-backup-now"}])
+    where = "/Users/someone/Library/Application Support/wowlab/snapshots"
+    scenario["runs"].append(
+        {
+            "command": ["snap", "create"],
+            "params": {"flavor": BETA},
+            "stdout": "",
+            "exit_code": 1,
+            "stderr": f"Error: cannot write to {where}: [Errno 30] Read-only file system",
+        }
+    )
+    step = _drive(tmp_path / "node", scenario)["steps"][0]
+    status = step["home"]["backup"]["status"]
+    assert status == "The backup could not be taken. See Backups for details."
+    assert "Read-only file system" in step["backupStatus"]
+    assert "snapshots" in step["backupStatus"]
+
+
+def test_restore_not_offered_puts_no_id_on_the_home_card_constructed(
+    server: Any, both: Path, tmp_path: Path
+) -> None:
+    """Constructed: a command list without `snap restore`. Backups names
+    the command and the backup's id; the home card names neither."""
+    made = json.loads(backup_tab._created(server)["stdout"])["id"]
+    scenario = _scenario(server, [{"home_click": "home-restore"}])
+    commands = scenario["commands"]
+    commands["commands"] = [c for c in commands["commands"] if c["path"] != ["snap", "restore"]]
+    step = _drive(tmp_path / "node", scenario)["steps"][0]
+    status = step["home"]["backup"]["status"]
+    assert status == "Restoring is not offered on this page. See Backups for details."
+    assert made in step["backupStatus"]
+    assert hub_tab._bodies(step["newRequests"]) == []

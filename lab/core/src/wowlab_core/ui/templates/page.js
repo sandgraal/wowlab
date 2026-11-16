@@ -3158,6 +3158,12 @@
   // What a backup holds, in the player's words.
   const HOME_HOLDS = "settings, keybinds, macros and addon data";
   const WEEK_MS = 7 * 86400 * 1000;
+  // At most this many `char history` runs per read: the most recently
+  // played characters, and only those played in the last seven days.
+  const GAIN_RUNS = 12;
+  // The home card's words when Backups' own sentence holds a path or an id.
+  const HOME_BACKUP_FAILED = "The backup could not be taken. See Backups for details.";
+  const HOME_RESTORE_UNOFFERED = "Restoring is not offered on this page. See Backups for details.";
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   // The class colours COMPANION.md names, by the client's class token: the
   // style sheet has one rule set per token. Any other token is drawn plain.
@@ -3614,14 +3620,24 @@
     return "";
   }
 
-  // One `char history` run per recorded character, one after the other;
-  // each gain goes into its card as it comes. A run that fails leaves its
-  // card without a gain.
+  // The characters whose gain is read: played in the last seven days (an
+  // older newest save has no gain), most recent first, at most GAIN_RUNS.
+  function gainRows(report) {
+    const since = Date.now() - WEEK_MS;
+    return objects(report.rows)
+      .filter((r) => recorded(r) && hubNum(r.mtime_ns) !== null && r.mtime_ns / 1e6 >= since)
+      .sort((a, b) => b.mtime_ns - a.mtime_ns)
+      .slice(0, GAIN_RUNS);
+  }
+
+  // One `char history` run per character `gainRows` picks, one after the
+  // other; each gain goes into its card as it comes. A run that fails
+  // leaves its card without a gain.
   async function takeGains(report) {
     const seq = homeView.gainSeq;
     await (patchDay.reading || Promise.resolve());
     if (seq !== homeView.gainSeq) return;
-    for (const row of objects(report.rows).filter(recorded)) {
+    for (const row of gainRows(report)) {
       const params = { character: row.realm_folder + "/" + row.label, account: row.account };
       if (hubStr(row.flavor)) params.flavor = row.flavor;
       const reply = await runJson(["char", "history"], params, true, true);
@@ -4045,15 +4061,15 @@
     stale: false,
   };
 
-  // The same sentence goes on the home's backup card (M18-04), or
-  // `homeText` when the card needs other words (the diff is shown only under
-  // Backups).
+  // `homeText` goes on the home's backup card (M18-04): its own words, with
+  // no folder, path or snapshot id. Without one the card says nothing, so a
+  // sentence of Backups never reaches the home by default.
   function backupSay(text, isError, homeText) {
     const node = byId("backup-status");
     announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
     const card = byId("home-backup-status");
-    announce(card, homeText === undefined ? text : homeText, Boolean(isError));
+    announce(card, homeText === undefined ? "" : homeText, Boolean(isError));
     card.classList.toggle("error", Boolean(isError));
   }
 
@@ -4151,7 +4167,8 @@
       const made = await runJson(["snap", "create"], { flavor: line.flavor }, false, true);
       const manifest = made.data;
       if (!manifest || typeof manifest !== "object" || !hubStr(manifest.id)) {
-        backupSay(made.error ? shown(made.error) : "wowlab snap create printed something this page does not know.", true);
+        backupSay(made.error ? shown(made.error) : "wowlab snap create printed something this page does not know.", true,
+          HOME_BACKUP_FAILED);
         return;
       }
       const before = hubStr(line.snapshot_id);
@@ -4166,7 +4183,9 @@
       const said = made.note ? " " + shown(made.note) : "";
       const done = "Backed up " + name + " as " + visible(manifest.id) + "." + said;
       // The home's card names no folder and no id (M18-04).
-      const homeDone = "Backed up just now." + said;
+      // snap create's note is its own text, which may name a path: the
+      // card only says that Backups has it.
+      const homeDone = "Backed up just now." + (said ? " Backups has a note about it." : "");
       if (!before) {
         backupSay(done + " It is the first backup of " + name + " here, so there is nothing to compare it with.", false,
           homeDone);
@@ -4198,7 +4217,8 @@
     const button = Array.from(byId("commands").querySelectorAll("button"))
       .find((b) => b.textContent === "snap restore" && !b.disabled);
     if (!button) {
-      backupSay("This page does not offer snap restore: run wowlab snap restore " + visible(line.snapshot_id) + " in a terminal.", true);
+      backupSay("This page does not offer snap restore: run wowlab snap restore " + visible(line.snapshot_id) + " in a terminal.", true,
+        HOME_RESTORE_UNOFFERED);
       return;
     }
     button.click();

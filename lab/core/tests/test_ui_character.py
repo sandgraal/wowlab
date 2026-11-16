@@ -672,6 +672,30 @@ def _table_leaks(templates: dict[str, str]) -> list[tuple[str, str]]:
     return found
 
 
+# The two class colours of COMPANION.md that equal a quality colour, as
+# page.css declares them, and the button label that reads as a slot name.
+_CLASS_CLASHES = ("  --class-shaman: #0070dd;\n", "  --class-priest: #ffffff;\n")
+_BACK_UP_NOW = ">Back up now<"
+
+
+def _without_class_clashes(templates: dict[str, str]) -> dict[str, str]:
+    out = dict(templates)
+    for line in _CLASS_CLASHES:
+        assert out["page.css"].count(line) == 1, line
+        out["page.css"] = out["page.css"].replace(line, "")
+    assert out["page.html"].count(_BACK_UP_NOW) == 1
+    out["page.html"] = out["page.html"].replace(_BACK_UP_NOW, "><")
+    return out
+
+
+def test_constructed_a_class_token_with_a_quality_colour_is_caught() -> None:
+    """Review of M18-04: only the two clashing class colours are exempt; any
+    other declaration that holds a quality colour still fails the check."""
+    templates = _templates()
+    templates["page.css"] += ":root { --class-mage-text: #a335ee; }\n"
+    assert ("page.css", "a335ee") in _table_leaks(_without_class_clashes(templates))
+
+
 def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
     """§16.3: the JavaScript holds no slot table and no quality table, and the
     stylesheet no quality colour or word; the names and colours come from the
@@ -683,13 +707,9 @@ def test_the_templates_hold_no_slot_name_and_no_colour_code() -> None:
     # M18-04: two of WoW's class colours (COMPANION.md: Shaman 0070DD,
     # Priest FFFFFF) are also quality colours, and the home's primary button
     # says "Back up now", which reads as the Back slot. Neither is the gear
-    # table: the class tokens are declared one per line as `--class-<name>`,
-    # and the button's words are the design's. Both are taken out before the
-    # check, and nothing else is.
-    templates["page.css"] = re.sub(
-        r"^  --class-[a-z]+(?:-tile|-text)?: #[0-9a-f]{6};\n", "", templates["page.css"], flags=re.M
-    )
-    templates["page.html"] = templates["page.html"].replace(">Back up now<", "><")
+    # table. Exactly those two declarations and that one label are taken
+    # out before the check, and nothing else is.
+    templates = _without_class_clashes(templates)
     assert _table_leaks(templates) == []
 
 

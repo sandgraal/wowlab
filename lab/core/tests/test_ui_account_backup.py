@@ -452,13 +452,13 @@ def test_the_report_is_read_again_after_a_commands_tab_run_constructed(
         "command": ["char", "list"],
         "params": hub_tab.SUMMARY,
     }
-    # Then (M18-04) the home's `char history` of each recorded character,
-    # for its gain, once those reads are done.
+    # (M18-04's gains read no `char history` here: every character in this
+    # install was last played months ago.)
     assert [r["command"] for r in hub_tab._bodies(reread["newRequests"])[1:]] == [
         ["addons", "check"],
         ["sv", "list"],
         ["sv", "list"],
-    ] * 2 + [["char", "history"]] * 3
+    ] * 2
     assert reread["hubFlavor"] == "f:" + BETA
     [beta] = reread["backup"]["lines"]
     assert re.match(f"{BETA}: {_AGE}, taken on version {NEWER}\\.", beta["text"])
