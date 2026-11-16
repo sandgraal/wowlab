@@ -76,7 +76,9 @@ def _activate(gate: ModuleType, text: str) -> tuple[str, list[str]]:
 
 def _pending_files() -> list[Path]:
     return sorted(
-        p for p in TESTS.rglob("*.py") if "review" not in p.parts and REASON in p.read_text()
+        p
+        for p in TESTS.rglob("*.py")
+        if "review" not in p.parts and REASON in p.read_text(encoding="utf-8")
     )
 
 
@@ -92,7 +94,7 @@ def test_m18_01_pending_marks_are_removable_marker_blocks() -> None:
     for path in _pending_files():
         if not path.name.startswith("test_"):
             continue
-        head, dangling = _activate(gate, path.read_text())
+        head, dangling = _activate(gate, path.read_text(encoding="utf-8"))
         if REASON in head or dangling:
             bad[path.relative_to(ROOT).as_posix()] = {
                 "reason_left": REASON in head,
