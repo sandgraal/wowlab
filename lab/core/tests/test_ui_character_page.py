@@ -46,17 +46,21 @@ _STEPS = r"""
       } else if (step.page !== undefined) {
         const shown = (id) => !ids[id].hidden;
         out.steps.push({ char: charView(),
-          main: ["char-header", "char-gear", "char-progress", "char-changes", "char-profs", "char-bar"].map((id) =>
+          // The stand-in DOM keeps page.html's elements as separate roots:
+          // the header's three parts are read by their own ids.
+          main: ["char-header", "char-dressing-link", "char-dressing-short", "char-gear", "char-progress", "char-changes", "char-profs", "char-bar"].map((id) =>
             visibleText(ids[id])),
           panels: { page: shown("char-page"), about: shown("char-about"), keys: shown("char-keys-panel"),
             macros: shown("char-macros-panel") },
           title: ids["char-view-title"].textContent,
+          dressingNote: ids["char-dressing-note"].textContent,
           shown: Object.keys(ids).filter((id) => id.endsWith("-view") && !ids[id].hidden) });
 """
 
 # The text a player sees without a click: everything but a hidden element
 # (a gear item's detail) and what only a screen reader reads.
 _VIEW = r"""
+ctx.URL = URL;  // as test_ui_dressing.py gives it: the link's address is parsed
 function visibleText(node) {
   if (node.hidden || (typeof node.className === "string" && node.className.split(" ").includes("unseen"))) return "";
   if (!node.children || !node.children.length) return node.textContent || "";
@@ -227,7 +231,7 @@ def test_full_gear_has_no_empty_slot_constructed(server: Any, both: Path, tmp_pa
     page = _page(_drive(tmp_path / "node", scenario))
     rows = page["char"]["rows"]
     assert len(rows) == 19 and not any(r["empty"] for r in rows)
-    assert "Empty" not in page["main"][1]
+    assert "Empty" not in page["main"][3]
 
 
 # ─── the action bar ──────────────────────────────────────────────────────────
@@ -299,13 +303,28 @@ def test_the_main_view_holds_no_path_folder_id_or_caveat(
         "SavedVariables",
         "WTF/",
         "[verify]",
-        "wowlab ",
+        "wowlab char",
+        "wowlab snap",
         "spell ",
+        "body type",
         "item id",
         "modification time",
         "schema",
     ):
         assert word not in main, word
+    # The dressing room: the link and one short line; what its address
+    # carries is under About this data, word for word.
+    hero = " ".join(page["main"][:3])
+    assert "url" in gear["dressing"], "the launch capture's warlock has a dressing room"
+    assert "See it dressed on Wowhead" in hero
+    assert "Opens Wowhead in your browser; wowlab sends nothing." in hero
+    assert gear["dressing"]["note"] not in hero
+    assert page["dressingNote"] == gear["dressing"]["note"]
+    # The picker names the character, with no file time; this home holds
+    # two games, so each name carries its game.
+    texts = [o["text"] for o in page["char"]["options"]]
+    assert f"{WARLOCK.split('/')[1]} · WoW Forever" in texts
+    assert not any("written" in t for t in texts)
     # The item ids and the link's text are one click away, in each item's
     # detail; none is shown before it.
     for slot in gear["slots"]:

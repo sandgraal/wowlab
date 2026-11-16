@@ -470,7 +470,12 @@ pre:empty { display: none; }
    button, its note, or the item ids to copy when there is no link */
 .char-dressing { margin-top: var(--space-3); max-width: 60rem; }
 .dressing-link { min-height: 44px; padding: 0 var(--space-4); }
-.dressing-note { margin: var(--space-2) 0 0; max-width: 60rem; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+/* the outbound mark after the link's words, with no text of its own for a screen reader */
+.dressing-link::after { content: "\2197" / ""; margin-left: var(--space-2); }
+.char-dress { flex-basis: 100%; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.dressing-short { color: var(--muted); font-size: 13px; }
+.dressing-short:empty { display: none; }
+.dressing-note { margin: var(--space-2) 0 0; max-width: 60rem; overflow-wrap: anywhere; }
 .dressing-ids { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
 .dressing-items .copy { margin-left: var(--space-3); }
 /* the keys and macros panels: the files and record they read, a table of

@@ -1374,10 +1374,12 @@
     });
   }
 
-  // The folder label, with its realm (or digits) folder and account when
-  // another row has the same label, and the file's time.
-  function pickLabel(entry, counts) {
+  // The character's name (M18-05: no file time), with the game when the
+  // list spans several, and its realm (or digits) folder and account only
+  // when another row has the same name.
+  function pickLabel(entry, counts, games) {
     let text = visible(String(entry.label));
+    if (games && typeof entry.flavor === "string" && entry.flavor) text += " · " + visible(gameWords(entry.flavor));
     if (counts.get(entry.label) > 1) {
       text += " (" + visible(String(entry.realm_folder)) + ", account " + visible(String(entry.account)) + ")";
     }
@@ -1385,7 +1387,7 @@
     // writes there, so the label names the folder's shape instead.
     if (bare(entry)) return text + (entry.no_lab_record.first_name_folder === true ? ": <Realm>/<First> folder" : ": no lab record");
     if (!readable(entry)) return text + ": not read";
-    return text + ", written " + localTime(entry.mtime_ns);
+    return text;
   }
 
   function loadCharacters() {
@@ -1418,8 +1420,10 @@
     character.entries = latestFirst(report.characters.filter((e) => e && typeof e === "object"));
     const counts = new Map();
     for (const entry of character.entries) counts.set(entry.label, (counts.get(entry.label) || 0) + 1);
+    const flavors = new Set(character.entries.map((e) => (typeof e.flavor === "string" ? e.flavor : "")).filter((f) => f));
+    const games = flavors.size > 1;
     character.entries.forEach((entry, at) => {
-      const option = make("option", pickLabel(entry, counts));
+      const option = make("option", pickLabel(entry, counts, games));
       option.value = String(at);
       if (!readable(entry)) {
         option.disabled = true;
@@ -1962,6 +1966,8 @@
     link.removeAttribute("href");
     link.hidden = true;
     link.title = "";
+    link.textContent = "See it dressed";
+    byId("char-dressing-short").textContent = "";
     byId("char-dressing-note").textContent = "";
     byId("char-dressing-items").replaceChildren();
     byId("char-dressing-items").hidden = true;
@@ -1980,10 +1986,15 @@
           "The dressing-room address in the report is not one this page links to, so no link is shown.";
         return;
       }
+      const site = visible(String(dressing.site));
       const link = byId("char-dressing-link");
       link.href = checked;
-      link.title = "Opens " + visible(String(dressing.site)) + "'s dressing room in a new tab";
+      link.title = "Opens " + site + "'s dressing room in a new tab";
+      link.textContent = "See it dressed on " + site;
       link.hidden = false;
+      // One short line beside the link; what the address carries (the
+      // report's note) is under About this data.
+      byId("char-dressing-short").textContent = "Opens " + site + " in your browser; wowlab sends nothing.";
       byId("char-dressing-note").textContent = note;
       return;
     }

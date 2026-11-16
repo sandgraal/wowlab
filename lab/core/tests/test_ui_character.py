@@ -377,9 +377,11 @@ def test_the_picker_lists_the_characters_latest_written_first(
     labels = [NEWER.split("/")[1], OLDER.split("/")[1]]
     # Listed after every saved one (they have no file time), never picked:
     # disabled, and no read is asked for them, so they get no record panels.
+    # A name alone, with no file time (M18-05); the order is still the
+    # latest written first.
     assert [o["text"] for o in view["options"]] == [
-        f"{labels[0]}, written {_local(NEWER_NS)}",
-        f"{labels[1]}, written {_local(OLDER_NS)}",
+        labels[0],
+        labels[1],
         f"{BARE.split('/')[1]}: no lab record",
         f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
     ]
