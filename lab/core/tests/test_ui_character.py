@@ -512,7 +512,9 @@ def test_the_detail_row_carries_the_raw_link_and_copies_it(
     assert facts["Enchant"] == ("none" if first["enchant_id"] is None else str(first["enchant_id"]))
     assert facts["Gems"] == (", ".join(map(str, first["gem_ids"])) or "none")
     assert facts["Bonus ids"] == (", ".join(map(str, first["bonus_ids"])) or "none")
-    assert first["bonus_ids"], "the capture's first item has bonus ids"
+    # The sheet's first item (the back, since M18-05) has none; the capture's
+    # items do.
+    assert any(s["bonus_ids"] for s in _report(scenario, NEWER)["slots"])
     copied = out["steps"][2]
     assert copied["clipboard"] == [first["raw_link"]]
     assert copied["newRequests"] == [], "copying runs nothing"
