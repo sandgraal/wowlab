@@ -452,6 +452,8 @@ def test_the_report_is_read_again_after_a_commands_tab_run_constructed(
         "command": ["char", "list"],
         "params": hub_tab.SUMMARY,
     }
+    # (M18-04's gains read no `char history` here: every character in this
+    # install was last played months ago.)
     assert [r["command"] for r in hub_tab._bodies(reread["newRequests"])[1:]] == [
         ["addons", "check"],
         ["sv", "list"],

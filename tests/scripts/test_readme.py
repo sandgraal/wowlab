@@ -276,7 +276,8 @@ def test_the_first_screen_leads_with_the_player_features() -> None:
     for phrase in LEADS:
         assert phrase in screen, phrase
         assert screen.index(phrase) < install, f"{phrase} comes before the install line"
-    assert "opens on the Account tab" in screen
+    # M18-04: the home is Characters now (the Account tab before M18-03).
+    assert "opens on Characters" in screen
     assert "`wowlab addon install lab`, then log out or `/reload` once" in screen
     # What a snapshot cannot hold is said where the promise is made.
     assert "Action bars and talents are kept on Blizzard's servers" in screen

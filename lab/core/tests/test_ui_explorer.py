@@ -530,6 +530,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("snap", "diff"),
         ("addons", "check"),
         ("sv", "list"),
+        # M18-04: the Characters home's Download names runs `names fetch`,
+        # which writes only into wowlab's own game-table cache; that only
+        # the home runs it, on a click, is graded in test_ui_home.py.
+        ("names", "fetch"),
     }, used
     for path in used:
         assert path in offered, path

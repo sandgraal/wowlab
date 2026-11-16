@@ -300,6 +300,8 @@
     box.hidden = false;
     showGame();
     runFlavor.settle();
+    // The home's status cards are the picked game's.
+    drawHomeStatus();
   }
 
   // ─── the game in the header (M18-03) ───
@@ -311,13 +313,19 @@
   const game = { versions: new Map(), folders: [] };
 
   function gameName(folder) {
-    const words = String(folder).split(/[_\s]+/).filter((w) => w !== "");
-    const named = words.length
-      ? "WoW " + words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
-      : String(folder);
+    const named = gameWords(folder);
     // The patch as players say it ("1.60.1"), without the build number.
     const version = (game.versions.get(folder) || "").split(".").slice(0, 3).join(".");
     return visible(version ? named + " \u00b7 " + version : named);
+  }
+
+  // The name alone, without the patch (`gameName`'s words, and a character
+  // card's line, M18-04). Not yet made visible: its callers do that.
+  function gameWords(folder) {
+    const words = String(folder).split(/[_\s]+/).filter((w) => w !== "");
+    return words.length
+      ? "WoW " + words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+      : String(folder);
   }
 
   // Each flavor's version from a `char list` report (`flavors`, M16-114).
@@ -1459,6 +1467,7 @@
     byId("char-history").replaceChildren();
     charSay("", false);
     if (tabShown === "character" || tabShown === "keybinds") loadCharacters();
+    drawHomeStatus();
   }
 
   byId("char-picker").addEventListener("change", () => {
@@ -2791,8 +2800,13 @@
           drawHub();
         });
         alone(hubSay, () => takeVersions(report));
+        alone(cardsSay, () => takeHome(report));
         alone(backupSay, () => takeBackups(report));
         alone(patchDaySay, () => takePatchDay(report));
+        // The cards' gains are read once the patch-day reads are done, one
+        // run at a time, so the page never holds more of the server's run
+        // slots than before.
+        alone(cardsSay, () => takeGains(report));
       })();
       hub.asked = asked;
     }
@@ -3120,6 +3134,545 @@
   }
   for (const which of TABS) byId("tab-" + which).addEventListener("click", () => showTab(which));
 
+  // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
+  // Above the table of every character: two status cards, then one card per
+  // character folder, then a dashed card that says how a character appears.
+  // The backup card is the backup line of the game the header shows, from
+  // the hub's report (`backups`); its buttons are the Backups section's own
+  // (`backUp`, `restoreBackup`). The addons card counts what the patch-day
+  // reads found for that game. A character card holds what the report's row
+  // holds, in words (names, never ids, unless the name tables are not
+  // downloaded: then the line at the top offers `names fetch`, run as every
+  // other leaf is, and the id stands in meanwhile), and, once `char history`
+  // has been read for it, its gain. No card shows a folder, a path or an id
+  // of wowlab's own; the game is named as people say it (`gameName`). Every
+  // value goes in through textContent.
+
+  const homeView = {
+    report: null, // the hub's report the cards were drawn from
+    gains: new Map(), // a row's key: the gain's words, or "" when it has none
+    slots: new Map(), // a row's key: the element its gain goes in
+    gainSeq: 0, // the latest gains read; an earlier one still running stops
+    fetching: false, // a names download in progress
+  };
+  // What a backup holds, in the player's words.
+  const HOME_HOLDS = "settings, keybinds, macros and addon data";
+  const WEEK_MS = 7 * 86400 * 1000;
+  // At most this many `char history` runs per read: the most recently
+  // played characters, and only those played in the last seven days.
+  const GAIN_RUNS = 12;
+  // The home card's words when Backups' own sentence holds a path or an id.
+  const HOME_BACKUP_FAILED = "The backup could not be taken. See Backups for details.";
+  const HOME_RESTORE_UNOFFERED = "Restoring is not offered on this page. See Backups for details.";
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // The class colours COMPANION.md names, by the client's class token: the
+  // style sheet has one rule set per token. Any other token is drawn plain.
+  const CLASS_TOKENS = [
+    "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "MONK",
+    "DRUID", "DEMONHUNTER", "EVOKER",
+  ];
+  // A class token's English name when no name table is cached and the
+  // token is not one capitalised word.
+  const TWO_WORD_CLASSES = { DEATHKNIGHT: "Death Knight", DEMONHUNTER: "Demon Hunter" };
+  const HOME_ADDON = "lab"; // `addon install`'s one addon, the lab-addon
+
+  function cardsSay(text, isError) {
+    const node = byId("cards-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function namesSay(text, isError) {
+    const node = byId("names-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  const rowKey = (row) => [hubStr(row.flavor) || "", row.account, row.realm_folder, row.label].join("\u0000");
+
+  function takeHome(report) {
+    homeView.report = report;
+    homeView.gains = new Map();
+    homeView.gainSeq += 1;
+    cardsSay("", false);
+    drawNamesOffer();
+    drawCards();
+    drawHomeStatus();
+  }
+
+  // ─── the names line ───
+
+  function namesMissing() {
+    const report = homeView.report;
+    return report && Array.isArray(report.names_missing)
+      ? objects(report.names_missing).filter((n) => hubStr(n.flavor))
+      : [];
+  }
+
+  function drawNamesOffer() {
+    const missing = namesMissing();
+    byId("names-offer").hidden = missing.length === 0 && !byId("names-status").textContent;
+    byId("names-fetch").hidden = missing.length === 0;
+    byId("names-fetch").disabled = homeView.fetching;
+  }
+
+  // Runs `names fetch` for each game version the report says lacks names,
+  // one after the other, then reads the report again.
+  async function fetchNames() {
+    if (homeView.fetching) return;
+    const missing = namesMissing();
+    if (!missing.length) return;
+    homeView.fetching = true;
+    drawNamesOffer();
+    namesSay("Downloading names…", false);
+    let failed = "";
+    try {
+      for (const flavor of [...new Set(missing.map((n) => n.flavor))]) {
+        const reply = await runJson(["names", "fetch"], { flavor: flavor }, true, true);
+        if (reply.error) {
+          failed = shown(reply.error);
+          break;
+        }
+      }
+    } finally {
+      homeView.fetching = false;
+    }
+    if (failed) {
+      namesSay("The names could not all be downloaded: " + failed, true);
+      drawNamesOffer();
+      return;
+    }
+    namesSay("Names downloaded.", false);
+    hub.asked = null;
+    loadHub();
+  }
+
+  byId("names-fetch").addEventListener("click", () => fetchNames());
+
+  // ─── the status cards ───
+
+  // The game the header shows: the picked one, else the only one.
+  function homeFolder() {
+    if (runFlavor.picked) return runFlavor.picked;
+    return game.folders.length === 1 ? game.folders[0] : "";
+  }
+
+  function homeOf(list, folder) {
+    return list.find((x) => x.flavor === folder) || list[0] || null;
+  }
+
+  function statusLook(card, look) {
+    for (const name of ["status-wait", "status-ok", "status-warn"]) card.classList.toggle(name, name === look);
+  }
+
+  function drawHomeStatus() {
+    drawHomeBackup();
+    drawHomeAddons();
+  }
+
+  function drawHomeBackup() {
+    const card = byId("home-backup");
+    const title = byId("home-backup-title");
+    const detail = byId("home-backup-detail");
+    const now = byId("home-backup-now");
+    const restore = byId("home-restore");
+    if (!homeView.report) return;
+    const line = homeOf(backup.lines, homeFolder());
+    now.disabled = backup.busy || line === null;
+    restore.disabled = backup.busy;
+    restore.hidden = true;
+    if (backup.error) {
+      statusLook(card, "status-warn");
+      title.textContent = "wowlab could not read its backups";
+      detail.textContent = "Backups says why.";
+      now.disabled = true;
+      return;
+    }
+    if (line === null) {
+      statusLook(card, "status-wait");
+      title.textContent = "No game to back up";
+      detail.textContent = "wowlab found no game version in your game folder.";
+      return;
+    }
+    if (!hubStr(line.snapshot_id)) {
+      statusLook(card, "status-warn");
+      title.textContent = "Your UI is not backed up yet";
+      detail.textContent = "A backup keeps your " + HOME_HOLDS + ".";
+      return;
+    }
+    restore.hidden = false;
+    const age = backupAgeWords(line.created_at) || "at a time wowlab cannot read";
+    if (line.game_updated === true) {
+      statusLook(card, "status-warn");
+      title.textContent = "The game updated since your last backup";
+      detail.textContent = "Last backup " + age + " · back up now to keep your " + HOME_HOLDS + " as they are.";
+      return;
+    }
+    statusLook(card, "status-ok");
+    title.textContent = "Your UI is backed up";
+    detail.textContent = age.charAt(0).toUpperCase() + age.slice(1) + " · " + HOME_HOLDS;
+  }
+
+  byId("home-backup-now").addEventListener("click", () => {
+    const line = homeOf(backup.lines, homeFolder());
+    if (line) backUp(line);
+  });
+  byId("home-restore").addEventListener("click", () => {
+    const line = homeOf(backup.lines, homeFolder());
+    if (line && hubStr(line.snapshot_id)) restoreBackup(line);
+  });
+
+  // "3 are", "1 is": a count and its verb.
+  const are = (n) => grouped(n) + (n === 1 ? " is" : " are");
+
+  function drawHomeAddons() {
+    const card = byId("home-addons");
+    const title = byId("home-addons-title");
+    const detail = byId("home-addons-detail");
+    if (!homeView.report) return;
+    const read = homeOf(patchDay.flavors, homeFolder());
+    if (read === null) {
+      statusLook(card, "status-wait");
+      title.textContent = "Checking your addons…";
+      detail.textContent = "";
+      return;
+    }
+    if (read.addons === null) {
+      statusLook(card, "status-warn");
+      title.textContent = "wowlab could not check your addons";
+      detail.textContent = "Addons says why.";
+      return;
+    }
+    const all = read.addons.length;
+    const unread = (read.unread || []).length;
+    if (all === 0) {
+      statusLook(card, unread ? "status-warn" : "status-ok");
+      title.textContent = "No addons are installed";
+      detail.textContent = unread ? "Some saved data could not be read. See Addons for what it is." : "Nothing to fix.";
+      return;
+    }
+    if (read.interface === null) {
+      statusLook(card, "status-warn");
+      title.textContent = "wowlab cannot tell which of your " + pluralWord(all, " addon") + " load on this version";
+      detail.textContent = "It cannot work out this game's interface version.";
+      return;
+    }
+    const current = read.addons.filter(patchDayCurrent).length;
+    const late = read.addons.filter(patchDayLate).length;
+    const needy = read.addons.filter((a) =>
+      texts(a.missing_dependencies).length > 0 || texts(a.unloadable_dependencies).length > 0).length;
+    const unchecked = read.addons.filter((a) => !patchDayCurrent(a) && !patchDayLate(a)).length;
+    title.textContent = current === all
+      ? (all === 1 ? "Your one addon loads on this version" : "All " + grouped(all) + " addons load on this version")
+      : grouped(current) + " of " + grouped(all) + " addons load on this version";
+    const parts = [];
+    if (late) parts.push(are(late) + " made for another game version, so the game skips " + (late === 1 ? "it" : "them") + ".");
+    if (unchecked) parts.push(grouped(unchecked) + " could not be checked.");
+    if (needy) parts.push(grouped(needy) + (needy === 1 ? " needs an addon" : " need an addon") + " that will not load.");
+    if (unread) parts.push(pluralWord(unread, " saved data file") + " could not be read.");
+    const fix = needy > 0 || unread > 0;
+    parts.push(fix ? "See Addons for what to fix." : "Nothing to fix.");
+    detail.textContent = parts.join(" ");
+    statusLook(card, fix ? "status-warn" : "status-ok");
+  }
+
+  byId("home-addons-open").addEventListener("click", () => showTab("addons"));
+
+  // ─── the character cards ───
+
+  // "Nov 12", with the year when it is not this year.
+  function playedDay(ns) {
+    if (typeof ns !== "number" || !Number.isFinite(ns)) return null;
+    const when = new Date(Math.floor(ns / 1e6));
+    if (Number.isNaN(when.getTime())) return null;
+    const day = MONTHS[when.getMonth()] + " " + when.getDate();
+    return when.getFullYear() === new Date().getFullYear() ? day : day + ", " + when.getFullYear();
+  }
+
+  // The name players see: the character, then the realm when the folder is
+  // named for one (a numbered folder is not a name).
+  function cardName(row) {
+    const name = visible(row.label);
+    return row.shape === "realm_name" ? name + "-" + visible(row.realm_folder) : name;
+  }
+
+  // The client's token in words ("DEATHKNIGHT": "Deathknight") when no name
+  // is downloaded; the id when not even the token is recorded.
+  function cardClass(row) {
+    if (hubStr(row.class_name)) return visible(row.class_name);
+    if (hubStr(row.class_file)) {
+      // The two tokens that are two words in English; every other token is one.
+      if (Object.prototype.hasOwnProperty.call(TWO_WORD_CLASSES, row.class_file)) {
+        return TWO_WORD_CLASSES[row.class_file];
+      }
+      const word = row.class_file.toLowerCase();
+      return visible(word.charAt(0).toUpperCase() + word.slice(1));
+    }
+    return hubNum(row.class_id) !== null ? "class " + row.class_id : null;
+  }
+
+  function cardRace(row) {
+    if (hubStr(row.race_name)) return visible(row.race_name);
+    return hubNum(row.race_id) !== null ? "race " + row.race_id : null;
+  }
+
+  // "Undead Warlock"; with a race not named yet, "Warlock · race 5".
+  function cardWho(row) {
+    const klass = cardClass(row);
+    const race = cardRace(row);
+    if (hubStr(row.race_name)) return klass ? race + " " + klass : race;
+    return [klass, race].filter((x) => x !== null).join(" · ") || null;
+  }
+
+  function classLook(row) {
+    const token = hubStr(row.class_file);
+    return token && CLASS_TOKENS.includes(token) ? "cls-" + token.toLowerCase() : "";
+  }
+
+  // One profession: its name, its skill and cap, and a bar of how far along.
+  function cardProfession(p) {
+    const box = make("div");
+    box.className = "card-prof";
+    const head = make("div");
+    head.className = "card-prof-head";
+    const name = hubStr(p.name) ? visible(p.name) : hubNum(p.skill_line) !== null ? "Skill line " + p.skill_line : "A profession";
+    head.appendChild(make("span", name));
+    const rank = hubNum(p.rank);
+    const max = hubNum(p.max_rank);
+    if (rank !== null) {
+      const of = make("span", max !== null ? rank + "/" + max : String(rank));
+      of.className = "card-prof-rank";
+      head.appendChild(of);
+    }
+    box.appendChild(head);
+    if (rank !== null && max !== null && max > 0) {
+      const track = make("div");
+      track.className = "bar-track";
+      const fill = make("div");
+      // Five-percent steps: the style sheet has one width per step, and the
+      // page sets no style of its own.
+      const step = Math.round(Math.min(1, Math.max(0, rank / max)) * 20);
+      fill.className = "bar-fill fill-" + step;
+      track.appendChild(fill);
+      box.appendChild(track);
+    }
+    return box;
+  }
+
+  function cardProfessions(row) {
+    const list = objects(row.professions);
+    if (!list.length) return null;
+    const box = make("div");
+    box.className = "card-profs";
+    for (const p of list.slice(0, 4)) box.appendChild(cardProfession(p));
+    return box;
+  }
+
+  function cardTile(row) {
+    const tile = make("div");
+    tile.className = "card-level";
+    const word = make("span", "Level ");
+    word.className = "unseen";
+    tile.appendChild(word);
+    tile.appendChild(make("span", hubNum(row.level) !== null ? String(row.level) : "?"));
+    return tile;
+  }
+
+  function cardHead(row, open) {
+    const head = make("div");
+    head.className = "card-head";
+    head.appendChild(cardTile(row));
+    const who = make("div");
+    who.className = "card-who";
+    const title = make("h3");
+    title.className = "card-name";
+    if (open) {
+      // The name is the card's one button; it covers the whole card, so a
+      // click anywhere on it opens the character.
+      const button = make("button", cardName(row));
+      button.type = "button";
+      button.className = "card-open";
+      button.addEventListener("click", () => openCharacter(row));
+      title.appendChild(button);
+    } else {
+      title.textContent = cardName(row);
+    }
+    who.appendChild(title);
+    const words = recorded(row) ? cardWho(row) : null;
+    if (words) {
+      const line = make("p", words);
+      line.className = "card-class";
+      who.appendChild(line);
+    }
+    head.appendChild(who);
+    const ilvl = recorded(row) ? hubNum(row.item_level) : null;
+    if (ilvl !== null) {
+      const box = make("div");
+      box.className = "card-ilvl";
+      const big = make("span", ilvl.toFixed(1));
+      big.className = "card-ilvl-value";
+      box.appendChild(big);
+      const small = make("span", "item level");
+      small.className = "card-ilvl-word";
+      box.appendChild(small);
+      head.appendChild(box);
+    }
+    return head;
+  }
+
+  function cardFoot(row, several) {
+    const foot = make("div");
+    foot.className = "card-foot";
+    const parts = [];
+    const day = playedDay(row.mtime_ns);
+    if (day) parts.push("Last played " + day);
+    if (several && hubStr(row.flavor)) parts.push(visible(gameWords(row.flavor)));
+    foot.appendChild(make("span", parts.join(" · ")));
+    const gain = make("span", homeView.gains.get(rowKey(row)) || "");
+    gain.className = "card-gain";
+    homeView.slots.set(rowKey(row), gain);
+    foot.appendChild(gain);
+    return foot;
+  }
+
+  function charCard(row, several) {
+    const card = make("div");
+    card.className = "char-card";
+    const look = recorded(row) ? classLook(row) : "";
+    if (look) card.classList.add(look);
+    if (!recorded(row)) card.classList.add("card-bare");
+    const stripe = make("div");
+    stripe.className = "card-stripe";
+    card.appendChild(stripe);
+    const body = make("div");
+    body.className = "card-body";
+    body.appendChild(cardHead(row, recorded(row)));
+    if (recorded(row)) {
+      const profs = cardProfessions(row);
+      if (profs) body.appendChild(profs);
+      body.appendChild(cardFoot(row, several));
+    } else {
+      const why = row.state === "no_lab_record"
+        ? "No details yet. Log in with this character once with the wowlab addon installed, then log out."
+        : "wowlab could not read what the addon saved for this character. The table below says why.";
+      const note = make("p", why);
+      note.className = "card-note";
+      body.appendChild(note);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  function missingCard() {
+    const card = make("div");
+    card.className = "char-card card-missing";
+    const title = make("h3", "Missing a character?");
+    title.className = "card-name";
+    card.appendChild(title);
+    card.appendChild(make("p", "Log in with it once and log out. The wowlab addon writes down its level, gear and " +
+      "professions as you leave, and it shows up here."));
+    const install = make("button", "Install the wowlab addon");
+    install.type = "button";
+    install.className = "link-button";
+    install.title = "Opens the Commands tab, where you see what installing would change before anything does";
+    install.addEventListener("click", () => installAddon());
+    card.appendChild(install);
+    return card;
+  }
+
+  // Latest played first; folders with no record after them.
+  function cardOrder(rows) {
+    const time = (r) => (recorded(r) && hubNum(r.mtime_ns) !== null ? r.mtime_ns : -Infinity);
+    return rows.slice().sort((a, b) => {
+      if (recorded(a) !== recorded(b)) return recorded(a) ? -1 : 1;
+      return time(b) - time(a);
+    });
+  }
+
+  function drawCards() {
+    const box = byId("char-cards");
+    const rows = homeView.report ? objects(homeView.report.rows) : [];
+    const several = new Set(rows.map((r) => hubStr(r.flavor)).filter(Boolean)).size > 1;
+    homeView.slots = new Map();
+    const cards = cardOrder(rows).map((row) => charCard(row, several));
+    box.replaceChildren(...cards, missingCard());
+  }
+
+  // ─── the gains, from `char history` ───
+
+  // What a character gained by its newest save, when that save is from the
+  // last seven days: against the last save before those days, else the
+  // first of them. Levels first; else the equipped item level. "this week"
+  // when the save compared with is from those days too, else its date.
+  function gainOf(report) {
+    if (!report || typeof report !== "object") return "";
+    const rows = objects(report.rows).filter((r) => hubNum(r.saved_at_ns) !== null);
+    if (rows.length < 2) return "";
+    const newest = rows[rows.length - 1];
+    const since = Date.now() - WEEK_MS;
+    if (newest.saved_at_ns / 1e6 < since) return "";
+    let base = null;
+    for (const r of rows.slice(0, -1)) {
+      if (r.saved_at_ns / 1e6 < since) base = r;
+    }
+    if (base === null) base = rows[0];
+    const when = base.saved_at_ns / 1e6 >= since ? " this week" : " since " + playedDay(base.saved_at_ns);
+    const levels = hubNum(newest.level) !== null && hubNum(base.level) !== null ? newest.level - base.level : 0;
+    if (levels > 0) return "+" + count(levels, "level", "levels") + when;
+    const was = hubNum(base.item_level);
+    const is = hubNum(newest.item_level);
+    if (was !== null && is !== null && Number((is - was).toFixed(1)) > 0) {
+      return "+" + (is - was).toFixed(1) + " item level" + when;
+    }
+    return "";
+  }
+
+  // The characters whose gain is read: played in the last seven days (an
+  // older newest save has no gain), most recent first, at most GAIN_RUNS.
+  function gainRows(report) {
+    const since = Date.now() - WEEK_MS;
+    return objects(report.rows)
+      .filter((r) => recorded(r) && hubNum(r.mtime_ns) !== null && r.mtime_ns / 1e6 >= since)
+      .sort((a, b) => b.mtime_ns - a.mtime_ns)
+      .slice(0, GAIN_RUNS);
+  }
+
+  // One `char history` run per character `gainRows` picks, one after the
+  // other; each gain goes into its card as it comes. A run that fails
+  // leaves its card without a gain.
+  async function takeGains(report) {
+    const seq = homeView.gainSeq;
+    await (patchDay.reading || Promise.resolve());
+    if (seq !== homeView.gainSeq) return;
+    for (const row of gainRows(report)) {
+      const params = { character: row.realm_folder + "/" + row.label, account: row.account };
+      if (hubStr(row.flavor)) params.flavor = row.flavor;
+      const reply = await runJson(["char", "history"], params, true, true);
+      if (seq !== homeView.gainSeq) return;
+      const gain = gainOf(reply.data);
+      homeView.gains.set(rowKey(row), gain);
+      const slot = homeView.slots.get(rowKey(row));
+      if (slot) slot.textContent = gain;
+    }
+  }
+
+  // Opens the Commands tab on `addon install` with the lab-addon named:
+  // the player asks for the plan there, and Confirm runs it, as for any
+  // change.
+  function installAddon() {
+    const button = Array.from(byId("commands").querySelectorAll("button"))
+      .find((b) => b.textContent === "addon install" && !b.disabled);
+    if (!button) {
+      cardsSay("This page does not offer addon install: run wowlab addon install " + HOME_ADDON + " in a terminal.", true);
+      return;
+    }
+    button.click();
+    const field = inputs.find((entry) => entry.param.name === "name");
+    if (field) field.input.value = HOME_ADDON;
+    showTab("commands");
+    byId("run").focus();
+  }
+
   // ─── the patch-day card on the Account tab (M17-05, §19 CW-4) ───
   // Per flavor the hub's report lists: the addons `addons check` finds made
   // for another game version, needing an addon that will not load, or not
@@ -3135,6 +3688,7 @@
     seq: 0, // the latest read; an earlier one still running draws nothing
     flavors: [], // per flavor folder, what the two runs said
     pending: null, // a path to show once the Explorer's tree is read
+    reading: null, // the latest read, settled when it is done
   };
   // The sentence `sv list --orphans` prints with its list.
   const PATCH_DAY_REINSTALL =
@@ -3193,7 +3747,21 @@
   }
 
   // Reads every flavor the hub's report lists, one run at a time.
+  // `patchDay.reading` settles when it is done, however it ends: the home's
+  // gains wait for it.
   async function takePatchDay(report) {
+    let settle = null;
+    patchDay.reading = new Promise((resolve) => {
+      settle = resolve;
+    });
+    try {
+      await readPatchDay(report);
+    } finally {
+      settle();
+    }
+  }
+
+  async function readPatchDay(report) {
     const seq = ++patchDay.seq;
     const folders = objects(report.flavors).map((f) => f.folder).filter((f) => typeof f === "string" && f !== "");
     patchDay.flavors = [];
@@ -3214,6 +3782,7 @@
     patchDay.flavors = read;
     patchDaySay("", false);
     drawPatchDay();
+    drawHomeStatus();
   }
 
   // A line: its name as a button that opens the Explorer on `path` (from
@@ -3499,31 +4068,42 @@
     stale: false,
   };
 
-  function backupSay(text, isError) {
+  // `homeText` goes on the home's backup card (M18-04): its own words, with
+  // no folder, path or snapshot id. Without one the card says nothing, so a
+  // sentence of Backups never reaches the home by default.
+  function backupSay(text, isError, homeText) {
     const node = byId("backup-status");
     announce(node, text, Boolean(isError));
     node.classList.toggle("error", Boolean(isError));
+    const card = byId("home-backup-status");
+    announce(card, homeText === undefined ? "" : homeText, Boolean(isError));
+    card.classList.toggle("error", Boolean(isError));
   }
 
   function takeBackups(report) {
     const lines = Array.isArray(report.backups) ? report.backups : [];
     backup.lines = lines.filter((b) => b && typeof b === "object" && typeof b.flavor === "string" && b.flavor !== "");
     backup.error = typeof report.backup_error === "string" ? report.backup_error : "";
-    if (backup.error) backupSay(shown(backup.error), true);
+    // The home's card says it in its own words, with no path (M18-04).
+    if (backup.error) backupSay(shown(backup.error), true, "");
     drawBackups();
   }
 
-  // How long ago an ISO 8601 time was, in words, then the local time.
-  function backupAge(iso) {
+  // How long ago an ISO 8601 time was, in words ("18 hours ago"), or null.
+  function backupAgeWords(iso) {
     const at = typeof iso === "string" ? Date.parse(iso) : NaN;
     if (Number.isNaN(at)) return null;
     const minutes = Math.floor(Math.max(0, Date.now() - at) / 60000);
-    let words;
-    if (minutes < 1) words = "just now";
-    else if (minutes < 60) words = count(minutes, "minute", "minutes") + " ago";
-    else if (minutes < 48 * 60) words = count(Math.floor(minutes / 60), "hour", "hours") + " ago";
-    else words = count(Math.floor(minutes / 1440), "day", "days") + " ago";
-    return words + " (" + localTime(at * 1e6) + ")";
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return count(minutes, "minute", "minutes") + " ago";
+    if (minutes < 48 * 60) return count(Math.floor(minutes / 60), "hour", "hours") + " ago";
+    return count(Math.floor(minutes / 1440), "day", "days") + " ago";
+  }
+
+  // The same, then the local time.
+  function backupAge(iso) {
+    const words = backupAgeWords(iso);
+    return words === null ? null : words + " (" + localTime(Date.parse(iso) * 1e6) + ")";
   }
 
   function backupLine(line, several) {
@@ -3576,6 +4156,7 @@
     box.replaceChildren(
       ...backup.lines.filter((b) => !flavor || "f:" + b.flavor === flavor).map((b) => backupLine(b, several)),
     );
+    drawHomeStatus();
   }
 
   byId("hub-flavor").addEventListener("change", () => drawBackups());
@@ -3589,11 +4170,12 @@
     diff.textContent = "";
     const name = visible(line.flavor);
     try {
-      backupSay("Backing up " + name + "…", false);
+      backupSay("Backing up " + name + "…", false, "Backing up…");
       const made = await runJson(["snap", "create"], { flavor: line.flavor }, false, true);
       const manifest = made.data;
       if (!manifest || typeof manifest !== "object" || !hubStr(manifest.id)) {
-        backupSay(made.error ? shown(made.error) : "wowlab snap create printed something this page does not know.", true);
+        backupSay(made.error ? shown(made.error) : "wowlab snap create printed something this page does not know.", true,
+          HOME_BACKUP_FAILED);
         return;
       }
       const before = hubStr(line.snapshot_id);
@@ -3607,8 +4189,13 @@
       // logout or /reload.
       const said = made.note ? " " + shown(made.note) : "";
       const done = "Backed up " + name + " as " + visible(manifest.id) + "." + said;
+      // The home's card names no folder and no id (M18-04).
+      // snap create's note is its own text, which may name a path: the
+      // card only says that Backups has it.
+      const homeDone = "Backed up just now." + (said ? " Backups has a note about it." : "");
       if (!before) {
-        backupSay(done + " It is the first backup of " + name + " here, so there is nothing to compare it with.", false);
+        backupSay(done + " It is the first backup of " + name + " here, so there is nothing to compare it with.", false,
+          homeDone);
         return;
       }
       const changes = await runJson(["snap", "diff"], { a: before, b: manifest.id }, false, true);
@@ -3617,12 +4204,14 @@
         : null;
       if (lines === null) {
         const why = changes.error ? shown(changes.error) : "wowlab snap diff printed something this page does not know.";
-        backupSay(done + " What changed since the previous backup cannot be shown: " + why, true);
+        backupSay(done + " What changed since the previous backup cannot be shown: " + why, true,
+          homeDone + " What changed cannot be shown; Backups says why.");
         return;
       }
       diff.textContent = lines.map(shown).join("\n");
       diff.hidden = lines.length === 0;
-      backupSay(done + " What changed since the previous backup:", false);
+      backupSay(done + " What changed since the previous backup:", false,
+        homeDone + (lines.length ? " Backups shows what changed since the previous one." : ""));
     } finally {
       backup.busy = false;
       drawBackups();
@@ -3635,7 +4224,8 @@
     const button = Array.from(byId("commands").querySelectorAll("button"))
       .find((b) => b.textContent === "snap restore" && !b.disabled);
     if (!button) {
-      backupSay("This page does not offer snap restore: run wowlab snap restore " + visible(line.snapshot_id) + " in a terminal.", true);
+      backupSay("This page does not offer snap restore: run wowlab snap restore " + visible(line.snapshot_id) + " in a terminal.", true,
+        HOME_RESTORE_UNOFFERED);
       return;
     }
     button.click();
