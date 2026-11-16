@@ -81,26 +81,49 @@
 <p class="intro">Every character folder in your game folder, in every flavor, as the lab-addon last saved it: at logout or <code>/reload</code>, never the session in progress. This tab reads with <code>wowlab char list --summary</code>. Pick a character to open it in the Character tab. A card's last played date is when the game last wrote that character's lab-addon file. Its gain (“+6 levels this week”) is shown when the newest save is from the last seven days: it compares that save with the last one before those days that your backups hold, or, when every save is from those days, with the first of them, and names that save's date when it is older than a week. The saves are read with <code>wowlab char history</code>, for the twelve characters played most recently, and only those played in the last seven days. The backup card is the backup line of the game shown in the header; the addons card counts what <code>wowlab addons check</code> finds current for that game. Names of races, classes and professions come from game tables <code>wowlab names fetch</code> downloads once per game version.</p>
 </details>
 </section>
-<section id="character-view" role="tabpanel" aria-labelledby="tab-character" hidden>
+<section id="character-view" role="tabpanel" aria-labelledby="char-view-title" hidden>
 <h2 id="char-view-title" class="unseen">Character</h2>
 <div class="toolbar panel">
 <label>Character <select id="char-picker" disabled></select></label>
 <p id="char-status" role="status"></p>
 </div>
 <div id="char-panels" class="char-panels">
-<section id="char-gear-panel" class="panel char-panel">
+<div id="char-page" class="char-page">
+<button id="char-back" class="link-button char-back" type="button"><span aria-hidden="true">← </span>All characters</button>
+<section id="char-hero" class="panel char-hero" aria-label="The character">
 <div id="char-header"></div>
-<div id="char-gear"></div>
 <div id="char-dressing" class="char-dressing" hidden>
 <a id="char-dressing-link" class="dressing-link" target="_blank" rel="noopener noreferrer" hidden>See it dressed</a>
 <p id="char-dressing-note" class="dressing-note"></p>
 <div id="char-dressing-items" class="dressing-items" hidden></div>
 </div>
 </section>
-<section id="char-history-panel" class="panel char-panel" aria-labelledby="char-history-title">
-<h3 id="char-history-title">History</h3>
-<div id="char-history"></div>
+<div class="char-grid">
+<section id="char-gear-panel" class="panel char-panel" aria-labelledby="char-gear-title">
+<h3 id="char-gear-title">Gear</h3>
+<div id="char-gear"></div>
 </section>
+<div class="char-side">
+<section id="char-progress-panel" class="panel char-panel" aria-labelledby="char-progress-title">
+<h3 id="char-progress-title">Progress</h3>
+<div id="char-progress"></div>
+</section>
+<section id="char-changes-panel" class="panel char-panel" aria-labelledby="char-changes-title">
+<h3 id="char-changes-title">What changed</h3>
+<div id="char-changes"></div>
+</section>
+</div>
+<section id="char-profs-panel" class="panel char-panel" aria-labelledby="char-profs-title">
+<h3 id="char-profs-title">Professions</h3>
+<div id="char-profs"></div>
+</section>
+<section id="char-bar-panel" class="panel char-panel" aria-labelledby="char-bar-title">
+<h3 id="char-bar-title">Action bar</h3>
+<div id="char-bar"></div>
+<p class="char-bar-more">Every key is under Keybinds.</p>
+</section>
+</div>
+</div>
 <section id="char-keys-panel" class="panel char-panel" aria-labelledby="char-keys-title" hidden>
 <h3 id="char-keys-title">Keys</h3>
 <div class="toolbar char-filters">
@@ -110,7 +133,7 @@
 <div id="char-keys" role="region" aria-label="Key bindings" tabindex="0"></div>
 <p class="char-read-only">Read only in this version: this panel changes no binding. Changing keys from here is planned for a later wave.</p>
 </section>
-<section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title">
+<section id="char-macros-panel" class="panel char-panel" aria-labelledby="char-macros-title" hidden>
 <h3 id="char-macros-title">Macros</h3>
 <div class="toolbar char-filters">
 <label class="check"><input id="char-macros-findings" type="checkbox"> Findings only</label>
@@ -120,7 +143,14 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and, under History, its earlier saves that your backups hold. Read only: this tab runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code> and nothing else. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
+<p class="intro">One character as the lab-addon last saved it: the file it wrote at logout or <code>/reload</code>, never the session in progress, beside the key bindings and macros the client last wrote, and its earlier saves that your backups hold. Read only: this page runs <code>wowlab char list</code>, <code>wowlab char gear</code>, <code>wowlab char binds</code>, <code>wowlab char macros</code> and <code>wowlab char history</code> and nothing else; the professions are the ones <code>wowlab char list --summary</code> read for All characters. An item's name is its link's own text, and nothing is fetched. <strong>See it dressed</strong> opens an outside dressing room in your own browser, and only when you click it; this page makes no request to it.</p>
+<div id="char-about" class="char-about">
+<div id="char-sources"></div>
+<section id="char-history-panel" class="char-about-part" aria-labelledby="char-history-title">
+<h3 id="char-history-title">Every save</h3>
+<div id="char-history"></div>
+</section>
+</div>
 </details>
 </section>
 <section id="backups-view" role="tabpanel" aria-labelledby="sec-backups" hidden>

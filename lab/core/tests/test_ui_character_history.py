@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,7 @@ from test_ui_character import ACCOUNT, NEWER, NEWER_NS, _gear_params, _lab_file,
 from test_ui_explorer import FLAVOR, IMG, RLO, _node
 from typer.testing import CliRunner
 
-from wowlab_core import cli, snapshot
+from wowlab_core import cli, gear, snapshot
 
 home = first_stage.home
 install = first_stage.install
@@ -83,8 +84,15 @@ function historyView() {
     text: box.textContent,
     lines: all.filter((e) => e.tagName === "p").map((e) => ({ cls: e.className, text: e.textContent })),
     errors: cls("char-error").map((e) => e.textContent),
-    captions: cls("history-caption").map((e) => e.textContent),
-    charts: all.filter((e) => e.tagName === "svg").map((s) => ({
+    // The Progress card (M18-05): its figures, its chart and its caption.
+    figures: ids["char-progress"].all().filter((e) => has(e, "progress-figure")).map((f) => f.children.map((c) => c.textContent)),
+    progress: ids["char-progress"].all().filter((e) => e.tagName === "p").map((e) => e.textContent),
+    // What changed (M18-05): each save's date and line, and the item names in it.
+    timeline: ids["char-changes"].all().filter((e) => has(e, "change")).map((li) => ({
+      when: li.children[0].textContent, what: li.children[1].textContent,
+      items: li.children[1].children.filter((e) => has(e, "item-name")).map((e) => [e.textContent, e.className]) })),
+    changesText: ids["char-changes"].textContent,
+    charts: ids["char-progress"].all().filter((e) => e.tagName === "svg").map((s) => ({
       ns: s.ns, viewBox: s.getAttribute("viewBox"), hidden: s.getAttribute("aria-hidden"),
       lines: s.all().filter((e) => e.tagName === "polyline" && has(e, "history-line")).map((e) => e.getAttribute("points")),
       dots: s.all().filter((e) => e.tagName === "circle").map((e) => [Number(e.getAttribute("cx")), Number(e.getAttribute("cy"))]),
@@ -105,7 +113,8 @@ function historyView() {
     notes: cls("char-notes").flatMap((ul) => ul.children.map((li) => li.textContent)),
     summary: all.filter((e) => e.tagName === "summary").map((e) => e.textContent),
     status: ids["char-status"].textContent,
-    gearRows: ids["char-gear"].all().filter((e) => e.tagName === "tr" && has(e, "gear-row")).length,
+    gearRows: ids["char-gear"].all().filter((e) => has(e, "gear-row")).length,
+    history: all.filter((e) => e.tagName === "svg").length,
   };
 }
 """
@@ -221,6 +230,19 @@ def _num(value: Any) -> str:
     return "not recorded" if value is None else str(value)
 
 
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _played(ns: int) -> str:
+    """A save's day as the page says it ("Nov 12"; the year when not this one)."""
+    when = time.localtime(ns // 10**9)
+    day = f"{_MONTHS[when.tm_mon - 1]} {when.tm_mday}"
+    return day if when.tm_year == time.localtime().tm_year else f"{day}, {when.tm_year}"
+
+
+MINUS = chr(0x2212)  # the page writes a loss with a minus sign
+
+
 # ─── several saves ───────────────────────────────────────────────────────────
 
 
@@ -237,41 +259,48 @@ def test_several_saves_draw_two_charts_and_a_table_cross_capture(
         "text": f"4 saves, {day(T1)} to {day(T_LIVE)}. A time is the file's modification time: "
         "when the game wrote it at logout or /reload, or when a restore put it back.",
     }
-    # Two charts, SVG in the SVG namespace, hidden from screen readers.
-    assert len(view["charts"]) == 2
-    for chart in view["charts"]:
-        assert chart["ns"] == "http://www.w3.org/2000/svg"
-        assert chart["hidden"] == "true" and chart["viewBox"] == "0 0 640 150"
-        assert set(chart["tags"]) <= {"polyline", "circle", "text"}
-        assert chart["labels"][-2:] == [day(T1), day(T_LIVE)]
-    ilvl, level = view["charts"]
-    for chart, field in ((ilvl, "item_level"), (level, "level")):
-        values = [r[field] for r in rows]
-        known = [v for v in values if v is not None]
-        assert len(chart["dots"]) == len(known) >= 2, field
-        # One step per save, oldest left; a higher value is drawn higher.
-        xs = [x for x, _ in chart["dots"]]
-        assert xs == sorted(xs) and len(set(xs)) == len(xs)
-        top = max(known)
-        for (_, y), v in zip(chart["dots"], known, strict=True):
-            assert (y == min(y for _, y in chart["dots"])) == (v == top), (field, v)
-        assert chart["labels"][0] == (f"{top:.1f}" if field == "item_level" else str(top))
-    known = [r["item_level"] for r in rows if r["item_level"] is not None]
+    # The Progress card (M18-05): one chart of the level, SVG in the SVG
+    # namespace, hidden from screen readers, with no text of its own.
+    assert view["history"] == 0, "no chart is left under About this data"
+    assert len(view["charts"]) == 1
+    chart = view["charts"][0]
+    assert chart["ns"] == "http://www.w3.org/2000/svg"
+    assert chart["hidden"] == "true" and chart["viewBox"] == "0 0 360 110"
+    assert set(chart["tags"]) <= {"polyline", "circle"} and chart["labels"] == []
     levels = [r["level"] for r in rows if r["level"] is not None]
-    # Lowest and highest, never "from ... to" (which reads as a gain), and
-    # the steps are said not to be time.
-    assert view["captions"] == [
-        "Equipped item level (the client's average, as the addon recorded it): "
-        f"lowest {min(known):.1f}, highest {max(known):.1f}, one step per save (not spaced by "
-        "time).",
-        f"Level: lowest {min(levels)}, highest {max(levels)}, one step per save (not spaced by "
-        "time).",
-    ]
-    # The table: the charts' text alternative, reachable and labelled.
+    assert len(chart["dots"]) == len(levels) >= 2
+    # One step per save, oldest left; a higher level is drawn higher.
+    xs = [x for x, _ in chart["dots"]]
+    assert xs == sorted(xs) and len(set(xs)) == len(xs)
+    for (_, y), v in zip(chart["dots"], levels, strict=True):
+        assert (y == min(y for _, y in chart["dots"])) == (v == max(levels)), v
+    # The figures say it in words: the first and the last save's values.
+    ilvls = [r["item_level"] for r in rows if r["item_level"] is not None]
+    level_figure = ["Level"]
+    if levels[0] == levels[-1]:
+        level_figure.append(str(levels[-1]))
+    else:
+        diff = levels[-1] - levels[0]
+        level_figure += [
+            f"{levels[0]} → {levels[-1]}",
+            ("+" if diff > 0 else MINUS) + str(abs(diff)),
+        ]
+    ilvl_figure = ["Item level"]
+    if ilvls[0] == ilvls[-1]:
+        ilvl_figure.append(f"{ilvls[-1]:.1f}")
+    else:
+        diff = ilvls[-1] - ilvls[0]
+        ilvl_figure += [
+            f"{ilvls[0]:.1f} → {ilvls[-1]:.1f}",
+            ("+" if diff > 0 else MINUS) + f"{abs(diff):.1f}",
+        ]
+    assert view["figures"] == [level_figure, ilvl_figure]
+    assert view["progress"] == [f"4 saves, {_played(T1)} to {_played(T_LIVE)}, one step per save"]
+    # The table, under About this data: every value, reachable and labelled.
     table = view["table"]
     assert table["role"] == "region" and table["label"] == "Each save as a table"
     assert table["tabIndex"] == 0
-    assert table["caption"] == "Each save, oldest first: the values the charts draw"
+    assert table["caption"] == "Each save, oldest first: the values the Progress card draws"
     assert table["head"] == ["Saved", "Level", "Equipped item level", "Spec", "Held in"]
     assert len(table["rows"]) == 4
     for drawn, row in zip(table["rows"], rows, strict=True):
@@ -345,9 +374,51 @@ def test_the_changes_are_newest_first_in_player_words_cross_capture(
     assert view["changes"][2]["items"] == [
         "No change in what both saves record (level, equipped item level, spec, gear, currencies)."
     ]
-    # The report's notes, behind a closed summary.
+    # The report's notes, under their own heading in About this data.
     assert view["notes"] == several["notes"]
-    assert view["summary"] == [f"{len(several['notes'])} notes on what these figures are"]
+    assert "On what these figures are" in view["headings"] and view["summary"] == []
+
+
+def _upgrade(g: dict[str, Any]) -> bool:
+    before, after = g["before"], g["after"]
+    if after is None:
+        return False
+    if before is None:
+        return True
+    was, now = before["item_level"], after["item_level"]
+    return was is not None and now is not None and now > was
+
+
+def test_what_changed_says_each_save_in_plain_words_cross_capture(
+    server: Any, several: dict[str, Any], tmp_path: Path
+) -> None:
+    """M18-05: newest first, one line per save after the oldest: the level
+    reached, the upgrades counted, at most three item names in their
+    quality colour and "and N more"; no slot, id or file time."""
+    out = _drive(tmp_path / "node", _scenario(server, several))
+    view = out["steps"][1]
+    rows = several["rows"]
+    assert [t["when"] for t in view["timeline"]] == [_played(r["saved_at_ns"]) for r in rows[:0:-1]]
+    for drawn, row, prev in zip(view["timeline"], rows[:0:-1], rows[-2::-1], strict=True):
+        what = drawn["what"]
+        if row["same_bytes_as_ns"] is not None:
+            assert what.startswith("Put back from a backup")
+        was, now = prev["level"], row["level"]
+        if was is not None and now is not None and now > was:
+            assert f"Reached level {now}" in what
+        gear_changes = row["gear_changes"]
+        ups = [g for g in gear_changes if _upgrade(g)]
+        named = [g for g in (ups or gear_changes) if g["after"] is not None]
+        assert [name for name, _ in drawn["items"]] == [g["after"]["name"] for g in named[:3]]
+        for (_, cls), g in zip(drawn["items"], named, strict=False):
+            colour = gear.colour_class(g["after"]["link"].split("|H")[0][2:])
+            assert cls.split() == ["item-name", colour]
+        if len(named) > 3:
+            assert what.endswith(f" and {len(named) - 3} more")
+        if not gear_changes and not (was is not None and now is not None and was != now):
+            assert "No change in level or gear" in what
+        assert "slot" not in what.lower() and "WowLab.lua" not in what
+    assert any(t["items"] for t in view["timeline"]), "the sequence names an item"
 
 
 # ─── zero and one save ───────────────────────────────────────────────────────
@@ -414,7 +485,7 @@ def test_no_save_that_can_be_read_shows_why_constructed(
         _FEW,
     ]
     assert view["table"] is None and view["charts"] == []
-    assert view["headings"] == ["Could not read 1 copy"]
+    assert view["headings"][:1] == ["Could not read 1 copy"]
     assert view["missing"] == [
         [f"the file in the game folder: {report['unreadable'][0]['reason']}"]
     ]
@@ -488,9 +559,13 @@ def test_hostile_report_text_draws_as_text_constructed(
     assert view["table"]["rows"][1]["cells"][3] == IMG
     assert "<a href=x>panel</a>" in view["changes"][2]["items"]
     assert view["missing"] == [["snapshot <img>: ⟨U+202E⟩bad"]]
-    # The item level chart draws only the values that are numbers.
-    known = [r["item_level"] for r in several["rows"][1:] if r["item_level"] is not None]
+    # The level chart draws only the values that are numbers.
+    known = [r["level"] for r in rows if isinstance(r["level"], int)]
     assert len(view["charts"][0]["dots"]) == len(known)
+    # What changed holds no control character either.
+    assert RLO not in view["changesText"] and RLO not in json.dumps(
+        view["timeline"], ensure_ascii=False
+    )
 
 
 # ─── the script ──────────────────────────────────────────────────────────────
@@ -588,16 +663,11 @@ def test_levels_that_round_alike_are_shown_exactly_constructed(
     server: Any, several: dict[str, Any], tmp_path: Path
 ) -> None:
     """Constructed: two equipped item levels that read 8.2 to one decimal
-    but differ are written exactly in the change and in the caption."""
+    but differ are written exactly in the change and on the Progress card."""
     report = json.loads(json.dumps(several))
-    for row, value in zip(report["rows"], (8.1875, 8.2, 8.2, 8.1875), strict=True):
+    for row, value in zip(report["rows"], (8.1875, 8.2, 8.2, 8.2), strict=True):
         row["item_level"] = value
     out = _drive(tmp_path / "node", _scenario(server, report))
     view = out["steps"][1]
-    assert view["captions"][0] == (
-        "Equipped item level (the client's average, as the addon recorded it): lowest 8.1875, "
-        "highest 8.2, one step per save (not spaced by time)."
-    )
-    assert view["charts"][0]["labels"][:2] == ["8.2", "8.1875"]
+    assert view["figures"][1] == ["Item level", "8.1875 → 8.2", "+0.0125"]
     assert "Equipped item level 8.1875 to 8.2 (the client's figure)" in view["changes"][2]["items"]
-    assert "Equipped item level 8.2 to 8.1875 (the client's figure)" in view["changes"][0]["items"]

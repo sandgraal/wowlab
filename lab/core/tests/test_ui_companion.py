@@ -279,7 +279,8 @@ def _views(html: str) -> dict[str, str]:
 
 _ABOUT = re.compile(
     r'<details class="about"><summary>About this data</summary>\n<p class="(?:intro|patch-day-intro)">'
-    r"(?:(?!</p>).)+</p>\n</details>\n</section>\n$",
+    # The character page's own facts and saves follow its intro (M18-05).
+    r'(?:(?!</p>).)+</p>\n(?:<div id="char-about" class="char-about">\n.*</div>\n)?</details>\n</section>\n$',
     flags=re.DOTALL,
 )
 
@@ -354,7 +355,7 @@ _KEPT = (
     "looks, the db2 cache, pages), run directly.",
     "One character as the lab-addon last saved it: the file it wrote at logout or /reload , "
     "never the session in progress, beside the key bindings and macros the client last wrote, "
-    "and, under History, its earlier saves that your backups hold.",
+    "and its earlier saves that your backups hold.",
     "See it dressed opens an outside dressing room in your own browser, and only when you click "
     "it; this page makes no request to it.",
     "It downloads the build's public game tables from wago.tools when wowlab does not have them "
