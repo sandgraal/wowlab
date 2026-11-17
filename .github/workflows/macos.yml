@@ -1,0 +1,69 @@
+name: macOS
+
+# The Lab suite on macos-latest, the owner's platform (ADR-0031, M13-02,
+# docs/LAB_PLAN.md §15.3 E3). Not a required check.
+#
+# Off the pull-request path (owner decision, 2026-11-17, M18-15): until then
+# it was the `lab-desktop` job in ci.yml and ran on every pull request. It
+# now runs after each merge to main, nightly, and on demand for a branch:
+#   gh workflow run macos.yml --ref <branch>
+# A failed scheduled run is emailed to the owner by GitHub's default
+# notification settings (scheduled runs notify the user who last edited the
+# cron line); nothing here posts anywhere. The conductor reads the latest
+# runs on main with the Windows ones (docs/AGENT_WORKFLOW.md).
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 10:17 UTC: 02:17 or 03:17 Pacific, clear of 6-9 AM Pacific.
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A run in progress on main is never cancelled. GitHub keeps at most one running and one
+# pending run per group, and a newer queued run replaces the pending one, so
+# merges in quick succession can share a run rather than each getting its
+# own. The nightly run has a group of its own (M18-15), so a merge never
+# replaces it and it never replaces a merge's run. A superseded on-demand
+# branch run is cancelled.
+concurrency:
+  group: macos-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lab-desktop:
+    name: lab (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Actions cache, restored or saved (M13-42; see the note in ci.yml).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install
+        run: uv sync --frozen
+      # Two passes (M13-18), as in ci.yml's `quality`.
+      - name: pytest lab/core/tests (parallel)
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
+      - name: pytest lab/core/tests (serial)
+        run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests
+      - name: wowlab --version
+        run: uv run --frozen wowlab --version
