@@ -154,7 +154,7 @@ def test_the_hint_opens_the_backups_page_and_restores_nothing_constructed(
     assert step["keptHidden"] is False
     assert re.fullmatch(
         r"From your backup of Oct \d{1,2}(, \d{4})?\. This character's folder is still in your "
-        r"game folder but holds no wowlab record; your backup has one\. This page changes "
+        r"game folder but holds no lab record; your backup has one\. This page changes "
         r"nothing\.",
         step["kept"],
     ), step["kept"]

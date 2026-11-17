@@ -4100,7 +4100,7 @@
     // A folder still in the game folder with no record of its own (M18-11)
     // is not gone: the line says what is.
     const why = row.folder_present === true
-      ? ". This character's folder is still in your game folder but holds no wowlab record; your backup has one. " +
+      ? ". This character's folder is still in your game folder but holds no lab record; your backup has one. " +
         "This page changes nothing."
       : ". wowlab's record of this character is no longer in your game folder; this page changes nothing.";
     line.textContent = (day ? "From your backup of " + day : "From your backup") + why;
