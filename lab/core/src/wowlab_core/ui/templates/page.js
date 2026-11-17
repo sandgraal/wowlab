@@ -1294,6 +1294,10 @@
     // digits folder and folder name, picked once the list is read.
     want: null,
     seq: 0, // bumped by every pick, so a reply that arrives late draws nothing
+    // Bumped by every open from the home (`openCharacter`, `openKept`), a
+    // pick in the picker and every other tab shown: an open still waiting
+    // for the list stops when it moved (code review of #573).
+    opening: 0,
     binds: null, // the picked character's CharBindsReport, for the keys filters
     macros: null, // its CharMacrosReport, for the findings filter
     entry: null, // the picked character's `char list` row
@@ -1483,6 +1487,7 @@
   }
 
   byId("char-picker").addEventListener("change", () => {
+    character.opening += 1;
     const at = byId("char-picker").value;
     if (!/^[0-9]+$/.test(at)) return;
     const entry = character.entries[Number(at)];
@@ -3392,14 +3397,19 @@
   // tab's list does not hold that character (the header could not move to
   // its flavor), the status says so; no other character stands in for it.
   async function openCharacter(row) {
+    const token = ++character.opening;
     await runFlavor.ready;
+    if (token !== character.opening) return;
     const flavor = hubStr(row.flavor);
     const want = { flavor: flavor, account: row.account, realm_folder: row.realm_folder, label: row.label };
     character.want = want;
     if (flavor && runFlavor.picked && flavor !== runFlavor.picked) switchRunFlavor(flavor);
     showTab("character");
+    const opened = ++character.opening;
     await loadCharacters();
     character.want = null;
+    // Another tab, pick or open came while the list was read: it wins.
+    if (opened !== character.opening || tabShown !== "character") return;
     const at = character.entries.findIndex((e) => readable(e) && isWanted(e, want));
     if (at < 0) {
       // A list that could not be read has said so already.
@@ -3450,6 +3460,7 @@
 
   function showTab(name) {
     tabShown = name;
+    if (name !== "character") character.opening += 1;
     const section = sectionOf(name);
     sectionShown[section] = name;
     for (const which of Object.keys(SECTIONS)) {
@@ -4031,7 +4042,10 @@
   // list is read first, so its own first pick never draws over this one.
   async function openKept(row) {
     showTab("character");
+    const token = ++character.opening;
     await loadCharacters();
+    // Another tab, pick or open came while the list was read: it wins.
+    if (token !== character.opening || tabShown !== "character") return;
     byId("char-picker").value = "";
     await pickKept(row);
     byId("char-back").focus();
