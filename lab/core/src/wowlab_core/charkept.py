@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict
 
 from wowlab_core import charhistory, firstrun, labaddon, longpath, luadata, snapshot
 
-__all__ = ["KeptCopy", "find", "in_install", "read_copy"]
+__all__ = ["KeptCopy", "counts", "find", "in_install", "read_copy"]
 
 # A character's lab file as a manifest names it, relative to the install
 # root: `<flavor>/WTF/Account/<account>/<realm>/<character>/SavedVariables/
@@ -96,8 +96,14 @@ def _key(path: str) -> tuple[str, str, str, str] | None:
 def in_install(root: Path, path: str) -> bool:
     """Whether the character folder of the lab file at `path` (relative to
     `root`, as a manifest names it) exists in the install. Only `lstat`:
-    nothing is opened or followed. A refused check counts as present."""
-    folder = root.joinpath(*path.split("/")[:-2])
+    nothing is opened or followed. A refused check counts as present, and
+    so does a path with a part that could name another place on Windows
+    (a backslash or a colon, which a drive letter needs): it is never
+    looked up."""
+    parts = path.split("/")[:-2]
+    if any("\\" in part or ":" in part for part in parts):
+        return True
+    folder = root.joinpath(*parts)
     try:
         longpath.lstat(folder)
     except (FileNotFoundError, NotADirectoryError):
@@ -105,6 +111,12 @@ def in_install(root: Path, path: str) -> bool:
     except OSError:
         return True
     return True
+
+
+def counts(manifest: snapshot.Manifest, root: Path, imported_ids: Collection[str] = ()) -> bool:
+    """Whether `manifest` is a snapshot of the install at `root` that
+    `snap import` did not add: the snapshots `find` reads."""
+    return manifest.id not in imported_ids and firstrun._same_root(manifest.install_root, root)
 
 
 def find(
@@ -121,7 +133,7 @@ def find(
     is_present = present if present is not None else (lambda p: in_install(root, p))
     found: dict[tuple[str, str, str, str], list[tuple[snapshot.Manifest, snapshot.Entry]]] = {}
     for manifest in manifests:
-        if manifest.id in imported_ids or not firstrun._same_root(manifest.install_root, root):
+        if not counts(manifest, root, imported_ids):
             continue
         mine: dict[tuple[str, str, str, str], dict[str, snapshot.Entry]] = {}
         for entry in manifest.entries:

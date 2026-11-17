@@ -413,6 +413,7 @@ def collect(
     table: gear.SlotTable | None = None,
     spec_name: Callable[[int, int | None], str | None] = _no_spec_name,
     currency_name: Callable[[int], str | None] = _no_name,
+    only: Callable[[snapshot.Manifest], bool] | None = None,
 ) -> CharHistory:
     """The history of the file at `path` (relative to the install root, as a
     manifest names it: `<flavor folder>/WTF/Account/...`) in every
@@ -421,9 +422,15 @@ def collect(
     no snapshot holds a copy with that save time). `table` names the gear
     slots (the shipped default when None). `spec_name` is given the spec id
     and the record's body type (`Enum.UnitSex`, None when not recorded).
-    Never raises for a copy it cannot read; it lists it."""
+    `only`, when given, keeps the snapshots it answers True for (the
+    others are not searched or counted). Never raises for a copy it
+    cannot read; it lists it."""
     slot_table = table if table is not None else gear.shipped_slot_table()
     listing = store.list_lenient()
+    if only is not None:
+        listing = listing.model_copy(
+            update={"manifests": tuple(m for m in listing.manifests if only(m))}
+        )
     copies: list[_Copy] = []
     unreadable: list[UnreadableCopy] = []
     holding = 0

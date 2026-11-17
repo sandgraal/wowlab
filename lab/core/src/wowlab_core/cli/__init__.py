@@ -795,6 +795,9 @@ from wowlab_core.cli._cmd_char import (
     _older_record_line as _older_record_line,
 )
 from wowlab_core.cli._cmd_char import (
+    _patch_line as _patch_line,
+)
+from wowlab_core.cli._cmd_char import (
     _picked_words as _picked_words,
 )
 from wowlab_core.cli._cmd_char import (

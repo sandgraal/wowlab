@@ -141,7 +141,7 @@ def test_kept_characters_are_dimmed_cards_after_the_others_constructed(
         assert re.fullmatch(r"Level \d+", card["level"])
         assert re.fullmatch(r"\d+\.\d", card["ilvl"])
         assert re.fullmatch(
-            r"WoW Classic Beta · kept in your backup from Oct \d{1,2}", card["foot"]
+            r"WoW Classic Beta · 1\.60\.1 · kept in your backup from Oct \d{1,2}", card["foot"]
         ), card
         assert card["buttons"] == [f"card-open: {card['name']}"]
         assert card["gain"] is None
@@ -192,7 +192,8 @@ def test_a_kept_card_opens_a_read_only_page_from_the_backup_constructed(
     assert {tuple(b["command"]) for b in bodies} <= READS
     assert step["keptHidden"] is False
     assert re.fullmatch(
-        r"From your backup of Oct \d{1,2}\. This character is no longer in your game folder; "
+        r"From your backup of Oct \d{1,2}\. wowlab's record of this character is no longer in "
+        r"your game folder; "
         r"this page changes nothing\.",
         step["kept"],
     )
@@ -240,7 +241,7 @@ def test_a_kept_record_that_cannot_be_read_has_no_open_button_constructed(
     card = home_tab._card(_drive(tmp_path / "node", scenario)["steps"][0]["home"], "Sangraal-Sett")
     assert card["buttons"] == []
     assert card["note"] == "wowlab could not read what your backup holds for this character."
-    assert card["foot"].startswith("WoW Classic Beta · kept in your backup from ")
+    assert card["foot"].startswith("WoW Classic Beta · 1.60.1 · kept in your backup from ")
 
 
 def test_hostile_kept_names_draw_as_inert_text_constructed(
@@ -256,7 +257,7 @@ def test_hostile_kept_names_draw_as_inert_text_constructed(
     cards = _drive(tmp_path / "node", scenario)["steps"][0]["home"]["cards"]
     card = cards[-3]
     assert card["name"] == first_stage.IMG
-    assert card["foot"].startswith("WoW <b>x</b> · kept in your backup")
+    assert card["foot"].startswith("WoW <b>x</b> · 1.60.1 · kept in your backup")
 
 
 def test_the_kept_cards_use_text_nodes_only() -> None:

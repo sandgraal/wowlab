@@ -303,3 +303,78 @@ def test_reads_only_the_install_and_the_store_stay_as_they_were_constructed(
     assert run("char", "kept", "--character", SETT).exit_code == 0
     assert (_state(kept["root"]), _state(store)) == before
     assert not (_account(kept["root"]) / SETT).exists()
+
+
+# ─── the security review of #573 ─────────────────────────────────────────────
+
+
+def test_history_leaves_out_an_imported_snapshot_of_the_same_path_constructed(
+    kept: dict[str, Any],
+) -> None:
+    """Constructed: a second snapshot holding another save of the warlock,
+    then recorded as imported (as `snap import` records one)."""
+    root = kept["root"]
+    shutil.copytree(OWNER / SETT, _account(root) / SETT)
+    os.utime(_account(root) / SETT / SV, ns=(SETT_NS + 10**9, SETT_NS + 10**9))
+    other = _snap(root, datetime(2026, 10, 20, tzinfo=UTC))
+    shutil.rmtree(_account(root) / SETT)
+    store = snapshot.SnapshotStore()
+    (store.path / "imported").mkdir(exist_ok=True)
+    (store.path / "imported" / other.id).write_bytes(b"")
+    assert other.id in store.imported_ids()
+    report = as_json("char", "kept", "--character", SETT)[1]
+    (row,) = report["history"]["rows"]
+    assert row["snapshots"] == [kept["snapshot"].id]
+    assert report["history"]["snapshots_searched"] == 1
+    assert report["kept"][0]["snapshot_id"] == kept["snapshot"].id
+
+
+def test_a_backup_time_out_of_the_local_clocks_range_is_its_utc_date() -> None:
+    from wowlab_core.cli import _cmd_char
+
+    assert _cmd_char._backup_day("0001-01-01T00:00:00Z") in ("0001-01-01", "0000-12-31")
+    assert _cmd_char._backup_day("not a time") == "not a time"
+
+
+def test_constructed_a_path_part_with_a_backslash_or_colon_is_never_looked_up(
+    tmp_path: Path,
+) -> None:
+    tail = "SavedVariables/WowLab.lua"
+    for bad in ("_x_/WTF/Account/A/R/C:D", "_x_/WTF/Account/A\\..\\R/C", "C:/WTF/Account/A/R/C"):
+        assert charkept.in_install(tmp_path, f"{bad}/{tail}") is True
+    assert charkept.in_install(tmp_path, f"_x_/WTF/Account/A/R/C/{tail}") is False
+
+
+# ─── names from another version (domain review of #573) ─────────────────────
+
+
+def test_names_prefer_an_installed_version_on_the_same_patch_line_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constructed: which versions have every name table cached."""
+    from wowlab_core.cli import _cmd_char
+
+    cached = {"1.61.0.80000", "1.60.1.70888"}
+    monkeypatch.setattr(_cmd_char, "_names_missing", lambda v: [] if v in cached else ["x"])
+    installed = ["1.61.0.80000", "1.60.1.70888"]
+    assert _cmd_char._names_version("1.60.1.69913", installed) == "1.60.1.70888"
+    assert _cmd_char._names_version("1.59.0.1", installed) == "1.61.0.80000"
+    cached.add("1.60.1.69913")
+    assert _cmd_char._names_version("1.60.1.69913", installed) == "1.60.1.69913"
+    cached.clear()
+    assert _cmd_char._names_version("1.60.1.69913", installed) == "1.60.1.69913"
+
+
+def test_the_text_says_when_names_are_another_versions_constructed(
+    kept: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wowlab_core.cli import _cmd_char
+
+    launch = hub_cli.LAUNCH_VERSION
+    monkeypatch.setattr(_cmd_char, "_names_missing", lambda v: [] if v == launch else ["x"])
+    report = as_json("char", "list", "--summary")[1]
+    assert {r["version"] for r in report["kept_in_backups"]} == {launch}
+    done = run("char", "kept")
+    assert done.exit_code == 0, done.output
+    words = " ".join(done.stdout.split())
+    assert f"names read for game version {launch}, not the backup's own ({BETA_VERSION})" in words

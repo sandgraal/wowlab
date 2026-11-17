@@ -709,13 +709,26 @@ def _summary_backups(
     return lines, None
 
 
+def _patch_line(version: str | None) -> str | None:
+    """A version's first two parts ("1.60" of "1.60.1.69913"), or None."""
+    if version is None:
+        return None
+    parts = version.split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else None
+
+
 def _names_version(snapshot_version: str | None, installed: Sequence[str | None]) -> str | None:
     """The version a kept record's names are read for (M18-06): the
-    snapshot's own when every name table is cached for it, else the first
-    installed flavor's that has them all (the game's ids for a race, class,
-    spec or skill line do not change between versions), else the
-    snapshot's. Reads the cache only."""
-    for version in dict.fromkeys([snapshot_version, *installed]):
+    snapshot's own when every name table is cached for it, else an installed
+    flavor's that has them all, one on the snapshot's patch line (the same
+    first two parts) before any other, else the snapshot's. A race, class,
+    spec or skill line id is usually the same between versions [verify]; a
+    name read for another version is said so in the text. Reads the cache
+    only."""
+    line = _patch_line(snapshot_version)
+    others = [v for v in installed if v is not None]
+    same = [v for v in others if line is not None and _patch_line(v) == line]
+    for version in dict.fromkeys([snapshot_version, *same, *others]):
         if version is not None and _names_missing(version) == []:
             return version
     return snapshot_version
@@ -2443,7 +2456,9 @@ _KEPT_NOTES = [
     "Nothing is restored. wowlab snap restore puts a snapshot's files back, after its own "
     "plan and confirmation.",
     "Names of classes, races, specs and professions come from game tables already downloaded "
-    "for the backup's game version, or, when those are not downloaded, for an installed one.",
+    "for the backup's game version, or, when those are not downloaded, for an installed one "
+    "(the same patch first): the ids are usually the same between versions, and a line says "
+    "when another version's names are used.",
 ]
 
 KeptFlavorOpt = Annotated[
@@ -2462,7 +2477,11 @@ def _backup_day(created_at: str) -> str:
         when = datetime.fromisoformat(created_at)
     except ValueError:
         return created_at
-    return when.astimezone().strftime("%Y-%m-%d")
+    try:
+        return when.astimezone().strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        # Out of the local clock's range (a year near 1): the UTC date.
+        return when.strftime("%Y-%m-%d")
 
 
 def _kept_head(row: CharKeptRow) -> str:
@@ -2470,7 +2489,13 @@ def _kept_head(row: CharKeptRow) -> str:
 
 
 def _kept_lines(row: CharKeptRow) -> list[str]:
-    return [*_summary_lines(row), f"kept in the backup of {_backup_day(row.created_at)}"]
+    lines = [*_summary_lines(row), f"kept in the backup of {_backup_day(row.created_at)}"]
+    if row.version is not None and row.version != row.snapshot_version:
+        lines.append(
+            f"names read for game version {row.version}, not the backup's own "
+            f"({row.snapshot_version or 'not recorded'})"
+        )
+    return lines
 
 
 def _say_kept(rows: Sequence[CharKeptRow]) -> None:
@@ -2510,6 +2535,7 @@ def char_kept(
     if isinstance(listing, str):
         raise CliError(listing)
     installed = [f.version for f in inst.flavors]
+    imported = listing[1]
     found = _kept_rows(
         listing, inst.root, installed, flavor=flavor, account=account, character=character
     )
@@ -2564,6 +2590,8 @@ def char_kept(
             table=table.table,
             spec_name=spec_name,
             currency_name=currency_name,
+            # The snapshots `find` reads: this install's, not imported.
+            only=lambda m: charkept.counts(m, inst.root, imported),
         )
         history = CharHistoryReport(
             flavor_folder=copy.flavor_folder,

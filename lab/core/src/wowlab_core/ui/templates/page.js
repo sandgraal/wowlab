@@ -3988,6 +3988,13 @@
     return Number.isFinite(ms) ? playedDay(ms * 1e6) : null;
   }
 
+  // The game and the backup's patch, as the header names a game
+  // (`gameName`'s words and patch): "WoW Classic Beta · 1.60.1".
+  function keptGame(row) {
+    const patch = (hubStr(row.snapshot_version) || "").split(".").slice(0, 3).join(".");
+    return visible(patch ? gameWords(row.flavor) + " \u00b7 " + patch : gameWords(row.flavor));
+  }
+
   function keptWords(row) {
     const day = keptDay(row);
     return day ? "kept in your backup from " + day : "kept in your backup";
@@ -4014,7 +4021,7 @@
     }
     const foot = make("div");
     foot.className = "card-foot";
-    foot.appendChild(make("span", visible(gameWords(row.flavor)) + " \u00b7 " + keptWords(row)));
+    foot.appendChild(make("span", keptGame(row) + " \u00b7 " + keptWords(row)));
     body.appendChild(foot);
     card.appendChild(body);
     return card;
@@ -4041,7 +4048,7 @@
     const line = byId("char-kept");
     const day = keptDay(row);
     line.textContent = (day ? "From your backup of " + day : "From your backup") +
-      ". This character is no longer in your game folder; this page changes nothing.";
+      ". wowlab's record of this character is no longer in your game folder; this page changes nothing.";
     line.hidden = false;
     byId("char-bar-panel").hidden = true;
     byId("char-header").replaceChildren(charTitle(name));
