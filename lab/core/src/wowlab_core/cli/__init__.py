@@ -3,7 +3,8 @@
 A thin shell over the library. Every command reads through the modules the
 spec names and prints text, or JSON with `--json`; the only commands that
 change an install are `snap restore`, `profile apply` (§13.3, M11-08),
-`addon install|remove lab` (§13.1, M11-02), `sv merge` (§13.4, M11-09) and `undo`, and all go
+`addon install|remove lab` (§13.1, M11-02), `sv merge` (§13.4, M11-09), `macros fix`
+(§16.5 F2, M13-07) and `undo`, and all go
 through `wowlab_core.guard` (L2, ADR-0021): they print
 the plan and ask before writing unless `--yes` is given. Nothing here writes a file itself; the
 snapshot store, the game-data cache and saved looks are written by `snapshot`,
@@ -1863,6 +1864,15 @@ from wowlab_core.cli._cmd_looks import (
     looks_show as looks_show,
 )
 from wowlab_core.cli._cmd_macros import (
+    _FIX_KEPT as _FIX_KEPT,
+)
+from wowlab_core.cli._cmd_macros import (
+    _FIX_LEFT as _FIX_LEFT,
+)
+from wowlab_core.cli._cmd_macros import (
+    _FIX_UNCONFIRMED as _FIX_UNCONFIRMED,
+)
+from wowlab_core.cli._cmd_macros import (
     _MACRO_FILE_NOTE as _MACRO_FILE_NOTE,
 )
 from wowlab_core.cli._cmd_macros import (
@@ -1884,16 +1894,31 @@ from wowlab_core.cli._cmd_macros import (
     MacrosFile as MacrosFile,
 )
 from wowlab_core.cli._cmd_macros import (
+    MacrosFixReport as MacrosFixReport,
+)
+from wowlab_core.cli._cmd_macros import (
     MacrosReport as MacrosReport,
 )
 from wowlab_core.cli._cmd_macros import (
     _check_record as _check_record,
 )
 from wowlab_core.cli._cmd_macros import (
+    _fix_expect as _fix_expect,
+)
+from wowlab_core.cli._cmd_macros import (
+    _fix_hint as _fix_hint,
+)
+from wowlab_core.cli._cmd_macros import (
     _macro_notes as _macro_notes,
 )
 from wowlab_core.cli._cmd_macros import (
+    _print_fix as _print_fix,
+)
+from wowlab_core.cli._cmd_macros import (
     macros_check as macros_check,
+)
+from wowlab_core.cli._cmd_macros import (
+    macros_fix as macros_fix,
 )
 from wowlab_core.cli._cmd_macros import (
     macros_list as macros_list,

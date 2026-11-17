@@ -3,10 +3,11 @@
 The first screen is everything above the marker comment the README carries
 (`FIRST_SCREEN_END`). These tests pin, against the repository as it is:
 
-- the one wheel install line is byte for byte the v0.2.1 line `test_release.py`
-  pins as `INSTALL_V021`, the line `scripts/release_check.py` prints for
-  v0.2.1 with the published wheel's hash, as the release notes carry it
-  (M16-32; v0.1.0's line, `INSTALL_V010`, is history); beside it are the
+- the one wheel install line is byte for byte the v0.3.0 line `test_release.py`
+  pins as `INSTALL_V030`, the line `scripts/release_check.py` prints for
+  v0.3.0 with the published wheel's hash, as the release notes carry it
+  (M18-09; the v0.1.0 and v0.2.1 lines, `INSTALL_V010` and `INSTALL_V021`,
+  are history); beside it are the
   PyPI lines, `uvx` to try and `uv tool install wowlab` to install, added
   after the first PyPI upload (v0.2.1, 2026-11-14), and the upgrade note;
 - every `wowlab ...` invocation anywhere in the README names a command, and
@@ -35,7 +36,7 @@ import yaml
 # The modules those test files already loaded: loading them again would replace
 # them in sys.modules and break identity checks elsewhere.
 from test_check_wiki import cw, gen
-from test_release import INSTALL_V021, WHEEL_V021_SHA256, rc
+from test_release import INSTALL_V030, WHEEL_V030_SHA256, rc
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
@@ -54,8 +55,8 @@ UI_RUNS = (
     "pages), run directly. A command that asks before changing anything (`--yes`) "
     "runs first as a plan that changes nothing, and runs for real only when you "
     "confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's "
-    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon "
-    "install` and `addon remove` change your install through the same write gate as "
+    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `macros fix`, "
+    "`addon install` and `addon remove` change your install through the same write gate as "
     "on the command line, which takes a snapshot first, so `wowlab undo` reverses "
     "them."
 )
@@ -85,15 +86,15 @@ INSTALL_PYPI = "uv tool install --python 3.12 wowlab"
 UPGRADE_NOTE = "Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first."
 
 
-def test_one_wheel_install_line_and_it_is_the_v021_line() -> None:
-    release = rc.parse_version("0.2.1")
-    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V021_SHA256) == INSTALL_V021
-    assert _install_lines(_readme()) == [INSTALL_PYPI, INSTALL_V021], (
-        "two install lines: PyPI's, then the v0.2.1 wheel's"
+def test_one_wheel_install_line_and_it_is_the_v030_line() -> None:
+    release = rc.parse_version("0.3.0")
+    assert rc.install_line("sandgraal/wowlab", release, WHEEL_V030_SHA256) == INSTALL_V030
+    assert _install_lines(_readme()) == [INSTALL_PYPI, INSTALL_V030], (
+        "two install lines: PyPI's, then the v0.3.0 wheel's"
     )
     wheels = [line for line in _install_lines(_readme()) if ".whl" in line]
-    assert wheels == [INSTALL_V021], "exactly one wheel install line, the v0.2.1 one"
-    assert INSTALL_V021 + "\n" in _first_screen(), "on the first screen, on a line of its own"
+    assert wheels == [INSTALL_V030], "exactly one wheel install line, the v0.3.0 one"
+    assert INSTALL_V030 + "\n" in _first_screen(), "on the first screen, on a line of its own"
 
 
 def test_the_pypi_lines_come_first_with_the_upgrade_note() -> None:
@@ -105,7 +106,7 @@ def test_the_pypi_lines_come_first_with_the_upgrade_note() -> None:
     ], "one uvx line, the PyPI one"
     for line in (TRY_PYPI, INSTALL_PYPI):
         assert f"\n{line}\n" in screen, f"{line} on the first screen, on a line of its own"
-    assert screen.index(TRY_PYPI) < screen.index(INSTALL_PYPI) < screen.index(INSTALL_V021)
+    assert screen.index(TRY_PYPI) < screen.index(INSTALL_PYPI) < screen.index(INSTALL_V030)
     assert CHECK_PYPI in screen
     assert screen.index(CHECK_PYPI) < screen.index(INSTALL_PYPI)
     assert UPGRADE_NOTE in screen
@@ -272,7 +273,7 @@ LEADS = (
 
 def test_the_first_screen_leads_with_the_player_features() -> None:
     screen = _first_screen()
-    install = screen.index(INSTALL_V021)
+    install = screen.index(INSTALL_V030)
     for phrase in LEADS:
         assert phrase in screen, phrase
         assert screen.index(phrase) < install, f"{phrase} comes before the install line"
