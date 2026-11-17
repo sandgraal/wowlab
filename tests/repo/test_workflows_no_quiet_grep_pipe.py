@@ -80,6 +80,7 @@ def _constructed(run: str) -> dict[str, Any]:
         "if ! printf '%s\\n' \"$assets\" | grep -Fqx SHA256SUMS; then exit 1; fi\n",
         'printf \'%s\\n\' "$a" | grep -q -- "$B" && echo yes\n',
         "echo x |grep --quiet x\n",
+        "echo x | grep --silent x\n",
         "cat f | grep -Eqx '[0-9a-f]{64}'\n",
         "a\nb | grep -sq x\n",
     ],
