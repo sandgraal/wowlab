@@ -113,6 +113,8 @@ Read-only; writes nothing. Rules (§15.2): a body over 255 (stating whether char
 
 The test comes first, run by the owner from a runbook the conductor writes (`docs/handoffs/M13-07.md`): with the client closed, edit `macros-cache.txt`, log in, and record whether the edit persists, once with `synchronizeMacros` on and once off. The result goes into `docs/LAB_FORMATS.md` as a dated amendment before any code. If the server replaces the file, ship no writer: `macros fix` prints corrected text for the player to paste in game. If the edit persists, add the writer through `guard` with `--yes`, changing only the bytes of the macros it fixes (L4).
 
+
+*Owner decision, 2026-11-17, in session:* the persistence test is not run. The owner said to assume a macro edit made with the client closed survives the next login ("assume it works"), and chose the writer ("Build the writer"). So no runbook and no `LAB_FORMATS.md` amendment come first. `macros fix` writes through a `guard` transaction, and its `--help` and plan say the in-game persistence is unconfirmed and that `wowlab undo` puts the old macros back. If a later login shows the server replacing the file, that is a finding: the writer becomes print-only.
 **Acceptance:** the amendment is merged before the implementation PR opens; for the print-only outcome, a test per fixable rule shows the corrected text and that nothing is written; for the writer outcome, the change goes through a `guard` transaction (snapshot, journal, `wowlab undo` restores the original bytes) and is refused while the client runs; `make ci` green; reviewed by `domain-reviewer`, `security-reviewer` (a writer) and `code-reviewer`.
 
 ---
