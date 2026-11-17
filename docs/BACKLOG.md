@@ -3253,14 +3253,14 @@ A header (level tile, name, race and class, item level, profession count, last p
 
 **Acceptance:** page tests on the fixture characters; headless-browser check; `make ci` green. User-facing: the character page.
 
-## [ ] M18-06 — Characters kept only in a backup
+## [x] M18-06 — Characters kept only in a backup
 **Size:** S · **Depends on:** M18-04 · **Sources:** the mockup ("kept in your backup from Oct 19")
 
 A character whose lab record is no longer in the install (a closed beta, a deleted folder) but is held in a snapshot shows as a dimmed card on the home screen, labelled with the game version and the backup's date, and opens a read-only character page from that record. Reads the store only (L1); never restores anything by itself.
 
 **Acceptance:** tests on a constructed store holding a record the install lacks; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the home screen.
 
-## [ ] M18-07 — `names fetch` passes over a game version the install no longer lists
+## [x] M18-07 — `names fetch` passes over a game version the install no longer lists
 **Size:** XS · **Depends on:** M18-02 · **Sources:** the owner's run, 2026-11-14; the review of #572
 
 On the owner's install, `wowlab names fetch` prints "Names for _classic_beta_: not downloaded, because .build.info has no row for product wow_classic_beta." for a leftover beta folder, and exits 1 although every installed game got its names. A flavor folder with no game version (its product has no `.build.info` row, its `.flavor.info` is empty, or its Version cell is blank) is not an installed game for this command.
@@ -3271,9 +3271,23 @@ On the owner's install, `wowlab names fetch` prints "Names for _classic_beta_: n
 
 **Acceptance:** constructed tests for each of the three no-version cases (text output, JSON status, exit code); `make lint` and the touched tests green. Reviewed by `code-reviewer`. User-facing: `names fetch` output, exit code and JSON.
 
-## [ ] M18-08 — The README pictures show the companion
+## [x] M18-08 — The README pictures show the companion
 **Size:** XS · **Depends on:** M18-06 · **Sources:** M18-04 review (the pictures still show the old table)
 
 Re-make `docs/assets/readme-account-tab.svg` and `readme-backup-now.svg` from the companion screens on fixture data with names cached (the Characters home, and the backup card), with alt text that matches. Same embedding rules as M17-11.
 
 **Acceptance:** `tests/repo` and `tests/scripts/test_readme.py` green; the owner sees the pictures before merge. Reviewed by `code-reviewer`. User-facing: the README.
+
+## [ ] M18-09 — Release v0.3
+**Size:** XS · **Depends on:** M18-08 · **Sources:** the owner, 2026-11-17 in session ("prep v0.3"); ADR-0031 and its amendments
+
+v0.2.1 carries the old UI. Bump `lab/core/pyproject.toml` to 0.3.0 (and its `uv.lock` line), give `.github/release-notes.md` a "New in v0.3" section (the Characters home, the character page, characters kept in a backup, names by default, the nil-hole fix) and the `--json` changes since v0.2.1, and rewrite the notes' description of `wowlab ui` for the five sections. The owner approves the notes' wording, then tags `v0.3.0` and approves the `release` environment (both the `release` and `pypi` jobs wait on it). After the release, everything #557 moved for v0.2.1 moves to v0.3.0 with the published wheel's hash: the README's badge, install line and app zip links; `docs/INSTALL.md` (the current release, the zip links, the hash examples); and the tests that pin the line (`tests/scripts/test_release.py`, `tests/scripts/test_readme.py`, `lab/core/tests/test_doc_examples.py`).
+
+**Acceptance:** `release_check.py version --tag v0.3.0` names the 0.3.0 files; `tests/scripts/test_release.py`, `tests/repo` and `tests/packaging` green; the release is published with the wheel, the sdist, `SHA256SUMS` and both apps; the README follow-up merged. Reviewed by `code-reviewer`. User-facing: the release notes; `wowlab --version`.
+
+## [x] M18-10 — Wave M18 review
+**Size:** XS · **Depends on:** M18-08 · **Sources:** ADR-0024
+
+`docs/handoffs/M18-review.md`: what shipped, what went wrong, users, and the recommendation. Written 2026-11-17, before v0.3 is tagged, at the owner's request.
+
+**Acceptance:** the handoff on `main`. Reviewed by `code-reviewer`.
