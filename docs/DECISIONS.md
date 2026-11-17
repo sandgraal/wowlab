@@ -326,6 +326,12 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 - *Sentences this replaces.* In the 2026-10-27 amendment, "works once", "spent", "the one exchange", "a reload needs a new `wowlab ui`" and its 403 sentence no longer hold. The decision's "every request must carry it" now reads "every request but `GET`/`HEAD /` must carry the session key, in the `X-Wowlab-Session` header or the `token` field".
 - *Accepted residual (owner, 2026-11-11).* The link sits in the browser's process arguments, readable by another account on the same machine, and opens a session until Ctrl-C. Keys live in memory only, so a new `wowlab ui` makes new keys and the old link opens nothing. README and INSTALL keep the single-user-machine note. LAB_PLAN's `wowlab ui` amendment of 2026-11-11 records the same design.
 
+
+**Amendment (2026-11-17; Proposed, from M18-11 (#580) and its code review): one more request needs no key, the tab icon.**
+- *Why.* The page had no icon link, so the browser asked for `/favicon.ico` on every load and got 403, an error in the console. An inline `data:` icon would need `img-src data:`, which widens the CSP on every response.
+- *What changes.* `GET` and `HEAD /favicon.svg` with no query are served without the session key. The response is one fixed file shipped in the package (`templates/favicon.svg`: `svg`, `rect` and `path` only, no script, style or link). Host and Origin are checked as before. It carries the same headers as every other response (CSP, `nosniff`, `no-store`, `Cross-Origin-Resource-Policy: same-origin`). With any query, or any other method, the key is required as before. `/favicon.ico` stays refused.
+- *Sentence this replaces.* In the 2026-11-12 amendment, "every request but `GET`/`HEAD /` must carry the session key" now reads "every request but `GET`/`HEAD /` and `GET`/`HEAD /favicon.svg` must carry the session key".
+- *Residual.* A request without the key learns that a wowlab ui server is listening, which the keyless `GET /` already tells it. The security review of #580 sent 180 requests (six methods, 30 paths) and found nothing else reachable without the key.
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
