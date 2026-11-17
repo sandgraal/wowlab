@@ -108,7 +108,7 @@ Read-only; writes nothing. Rules (§15.2): a body over 255 (stating whether char
 
 ---
 
-## [ ] M13-07 — `wowlab macros fix`, only after the owner's test
+## [x] M13-07 — `wowlab macros fix`, only after the owner's test
 **Size:** S · **Depends on:** M13-06 · **owner** (the persistence test)
 
 The test comes first, run by the owner from a runbook the conductor writes (`docs/handoffs/M13-07.md`): with the client closed, edit `macros-cache.txt`, log in, and record whether the edit persists, once with `synchronizeMacros` on and once off. The result goes into `docs/LAB_FORMATS.md` as a dated amendment before any code. If the server replaces the file, ship no writer: `macros fix` prints corrected text for the player to paste in game. If the edit persists, add the writer through `guard` with `--yes`, changing only the bytes of the macros it fixes (L4).
@@ -1945,7 +1945,7 @@ Reviewed by `code-reviewer`. User-facing: the page's layout and contrast.
 
 ---
 
-## [ ] M16-38 — Owner: an `@live` L1 sweep before each release
+## [x] M16-38 — Owner: an `@live` L1 sweep before each release
 **Size:** S · **owner** (runs it) · **Depends on:** nothing · **Sources:** qa:F14 (EV-35)
 
 An `@live` test hashes the real install: contents, sizes, modes, and file and directory mtimes. It then runs every read command and the UI's read endpoints, and compares. CI never runs it (ADR-0012). It is added to the release checklist.
@@ -3283,7 +3283,7 @@ Re-make `docs/assets/readme-account-tab.svg` and `readme-backup-now.svg` from th
 
 **Acceptance:** `tests/repo` and `tests/scripts/test_readme.py` green; the owner sees the pictures before merge. Reviewed by `code-reviewer`. User-facing: the README.
 
-## [ ] M18-09 — Release v0.3
+## [x] M18-09 — Release v0.3
 **Size:** XS · **Depends on:** M18-08 · **Sources:** the owner, 2026-11-17 in session ("prep v0.3"); ADR-0031 and its amendments
 
 v0.2.1 carries the old UI. Bump `lab/core/pyproject.toml` to 0.3.0 (and its `uv.lock` line), give `.github/release-notes.md` a "New in v0.3" section (the Characters home, the character page, characters kept in a backup, names by default, the nil-hole fix) and the `--json` changes since v0.2.1, and rewrite the notes' description of `wowlab ui` for the five sections. The owner approves the notes' wording, then tags `v0.3.0` and approves the `release` environment (both the `release` and `pypi` jobs wait on it). After the release, everything #557 moved for v0.2.1 moves to v0.3.0 with the published wheel's hash: the README's badge, install line and app zip links; `docs/INSTALL.md` (the current release, the zip links, the hash examples); and the tests that pin the line (`tests/scripts/test_release.py`, `tests/scripts/test_readme.py`, `lab/core/tests/test_doc_examples.py`).
@@ -3299,7 +3299,7 @@ v0.2.1 carries the old UI. Bump `lab/core/pyproject.toml` to 0.3.0 (and its `uv.
 
 *Owner decision, 2026-11-17, in session: wowlab stays the owner's own for a while (no announcement yet); the small items the M18 review left open are done now, by agents.*
 
-## [ ] M18-11 — Companion polish: the tab icon, a backup hint, the help text
+## [x] M18-11 — Companion polish: the tab icon, a backup hint, the help text
 **Size:** S · **Depends on:** nothing · **Sources:** `docs/handoffs/M18-review.md` ("Left open"); the owner's run, 2026-11-14
 
 Four small things, all on `main`:
@@ -3310,9 +3310,32 @@ Four small things, all on `main`:
 
 **Acceptance:** a page test for the hint (a constructed store and a folder without a lab record) and for the icon (no request that the server refuses); the real page loaded in a headless browser on a fixture install with no console error; `make lint` and the touched tests green. Reviewed by `code-reviewer` and `security-reviewer` (templates, server). User-facing: the Characters home; `ui --help`.
 
-## [ ] M18-12 — A release-workflow test that failed once under load
+## [x] M18-12 — A release-workflow test that failed once under load
 **Size:** XS · **Depends on:** nothing · **Sources:** the review of #577 (2026-11-17)
 
 `tests/packaging/test_windows_app.py::test_constructed_a_rerun_after_both_uploads_nothing[windows_app_release-mac-then-windows]` failed once in a full parallel `make ci` ("The release's SHA256SUMS is one this job may write (failed)") and passed 46 of 46 when its file ran alone. Find why: shared temp paths, ordering, a clock, or state between parallel workers. Fix the test or its helper so it cannot depend on another test. If the cause is in `.github/workflows/release.yml` itself, stop and report rather than change the workflow.
 
 **Acceptance:** the cause named in the PR; the file passes repeated runs under `pytest -n auto` (say how many); `make hooks-test` and `tests/packaging` green. Reviewed by `code-reviewer`. User-facing: none.
+
+## [x] M18-14 — Windows tests write into the runner's real store
+**Size:** S · **Depends on:** nothing · **Sources:** `lab (windows)` on #583 and #581 (2026-11-17)
+
+On Windows, platformdirs ignores `HOME`, `APPDATA` and `LOCALAPPDATA`, so tests that redirected the data folder that way wrote into the runner's real `%LOCALAPPDATA%\wowlab`, and parallel snapshots collided (`SnapshotExistsError`). Shared fixtures now also set `WIN_PD_OVERRIDE_APPDATA` and `WIN_PD_OVERRIDE_LOCAL_APPDATA`. A root conftest check fails a test whose redirected store escapes its `tmp_path`.
+
+**Acceptance:** `lab (windows)` green with no `SnapshotExistsError`. Done in #587, reviewed CLEAN.
+
+## [x] M18-15 — The desktop test suites leave pull requests
+**Size:** XS · **Depends on:** nothing · **Sources:** owner decision, 2026-11-17 in session ("Windows/macOS off PRs"); ADR-0014 amendment of 2026-11-17 (accepted)
+
+`lab (windows)` and `lab (macos)` run on push to `main`, nightly and on demand, never on pull requests. The app build jobs still run on PRs that touch packaging or dependencies.
+
+**Acceptance:** no Lab desktop suite on `pull_request`; required checks unchanged. Done in #589.
+
+## [ ] M18-16 — Leftovers from the 2026-11-17 reviews
+**Size:** S · **Depends on:** M18-14 · **Sources:** the reviews of #579, #587 and #581 (2026-11-17)
+
+- `scripts/app_smoke.py` `_env` sets `LOCALAPPDATA` and `APPDATA` but not `WIN_PD_OVERRIDE_*`, so the Windows app smoke uses the runner's real store. Use the same overrides as M18-14. Check `scripts/perf_budget.py` the same way.
+- `tests/packaging/test_macos_app.py::test_the_smoke_test_passes_against_the_unfrozen_launcher` fails when 2 to 4 packaging sessions run at once: `wowlab ui` does not stop within 15 s of Ctrl-C under load. Find why it is slow to stop, rather than raising the limit blindly.
+- `lab/core/tests/review/test_pr435_linger_drains_without_acting.py::test_lingering_connections_do_not_stop_a_new_request` fails under full-suite load (connection refused) and passes alone. It is a reviewer's probe, so report a fix for the conductor rather than editing it.
+
+**Acceptance:** each item fixed or explained in the PR; the touched tests pass repeated parallel runs. Reviewed by `code-reviewer`. User-facing: none.

@@ -51,6 +51,10 @@ return facts in the report format below, not prose.
   and never touch one: build a synthetic tree in `tmp_path`, inject the
   process probe, redirect the user data directory.
 - No live external calls from tests. Record a fixture, replay it.
+- Your shell may inherit `WOWLAB_WOW_ROOT` pointing at the owner's real
+  install (2026-11-17: an `@live` test ran against it by accident). Run every
+  test command as `env -u WOWLAB_WOW_ROOT …`, and never run an `@live` test
+  unless the conductor's brief says to.
 - A fixture that contradicts `docs/LAB_FORMATS.md` wins: follow the fixture
   and say so in your report (the conductor adds the dated amendment). If the
   contradiction changes what the ticket delivers, stop and report.
