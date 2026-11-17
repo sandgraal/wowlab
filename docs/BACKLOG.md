@@ -3261,11 +3261,15 @@ A character whose lab record is no longer in the install (a closed beta, a delet
 **Acceptance:** tests on a constructed store holding a record the install lacks; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the home screen.
 
 ## [ ] M18-07 — `names fetch` passes over a game version the install no longer lists
-**Size:** XS · **Depends on:** M18-02 · **Sources:** the owner's run, 2026-11-14
+**Size:** XS · **Depends on:** M18-02 · **Sources:** the owner's run, 2026-11-14; the review of #572
 
-On the owner's install, `wowlab names fetch` prints "Names for _classic_beta_: not downloaded, because .build.info has no row for product wow_classic_beta." for a leftover beta folder, and exits 1 although every installed game got its names. A flavor folder whose product `.build.info` no longer lists is not an installed game: leave it out of the run (say so once under `--json` notes), and exit 0 when every listed game has its names. `doctor` and `char list --summary` treat it the same way.
+On the owner's install, `wowlab names fetch` prints "Names for _classic_beta_: not downloaded, because .build.info has no row for product wow_classic_beta." for a leftover beta folder, and exits 1 although every installed game got its names. A flavor folder with no game version (its product has no `.build.info` row, its `.flavor.info` is empty, or its Version cell is blank) is not an installed game for this command.
 
-**Acceptance:** a test with a fixture whose folder has no `.build.info` row; `make lint` and the touched tests green. Reviewed by `code-reviewer`. User-facing: `names fetch` output and exit code.
+- `names fetch` leaves such a folder out of the text output entirely and out of the exit code: exit 0 when every flavor that has a version ends with all four tables cached.
+- `--json`: the folder stays in `NamesFetchReport.flavors` with a new status value `no_version` (a change to the JSON output, listed in the release notes' `--json` section), and nothing is requested for it.
+- `doctor` and `char list --summary` are unchanged: they already leave such a folder out of the names hint, and doctor keeps its "left behind by a beta" line.
+
+**Acceptance:** constructed tests for each of the three no-version cases (text output, JSON status, exit code); `make lint` and the touched tests green. Reviewed by `code-reviewer`. User-facing: `names fetch` output, exit code and JSON.
 
 ## [ ] M18-08 — The README pictures show the companion
 **Size:** XS · **Depends on:** M18-06 · **Sources:** M18-04 review (the pictures still show the old table)

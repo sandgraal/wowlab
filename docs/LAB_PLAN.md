@@ -670,7 +670,7 @@ platform and locale.
    comments). A `nil` value inside a table is refused under item 2, because
    the parser refuses it (§4.1: `nil` only as a top-level value) and the
    client never writes one; this corrects an earlier wording of this item.
-   *Amended 2026-11-14 (M18-01, LAB_FORMATS §4.1 amendment):* this now covers only a keyed `nil` (`["k"] = nil`, `k = nil`) and `nil` as a key. A positional `nil` is a hole the client writes as `nil,`; the parser keeps it, the serializer writes it back as a positional entry at the same index, and `to_python()` leaves its key out (the table becomes a `dict`), as Lua 5.1 loads it.
+   *Amended 2026-11-14 (M18-01, LAB_FORMATS §4.1 amendment):* this now covers only a keyed `nil` (`["k"] = nil`, `k = nil`) and `nil` as a key. A positional `nil` is a hole the client writes as `nil,`; the parser keeps it, the serializer writes it back as a positional entry at the same index, and `to_python()` leaves its key out, as Lua 5.1 loads it: a hole inside the list part makes the table a `dict`, a trailing hole leaves a `list`.
 9. **Data only, precisely (conductor, 2026-09-27, from the M10-12T
    re-review).** Item 2 covers every slot: a `--` comment in any slot but
    the document's `tail` ends with a line break inside that slot; `sep` is
