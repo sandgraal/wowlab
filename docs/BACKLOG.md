@@ -115,6 +115,9 @@ The test comes first, run by the owner from a runbook the conductor writes (`doc
 
 
 *Owner decision, 2026-11-17, in session:* the persistence test is not run. The owner said to assume a macro edit made with the client closed survives the next login ("assume it works"), and chose the writer ("Build the writer"). So no runbook and no `LAB_FORMATS.md` amendment come first. `macros fix` writes through a `guard` transaction, and its `--help` and plan say the in-game persistence is unconfirmed and that `wowlab undo` puts the old macros back. If a later login shows the server replacing the file, that is a finding: the writer becomes print-only.
+
+*Corrected 2026-11-17 (reviews of #582):* the note above is wrong in two places. The test had partly run: `LAB_FORMATS.md` §7 (2026-11-12) records a character's macro edit, made with the client closed, surviving login twice. The owner's decision covers what was not tested: the account file, other game versions, and `synchronizeMacros`. And `macros fix` does not call persistence unconfirmed. Its plan and `--help` say a character's edits were kept in two tests on one game version, and that account macros, other versions and server-synced macros were not tested.
+
 **Acceptance:** the amendment is merged before the implementation PR opens; for the print-only outcome, a test per fixable rule shows the corrected text and that nothing is written; for the writer outcome, the change goes through a `guard` transaction (snapshot, journal, `wowlab undo` restores the original bytes) and is refused while the client runs; `make ci` green; reviewed by `domain-reviewer`, `security-reviewer` (a writer) and `code-reviewer`.
 
 ---
