@@ -105,13 +105,17 @@ SERIAL_TESTS: frozenset[str] = frozenset(
 
 # Tests that may legitimately run longer than the hang guard's 300 s
 # (`timeout` in pyproject.toml, M13-81), by node id without the parameter
-# suffix, with the seconds they get. None is listed: the slowest measured
-# test took 255 s (a lab-addon review probe, on 4 cores at load average about
-# 20; M13-81), 45 s inside the guard. An entry goes here, never into the test
+# suffix, with the seconds they get. The slowest measured suite test took
+# 255 s (a lab-addon review probe, on 4 cores at load average about 20;
+# M13-81), 45 s inside the guard. An entry goes here, never into the test
 # file, for the same reason as the serial list.
 # `tests/repo/test_make_test_fast.py` checks that every entry names a test
 # that exists.
-TIMEOUT_OVERRIDES: dict[str, int] = {}
+TIMEOUT_OVERRIDES: dict[str, int] = {
+    # The owner's `@live` L1 sweep (M16-38): it hashes a whole install and
+    # runs every read command; never collected by `make test` or CI.
+    "lab/core/tests/test_l1_sweep_live.py::test_live_l1_sweep_changes_nothing_in_the_install": 3600,
+}
 
 SERIAL = pytest.mark.serial
 

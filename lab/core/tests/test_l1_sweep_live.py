@@ -22,10 +22,16 @@ What it does, in order:
    directory, where the snapshot store and the caches live.
 2. Runs every read command, as a player would (`python -m wowlab_core`, no
    `--yes` anywhere, stdin closed so nothing can be asked), for every flavor
-   folder, every account folder, and one character per flavor. `names fetch`
-   runs only when every installed version already has every name table
-   cached, since otherwise it downloads; nothing else here goes online.
-   Nothing that writes runs: no `snap create`, no `--yes`.
+   folder, every account folder, and one character per flavor; `snap show`,
+   `snap diff`, `snap verify`, `profile show` and `cvar get` on what the
+   store and the install hold. Three groups read game tables that they
+   download when missing, so each runs only when every table it reads is
+   already cached, and is otherwise listed as skipped with that reason:
+   `names fetch`, `looks races/options/show/compare` and `db2 head`.
+   Nothing else goes online. The commands that write, and `db2 builds`
+   (which always asks wago.tools), never run; `EXCLUDED` names each with
+   its reason, and the summary lists them. A constructed test checks that
+   every command of the CLI is run, skipped with a reason, or excluded.
 3. Starts the `wowlab ui` server in this process and makes its read
    requests with the session key: the page shell, `/api/commands`,
    `/api/looks-page`, and `POST /api/run` for read commands only, never with
@@ -45,10 +51,15 @@ That block is all it prints. A failure's message names the real paths, for
 the owner's terminal only.
 
 The constructed tests below it (not `live`, so CI runs them) check the
-comparison on a constructed tree and run the same sweep on a copy of the
-captured install `fixtures/macos-70888/` in `tmp_path`, with the user data
-directory redirected there too. Nothing in this file writes into a real
-install.
+comparison on a constructed tree; check, with stand-in commands, that the
+sweep fails when a command writes into the install or the data folder or
+exits badly, and that a running or unknown client fails rather than skips;
+and run the same sweep on a copy of the captured install
+`fixtures/macos-70888/` in `tmp_path`, with the user data directory
+redirected there, recorded game tables planted in its cache, and a dead
+proxy, so the gated commands run and any request would fail. Nothing in
+this file writes into a real install. The live test's 3600 s timeout is in
+`conftest.py` (`TIMEOUT_OVERRIDES`).
 """
 
 from __future__ import annotations
@@ -74,11 +85,12 @@ from typing import Any
 import platformdirs
 import pytest
 
-from wowlab_core import gamedata, guard, install, process, snapshot, ui
+from wowlab_core import gamedata, guard, install, looks, process, snapshot, ui
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURE = FIXTURES / "macos-70888"  # a whole captured flavor, with its .build.info
 LOG_CAPTURE = FIXTURES / "macos" / "forever" / "Logs"
+WAGO = FIXTURES / "wago"
 FLAVOR = "_forever_"  # the provenance row's flavor folder; tests may name it (L6)
 ACCOUNT = "LABACCOUNTA"
 CHARACTER = "Sandgraal-Rizzen"
@@ -90,6 +102,30 @@ ALLOWED_EXITS = frozenset({0, 1})
 RUN_TIMEOUT_S = 600.0
 SHOWN_DIFFERENCES = 40
 _CHUNK = 1 << 20
+
+
+# Every command the sweep never runs, with why; a test checks that every
+# command of the CLI is run, skipped with a reason, or listed here.
+EXCLUDED: dict[str, str] = {
+    "undo": "writes into the install",
+    "sv merge": "writes into the install",
+    "snap restore": "writes into the install",
+    "profile apply": "writes into the install",
+    "addon install": "writes into the install",
+    "addon remove": "writes into the install",
+    "snap create": "writes into wowlab's store",
+    "snap gc": "writes into wowlab's store",
+    "snap import": "writes into wowlab's store",
+    "profile save": "writes into wowlab's store",
+    "profile delete": "writes into wowlab's store",
+    "looks save": "writes into wowlab's user data directory",
+    "looks import-char": "writes into wowlab's user data directory",
+    "looks page": "writes a page into wowlab's user data directory",
+    "snap export": "writes a file outside the install",
+    "db2 fetch": "downloads a table into wowlab's cache",
+    "db2 builds": "asks wago.tools for its list of versions",
+    "ui": "its server is started in this process instead, and its read requests made",
+}
 
 
 # ─── the fingerprint ─────────────────────────────────────────────────────────
@@ -430,8 +466,49 @@ def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
         flag = f"  !! {ran.problem}" if ran.problem else ""
         lines.append(scrub(f"exit {ran.exit_code:>3}  {ran.what}{flag}"))
     lines += [scrub(f"skipped  {note}") for note in sweep.skipped]
+    lines += [f"excluded {name}: {why}" for name, why in EXCLUDED.items()]
     lines.append("--- end ---")
     return lines
+
+
+def _cached(names: tuple[str, ...], version: str | None) -> bool:
+    """Whether every table in `names` is cached for `version`, so a command
+    that reads them downloads nothing."""
+    if version is None:
+        return False
+    try:
+        return not gamedata.missing_tables(names, version)
+    except (ValueError, OSError):
+        return False
+
+
+def _offline_tables(f: install.Flavor, sweep: Sweep) -> None:
+    """`looks races/options/show/compare` and `db2 head`, which download a
+    table that is not cached: run only when every table they read is."""
+    fl = ("--flavor", f.folder)
+    if _cached(looks.REQUIRED_TABLES, f.version):
+        races = _report(sweep.cli("looks", "races", *fl, "--json"))
+        race = [r for r in (races or {}).get("races", []) if isinstance(r, dict)]
+        if race:
+            sweep.cli("looks", "options", *fl, "--json", "--", str(race[0]["id"]))
+        else:
+            sweep.skipped.append(f"looks options: no race in {f.folder}'s tables")
+        saved = _report(sweep.cli("looks", "show", *fl, "--json"))
+        named = [x["name"] for x in (saved or {}).get("looks", []) if isinstance(x, dict)]
+        if len(named) >= 2:
+            sweep.cli("looks", "compare", *fl, "--json", "--", str(named[0]), str(named[1]))
+        else:
+            sweep.skipped.append("looks compare: fewer than two saved looks")
+    else:
+        why = f"{f.folder}'s customization tables are not all cached, so it would go online"
+        for leaf in ("races", "options", "show", "compare"):
+            sweep.skipped.append(f"looks {leaf}: {why}")
+    if _cached(("ChrClasses",), f.version):
+        sweep.cli("db2", "head", "ChrClasses", "-n", "3", *fl, "--json")
+    else:
+        sweep.skipped.append(
+            f"db2 head: ChrClasses is not cached for {f.folder}, so it would go online"
+        )
 
 
 def run_commands(inst: install.Install, sweep: Sweep) -> None:
@@ -454,12 +531,23 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         sweep.cli("char", "kept", *kf, *who, "--json")
     else:
         sweep.skipped.append("char kept --character: no character is kept only in a backup")
-    sweep.cli("profile", "list", "--json")
+    profiles = _report(sweep.cli("profile", "list", "--json"))
+    names = [p.get("name") for p in (profiles or {}).get("profiles", []) if isinstance(p, dict)]
+    if names and names[0]:
+        sweep.cli("profile", "show", "--json", "--", str(names[-1]))
+    else:
+        sweep.skipped.append("profile show: there is no profile")
     snaps = _report(sweep.cli("snap", "list", "--json"))
-    if snaps and snaps.get("snapshots"):
+    count = len((snaps or {}).get("snapshots", []))
+    if count:
         sweep.cli("snap", "show", "latest", "--json")
     else:
         sweep.skipped.append("snap show: the store holds no snapshot")
+    if count >= 2:
+        sweep.cli("snap", "diff", "--json", "--", "~1", "latest")
+    else:
+        sweep.skipped.append("snap diff: the store holds fewer than two snapshots")
+    sweep.cli("snap", "verify", "--json")
     if _names_cached(inst):
         sweep.cli("names", "fetch", "--json")
     else:
@@ -473,7 +561,13 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         sweep.cli("tree", "--explain", *fl, "--json")
         for rel in ("WTF/Config.wtf", "WTF/Account", "Interface/AddOns", "Logs"):
             sweep.cli("explain", *fl, "--verbose", "--json", "--", str(f.path / rel))
-        sweep.cli("cvar", "list", *fl, "--json")
+        cvars = _report(sweep.cli("cvar", "list", *fl, "--json"))
+        items = [c for c in (cvars or {}).get("cvars", []) if isinstance(c, dict)]
+        if items:
+            sweep.cli("cvar", "get", *fl, "--json", "--", str(items[0]["name"]))
+        else:
+            sweep.skipped.append(f"cvar get: {f.folder} sets no CVar in Config.wtf")
+        _offline_tables(f, sweep)
         sweep.cli("addons", "list", *fl, "--json")
         sweep.cli("addons", "check", *fl, "--json")
         sweep.cli("char", "kept", *fl, "--json")
@@ -525,6 +619,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
             sweep.cli("char", sub, *ch, "--json")
         if _has_combat_log(f.path):
             sweep.cli("binds", "coach", *ch, "--json")
+        else:
+            sweep.skipped.append(f"binds coach: {f.folder} has no combat log")
 
 
 # ─── the UI's read endpoints ─────────────────────────────────────────────────
@@ -708,7 +804,6 @@ def _client_closed(inst: install.Install) -> None:
 
 
 @pytest.mark.live
-@pytest.mark.timeout(3600)
 def test_live_l1_sweep_changes_nothing_in_the_install() -> None:
     root = live_root()
     _client_closed(install.discover(root))
@@ -907,12 +1002,48 @@ def test_a_run_that_ends_badly_is_flagged_constructed() -> None:
         assert ran.problem == problem, ran.what
 
 
+def _copy_install(tmp_path: Path) -> Path:
+    """The captured flavor `macos-70888` copied into `tmp_path` as an
+    install, with a captured combat log beside it and a constructed Data/
+    and executable bundle."""
+    root = tmp_path / "World of Warcraft"
+    root.mkdir()
+    shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
+    shutil.copytree(CAPTURE / "forever", root / FLAVOR)
+    shutil.copytree(LOG_CAPTURE, root / FLAVOR / "Logs")
+    app = root / FLAVOR / "World of Warcraft.app" / "Contents" / "MacOS"
+    app.mkdir(parents=True)
+    (app / "World of Warcraft").write_bytes(b"constructed")
+    (root / "Data" / "data").mkdir(parents=True)
+    (root / "Data" / "data" / "data.000").write_bytes(b"constructed")
+    return root
+
+
+# The tables planted in the redirected cache for the capture's version
+# (constructed: real recorded tables, filed under a build key they were not
+# recorded for), so `names fetch`, `looks` and `db2 head` run with nothing
+# to download.
+PLANTED: dict[str, str] = {
+    "ChrRaces": "ChrRaces.1.60.1.70058.csv",
+    "ChrClasses": "ChrClasses.1.60.1.70058.csv",
+    "ChrSpecialization": "ChrSpecialization.1.60.1.70058.subset.csv",
+    "SkillLine": "SkillLine.1.60.1.70058.subset.csv",
+    **{
+        name: f"{name}.1.60.1.70009.csv"
+        for name in looks.REQUIRED_TABLES
+        if name not in ("ChrRaces", "ChrClasses")
+    },
+}
+DEAD_PROXY = "http://127.0.0.1:9"  # nothing listens: any request fails at once
+
+
 @pytest.fixture
 def captured_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    """The captured flavor `macos-70888` copied into `tmp_path` as an install,
-    with a captured combat log beside it and a constructed Data/ and
-    executable bundle; HOME and every user data variable point into
-    `tmp_path`, so the children's user data directory is there too."""
+    """`_copy_install`, with HOME and every user data variable pointing into
+    `tmp_path`, so the children's user data directory is there too, and
+    this process's (which `_names_cached` and `_cached` read) is the same
+    one. Every proxy variable names a dead proxy, so a command that went
+    online would fail rather than reach wago.tools."""
     home = tmp_path / "home"
     home.mkdir()
     for name in (
@@ -927,6 +1058,17 @@ def captured_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
         "WIN_PD_OVERRIDE_APPDATA",
     ):
         monkeypatch.setenv(name, str(home))
+    for name in (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(name, DEAD_PROXY)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
     # The children's user data directory is under tmp_path, or nothing runs:
     # `snap create` below would otherwise write into the real store.
     probe = subprocess.run(
@@ -945,49 +1087,83 @@ def captured_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     child_data = Path(probe.stdout.strip())
     if tmp_path.resolve() not in child_data.resolve().parents:
         pytest.skip(f"the user data directory does not follow the redirect here: {child_data}")
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: child_data)
     monkeypatch.delenv(install.ENV_FLAVOR, raising=False)
-    cache = tmp_path / "in-process-data"
-    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: cache)
-    root = tmp_path / "World of Warcraft"
-    root.mkdir()
-    shutil.copy2(CAPTURE / ".build.info", root / ".build.info")
-    shutil.copytree(CAPTURE / "forever", root / FLAVOR)
-    shutil.copytree(LOG_CAPTURE, root / FLAVOR / "Logs")
-    app = root / FLAVOR / "World of Warcraft.app" / "Contents" / "MacOS"
-    app.mkdir(parents=True)
-    (app / "World of Warcraft").write_bytes(b"constructed")
-    (root / "Data" / "data").mkdir(parents=True)
-    (root / "Data" / "data" / "data.000").write_bytes(b"constructed")
+    root = _copy_install(tmp_path)
+    version = install.discover(root).flavors[0].version
+    assert version is not None
+    tables = child_data / "gamedata" / "tables" / version
+    tables.mkdir(parents=True)
+    for name, recorded in PLANTED.items():
+        shutil.copy2(WAGO / recorded, tables / f"{name}.csv")
     monkeypatch.setenv(install.ENV_ROOT, str(root))
     monkeypatch.chdir(tmp_path)
     # A character kept only in a backup (constructed): a copy of the captured
     # character folder, snapshotted into the redirected store, then removed,
     # so `snap show`, `char history` and `char kept --character` have data.
+    # A profile adds a second snapshot, for `snap diff` and `profile show`.
     characters = root / FLAVOR / "WTF" / "Account" / ACCOUNT / "1"
     shutil.copytree(characters / CHARACTER, characters / KEPT)
     took = _cli("snap", "create", "--flavor", FLAVOR, "--json")
     assert took.exit_code == 0, took.stderr
     shutil.rmtree(characters / KEPT)
+    saved = _cli("profile", "save", "--preset", "ui", "--flavor", FLAVOR, "--json", "--", "l1sweep")
+    assert saved.exit_code == 0, saved.stderr
     return root, home
+
+
+def _leaves() -> list[str]:
+    """Every command of the CLI, as `"snap show"`."""
+    import typer
+
+    from wowlab_core import cli
+
+    return [" ".join(path) for path in ui._read_tree(typer.main.get_command(cli.app))]
 
 
 def test_sweep_on_a_captured_install_changes_nothing_constructed(
     captured_install: tuple[Path, Path],
 ) -> None:
     """The live test's own sweep, on a copy of a captured install: every
-    command's argv is accepted (no exit 2), nothing crashes, the copy and
-    the redirected user data directory are unchanged."""
+    command's argv is accepted (no exit 2), nothing crashes, nothing goes
+    online, the copy and the redirected user data directory are unchanged,
+    and every command of the CLI is run, skipped with a reason, or
+    excluded with one."""
     root, home = captured_install
     sweep = sweep_and_compare(root, home)
-    ran = {r.what for r in sweep.ran}
+    ran = {r.what: r for r in sweep.ran}
     # The character commands ran: the capture has a lab-addon record.
-    assert any(w.startswith("wowlab char gear ") for w in ran)
-    assert any(w.startswith("wowlab sv dump ") for w in ran)
-    assert any(w.startswith("wowlab log tail ") for w in ran)
-    assert any(w.startswith("ui POST /api/run char list") for w in ran)
-    assert any(w.startswith("wowlab snap show latest") for w in ran)
+    for started in (
+        "wowlab char gear ",
+        "wowlab sv dump ",
+        "wowlab log tail ",
+        "wowlab binds coach ",
+        "wowlab cvar get ",
+        "wowlab snap show latest",
+        "wowlab snap diff ",
+        "wowlab snap verify ",
+        "wowlab profile show ",
+        "wowlab looks races ",
+        "wowlab looks options ",
+        "wowlab looks show ",
+        "wowlab db2 head ",
+        "ui POST /api/run char list",
+    ):
+        assert any(w.startswith(started) for w in ran), started
     assert f"--character 1/{KEPT}" in " ".join(w for w in ran if w.startswith("wowlab char kept"))
-    assert any(s.startswith("names fetch:") for s in sweep.skipped)
+    # Every name table is cached: `names fetch` runs, and downloads nothing
+    # (any request would fail against the dead proxy).
+    (fetch,) = [r for w, r in ran.items() if w.startswith("wowlab names fetch")]
+    assert fetch.exit_code == 0, fetch.stderr
+    report = json.loads(fetch.stdout)
+    assert report["fetched"] == 0
+    assert {t["status"] for f in report["flavors"] for t in f["tables"]} == {"cached"}
+    # Every command is accounted for.
+    skipped = " | ".join(sweep.skipped)
+    for leaf in _leaves():
+        done = any(w == f"wowlab {leaf}" or w.startswith(f"wowlab {leaf} ") for w in ran)
+        assert done or leaf in EXCLUDED or f"{leaf}:" in skipped, leaf
+    assert set(EXCLUDED) <= set(_leaves())
     # The summary for the release record names no account or character
     # folder and no path of this machine, and still lists every run.
     summary = "\n".join(sweep.summary)
@@ -996,6 +1172,131 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
     assert "account#1" in summary and "character#1" in summary and "<root>" in summary
     assert len([x for x in sweep.summary if x.startswith("exit ")]) == len(sweep.ran)
     assert "install: " in summary and "; unchanged" in summary
+    assert "excluded db2 builds: " in summary
+
+
+# ─── graders of the sweep's own checks (stand-in commands) ───────────────────
+
+
+@pytest.fixture
+def stand_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]]]:
+    """A copied install, a data folder, and stand-ins for the commands and
+    the UI: each command only records its argv and runs the effect named
+    for its first word, if any, which returns its exit code."""
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: tmp_path / "data")
+    root = _copy_install(tmp_path)
+    data = tmp_path / "data"
+    data.mkdir()
+    effects: dict[str, Callable[[tuple[str, ...]], int]] = {}
+
+    def command(*args: str) -> Ran:
+        effect = effects.get(args[0])
+        ran = Ran("wowlab " + " ".join(args), effect(args) if effect else 0, json_out=False)
+        ran.check()
+        return ran
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_cli", command)
+    monkeypatch.setattr(module, "run_ui", lambda inst, sweep: None)
+    yield root, data, effects
+
+
+def test_stand_in_sweep_passes_when_nothing_changes_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
+) -> None:
+    root, data, _ = stand_in
+    assert sweep_and_compare(root, data).ran
+
+
+def test_a_command_that_writes_into_the_install_fails_the_sweep_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
+) -> None:
+    root, data, effects = stand_in
+    config = root / FLAVOR / "WTF" / "Config.wtf"
+
+    def write(args: tuple[str, ...]) -> int:
+        with config.open("ab") as f:
+            f.write(b"\n")
+        return 0
+
+    effects["cvar"] = write
+    with pytest.raises(AssertionError, match=r"the install changed \(L1\)"):
+        sweep_and_compare(root, data)
+
+
+def test_a_command_that_writes_into_the_data_folder_fails_the_sweep_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
+) -> None:
+    root, data, effects = stand_in
+
+    def touch(args: tuple[str, ...]) -> int:
+        (data / "store").mkdir(exist_ok=True)
+        return 0
+
+    effects["doctor"] = touch
+    with pytest.raises(AssertionError, match=r"user data directory .* changed"):
+        sweep_and_compare(root, data)
+
+
+@pytest.mark.parametrize("code", [2, 3, -9])
+def test_a_command_that_exits_badly_fails_the_sweep_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]], code: int
+) -> None:
+    root, data, effects = stand_in
+    effects["doctor"] = lambda args: code
+    with pytest.raises(
+        AssertionError, match=rf"did not end as a read may:\n\s*wowlab doctor --json: exit {code}"
+    ):
+        sweep_and_compare(root, data)
+
+
+@pytest.mark.parametrize("state", [process.ClientState.RUNNING, process.ClientState.UNKNOWN])
+def test_a_running_or_unknown_client_fails_not_skips_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: process.ClientState
+) -> None:
+    inst = install.discover(_copy_install(tmp_path))
+    monkeypatch.setattr(process, "client_state", lambda *a, **k: state)
+    with pytest.raises(pytest.fail.Exception, match=f"the game client is {state.value}"):
+        _client_closed(inst)
+
+
+def test_a_closed_client_lets_the_sweep_go_on_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = install.discover(_copy_install(tmp_path))
+    seen: list[tuple[Any, ...]] = []
+
+    def probe(*args: Any, **kwargs: Any) -> process.ClientState:
+        seen.append((args, kwargs))
+        return process.ClientState.NOT_RUNNING
+
+    monkeypatch.setattr(process, "client_state", probe)
+    _client_closed(inst)
+    ((args, kwargs),) = seen
+    assert list(args[0]) == [inst.root]
+    assert kwargs["flavor_folders"] == [FLAVOR]
+    assert "World of Warcraft" in kwargs["extra_names"]
+
+
+def test_names_cached_is_false_on_an_empty_cache_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: tmp_path / "data")
+    inst = install.discover(_copy_install(tmp_path))
+    assert not _names_cached(inst)
+    assert not _cached(looks.REQUIRED_TABLES, inst.flavors[0].version)
+    sweep = Sweep()
+    monkeypatch.setattr(sys.modules[__name__], "_cli", lambda *a: pytest.fail(f"ran {a}"))
+    _offline_tables(inst.flavors[0], sweep)
+    assert [s.split(":")[0] for s in sweep.skipped] == [
+        "looks races",
+        "looks options",
+        "looks show",
+        "looks compare",
+        "db2 head",
+    ]
 
 
 def test_record_summary_holds_no_folder_or_path_constructed(
