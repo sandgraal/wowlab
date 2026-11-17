@@ -18,7 +18,7 @@ _BROWSER_WAIT_S = 1.0
 def ui_command() -> None:
     """Open the local UI in your browser and serve it until Ctrl-C.
 
-    Reading never changes anything. Six commands can change game files;
+    Reading never changes anything. Seven commands can change game files;
     each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and
@@ -37,10 +37,11 @@ def ui_command() -> None:
 
     On the Commands tab, a command that asks first (--yes) runs as a plan
     that changes nothing, and runs for real only when you press Confirm
-    under it. snap gc and doctor change only wowlab's own store. The six
+    under it. snap gc and doctor change only wowlab's own store. The seven
     that change game files are snap restore, undo, profile apply, sv merge,
-    addon install and addon remove, and `wowlab undo` reverses any of the
-    six. undo and sv merge refuse when something changed after the plan;
+    macros fix, addon install and addon remove, and `wowlab undo` reverses
+    any of the seven. undo, sv merge and macros fix refuse when something
+    changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
     --follow and looks page --out are not offered. If no browser opens,
     the URL is printed once on stdout."""

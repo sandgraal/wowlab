@@ -36,6 +36,7 @@ ASKS_FIRST = {
     "wowlab addon install",
     "wowlab addon remove",
     "wowlab sv merge",
+    "wowlab macros fix",
     "wowlab snap gc",
     # On a first run it offers a first snapshot into the Lab's store (M13-04).
     "wowlab doctor",

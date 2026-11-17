@@ -1,12 +1,18 @@
-"""`wowlab macros list` and `macros check` (M16-111)."""
+"""`wowlab macros list`, `macros check` (M16-111) and `macros fix` (M13-07)."""
 
-from collections.abc import Sequence
+import hashlib
+from collections.abc import Callable, Sequence
+from typing import Annotated
+
+import typer
 
 from wowlab_core import (
+    guard,
     labaddon,
     layout,
     luadata,
     macrocheck,
+    macrofix,
     snapshot,
     wtfconfig,
 )
@@ -14,7 +20,11 @@ from wowlab_core.cli._cmd_cvar import (
     _MACRO_SYNC,
     _no_file,
 )
+from wowlab_core.cli._cmd_sv import _SHA256
 from wowlab_core.cli._common import (
+    EXIT_ERROR,
+    EXIT_REFUSED,
+    EXIT_USAGE,
     AccountOpt,
     CharacterOpt,
     CliError,
@@ -23,8 +33,11 @@ from wowlab_core.cli._common import (
     NotesOpt,
     RootOpt,
     Scope,
+    YesOpt,
     _account_words,
+    _bytes,
     _chosen_lab_file,
+    _confirm,
     _emit,
     _handled,
     _is_lab_file,
@@ -34,6 +47,7 @@ from wowlab_core.cli._common import (
     _player_copy,
     _plural,
     _say,
+    _say_err,
     _say_notes,
     _say_prose,
     _select_account,
@@ -307,9 +321,10 @@ def macros_check(
         )
     _say(f"Findings: {len(report.findings)}")
     for finding in report.findings:
+        fix = f" ({_FIX_HINT})" if finding.fixable else ""
         _say_prose(
             f"{finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
-            f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}',
+            f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}{fix}',
             indent="  ",
             hang="    ",
         )
@@ -336,3 +351,235 @@ def macros_check(
     )
     caveat = length if over else _MACRO_FILE_TEXT
     _say_notes([length, *_macro_notes(report.notes)], notes_out, caveat, keep=held)
+
+
+# ─── macros fix (M13-07) ─────────────────────────────────────────────────────
+
+_FIX_HINT = "wowlab macros fix moves it to the first line"
+
+# Owner decision, 2026-11-17: the writer is built on the assumption that an
+# edit made with the client closed survives the next login; the plan and the
+# result say it is not confirmed, and how to go back.
+_FIX_UNCONFIRMED = (
+    "Whether the game keeps the fixed macros after you log in is not yet confirmed; "
+    "`wowlab undo` puts the old macros back."
+)
+_FIX_LEFT = (
+    "Every other finding needs your choice (which spell, which bracket, which duplicate), so "
+    "macros fix leaves it as it is; wowlab macros check lists them."
+)
+
+
+class MacrosFixReport(_Out):
+    """`wowlab macros fix --json`: what the fix changes, and whether it wrote."""
+
+    flavor_folder: str
+    account: str
+    character: str | None  # "<realm folder>/<character folder>"; None: the account's file
+    scope: Scope
+    file: str | None  # relative to the flavor folder; None when there is no such file
+    fixes: list[macrofix.MacroFix]
+    # Findings of the file's own rules that the fix leaves as they are (the
+    # spellbook and action-bar rules are `macros check`'s, with --character).
+    left: list[macrocheck.Finding]
+    written: bool
+    transaction: str | None  # the journal record of the write (`wowlab undo` reverses it)
+    # The file's SHA-256 as this run read it, and of the bytes the fix writes
+    # (or would write); `--expect` compares a later run's with both. None
+    # when there is no file; `fixed_sha256` is None when there is nothing to fix.
+    target_sha256: str | None
+    fixed_sha256: str | None
+    notes: list[str]
+
+
+def _fix_expect(expect: str | None) -> tuple[str | None, str | None]:
+    """`macros fix --expect TARGET:FIXED`, split into its two SHA-256s."""
+    if expect is None:
+        return None, None
+    target, sep, fixed = expect.partition(":")
+    if not sep or not _SHA256.fullmatch(target) or not _SHA256.fullmatch(fixed):
+        raise CliError(
+            f"--expect {expect!r} is not TARGET:FIXED, the two lowercase SHA-256s "
+            "target_sha256 and fixed_sha256 of an earlier run's --json",
+            EXIT_USAGE,
+        )
+    return target, fixed
+
+
+def _print_fix(show: Callable[[str], None], report: MacrosFixReport) -> None:
+    show(f"Fix {_plural(len(report.fixes), 'macro')} in {report.file} ({report.scope} macros):")
+    for fix in report.fixes:
+        # The one line that moves is the first one after the fix.
+        moved = fix.before.index(fix.after[0]) + 1
+        show(
+            f'  {fix.macro.scope} macro {fix.macro.id} "{fix.name}" (line {fix.line}): '
+            f"body line {moved} moves to the top"
+        )
+        show("    before:")
+        for line in fix.before:
+            show(f"      {line}")
+        show("    after:")
+        for line in fix.after:
+            show(f"      {line}")
+
+
+@macros_app.command("fix", short_help="Fix the macro mistakes wowlab can fix (asks first).")
+@_handled
+def macros_fix(
+    expect: Annotated[
+        str | None,
+        typer.Option(
+            "--expect",
+            metavar="TARGET:FIXED",
+            help="Write only if the file still has the SHA-256 TARGET and the fix would "
+            "write bytes with the SHA-256 FIXED (target_sha256 and fixed_sha256 in an "
+            "earlier run's --json): else refused, exit 3, nothing written. For a plan "
+            "shown by one run and confirmed by another.",
+        ),
+    ] = None,
+    account: AccountOpt = None,
+    character: CharacterOpt = None,
+    yes: YesOpt = False,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Fix the account's macros, or one character's with --character, where
+    macros check finds a #showtooltip (or #show) line that is not the first
+    line: that line moves to the top, and nothing else in the file changes. A
+    macro with two such lines is left for you, and so is every other finding:
+    each needs your choice.
+
+    Shows the plan and asks first, then writes through the write gate: the
+    game must be closed, a snapshot is taken first, and `wowlab undo` puts the
+    old macros back. Whether the game keeps the fixed macros after you log in
+    is not yet confirmed.
+
+    \f
+    JSON: MacrosFixReport."""
+    expect_target, expect_fixed = _fix_expect(expect)
+    store = snapshot.SnapshotStore()
+    _, chosen, lay = _open(root, flavor)
+    acct = _select_account(lay, account)
+    scope: macrocheck.MacroScope = "character" if character is not None else "account"
+    target, found = _wtf_file(lay, "macros-cache.txt", scope, acct.folder, character)
+
+    def report(
+        *,
+        file: str | None = None,
+        plan: macrofix.FixPlan | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        written: bool = False,
+        transaction: str | None = None,
+    ) -> MacrosFixReport:
+        fixes = plan.fixes if plan is not None else []
+        left = plan.left if plan is not None else []
+        notes = [_FIX_UNCONFIRMED] if fixes else []
+        if left:
+            notes.append(_FIX_LEFT)
+        return MacrosFixReport(
+            flavor_folder=chosen.folder,
+            account=acct.folder,
+            character=target.character,
+            scope=target.scope,
+            file=file,
+            fixes=fixes,
+            left=left,
+            written=written,
+            transaction=transaction,
+            target_sha256=before,
+            fixed_sha256=after,
+            notes=notes,
+        )
+
+    if found is None:
+        if expect is not None:
+            raise CliError(
+                "there is no macros-cache.txt here now: it changed after the plan was made, "
+                "so nothing was written; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
+        if json_out:
+            _emit(report())
+            return
+        _say(_no_file("macros-cache.txt", target))
+        return
+    path = found.path
+    data = _listed(snapshot.read_regular_file, lay, path, limit=_MACROS_LIMIT)
+    before = hashlib.sha256(data).hexdigest()
+    if expect_target is not None and expect_target != before:
+        raise CliError(
+            f"{path} has SHA-256 {before}, not the expected {expect_target}: it changed after "
+            "the plan was made, so nothing was written; run the command again to see the new "
+            "plan",
+            EXIT_REFUSED,
+        )
+    plan = macrofix.plan(wtfconfig.parse_macros(data), scope=scope, file=path)
+    after = hashlib.sha256(plan.data).hexdigest() if plan.fixes else None
+    if expect_fixed is not None and expect_fixed != after:
+        if json_out:
+            _emit(report(file=path, plan=plan, before=before, after=after))
+        now = "has nothing to fix" if after is None else f"would write SHA-256 {after}"
+        raise CliError(
+            f"the fix of {path} {now}, not the expected {expect_fixed}, so nothing was "
+            "written; run the command again to see the new plan",
+            EXIT_REFUSED,
+        )
+    if not plan.fixes:
+        done = report(file=path, plan=plan, before=before)
+        if json_out:
+            _emit(done)
+            return
+        _say(f"Nothing to fix in {path}.")
+        if done.left:
+            _say(_player_copy(_FIX_LEFT))
+        return
+    show = _say if not json_out else _say_err
+    if not yes:
+        _print_fix(show, report(file=path, plan=plan, before=before, after=after))
+        show(f"  replace  {path}  ({_bytes(len(plan.data))})")
+        show(_player_copy(_FIX_UNCONFIRMED))
+    try:
+        _confirm("Write the fixed macros?", yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report(file=path, plan=plan, before=before, after=after))
+        raise
+    with guard.transaction(chosen, label=f"macros fix {path}", store=store.path) as tx:
+        tx.write(path, plan.data)
+        # Under the write gate's locks: raising here rolls the write back.
+        if expect_target is not None and tx.plan[0].before != expect_target:
+            raise CliError(
+                f"{path} changed after the plan was made (its SHA-256 is "
+                f"{tx.plan[0].before}, not the expected {expect_target}), so the fix was "
+                "rolled back; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
+        if expect_fixed is not None and tx.plan[0].after != expect_fixed:
+            raise CliError(
+                f"the fix of {path} would write SHA-256 {tx.plan[0].after}, not the expected "
+                f"{expect_fixed}, so it was rolled back; run the command again to see the "
+                "new plan",
+                EXIT_REFUSED,
+            )
+        if [item.before for item in tx.plan] != [before]:
+            raise CliError(
+                f"{path} changed after it was read, so the fix was rolled back; run the "
+                "command again",
+                EXIT_ERROR,
+            )
+    record = guard.history(store=store.path)[-1].id
+    done = report(
+        file=path, plan=plan, before=before, after=after, written=True, transaction=record
+    )
+    if json_out:
+        _emit(done)
+        return
+    if yes:
+        _print_fix(_say, done)
+    _say(
+        f"Fixed {_plural(len(done.fixes), 'macro')} in {path}. `wowlab undo` puts the old "
+        "macros back."
+    )
+    _say(_player_copy("Whether the game keeps them after you log in is not yet confirmed."))

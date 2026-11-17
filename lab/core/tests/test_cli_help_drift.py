@@ -18,7 +18,14 @@ runner = CliRunner()
 
 # Every command that writes into an install through the gate (each opens a
 # `guard.transaction`), and so is what `undo` reverses.
-WRITERS = ("snap restore", "profile apply", "sv merge", "addon install", "addon remove")
+WRITERS = (
+    "snap restore",
+    "profile apply",
+    "sv merge",
+    "macros fix",
+    "addon install",
+    "addon remove",
+)
 
 
 def _help(*path: str) -> str:

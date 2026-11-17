@@ -1075,13 +1075,15 @@ is what stderr holds before this line (docs/LAB_PLAN.md §16.1, M14-03)."""
 EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("undo",): ("undone",),
     ("sv", "merge"): ("target_sha256", "merged_sha256"),
+    ("macros", "fix"): ("target_sha256", "fixed_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed
 back as `--expect`, make a later run refuse (exit 3) unless it would apply
-the same plan. The journal record `undo` would undo; for `sv merge`, the
-SHA-256 it read its target with and the SHA-256 of the bytes it would write
-(§16.1, "applies the plan that was shown"; M13-74)."""
+the same plan. The journal record `undo` would undo; for `sv merge` and
+`macros fix`, the SHA-256 it read its target with and the SHA-256 of the
+bytes it would write (§16.1, "applies the plan that was shown"; M13-74,
+M13-07)."""
 
 
 def _confirm(question: str, yes: bool) -> None:

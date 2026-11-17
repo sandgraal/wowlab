@@ -760,3 +760,71 @@ def test_nothing_to_undo_offers_no_confirm(real: Real) -> None:
     assert plan["exit_code"] == 1
     assert not plan["stderr"].endswith(f"{cli.CONFIRM_DECLINED}{os.linesep}")
     assert _token(plan) is None
+
+
+# ─── macros fix (M13-07): the declined shape, read from what it declares ─────
+
+FIX = ("macros", "fix")
+MACROS = f"WTF/Account/{ACCOUNT}/1/Labcharb-Labrealmd/macros-cache.txt"
+# A fixable macro appended to the captured character file (constructed): its
+# #showtooltip is on the second body line.
+_FIXABLE = (
+    b'VER 3 0100000000000102 "Mac fix" "134400"\r\n/cast Fear\r\n#showtooltip Fear\r\nEND\r\n'
+)
+_FIX_PARAMS = {"character": "Labcharb-Labrealmd"}
+
+
+def test_macros_fix_is_in_the_step_with_the_declined_shape(server: ui.UiServer) -> None:
+    listed = {tuple(c["path"]): c for c in _commands(server)}
+    assert listed[FIX]["confirm"] == "declined" and listed[FIX]["excluded"] is None
+    names = {p["name"] for p in listed[FIX]["params"]}
+    assert not names & {"yes", "expect"}, names
+
+
+def test_macros_fix_through_the_ui_constructed(real: Real) -> None:
+    target = real.flavor / MACROS
+    before = target.read_bytes() + _FIXABLE
+    target.write_bytes(before)
+    params: dict[str, object] = {"root": str(real.root), **_FIX_PARAMS}
+    plan = real.plan(FIX, params)
+    assert plan["exit_code"] == 1
+    eol = os.linesep  # the CLI's stderr is text mode
+    assert plan["stderr"].endswith(
+        f"Write the fixed macros? [y/N]:{eol}{cli.CONFIRM_DECLINED}{eol}"
+    )
+    assert f"replace  {MACROS}" in plan["stderr"]
+    assert "not yet confirmed" in plan["stderr"]
+    shown = json.loads(plan["stdout"])
+    assert shown["written"] is False
+    assert shown["target_sha256"] == hashlib.sha256(before).hexdigest()
+    assert target.read_bytes() == before  # the plan changed nothing
+    token = _token(plan)
+    assert token is not None
+    done = real.confirm(FIX, token, params)
+    assert done["exit_code"] == 0, done["stderr"]
+    assert f"--expect={shown['target_sha256']}:{shown['fixed_sha256']}" in real.argvs()[-1]
+    report = json.loads(done["stdout"])
+    assert report["written"] is True
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == shown["fixed_sha256"]
+    _went_through_guard(real, report, "macros fix")
+    real.undo()
+    assert target.read_bytes() == before
+
+
+def test_macros_fix_is_refused_when_the_file_changed_after_the_plan_constructed(
+    real: Real,
+) -> None:
+    target = real.flavor / MACROS
+    target.write_bytes(target.read_bytes() + _FIXABLE)
+    params: dict[str, object] = {"root": str(real.root), **_FIX_PARAMS}
+    plan = real.plan(FIX, params)
+    token = _token(plan)
+    assert token is not None
+    extra = b'VER 3 0100000000000103 "Mac new" "134400"\r\n/dance\r\nEND\r\n'
+    changed = target.read_bytes() + extra
+    target.write_bytes(changed)
+    records = real.history()
+    done = real.confirm(FIX, token, params)
+    assert done["exit_code"] == 3, done["stderr"]
+    assert target.read_bytes() == changed  # nothing written
+    assert real.history() == records  # nothing journaled
