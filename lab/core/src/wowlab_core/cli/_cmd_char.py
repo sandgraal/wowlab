@@ -3,6 +3,7 @@
 
 import os
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -12,6 +13,7 @@ from pydantic import Field
 from wowlab_core import (
     addoninstall,
     charhistory,
+    charkept,
     dressing,
     gamedata,
     gear,
@@ -452,6 +454,26 @@ class CharSummaryNames(_Out):
     command: str
 
 
+class CharKeptRow(CharSummaryRow):
+    """A character kept only in a backup (M18-06): its lab record is no
+    longer in the install (its flavor folder or character folder is gone),
+    but a snapshot of this install in wowlab's store holds it. The values
+    are those of a `CharSummaryRow` read from the newest copy the store
+    holds (`state` is `recorded`, or `not_read` with `error`), `flavor` and
+    the folders as the snapshot names them, and `mtime_ns` that copy's save
+    time. `version` is the client version the names were read for: the
+    snapshot's own (`snapshot_version`) when its name tables are cached,
+    else an installed flavor's whose tables are, else the snapshot's.
+    `snapshot_id` and `created_at` name the newest snapshot holding that
+    copy; `snapshots_holding` counts the snapshots that hold any copy.
+    Nothing is restored: `wowlab char kept` reads it again."""
+
+    snapshot_id: str
+    created_at: str  # UTC, ISO 8601, as the manifest records it
+    snapshot_version: str | None
+    snapshots_holding: int
+
+
 class CharSummaryReport(_Out):
     """`wowlab char list --summary --json` (M17-01): one row per character
     folder `char list` lists, every flavor of an install with several unless
@@ -473,6 +495,10 @@ class CharSummaryReport(_Out):
     # The flavors with a recorded character whose names are not all
     # downloaded (M18-02), in the order of `flavors`; empty when none is.
     names_missing: list[CharSummaryNames] = Field(default_factory=list)
+    # The characters kept only in a backup (M18-06), newest save first;
+    # empty when there are none or the store cannot be read (`backup_error`).
+    # Filtered by --flavor and --account as the rows are.
+    kept_in_backups: list[CharKeptRow] = Field(default_factory=list)
 
 
 _FIX_COMMAND = "wowlab addon install lab"
@@ -547,15 +573,26 @@ def _summary_row(e: labaddon.CharacterFile, version: str | None) -> CharSummaryR
         if e.place in _BLOCKED_PLACE:
             error = f"could not look inside {_BLOCKED_PLACE[e.place]} ({error})"
         return CharSummaryRow.model_validate(base | {"state": "not_read", "error": error})
+    return CharSummaryRow.model_validate(
+        base
+        | {
+            "record_schema": e.record_schema,
+            "client_build": e.client_build,
+            "older_client": e.older_client,
+        }
+        | _record_values(record, version)
+    )
+
+
+def _record_values(record: labaddon.CharDB, version: str | None) -> dict[str, object]:
+    """A recorded row's values from `record`, named from the tables cached
+    for `version` (the hub's rows, and the kept ones, M18-06)."""
     identity = labaddon.identity_of(record)
     spec = gear.spec_of(record)
     names = _char_names(version, spec, identity)
     level = dressing.level_of(record)
-    out: dict[str, object] = base | {
+    out: dict[str, object] = {
         "state": "recorded",
-        "record_schema": e.record_schema,
-        "client_build": e.client_build,
-        "older_client": e.older_client,
         "level": level,
         "level_absent": labaddon.level_absent_of(record) if level is None else None,
         "class_id": identity.class_id,
@@ -592,7 +629,7 @@ def _summary_row(e: labaddon.CharacterFile, version: str | None) -> CharSummaryR
         ]
     else:
         out["professions_absent"] = _section_absent(held)
-    return CharSummaryRow.model_validate(out)
+    return out
 
 
 def _summary_value(value: object, name: str | None = None) -> str:
@@ -637,14 +674,25 @@ def _summary_lines(row: CharSummaryRow) -> list[str]:
     return [first, professions, f"last logout or /reload: {when}"]
 
 
+_Listing = tuple[Sequence[snapshot.Manifest], frozenset[str]]
+
+
+def _store_listing() -> _Listing | str:
+    """Every manifest in wowlab's store that loads and the imported ids, or
+    why the store cannot be read. Reads the store only."""
+    try:
+        return lastbackup.store_listing(snapshot.SnapshotStore())
+    except (OSError, snapshot.SnapshotError) as exc:
+        return f"wowlab could not read its snapshot store: {exc}"
+
+
 def _summary_backups(
-    root: Path, flavors: Sequence[install.Flavor]
+    listing: _Listing | str, root: Path, flavors: Sequence[install.Flavor]
 ) -> tuple[list[CharSummaryBackup], str | None]:
     """Each flavor's backup line (M17-04): reads wowlab's store only."""
-    try:
-        manifests, imported = lastbackup.store_listing(snapshot.SnapshotStore())
-    except (OSError, snapshot.SnapshotError) as exc:
-        return [], f"wowlab could not read its snapshot store: {exc}"
+    if isinstance(listing, str):
+        return [], listing
+    manifests, imported = listing
     lines: list[CharSummaryBackup] = []
     for f in flavors:
         latest = lastbackup.latest_backup(manifests, root, f.folder, imported)
@@ -659,6 +707,77 @@ def _summary_backups(
             )
         )
     return lines, None
+
+
+def _names_version(snapshot_version: str | None, installed: Sequence[str | None]) -> str | None:
+    """The version a kept record's names are read for (M18-06): the
+    snapshot's own when every name table is cached for it, else the first
+    installed flavor's that has them all (the game's ids for a race, class,
+    spec or skill line do not change between versions), else the
+    snapshot's. Reads the cache only."""
+    for version in dict.fromkeys([snapshot_version, *installed]):
+        if version is not None and _names_missing(version) == []:
+            return version
+    return snapshot_version
+
+
+def _kept_rows(
+    listing: _Listing | str,
+    root: Path,
+    installed: Sequence[str | None],
+    *,
+    flavor: str | None = None,
+    account: str | None = None,
+    character: str | None = None,
+) -> list[tuple[CharKeptRow, labaddon.CharDB | None, charkept.KeptCopy]]:
+    """Each character kept only in a backup of the install at `root`
+    (`charkept.find`), with its record read from the store (None when it
+    could not be, the row then `not_read`). `flavor`, `account` and
+    `character` (`<realm or digits folder>/<character folder>`, or the
+    character folder alone) narrow it, matched as typed, then with case
+    folded."""
+    if isinstance(listing, str):
+        return []
+    manifests, imported = listing
+    store = snapshot.SnapshotStore()
+    out: list[tuple[CharKeptRow, labaddon.CharDB | None, charkept.KeptCopy]] = []
+    for copy in charkept.find(manifests, root, imported):
+        if flavor is not None and copy.flavor_folder.casefold() != flavor.casefold():
+            continue
+        if account is not None and copy.account.casefold() != account.casefold():
+            continue
+        if character is not None:
+            whole = f"{copy.realm_folder}/{copy.character_folder}"
+            named = whole if "/" in character else copy.character_folder
+            if named.casefold() != character.casefold():
+                continue
+        names_version = _names_version(copy.snapshot_version, installed)
+        base: dict[str, object] = {
+            "flavor": copy.flavor_folder,
+            "version": names_version,
+            "account": copy.account,
+            "realm_folder": copy.realm_folder,
+            "label": copy.character_folder,
+            "shape": copy.shape,
+            "file": copy.file,
+            "mtime_ns": copy.saved_at_ns,
+            "snapshot_id": copy.snapshot_id,
+            "created_at": copy.created_at,
+            "snapshot_version": copy.snapshot_version,
+            "snapshots_holding": copy.snapshots_holding,
+        }
+        record = charkept.read_copy(store, copy)
+        if isinstance(record, str):
+            row = CharKeptRow.model_validate(base | {"state": "not_read", "error": record})
+            out.append((row, None, copy))
+            continue
+        values = base | {
+            "record_schema": record.schema_,
+            "client_build": labaddon.client_build(record),
+        }
+        row = CharKeptRow.model_validate(values | _record_values(record, names_version))
+        out.append((row, record, copy))
+    return out
 
 
 def _summary_names(
@@ -723,6 +842,7 @@ def _say_summary(
                     _say_prose(line, indent="    ", hang="      ")
     if report.rows and report.not_looked_at:
         _say(f"{_unseen_words(len(report.not_looked_at))}.")
+    _say_kept(report.kept_in_backups)
     if report.names_missing:
         tables = list(dict.fromkeys(t for n in report.names_missing for t in n.tables))
         command = report.names_missing[0].command
@@ -854,12 +974,21 @@ def char_list(
             not_looked_at=unseen,
             notes=_SUMMARY_NOTES,
         )
-        backups, backup_error = _summary_backups(inst.root, [f for f, _ in shown])
+        listing = _store_listing()
+        backups, backup_error = _summary_backups(listing, inst.root, [f for f, _ in shown])
+        kept = _kept_rows(
+            listing,
+            inst.root,
+            [f.version for f in inst.flavors],
+            flavor=_given_flavor(flavor),
+            account=account if acct_folder is None else acct_folder,
+        )
         hub = hub.model_copy(
             update={
                 "backups": backups,
                 "backup_error": backup_error,
                 "names_missing": _summary_names(hub.rows, [f for f, _ in shown], root),
+                "kept_in_backups": [row for row, _, _ in kept],
             }
         )
         if json_out:
@@ -1203,6 +1332,65 @@ def _num_words(value: labaddon.Number | None) -> str:
     return "not returned" if value is None else str(value)
 
 
+def _slot_table() -> gear.SlotTableSource:
+    try:
+        return gear.load_slot_table()
+    except gear.SlotTableError as exc:
+        raise CliError(f"the slot table cannot be used: {exc}") from exc
+
+
+def _gear_report(
+    record: labaddon.CharDB,
+    table: gear.SlotTableSource,
+    *,
+    flavor_folder: str,
+    version: str | None,
+    character: str,
+    file: str,
+    mtime_ns: int,
+    notes: list[str],
+    names_version: str | None = None,
+) -> CharGearReport | str:
+    """`char gear`'s report for `record`, or why there is none: the record
+    has no gear, or holds a link wowlab cannot read. `version` is the
+    client's (the dressing room's); the names are read for `names_version`,
+    `version` when None. `notes` come first, the gear notes after them."""
+    missing = _no_gear(record, file)
+    if missing is not None:
+        return missing
+    section = record.gear
+    assert isinstance(section, labaddon.Gear)  # _no_gear said so
+    try:
+        filled, empty = gear.rows(section, table.table)
+    except itemlink.ItemLinkError as exc:  # the record reader admits no such link
+        return f"{file}: an item link wowlab cannot read: {exc}"
+    identity = labaddon.identity_of(record)
+    spec = gear.spec_of(record)
+    level = dressing.level_of(record)
+    return CharGearReport(
+        flavor_folder=flavor_folder,
+        character=character,
+        file=file,
+        mtime_ns=mtime_ns,
+        spec=spec,
+        identity=identity,
+        level=level,
+        level_absent=labaddon.level_absent_of(record) if level is None else None,
+        names=_char_names(version if names_version is None else names_version, spec, identity),
+        average=gear.average_of(section),
+        slots=filled,
+        empty_slots=empty,
+        notes=[
+            *notes,
+            _gear_table_note(table),
+            _GEAR_NAMES_NOTE,
+            _GEAR_LEVEL_NOTE,
+            _GEAR_OVERALL_NOTE,
+        ],
+        dressing=dressing.build(identity, filled, version=version, level=level),
+    )
+
+
 @char_app.command("gear", short_help="One character's equipped gear and item levels.")
 @_handled
 def char_gear(
@@ -1230,42 +1418,29 @@ def char_gear(
     missing = _no_gear(record, target.path)
     if missing is not None:
         raise CliError(missing)
-    section = record.gear
-    assert isinstance(section, labaddon.Gear)  # _no_gear said so
-    try:
-        table = gear.load_slot_table()
-    except gear.SlotTableError as exc:
-        raise CliError(f"the slot table cannot be used: {exc}") from exc
-    try:
-        filled, empty = gear.rows(section, table.table)
-    except itemlink.ItemLinkError as exc:  # the record reader admits no such link
-        raise CliError(f"{target.path}: an item link wowlab cannot read: {exc}") from exc
+    table = _slot_table()
     notes = list(_CHAR_NOTES)
     if how == "latest":
         notes.append(
             "The character is the one whose WowLab.lua has the newest modification time; "
             "choose another with --character."
         )
-    notes += [_gear_table_note(table), _GEAR_NAMES_NOTE, _GEAR_LEVEL_NOTE, _GEAR_OVERALL_NOTE]
-    identity = labaddon.identity_of(record)
-    spec = gear.spec_of(record)
-    level = dressing.level_of(record)
-    report = CharGearReport(
+    report = _gear_report(
+        record,
+        table,
         flavor_folder=chosen.folder,
+        version=chosen.version,
         character=f"{target.realm_folder}/{target.character_folder}",
         file=target.path,
         mtime_ns=target.mtime_ns,
-        spec=spec,
-        identity=identity,
-        level=level,
-        level_absent=labaddon.level_absent_of(record) if level is None else None,
-        names=_char_names(chosen.version, spec, identity),
-        average=gear.average_of(section),
-        slots=filled,
-        empty_slots=empty,
         notes=notes,
-        dressing=dressing.build(identity, filled, version=chosen.version, level=level),
     )
+    if isinstance(report, str):
+        raise CliError(report)
+    section = record.gear
+    assert isinstance(section, labaddon.Gear)  # _gear_report said so
+    filled = report.slots
+    empty = report.empty_slots
     if json_out:
         _emit(report)
         return
@@ -2239,3 +2414,203 @@ def _say_char_history(
         _say(f"  snapshot file {damaged.name} does not load: {damaged.reason}")
     caveat = _HISTORY_FEW if n < 2 else None
     _say_notes(report.notes, notes_out, caveat, keep=held)
+
+
+# ─── char kept: characters kept only in a backup (M18-06) ───────────────────
+
+
+class CharKeptReport(_Out):
+    """`wowlab char kept --json` (M18-06): the characters kept only in a
+    backup, as `char list --summary --json` lists them in `kept_in_backups`.
+    With --character, `kept` holds that one character, and `gear` and
+    `history` are read from the store: `gear` as `char gear` reports it
+    from the newest copy (None with `gear_absent` saying why), `history`
+    as `char history` reports it from every snapshot (no live file: the
+    install no longer holds one). Reads the store only; restores nothing."""
+
+    kept: list[CharKeptRow]
+    gear: CharGearReport | None = None
+    gear_absent: str | None = None
+    history: CharHistoryReport | None = None
+    notes: list[str]
+
+
+_KEPT_NOTES = [
+    "A character is kept only in a backup when a snapshot wowlab took of this game folder "
+    "holds its WowLab.lua and its character folder is no longer in the game folder: a closed "
+    "beta's folder deleted, or a character folder removed. The newest save the snapshots hold "
+    "is shown.",
+    "Nothing is restored. wowlab snap restore puts a snapshot's files back, after its own "
+    "plan and confirmation.",
+    "Names of classes, races, specs and professions come from game tables already downloaded "
+    "for the backup's game version, or, when those are not downloaded, for an installed one.",
+]
+
+KeptFlavorOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--flavor",
+        help="Only characters kept under this flavor folder, which need no longer be in "
+        "the install.",
+    ),
+]
+
+
+def _backup_day(created_at: str) -> str:
+    """A snapshot's UTC time as the local date, or the text as recorded."""
+    try:
+        when = datetime.fromisoformat(created_at)
+    except ValueError:
+        return created_at
+    return when.astimezone().strftime("%Y-%m-%d")
+
+
+def _kept_head(row: CharKeptRow) -> str:
+    return f"{row.realm_folder}/{row.label} ({row.flavor}, account {row.account})"
+
+
+def _kept_lines(row: CharKeptRow) -> list[str]:
+    return [*_summary_lines(row), f"kept in the backup of {_backup_day(row.created_at)}"]
+
+
+def _say_kept(rows: Sequence[CharKeptRow]) -> None:
+    """The text of the characters kept only in a backup, after the others."""
+    if not rows:
+        return
+    _say(
+        "Kept only in your backups, no longer in the game folder: "
+        + _plural(len(rows), "character")
+    )
+    for row in rows:
+        _say(f"  {_kept_head(row)}")
+        for line in _kept_lines(row):
+            _say_prose(line, indent="    ", hang="      ")
+
+
+@char_app.command("kept", short_help="Characters kept only in your backups.")
+@_handled
+def char_kept(
+    character: CharacterOpt = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: KeptFlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes_out: NotesOpt = False,
+) -> None:
+    """Characters whose lab-addon record is no longer in the game folder (a
+    closed beta's folder deleted, a character folder removed) but is held by
+    a snapshot wowlab took of it: the newest save each one has there. With
+    --character, that character's gear from that save and every save the
+    snapshots hold. Reads wowlab's snapshots only; restores nothing.
+
+    \f
+    JSON: CharKeptReport."""
+    inst, _ = _discover(root)
+    listing = _store_listing()
+    if isinstance(listing, str):
+        raise CliError(listing)
+    installed = [f.version for f in inst.flavors]
+    found = _kept_rows(
+        listing, inst.root, installed, flavor=flavor, account=account, character=character
+    )
+    if character is None:
+        report = CharKeptReport(kept=[row for row, _, _ in found], notes=_KEPT_NOTES)
+        if json_out:
+            _emit(report)
+            return
+        if not report.kept:
+            _say(
+                "No character is kept only in a backup: every character your snapshots hold "
+                "is in the game folder."
+            )
+        _say_kept(report.kept)
+        _say_notes(report.notes, notes_out)
+        return
+    if not found:
+        raise CliError(
+            f"no character kept only in a backup is named {character}"
+            + (f" in account {account}" if account is not None else "")
+            + (f" under {flavor}" if flavor is not None else "")
+            + "; wowlab char kept lists them",
+            EXIT_USAGE,
+        )
+    if len(found) > 1:
+        names = "; ".join(_kept_head(row) for row, _, _ in found)
+        raise CliError(
+            f"{character} names {len(found)} kept characters ({names}); "
+            "name one with --flavor and --account",
+            EXIT_USAGE,
+        )
+    row, record, copy = found[0]
+    gear_report: CharGearReport | str | None = None
+    history: CharHistoryReport | None = None
+    if record is not None:
+        table = _slot_table()
+        gear_report = _gear_report(
+            record,
+            table,
+            flavor_folder=copy.flavor_folder,
+            version=copy.snapshot_version,
+            names_version=row.version,
+            character=f"{copy.realm_folder}/{copy.character_folder}",
+            file=copy.file,
+            mtime_ns=copy.saved_at_ns,
+            notes=list(_CHAR_NOTES),
+        )
+        spec_name, currency_name = _history_names(row.version)
+        found_history = charhistory.collect(
+            snapshot.SnapshotStore(),
+            copy.path,
+            table=table.table,
+            spec_name=spec_name,
+            currency_name=currency_name,
+        )
+        history = CharHistoryReport(
+            flavor_folder=copy.flavor_folder,
+            account=copy.account,
+            character=f"{copy.realm_folder}/{copy.character_folder}",
+            chosen_by="--character",
+            file=copy.file,
+            names_build=row.version,
+            rows=found_history.rows,
+            unreadable=found_history.unreadable,
+            damaged_snapshots=found_history.damaged_snapshots,
+            snapshots_searched=found_history.snapshots_searched,
+            snapshots_holding=found_history.snapshots_holding,
+            notes=_HISTORY_NOTES,
+        )
+    report = CharKeptReport(
+        kept=[row],
+        gear=gear_report if isinstance(gear_report, CharGearReport) else None,
+        gear_absent=gear_report if isinstance(gear_report, str) else None,
+        history=history,
+        notes=_KEPT_NOTES,
+    )
+    if json_out:
+        _emit(report)
+    else:
+        _say_kept_one(report, row, notes_out)
+    if row.state != "recorded":
+        raise typer.Exit(EXIT_ERROR)
+
+
+def _say_kept_one(report: CharKeptReport, row: CharKeptRow, notes_out: bool) -> None:
+    """`char kept --character`'s text: the character, its gear, its saves."""
+    _say_prose(f"Character: {_kept_head(row)}", keep=[row.realm_folder, row.label, row.account])
+    for line in _kept_lines(row):
+        _say_prose(line, indent="  ", hang="    ")
+    if report.gear is not None:
+        g = report.gear
+        _say(f"Gear ({_plural(len(g.slots), 'slot')} filled):")
+        for s in sorted(g.slots, key=lambda s: s.slot):
+            level = (
+                "item level not returned" if s.item_level is None else f"item level {s.item_level}"
+            )
+            _say(f"  {_slot_label(s.slot, s.slot_name)}  {s.name} ({level})")
+    elif report.gear_absent is not None:
+        _say_prose(f"Gear: {report.gear_absent}")
+    if report.history is not None and report.history.rows:
+        _say(f"Saves in your backups ({len(report.history.rows)}), oldest first:")
+        for h in report.history.rows:
+            _say(f"  {_history_head(h)}")
+    _say_notes(report.notes, notes_out)

@@ -1298,6 +1298,9 @@
     macros: null, // its CharMacrosReport, for the findings filter
     entry: null, // the picked character's `char list` row
     gear: null, // its CharGearReport, once read: the header is drawn from it
+    // The `kept_in_backups` row of a character kept only in a backup, while
+    // its page is shown (M18-06); null for a character in the game folder.
+    kept: null,
     // What `char list` said on stderr when it exited with an error (a row it
     // could not read, a place it could not look inside): the status line
     // keeps it while characters are read.
@@ -1519,6 +1522,10 @@
   function clearCharacter() {
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
+    character.kept = null;
+    byId("char-kept").textContent = "";
+    byId("char-kept").hidden = true;
+    byId("char-bar-panel").hidden = false;
     character.entry = null;
     character.gear = null;
     character.binds = null;
@@ -1600,6 +1607,8 @@
   // cards' report), for its professions; null until that report is read or
   // when it does not list the character. The flavor counts when both name one.
   function hubRowOf(entry) {
+    // A character kept only in a backup carries its own row (M18-06).
+    if (entry && entry.kept) return entry.kept;
     if (!entry || !hub.report) return null;
     const flavor = character.flavor || (hubStr(entry.flavor) ? entry.flavor : null);
     for (const row of objects(hub.report.rows)) {
@@ -2608,7 +2617,12 @@
     box.appendChild(figures);
     if (!several) {
       box.appendChild(
-        charLine("One save so far. Take a backup after you next log out, and the change shows here.", "progress-caption"),
+        charLine(
+          character.kept
+            ? "One save in your backups."
+            : "One save so far. Take a backup after you next log out, and the change shows here.",
+          "progress-caption",
+        ),
       );
       return;
     }
@@ -2902,7 +2916,7 @@
         ? "One save of this character so far, written " + localTime(rows[0].saved_at_ns) + "."
         : "No save of this character could be read.";
       box.appendChild(charLine(so, "char-count"));
-      box.appendChild(charLine(HISTORY_FEW, "char-line"));
+      if (!character.kept) box.appendChild(charLine(HISTORY_FEW, "char-line"));
     } else {
       const span =
         count(rows.length, "save", "saves") + ", " + dayOf(rows[0].saved_at_ns) + " to " +
@@ -3464,7 +3478,14 @@
       loadHub();
     }
     if (name === "gaps") loadGaps();
-    if (name === "character" || keys) loadCharacters();
+    if (name === "character" || keys) {
+      const listed = loadCharacters();
+      if (keys && character.kept) {
+        listed.then(() => {
+          if (character.kept) leaveKept();
+        });
+      }
+    }
   }
   for (const section of Object.keys(SECTIONS)) {
     byId("sec-" + section).addEventListener("click", () =>
@@ -3834,7 +3855,8 @@
       const button = make("button", cardName(row));
       button.type = "button";
       button.className = "card-open";
-      button.addEventListener("click", () => openCharacter(row));
+      if (typeof open === "function") button.title = "Open from your backup";
+      button.addEventListener("click", () => (typeof open === "function" ? open(row) : openCharacter(row)));
       title.appendChild(button);
     } else {
       title.textContent = cardName(row);
@@ -3937,7 +3959,133 @@
     const several = new Set(rows.map((r) => hubStr(r.flavor)).filter(Boolean)).size > 1;
     homeView.slots = new Map();
     const cards = cardOrder(rows).map((row) => charCard(row, several));
-    box.replaceChildren(...cards, missingCard());
+    const kept = keptRows().map((row) => keptCard(row));
+    box.replaceChildren(...cards, ...kept, missingCard());
+  }
+
+  // ─── characters kept only in a backup (M18-06) ───
+  // A character whose lab record is no longer in the game folder (a closed
+  // beta's folder deleted, a character folder removed) but which a backup
+  // holds: `char list --summary` lists it in `kept_in_backups`. Its card
+  // is dimmed and comes after the others; it names the game and the
+  // backup's date, never a folder, a path or a snapshot id. Opening it
+  // reads the backup with `char kept` and draws the character page from
+  // that: no keys, nothing that changes anything, and a line that says
+  // where the page comes from. Nothing is restored.
+
+  function keptRows() {
+    const report = homeView.report;
+    if (!report || !Array.isArray(report.kept_in_backups)) return [];
+    return objects(report.kept_in_backups).filter(
+      (r) => typeof r.label === "string" && typeof r.account === "string" && typeof r.realm_folder === "string" &&
+        hubStr(r.flavor),
+    );
+  }
+
+  // The backup's date as people say it ("Oct 19"), from its UTC time.
+  function keptDay(row) {
+    const ms = hubStr(row.created_at) ? Date.parse(row.created_at) : NaN;
+    return Number.isFinite(ms) ? playedDay(ms * 1e6) : null;
+  }
+
+  function keptWords(row) {
+    const day = keptDay(row);
+    return day ? "kept in your backup from " + day : "kept in your backup";
+  }
+
+  function keptCard(row) {
+    const card = make("div");
+    card.className = "char-card card-kept";
+    const look = recorded(row) ? classLook(row) : "";
+    if (look) card.classList.add(look);
+    const stripe = make("div");
+    stripe.className = "card-stripe";
+    card.appendChild(stripe);
+    const body = make("div");
+    body.className = "card-body";
+    body.appendChild(cardHead(row, recorded(row) ? openKept : false));
+    if (recorded(row)) {
+      const profs = cardProfessions(row);
+      if (profs) body.appendChild(profs);
+    } else {
+      const note = make("p", "wowlab could not read what your backup holds for this character.");
+      note.className = "card-note";
+      body.appendChild(note);
+    }
+    const foot = make("div");
+    foot.className = "card-foot";
+    foot.appendChild(make("span", visible(gameWords(row.flavor)) + " \u00b7 " + keptWords(row)));
+    body.appendChild(foot);
+    card.appendChild(body);
+    return card;
+  }
+
+  // Opens the character page on a kept character. The Character tab's
+  // list is read first, so its own first pick never draws over this one.
+  async function openKept(row) {
+    showTab("character");
+    await loadCharacters();
+    byId("char-picker").value = "";
+    await pickKept(row);
+    byId("char-back").focus();
+  }
+
+  async function pickKept(row) {
+    const seq = ++character.seq;
+    clearCharacter();
+    const name = cardName(row);
+    character.entry = {
+      label: row.label, account: row.account, realm_folder: row.realm_folder, flavor: row.flavor, kept: row,
+    };
+    character.kept = row;
+    const line = byId("char-kept");
+    const day = keptDay(row);
+    line.textContent = (day ? "From your backup of " + day : "From your backup") +
+      ". This character is no longer in your game folder; this page changes nothing.";
+    line.hidden = false;
+    byId("char-bar-panel").hidden = true;
+    byId("char-header").replaceChildren(charTitle(name));
+    charSay("Reading " + name + " from your backup…", false);
+    const params = { character: row.realm_folder + "/" + row.label, account: row.account, flavor: row.flavor };
+    // Every flavor: the kept one need not be in the game folder.
+    const reply = await runJson(["char", "kept"], params, true, true);
+    if (seq !== character.seq) return;
+    const report = reply.data;
+    if (!report || !Array.isArray(report.kept)) {
+      charError(byId("char-gear"), reply, "char kept");
+      charSay("This character could not be read from your backup.", true);
+      return;
+    }
+    const gear = report.gear;
+    if (gear && typeof gear === "object" && Array.isArray(gear.slots) && Array.isArray(gear.empty_slots)) {
+      character.gear = gear;
+      drawCharHeader();
+      drawCharSources(gear);
+      drawGear(gear);
+      drawDressing(gear.dressing);
+    } else {
+      const why = hubStr(report.gear_absent) ? shown(report.gear_absent) : "Your backup holds no gear for this character.";
+      byId("char-gear").replaceChildren(charLine(why, "char-none"));
+    }
+    const history = report.history;
+    if (history && typeof history === "object" && Array.isArray(history.rows)) {
+      drawHistory(history);
+    } else {
+      byId("char-progress").replaceChildren(charLine("No save of this character could be read.", "char-none"));
+    }
+    charSay("", false);
+  }
+
+  // Leaving a kept character for Keybinds: its keys are not read, so the
+  // view goes back to the list's character.
+  function leaveKept() {
+    const at = character.entries.findIndex(readable);
+    if (at < 0) {
+      clearCharacter();
+      return;
+    }
+    byId("char-picker").value = String(at);
+    pickCharacter(character.entries[at]);
   }
 
   // ─── the gains, from `char history` ───

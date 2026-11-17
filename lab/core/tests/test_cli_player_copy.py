@@ -382,6 +382,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["char", "binds"],
         ["char", "macros"],
         ["char", "history"],
+        ["char", "kept"],
+        ["char", "kept", "--notes"],
         *[
             [*cmd, "--character", c]
             for c in chars
