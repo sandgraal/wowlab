@@ -29,10 +29,12 @@ on:
 permissions:
   contents: read
 
-# Runs on main queue rather than cancel, so each merge gets its own verdict.
-# The nightly run has a group of its own (M18-15), so it neither replaces a
-# merge's queued run nor is replaced by one; a superseded on-demand branch
-# run is cancelled.
+# A run in progress on main is never cancelled. GitHub keeps at most one running and one
+# pending run per group, and a newer queued run replaces the pending one, so
+# merges in quick succession can share a run rather than each getting its
+# own. The nightly run has a group of its own (M18-15), so a merge never
+# replaces it and it never replaces a merge's run. A superseded on-demand
+# branch run is cancelled.
 concurrency:
   group: windows-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}

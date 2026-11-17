@@ -1991,8 +1991,11 @@ yet, and a fixture produced by the thing under test proves nothing).
   otherwise; the conductor checks the latest runs
   (`docs/AGENT_WORKFLOW.md`).
 
-  *Amended 2026-11-17 (owner decision, M18-15):* Windows and macOS are off
-  pull requests. `windows.yml` no longer runs on a pull request touching
+  *Amended 2026-11-17 (owner decision, M18-15):* the Lab test suites on
+  Windows and macOS, `lab (windows)` and `lab (macos)`, are off pull
+  requests; the app build and smoke jobs (`macos-app.yml`,
+  `windows-app.yml`) still run on a pull request that touches packaging or
+  dependencies, unchanged. `windows.yml` no longer runs on a pull request touching
   `lab/**` (the 2026-10-17 trigger above is gone), and the macOS `lab`
   suite, until then the `lab-desktop` job of `ci.yml` that ran on every
   pull request, moved to `.github/workflows/macos.yml`. Both run after each
