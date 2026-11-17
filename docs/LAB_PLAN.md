@@ -4098,7 +4098,7 @@ CLI printed it with no Confirm:
   apply`, `addon install`, `addon remove`) is run with `--dry-run --json`;
   the marker is the JSON report with `dry_run: true`, and it is the plan;
 - a leaf with no `--dry-run` that confirms through `cli._confirm` (`undo`,
-  `sv merge`) is run with `--json` and no `--yes`; the CLI writes the text
+  `sv merge`, and `macros fix` since M13-07, 2026-11-17) is run with `--json` and no `--yes`; the CLI writes the text
   plan to stderr, `_confirm` gets no answer, and the run ends with
   `Nothing was changed.` and exit 1; the marker is that ending, read by a
   constant the CLI exports, and the plan is the stderr text before it;
@@ -4143,6 +4143,7 @@ from a count (on 2026-10-18: `snap restore`, `undo`, `profile apply`,
 `addon install`, `addon remove`, `sv merge`, `snap gc` and `doctor`). It
 ships in two steps so that the mechanism is proven on the two commands
 whose worst case is wowlab's own store before it reaches an install:
+*Amended 2026-11-17 (M13-07):* `macros fix` is a third. It is pinned the same way, by `--expect <target sha256>:<fixed sha256>` from its plan JSON, checked again under `guard`'s lock.
 
 - **M14-02, the mechanism on the store-only commands.** `snap gc` and
   `doctor --yes` (the first snapshot). The server keeps the plan run and the
@@ -4385,6 +4386,7 @@ its plan without `--yes`, and each reaching the UI through the confirm
 flow of §16.1 with nothing UI-specific added. If the server replaces the
 file, no writer is built: the same commands print the corrected text for
 the player to apply in game, as M13-07 already provides for.
+*Amended 2026-11-17 (M13-07, owner decision in session):* `macros fix` was built before F3, with no proposal file. It fixes only the findings `macros check` marks fixable: a `#showtooltip` or `#show` line that is not first moves to line 1. A proposal-file form waits for F3. It writes, because §7 of `LAB_FORMATS.md` (2026-11-12) saw a character's offline macro edit survive login; account macros were not tested, and its plan says so.
 
 **F3. The proposal format, and its validator.** A proposal is a small
 document (TOML, like the Lab's other data files) that names the character
@@ -5168,6 +5170,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
       only).
     - CI enforcement of "graders activated by marker deletion only".
     - An owner-run `@live` L1 sweep before each release.
+   *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
 
 The panel's suggestions that the owner declined, or left for later:
 - retail and Windows volunteer captures (the README states the limit
