@@ -2478,10 +2478,11 @@ def _backup_day(created_at: str) -> str:
     except ValueError:
         return created_at
     try:
-        return when.astimezone().strftime("%Y-%m-%d")
+        # `date.isoformat`, not strftime: Linux's %Y does not pad a year below 1000.
+        return when.astimezone().date().isoformat()
     except (OverflowError, OSError, ValueError):
         # Out of the local clock's range (a year near 1): the UTC date.
-        return when.strftime("%Y-%m-%d")
+        return when.date().isoformat()
 
 
 def _kept_head(row: CharKeptRow) -> str:
