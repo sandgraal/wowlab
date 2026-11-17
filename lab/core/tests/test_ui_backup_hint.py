@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,18 @@ def _drive(folder: Path, scenario: dict[str, Any]) -> dict[str, Any]:
         home_tab._harness = original
 
 
+@pytest.fixture(autouse=True)
+def windows_store(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Windows, platformdirs asks the system for the data folders and
+    ignores `APPDATA`/`LOCALAPPDATA`, so a snapshot taken here would land in
+    the runner's real store, shared with every parallel test (a fixed
+    `now` then collides). Its own override variables point it at the
+    stand-in home, as `home` points the other platforms; the server's runs
+    inherit them."""
+    monkeypatch.setenv("WIN_PD_OVERRIDE_APPDATA", str(home / "appdata"))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(home / "localappdata"))
+
+
 @pytest.fixture
 def held(both: Path) -> Path:
     from wowlab_core import snapshot
@@ -83,7 +96,8 @@ def held(both: Path) -> Path:
         [f"{BETA}/WTF"],
         flavor_folder=BETA,
         flavor_version=kept_cli.BETA_VERSION,
-        now=kept_tab.SNAPPED,
+        # Not test_ui_kept's time: a snapshot of other files never shares its id.
+        now=kept_tab.SNAPPED + timedelta(minutes=7),
     )
     (account / SETT / kept_cli.SV).unlink()
     return both
@@ -138,7 +152,12 @@ def test_the_hint_opens_the_backups_page_and_restores_nothing_constructed(
     # Every run is a read; nothing restores, backs up or installs.
     assert {tuple(b["command"]) for b in bodies} <= READS
     assert step["keptHidden"] is False
-    assert step["kept"].startswith("From your backup of Oct ")
+    assert re.fullmatch(
+        r"From your backup of Oct \d{1,2}(, \d{4})?\. This character's folder is still in your "
+        r"game folder but holds no wowlab record; your backup has one\. This page changes "
+        r"nothing\.",
+        step["kept"],
+    ), step["kept"]
     assert step["barHidden"] is True
     char = step["char"]
     assert char["hero"]["name"] == "Sangraal-Sett"

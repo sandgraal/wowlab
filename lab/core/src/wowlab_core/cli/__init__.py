@@ -627,6 +627,9 @@ from wowlab_core.cli._cmd_char import (
     _GEAR_SPEC_NOTE as _GEAR_SPEC_NOTE,
 )
 from wowlab_core.cli._cmd_char import (
+    _HELD_NOTES as _HELD_NOTES,
+)
+from wowlab_core.cli._cmd_char import (
     _HISTORY_FEW as _HISTORY_FEW,
 )
 from wowlab_core.cli._cmd_char import (

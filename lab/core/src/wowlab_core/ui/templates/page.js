@@ -4097,8 +4097,13 @@
     character.kept = row;
     const line = byId("char-kept");
     const day = keptDay(row);
-    line.textContent = (day ? "From your backup of " + day : "From your backup") +
-      ". wowlab's record of this character is no longer in your game folder; this page changes nothing.";
+    // A folder still in the game folder with no record of its own (M18-11)
+    // is not gone: the line says what is.
+    const why = row.folder_present === true
+      ? ". This character's folder is still in your game folder but holds no wowlab record; your backup has one. " +
+        "This page changes nothing."
+      : ". wowlab's record of this character is no longer in your game folder; this page changes nothing.";
+    line.textContent = (day ? "From your backup of " + day : "From your backup") + why;
     line.hidden = false;
     byId("char-bar-panel").hidden = true;
     byId("char-header").replaceChildren(charTitle(name));

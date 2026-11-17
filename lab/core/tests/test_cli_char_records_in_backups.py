@@ -72,6 +72,7 @@ def test_a_folder_with_no_record_lists_the_backups_record_constructed(
     assert record["snapshot_id"] == held["snapshot"].id
     assert record["created_at"] == held["snapshot"].created_at
     assert record["mtime_ns"] == kept_cli.SETT_NS
+    assert record["folder_present"] is True
     # Its folder is in the game folder: it is not a character kept only in a backup.
     assert report["kept_in_backups"] == []
 
@@ -119,6 +120,12 @@ def test_char_kept_reads_the_backups_record_of_the_folder_constructed(
     assert row["snapshot_id"] == held["snapshot"].id
     assert report["gear"] is not None and report["gear"]["slots"]
     assert report["history"]["snapshots_holding"] == 1
+    # Told apart from a character whose folder is gone, in its own notes too.
+    assert row["folder_present"] is True
+    assert report["notes"][0].startswith(
+        "This character's folder is still in the game folder but holds no WowLab.lua"
+    )
+    assert "no longer in the game folder" not in " ".join(report["notes"])
     # Nothing was restored: the folder still holds no record.
     assert not (kept_cli._account(held["root"]) / SETT / SV).exists()
 
@@ -139,3 +146,37 @@ def test_char_kept_refuses_a_folder_that_has_its_record_constructed(
     result = run("char", "kept", "--character", PARTICIPLE, "--account", ACCOUNT, "--flavor", BETA)
     assert result.exit_code == 2, result.output
     assert "no character kept only in a backup is named" in result.output
+
+
+def test_char_kept_says_the_folder_is_still_there_in_text_constructed(
+    held: dict[str, Any],
+) -> None:
+    result = run(
+        "char", "kept", "--character", SETT, "--account", ACCOUNT, "--flavor", BETA, "--notes"
+    )
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.stdout.split())
+    assert "its folder is still in the game folder but holds no lab record; the backup of " in text
+    assert "This character's folder is still in the game folder but holds no WowLab.lua" in text
+    assert "no longer in the game folder" not in text
+    assert "kept in the backup of" not in text
+
+
+def test_a_character_whose_folder_is_gone_is_not_folder_present_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = hub_cli.two_flavors(tmp_path / "World of Warcraft")
+    monkeypatch.setenv(hub_cli.install.ENV_ROOT, str(root))
+    monkeypatch.chdir(tmp_path)
+    account = kept_cli._account(root)
+    shutil.copytree(kept_cli.OWNER / SETT, account / SETT)
+    kept_cli._snap(root)
+    shutil.rmtree(account / SETT)
+    (row,) = _summary()["kept_in_backups"]
+    assert row["folder_present"] is False
+    result = run(
+        "char", "kept", "--character", SETT, "--account", ACCOUNT, "--flavor", BETA, "--json"
+    )
+    report = json.loads(result.stdout)
+    assert report["kept"][0]["folder_present"] is False
+    assert "no longer in the game folder" in report["notes"][0]
