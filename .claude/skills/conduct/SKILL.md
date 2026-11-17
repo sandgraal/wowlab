@@ -27,11 +27,12 @@ branch; `code-reviewer` still grades it before merge. Otherwise the only files y
   restricted to M10; explicit ids = those that are on the frontier. An id
   that is not on the frontier is not dispatched — name the open predecessor
   and ask, since the owner may know something the backlog does not.
-- Check Windows. `lab (windows)` runs after merges, nightly, on demand,
-  and since 2026-10-17 on pull requests that touch `lab/**` (`windows.yml`,
-  ADR-0014 amendments of 2026-10-15 and 2026-10-17), but it is not
-  required, so nothing blocks on it and the conductor owns noticing it:
-  `gh run list --workflow windows.yml --branch main -L 3 --json conclusion,headSha,url`.
+- Check Windows and macOS. `lab (windows)` (`windows.yml`) and `lab (macos)`
+  (`macos.yml`) run after merges to `main`, nightly and on demand, never on
+  pull requests (ADR-0014 amendments of 2026-10-15 and 2026-11-17). They are
+  not required, so nothing blocks on them and the conductor owns noticing them:
+  `gh run list --workflow windows.yml --branch main -L 3 --json conclusion,headSha,url`
+  and the same for `macos.yml`.
   A red finished run on `main` is a bug: file a ticket in the next docs PR
   (or name the open one), put it first on the frontier, and tell the owner.
   Check again before writing a wave review; a wave does not close red.

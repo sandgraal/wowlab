@@ -90,6 +90,8 @@ ADR-0001 to ADR-0011 and ADR-0015 to ADR-0018 belonged to Bronze, retired 2026-0
 
 **Amendment (2026-10-17, owner decision; Accepted 2026-10-17 — owner: "i accept all"; the status edit was made by the conductor on the owner's explicit instruction):** off the PR path, the Windows job went red on `main` twice in two days (M13-36 from #203/#204, M13-43 from #235/#237), each time from a test that assumed a POSIX host and that nobody saw until after the merge. `windows.yml` therefore also runs on a pull request that touches `lab/**`, `uv.lock`, the root `pyproject.toml` or `conftest.py` (which decide what is installed and which tests run serially), or the workflow itself, still as a non-required check: a red run is visible on the PR before merge, but nothing waits on it. The merge-to-`main`, nightly and on-demand runs stay. The required checks are unchanged.
 
+**Amendment (2026-11-17, from the owner's CI choice in session, "Windows/macOS off PRs"; Proposed):** neither desktop suite runs on pull requests any more. `lab (windows)` (`windows.yml`) and `lab (macos)` (moved from `ci.yml` to its own `macos.yml`) run on push to `main`, nightly, and on demand (`gh workflow run windows.yml|macos.yml --ref <branch>`). This reverses the 2026-10-17 amendment's runs on pull requests that touch `lab/**`. The required checks are unchanged and are all Linux or security jobs. A desktop regression now shows up after merge. The conductor watches the runs on `main`, and GitHub emails the owner when a scheduled run fails.
+
 ---
 
 ## ADR-0019 — wowlab is a local-only personal toolchain
