@@ -308,6 +308,27 @@ from the owner's install through `scripts/lab_capture.py`
 (`docs/handoffs/M10-03.md`). Accept or reject ADRs by editing their status
 in a PR you merge yourself.
 
+## Release checklist (owner)
+
+Before tagging a release (M16-38, `docs/LAB_PLAN.md` §18.1 item 12), with the
+game client and the Battle.net app closed, run the `@live` L1 sweep on the
+launch client's install from a checkout of the commit to be tagged:
+
+```bash
+WOWLAB_WOW_ROOT="/path/to/World of Warcraft" uv run pytest -m live lab/core/tests/test_l1_sweep_live.py -s -p no:cacheprovider
+```
+
+It hashes the install, runs every read command and the `wowlab ui` read
+endpoints, hashes again, and fails on any difference, printing the first
+ones. CI never runs it (ADR-0012). Into the release record (the release's
+handoff under `docs/handoffs/`), paste only the block between
+`--- L1 sweep, for the release record ---` and `--- end ---`, and the
+`passed` line. That block uses placeholders (`account#1`, `character#1`,
+`<root>`, `<home>`, `<login>`) in place of account and character folders and
+paths on your machine. A failure's message names the real ones: read it on
+your terminal, and never paste it, since nothing scrubs the repository for
+them (ADR-0019). A failure is an L1 finding and blocks the tag.
+
 ## Reusing this harness in another project
 
 1. Copy `.claude/` (agents, skills, rules, hooks, settings), `tests/harness/`,
