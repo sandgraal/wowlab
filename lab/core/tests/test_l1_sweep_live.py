@@ -37,7 +37,12 @@ What it does, in order:
    refusal by the write gate, which no read reaches), or printed something
    other than JSON under `--json`.
 
-Every command's exit code is printed with `-s`, for the release record.
+With `-s` it prints one block for the release record: the verdicts, every
+command's exit code and every skip, with `account#N`, `character#N`,
+`<root>`, `<home>` and `<login>` in place of the account and character
+folders and the paths of this machine (ADR-0019 amendment of 2026-10-17).
+That block is all it prints. A failure's message names the real paths, for
+the owner's terminal only.
 
 The constructed tests below it (not `live`, so CI runs them) check the
 comparison on a constructed tree and run the same sweep on a copy of the
@@ -403,8 +408,9 @@ def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
     """The lines for the release record: the verdicts, each run's exit code
     and command, and each skip, with the install root as `<root>`, the home
     folder as `<home>`, the login as `<login>`, and every account and
-    character folder as `account#N` / `character#N`. The full detail stays
-    on the terminal above it and never goes into the record."""
+    character folder as `account#N` / `character#N`. It is all the sweep
+    prints; only a failure's message names real paths, so it can be read
+    on the terminal and is never pasted into the record."""
     swaps: list[tuple[str, str]] = [(str(root), "<root>")]
     with contextlib.suppress(RuntimeError, KeyError, OSError):
         swaps.append((str(Path.home()), "<home>"))
@@ -650,14 +656,6 @@ def sweep_and_compare(root: Path, data_dir: Path) -> Sweep:
         after = install_fingerprint(inst.root)
         data_after = store_fingerprint(data_dir)
     hashed = sum(1 for e in before.values() if e.sha256 is not None)
-    print(f"\ninstall {inst.root}: {len(before)} paths, {hashed} files hashed")
-    for ran in sweep.ran:
-        print(
-            f"  exit {ran.exit_code:>3}  {ran.what}"
-            + (f"  !! {ran.problem}" if ran.problem else "")
-        )
-    for note in sweep.skipped:
-        print(f"  skipped  {note}")
     changed = differences(before, after)
     data_changed = differences(data_before, data_after)
     flagged = [r for r in sweep.ran if r.problem]
@@ -665,7 +663,7 @@ def sweep_and_compare(root: Path, data_dir: Path) -> Sweep:
         f"wowlab {_version()}; flavors: "
         + ", ".join(f"{f.folder} {f.version}" for f in inst.flavors),
         f"install: {len(before)} paths, {hashed} files hashed; "
-        + ("unchanged" if not changed else f"CHANGED ({len(changed)} lines above the summary)"),
+        + ("unchanged" if not changed else f"CHANGED ({len(changed)} lines in the failure)"),
         "user data directory: " + ("unchanged" if not data_changed else "CHANGED"),
         f"runs: {len(sweep.ran)}, flagged: {len(flagged)}",
     ]
