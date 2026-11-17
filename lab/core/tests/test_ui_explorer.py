@@ -342,6 +342,10 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
     # in, which `createElementNS` needs; nothing is fetched from it.
     assert body.count(SVG_NS_LINE) == 1
     body = body.replace(SVG_NS_LINE, "")
+    # The tab icon (M18-11): the server's own path, which needs no key
+    # (test_ui_icon.py); no other `<link`.
+    assert body.count(ICON_LINK) == 1
+    body = body.replace(ICON_LINK, "")
     body = body.replace(DRESSING_PARSE, "").lower()
     for marker in _EXTERNAL:
         assert marker not in body, marker
@@ -426,6 +430,7 @@ DRESSING_HREF = "link.href = checked;"
 # of the attributes is a URL, a handler or a style; none of the elements can
 # fetch, link, run script or animate an attribute.
 SVG_NS_LINE = 'const SVG_NS = "http://www.w3.org/2000/svg";'
+ICON_LINK = '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
 SVG_TAGS = frozenset({"svg", "polyline", "circle", "text"})
 SVG_ATTRS = frozenset({"viewBox", "aria-hidden", "points", "cx", "cy", "r", "x", "y"})
 
