@@ -3209,14 +3209,14 @@ Two display bugs on the Account tab, both on `main`:
 
 *Owner decision, 2026-11-14, in session ("yes"), after the conductor's look at `wowlab ui` on the owner's install found it reads like a debug console, shows ids instead of names, and raises a false alarm about the game's own files.* The first two tickets fix the false alarm (load-bearing `luadata.py`, so the grader lands first, ADR-0013). The redesign follows a mockup the owner approves before any UI ticket is filed.
 
-## [ ] M18-01T — [TEST] A `nil` hole in a list is read, kept and round-tripped
+## [x] M18-01T — [TEST] A `nil` hole in a list is read, kept and round-tripped
 **Size:** S · **Depends on:** nothing · **Sources:** `docs/LAB_FORMATS.md` §4.1 (amendment of 2026-11-14), §4.4; L3, L4, L8
 
-Graders, expected to fail until M18-01: a positional `nil,` inside a table parses; it keeps its index, so later positional entries keep theirs; `serialize(parse(x)) == x` byte for byte; the document model reports the hole as a value with no content; the CLI/JSON readers that walk values (`sv dump`, `sv list --unreadable`, `sv merge`) treat it as a hole, not an error; a keyed `nil` and `nil` as a key are still refused with a position. Real fixtures (L8): the owner's `Blizzard_AuctionHouseUI.lua`, `Blizzard_CombatLog.lua` and the account's `Auctionator.lua` (two holes in a row) from Forever 1.60.1.70938, through `scripts/lab_capture.py` with provenance rows; constructed boundary cases (a leading hole, a trailing hole, a hole as the only entry) labelled as such; a top-level `X = nil` still parses.
+Graders, expected to fail until M18-01: a positional `nil,` inside a table parses; it keeps its index, so later positional entries keep theirs; `serialize(parse(x)) == x` byte for byte; the document model reports the hole as a value with no content; the CLI/JSON readers that walk values (`sv dump`, `sv list --unreadable`, `sv merge`) treat it as a hole, not an error; a keyed `nil` and `nil` as a key are still refused with a position. Real fixtures (L8): the owner's `Blizzard_AuctionHouseUI.lua`, `Blizzard_CombatLog.lua` and the account's `Auctionator.lua` (two holes in a row) from Forever 1.60.1.70938, through `scripts/lab_capture.py` with provenance rows; constructed boundary cases (a leading hole, a trailing hole, a hole as the only entry) labelled as such; a top-level `X = nil` still parses. *Amended 2026-11-14 (#560):* the account's `Auctionator.lua` could not be captured: the scrub tool refused it on a likely false positive inside a 132 KB encoded price string, and the security review advised keeping the refusal. Two holes in a row are graded on a constructed input.
 
 **Acceptance:** the graders are on `main`, marked expected-fail; `make test-parser` otherwise green. Reviewed by `code-reviewer` and `security-reviewer`.
 
-## [ ] M18-01 — [IMPL] `luadata` reads a `nil` hole in a list
+## [x] M18-01 — [IMPL] `luadata` reads a `nil` hole in a list
 **Size:** S · **Depends on:** M18-01T · **Sources:** as M18-01T
 
 Make M18-01T's graders pass by deleting their markers only. The patch-day card stops listing the game's own files as unreadable. No interpreter, no evaluation (L3); the fuzz corpus keeps passing.
@@ -3225,28 +3225,28 @@ Make M18-01T's graders pass by deleting their markers only. The patch-day card s
 
 *Owner decision, 2026-11-14, in session ("mockup approved"):* the redesign is specified in `docs/design/COMPANION.md`. The UI tickets below share `ui/templates/page.js`, `page.css` and `page.html`, so they run one at a time in this order. Each is reviewed by `code-reviewer`, who also loads the real page in a headless browser on a fixture install (the #544 lesson: the Node stand-in hid a crash), and by `security-reviewer` for the templates. Behaviour the current tabs have is kept, moved, never dropped, unless a ticket says so.
 
-## [ ] M18-02 — Names by default: one offer to download the name tables
+## [x] M18-02 — Names by default: one offer to download the name tables
 **Size:** S · **Depends on:** nothing · **Sources:** `docs/design/COMPANION.md` (Words); ADR-0019, ADR-0022; L5
 
 Race, spec and profession names need `ChrRaces`, `ChrClasses`, `ChrSpecialization` and `SkillLine` cached for the game's build, which today means four `wowlab db2 fetch` commands nobody knows to run. Add one command, `wowlab names fetch`, that fetches whichever of the four are missing for each installed flavor's build through `wowlab_core.gamedata` (one request per table to wago.tools, keyed on the full build string as ADR-0022 keys the cache), never replacing a cached table (L5). `doctor` names it when a table is missing; `wowlab ui` runs it through its fixed-argv CLI path (ADR-0029), not a route of its own, so M18-04 can draw the button. Nothing is fetched without the player's command or click.
 
 **Acceptance:** tests with recorded responses (no live call in CI, ADR-0012); a `@live` test by hand; `doctor` and `char list --summary` text name the command when names are missing; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; `doctor` text.
 
-## [ ] M18-03 — The new shell: sections, tokens and fonts
+## [x] M18-03 — The new shell: sections, tokens and fonts
 **Size:** M · **Depends on:** nothing (the ADR-0035 amendment of 2026-11-14 was accepted by the owner the same day) · **Sources:** `docs/design/COMPANION.md` (Sections, Tokens), ADR-0035 and its amendment
 
 Replace Wellspring's chrome with the companion's: the header with the five sections (Characters, Backups, Addons, Keybinds, Advanced), the game picker named for people, the dark tokens, Inter and Sora under the ADR amendment. Today's tabs move into the sections as they are (Account content under Characters and Backups and Addons, Character under Characters, Keys under Keybinds, Explorer/Gaps/Commands/Looks under Advanced) so nothing is lost before M18-04 and M18-05 redraw them. The tab intros become a closed **About this data** disclosure.
 
 **Acceptance:** every existing UI test passes or is updated with a stated reason; the font hashes are pinned, and the implementer reports the font rows so the conductor fills the amendment's table on the branch; the page loads in a headless browser with no console error at 1440 px and 390 px; `make ci` green. User-facing: the whole UI.
 
-## [ ] M18-04 — The Characters home: status cards and character cards
+## [x] M18-04 — The Characters home: status cards and character cards
 **Size:** M · **Depends on:** M18-03, M18-02 · **Sources:** `docs/design/COMPANION.md`; the mockup
 
 Two status cards (backup: when, what it holds, **Back up now** and **Restore…**; addons: "N of M addons load on this version" with one line that names what the rest are and whether anything needs fixing). Then one card per character: class stripe and level tile in the class colour, name, race and class, item level, the top professions as bars, last played, and a gain from history when there is one ("+6 levels this week"). Then a dashed **Missing a character?** card that says how a character appears. A card opens the character page. When names are missing, one line at the top offers the M18-02 download.
 
 **Acceptance:** page tests on the fixture installs for each card state (backup / no backup / game updated; names cached / not; a character with and without a lab record); headless-browser check; `make ci` green. User-facing: the home screen.
 
-## [ ] M18-05 — The character page
+## [x] M18-05 — The character page
 **Size:** M · **Depends on:** M18-04 · **Sources:** `docs/design/COMPANION.md`; the mockup
 
 A header (level tile, name, race and class, item level, profession count, last played, the existing **See it dressed** link), gear in two columns with quality colours and empty slots, a Progress card (level and item level over the saves `char history` has), a **What changed** timeline in plain words, profession bars, and the action bar's keys 1 to 0 with what each casts. The full key table stays in Keybinds. Every caveat moves under **About this data**.
@@ -3259,3 +3259,17 @@ A header (level tile, name, race and class, item level, profession count, last p
 A character whose lab record is no longer in the install (a closed beta, a deleted folder) but is held in a snapshot shows as a dimmed card on the home screen, labelled with the game version and the backup's date, and opens a read-only character page from that record. Reads the store only (L1); never restores anything by itself.
 
 **Acceptance:** tests on a constructed store holding a record the install lacks; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the home screen.
+
+## [ ] M18-07 — `names fetch` passes over a game version the install no longer lists
+**Size:** XS · **Depends on:** M18-02 · **Sources:** the owner's run, 2026-11-14
+
+On the owner's install, `wowlab names fetch` prints "Names for _classic_beta_: not downloaded, because .build.info has no row for product wow_classic_beta." for a leftover beta folder, and exits 1 although every installed game got its names. A flavor folder whose product `.build.info` no longer lists is not an installed game: leave it out of the run (say so once under `--json` notes), and exit 0 when every listed game has its names. `doctor` and `char list --summary` treat it the same way.
+
+**Acceptance:** a test with a fixture whose folder has no `.build.info` row; `make lint` and the touched tests green. Reviewed by `code-reviewer`. User-facing: `names fetch` output and exit code.
+
+## [ ] M18-08 — The README pictures show the companion
+**Size:** XS · **Depends on:** M18-06 · **Sources:** M18-04 review (the pictures still show the old table)
+
+Re-make `docs/assets/readme-account-tab.svg` and `readme-backup-now.svg` from the companion screens on fixture data with names cached (the Characters home, and the backup card), with alt text that matches. Same embedding rules as M17-11.
+
+**Acceptance:** `tests/repo` and `tests/scripts/test_readme.py` green; the owner sees the pictures before merge. Reviewed by `code-reviewer`. User-facing: the README.
