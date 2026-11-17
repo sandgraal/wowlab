@@ -53,10 +53,11 @@ downloads today gets the screen the owner disliked. M18-09 (v0.3) fixes that.
   the dressing link's note). Lesson: the spec, not a scratch file, is the
   durable copy. It held.
 - **A review caught a real data bug in #564.** The first `sv merge` across a
-  hole renumbered every entry after it. The fix pads with `nil` so every key
+  hole renumbered the entries after it, when the other side's list was taken
+  and the target had positional entries past it. The fix pads with `nil` so every key
   keeps its slot. This is the kind of bug the two-session rule for
   `luadata.py` exists for, and it is in `svmerge.py`, outside that rule:
-  the reviewer found it, not a grader.
+  two reviewers found it independently, not a grader.
 - **Two platform bugs reached CI only:** a probe read test files in the
   Windows code page (#570), and Linux printed a backup's date as `1-01-01`
   (fixed inside #573 with `isoformat`). Neither shows on the owner's Mac.
@@ -68,7 +69,8 @@ downloads today gets the screen the owner disliked. M18-09 (v0.3) fixes that.
 - The page's tab icon is refused by the server (a 403 in the console).
 - A folder with no lab record says nothing about a backup that holds one.
 - `wowlab ui --help` does not say that macros are under Keybinds.
-- The `NamesFlavor` docstring does not mention `no_version`.
+- The `NamesFlavor` docstring says a `no_version` folder never counts in the
+  exit code; it should add "while another folder has a version".
 - `sv merge` could keep a list with holes as a list when every slot is
   filled after the merge (a domain reviewer's suggestion; today's result is
   correct, only less tidy).
