@@ -2,9 +2,9 @@
 
 `make test-fast` is a local iteration target. It skips the review probes
 under `lab/core/tests/review/` and the `serial` and `live` markers, and
-nothing else. These checks read the Makefile, `ci.yml` and `pyproject.toml`
-as text, so the target cannot drift into hiding a suite, and the two passes
-CI and `make test` run still add up to every test that is not `live`. They
+nothing else. These checks read the Makefile, `ci.yml`, `macos.yml` (M18-15)
+and `pyproject.toml` as text, so the target cannot drift into hiding a suite,
+and the two passes CI and `make test` run still add up to every test that is not `live`. They
 also check the hang guard's settings and its per-test overrides.
 """
 
@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,11 +98,12 @@ def test_make_ci_runs_every_stage() -> None:
     assert "test-fast" not in " ".join(_recipe("ci"))
 
 
-# Every pytest command in ci.yml, by job, exactly. A marker expression is one
-# of the two passes (together `not live`) or none (the hook tests, which have
-# no markers), and the paths are each job's documented roots: the whole
-# testpaths for `quality`, `lab/core/tests` for the desktop job (docs/LAB_PLAN.md
-# section 15.3 E3), `tests/harness` for the hook tests on 3.9 and 3.12.
+# Every pytest command in ci.yml and macos.yml, by job, exactly. A marker
+# expression is one of the two passes (together `not live`) or none (the hook
+# tests, which have no markers), and the paths are each job's documented
+# roots: the whole testpaths for `quality`, `lab/core/tests` for the desktop
+# job (docs/LAB_PLAN.md section 15.3 E3; in macos.yml since M18-15),
+# `tests/harness` for the hook tests on 3.9 and 3.12.
 # The third `quality` entry is the bidi scan alone, which runs only on a
 # docs-only PR, when the two passes are skipped (M16-89).
 CI_PYTEST = {
@@ -110,16 +112,21 @@ CI_PYTEST = {
         ["-q", "-m", SERIAL],
         ["-q", "tests/repo/test_bidi_controls.py"],
     ],
+    "harness": [["-q", "tests/harness"]],
+}
+MACOS_PYTEST = {
     "lab-desktop": [
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL, "lab/core/tests"],
         ["-q", "-m", SERIAL, "lab/core/tests"],
     ],
-    "harness": [["-q", "tests/harness"]],
 }
 
 
-def test_ci_yml_runs_every_test_in_its_two_passes() -> None:
-    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+@pytest.mark.parametrize(("name", "expected"), [("ci.yml", CI_PYTEST), ("macos.yml", MACOS_PYTEST)])
+def test_each_ci_workflow_runs_every_test_in_its_two_passes(
+    name: str, expected: dict[str, list[list[str]]]
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text("utf-8"))
     commands: dict[str, list[list[str]]] = {}
     for job_id, job in workflow["jobs"].items():
         for step in job.get("steps", []):
@@ -133,7 +140,7 @@ def test_ci_yml_runs_every_test_in_its_two_passes() -> None:
             if "-m" in args:
                 marker = args[args.index("-m") + 1]
                 assert marker in (PARALLEL, SERIAL), f"{job_id}: -m {marker!r} narrows a pass"
-    assert commands == CI_PYTEST
+    assert commands == expected
 
 
 def test_pyproject_hides_nothing_and_sets_the_hang_guard_and_retention() -> None:

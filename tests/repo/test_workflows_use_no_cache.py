@@ -103,6 +103,8 @@ CACHE_OFF: Mapping[str, str] = {
 ALLOWED: Mapping[str, frozenset[str]] = {
     "ci.yml": frozenset({CHECKOUT, PATHS_FILTER, SETUP_UV, TRIVY}),
     "latest-release.yml": frozenset({CHECKOUT, SETUP_UV}),
+    # M18-15: the macOS Lab suite, ci.yml's `lab-desktop` job until 2026-11-17.
+    "macos.yml": frozenset({CHECKOUT, SETUP_UV}),
     # M17-08: the macOS app on a pull request or by hand; no attestation, no release.
     "macos-app.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
     "perf-nightly.yml": frozenset({CHECKOUT, SETUP_UV}),
@@ -261,7 +263,7 @@ def test_the_five_consumer_jobs_install_with_the_cache_off() -> None:
     for name, job in (
         ("ci.yml", "quality"),
         ("ci.yml", "parser-suite"),
-        ("ci.yml", "lab-desktop"),
+        ("macos.yml", "lab-desktop"),
         ("ci.yml", "harness"),
         ("windows.yml", "lab-windows"),
     ):
@@ -313,7 +315,7 @@ def test_a_cache_step_is_caught(uses: str) -> None:
 
 @pytest.mark.parametrize("value", ["<omitted>", True, "true", "auto", "${{ true }}"])
 def test_setup_uv_without_enable_cache_false_is_caught(value: object) -> None:
-    for name in ("windows.yml", "ci.yml", "release.yml", "latest-release.yml"):
+    for name in ("windows.yml", "macos.yml", "ci.yml", "release.yml", "latest-release.yml"):
         workflow = _mutated(name)
         step = _first_step(workflow, SETUP_UV)
         if value == "<omitted>":
@@ -409,7 +411,7 @@ def test_a_moved_pin_names_the_action_both_refs_and_every_workflow() -> None:
                 step["uses"] = f"astral-sh/setup-uv@{new}"
     assert _moved_pins(workflows) == [
         f"astral-sh/setup-uv moved from {SETUP_UV.partition('@')[2]} to {new} in "
-        "ci.yml, latest-release.yml, macos-app.yml, perf-nightly.yml, release.yml, "
+        "ci.yml, latest-release.yml, macos-app.yml, macos.yml, perf-nightly.yml, release.yml, "
         "windows-app.yml, windows.yml. Re-read "
         f"astral-sh/setup-uv's action.yml at {new}, and every action it nests, "
         "for cache inputs and caches on by default; only then update the pin "

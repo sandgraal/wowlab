@@ -14,8 +14,8 @@ The first screen is everything above the marker comment the README carries
   options, that exist in the Click tree (the wiki checker's own walk), and the
   three first commands are leaves of it;
 - the platform claims match the CI workflows, read from the runners of the
-  jobs that run pytest (macOS and Linux in `ci.yml`, Windows in
-  `windows.yml`), and macOS is called "Supported" only while its recorded
+  jobs that run pytest (Linux in `ci.yml`, macOS in `macos.yml` since
+  M18-15, Windows in `windows.yml`), and macOS is called "Supported" only while its recorded
   first run on a real install (`MACOS_RECORD`) exists and is linked;
 - the statements ADR-0029's and ADR-0031's owner rulings ask for are there.
 - the first screen leads with what a player gets, names no ticket or ADR,
@@ -221,7 +221,8 @@ def test_the_platform_claims_match_ci() -> None:
     assert "| macOS | **Supported.** CI runs the test suite on macOS" in screen
     assert "| Windows | **Untested.** CI runs the test suite on Windows" in screen
     assert "| Linux | **Untested.** CI runs the test suite on Linux" in screen
-    assert _suite_runners("ci.yml") == {"macos-latest", "ubuntu-latest"}
+    assert _suite_runners("ci.yml") == {"ubuntu-latest"}
+    assert _suite_runners("macos.yml") == {"macos-latest"}
     assert _suite_runners("windows.yml") == {"windows-latest"}
 
 

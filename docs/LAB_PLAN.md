@@ -1991,6 +1991,15 @@ yet, and a fixture produced by the thing under test proves nothing).
   otherwise; the conductor checks the latest runs
   (`docs/AGENT_WORKFLOW.md`).
 
+  *Amended 2026-11-17 (owner decision, M18-15):* Windows and macOS are off
+  pull requests. `windows.yml` no longer runs on a pull request touching
+  `lab/**` (the 2026-10-17 trigger above is gone), and the macOS `lab`
+  suite, until then the `lab-desktop` job of `ci.yml` that ran on every
+  pull request, moved to `.github/workflows/macos.yml`. Both run after each
+  merge to `main`, nightly and on demand for a branch; neither is required.
+  A Windows or macOS regression is now found after merge, by the nightly run
+  or by an on-demand run on the branch before it.
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:

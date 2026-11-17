@@ -7,11 +7,14 @@ name: Windows
 #
 # Not a required check (owner decisions, ADR-0014 amendments of 2026-10-15 and
 # 2026-10-17): the job took 15 to 30 minutes and every PR waited on it. It runs
-# after each merge to main, nightly, on demand for a branch:
+# after each merge to main, nightly, and on demand for a branch:
 #   gh workflow run windows.yml --ref <branch>
-# and on a pull request that touches lab/, the lockfile, the root pyproject,
-# the root conftest or this file, so a POSIX-only test assumption shows on the
-# PR; nothing waits on it. A red run on main is a bug to fix next, filed
+# From 2026-10-17 to 2026-11-17 it also ran on a pull request that touched
+# lab/, the lockfile, the root pyproject, the root conftest or this file; the
+# owner took it off pull requests again on 2026-11-17 (M18-15; about 44
+# minutes a run), with macOS (macos.yml). A failed scheduled run is emailed
+# to the owner by GitHub's default notification settings; nothing here posts
+# anywhere. A red run on main is a bug to fix next, filed
 # as a ticket, not a reason to revert. The conductor checks the latest runs
 # on main at the start of each /conduct session and before a wave review
 # (.claude/skills/conduct/SKILL.md, docs/AGENT_WORKFLOW.md).
@@ -19,13 +22,6 @@ name: Windows
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - "lab/**"
-      - "uv.lock"
-      - "pyproject.toml"
-      - "conftest.py"
-      - ".github/workflows/windows.yml"
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:
@@ -33,11 +29,13 @@ on:
 permissions:
   contents: read
 
-# Runs on main queue rather than cancel, so each merge gets its own verdict;
-# a superseded pull-request or on-demand branch run is cancelled.
+# Runs on main queue rather than cancel, so each merge gets its own verdict.
+# The nightly run has a group of its own (M18-15), so it neither replaces a
+# merge's queued run nor is replaced by one; a superseded on-demand branch
+# run is cancelled.
 concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: windows-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
 
 env:
   UV_VERSION: "0.12.12"

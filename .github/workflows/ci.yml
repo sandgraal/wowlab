@@ -6,12 +6,13 @@ on:
   push:
     branches: [main]
 
-# Every job below except `lab (macos)` and `grader-diff` (M16-40; not yet
-# in the ruleset, see the job) is a required status check on main,
-# by exact name (see .github/rulesets/main.json). `lab (macos)` came with
-# M13-02 (ADR-0031, docs/LAB_PLAN.md §9 and §15.3 E3) and counts toward
-# macOS being supported without being required. `lab (windows)` lives in
-# windows.yml and is not required (ADR-0014 amendments of 2026-10-15).
+# Every job below except `grader-diff` (M16-40; not yet in the ruleset, see
+# the job) is a required status check on main, by exact name (see
+# .github/rulesets/main.json). The Lab suite on the desktop platforms runs
+# off the pull-request path, after each merge to main, nightly and on demand,
+# and neither is required: `lab (macos)` in macos.yml (it was this file's
+# `lab-desktop` job until 2026-11-17, M18-15, owner decision) and
+# `lab (windows)` in windows.yml (ADR-0014 amendments of 2026-10-15).
 # Renaming a job means
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 #
@@ -169,49 +170,6 @@ jobs:
       - name: Doc-only PR — skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — parser suite skipped"
-
-  # The Lab suite on macOS, the owner's platform (ADR-0031, M13-02,
-  # docs/LAB_PLAN.md §15.3 E3); not required. Windows runs in windows.yml,
-  # after every merge to main and nightly, off the PR path (ADR-0014
-  # amendment of 2026-10-15). The Linux-only lint, Lua lint and locale steps
-  # stay in `quality`.
-  lab-desktop:
-    name: lab (${{ matrix.name }})
-    needs: changes
-    if: ${{ !cancelled() }}
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macos
-            os: macos-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: false
-      - name: Install
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv sync --frozen
-      - name: pytest lab/core/tests (parallel)
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial" lab/core/tests
-      - name: pytest lab/core/tests (serial)
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q -m "serial and not live" lab/core/tests
-      - name: wowlab --version
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen wowlab --version
-      - name: Doc-only PR — skipped
-        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
-        run: echo "doc-only PR - lab suite skipped"
 
   harness:
     name: Agent harness (hooks on 3.9 and 3.12, lockfile, workflows)
