@@ -101,6 +101,8 @@ Scripts that read `wowlab … --json` depend on the models behind it. Each relea
 
 - New: `MacrosFixReport` (`macros fix --json`): the macros it fixes, each with its body before and after, the findings it leaves, whether it wrote, the journal record, and `target_sha256` and `fixed_sha256`, the pin `--expect` takes.
 - `MacrosCheckReport` (`macros check --json`) and `CharMacrosReport` (`char macros --json`): every finding gains `fixable`, true when `macros fix` corrects it.
+- `CharSummaryReport` (`char list --summary --json`) gains `records_in_backups`: folders with no lab record whose record a backup holds.
+- `CharKeptRow` gains `folder_present`: true for a character whose folder is still in the game folder but holds no lab record, false when the folder is gone.
 
 **From v0.2.1 to v0.3.0**, every change adds something; nothing was removed or renamed:
 

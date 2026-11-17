@@ -62,9 +62,10 @@ class NamesFlavor(_Out):
     game version (its product has no `.build.info` row, its `.flavor.info`
     gives no product, or the row's version is blank), such as one a beta
     left behind: `version` is None, `detail` says why, no table is
-    requested, and it counts neither in the text nor in the exit code.
-    `installed` is every other folder; `tables` is empty there only when
-    its version is not a full build string (`detail` says so)."""
+    requested, and it counts neither in the text nor in the exit code
+    while another folder has a version. `installed` is every other folder;
+    `tables` is empty there only when its version is not a full build
+    string (`detail` says so)."""
 
     folder: str
     status: NamesFlavorStatus = "installed"

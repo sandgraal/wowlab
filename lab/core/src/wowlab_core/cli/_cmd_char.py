@@ -466,12 +466,17 @@ class CharKeptRow(CharSummaryRow):
     else an installed flavor's whose tables are, else the snapshot's.
     `snapshot_id` and `created_at` name the newest snapshot holding that
     copy; `snapshots_holding` counts the snapshots that hold any copy.
-    Nothing is restored: `wowlab char kept` reads it again."""
+    `folder_present` is True for a character whose folder is still in the
+    install but holds no lab record (M18-11: `records_in_backups`, and
+    `char kept --character` on such a folder), named as the folder is;
+    False when the folder is gone. Nothing is restored: `wowlab char kept`
+    reads it again."""
 
     snapshot_id: str
     created_at: str  # UTC, ISO 8601, as the manifest records it
     snapshot_version: str | None
     snapshots_holding: int
+    folder_present: bool = False
 
 
 class CharSummaryReport(_Out):
@@ -499,6 +504,12 @@ class CharSummaryReport(_Out):
     # empty when there are none or the store cannot be read (`backup_error`).
     # Filtered by --flavor and --account as the rows are.
     kept_in_backups: list[CharKeptRow] = Field(default_factory=list)
+    # The character folders of `rows` that hold no lab record (`state`
+    # `no_lab_record`) but whose record a snapshot of this install holds
+    # (M18-11): the newest copy, as a kept row named as the folder is.
+    # Empty when there are none or the store cannot be read. Nothing is
+    # restored: `wowlab char kept --character` reads it.
+    records_in_backups: list[CharKeptRow] = Field(default_factory=list)
 
 
 _FIX_COMMAND = "wowlab addon install lab"
@@ -734,6 +745,11 @@ def _names_version(snapshot_version: str | None, installed: Sequence[str | None]
     return snapshot_version
 
 
+def _folded(flavor: str, account: str, realm: str, label: str) -> tuple[str, str, str, str]:
+    """A character's four folder names with case folded."""
+    return flavor.casefold(), account.casefold(), realm.casefold(), label.casefold()
+
+
 def _kept_rows(
     listing: _Listing | str,
     root: Path,
@@ -742,19 +758,46 @@ def _kept_rows(
     flavor: str | None = None,
     account: str | None = None,
     character: str | None = None,
+    folders: Sequence[labaddon.CharacterFile] | None = None,
 ) -> list[tuple[CharKeptRow, labaddon.CharDB | None, charkept.KeptCopy]]:
     """Each character kept only in a backup of the install at `root`
     (`charkept.find`), with its record read from the store (None when it
     could not be, the row then `not_read`). `flavor`, `account` and
     `character` (`<realm or digits folder>/<character folder>`, or the
     character folder alone) narrow it, matched as typed, then with case
-    folded."""
+    folded. With `folders` (M18-11), instead each of those character
+    folders, which are in the install with no lab record, whose record a
+    backup of this install holds: the newest copy, matched with case folded
+    and named as the folder is."""
     if isinstance(listing, str):
         return []
     manifests, imported = listing
     store = snapshot.SnapshotStore()
     out: list[tuple[CharKeptRow, labaddon.CharDB | None, charkept.KeptCopy]] = []
-    for copy in charkept.find(manifests, root, imported):
+    bare: dict[tuple[str, str, str, str], labaddon.CharacterFile] = {}
+    for e in folders or []:
+        bare.setdefault(_folded(e.flavor or "", e.account, e.realm_folder, e.label), e)
+    copies = (
+        charkept.find(manifests, root, imported)
+        if folders is None
+        else charkept.find(manifests, root, imported, present=lambda _: False)
+    )
+    for copy in copies:
+        if folders is not None:
+            whose = _folded(
+                copy.flavor_folder, copy.account, copy.realm_folder, copy.character_folder
+            )
+            folder = bare.pop(whose, None)
+            if folder is None:
+                continue
+            copy = copy.model_copy(
+                update={
+                    "flavor_folder": folder.flavor or copy.flavor_folder,
+                    "account": folder.account,
+                    "realm_folder": folder.realm_folder,
+                    "character_folder": folder.label,
+                }
+            )
         if flavor is not None and copy.flavor_folder.casefold() != flavor.casefold():
             continue
         if account is not None and copy.account.casefold() != account.casefold():
@@ -778,6 +821,7 @@ def _kept_rows(
             "created_at": copy.created_at,
             "snapshot_version": copy.snapshot_version,
             "snapshots_holding": copy.snapshots_holding,
+            "folder_present": folders is not None,
         }
         record = charkept.read_copy(store, copy)
         if isinstance(record, str):
@@ -996,12 +1040,19 @@ def char_list(
             flavor=_given_flavor(flavor),
             account=account if acct_folder is None else acct_folder,
         )
+        held = _kept_rows(
+            listing,
+            inst.root,
+            [f.version for f in inst.flavors],
+            folders=bare_rows,
+        )
         hub = hub.model_copy(
             update={
                 "backups": backups,
                 "backup_error": backup_error,
                 "names_missing": _summary_names(hub.rows, [f for f, _ in shown], root),
                 "kept_in_backups": [row for row, _, _ in kept],
+                "records_in_backups": [row for row, _, _ in held],
             }
         )
         if json_out:
@@ -2460,6 +2511,14 @@ _KEPT_NOTES = [
     "(the same patch first): the ids are usually the same between versions, and a line says "
     "when another version's names are used.",
 ]
+# `char kept --character` on a folder still in the game folder that holds
+# no lab record (M18-11): its own first note, the others as above.
+_HELD_NOTES = [
+    "This character's folder is still in the game folder but holds no WowLab.lua, and a "
+    "snapshot wowlab took of this game folder holds one. The newest save the snapshots hold "
+    "is shown.",
+    *_KEPT_NOTES[1:],
+]
 
 KeptFlavorOpt = Annotated[
     str | None,
@@ -2485,12 +2544,42 @@ def _backup_day(created_at: str) -> str:
         return when.date().isoformat()
 
 
+def _bare_folders(
+    inst: install.Install, flavor: str | None, account: str | None, root: Path | None
+) -> list[labaddon.CharacterFile]:
+    """The character folders of the install that hold no lab record, as
+    `char list --summary` lists them: every installed flavor, or only
+    --flavor's; every account, or only --account's. A flavor without that
+    account, or that --flavor does not name, adds none."""
+    out: list[labaddon.CharacterFile] = []
+    for chosen in inst.flavors:
+        if flavor is not None and chosen.folder.casefold() != flavor.casefold():
+            continue
+        try:
+            _, mine, _, _ = _char_list_flavor(inst, chosen, account, root, False)
+        except CliError:
+            continue
+        out += [
+            e.model_copy(update={"flavor": chosen.folder})
+            for e in mine
+            if e.no_lab_record is not None and not _first_name_folder(e)
+        ]
+    return out
+
+
 def _kept_head(row: CharKeptRow) -> str:
     return f"{row.realm_folder}/{row.label} ({row.flavor}, account {row.account})"
 
 
 def _kept_lines(row: CharKeptRow) -> list[str]:
-    lines = [*_summary_lines(row), f"kept in the backup of {_backup_day(row.created_at)}"]
+    day = _backup_day(row.created_at)
+    where = (
+        f"its folder is still in the game folder but holds no lab record; the backup of {day} "
+        "has one"
+        if row.folder_present
+        else f"kept in the backup of {day}"
+    )
+    lines = [*_summary_lines(row), where]
     if row.version is not None and row.version != row.snapshot_version:
         lines.append(
             f"names read for game version {row.version}, not the backup's own "
@@ -2527,7 +2616,9 @@ def char_kept(
     closed beta's folder deleted, a character folder removed) but is held by
     a snapshot wowlab took of it: the newest save each one has there. With
     --character, that character's gear from that save and every save the
-    snapshots hold. Reads wowlab's snapshots only; restores nothing.
+    snapshots hold; --character also finds a character whose folder is
+    still there but holds no lab record when a snapshot holds one. Reads
+    wowlab's snapshots only; restores nothing.
 
     \f
     JSON: CharKeptReport."""
@@ -2540,6 +2631,18 @@ def char_kept(
     found = _kept_rows(
         listing, inst.root, installed, flavor=flavor, account=account, character=character
     )
+    if character is not None and not found:
+        # A character folder still in the game folder but with no lab
+        # record, whose record a backup holds (M18-11).
+        found = _kept_rows(
+            listing,
+            inst.root,
+            installed,
+            flavor=flavor,
+            account=account,
+            character=character,
+            folders=_bare_folders(inst, flavor, account, root),
+        )
     if character is None:
         report = CharKeptReport(kept=[row for row, _, _ in found], notes=_KEPT_NOTES)
         if json_out:
@@ -2613,7 +2716,7 @@ def char_kept(
         gear=gear_report if isinstance(gear_report, CharGearReport) else None,
         gear_absent=gear_report if isinstance(gear_report, str) else None,
         history=history,
-        notes=_KEPT_NOTES,
+        notes=_HELD_NOTES if row.folder_present else _KEPT_NOTES,
     )
     if json_out:
         _emit(report)
