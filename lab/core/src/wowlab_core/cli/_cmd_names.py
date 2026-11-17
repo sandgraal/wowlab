@@ -39,6 +39,7 @@ from wowlab_core.cli._common import (
 # ─── names ───────────────────────────────────────────────────────────────────
 
 NamesTableStatus = Literal["cached", "fetched", "not_published", "error", "not_tried"]
+NamesFlavorStatus = Literal["installed", "no_version"]
 
 
 class NamesTable(_Out):
@@ -56,10 +57,17 @@ class NamesTable(_Out):
 
 
 class NamesFlavor(_Out):
-    """One flavor folder: its version (None when discovery cannot read one:
-    `detail` says why and no table is tried) and each name table's status."""
+    """One flavor folder: whether it is an installed game (`status`), its
+    version and each name table's status. `no_version` is a folder with no
+    game version (its product has no `.build.info` row, its `.flavor.info`
+    gives no product, or the row's version is blank), such as one a beta
+    left behind: `version` is None, `detail` says why, no table is
+    requested, and it counts neither in the text nor in the exit code.
+    `installed` is every other folder; `tables` is empty there only when
+    its version is not a full build string (`detail` says so)."""
 
     folder: str
+    status: NamesFlavorStatus = "installed"
     version: str | None
     tables: list[NamesTable]
     detail: str | None = None
@@ -67,8 +75,9 @@ class NamesFlavor(_Out):
 
 class NamesFetchReport(_Out):
     """`wowlab names fetch --json`: each flavor's name tables, and how many
-    downloads were made. The command exits 1 unless every flavor ends with
-    all of its name tables cached."""
+    downloads were made. The command exits 0 when at least one flavor has
+    a game version and every such flavor ends with all of its name tables
+    cached; otherwise it exits 1."""
 
     flavors: list[NamesFlavor]
     fetched: int
@@ -86,7 +95,12 @@ def _fetch_names(
     does not list, with its words, so no request is repeated for them."""
     if f.version is None:
         cause = _no_version_cause(f.folder, f.product, f.matching_rows)
-        return NamesFlavor(folder=f.folder, version=None, tables=[], detail=cause), 0
+        return (
+            NamesFlavor(
+                folder=f.folder, status="no_version", version=None, tables=[], detail=cause
+            ),
+            0,
+        )
     version = f.version
     try:
         missing = set(
@@ -170,7 +184,8 @@ def names_fetch(
     from wago.tools; when wago.tools has no such table, wowlab also
     downloads its list of game versions to say why. A table already
     downloaded is never replaced. Until they are here, wowlab shows ids
-    instead of names.
+    instead of names. A flavor folder with no game version, such as one a
+    beta left behind, is passed over when another folder has one.
 
     \f
     JSON: NamesFetchReport."""
@@ -188,17 +203,23 @@ def names_fetch(
             flavors.append(row)
             fetched += n
     report = NamesFetchReport(flavors=flavors, fetched=fetched)
+    # A folder with no game version is not an installed game: it is left out
+    # of the text and the exit code, unless no folder has a version, when
+    # its line is the only answer there is.
+    installed = [f for f in flavors if f.status == "installed"]
+    shown = installed or flavors
     if json_out:
         _emit(report)
     else:
         if not flavors:
             _say_prose(f"{inst.root} has no flavor folders; nothing fetched.")
-        for row in flavors:
+        for row in shown:
             for line in _names_lines(row):
                 indent = line[: len(line) - len(line.lstrip(" "))]
                 _say_prose(line.lstrip(" "), indent=indent, hang="    ", keep=[row.folder])
-    done = bool(flavors) and all(
-        bool(f.tables) and all(t.status in ("cached", "fetched") for t in f.tables) for f in flavors
+    done = bool(installed) and all(
+        bool(f.tables) and all(t.status in ("cached", "fetched") for t in f.tables)
+        for f in installed
     )
     if not done:
         raise typer.Exit(EXIT_ERROR)

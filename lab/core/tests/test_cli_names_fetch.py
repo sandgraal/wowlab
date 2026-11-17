@@ -461,9 +461,122 @@ def test_a_version_it_cannot_use_is_said_and_nothing_is_asked(
     assert code == 1
     (row,) = report.flavors
     assert row.tables == [] and row.detail is not None and words in row.detail
+    assert row.status == ("no_version" if cell == b"" else "installed")
     assert requests == []
     result = run("names", "fetch")
     assert result.exit_code == 1
     flat = " ".join(result.stdout.split())
     assert flat.startswith(f"Names for {FLAVOR}") and "not downloaded, because" in flat
     assert words in flat
+
+
+# ─── a folder with no game version (M18-07) ──────────────────────────────────
+
+LEFTOVER = "_leftover_beta_"  # constructed: a folder a beta left behind
+LEFTOVER_PRODUCT = b"wow_leftover_beta"
+
+
+def _leftover(root: Path, case: str) -> None:
+    """Constructed: a second flavor folder holding only a `.flavor.info`,
+    beside the captured one, whose game version cannot be read: its product
+    has no `.build.info` row (`no_row`), its `.flavor.info` names no product
+    (`no_product`), or its row's Version cell is blank (`blank_version`, the
+    captured row copied with the product swapped and the version cut)."""
+    folder = root / LEFTOVER
+    folder.mkdir()
+    head = (EARLY / "forever" / ".flavor.info").read_bytes().split(b"\n", 1)[0]
+    product = b"" if case == "no_product" else LEFTOVER_PRODUCT
+    (folder / ".flavor.info").write_bytes(head + b"\n" + product + b"\n")
+    if case == "blank_version":
+        info = root / ".build.info"
+        data = info.read_bytes()
+        rows = data.splitlines(keepends=True)
+        (row,) = [r for r in rows[1:] if VERSION.encode() in r]
+        added = row.replace(b"|" + VERSION.encode() + b"|", b"||").replace(
+            b"|wow_classic_beta\n", b"|" + LEFTOVER_PRODUCT + b"\n"
+        )
+        assert added != row and LEFTOVER_PRODUCT in added
+        info.write_bytes(data + added)
+
+
+LEFTOVER_CASES = pytest.mark.parametrize(
+    ("case", "words"),
+    [
+        ("no_row", ".build.info has no row for product wow_leftover_beta"),
+        ("no_product", "gives no product code"),
+        ("blank_version", "has no version in it"),
+    ],
+    ids=["no_row_constructed", "no_product_constructed", "blank_version_constructed"],
+)
+
+
+@LEFTOVER_CASES
+def test_a_folder_with_no_version_is_kept_in_json_as_no_version(
+    root: Path, user_data: Path, requests: list[httpx.Request], case: str, words: str
+) -> None:
+    _leftover(root, case)
+    _place_subsets(user_data)
+    code, report = _fetch()
+    assert code == 0
+    by_folder = {f.folder: f for f in report.flavors}
+    assert set(by_folder) == {FLAVOR, LEFTOVER}
+    left = by_folder[LEFTOVER]
+    assert left.status == "no_version"
+    assert left.version is None and left.tables == []
+    assert left.detail is not None and words in left.detail
+    assert by_folder[FLAVOR].status == "installed"
+    assert set(_statuses(report).values()) == {"fetched", "cached"}
+    # Nothing is requested for the leftover folder: every request is the
+    # installed version's.
+    assert sorted(_tables_asked(requests)) == sorted(RECORDED)
+    assert {r.url.params.get("build") for r in requests} == {VERSION}
+    raw = json.loads(run("names", "fetch", "--json").stdout)
+    assert [f["status"] for f in raw["flavors"] if f["folder"] == LEFTOVER] == ["no_version"]
+
+
+@LEFTOVER_CASES
+def test_a_folder_with_no_version_is_left_out_of_text_and_exit_code(
+    root: Path, user_data: Path, requests: list[httpx.Request], case: str, words: str
+) -> None:
+    _leftover(root, case)
+    _place_all(user_data)
+    result = run("names", "fetch")
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    flat = " ".join(result.stdout.split())
+    assert flat == f"Names for {FLAVOR} ({VERSION}): already downloaded; nothing fetched."
+    assert LEFTOVER not in result.stdout + result.stderr
+    assert words not in result.stdout
+    assert requests == []
+
+
+@LEFTOVER_CASES
+def test_a_missing_table_still_fails_beside_a_folder_with_no_version(
+    root: Path, user_data: Path, monkeypatch: pytest.MonkeyPatch, case: str, words: str
+) -> None:
+    """Constructed: the source answers 503, so the installed flavor's tables
+    stay missing; the exit code is that flavor's, and the leftover folder
+    is still not shown."""
+    _leftover(root, case)
+    _replay(monkeypatch, user_data, lambda _: httpx.Response(503))
+    result = run("names", "fetch")
+    assert result.exit_code == 1
+    assert f"Names for {FLAVOR} ({VERSION})" in " ".join(result.stdout.split())
+    assert LEFTOVER not in result.stdout
+
+
+@LEFTOVER_CASES
+def test_a_named_folder_with_no_version_still_says_why(
+    root: Path, user_data: Path, requests: list[httpx.Request], case: str, words: str
+) -> None:
+    """With --flavor naming the leftover folder there is no installed game
+    to fetch for: its line is the answer, and the run exits 1."""
+    _leftover(root, case)
+    result = run("names", "fetch", "--flavor", LEFTOVER)
+    assert result.exit_code == 1
+    flat = " ".join(result.stdout.split())
+    assert flat.startswith(f"Names for {LEFTOVER}: not downloaded, because")
+    assert words in flat
+    code, report = _fetch("--flavor", LEFTOVER)
+    assert code == 1
+    assert [f.status for f in report.flavors] == ["no_version"]
+    assert requests == []
