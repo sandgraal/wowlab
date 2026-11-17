@@ -113,6 +113,8 @@ Read-only; writes nothing. Rules (§15.2): a body over 255 (stating whether char
 
 The test comes first, run by the owner from a runbook the conductor writes (`docs/handoffs/M13-07.md`): with the client closed, edit `macros-cache.txt`, log in, and record whether the edit persists, once with `synchronizeMacros` on and once off. The result goes into `docs/LAB_FORMATS.md` as a dated amendment before any code. If the server replaces the file, ship no writer: `macros fix` prints corrected text for the player to paste in game. If the edit persists, add the writer through `guard` with `--yes`, changing only the bytes of the macros it fixes (L4).
 
+
+*Owner decision, 2026-11-17, in session:* the persistence test is not run. The owner said to assume a macro edit made with the client closed survives the next login ("assume it works"), and chose the writer ("Build the writer"). So no runbook and no `LAB_FORMATS.md` amendment come first. `macros fix` writes through a `guard` transaction, and its `--help` and plan say the in-game persistence is unconfirmed and that `wowlab undo` puts the old macros back. If a later login shows the server replacing the file, that is a finding: the writer becomes print-only.
 **Acceptance:** the amendment is merged before the implementation PR opens; for the print-only outcome, a test per fixable rule shows the corrected text and that nothing is written; for the writer outcome, the change goes through a `guard` transaction (snapshot, journal, `wowlab undo` restores the original bytes) and is refused while the client runs; `make ci` green; reviewed by `domain-reviewer`, `security-reviewer` (a writer) and `code-reviewer`.
 
 ---
@@ -3291,3 +3293,23 @@ v0.2.1 carries the old UI. Bump `lab/core/pyproject.toml` to 0.3.0 (and its `uv.
 `docs/handoffs/M18-review.md`: what shipped, what went wrong, users, and the recommendation. Written 2026-11-17, before v0.3 is tagged, at the owner's request.
 
 **Acceptance:** the handoff on `main`. Reviewed by `code-reviewer`.
+
+*Owner decision, 2026-11-17, in session: wowlab stays the owner's own for a while (no announcement yet); the small items the M18 review left open are done now, by agents.*
+
+## [ ] M18-11 — Companion polish: the tab icon, a backup hint, the help text
+**Size:** S · **Depends on:** nothing · **Sources:** `docs/handoffs/M18-review.md` ("Left open"); the owner's run, 2026-11-14
+
+Four small things, all on `main`:
+- **The tab icon.** The page has no icon link, so the browser asks for `/favicon.ico` and the server answers 403, an error in the console on every load. Give the page the wowlab mark as its icon without widening what the server serves: an inline icon in `page.html` that the page's Content-Security-Policy already allows, or one fixed, token-free route that serves only that file. Say which, and why, in the PR. The console shows no error on load.
+- **A backup hint.** A character folder with no lab record (the "no lab record" card and table row) says nothing when one of this install's snapshots holds that character's record. When `charkept` can find one, the card says so in one line ("Your backup from Oct 19 has a record of this character") and opens the kept page from it. Reading only; nothing is restored.
+- **`wowlab ui --help`** says that Keybinds holds the keys and the macros.
+- **The `NamesFlavor` docstring** (`cli/_cmd_names.py`) says a `no_version` folder counts in neither the text nor the exit code *while another folder has a version*, as `--help` does.
+
+**Acceptance:** a page test for the hint (a constructed store and a folder without a lab record) and for the icon (no request that the server refuses); the real page loaded in a headless browser on a fixture install with no console error; `make lint` and the touched tests green. Reviewed by `code-reviewer` and `security-reviewer` (templates, server). User-facing: the Characters home; `ui --help`.
+
+## [ ] M18-12 — A release-workflow test that failed once under load
+**Size:** XS · **Depends on:** nothing · **Sources:** the review of #577 (2026-11-17)
+
+`tests/packaging/test_windows_app.py::test_constructed_a_rerun_after_both_uploads_nothing[windows_app_release-mac-then-windows]` failed once in a full parallel `make ci` ("The release's SHA256SUMS is one this job may write (failed)") and passed 46 of 46 when its file ran alone. Find why: shared temp paths, ordering, a clock, or state between parallel workers. Fix the test or its helper so it cannot depend on another test. If the cause is in `.github/workflows/release.yml` itself, stop and report rather than change the workflow.
+
+**Acceptance:** the cause named in the PR; the file passes repeated runs under `pytest -n auto` (say how many); `make hooks-test` and `tests/packaging` green. Reviewed by `code-reviewer`. User-facing: none.
