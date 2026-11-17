@@ -1842,6 +1842,9 @@ from wowlab_core.cli._cmd_names import (
     NamesFlavor as NamesFlavor,
 )
 from wowlab_core.cli._cmd_names import (
+    NamesFlavorStatus as NamesFlavorStatus,
+)
+from wowlab_core.cli._cmd_names import (
     NamesTable as NamesTable,
 )
 from wowlab_core.cli._cmd_names import (

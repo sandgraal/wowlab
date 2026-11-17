@@ -95,6 +95,7 @@ New models, with nothing existing changed:
 - `CharHistoryReport` (`char history --json`): one character over time, one row per distinct save, oldest first, and the copies that could not be read, with the reason.
 - `SnapCreateReport` (`snap create --json` on an install with several game versions and none named). `snap create` used to exit 2 there. It now backs up each one and prints `{"snapshots": [<manifest>, ...]}`. With one game version, or one named, it prints the bare manifest as before.
 - `ExportReport` (`snap export --json`) and `ImportReport` (`snap import --json`), for the new commands that move a snapshot to another machine as one file and back.
+- `NamesFetchReport` (`names fetch --json`): each flavor folder with its `status`, its version and each name table's status, and how many tables were downloaded. A folder's `status` is `installed`, or `no_version` for a folder with no game version (such as one a beta left behind): it has no tables, nothing is requested for it, and it does not count in the exit code.
 
 Fields added to existing models:
 
