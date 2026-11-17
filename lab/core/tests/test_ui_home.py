@@ -663,9 +663,12 @@ def _section() -> str:
 
 
 def test_the_home_runs_only_names_fetch_and_char_history() -> None:
+    # M18-06: and the read `char kept`, when a kept card is opened
+    # (graded in test_ui_kept.py).
     runs = re.findall(r"runJson\(([^)]*)\)", _section())
     assert runs == [
         '["names", "fetch"], { flavor: flavor }, true, true',
+        '["char", "kept"], params, true, true',
         '["char", "history"], params, true, true',
     ]
     body = _section()

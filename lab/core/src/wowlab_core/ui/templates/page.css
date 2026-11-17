@@ -718,6 +718,13 @@ pre:empty { display: none; }
 .card-gain { color: var(--ok); }
 .card-gain:empty { display: none; }
 .card-note { margin: 0; color: var(--muted); font-size: 14px; }
+/* A character kept only in a backup (M18-06): dimmed, its words all in
+   the text colour so they still read at 4.5:1 through the dimming. */
+.card-kept { opacity: 0.72; }
+.card-kept:hover, .card-kept:focus-within { opacity: 1; }
+.char-card.card-kept .card-class, .char-card.card-kept .card-foot, .char-card.card-kept .card-prof-rank,
+.char-card.card-kept .card-ilvl-word, .char-card.card-kept .card-note, .char-card.card-kept .card-level { color: var(--text); }
+.char-kept { margin: var(--space-3) 0 0; color: var(--text); overflow-wrap: anywhere; }
 .card-missing {
   justify-content: center; gap: 10px; min-height: 180px; padding: var(--space-5);
   background: transparent; border: 1.5px dashed var(--line-strong);

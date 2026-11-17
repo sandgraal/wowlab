@@ -636,6 +636,9 @@ from wowlab_core.cli._cmd_char import (
     _INSTALL_ADVICE as _INSTALL_ADVICE,
 )
 from wowlab_core.cli._cmd_char import (
+    _KEPT_NOTES as _KEPT_NOTES,
+)
+from wowlab_core.cli._cmd_char import (
     _NAME_TABLES as _NAME_TABLES,
 )
 from wowlab_core.cli._cmd_char import (
@@ -655,6 +658,12 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     CharHistoryReport as CharHistoryReport,
+)
+from wowlab_core.cli._cmd_char import (
+    CharKeptReport as CharKeptReport,
+)
+from wowlab_core.cli._cmd_char import (
+    CharKeptRow as CharKeptRow,
 )
 from wowlab_core.cli._cmd_char import (
     CharListFlavor as CharListFlavor,
@@ -693,6 +702,12 @@ from wowlab_core.cli._cmd_char import (
     CharSummaryRow as CharSummaryRow,
 )
 from wowlab_core.cli._cmd_char import (
+    KeptFlavorOpt as KeptFlavorOpt,
+)
+from wowlab_core.cli._cmd_char import (
+    _backup_day as _backup_day,
+)
+from wowlab_core.cli._cmd_char import (
     _bare_words as _bare_words,
 )
 from wowlab_core.cli._cmd_char import (
@@ -729,6 +744,9 @@ from wowlab_core.cli._cmd_char import (
     _gear_line as _gear_line,
 )
 from wowlab_core.cli._cmd_char import (
+    _gear_report as _gear_report,
+)
+from wowlab_core.cli._cmd_char import (
     _gear_table_note as _gear_table_note,
 )
 from wowlab_core.cli._cmd_char import (
@@ -750,7 +768,22 @@ from wowlab_core.cli._cmd_char import (
     _history_summary as _history_summary,
 )
 from wowlab_core.cli._cmd_char import (
+    _kept_head as _kept_head,
+)
+from wowlab_core.cli._cmd_char import (
+    _kept_lines as _kept_lines,
+)
+from wowlab_core.cli._cmd_char import (
+    _kept_rows as _kept_rows,
+)
+from wowlab_core.cli._cmd_char import (
+    _Listing as _Listing,
+)
+from wowlab_core.cli._cmd_char import (
     _named as _named,
+)
+from wowlab_core.cli._cmd_char import (
+    _names_version as _names_version,
 )
 from wowlab_core.cli._cmd_char import (
     _no_gear as _no_gear,
@@ -762,6 +795,9 @@ from wowlab_core.cli._cmd_char import (
     _older_record_line as _older_record_line,
 )
 from wowlab_core.cli._cmd_char import (
+    _patch_line as _patch_line,
+)
+from wowlab_core.cli._cmd_char import (
     _picked_words as _picked_words,
 )
 from wowlab_core.cli._cmd_char import (
@@ -769,6 +805,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _profession_words as _profession_words,
+)
+from wowlab_core.cli._cmd_char import (
+    _record_values as _record_values,
 )
 from wowlab_core.cli._cmd_char import (
     _row_words as _row_words,
@@ -781,6 +820,12 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _say_char_macros as _say_char_macros,
+)
+from wowlab_core.cli._cmd_char import (
+    _say_kept as _say_kept,
+)
+from wowlab_core.cli._cmd_char import (
+    _say_kept_one as _say_kept_one,
 )
 from wowlab_core.cli._cmd_char import (
     _say_record as _say_record,
@@ -801,7 +846,13 @@ from wowlab_core.cli._cmd_char import (
     _slot_label as _slot_label,
 )
 from wowlab_core.cli._cmd_char import (
+    _slot_table as _slot_table,
+)
+from wowlab_core.cli._cmd_char import (
     _source_words as _source_words,
+)
+from wowlab_core.cli._cmd_char import (
+    _store_listing as _store_listing,
 )
 from wowlab_core.cli._cmd_char import (
     _summary_backups as _summary_backups,
@@ -829,6 +880,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     char_history as char_history,
+)
+from wowlab_core.cli._cmd_char import (
+    char_kept as char_kept,
 )
 from wowlab_core.cli._cmd_char import (
     char_list as char_list,
