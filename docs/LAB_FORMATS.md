@@ -90,7 +90,7 @@ string     := '"' … '"' | "'" … "'"
 number     := decimal int | decimal float | exponent form | hex int (0x…) | leading "-"
 ```
 
-`NAME` is a Lua identifier. `nil` is legal only as a top-level value.
+`NAME` is a Lua identifier. `nil` is legal only as a top-level value. *(Narrowed 2026-11-14 by the amendment below: a positional `nil` inside a table, a hole, is also legal.)*
 
 *Amended 2026-11-14 (owner's install, Forever 1.60.1.70938; contradicts the line above):* the client writes `nil` as a **positional** entry, a hole in a list, on its own line as `nil,`. Seen in the game's own files: `Blizzard_AuctionHouseUI.lua` (per character; `g_auctionHouseFilters.filters` reads `false, false, false, false, nil, true, …`) and `Blizzard_CombatLog.lua` (account; two holes between colour tables), in the account's `Auctionator.lua` (two holes back to back), and in the `.bak` copies `Blizzard_CombatLog.lua.bak` and `Auctionator.lua.bak`. The files show where the holes are written, not how the client reads them back: by the Lua 5.1 manual §2.5.7 (table constructors), a positional `nil` takes its index like any other positional entry, so the entries after it keep their numbers. The parser accepts a positional `nil`, keeps its text and position byte for byte (§4.4), and reports it as a value with no content (the hole), never as an error. A top-level `X = nil` stays accepted as before. Inside a table, a keyed `nil` (`["k"] = nil` or `k = nil`) and `nil` as a key are still unobserved and stay rejected.
 
