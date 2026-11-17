@@ -1210,6 +1210,38 @@ def test_stand_in_sweep_passes_when_nothing_changes_constructed(
     assert sweep_and_compare(root, data).ran
 
 
+def test_names_fetch_does_not_run_when_a_name_table_is_missing_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
+) -> None:
+    """The data folder's cache is empty: `names fetch` would download, so it
+    is not run, and the skip says why."""
+    root, data, _ = stand_in
+    sweep = sweep_and_compare(root, data)
+    assert not [r.what for r in sweep.ran if r.what.startswith("wowlab names fetch")]
+    assert [s for s in sweep.skipped if s.startswith("names fetch:")] == [
+        "names fetch: a name table is not cached, so it would go online"
+    ]
+
+
+def test_names_fetch_runs_when_every_name_table_is_cached_constructed(
+    stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
+) -> None:
+    """Every name table is in the data folder's cache (constructed: empty
+    files, which is all the gate looks at): `names fetch` runs once."""
+    root, data, _ = stand_in
+    version = install.discover(root).flavors[0].version
+    assert version is not None
+    tables = data / "gamedata" / "tables" / version
+    tables.mkdir(parents=True)
+    for name in gamedata.NAME_TABLES:
+        (tables / f"{name}.csv").write_bytes(b"")
+    sweep = sweep_and_compare(root, data)
+    assert [r.what for r in sweep.ran if r.what.startswith("wowlab names fetch")] == [
+        "wowlab names fetch --json"
+    ]
+    assert not [s for s in sweep.skipped if s.startswith("names fetch:")]
+
+
 def test_a_command_that_writes_into_the_install_fails_the_sweep_constructed(
     stand_in: tuple[Path, Path, dict[str, Callable[[tuple[str, ...]], int]]],
 ) -> None:
@@ -1258,8 +1290,13 @@ def test_a_running_or_unknown_client_fails_not_skips_constructed(
 ) -> None:
     inst = install.discover(_copy_install(tmp_path))
     monkeypatch.setattr(process, "client_state", lambda *a, **k: state)
-    with pytest.raises(pytest.fail.Exception, match=f"the game client is {state.value}"):
-        _client_closed(inst)
+    try:
+        with pytest.raises(pytest.fail.Exception, match=f"the game client is {state.value}"):
+            _client_closed(inst)
+    except pytest.skip.Exception as skipped:
+        # A skip would read as "not run" in the release record, not as a
+        # failure: it must fail.
+        pytest.fail(f"a {state.value} client skipped the sweep instead of failing it: {skipped}")
 
 
 def test_a_closed_client_lets_the_sweep_go_on_constructed(
