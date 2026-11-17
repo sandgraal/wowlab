@@ -75,9 +75,9 @@ class NamesFlavor(_Out):
 
 class NamesFetchReport(_Out):
     """`wowlab names fetch --json`: each flavor's name tables, and how many
-    downloads were made. The command exits 1 unless every flavor with a
-    game version ends with all of its name tables cached, and when no
-    flavor has one."""
+    downloads were made. The command exits 0 when at least one flavor has
+    a game version and every such flavor ends with all of its name tables
+    cached; otherwise it exits 1."""
 
     flavors: list[NamesFlavor]
     fetched: int
@@ -185,7 +185,7 @@ def names_fetch(
     downloads its list of game versions to say why. A table already
     downloaded is never replaced. Until they are here, wowlab shows ids
     instead of names. A flavor folder with no game version, such as one a
-    beta left behind, is passed over.
+    beta left behind, is passed over when another folder has one.
 
     \f
     JSON: NamesFetchReport."""
