@@ -1855,7 +1855,7 @@ from wowlab_core.cli._cmd_looks import (
     looks_show as looks_show,
 )
 from wowlab_core.cli._cmd_macros import (
-    _FIX_HINT as _FIX_HINT,
+    _FIX_KEPT as _FIX_KEPT,
 )
 from wowlab_core.cli._cmd_macros import (
     _FIX_LEFT as _FIX_LEFT,
@@ -1895,6 +1895,9 @@ from wowlab_core.cli._cmd_macros import (
 )
 from wowlab_core.cli._cmd_macros import (
     _fix_expect as _fix_expect,
+)
+from wowlab_core.cli._cmd_macros import (
+    _fix_hint as _fix_hint,
 )
 from wowlab_core.cli._cmd_macros import (
     _macro_notes as _macro_notes,

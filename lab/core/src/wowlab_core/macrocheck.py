@@ -41,7 +41,8 @@ The rules:
 - `showtooltip-not-first`: a `#showtooltip` line, or a `#show` line (the same
   rule assumed, **[verify]**), that is not the body's first line. The one rule
   `wowlab macros fix` corrects (`Finding.fixable`, `macrofix`): when the
-  macro has exactly one such line and ends with its `END`.
+  macro has exactly one such line, its `#` in the first column (whether an
+  indented directive counts is **[verify]**), and ends with its `END`.
 
 A record section whose own probes say values were dropped (a call raised, a
 value was secret or untestable, a needed function was missing) or that holds
@@ -227,7 +228,8 @@ class Finding(_Model):
     same_as: MacroRef | None = None
     # `wowlab macros fix` corrects this finding (M13-07): only a
     # `showtooltip-not-first` whose macro has exactly that one `#show` or
-    # `#showtooltip` line and ends with its `END`.
+    # `#showtooltip` line, starting with its `#` in the first column, and
+    # ends with its `END`.
     fixable: bool = False
 
 
@@ -590,7 +592,9 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                         name=m.macro.name,
                         line=line,
                         detail=f"{_FIRST_LINE[parsed[0]]} is on body line {k + 1}, not the first",
-                        fixable=movable,
+                        # A directive with space before its `#`: whether the
+                        # client reads it at all is [verify], so it is not moved.
+                        fixable=movable and text.startswith("#"),
                     )
                 )
 

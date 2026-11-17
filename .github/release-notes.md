@@ -9,6 +9,10 @@
 -->
 wowlab {{VERSION}} runs on your own machine against your own World of Warcraft install. It is read-only by default. Every command that changes files asks first and goes through one write gate; a snapshot is taken before the change, and `wowlab undo` reverses it. The only network traffic is fetching public game tables, and nothing is uploaded.
 
+## New in v0.4
+
+- **`wowlab macros fix`.** Where `wowlab macros check` finds a `#showtooltip` (or `#show`) line that is not the first line of a macro, `macros fix` moves it to the top and changes nothing else. It shows the plan and asks first, refuses while the game is running, and takes a snapshot before it writes, so `wowlab undo` puts the old macros back. It fixes your account's macros, or one character's with `--character`. In two tests on one game version, a character's macros changed with the game closed were still there after logging in. Account macros, other game versions, and servers that keep their own copy of your macros were not tested.
+
 ## New in v0.3
 
 - **A new look for `wowlab ui`.** It opens on your characters: one card each, in its class colour, with level, race and class, spec, item level, professions and when you last played it. Above them, two cards: when your UI was last backed up, with **Back up now**, and how many of your addons load on this game version. Everything else is in five sections along the top: Characters, Backups, Addons, Keybinds and Advanced (the file explorer and the other tools from v0.2). Where a figure comes from is one click away, under **About this data**.
@@ -36,7 +40,7 @@ It reads an install and tells you what every file is, keeps snapshots of your se
 - **Find and explain:** `doctor` (finds the install; a first run says what wowlab will do and offers a first snapshot), `install show`, `tree`, `explain` (what a file is, who writes it, whether it is safe to touch, with the snapshot facts and the commands that read it), `filemap gaps`.
 - **The browser view:** `wowlab ui` opens your characters, backups, addons and keybinds in your browser, with the explorer of the whole install under Advanced. It runs the commands that read, and the ones that save only to wowlab's own data (snapshots, profiles, saved looks, the game-table cache, pages), directly. A command that takes `--yes` runs first as a plan that changes nothing, and runs for real only when you press Confirm under it, through the same write gate as on the command line. It listens only on this machine behind a token.
 - **Snapshots and undo:** `snap create`, `snap list`, `snap show`, `snap diff`, `snap restore`, `snap verify`, `snap gc`, `snap export` and `snap import` (both v0.2), `undo`.
-- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list` and `macros check`, `addons`, `addons check` (v0.2), `sv list` (`--orphans` and `--unreadable` in v0.2), `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
+- **Settings, binds, macros, addons:** `cvar`, `binds`, `binds coach` (from your own combat log: spells cast often on awkward keys, cast with no bind, and binds never used; read-only), `macros list`, `macros check` and `macros fix` (v0.4), `addons`, `addons check` (v0.2), `sv list` (`--orphans` and `--unreadable` in v0.2), `sv dump`, `sv merge`, `addon install lab` (the lab-addon, which records your spellbook, action bars and bindings on logout).
 - **Profiles and looks:** `profile save`, `apply`, `list`, `show`, `delete`; `looks import-char`, `options`, `races`, `compare`, `page`.
 - **Characters and game data:** `char list` (`--summary` in v0.2), `char show`, `char gear`, `char binds`, `char macros` and `char history` (all four v0.2), `char kept` (v0.3), `db2 builds`, `db2 fetch`, `db2 head`, `names fetch` (v0.3; the one download that shows races, classes, specs and professions by name), `log tail`.
 - **For bug reports:** `doctor --redact` prints output with no character, realm, account folder, BattleTag or home path in it; names it cannot find on its own, such as your guild's, go in `--redact-name`.
@@ -93,7 +97,12 @@ The `#sha256=` at the end of the install line is the wheel's hash from `SHA256SU
 
 Scripts that read `wowlab … --json` depend on the models behind it. Each release lists here every model whose shape changed, what changed, and what a script reading it has to do.
 
-**Since v0.2.1**, every change adds something; nothing was removed or renamed:
+**Since v0.3.0**, every change adds something; nothing was removed or renamed:
+
+- New: `MacrosFixReport` (`macros fix --json`): the macros it fixes, each with its body before and after, the findings it leaves, whether it wrote, the journal record, and `target_sha256` and `fixed_sha256`, the pin `--expect` takes.
+- `MacrosCheckReport` (`macros check --json`) and `CharMacrosReport` (`char macros --json`): every finding gains `fixable`, true when `macros fix` corrects it.
+
+**From v0.2.1 to v0.3.0**, every change adds something; nothing was removed or renamed:
 
 - New: `CharKeptReport` (`char kept --json`) and `NamesFetchReport` (`names fetch --json`), described below.
 - `CharSummaryReport` (`char list --summary --json`) gains `kept_in_backups`, the characters kept only in a backup, and `names_missing`, one entry per game version that has a recorded character and whose name tables are not downloaded, with the command that downloads them.

@@ -6,7 +6,8 @@ bytes to `guard` (L2, ADR-0021).
 
 What is fixed is exactly what `macrocheck` marks `fixable`: a
 `showtooltip-not-first` finding in a macro with one `#showtooltip` or `#show`
-line, not the first, that ends with its `END`. The fix moves that line to
+line, not the first and with its `#` in the first column, that ends with its
+`END`. The fix moves that line to
 the top of the body; the lines above it move down one. Every other rule
 needs the player's choice (which spell, which bracket, which duplicate) and
 is left alone.
@@ -16,8 +17,14 @@ its slot's ending does not), so the file keeps its length, every byte outside
 the fixed macros' bodies is unchanged, every record stays where it was (the
 client numbers macros by their position in the file, `docs/LAB_FORMATS.md`
 §7, 2026-11-12), and a file with no fixable finding comes back byte for byte.
-Whether the client keeps such an edit after the next login is assumed, not
-confirmed (owner decision, 2026-11-17).
+Persistence: the test was run on the character file. `docs/LAB_FORMATS.md`
+§7 (2026-11-12) records two edits to a character's `macros-cache.txt`, made
+with the client closed, still there after login on one client build, where
+`synchronizeMacros` did not answer. The cases that were not tested are the
+account file (the command's default target), other game versions, and a
+client where `synchronizeMacros` exists and is on. The owner's decision of
+2026-11-17 is to build the writer for those too and say in the plan what was
+and was not tested; `wowlab undo` puts the old bytes back.
 """
 
 from __future__ import annotations

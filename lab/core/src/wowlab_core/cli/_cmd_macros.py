@@ -321,7 +321,7 @@ def macros_check(
         )
     _say(f"Findings: {len(report.findings)}")
     for finding in report.findings:
-        fix = f" ({_FIX_HINT})" if finding.fixable else ""
+        fix = f" ({_fix_hint(finding.macro.scope, account, character)})" if finding.fixable else ""
         _say_prose(
             f"{finding.rule}: {finding.macro.scope} macro {finding.macro.id} "
             f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}{fix}',
@@ -355,14 +355,33 @@ def macros_check(
 
 # ─── macros fix (M13-07) ─────────────────────────────────────────────────────
 
-_FIX_HINT = "wowlab macros fix moves it to the first line"
 
-# Owner decision, 2026-11-17: the writer is built on the assumption that an
-# edit made with the client closed survives the next login; the plan and the
-# result say it is not confirmed, and how to go back.
+def _fix_hint(scope: macrocheck.MacroScope, account: str | None, character: str | None) -> str:
+    """The `macros fix` command that fixes a finding of `scope`, with the
+    options `macros check` was given: bare `macros fix` writes only the
+    account's file."""
+    words = ["wowlab macros fix"]
+    if scope == "character" and character is not None:
+        words.append(f"--character {character}")
+    if account is not None:
+        words.append(f"--account {account}")
+    return f"{' '.join(words)} moves it to the first line"
+
+
+# What was tested (docs/LAB_FORMATS.md §7, 2026-11-12): two offline edits of
+# a character's macros-cache.txt kept after login, on one client build. The
+# account file, other game versions and server-synced macros were not; the
+# owner's decision of 2026-11-17 is to write them anyway and say so. No build
+# number or flavor name here (L6).
 _FIX_UNCONFIRMED = (
-    "Whether the game keeps the fixed macros after you log in is not yet confirmed; "
-    "`wowlab undo` puts the old macros back."
+    "In two tests on one game version, a character's macros changed with the game closed "
+    "were still there after logging in. Account macros, other game versions, and servers "
+    "that keep their own copy of your macros were not tested. `wowlab undo` puts the old "
+    "macros back."
+)
+_FIX_KEPT = (
+    "Character macros changed this way were kept after login in tests on one game version; "
+    "account macros were not tested."
 )
 _FIX_LEFT = (
     "Every other finding needs your choice (which spell, which bracket, which duplicate), so "
@@ -447,13 +466,14 @@ def macros_fix(
     """Fix the account's macros, or one character's with --character, where
     macros check finds a #showtooltip (or #show) line that is not the first
     line: that line moves to the top, and nothing else in the file changes. A
-    macro with two such lines is left for you, and so is every other finding:
-    each needs your choice.
+    macro with two such lines, or with spaces before the #, is left for you,
+    and so is every other finding: each needs your choice.
 
     Shows the plan and asks first, then writes through the write gate: the
     game must be closed, a snapshot is taken first, and `wowlab undo` puts the
-    old macros back. Whether the game keeps the fixed macros after you log in
-    is not yet confirmed.
+    old macros back. Character macros changed this way were kept after login
+    in two tests on one game version; account macros, other game versions and
+    server-synced macros were not tested.
 
     \f
     JSON: MacrosFixReport."""
@@ -580,6 +600,5 @@ def macros_fix(
         _print_fix(_say, done)
     _say(
         f"Fixed {_plural(len(done.fixes), 'macro')} in {path}. `wowlab undo` puts the old "
-        "macros back."
+        f"macros back. {_FIX_KEPT}"
     )
-    _say(_player_copy("Whether the game keeps them after you log in is not yet confirmed."))

@@ -793,7 +793,7 @@ def test_macros_fix_through_the_ui_constructed(real: Real) -> None:
         f"Write the fixed macros? [y/N]:{eol}{cli.CONFIRM_DECLINED}{eol}"
     )
     assert f"replace  {MACROS}" in plan["stderr"]
-    assert "not yet confirmed" in plan["stderr"]
+    assert "Account macros, other game versions" in plan["stderr"]
     shown = json.loads(plan["stdout"])
     assert shown["written"] is False
     assert shown["target_sha256"] == hashlib.sha256(before).hexdigest()

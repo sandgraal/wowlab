@@ -237,6 +237,10 @@ def test_a_directive_not_first_moves_to_the_top(
             _macro(1, "Mac cut", "/cast Fear", "#showtooltip Fear", end=False),
             id="constructed-no-end",
         ),
+        pytest.param(
+            _macro(1, "Mac indented", "/cast Fear", "  #showtooltip Fear"),
+            id="constructed-indented",
+        ),
     ],
 )
 def test_a_macro_the_player_must_decide_is_not_fixable(record: bytes) -> None:
@@ -325,7 +329,47 @@ def test_macros_check_marks_the_fixable_finding_and_says_so_constructed(flavor: 
     marks = {(f.macro.id, f.fixable) for f in rep.findings if f.rule == "showtooltip-not-first"}
     assert marks == {(_id(1), True), (_id(2), False)}
     text = ok("macros", "check", "--character", CHARACTER).stdout
-    assert text.count(cli._FIX_HINT) == 1
+    hint = f"(wowlab macros fix --character {CHARACTER} moves it to the first line)"
+    assert text.count(hint) == 1
+    assert text.count("moves it to the first line") == 1
+
+
+def test_the_hint_names_the_options_that_reach_the_file_constructed(flavor: Path) -> None:
+    """Bare `macros fix` writes only the account's file: a character finding's
+    hint names --character, and --account when check was given it."""
+    (flavor / CHAR_FILE).write_bytes(_macro(1, "Mac char", "/cast Fear", "#showtooltip Fear"))
+    (flavor / ACCOUNT_FILE).write_bytes(_macro(2, "Mac acc", "/cast Fear", "#show Fear"))
+    text = ok("macros", "check", "--character", CHARACTER, "--account", ACCOUNT).stdout
+    assert (
+        f'"Mac char" (line 3): #showtooltip is on body line 2, not the first '
+        f"(wowlab macros fix --character {CHARACTER} --account {ACCOUNT} moves it to the "
+        "first line)"
+    ) in text
+    assert f"(wowlab macros fix --account {ACCOUNT} moves it to the first line)" in text
+    bare = ok("macros", "check").stdout
+    assert "(wowlab macros fix moves it to the first line)" in bare
+    # Following each hint fixes that finding.
+    ok("macros", "fix", "--character", CHARACTER, "--account", ACCOUNT, "--yes")
+    ok("macros", "fix", "--account", ACCOUNT, "--yes")
+    rep = cli.MacrosCheckReport.model_validate_json(
+        ok("macros", "check", "--character", CHARACTER, "--json").stdout
+    )
+    assert not [f for f in rep.findings if f.rule == "showtooltip-not-first"]
+
+
+def test_an_indented_directive_is_reported_but_not_fixed_constructed(flavor: Path) -> None:
+    data = _macro(1, "Mac indented", "/cast Fear", "  #showtooltip Fear")
+    (flavor / CHAR_FILE).write_bytes(data)
+    rep = cli.MacrosCheckReport.model_validate_json(
+        ok("macros", "check", "--character", CHARACTER, "--json").stdout
+    )
+    (finding,) = [f for f in rep.findings if f.rule == "showtooltip-not-first"]
+    assert finding.fixable is False
+    assert (
+        "moves it to the first line" not in ok("macros", "check", "--character", CHARACTER).stdout
+    )
+    assert fix_json("--character", CHARACTER, "--yes").fixes == []
+    assert (flavor / CHAR_FILE).read_bytes() == data
 
 
 # ─── the command: plan, confirm, write, undo ─────────────────────────────────
@@ -346,7 +390,7 @@ def test_plan_without_yes_writes_nothing_real_plus_constructed(flavor: Path) -> 
     assert result.exit_code == 1, (result.stdout, result.stderr)
     assert '"Mac fix" (line 117): body line 2 moves to the top' in result.stdout
     assert "#showtooltip Corruption" in result.stdout
-    assert "not yet confirmed" in result.stdout and "wowlab undo" in result.stdout
+    assert cli._FIX_UNCONFIRMED in result.stdout
     assert result.stderr.endswith(f"\n{cli.CONFIRM_DECLINED}\n")
     assert (flavor / CHAR_FILE).read_bytes() == whole
     assert guard.history() == ()
@@ -361,7 +405,7 @@ def test_plan_json_names_its_pin_and_writes_nothing_real_plus_constructed(flavor
     assert rep.written is False and rep.target_sha256 == _sha(whole)
     assert rep.fixed_sha256 == _sha(_plan(whole).data)
     assert [f.macro.id for f in rep.fixes] == [_id(1)]
-    assert "not yet confirmed" in " ".join(rep.notes)
+    assert cli._FIX_UNCONFIRMED in rep.notes
     assert (flavor / CHAR_FILE).read_bytes() == whole
 
 
@@ -390,7 +434,10 @@ def test_text_run_with_yes_says_what_it_did_constructed(flavor: Path) -> None:
     out = ok("macros", "fix", "--character", CHARACTER, "--yes").stdout
     assert f"Fixed 1 macro in {CHAR_FILE}." in out
     assert "`wowlab undo` puts the old macros back." in out
-    assert "not yet confirmed" in out
+    assert (
+        "Character macros changed this way were kept after login in tests on one game "
+        "version; account macros were not tested."
+    ) in out
 
 
 def test_account_file_is_fixed_by_default_constructed(flavor: Path) -> None:
@@ -475,7 +522,12 @@ def test_help_says_persistence_is_unconfirmed_and_undo_goes_back() -> None:
     result = runner.invoke(cli.app, ["macros", "fix", "--help"], terminal_width=200)
     assert result.exit_code == 0
     text = " ".join(result.stdout.split())
-    assert "not yet confirmed" in text
+    assert (
+        "Character macros changed this way were kept after login in two tests on one "
+        "game version; account macros, other game versions and server-synced macros were "
+        "not tested."
+    ) in text
+    assert "not yet confirmed" not in text
     assert "`wowlab undo` puts the old macros back" in text
     assert "--yes" in text and "--expect" in text
 
