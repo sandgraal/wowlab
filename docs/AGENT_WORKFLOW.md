@@ -320,9 +320,14 @@ WOWLAB_WOW_ROOT="/path/to/World of Warcraft" uv run pytest -m live lab/core/test
 
 It hashes the install, runs every read command and the `wowlab ui` read
 endpoints, hashes again, and fails on any difference, printing the first
-ones. CI never runs it (ADR-0012). Paste its tail (the exit-code list and the
-`passed` line) into the release record, the release's handoff under
-`docs/handoffs/`. A failure is an L1 finding and blocks the tag.
+ones. CI never runs it (ADR-0012). Into the release record (the release's
+handoff under `docs/handoffs/`), paste only the block between
+`--- L1 sweep, for the release record ---` and `--- end ---`, and the
+`passed` line. That block uses placeholders (`account#1`, `character#1`,
+`<root>`, `<home>`, `<login>`) where the output above it names account and
+character folders and paths on your machine; never paste the output above it,
+which the repository is not scrubbed for (ADR-0019). A failure is an L1
+finding and blocks the tag.
 
 ## Reusing this harness in another project
 

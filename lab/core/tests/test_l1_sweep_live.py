@@ -48,9 +48,12 @@ install.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import getpass
 import hashlib
 import http.client
+import importlib.metadata
 import json
 import os
 import shutil
@@ -351,11 +354,78 @@ def _character(report: dict[str, Any] | None) -> dict[str, Any] | None:
 class Sweep:
     ran: list[Ran] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Account and character folders seen, each with its placeholder, so the
+    # summary for the release record names none of them (ADR-0019 amendment
+    # of 2026-10-17: the account folder stays scrubbed).
+    hidden: dict[str, str] = field(default_factory=dict)
+    summary: list[str] = field(default_factory=list)
 
     def cli(self, *args: str) -> Ran:
         ran = _cli(*args)
         self.ran.append(ran)
         return ran
+
+    def hide(self, kind: str, value: object) -> None:
+        """Give `value` (an account or character folder) a placeholder."""
+        text = str(value or "")
+        if text and text not in self.hidden:
+            n = sum(1 for v in self.hidden.values() if v.startswith(kind + "#")) + 1
+            self.hidden[text] = f"{kind}#{n}"
+
+    def hide_rows(self, report: dict[str, Any] | None, key: str, label: str) -> None:
+        """Every account and character folder a report's rows name."""
+        for r in (report or {}).get(key, []):
+            if not isinstance(r, dict):
+                continue
+            self.hide("account", r.get("account"))
+            name = r.get(label)
+            if name:
+                self.hide("character", name)
+                if r.get("realm_folder"):  # the same placeholder, with its folder
+                    self.hidden.setdefault(f"{r['realm_folder']}/{name}", self.hidden[str(name)])
+
+
+def _version() -> str:
+    try:
+        return importlib.metadata.version("wowlab")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _login() -> str | None:
+    try:
+        return getpass.getuser() or None
+    except (OSError, KeyError, ImportError):
+        return None
+
+
+def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
+    """The lines for the release record: the verdicts, each run's exit code
+    and command, and each skip, with the install root as `<root>`, the home
+    folder as `<home>`, the login as `<login>`, and every account and
+    character folder as `account#N` / `character#N`. The full detail stays
+    on the terminal above it and never goes into the record."""
+    swaps: list[tuple[str, str]] = [(str(root), "<root>")]
+    with contextlib.suppress(RuntimeError, KeyError, OSError):
+        swaps.append((str(Path.home()), "<home>"))
+    swaps += sorted(sweep.hidden.items(), key=lambda kv: -len(kv[0]))
+    login = _login()
+    if login and len(login) >= 3:
+        swaps.append((login, "<login>"))
+
+    def scrub(text: str) -> str:
+        for old, new in swaps:
+            text = text.replace(old, new)
+        return text
+
+    lines = ["--- L1 sweep, for the release record ---"]
+    lines += [scrub(v) for v in verdicts]
+    for ran in sweep.ran:
+        flag = f"  !! {ran.problem}" if ran.problem else ""
+        lines.append(scrub(f"exit {ran.exit_code:>3}  {ran.what}{flag}"))
+    lines += [scrub(f"skipped  {note}") for note in sweep.skipped]
+    lines.append("--- end ---")
+    return lines
 
 
 def run_commands(inst: install.Install, sweep: Sweep) -> None:
@@ -366,9 +436,10 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
     sweep.cli("install", "show", "--json")
     sweep.cli("filemap", "gaps", "--json")
     sweep.cli("tree", "--install", "--json")
-    sweep.cli("char", "list", "--json")
+    sweep.hide_rows(_report(sweep.cli("char", "list", "--json")), "characters", "label")
     sweep.cli("char", "list", "--summary", "--json")
     kept = _report(sweep.cli("char", "kept", "--json"))
+    sweep.hide_rows(kept, "kept", "label")
     rows = [r for r in (kept or {}).get("kept", []) if isinstance(r, dict)]
     if rows:
         k = rows[0]
@@ -405,6 +476,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         else:
             sweep.skipped.append(f"log tail: {f.folder} has no combat log")
         accounts = _accounts(f.path)
+        for account in accounts:
+            sweep.hide("account", account)
         if not accounts:
             sweep.skipped.append(f"account commands: {f.folder} has no account folder")
         for account in accounts:
@@ -414,6 +487,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
             sweep.cli("macros", "list", *ac, "--json")
             sweep.cli("macros", "check", *ac, "--json")
             listing = _report(sweep.cli("sv", "list", *ac, "--json"))
+            sweep.hide_rows(listing, "files", "character_folder")
             sweep.cli("sv", "list", "--orphans", *ac, "--json")
             sweep.cli("sv", "list", "--unreadable", *ac, "--json")
             files = [
@@ -428,6 +502,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
             else:
                 sweep.skipped.append(f"sv dump: {f.folder} {account} has no SavedVariables file")
         chars = _report(sweep.cli("char", "list", *fl, "--brief", "--json"))
+        sweep.hide_rows(chars, "characters", "label")
         sweep.cli("char", "list", "--summary", *fl, "--json")
         row = _character(chars)
         if row is None:
@@ -452,8 +527,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
 @dataclass
 class _Ui:
     port: int
-    token: str
-    boot: str
+    token: str = field(repr=False)
+    boot: str = field(repr=False)
 
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None, *, key: bool = True
@@ -584,12 +659,23 @@ def sweep_and_compare(root: Path, data_dir: Path) -> Sweep:
     for note in sweep.skipped:
         print(f"  skipped  {note}")
     changed = differences(before, after)
-    assert not changed, "the install changed (L1):\n" + "\n".join(changed)
     data_changed = differences(data_before, data_after)
+    flagged = [r for r in sweep.ran if r.problem]
+    verdicts = [
+        f"wowlab {_version()}; flavors: "
+        + ", ".join(f"{f.folder} {f.version}" for f in inst.flavors),
+        f"install: {len(before)} paths, {hashed} files hashed; "
+        + ("unchanged" if not changed else f"CHANGED ({len(changed)} lines above the summary)"),
+        "user data directory: " + ("unchanged" if not data_changed else "CHANGED"),
+        f"runs: {len(sweep.ran)}, flagged: {len(flagged)}",
+    ]
+    sweep.summary = record_summary(sweep, inst.root, verdicts)
+    print("\n" + "\n".join(sweep.summary))
+    assert not changed, "the install changed (L1):\n" + "\n".join(changed)
     assert not data_changed, f"wowlab's user data directory {data_dir} changed:\n" + "\n".join(
         data_changed
     )
-    bad = [f"{r.what}: {r.problem}\n{r.stderr[-2000:]}" for r in sweep.ran if r.problem]
+    bad = [f"{r.what}: {r.problem}\n{r.stderr[-2000:]}" for r in flagged]
     assert not bad, "runs that did not end as a read may:\n" + "\n".join(bad)
     return sweep
 
@@ -831,8 +917,36 @@ def captured_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     `tmp_path`, so the children's user data directory is there too."""
     home = tmp_path / "home"
     home.mkdir()
-    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
+    for name in (
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_DATA_HOME",
+        # On Windows platformdirs asks the shell for the folder (not the
+        # variables above) unless one of these overrides is set.
+        "WIN_PD_OVERRIDE_LOCAL_APPDATA",
+        "WIN_PD_OVERRIDE_APPDATA",
+    ):
         monkeypatch.setenv(name, str(home))
+    # The children's user data directory is under tmp_path, or nothing runs:
+    # `snap create` below would otherwise write into the real store.
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            "import platformdirs; print(platformdirs.user_data_path('wowlab'))",
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+        timeout=60,
+        text=True,
+    )
+    child_data = Path(probe.stdout.strip())
+    if tmp_path.resolve() not in child_data.resolve().parents:
+        pytest.skip(f"the user data directory does not follow the redirect here: {child_data}")
     monkeypatch.delenv(install.ENV_FLAVOR, raising=False)
     cache = tmp_path / "in-process-data"
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: cache)
@@ -876,3 +990,48 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
     assert any(w.startswith("wowlab snap show latest") for w in ran)
     assert f"--character 1/{KEPT}" in " ".join(w for w in ran if w.startswith("wowlab char kept"))
     assert any(s.startswith("names fetch:") for s in sweep.skipped)
+    # The summary for the release record names no account or character
+    # folder and no path of this machine, and still lists every run.
+    summary = "\n".join(sweep.summary)
+    for secret in (ACCOUNT, CHARACTER, KEPT, str(root), str(home), str(root.parent)):
+        assert secret not in summary, secret
+    assert "account#1" in summary and "character#1" in summary and "<root>" in summary
+    assert len([x for x in sweep.summary if x.startswith("exit ")]) == len(sweep.ran)
+    assert "install: " in summary and "; unchanged" in summary
+
+
+def test_record_summary_holds_no_folder_or_path_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constructed names: an account folder, a character folder with its
+    realm folder, a home folder holding the install, and a login."""
+    home = Path("/Users/labloginz") if os.sep == "/" else Path("C:\\Users\\labloginz")
+    root = home / "Games" / "World of Warcraft"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(getpass, "getuser", lambda: "labloginz")
+    account, character, realm = "90000001#6", "Labchard-Labrealmg", "1"
+    sweep = Sweep()
+    sweep.hide("account", account)
+    sweep.hide_rows(
+        {"characters": [{"account": account, "realm_folder": realm, "label": character}]},
+        "characters",
+        "label",
+    )
+    sv = (
+        root / FLAVOR / "WTF" / "Account" / account / realm / character / "SavedVariables" / "X.lua"
+    )
+    sweep.ran += [
+        Ran(f"wowlab binds list --account {account} --character {realm}/{character} --json", 0),
+        Ran(f"wowlab sv dump --install-only --account {account} --json -- {sv}", 1),
+        Ran(f"wowlab explain --json -- {root / 'Data'}", 0),
+        Ran("wowlab char list --json", 2, problem="exit 2"),
+    ]
+    sweep.skipped.append(f"sv dump: {FLAVOR} {account} has no SavedVariables file")
+    lines = record_summary(sweep, root, [f"install {root} by labloginz"])
+    text = "\n".join(lines)
+    for secret in (account, character, str(root), str(home), "labloginz"):
+        assert secret not in text, secret
+    assert "--account account#1 --character character#1 --json" in text
+    assert "<root>" in text and "<login>" in text
+    assert "exit   2  wowlab char list --json  !! exit 2" in text
+    assert f"skipped  sv dump: {FLAVOR} account#1 has no SavedVariables file" in text
