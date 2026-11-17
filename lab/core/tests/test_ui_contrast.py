@@ -266,7 +266,8 @@ _REGIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The detail pane: its own rules, and the hint and preview boxes the
     # script draws inside it.
     "parchment": ((".parchment", "#explain", ".hint", ".preview"), (".parchment",)),
-    "gear": ((".gear-",), (".gear-table",)),
+    # The gear: since M18-05 each slot is a row on its own dark ground.
+    "gear": ((".gear-",), (".gear-row",)),
     "chrome": ((), ("html", "body", ".banner", ".panel")),
 }
 # Painted surfaces that hold none of the page's text: the Looks frame shows a
@@ -750,12 +751,15 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
 
 def test_the_quality_word_is_drawn_beside_the_name() -> None:
     """a11y:F8: the quality is a visible word next to the gear name, from the
-    record's own `quality`, not a hidden span or a tooltip."""
+    record's own `quality`, not a hidden span or a tooltip. Since M18-05 it
+    is in the slot's line above the name ("Head · Epic")."""
     page_js = (_TEMPLATES / "page.js").read_text(encoding="utf-8")
-    body = page_js[page_js.index("function gearRow(") : page_js.index("function gearDetail(")]
-    assert "gear-quality" in body
-    assert "slot.quality" in body
-    assert "unseen(" not in body
+    line = page_js[page_js.index("function gearSlotLine(") : page_js.index("function emptyItem(")]
+    assert "gear-slot" in line
+    assert "slot.quality" in line
+    assert "unseen(" not in line
+    item = page_js[page_js.index("function gearItem(") : page_js.index("function gearDetail(")]
+    assert "gearSlotLine(slot)" in item
 
 
 # ─── the reflow at 320 CSS px, in a browser ──────────────────────────────────
@@ -921,7 +925,7 @@ def test_constructed_a_container_ground_does_not_hang_on_another_rule() -> None:
         " --number: #f4c15d; }"
         " html { background: var(--ground); }"
         " .parchment { background-color: var(--ground); color: var(--text); }"
-        " .gear-table { background: var(--ground); color: var(--text); }"
+        " .gear-row { background: var(--ground); color: var(--text); }"
         " .toolbar select { background: var(--sunk); }"
         " .jt { color: var(--text); background: var(--sunk); }"
         " .jt-number { color: var(--number); }"

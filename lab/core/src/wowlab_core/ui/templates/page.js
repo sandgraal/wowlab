@@ -1275,6 +1275,16 @@
   // own fields (`disagrees`, `findings`). The history panel (M17-03) lays
   // out `char history --json`. Those five read commands are the only ones
   // this tab runs, and nothing in it edits anything.
+  // The character page (M18-05, docs/design/COMPANION.md) lays the same
+  // reports out for a player: a header (the level tile in the class colour,
+  // the name, race and class named as the cards name them, the item level,
+  // the professions and when it was last played), the gear as the character
+  // sheet places it, a Progress card and a What changed timeline from the
+  // saves, the professions of the character's card (`char list --summary`,
+  // read for All characters), and keys 1 to 0 from `char binds`, each named
+  // by what its slot holds (`holds`) without an id. Every file, folder, id
+  // and caveat is under About this data; the Keys and Macros panels are
+  // shown by Keybinds.
 
   const character = {
     asked: null, // the one `char list` run; asked again after a failure
@@ -1286,6 +1296,8 @@
     seq: 0, // bumped by every pick, so a reply that arrives late draws nothing
     binds: null, // the picked character's CharBindsReport, for the keys filters
     macros: null, // its CharMacrosReport, for the findings filter
+    entry: null, // the picked character's `char list` row
+    gear: null, // its CharGearReport, once read: the header is drawn from it
     // What `char list` said on stderr when it exited with an error (a row it
     // could not read, a place it could not look inside): the status line
     // keeps it while characters are read.
@@ -1362,10 +1374,12 @@
     });
   }
 
-  // The folder label, with its realm (or digits) folder and account when
-  // another row has the same label, and the file's time.
-  function pickLabel(entry, counts) {
+  // The character's name (M18-05: no file time), with the game when the
+  // list spans several, and its realm (or digits) folder and account only
+  // when another row has the same name.
+  function pickLabel(entry, counts, games) {
     let text = visible(String(entry.label));
+    if (games && typeof entry.flavor === "string" && entry.flavor) text += " · " + visible(gameWords(entry.flavor));
     if (counts.get(entry.label) > 1) {
       text += " (" + visible(String(entry.realm_folder)) + ", account " + visible(String(entry.account)) + ")";
     }
@@ -1373,7 +1387,7 @@
     // writes there, so the label names the folder's shape instead.
     if (bare(entry)) return text + (entry.no_lab_record.first_name_folder === true ? ": <Realm>/<First> folder" : ": no lab record");
     if (!readable(entry)) return text + ": not read";
-    return text + ", written " + localTime(entry.mtime_ns);
+    return text;
   }
 
   function loadCharacters() {
@@ -1406,8 +1420,10 @@
     character.entries = latestFirst(report.characters.filter((e) => e && typeof e === "object"));
     const counts = new Map();
     for (const entry of character.entries) counts.set(entry.label, (counts.get(entry.label) || 0) + 1);
+    const flavors = new Set(character.entries.map((e) => (typeof e.flavor === "string" ? e.flavor : "")).filter((f) => f));
+    const games = flavors.size > 1;
     character.entries.forEach((entry, at) => {
-      const option = make("option", pickLabel(entry, counts));
+      const option = make("option", pickLabel(entry, counts, games));
       option.value = String(at);
       if (!readable(entry)) {
         option.disabled = true;
@@ -1455,16 +1471,9 @@
     character.asked = null;
     character.entries = [];
     character.flavor = null;
-    character.binds = null;
-    character.macros = null;
     character.note = "";
     byId("char-picker").replaceChildren();
-    byId("char-header").replaceChildren();
-    byId("char-gear").replaceChildren();
-    clearDressing();
-    byId("char-keys").replaceChildren();
-    byId("char-macros").replaceChildren();
-    byId("char-history").replaceChildren();
+    clearCharacter();
     charSay("", false);
     if (tabShown === "character" || tabShown === "keybinds") loadCharacters();
     drawHomeStatus();
@@ -1485,14 +1494,9 @@
   // them), and a pick left behind stops after the run it is waiting for.
   async function pickCharacter(entry) {
     const seq = ++character.seq;
-    byId("char-header").replaceChildren(make("h2", visible(entry.label)));
-    byId("char-gear").replaceChildren();
-    clearDressing();
-    byId("char-keys").replaceChildren();
-    byId("char-macros").replaceChildren();
-    byId("char-history").replaceChildren();
-    character.binds = null;
-    character.macros = null;
+    clearCharacter();
+    character.entry = entry;
+    byId("char-header").replaceChildren(charTitle(visible(entry.label)));
     charSay("Reading the gear, keys, macros and history of " + visible(entry.label) + "…", false);
     // `--character` takes `<realm or digits folder>/<character folder>`.
     const params = { character: entry.realm_folder + "/" + entry.label, account: entry.account };
@@ -1504,6 +1508,28 @@
       if (seq !== character.seq) return;
     }
     charNote();
+  }
+
+  // Every box a pick draws into, emptied, and what was read for the last one.
+  const CHAR_BOXES = [
+    "char-header", "char-gear", "char-progress", "char-changes", "char-profs", "char-bar", "char-keys",
+    "char-macros", "char-sources", "char-history",
+  ];
+
+  function clearCharacter() {
+    for (const id of CHAR_BOXES) byId(id).replaceChildren();
+    clearDressing();
+    character.entry = null;
+    character.gear = null;
+    character.binds = null;
+    character.macros = null;
+  }
+
+  // The character's name, the page's heading.
+  function charTitle(text) {
+    const title = make("h2", text);
+    title.className = "char-name";
+    return title;
   }
 
   // A refusal or any other error, in the CLI's own words, in `box`.
@@ -1523,7 +1549,9 @@
       charError(byId("char-gear"), reply, "char gear");
       return;
     }
-    drawCharHeader(entry, report);
+    character.gear = report;
+    drawCharHeader();
+    drawCharSources(report);
     drawGear(report);
     drawDressing(report.dressing);
   }
@@ -1566,15 +1594,105 @@
     else charFact(list, label, notRecorded(absent));
   }
 
-  function drawCharHeader(entry, report) {
+  const charObj = (v) => (v && typeof v === "object" ? v : {});
+
+  // The picked character's row of `char list --summary` (the All characters
+  // cards' report), for its professions; null until that report is read or
+  // when it does not list the character. The flavor counts when both name one.
+  function hubRowOf(entry) {
+    if (!entry || !hub.report) return null;
+    const flavor = character.flavor || (hubStr(entry.flavor) ? entry.flavor : null);
+    for (const row of objects(hub.report.rows)) {
+      if (row.account !== entry.account || row.realm_folder !== entry.realm_folder || row.label !== entry.label) continue;
+      if (flavor && hubStr(row.flavor) && row.flavor !== flavor) continue;
+      return row;
+    }
+    return null;
+  }
+
+  // The flavor the picked character was read in.
+  function charFlavor(entry) {
+    const gear = character.gear;
+    if (gear && hubStr(gear.flavor_folder)) return gear.flavor_folder;
+    if (character.flavor) return character.flavor;
+    return entry && hubStr(entry.flavor) ? entry.flavor : null;
+  }
+
+  // The class, race and level of `char gear`'s report, in the shape of a
+  // `char list --summary` row, so the header names them as a card does.
+  function identityRow(report) {
+    const identity = charObj(report.identity);
+    const names = charObj(report.names);
+    return {
+      level: report.level,
+      class_name: names.class_name,
+      class_file: identity.class_file,
+      class_id: identity.class_id,
+      race_name: names.race,
+      race_id: identity.race_id,
+    };
+  }
+
+  // One figure under the name: a big value over its word.
+  function charStat(list, word, value) {
+    const box = make("div");
+    box.className = "char-stat";
+    const big = make("dd", value);
+    big.className = "char-stat-value";
+    const small = make("dt", word);
+    small.className = "char-stat-word";
+    box.append(small, big);
+    list.appendChild(box);
+  }
+
+  // The header: the level tile in the class colour, the name, "Race Class ·
+  // game", and the item level, the professions and when it was last played.
+  // Drawn from `char gear` and, once read, the character's card row.
+  function drawCharHeader() {
+    const entry = character.entry;
+    const report = character.gear;
+    if (!entry || !report) return;
     const header = byId("char-header");
-    header.replaceChildren(make("h2", visible(entry.label)));
+    const row = identityRow(report);
+    const card = hubRowOf(entry);
+    const head = make("div");
+    head.className = "char-head";
+    const look = classLook(row);
+    if (look) head.classList.add(look);
+    head.appendChild(cardTile(row));
+    const who = make("div");
+    who.className = "char-who";
+    who.appendChild(charTitle(card ? cardName(card) : visible(entry.label)));
+    const flavor = charFlavor(entry);
+    const line = [cardWho(row), flavor ? visible(gameWords(flavor)) : null].filter((x) => x).join(" · ");
+    if (line) {
+      const words = make("p", line);
+      words.className = "card-class";
+      who.appendChild(words);
+    }
+    head.appendChild(who);
+    const stats = make("dl");
+    stats.className = "char-stats";
+    const average = charObj(report.average);
+    const ilvl = hubNum(average.equipped);
+    charStat(stats, "Item level", ilvl !== null ? ilvl.toFixed(1) : "—");
+    const profs = card && Array.isArray(card.professions) ? objects(card.professions).length : null;
+    charStat(stats, "Professions", profs !== null ? String(profs) : "—");
+    charStat(stats, "Last played", playedDay(report.mtime_ns) || "—");
+    header.replaceChildren(head, stats);
+    drawProfessions();
+  }
+
+  // What the header and the gear were read from, and every note on them:
+  // under About this data.
+  function drawCharSources(report) {
+    const box = byId("char-sources");
+    box.replaceChildren(make("h3", "This character's record"));
     const facts = make("dl");
     facts.className = "char-facts";
-    const obj = (v) => (v && typeof v === "object" ? v : {});
-    const identity = obj(report.identity);
-    const names = obj(report.names);
-    const spec = obj(report.spec);
+    const identity = charObj(report.identity);
+    const names = charObj(report.names);
+    const spec = charObj(report.spec);
     charFact(facts, "Level", typeof report.level === "number" ? String(report.level) : notRecorded(report.level_absent));
     // Without a cached name, the class's file name as the client gave it ("MAGE").
     const classWords = typeof names.class_name === "string" && names.class_name ? names.class_name : identity.class_file;
@@ -1588,7 +1706,7 @@
     namedFact(facts, "Race", names.race, identity.race_id, raceAbsent);
     // What the client calls the specialization, whatever its name reads.
     namedFact(facts, "Spec", names.spec, spec.id, spec.absent, "the client's specialization, not the talent points spent");
-    const average = obj(report.average);
+    const average = charObj(report.average);
     if (typeof average.absent === "string") {
       charFact(facts, "Average item level", "absent (" + visible(average.absent) + ")");
     } else {
@@ -1598,14 +1716,9 @@
     charFact(facts, "Character folder", visible(String(report.character)));
     charFact(facts, "File", shown(String(report.file)));
     charFact(facts, "Written", localTime(report.mtime_ns) + " (the file's modification time)");
-    header.appendChild(facts);
-    const notes = (Array.isArray(report.notes) ? report.notes : []).filter((n) => typeof n === "string");
-    if (notes.length) {
-      const list = make("ul");
-      list.className = "char-notes";
-      for (const note of notes) list.appendChild(make("li", shown(note)));
-      header.appendChild(list);
-    }
+    box.appendChild(facts);
+    const notes = texts(report.notes);
+    if (notes.length) box.appendChild(charNotes(notes));
   }
 
   // The class the server's stylesheet paints an item name with: the colour
@@ -1614,6 +1727,12 @@
   function colourClass(code) {
     if (typeof code !== "string" || !/^[0-9A-Za-z:]{1,16}$/.test(code)) return "";
     return "colour-" + code.toLowerCase().replace(/:/g, "_");
+  }
+
+  // The colour code of an item link (`|c<code>|H...`), as `itemlink` reads it.
+  function linkColour(link) {
+    const found = typeof link === "string" ? /^\|c([0-9A-Za-z:]{1,16})\|H/.exec(link) : null;
+    return found ? found[1] : "";
   }
 
   function slotLabel(entry) {
@@ -1625,84 +1744,103 @@
     return ids.length ? ids.map(String).join(", ") : "none";
   }
 
+  // The gear as the character sheet lays it out: two columns, then the
+  // weapons, by the client's slot numbers. A slot the report gives that is
+  // in none of them goes after the weapons, so nothing is left out.
+  const GEAR_COLUMNS = [
+    [1, 2, 3, 15, 5, 4, 19, 9],
+    [10, 6, 7, 8, 11, 12, 13, 14],
+    [16, 17, 18],
+  ];
+
   function drawGear(report) {
     const body = byId("char-gear");
     body.replaceChildren();
-    // The client's slot order: filled and empty slots by the slot number.
-    const rows = [];
-    for (const slot of report.slots) if (slot && typeof slot.slot === "number") rows.push({ slot: slot, filled: true });
-    for (const slot of report.empty_slots) if (slot && typeof slot.slot === "number") rows.push({ slot: slot, filled: false });
-    rows.sort((a, b) => a.slot.slot - b.slot.slot);
-    body.appendChild(make("h3", "Gear"));
-    const table = make("table");
-    table.className = "gear-table";
-    const head = make("thead");
-    const titles = make("tr");
-    for (const title of ["Slot", "Item", "Item level"]) titles.appendChild(make("th", title));
-    head.appendChild(titles);
-    const rowsBox = make("tbody");
-    for (const row of rows) {
-      if (row.filled) gearRow(rowsBox, row.slot);
-      else emptyRow(rowsBox, row.slot);
+    const bySlot = new Map();
+    for (const slot of report.slots) if (slot && typeof slot.slot === "number") bySlot.set(slot.slot, { slot: slot, filled: true });
+    for (const slot of report.empty_slots) {
+      if (slot && typeof slot.slot === "number" && !bySlot.has(slot.slot)) bySlot.set(slot.slot, { slot: slot, filled: false });
     }
-    table.append(head, rowsBox);
-    body.appendChild(table);
+    const placed = new Set(GEAR_COLUMNS.flat());
+    const rest = Array.from(bySlot.keys()).filter((n) => !placed.has(n)).sort((a, b) => a - b);
+    const grid = make("div");
+    grid.className = "gear-grid";
+    GEAR_COLUMNS.forEach((numbers, at) => {
+      const list = make("ul");
+      list.className = at === GEAR_COLUMNS.length - 1 ? "gear-col gear-weapons" : "gear-col";
+      const shown = at === GEAR_COLUMNS.length - 1 ? numbers.concat(rest) : numbers;
+      for (const n of shown) {
+        const row = bySlot.get(n);
+        if (!row) continue;
+        list.appendChild(row.filled ? gearItem(row.slot) : emptyItem(row.slot));
+      }
+      if (list.children.length) grid.appendChild(list);
+    });
+    body.appendChild(grid);
   }
 
-  function emptyRow(box, slot) {
-    const tr = make("tr");
-    tr.className = "gear-row gear-row-empty";
-    const name = make("td", slotLabel(slot));
-    name.className = "gear-slot";
-    const item = make("td", "empty");
-    item.className = "gear-empty";
-    const level = make("td");
-    level.className = "gear-level";
-    tr.append(name, item, level);
-    box.appendChild(tr);
+  // The slot's label, with the quality in words so it does not rest on colour.
+  function gearSlotLine(slot) {
+    const quality = typeof slot.quality === "string" && slot.quality ? " · " + visible(slot.quality) : "";
+    const line = make("span", slotLabel(slot) + quality);
+    line.className = "gear-slot";
+    return line;
   }
 
-  // A filled slot, and its detail row, drawn hidden and shown by a click on
-  // the item's name.
-  function gearRow(box, slot) {
-    const tr = make("tr");
-    tr.className = "gear-row";
-    const slotCell = make("td", slotLabel(slot));
-    slotCell.className = "gear-slot";
-    const itemCell = make("td");
+  function emptyItem(slot) {
+    const li = make("li");
+    li.className = "gear-row gear-row-empty";
+    const main = make("div");
+    main.className = "gear-main";
+    const words = make("div");
+    words.className = "gear-words";
+    const empty = make("span", "Empty");
+    empty.className = "gear-empty";
+    words.append(gearSlotLine(slot), empty);
+    main.appendChild(words);
+    li.appendChild(main);
+    return li;
+  }
+
+  // A filled slot, and its detail, drawn hidden and shown by a click on the
+  // item's name.
+  function gearItem(slot) {
+    const li = make("li");
+    li.className = "gear-row";
+    const main = make("div");
+    main.className = "gear-main";
+    const words = make("div");
+    words.className = "gear-words";
     const name = make("button", visible(String(slot.name)));
     name.type = "button";
     name.className = "gear-name";
     const colour = colourClass(slot.colour);
     if (colour) name.classList.add(colour);
     name.setAttribute("aria-expanded", "false");
-    // The quality in words too, shown beside the name so it does not rest
-    // on colour alone; the word is the record's, from the slot table.
-    if (typeof slot.quality === "string" && slot.quality) {
-      name.title = visible(slot.quality);
-      const quality = make("span", " (" + visible(slot.quality) + ")");
-      quality.className = "gear-quality";
-      name.appendChild(quality);
-    }
-    itemCell.appendChild(name);
-    const level = make("td", numberWords(slot.item_level));
+    if (typeof slot.quality === "string" && slot.quality) name.title = visible(slot.quality);
+    words.append(gearSlotLine(slot), name);
+    main.appendChild(words);
+    const level = make("span");
     level.className = "gear-level";
-    tr.append(slotCell, itemCell, level);
+    if (typeof slot.item_level === "number") {
+      level.append(unseen("item level "), make("span", String(slot.item_level)));
+    }
+    main.appendChild(level);
     const detail = gearDetail(slot);
     name.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
       name.setAttribute("aria-expanded", detail.hidden ? "false" : "true");
     });
-    box.append(tr, detail);
+    li.append(main, detail);
+    return li;
   }
 
   function gearDetail(slot) {
-    const tr = make("tr");
-    tr.className = "gear-detail";
-    tr.hidden = true;
-    const cell = make("td");
-    cell.colSpan = 3;
+    const box = make("div");
+    box.className = "gear-detail";
+    box.hidden = true;
     const list = make("dl");
+    charFact(list, "Item level", numberWords(slot.item_level));
     charFact(list, "Item id", typeof slot.item_id === "number" ? String(slot.item_id) : "not in the link");
     const code = visible(String(slot.colour));
     charFact(
@@ -1722,9 +1860,85 @@
     raw.className = "gear-link";
     link.append(raw, copyButton(String(slot.raw_link), "Copy this item link"));
     list.appendChild(link);
-    cell.appendChild(list);
-    tr.appendChild(cell);
-    return tr;
+    box.appendChild(list);
+    return box;
+  }
+
+  // ─── the professions (M18-05): the card row's, as bars ───
+
+  function drawProfessions() {
+    const box = byId("char-profs");
+    const entry = character.entry;
+    if (!entry || !character.gear) return;
+    const row = hubRowOf(entry);
+    box.replaceChildren();
+    if (!row) {
+      box.appendChild(charLine(hub.report ? "Not listed under All characters." : "Reading…", "char-none"));
+      return;
+    }
+    const list = Array.isArray(row.professions) ? objects(row.professions) : null;
+    if (list === null) {
+      box.appendChild(charLine("Not recorded for this character.", "char-none"));
+      return;
+    }
+    if (!list.length) {
+      box.appendChild(charLine("No professions yet.", "char-none"));
+      return;
+    }
+    const bars = make("div");
+    bars.className = "char-profs";
+    for (const p of list) bars.appendChild(cardProfession(p));
+    box.appendChild(bars);
+  }
+
+  // ─── the action bar (M18-05): keys 1 to 0, from `char binds` ───
+  const BAR_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+
+  // What a slot holds, in the player's words; the report's `does` has the ids.
+  function holdsWords(row) {
+    if (!row) return "Not bound";
+    if (typeof row.slot !== "number") return "Another command";
+    const holds = row.holds && typeof row.holds === "object" ? row.holds : null;
+    if (!holds) return "Empty";
+    if (holds.type === "spell") {
+      if (!hubStr(holds.name)) return "A spell";
+      return visible(holds.name) + (hubStr(holds.subtext) ? " (" + visible(holds.subtext) + ")" : "");
+    }
+    if (holds.type === "macro") return "A macro";
+    if (holds.type === "item") return "An item";
+    if (holds.type === "flyout") return "A spell flyout";
+    if (holds.type === "equipmentset") return "An equipment set";
+    return "Something";
+  }
+
+  // The row the key presses on the action bar: one with a slot first.
+  function barRow(report, key) {
+    const rows = objects(report.keys).filter((r) => r.key === key);
+    return rows.find((r) => typeof r.slot === "number") || rows[0] || null;
+  }
+
+  function drawActionBar(report) {
+    const box = byId("char-bar");
+    box.replaceChildren();
+    if (typeof report.cannot_place === "string") {
+      box.appendChild(charLine("The action bars were not recorded for this character.", "char-none"));
+      return;
+    }
+    const list = make("ol");
+    list.className = "char-bar";
+    for (const key of BAR_KEYS) {
+      const row = barRow(report, key);
+      const item = make("li");
+      item.className = "bar-key";
+      const cap = make("span", key);
+      cap.className = "bar-cap";
+      const words = make("span", holdsWords(row));
+      words.className = "bar-does";
+      if (!row || !row.holds) item.classList.add("bar-key-empty");
+      item.append(cap, words);
+      list.appendChild(item);
+    }
+    box.appendChild(list);
   }
 
   // ─── the dressing-room link (M15-02, §16.3's amendment of 2026-10-19) ───
@@ -1752,6 +1966,8 @@
     link.removeAttribute("href");
     link.hidden = true;
     link.title = "";
+    link.textContent = "See it dressed";
+    byId("char-dressing-short").textContent = "";
     byId("char-dressing-note").textContent = "";
     byId("char-dressing-items").replaceChildren();
     byId("char-dressing-items").hidden = true;
@@ -1770,10 +1986,15 @@
           "The dressing-room address in the report is not one this page links to, so no link is shown.";
         return;
       }
+      const site = visible(String(dressing.site));
       const link = byId("char-dressing-link");
       link.href = checked;
-      link.title = "Opens " + visible(String(dressing.site)) + "'s dressing room in a new tab";
+      link.title = "Opens " + site + "'s dressing room in a new tab";
+      link.textContent = "See it dressed on " + site;
       link.hidden = false;
+      // One short line beside the link; what the address carries (the
+      // report's note) is under About this data.
+      byId("char-dressing-short").textContent = "Opens " + site + " in your browser; wowlab sends nothing.";
       byId("char-dressing-note").textContent = note;
       return;
     }
@@ -1901,10 +2122,12 @@
     const report = reply.data;
     if (reply.error || !report || !Array.isArray(report.keys) || !Array.isArray(report.unreached_slots)) {
       charError(byId("char-keys"), reply, "char binds");
+      byId("char-bar").replaceChildren(charLine("The keys could not be read. Keybinds says why.", "char-none"));
       return;
     }
     character.binds = { report: report, rows: null, count: null, shared: new Set() };
     drawKeys(report);
+    drawActionBar(report);
   }
 
   function drawKeys(report) {
@@ -2199,7 +2422,7 @@
   // address. Nothing is fetched from it.
   const SVG_NS = "http://www.w3.org/2000/svg";
   // The chart's drawing box, in its own units: the SVG scales to the panel.
-  const CHART = { width: 640, height: 150, left: 56, right: 16, top: 14, bottom: 26 };
+  const CHART = { width: 360, height: 110, left: 10, right: 10, top: 10, bottom: 12 };
 
   const HISTORY_FEW =
     "History appears once there are two different saves of this character (the file in the game " +
@@ -2215,6 +2438,9 @@
     const report = reply.data;
     if (!report || !Array.isArray(report.rows)) {
       charError(byId("char-history"), reply, "char history");
+      const why = "The saves could not be read. About this data says why.";
+      byId("char-progress").replaceChildren(charLine(why, "char-none"));
+      byId("char-changes").replaceChildren();
       return;
     }
     drawHistory(report);
@@ -2270,34 +2496,15 @@
           ": likely restored, so this time is when it was put back.";
   }
 
-  // One step per save, so the line's slope is not a rate.
-  const STEPS = ", one step per save (not spaced by time).";
-
-  // One chart: a line through each save's value (broken where a save does
-  // not record it), a dot on each value, the lowest and highest value at the
-  // left, and the first and last save's dates under it, one step per save.
-  // The caption says the same in words; with fewer than two values it is the
-  // caption alone.
-  function historyChart(title, values, rows, shownAs) {
-    const box = make("div");
-    box.className = "history-chart";
+  // The Progress card's chart (M18-05): the level at each save, one step
+  // per save (not spaced by time), a dot on each, broken where a save does
+  // not record it. The figures above it say the same in words, so the chart
+  // is hidden from screen readers.
+  function progressChart(values) {
     const known = values.filter((v) => v !== null);
-    if (known.length < 2) {
-      const few = title + ": recorded in " + known.length + " of " + count(values.length, "save", "saves");
-      box.appendChild(charLine(few + ", too few to draw.", "char-none"));
-      return box;
-    }
+    if (known.length < 2) return null;
     const low = Math.min(...known);
     const high = Math.max(...known);
-    // Two values that read the same once rounded are written exactly.
-    const exact = low !== high && shownAs(low) === shownAs(high);
-    const lowText = exact ? String(low) : shownAs(low);
-    const highText = exact ? String(high) : shownAs(high);
-    const range =
-      low === high
-        ? ": " + lowText + " in every save that records it"
-        : ": lowest " + lowText + ", highest " + highText;
-    box.appendChild(charLine(title + range + STEPS, "history-caption"));
     const c = CHART;
     const across = c.width - c.left - c.right;
     const down = c.height - c.top - c.bottom;
@@ -2309,8 +2516,8 @@
     chart.setAttribute("aria-hidden", "true");
     chart.classList.add("history-svg");
     const axis = document.createElementNS(SVG_NS, "polyline");
-    const corner = [[c.left, c.top], [c.left, c.top + down], [c.left + across, c.top + down]];
-    axis.setAttribute("points", corner.map(([x, y]) => fixed(x) + "," + fixed(y)).join(" "));
+    const base = [[c.left, c.top + down], [c.left + across, c.top + down]];
+    axis.setAttribute("points", base.map(([x, y]) => fixed(x) + "," + fixed(y)).join(" "));
     axis.classList.add("history-axis");
     chart.appendChild(axis);
     let run = [];
@@ -2340,21 +2547,160 @@
       dot.classList.add("history-dot");
       chart.appendChild(dot);
     });
-    const label = (text, x, y, atEnd) => {
-      const node = document.createElementNS(SVG_NS, "text");
-      node.setAttribute("x", fixed(x));
-      node.setAttribute("y", fixed(y));
-      node.classList.add("history-label");
-      if (atEnd) node.classList.add("history-end");
-      node.textContent = text;
-      chart.appendChild(node);
-    };
-    label(highText, c.left - 8, c.top + 5, true);
-    if (high !== low) label(lowText, c.left - 8, c.top + down + 5, true);
-    label(dayOf(rows[0].saved_at_ns), c.left, c.height - 6, false);
-    label(dayOf(rows[rows.length - 1].saved_at_ns), c.left + across, c.height - 6, true);
-    box.appendChild(chart);
+    return chart;
+  }
+
+  // The figures of two saves: "4.7 → 8.2", with the gain beside it.
+  function progressFigure(word, was, now, shownAs) {
+    const box = make("div");
+    box.className = "progress-figure";
+    const label = make("span", word);
+    label.className = "progress-word";
+    box.appendChild(label);
+    let text;
+    if (now === null) text = "—";
+    else if (was === null || was === now) text = shownAs(now);
+    else {
+      const pair = shownAs === oneDecimal ? twoDecimals(was, now) : [shownAs(was), shownAs(now)];
+      text = pair[0] + " → " + pair[1];
+    }
+    const value = make("span", text);
+    value.className = "progress-value";
+    box.appendChild(value);
+    if (was !== null && now !== null && now !== was) {
+      const diff = now - was;
+      // A change too small to show rounded is written exactly, never "+0.0".
+      const size = Math.abs(diff);
+      const rounded = shownAs(size);
+      const words = Number(rounded) === 0 ? String(Math.round(size * 10000) / 10000) : rounded;
+      const gain = make("span", (diff > 0 ? "+" : "−") + words);
+      gain.className = diff > 0 ? "progress-gain" : "progress-loss";
+      box.appendChild(gain);
+    }
     return box;
+  }
+
+  // The first and the last value the saves record, oldest first.
+  function firstLast(values) {
+    const known = values.filter((v) => v !== null);
+    if (!known.length) return [null, null];
+    return [known[0], known[known.length - 1]];
+  }
+
+  function drawProgress(rows) {
+    const box = byId("char-progress");
+    box.replaceChildren();
+    if (!rows.length) {
+      box.appendChild(charLine("No save of this character could be read. About this data says why.", "char-none"));
+      return;
+    }
+    const levels = rows.map((r) => historyNum(r.level));
+    const ilvls = rows.map((r) => historyNum(r.item_level));
+    const [levelWas, levelNow] = firstLast(levels);
+    const [ilvlWas, ilvlNow] = firstLast(ilvls);
+    const several = rows.length > 1;
+    const figures = make("div");
+    figures.className = "progress-figures";
+    figures.append(
+      progressFigure("Level", several ? levelWas : null, levelNow, String),
+      progressFigure("Item level", several ? ilvlWas : null, ilvlNow, oneDecimal),
+    );
+    box.appendChild(figures);
+    if (!several) {
+      box.appendChild(
+        charLine("One save so far. Take a backup after you next log out, and the change shows here.", "progress-caption"),
+      );
+      return;
+    }
+    const chart = progressChart(levels);
+    if (chart) box.appendChild(chart);
+    const span =
+      count(rows.length, "save", "saves") + ", " + playedDay(rows[0].saved_at_ns) + " to " +
+      playedDay(rows[rows.length - 1].saved_at_ns) + ", one step per save";
+    box.appendChild(charLine(span, "progress-caption"));
+  }
+
+  // ─── What changed (M18-05): the saves in plain words, newest first ───
+
+  // An item's name in its quality colour, from its link's colour code.
+  function itemName(item) {
+    const name = make("span", visible(String(item.name)));
+    name.className = "item-name";
+    const colour = colourClass(linkColour(item.link));
+    if (colour) name.classList.add(colour);
+    return name;
+  }
+
+  // A change that put a better item, or any item, in a slot.
+  function isUpgrade(g) {
+    const before = g.before && typeof g.before === "object" ? g.before : null;
+    const after = g.after && typeof g.after === "object" ? g.after : null;
+    if (!after) return false;
+    if (!before) return true;
+    const was = historyNum(before.item_level);
+    const now = historyNum(after.item_level);
+    return was !== null && now !== null && now > was;
+  }
+
+  // At most this many item names in one line; "and N more" after them.
+  const CHANGE_ITEMS = 3;
+
+  function changeLine(row, prev) {
+    const line = make("p");
+    line.className = "change-what";
+    const parts = [];
+    if (historyNum(row.same_bytes_as_ns) !== null) parts.push("Put back from a backup");
+    const was = historyNum(prev.level);
+    const now = historyNum(row.level);
+    if (was !== null && now !== null && now > was) parts.push("Reached level " + now);
+    else if (was !== null && now !== null && now < was) parts.push("Down to level " + now);
+    const specOf = (r) => (r.spec && typeof r.spec.id === "number" ? r.spec.id : null);
+    if (specOf(prev) !== null && specOf(row) !== null && specOf(prev) !== specOf(row)) {
+      parts.push(hubStr(row.spec_name) ? "Switched to " + visible(row.spec_name) : "Switched spec");
+    }
+    const gear = objects(row.gear_changes);
+    const upgrades = gear.filter(isUpgrade);
+    if (gear.length) {
+      const others = gear.length - upgrades.length;
+      if (!upgrades.length) parts.push(count(gear.length, "gear change", "gear changes"));
+      else if (!others) parts.push(count(upgrades.length, "upgrade", "upgrades"));
+      else parts.push(count(upgrades.length, "upgrade", "upgrades") + ", " + count(others, "other gear change", "other gear changes"));
+    }
+    if (!parts.length) parts.push("No change in level or gear");
+    line.appendChild(make("span", parts.join(" · ")));
+    const items = (upgrades.length ? upgrades : gear).filter((g) => g.after && typeof g.after === "object");
+    if (items.length) {
+      line.appendChild(make("span", ": "));
+      items.slice(0, CHANGE_ITEMS).forEach((g, at) => {
+        if (at) line.appendChild(make("span", ", "));
+        line.appendChild(itemName(g.after));
+      });
+      if (items.length > CHANGE_ITEMS) line.appendChild(make("span", " and " + (items.length - CHANGE_ITEMS) + " more"));
+    }
+    return line;
+  }
+
+  function drawChanges(rows) {
+    const box = byId("char-changes");
+    box.replaceChildren();
+    if (rows.length < 2) {
+      const why = rows.length
+        ? "Nothing to compare yet: there is one save of this character."
+        : "Nothing to compare: no save of this character could be read.";
+      box.appendChild(charLine(why, "char-none"));
+      return;
+    }
+    const list = make("ol");
+    list.className = "changes";
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const item = make("li");
+      item.className = "change";
+      const when = make("span", playedDay(rows[i].saved_at_ns) || "");
+      when.className = "change-when";
+      item.append(when, changeLine(rows[i], rows[i - 1]));
+      list.appendChild(item);
+    }
+    box.appendChild(list);
   }
 
   // The charts' values, one row per save, oldest first: what a screen
@@ -2367,7 +2713,7 @@
     wrap.tabIndex = 0;
     const table = make("table");
     table.className = "char-table";
-    table.appendChild(make("caption", "Each save, oldest first: the values the charts draw"));
+    table.appendChild(make("caption", "Each save, oldest first: the values the Progress card draws"));
     const head = make("tr");
     for (const word of ["Saved", "Level", "Equipped item level", "Spec", "Held in"]) {
       const th = make("th", word);
@@ -2549,6 +2895,8 @@
     const box = byId("char-history");
     box.replaceChildren();
     const rows = objects(report.rows).filter((r) => historyNum(r.saved_at_ns) !== null);
+    drawProgress(rows);
+    drawChanges(rows);
     if (rows.length < 2) {
       const so = rows.length
         ? "One save of this character so far, written " + localTime(rows[0].saved_at_ns) + "."
@@ -2561,18 +2909,6 @@
         dayOf(rows[rows.length - 1].saved_at_ns) + ". A time is the file's modification time: when the game " +
         "wrote it at logout or /reload, or when a restore put it back.";
       box.appendChild(charLine(span, "char-count"));
-      const charts = make("div");
-      charts.className = "history-charts";
-      charts.append(
-        historyChart(
-          "Equipped item level (the client's average, as the addon recorded it)",
-          rows.map((r) => historyNum(r.item_level)),
-          rows,
-          oneDecimal,
-        ),
-        historyChart("Level", rows.map((r) => historyNum(r.level)), rows, String),
-      );
-      box.appendChild(charts);
     }
     if (rows.length) box.appendChild(historyTable(rows));
     if (rows.length >= 2) {
@@ -2582,11 +2918,8 @@
     historyMissing(box, report);
     const notes = texts(report.notes);
     if (notes.length) {
-      const more = make("details");
-      more.className = "history-notes";
-      more.appendChild(make("summary", count(notes.length, "note", "notes") + " on what these figures are"));
-      more.appendChild(charNotes(notes));
-      box.appendChild(more);
+      box.appendChild(make("h4", "On what these figures are"));
+      box.appendChild(charNotes(notes));
     }
   }
 
@@ -2801,6 +3134,9 @@
         });
         alone(hubSay, () => takeVersions(report));
         alone(cardsSay, () => takeHome(report));
+        // A character page drawn before this report came gets its card's
+        // professions and name now.
+        alone(charSay, () => drawCharHeader());
         alone(backupSay, () => takeBackups(report));
         alone(patchDaySay, () => takePatchDay(report));
         // The cards' gains are read once the patch-day reads are done, one
@@ -3083,9 +3419,11 @@
   // The views with a tab, in their order; the first is shown when the page opens.
   const TABS = ["account", "character", "explorer", "gaps", "commands", "looks"];
   // Every view's element. Keybinds shows the character page's own element
-  // with its keys panel alone, so the picker and the keys are one.
+  // with its keys and macros panels alone, so the picker and the keys are
+  // one; the character page shows the rest.
   const VIEWS = ["account", "character", "backups", "addons", "explorer", "gaps", "commands", "looks"];
-  const CHARACTER_PANELS = ["char-gear-panel", "char-history-panel", "char-macros-panel"];
+  const CHARACTER_PANELS = ["char-page", "char-about"];
+  const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
   const sectionShown = { characters: "account", advanced: "explorer" };
 
@@ -3113,7 +3451,7 @@
     const keys = name === "keybinds";
     const element = keys ? "character" : name;
     for (const which of VIEWS) byId(which + "-view").hidden = which !== element;
-    byId("char-keys-panel").hidden = !keys;
+    for (const panel of KEYBIND_PANELS) byId(panel).hidden = !keys;
     for (const panel of CHARACTER_PANELS) byId(panel).hidden = keys;
     byId("char-view-title").textContent = keys ? "Keybinds" : "Character";
     if (name === "account" || name === "backups" || name === "addons") {
@@ -3133,6 +3471,10 @@
       showTab(sectionShown[section] || SECTIONS[section][0]));
   }
   for (const which of TABS) byId("tab-" + which).addEventListener("click", () => showTab(which));
+  byId("char-back").addEventListener("click", () => {
+    showTab("account");
+    byId("tab-account").focus();
+  });
 
   // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
   // Above the table of every character: two status cards, then one card per

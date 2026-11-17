@@ -107,7 +107,7 @@ function panelsView() {
     macrosErrors: find(macros, "char-error").map((e) => e.textContent),
     macrosNotes: find(macros, "char-notes").flatMap((ul) => ul.children.map((li) => li.textContent)),
     macrosText: macros.textContent,
-    gearRows: ids["char-gear"].all().filter((e) => e.tagName === "tr" && has(e, "gear-row")).length,
+    gearRows: ids["char-gear"].all().filter((e) => has(e, "gear-row")).length,
     gearErrors: find(ids["char-gear"], "char-error").map((e) => e.textContent),
     gearNames: ids["char-gear"].all().filter((e) => has(e, "gear-name")).map((e) => e._text),
     header: ids["char-header"].all().filter((e) => e.tagName === "h2").map((e) => e.textContent),
@@ -793,7 +793,9 @@ def test_a_late_reply_from_an_earlier_pick_draws_nothing_cross_capture(
     binds = _run_report(scenario, "binds", PICKED)
     gear = _run_report(scenario, "gear", PICKED)
     assert view["header"] == [PICKED.split("/")[1]]
-    assert view["gearNames"] == [s["name"] for s in sorted(gear["slots"], key=lambda s: s["slot"])]
+    # In the character sheet's order (M18-05).
+    in_sheet = sorted(gear["slots"], key=lambda s: gear_tab.SHEET.index(s["slot"]))
+    assert view["gearNames"] == [s["name"] for s in in_sheet]
     assert [r["own"] for r in view["keyRows"]] == [_key_cells(k) for k in binds["keys"]]
     assert [c["name"] for c in view["macros"]] == ["PolyArc"]
     assert view["status"] == ""
@@ -964,7 +966,8 @@ def _character_section() -> str:
 
 def test_the_tab_offers_no_edit_control_and_says_so() -> None:
     section = _character_section()
-    # The four controls: the picker, the text filter and the two checkboxes.
+    # The four controls: the picker, the text filter and the two checkboxes;
+    # and, since M18-05, the button back to All characters, which edits nothing.
     controls = re.findall(r"<(input|select|textarea|button)\b([^>]*)>", section)
     named = []
     for tag, attrs in controls:
@@ -974,6 +977,7 @@ def test_the_tab_offers_no_edit_control_and_says_so() -> None:
         named.append((tag, ident.group(1), kind.group(1) if kind else ""))
     named.sort()
     assert named == [
+        ("button", "char-back", "button"),
         ("input", "char-keys-disagree", "checkbox"),
         ("input", "char-keys-filter", "search"),
         ("input", "char-macros-findings", "checkbox"),

@@ -1,7 +1,7 @@
 /* wowlab ui in the companion design: one dark theme. Every colour is a
    custom property, the design's tokens first under their own names, then
    the few states and verdict colours the page needs besides; no rule below
-   names a colour. Item names keep the client's own colours, which the
+   names a colour. Item names are drawn in their quality's colour, rules the
    server adds from the shipped gear table; this file declares none of them.
    Fonts are the three stacks below; their faces are written after this file
    by the server, and nothing is fetched. */
@@ -50,6 +50,7 @@
   --gear-heading: var(--faint);
   --gear-row-rule: var(--line);
   --gear-detail: var(--surface);
+  --empty-slot: #5b6573;
   --ok-ground: #13281d;
   --accent-ground: #2a2412;
   /* the class colours (COMPANION.md), each with the ground of its level tile
@@ -388,38 +389,93 @@ pre:empty { display: none; }
 .char-facts dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .char-notes { margin: var(--space-2) 0 var(--space-3); padding-left: var(--space-5); color: var(--muted); font-size: 14px; }
 .char-error { color: var(--ruin); overflow-wrap: anywhere; white-space: pre-wrap; }
-.gear-table {
-  width: 100%; max-width: 60rem; border-collapse: collapse;
-  color: var(--gear-text); background: var(--gear-ground); border: 1px solid var(--line); border-radius: var(--radius-row);
+/* the character page (M18-05): the header, then the gear beside the
+   Progress and What changed cards, then the professions and the action bar */
+.char-page { display: flex; flex-direction: column; gap: var(--space-4); }
+.char-back { min-height: 44px; }
+.char-hero { padding: var(--space-5); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-6); }
+#char-header { flex: 1 1 28rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-6); }
+.char-head { display: flex; align-items: center; gap: var(--space-4); min-width: 0; flex: 1 1 18rem; }
+.char-head .card-level { width: 64px; height: 64px; font-size: 26px; }
+.char-who { min-width: 0; }
+.char-name {
+  margin: 0; font-family: var(--font-display); font-size: 30px; line-height: 38px; font-weight: 700;
+  color: var(--text); overflow-wrap: anywhere; unicode-bidi: isolate;
 }
-.gear-table th {
-  text-align: left; padding: var(--space-2) var(--space-3); font-size: 13px;
-  font-weight: 500; color: var(--gear-heading); border-bottom: 1px solid var(--line);
-}
-.gear-table td { padding: var(--space-1) var(--space-3); border-top: 1px solid var(--gear-row-rule); vertical-align: baseline; }
-.gear-slot { color: var(--gear-muted); white-space: nowrap; }
-.gear-level { text-align: right; font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+.char-head .card-class { font-size: 15px; }
+.char-stats { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-6); }
+.char-stat { display: flex; flex-direction: column-reverse; }
+.char-stat-value { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 28px; font-weight: 600; color: var(--text); }
+.char-stat-word { color: var(--faint); font-size: 13px; }
+.char-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--space-4); align-items: start; }
+.char-side { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.gear-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-4); }
+.gear-col { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.gear-weapons { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: var(--space-2) var(--space-4); padding-top: var(--space-2); border-top: 1px solid var(--line); }
+.gear-row { min-width: 0; padding: var(--space-2) var(--space-3); background: var(--gear-ground); border: 1px solid var(--line); border-radius: var(--radius-row); }
+.gear-row-empty { border-style: dashed; border-color: var(--empty-slot); }
+.gear-main { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.gear-words { display: flex; flex-direction: column; min-width: 0; }
+.gear-slot { color: var(--faint); font-size: 12px; line-height: 16px; }
+.gear-level { flex: none; color: var(--muted); font-family: var(--font-display); font-weight: 600; font-size: 15px; }
 .gear-name {
-  font-family: var(--font-text); font-size: 19px; line-height: 26px; font-weight: 700; text-align: left; cursor: pointer;
+  font-family: var(--font-text); font-size: 15px; line-height: 22px; font-weight: 600; text-align: left; cursor: pointer;
   padding: 0; color: var(--gear-text); background: none; border: none; overflow-wrap: anywhere; unicode-bidi: isolate;
 }
 .gear-name[aria-expanded="true"] { text-decoration: underline; text-underline-offset: 3px; }
-/* the quality in words beside the name, so it does not rest on colour alone */
-.gear-quality { margin-left: var(--space-2); color: var(--gear-muted); font-size: 14px; font-weight: 400; white-space: nowrap; }
-.gear-empty { color: var(--gear-muted); font-style: italic; }
-.gear-detail td { padding: var(--space-2) var(--space-3) var(--space-3) var(--space-6); background: var(--gear-detail); color: var(--gear-text); }
-.gear-detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-4); }
+.gear-empty { color: var(--faint); font-size: 15px; line-height: 22px; }
+.gear-detail { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); color: var(--gear-text); font-size: 14px; }
+.gear-detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); }
 .gear-detail dt { color: var(--gear-heading); font-weight: 500; }
-.gear-detail dd { margin: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.gear-detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .gear-link { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; unicode-bidi: isolate; }
-/* a secondary button on the gear's own dark ground, in the gear's colours */
-.gear-table .copy { margin-left: var(--space-3); color: var(--gear-text); background: transparent; border-color: var(--line-strong); }
-.gear-table .copy:hover { background: var(--gear-detail); }
+.gear-detail .copy { margin-left: var(--space-3); color: var(--gear-text); background: transparent; border-color: var(--line-strong); }
+.gear-detail .copy:hover { background: var(--gear-detail); }
+/* an item name in a sentence (What changed), in its quality colour */
+.item-name { font-weight: 600; unicode-bidi: isolate; }
+.progress-figures { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6); }
+.progress-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); }
+.progress-word { flex-basis: 100%; color: var(--faint); font-size: 13px; }
+.progress-value { font-family: var(--font-display); font-size: 22px; line-height: 28px; font-weight: 600; color: var(--text); }
+.progress-gain { color: var(--ok); font-weight: 600; }
+.progress-loss { color: var(--muted); font-weight: 600; }
+.progress-caption { margin: var(--space-2) 0 0; color: var(--muted); font-size: 14px; }
+#char-progress .history-svg { margin-top: var(--space-3); max-width: 28rem; }
+.changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.change { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: var(--space-3); padding-left: var(--space-3); border-left: 2px solid var(--line-strong); }
+.change-when { color: var(--faint); font-size: 13px; line-height: 22px; white-space: nowrap; }
+.change-what { margin: 0; overflow-wrap: anywhere; }
+.char-profs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr)); gap: var(--space-3) var(--space-5); font-size: 14px; }
+.char-bar { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); gap: var(--space-2); }
+.bar-key { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-1) var(--space-2); background: var(--bar); border: 1px solid var(--line); border-radius: var(--radius-row); }
+.bar-cap {
+  flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-weight: 700; color: var(--accent); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+}
+.bar-does { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.bar-key-empty .bar-does { color: var(--faint); }
+.char-bar-more { margin: var(--space-3) 0 0; color: var(--muted); font-size: 14px; }
+.char-about h3 { margin: var(--space-4) 0 var(--space-2); font-family: var(--font-display); font-size: 16px; line-height: 22px; font-weight: 600; color: var(--text); }
+.char-about h4 { margin: var(--space-3) 0 var(--space-1); font-size: 15px; font-weight: 600; color: var(--text); }
+.char-about .char-facts { color: var(--text); }
+@media (max-width: 60rem) {
+  .char-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 40rem) {
+  .gear-grid { grid-template-columns: minmax(0, 1fr); }
+  .char-hero { padding: var(--space-4); }
+  .char-name { font-size: 24px; line-height: 30px; }
+}
 /* the dressing-room link under the gear: a link drawn as a secondary
    button, its note, or the item ids to copy when there is no link */
 .char-dressing { margin-top: var(--space-3); max-width: 60rem; }
 .dressing-link { min-height: 44px; padding: 0 var(--space-4); }
-.dressing-note { margin: var(--space-2) 0 0; font-size: 14px; overflow-wrap: anywhere; }
+/* the outbound mark after the link's words, with no text of its own for a screen reader */
+.dressing-link::after { content: "\2197" / ""; margin-left: var(--space-2); }
+.char-dress { flex-basis: 100%; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.dressing-short { color: var(--muted); font-size: 13px; }
+.dressing-short:empty { display: none; }
+.dressing-note { margin: var(--space-2) 0 0; max-width: 60rem; overflow-wrap: anywhere; }
 .dressing-ids { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
 .dressing-items .copy { margin-left: var(--space-3); }
 /* the keys and macros panels: the files and record they read, a table of
@@ -468,18 +524,13 @@ pre:empty { display: none; }
 .macro-findings, .macro-slots { padding-left: var(--space-5); }
 .macro-finding { color: var(--ruin); }
 .macro-clean { margin: var(--space-1) 0; color: var(--muted); }
-/* the history panel (M17-03): two small charts, the table that carries the
-   same values, and the changes, newest first. The charts take their colours
-   from the tokens through their classes, and scale to the panel. */
-.history-charts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-2) 0 var(--space-3); }
-.history-chart { flex: 1 1 18rem; min-width: 0; max-width: 40rem; }
-.history-caption { margin: 0 0 var(--space-1); color: var(--text); }
+/* the saves (M17-03): the Progress card's chart, which takes its colours
+   from the tokens through its classes and scales to the card, and, under
+   About this data, the table of every save and the changes, newest first. */
 .history-svg { display: block; width: 100%; height: auto; }
 .history-axis { fill: none; stroke: var(--line-strong); stroke-width: 1; }
 .history-line { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linejoin: round; }
 .history-dot { fill: var(--accent); }
-.history-label { fill: var(--muted); font-family: var(--font-mono); font-size: 12px; }
-.history-end { text-anchor: end; }
 .history-table { max-width: 100%; overflow-x: auto; margin: 0 0 var(--space-3); }
 .history-table caption { text-align: left; color: var(--muted); padding: 0 0 var(--space-1); }
 .history-table th[scope="row"] { font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap; }
@@ -498,6 +549,10 @@ pre:empty { display: none; }
 /* A word wraps only between words: a narrow column grows, and the box
    scrolls sideways, rather than break a class, spec or flavor mid-word. */
 .char-table.hub td, .char-table.hub .hub-open, .char-table.hub .hub-advice code { overflow-wrap: normal; word-break: normal; hyphens: manual; }
+/* The same in the Keybinds table: "What it does" wraps between words, and a
+   narrow window scrolls the table's own box rather than break a word. */
+#char-keys .char-table td { overflow-wrap: normal; word-break: normal; hyphens: manual; }
+#char-keys .key-does { min-width: 12rem; }
 .hub-sort, .hub-open {
   padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
   font: inherit; letter-spacing: inherit; color: inherit;
@@ -751,8 +806,6 @@ pre:empty { display: none; }
   .toolbar label { flex-wrap: wrap; min-width: 0; max-width: 100%; }
   .toolbar select, .run-flavor select { max-width: 100%; }
   .char-panel, .parchment, #detail { padding: var(--space-3); }
-  .gear-table th, .gear-table td { padding-left: var(--space-2); padding-right: var(--space-2); }
-  .gear-detail td { padding-left: var(--space-4); }
   .status-cards { grid-template-columns: minmax(0, 1fr); }
   .status-card, .card-body { padding: var(--space-4); }
 }

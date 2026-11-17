@@ -42,7 +42,8 @@ header. The page shell is template text in this package (`templates/`),
 assembled into one document: a `<script src>` would be a request without the
 token. Its style has two parts that are not template text, both after
 `page.css`: the rules that draw an item name in its quality colour, made
-from the shipped `gear_slots.toml` (the Character tab, M14-08), so neither
+from the shipped `gear_slots.toml` and the companion's quality colours
+(the Character tab, M14-08 and M18-05), so neither
 the script nor the stylesheet holds a colour table; and one `@font-face` per
 pinned font file in `templates/fonts/` (M16-51), its bytes as a base64
 `data:` URL, since a font URL would be a request without the token.
@@ -292,21 +293,40 @@ def _hash_source(text: str) -> str:
     return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
 
 
+# The companion's quality colours (docs/design/COMPANION.md, M18-05), by the
+# shipped slot table's quality word: the game's own blues and purples are
+# too dark to read on the page's dark cards. A word not here keeps the
+# table's colour (`gear.colour_rgb`).
+_QUALITY_COLOURS = {
+    "Poor": "9d9d9d",
+    "Common": "e7eaee",
+    "Uncommon": "3ddc68",
+    "Rare": "4da3ff",
+    "Epic": "b970f7",
+    "Legendary": "ff9a2e",
+}
+
+
 def _colour_rules() -> str:
-    """One rule per colour code of the shipped slot table that has a colour:
-    an item name of that code (class `gear.colour_class`) is drawn in
-    `gear.colour_rgb`'s colour. Only the shipped table is read, never the
-    player's (the page reads nothing from the home folder): a code only the
-    player's table names is drawn in the text colour. Both helpers return
-    only `[0-9a-z_-]` and hex digits, so a rule cannot carry anything else."""
+    """Two rules per colour code of the shipped slot table that has a
+    colour: an item name of that code (class `gear.colour_class`), in the
+    gear (`.gear-name`) and in a sentence (`.item-name`), is drawn in the
+    companion's colour for the code's quality word, else in
+    `gear.colour_rgb`'s. Only the shipped table is read, never the player's
+    (the page reads nothing from the home folder): a code only the player's
+    table names is drawn in the text colour. Both helpers return only
+    `[0-9a-z_-]` and hex digits, so a rule cannot carry anything else."""
     from wowlab_core import gear
 
     table = gear.shipped_slot_table()
     rules = ["/* item names in their quality colour, from the shipped gear_slots.toml */"]
     for code in table.quality:
         name, rgb = gear.colour_class(code), gear.colour_rgb(code, table)
-        if name is not None and rgb is not None:
-            rules.append(f".gear-name.{name} {{ color: #{rgb}; }}")
+        if name is None or rgb is None:
+            continue
+        rgb = _QUALITY_COLOURS.get(table.quality[code], rgb)
+        rules.append(f".gear-name.{name} {{ color: #{rgb}; }}")
+        rules.append(f".item-name.{name} {{ color: #{rgb}; }}")
     return "\n".join(rules) + "\n"
 
 

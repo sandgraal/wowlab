@@ -91,6 +91,13 @@ function charView() {
   const gearBox = ids["char-gear"];
   const picker = ids["char-picker"];
   const named = (tr) => tr.all().find((e) => has(e, "gear-name")) || null;
+  const firstOf = (box, c) => box.all().find((e) => has(e, c)) || null;
+  const textOf = (box, c) => { const e = firstOf(box, c); return e ? e.textContent : null; };
+  // A gear row's three parts: the slot line, the item (or "Empty"), and the
+  // item level as shown (its last span; the first is for screen readers).
+  const levelOf = (li) => { const e = firstOf(li, "gear-level"); return e && e.children.length ? e.children[e.children.length - 1].textContent : ""; };
+  const sources = ids["char-sources"];
+  const hero = ids["char-header"];
   return {
     hidden: ids["character-view"].hidden,
     tabSelected: ids["tab-character"].getAttribute("aria-selected"),
@@ -98,20 +105,33 @@ function charView() {
     statusError: has(ids["char-status"], "error"),
     options: Array.from(picker.options, (o) => ({ text: o.textContent, value: o.value, disabled: o.disabled, title: o.title })),
     pickerDisabled: picker.disabled,
-    header: ids["char-header"].textContent,
-    headerFacts: ids["char-header"].all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e.textContent),
-    headerTitles: ids["char-header"].all().filter((e) => e.tagName === "dd").map((e) => e.title),
-    notes: ids["char-header"].all().filter((e) => e.tagName === "li").map((e) => e.textContent),
+    header: hero.textContent,
+    // The header (M18-05): the level tile, the name, the line under it and
+    // the three figures, word and value.
+    hero: { tile: textOf(hero, "card-level"), name: textOf(hero, "char-name"), who: textOf(hero, "card-class"),
+      look: (firstOf(hero, "char-head") || { className: "" }).className,
+      stats: hero.all().filter((e) => has(e, "char-stat")).map((e) => [textOf(e, "char-stat-word"), textOf(e, "char-stat-value")]) },
+    // What the old header held, under About this data since M18-05.
+    headerFacts: sources.all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e.textContent),
+    headerTitles: sources.all().filter((e) => e.tagName === "dd").map((e) => e.title),
+    notes: sources.all().filter((e) => e.tagName === "li").map((e) => e.textContent),
+    profs: ids["char-profs"].all().filter((e) => has(e, "card-prof")).map((e) => ({ text: e.textContent,
+      fill: (firstOf(e, "bar-fill") || { className: null }).className })),
+    profsText: ids["char-profs"].textContent,
+    bar: ids["char-bar"].all().filter((e) => has(e, "bar-key")).map((e) => [textOf(e, "bar-cap"), textOf(e, "bar-does")]),
+    barText: ids["char-bar"].textContent,
+    columns: gearBox.all().filter((e) => has(e, "gear-col")).map((ul) => ul.children.map((li) => textOf(li, "gear-slot"))),
     gearText: gearBox.textContent,
     errors: gearBox.all().filter((e) => has(e, "char-error")).map((e) => e.textContent),
-    rows: gearBox.all().filter((e) => e.tagName === "tr" && has(e, "gear-row")).map((tr) => {
+    rows: gearBox.all().filter((e) => e.tagName === "li" && has(e, "gear-row")).map((tr) => {
       const name = named(tr);
-      return { cells: tr.children.map((c) => c.textContent), empty: has(tr, "gear-row-empty"),
+      const item = name || firstOf(tr, "gear-empty");
+      return { cells: [textOf(tr, "gear-slot"), item ? item.textContent : null, levelOf(tr)], empty: has(tr, "gear-row-empty"),
         name: name ? name._text : null, nameText: name ? name.textContent : null,
         nameClass: name ? name.className : null, nameTitle: name ? name.title : null,
         expanded: name ? name.getAttribute("aria-expanded") : null };
     }),
-    details: gearBox.all().filter((e) => e.tagName === "tr" && has(e, "gear-detail")).map((tr) => ({
+    details: gearBox.all().filter((e) => has(e, "gear-detail")).map((tr) => ({
       hidden: tr.hidden, text: tr.textContent,
       facts: tr.all().filter((e) => e.tagName === "dt" || e.tagName === "dd").map((e) => e._text),
       link: (tr.all().find((e) => has(e, "gear-link")) || { textContent: null }).textContent,
@@ -294,10 +314,29 @@ def _local(ns: int) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ns // 1_000_000_000))
 
 
-def _in_slot_order(report: dict[str, Any]) -> list[dict[str, Any]]:
+# The character sheet's order (M18-05): the left column, the right column,
+# then the weapons, by the client's slot numbers.
+SHEET = [1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18]
+
+
+def _in_sheet_order(report: dict[str, Any]) -> list[dict[str, Any]]:
     rows = [dict(s, filled=True) for s in report["slots"]]
     rows += [dict(s, filled=False) for s in report["empty_slots"]]
-    return sorted(rows, key=lambda r: r["slot"])
+    return sorted(
+        rows, key=lambda r: (SHEET.index(r["slot"]) if r["slot"] in SHEET else 99, r["slot"])
+    )
+
+
+def _first_drawn(report: dict[str, Any]) -> dict[str, Any]:
+    """The filled slot drawn first: the first in the sheet's order."""
+    slot: dict[str, Any] = min(report["slots"], key=lambda s: SHEET.index(s["slot"]))
+    return slot
+
+
+def _slot_line(slot: dict[str, Any]) -> str:
+    """A gear row's slot line: the slot's name, and the quality in words."""
+    quality = slot.get("quality") if slot["filled"] else None
+    return slot["slot_name"] + (f" · {quality}" if quality else "")
 
 
 def _tab_requests(out: dict[str, Any], start: int) -> list[dict[str, Any]]:
@@ -338,9 +377,11 @@ def test_the_picker_lists_the_characters_latest_written_first(
     labels = [NEWER.split("/")[1], OLDER.split("/")[1]]
     # Listed after every saved one (they have no file time), never picked:
     # disabled, and no read is asked for them, so they get no record panels.
+    # A name alone, with no file time (M18-05); the order is still the
+    # latest written first.
     assert [o["text"] for o in view["options"]] == [
-        f"{labels[0]}, written {_local(NEWER_NS)}",
-        f"{labels[1]}, written {_local(OLDER_NS)}",
+        labels[0],
+        labels[1],
         f"{BARE.split('/')[1]}: no lab record",
         f"{TWIN.split('/')[1]}: <Realm>/<First> folder",
     ]
@@ -385,22 +426,24 @@ def test_the_gear_rows_match_char_gear_for_the_picked_one(
     out = _drive(tmp_path / "node", scenario)
     for step, character in ((out["steps"][0], NEWER), (out["steps"][1], OLDER)):
         report = _report(scenario, character)
-        expected = _in_slot_order(report)
+        expected = _in_sheet_order(report)
         assert len(step["rows"]) == len(expected) == 19, character
+        # Two columns of eight, then the three weapons (M18-05).
+        assert [len(c) for c in step["columns"]] == [8, 8, 3]
         for row, slot in zip(step["rows"], expected, strict=True):
-            assert row["cells"][0] == slot["slot_name"], (character, slot["slot"])
+            assert row["cells"][0] == _slot_line(slot), (character, slot["slot"])
             if not slot["filled"]:
                 assert row["empty"] and row["name"] is None
-                assert row["cells"][1:] == ["empty", ""], (character, slot["slot"])
+                assert row["cells"][1:] == ["Empty", ""], (character, slot["slot"])
                 continue
             assert not row["empty"]
             assert row["name"] == slot["name"]
             assert row["cells"][2] == str(slot["item_level"])
             # The quality colour: the class the server's rules paint, and the
-            # word for a screen reader and a pointer.
+            # word beside it in the slot line and for a pointer.
             assert gear.colour_class(slot["colour"]) in row["nameClass"].split()
             assert row["nameTitle"] == slot["quality"]
-            assert row["nameText"] == f"{slot['name']} ({slot['quality']})"
+            assert row["nameText"] == slot["name"]
             assert row["expanded"] == "false"
         assert all(d["hidden"] for d in step["details"])
     # The second pick asked for the second character, and only for it.
@@ -453,7 +496,8 @@ def test_the_detail_row_carries_the_raw_link_and_copies_it(
     steps = [{"char_tab": True}, {"item": 0}, {"copy_link": 0}, {"item": 0}]
     scenario = _scenario(server, steps, [NEWER])
     out = _drive(tmp_path / "node", scenario)
-    first = _report(scenario, NEWER)["slots"][0]
+    # The first item drawn: the first filled slot in the sheet's order.
+    first = _first_drawn(_report(scenario, NEWER))
     opened = out["steps"][1]
     assert (
         opened["rows"][[r["name"] for r in opened["rows"]].index(first["name"])]["expanded"]
@@ -470,7 +514,9 @@ def test_the_detail_row_carries_the_raw_link_and_copies_it(
     assert facts["Enchant"] == ("none" if first["enchant_id"] is None else str(first["enchant_id"]))
     assert facts["Gems"] == (", ".join(map(str, first["gem_ids"])) or "none")
     assert facts["Bonus ids"] == (", ".join(map(str, first["bonus_ids"])) or "none")
-    assert first["bonus_ids"], "the capture's first item has bonus ids"
+    # The sheet's first item (the back, since M18-05) has none; the capture's
+    # items do.
+    assert any(s["bonus_ids"] for s in _report(scenario, NEWER)["slots"])
     copied = out["steps"][2]
     assert copied["clipboard"] == [first["raw_link"]]
     assert copied["newRequests"] == [], "copying runs nothing"
@@ -490,9 +536,12 @@ def test_the_tab_runs_only_the_four_char_reads(server: Any, timed: Path, tmp_pat
         if body["command"] != ["char", "list"]:
             assert body["params"] in (_gear_params(NEWER), _gear_params(OLDER)), body
         else:
-            assert body["params"] == LIST_PARAMS, body
-    # `char list` is read once, however often the tab is used.
-    assert sum(1 for b in asked if b["command"] == ["char", "list"]) == 1
+            assert body["params"] in (LIST_PARAMS, {"summary": True}), body
+    # `char list` is read once, however often the tab is used. All
+    # characters' own read (`--summary`) may be asked for again when the
+    # page's back button shows it (M18-05); the harness holds no reply for it.
+    brief = [b for b in asked if b["command"] == ["char", "list"] and b["params"] == LIST_PARAMS]
+    assert len(brief) == 1
     # Every request the page made in the whole run is one the page makes
     # anyway (the command list, the explorer's tree) or one of the five.
     for request in out["requests"]:
@@ -600,15 +649,16 @@ def test_hostile_item_text_draws_as_inert_text_constructed(
     scenario = _scenario(server, [{"char_tab": True}, {"item": 0}], [NEWER])
     report = _report(scenario, NEWER)
     hostile = IMG + RLO + "x" + LSEP + "</script>"
-    report["slots"][0]["name"] = hostile
-    report["slots"][0]["raw_link"] = "|cnIQ2:|Hitem:1|h[" + hostile + "]|h|r"
-    report["slots"][0]["slot_name"] = "<b>" + RLO
-    report["slots"][0]["colour"] = 'x" onclick="y'
-    report["slots"][0]["quality"] = "<i>q</i>"
+    slot = _first_drawn(report)  # the item `{"item": 0}` opens
+    slot["name"] = hostile
+    slot["raw_link"] = "|cnIQ2:|Hitem:1|h[" + hostile + "]|h|r"
+    slot["slot_name"] = "<b>" + RLO
+    slot["colour"] = 'x" onclick="y'
+    slot["quality"] = "<i>q</i>"
     _set_report(scenario, NEWER, report)
     out = _drive(tmp_path / "node", scenario)
     row = out["steps"][1]["rows"][
-        [r["cells"][0] for r in out["steps"][1]["rows"]].index("<b>⟨U+202E⟩")
+        [r["cells"][0] for r in out["steps"][1]["rows"]].index("<b>⟨U+202E⟩ · <i>q</i>")
     ]
     assert row["name"] == IMG + "⟨U+202E⟩x⟨U+2028⟩</script>"
     # A colour code no slot table could hold gets no class at all.
@@ -746,9 +796,16 @@ def test_the_colour_rules_are_made_from_the_shipped_table(server: Any) -> None:
     for code in table.quality:
         rgb = gear.colour_rgb(code, table)
         if rgb is not None:
-            expected[gear.colour_class(code)] = rgb
+            # COMPANION.md's colour for the quality word, else the table's (M18-05).
+            expected[gear.colour_class(code)] = ui._QUALITY_COLOURS.get(table.quality[code], rgb)
     assert rules == expected
-    assert rules["colour-niq4_"] == rules["colour-ffa335ee"] == "a335ee"  # Epic
+    assert rules["colour-niq4_"] == rules["colour-ffa335ee"] == "b970f7"  # Epic
+    assert rules["colour-niq3_"] == "4da3ff" and rules["colour-niq2_"] == "3ddc68"
+    # The same colours for an item named in a sentence (What changed).
+    sentence = dict(
+        re.findall(r"\.item-name\.(colour-[0-9a-z_]+) \{ color: #([0-9a-f]{6}); \}", style)
+    )
+    assert sentence == rules
     assert "colour-niq8_" not in rules  # WoW Token: no hex code in the table
     # Every colour the captures hold has a rule.
     for code in ("nIQ0:", "nIQ1:", "nIQ2:"):
@@ -756,32 +813,29 @@ def test_the_colour_rules_are_made_from_the_shipped_table(server: Any) -> None:
 
 
 def test_the_colour_rules_read_on_the_gear_backing() -> None:
-    """The names are bold and large (WCAG AA for large text, 3:1) on the
-    gear table's own dark backing, in both schemes. The backing is
-    `var(--gear-ground)` (M16-52), declared under `:root` and in no scheme
-    block, so it is the same in both."""
+    """Since M18-05 the names are body text (15 px), in COMPANION.md's
+    quality colours, so each needs 4.5:1 (WCAG AA) on the gear row's own
+    dark backing and, named in What changed, on the card's surface. The
+    backing is `var(--gear-ground)` (M16-52), declared under `:root` and in
+    no scheme block, so it is the same in both."""
     css = first_stage._css()
-    table = re.search(r"\.gear-table \{([^}]*)\}", css)
-    assert table is not None
-    ground = re.search(r"background:\s*var\((--[\w-]+)\)\s*;", table.group(1))
+    row = re.search(r"\.gear-row \{([^}]*)\}", css)
+    assert row is not None
+    ground = re.search(r"background:\s*var\((--[\w-]+)\)\s*;", row.group(1))
     assert ground is not None and ground.group(1) == "--gear-ground"
     root = first_stage._root_vars(css)
     backing = root.get("--gear-ground", "")
     assert re.fullmatch(r"#[0-9a-fA-F]{6}", backing), backing
     assert css.count("--gear-ground:") == 1, "the gear backing is one colour in every scheme"
-    name = re.search(r"\.gear-name \{([^}]*)\}", css)
-    assert name is not None
-    assert "font-weight: 700" in name.group(1)
-    size = re.search(r"font-size:\s*([0-9.]+)(rem|px)", name.group(1))
-    assert size is not None
-    px = float(size.group(1)) * (16 if size.group(2) == "rem" else 1)
-    assert px >= 18.66
-    shipped = gear.shipped_slot_table()
-    for code in shipped.quality:
-        rgb = gear.colour_rgb(code, shipped)
-        if rgb is not None:
-            ratio = first_stage._contrast("#" + rgb, backing)
-            assert ratio >= 3, (code, rgb, round(ratio, 2))
+    surface = root.get("--surface", "")
+    assert re.fullmatch(r"#[0-9a-fA-F]{6}", surface), surface
+    style = ui._colour_rules()
+    colours = set(re.findall(r"color: #([0-9a-f]{6});", style))
+    assert colours
+    for rgb in colours:
+        for ground_colour in (backing, surface):
+            ratio = first_stage._contrast("#" + rgb, ground_colour)
+            assert ratio >= 4.5, (rgb, ground_colour, round(ratio, 2))
 
 
 # ─── the colour helpers ──────────────────────────────────────────────────────

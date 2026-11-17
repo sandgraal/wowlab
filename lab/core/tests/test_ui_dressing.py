@@ -66,6 +66,10 @@ function dressingView() {
     href: typeof link.href === "string" ? link.href : null,
     hrefAttr: link.getAttribute("href"),
     linkTitle: link.title,
+    linkText: link.textContent,
+    // The short line beside the link (M18-05); the report's note is under
+    // About this data.
+    short: ids["char-dressing-short"].textContent,
     note: ids["char-dressing-note"].textContent,
     itemsHidden: items.hidden,
     itemsText: items.textContent,
@@ -182,6 +186,8 @@ def test_the_links_href_is_the_reports_url(
     assert view["boxHidden"] is False and view["linkHidden"] is False
     assert view["href"] == report["dressing"]["url"]
     assert view["linkTitle"] == "Opens Wowhead's dressing room in a new tab"
+    assert view["linkText"] == "See it dressed on Wowhead"
+    assert view["short"] == "Opens Wowhead in your browser; wowlab sends nothing."
     assert view["note"] == report["dressing"]["note"]
     assert view["itemsHidden"] is True and view["copies"] == 0
     _only_api(out)
@@ -216,7 +222,8 @@ def test_a_hostile_address_is_left_unrendered_constructed(
     out = _drive(tmp_path / "node", scenario)
     view = out["steps"][-1]
     assert view["href"] is None and view["hrefAttr"] is None
-    assert view["linkHidden"] is True
+    assert view["linkHidden"] is True and view["short"] == ""
+    assert view["linkText"] == "See it dressed"
     assert view["note"] == (
         "The dressing-room address in the report is not one this page links to, so no link "
         "is shown."
@@ -274,6 +281,7 @@ def test_a_later_pick_clears_the_link(server: Any, forever: Path, tmp_path: Path
     first, last = out["steps"][1], out["steps"][3]
     assert first["href"] == ADDRESSES[SANGRAAL] and first["linkHidden"] is False
     assert last["linkHidden"] is True and last["hrefAttr"] is None
+    assert last["short"] == "" and last["linkText"] == "See it dressed"
     assert last["ids"] == ["1 <b>2</b>"]
 
 
