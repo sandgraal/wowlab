@@ -1393,6 +1393,13 @@ class UiServer(http.server.ThreadingHTTPServer):
     serving."""
 
     daemon_threads = True
+    # The listen backlog: connections the system completes before the serve
+    # loop accepts them. `socketserver`'s default is 5. A browser opens
+    # several at once, and each lingering close holds a handler thread, so
+    # when the serve loop is slow to be scheduled (a loaded machine) a sixth
+    # connection was reset or refused by the system, never reaching the
+    # server (M18-16). The system caps this at its own maximum.
+    request_queue_size = socket.SOMAXCONN
     token: str
     boot: str
     url: str

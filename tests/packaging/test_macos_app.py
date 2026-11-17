@@ -809,11 +809,23 @@ def test_the_recorder_refuses_anything_but_one_url(tmp_path: Path, args: list[st
     assert list(tmp_path.iterdir()) == []
 
 
+def _ignore_sigint() -> None:
+    """In the child, before it starts: SIGINT ignored, as a shell without job
+    control leaves it for a command run in the background (`cmd &`)."""
+    import signal
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="the stand-in executable is a POSIX shell script")
-def test_the_smoke_test_passes_against_the_unfrozen_launcher(tmp_path: Path) -> None:
+@pytest.mark.parametrize("started", ["as-is", "in-the-background"])
+def test_the_smoke_test_passes_against_the_unfrozen_launcher(tmp_path: Path, started: str) -> None:
     # A stand-in for the frozen executable: this interpreter running the
     # launcher, so the smoke script and the launcher's argument handling are
     # graded on every platform CI runs; the frozen app runs the same script.
+    # "in-the-background": the smoke script inherits SIGINT ignored, which
+    # its server inherited in turn until M18-16, so Ctrl-C never stopped it
+    # ("exited None after Ctrl-C" whenever the session ran in the background).
     from wowlab_core import __version__
 
     exe = tmp_path / "wowlab"
@@ -835,6 +847,7 @@ def test_the_smoke_test_passes_against_the_unfrozen_launcher(tmp_path: Path) -> 
         text=True,
         timeout=240,
         check=False,
+        preexec_fn=_ignore_sigint if started == "in-the-background" else None,
     )
     assert done.returncode == 0, done.stdout + done.stderr
     for line in (

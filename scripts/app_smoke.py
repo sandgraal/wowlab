@@ -33,11 +33,16 @@ no arguments, as a double-click starts it.
 
 The run gets a home folder of its own in a temporary directory and
 `WOWLAB_WOW_ROOT` pointing at an empty folder, so it never reads a game
-install. On macOS and Linux it never writes into the user's own wowlab data
-either; on Windows the data folder is the system's own known folder, which
-no environment variable moves, so there it runs only on GitHub Actions
+install. Its wowlab data goes into that home folder too: on Windows, where
+the data folder is the system's known folder and `APPDATA` and
+`LOCALAPPDATA` do not move it, through platformdirs' own
+`WIN_PD_OVERRIDE_APPDATA` and `WIN_PD_OVERRIDE_LOCAL_APPDATA` (M18-16). A
+frozen build whose platformdirs ignored them would write into the user's own
+data, so on Windows it still runs only on GitHub Actions
 (`GITHUB_ACTIONS=true`) or with `--allow-real-data-dir`, and otherwise exits
-2 before starting anything. Standard library only. Exit 0 when every check
+2 before starting anything. On macOS and Linux the server gets SIGINT at its
+default, as a terminal gives it, so Ctrl-C stops it even when this script was
+itself started in the background. Standard library only. Exit 0 when every check
 passes; otherwise the first failure is printed and the exit is 1.
 """
 
@@ -93,6 +98,11 @@ def _env(home: Path, wow_root: Path, url_file: Path, browser: str) -> dict[str, 
             "XDG_CACHE_HOME": str(home / "cache"),
             "LOCALAPPDATA": str(home / "local"),
             "APPDATA": str(home / "roaming"),
+            # On Windows platformdirs ignores the two above and asks the
+            # system for the known folder; only its own overrides move it
+            # (M18-14, M18-16).
+            "WIN_PD_OVERRIDE_LOCAL_APPDATA": str(home / "local"),
+            "WIN_PD_OVERRIDE_APPDATA": str(home / "roaming"),
             "WOWLAB_WOW_ROOT": str(wow_root),
             "BROWSER": browser,
             "WOWLAB_SMOKE_URL_FILE": str(url_file),
@@ -168,6 +178,7 @@ def check_ui(exe: Path, env: dict[str, str], url_file: Path) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if WINDOWS else 0,
+        preexec_fn=None if WINDOWS else _console_sigint,
     )
     try:
         url = _wait_for_url(url_file, server)
@@ -219,6 +230,18 @@ def check_ui(exe: Path, env: dict[str, str], url_file: Path) -> None:
     print("ok: wowlab ui stopped on Ctrl-C (exit 0)")
 
 
+def _console_sigint() -> None:
+    """In the server's process, before it starts: SIGINT back to its default,
+    as a terminal's foreground program has it. A program started in the
+    background by a shell without job control (`cmd &`, a background tool
+    session) inherits SIGINT ignored, and so does everything it starts;
+    Python then installs no KeyboardInterrupt handler, Ctrl-C does nothing,
+    and the stop check failed with `exited None` however idle the machine
+    was (M18-16). This script stands in for a console, so it gives the server
+    a console's Ctrl-C whatever it was itself started from."""
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
 def _stop(server: subprocess.Popen[bytes]) -> int | None:
     """Stop the server as a console does (Ctrl-C, SIGINT; on Windows
     Ctrl-Break to its process group) and wait; its exit code, or None when it
@@ -260,8 +283,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if WINDOWS and os.environ.get("GITHUB_ACTIONS") != "true" and not args.allow_real_data_dir:
         print(
-            "app_smoke: on Windows the build writes into this user's own wowlab data folder "
-            "(the system's known folder, which no environment variable moves); run it on "
+            "app_smoke: on Windows a build that ignores platformdirs' overrides writes into "
+            "this user's own wowlab data folder (the system's known folder); run it on "
             "GitHub Actions, or pass --allow-real-data-dir to accept that",
             file=sys.stderr,
         )

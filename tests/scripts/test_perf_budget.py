@@ -226,9 +226,17 @@ def test_constructed_the_sandbox_redirects_home_and_user_data(tmp_path: Path) ->
         "XDG_CONFIG_HOME",
         "XDG_CACHE_HOME",
         "XDG_STATE_HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        # platformdirs on Windows moves only with these (M18-16).
+        "WIN_PD_OVERRIDE_APPDATA",
+        "WIN_PD_OVERRIDE_LOCAL_APPDATA",
         "WOWLAB_WOW_ROOT",
     ):
         assert Path(env[key]).is_relative_to(tmp_path), key
+    assert env["WIN_PD_OVERRIDE_APPDATA"] == env["APPDATA"]
+    assert env["WIN_PD_OVERRIDE_LOCAL_APPDATA"] == env["LOCALAPPDATA"]
     flavor = root / perf_budget.FLAVOR_FOLDER
     constructed = list(flavor.rglob("Constructed*.lua")) + list(flavor.rglob("f*.lua"))
     assert len({p for p in constructed if b"constructed" in p.read_bytes()}) == 16
