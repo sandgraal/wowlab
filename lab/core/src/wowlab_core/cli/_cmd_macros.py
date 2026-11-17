@@ -1,6 +1,7 @@
 """`wowlab macros list`, `macros check` (M16-111) and `macros fix` (M13-07)."""
 
 import hashlib
+import shlex
 from collections.abc import Callable, Sequence
 from typing import Annotated
 
@@ -327,6 +328,8 @@ def macros_check(
             f'"{finding.name}" (line {finding.line}): {_player_copy(finding.detail)}{fix}',
             indent="  ",
             hang="    ",
+            # The hint's option values, as quoted: never broken across lines.
+            keep=[shlex.quote(v) for v in (account, character) if v is not None],
         )
     _say(f"Cannot judge: {len(report.cannot_judge)}")
     for c in report.cannot_judge:
@@ -361,10 +364,11 @@ def _fix_hint(scope: macrocheck.MacroScope, account: str | None, character: str 
     options `macros check` was given: bare `macros fix` writes only the
     account's file."""
     words = ["wowlab macros fix"]
+    # Quoted for a shell: a realm folder name can hold a space.
     if scope == "character" and character is not None:
-        words.append(f"--character {character}")
+        words.append(f"--character {shlex.quote(character)}")
     if account is not None:
-        words.append(f"--account {account}")
+        words.append(f"--account {shlex.quote(account)}")
     return f"{' '.join(words)} moves it to the first line"
 
 

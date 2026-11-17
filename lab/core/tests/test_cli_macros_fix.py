@@ -357,6 +357,30 @@ def test_the_hint_names_the_options_that_reach_the_file_constructed(flavor: Path
     assert not [f for f in rep.findings if f.rule == "showtooltip-not-first"]
 
 
+def test_the_hint_quotes_a_realm_folder_with_a_space_constructed(flavor: Path) -> None:
+    """A realm folder named with a space (constructed): the hint quotes it for
+    a shell, keeps it on one line at any width, and the quoted command works."""
+    folder = flavor / ACCOUNT_DIR / "Lab Realm" / "Labchar"
+    folder.mkdir(parents=True)
+    (folder / "macros-cache.txt").write_bytes(
+        _macro(1, "Mac spaced", "/cast Fear", "#showtooltip Fear")
+    )
+    spec = "Lab Realm/Labchar"
+    hint = "wowlab macros fix --character 'Lab Realm/Labchar' moves it to the first line"
+    wide = ok("macros", "check", "--character", spec).stdout
+    assert f"({hint})" in wide
+    narrow = runner.invoke(cli.app, ["macros", "check", "--character", spec], terminal_width=40)
+    assert narrow.exit_code == 0, narrow.stderr
+    lines = narrow.stdout.splitlines()
+    first = next(i for i, line in enumerate(lines) if "showtooltip-not-first" in line)
+    assert "first line)" not in lines[first], "the finding wraps at this width"
+    assert any("'Lab Realm/Labchar'" in line for line in lines[first:])
+    ok("macros", "fix", "--character", spec, "--yes")
+    assert _bodies((folder / "macros-cache.txt").read_bytes()) == [
+        ["#showtooltip Fear", "/cast Fear"]
+    ]
+
+
 def test_an_indented_directive_is_reported_but_not_fixed_constructed(flavor: Path) -> None:
     data = _macro(1, "Mac indented", "/cast Fear", "  #showtooltip Fear")
     (flavor / CHAR_FILE).write_bytes(data)
