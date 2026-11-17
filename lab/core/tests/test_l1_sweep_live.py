@@ -109,6 +109,7 @@ _CHUNK = 1 << 20
 EXCLUDED: dict[str, str] = {
     "undo": "writes into the install",
     "sv merge": "writes into the install",
+    "macros fix": "writes into the install",
     "snap restore": "writes into the install",
     "profile apply": "writes into the install",
     "addon install": "writes into the install",
