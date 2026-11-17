@@ -95,6 +95,7 @@ from typing import Any
 
 import pytest
 import typer
+from _user_dirs import redirect_user_dirs
 from test_ui_fonts import without_font_faces
 
 from wowlab_core import cli, filemap, lookspage, ui
@@ -134,10 +135,7 @@ def _copy_install(root: Path) -> Path:
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     folder = tmp_path / "home"
     folder.mkdir()
-    for name in ("HOME", "USERPROFILE"):
-        monkeypatch.setenv(name, str(folder))
-    for name in ("APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
-        monkeypatch.setenv(name, str(folder / name.lower()))
+    redirect_user_dirs(monkeypatch, folder)
     return folder
 
 
