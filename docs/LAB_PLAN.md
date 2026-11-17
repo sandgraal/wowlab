@@ -4143,7 +4143,6 @@ from a count (on 2026-10-18: `snap restore`, `undo`, `profile apply`,
 `addon install`, `addon remove`, `sv merge`, `snap gc` and `doctor`). It
 ships in two steps so that the mechanism is proven on the two commands
 whose worst case is wowlab's own store before it reaches an install:
-*Amended 2026-11-17 (M13-07):* `macros fix` is a third. It is pinned the same way, by `--expect <target sha256>:<fixed sha256>` from its plan JSON, checked again under `guard`'s lock.
 
 - **M14-02, the mechanism on the store-only commands.** `snap gc` and
   `doctor --yes` (the first snapshot). The server keeps the plan run and the
@@ -4169,6 +4168,8 @@ than the one it showed.
 *Amended 2026-11-10 (M16-86):* `undo`'s plan says a record's state in words, never by its name, so the killed-run sentence tells the player to confirm only if the record the plan names is this command's and the plan says it did not finish (the words for `open`). The plan also lists only the files the undo will change.
 
 *Amended 2026-10-22 (M13-74, as built):* `sv merge` pins what it writes, not only its target. Its report names `merged_sha256` beside `target_sha256`: the SHA-256 of the bytes `tx.write` receives (null when unresolved conflicts stop the merge). `cli.EXPECT_FIELDS` maps each command to a tuple of report fields, joined by `:` into the pin (`undo`: `undone`; `sv merge`: `target_sha256:merged_sha256`), and `sv merge --expect` takes only that two-part form (anything else exits 2). The confirmed run refuses with exit 3 unless both halves match: the target half before the lock and again against `tx.plan[0].before`, the merged half before the lock and again against `tx.plan[0].after`, the hash the gate took of the bytes it was handed. A source character that logged out between plan and confirm, or a `--from`/`--base` snapshot prefix that now names another snapshot, therefore changes the merged half and is refused. The sentence above that `sv merge`'s source is not pinned no longer holds.
+
+*Amended 2026-11-17 (M13-07, as built):* `macros fix` is a third command of the third shape. Its pin is `target_sha256:fixed_sha256` from its plan report (`cli.EXPECT_FIELDS`), checked before the lock and again against `tx.plan[0].before` and `.after` under it. So the two commands that refuse when something changed after the plan, named in the 2026-10-19 amendment, are now three: `undo`, `sv merge` and `macros fix`.
 
 ### 16.2 The character: what the CLI adds
 
@@ -4942,6 +4943,7 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    everywhere the page, the help, INSTALL.md and the wiki say it:
    "Reading never changes anything. Six commands can change game files;
    each shows a plan and runs only when you confirm, after a snapshot."
+   *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
    A test pins it. The network promise is one generated block in the same
    way.
    - `doctor` is **offline by default**.
@@ -5170,7 +5172,6 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
       only).
     - CI enforcement of "graders activated by marker deletion only".
     - An owner-run `@live` L1 sweep before each release.
-   *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
 
 The panel's suggestions that the owner declined, or left for later:
 - retail and Windows volunteer captures (the README states the limit
