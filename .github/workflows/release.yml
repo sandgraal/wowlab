@@ -412,7 +412,7 @@ jobs:
           mkdir "$RUNNER_TEMP/app"
           "$RUNNER_TEMP/venv/Scripts/python.exe" -I -m zipfile -c "$RUNNER_TEMP/app/$APP_ZIP" wowlab
           sum="$(sha256sum < "$RUNNER_TEMP/app/$APP_ZIP" | cut -d' ' -f1)"
-          printf '%s\n' "$sum" | grep -Eqx '[0-9a-f]{64}'
+          printf '%s\n' "$sum" | grep -Ex '[0-9a-f]{64}' >/dev/null
           echo "app_sha256=$sum" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -607,9 +607,9 @@ jobs:
           printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+          if ! printf '%s\n' "$assets" | grep -Fx SHA256SUMS >/dev/null; then
             # Written whole, it would leave out the other app's line.
-            if printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+            if printf '%s\n' "$assets" | grep -Fx -- "$OTHER_ZIP" >/dev/null; then
               echo "SHA256SUMS is missing but $OTHER_ZIP is attached; restore SHA256SUMS by hand, then re-run this job; refusing" >&2
               exit 1
             fi
@@ -630,12 +630,12 @@ jobs:
           tail -n +3 "$published" > "$RUNNER_TEMP/published-apps"
           while IFS= read -r line <&3; do
             name="${line#*  }"
-            if ! printf '%s\n' "$line" | grep -Eqx '[0-9a-f]{64}  [^ ]+'; then
+            if ! printf '%s\n' "$line" | grep -Ex '[0-9a-f]{64}  [^ ]+' >/dev/null; then
               echo "the release's SHA256SUMS has a line that is not a hash and a name; refusing" >&2
               exit 1
             elif [ "$name" = "$APP_ZIP" ] && [ "$mine" = no ] && [ "$line" = "$(cat "$RUNNER_TEMP/expected-app")" ]; then
               mine=yes
-            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fx -- "$OTHER_ZIP" >/dev/null; then
               gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$OTHER_ZIP" --dir "$RUNNER_TEMP/other"
               printf '%s\n' "$line" > "$RUNNER_TEMP/expected-other"
               (cd "$RUNNER_TEMP/other" && sha256sum -c "$RUNNER_TEMP/expected-other")
@@ -670,7 +670,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if printf '%s\n' "$assets" | grep -Fqx -- "$APP_ZIP"; then
+          if printf '%s\n' "$assets" | grep -Fx -- "$APP_ZIP" >/dev/null; then
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APP_ZIP" --dir "$RUNNER_TEMP/present"
             cd "$RUNNER_TEMP/present"
             sha256sum -c "$RUNNER_TEMP/expected-app"
@@ -742,9 +742,9 @@ jobs:
           printf '%s  %s\n' "$WHEEL_SHA256" "$WHEEL" "$SDIST_SHA256" "$SDIST" > "$RUNNER_TEMP/expected"
           test "$(grep -Ecx '[0-9a-f]{64}  [^ ]+' "$RUNNER_TEMP/expected")" -eq 2
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if ! printf '%s\n' "$assets" | grep -Fqx SHA256SUMS; then
+          if ! printf '%s\n' "$assets" | grep -Fx SHA256SUMS >/dev/null; then
             # Written whole, it would leave out the other app's line.
-            if printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+            if printf '%s\n' "$assets" | grep -Fx -- "$OTHER_ZIP" >/dev/null; then
               echo "SHA256SUMS is missing but $OTHER_ZIP is attached; restore SHA256SUMS by hand, then re-run this job; refusing" >&2
               exit 1
             fi
@@ -765,12 +765,12 @@ jobs:
           tail -n +3 "$published" > "$RUNNER_TEMP/published-apps"
           while IFS= read -r line <&3; do
             name="${line#*  }"
-            if ! printf '%s\n' "$line" | grep -Eqx '[0-9a-f]{64}  [^ ]+'; then
+            if ! printf '%s\n' "$line" | grep -Ex '[0-9a-f]{64}  [^ ]+' >/dev/null; then
               echo "the release's SHA256SUMS has a line that is not a hash and a name; refusing" >&2
               exit 1
             elif [ "$name" = "$APP_ZIP" ] && [ "$mine" = no ] && [ "$line" = "$(cat "$RUNNER_TEMP/expected-app")" ]; then
               mine=yes
-            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fqx -- "$OTHER_ZIP"; then
+            elif [ "$name" = "$OTHER_ZIP" ] && [ "$other" = no ] && printf '%s\n' "$assets" | grep -Fx -- "$OTHER_ZIP" >/dev/null; then
               gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$OTHER_ZIP" --dir "$RUNNER_TEMP/other"
               printf '%s\n' "$line" > "$RUNNER_TEMP/expected-other"
               (cd "$RUNNER_TEMP/other" && sha256sum -c "$RUNNER_TEMP/expected-other")
@@ -805,7 +805,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          if printf '%s\n' "$assets" | grep -Fqx -- "$APP_ZIP"; then
+          if printf '%s\n' "$assets" | grep -Fx -- "$APP_ZIP" >/dev/null; then
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APP_ZIP" --dir "$RUNNER_TEMP/present"
             cd "$RUNNER_TEMP/present"
             sha256sum -c "$RUNNER_TEMP/expected-app"
