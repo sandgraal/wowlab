@@ -9,7 +9,9 @@ Every request is checked, in this order, before anything else is done with
 it (a POST body included):
 - `Host` is exactly `127.0.0.1:<port>` or `localhost:<port>`;
 - an `Origin`, when present, is exactly `http://` plus that `Host`;
-- but for `GET` and `HEAD` of `/` with no query, it carries the session:
+- but for `GET` and `HEAD` of `/` or of the tab icon `/favicon.svg`
+  (`templates/favicon.svg`, M18-11), each with no query, it carries the
+  session:
   the session key (`secrets.token_urlsafe(32)`) in the header
   `X-Wowlab-Session`, or in the query parameter `token`; a `token` that is
   given decides, right or wrong.
@@ -1660,6 +1662,18 @@ _NO_SESSION = (
 )
 # The header the page sends the session key in.
 _SESSION_HEADER = "X-Wowlab-Session"
+# The page's tab icon, the wowlab mark (M18-11). A browser asks for a tab
+# icon with no header of the page's, so this one path, with no query, needs
+# no key: it serves only this file, which is template text and holds
+# nothing of the install's. Without it the browser asks for `/favicon.ico`
+# and is refused, an error on every load.
+_ICON = "/favicon.svg"
+
+
+@functools.cache
+def _icon() -> bytes:
+    """The tab icon's bytes: `templates/favicon.svg`."""
+    return _template("favicon.svg").encode("utf-8")
 
 
 def _same(given: str, key: str) -> bool:
@@ -1724,12 +1738,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     # ── checks ──
 
-    def _check(self, shell: bool = False) -> str | None:
+    def _check(self, shell: bool = False, icon: bool = False) -> str | None:
         """Host, Origin and the session, in that order; the refusal code, or
         None. With `shell` (`GET` and `HEAD` of `/`), no query at all passes
         (the shell holds no key), and so does a query that is exactly one
         `boot` field holding the boot key (the shell is served with the
-        session key in it)."""
+        session key in it). With `icon` (`GET` and `HEAD` of the tab icon),
+        no query at all passes, and nothing else does without the key."""
         hosts = self.headers.get_all("Host") or []
         if len(hosts) != 1 or hosts[0] not in self.server.hosts:
             return "host"
@@ -1737,7 +1752,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if origins is not None and (len(origins) != 1 or origins[0] != "http://" + hosts[0]):
             return "origin"
         query = self.path.partition("?")[2].partition("#")[0]
-        if shell and not query and "?" not in self.path.partition("#")[0]:
+        if (shell or icon) and not query and "?" not in self.path.partition("#")[0]:
             return None
         try:
             pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=32)
@@ -1762,8 +1777,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         """The request's path once it passed the checks, else None (refused).
         The boot key opens only the shell (`GET` and `HEAD` of `/`)."""
         route = self._route()
-        shell = self.command in ("GET", "HEAD") and route == "/"
-        refusal = self._check(shell)
+        reading = self.command in ("GET", "HEAD")
+        shell = reading and route == "/"
+        refusal = self._check(shell, icon=reading and route == _ICON)
         if refusal is not None:
             query = self.path.partition("?")[2].partition("#")[0]
             if shell and refusal == "token" and query.startswith("boot="):
@@ -1786,6 +1802,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._reply(200, self.server.booted_shell(), "text/html; charset=utf-8")
         elif path in files:
             self._reply(200, files[path], "text/html; charset=utf-8")
+        elif path == _ICON:
+            self._reply(200, _icon(), "image/svg+xml")
         elif path == "/api/commands":
             self._reply(200, self.server.commands_body, "application/json")
         elif path == _LOOKS_PAGE:
@@ -1822,7 +1840,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if path is None:
             return
         if path != "/api/run":
-            if path in static_files() or path == _LOOKS_PAGE:
+            if path in static_files() or path in (_LOOKS_PAGE, _ICON):
                 self._error(405, "method_not_allowed")
             else:
                 self._error(404, "not_found")

@@ -150,6 +150,7 @@ from typing import Annotated, Any
 import psutil
 import pytest
 import typer
+from _user_dirs import redirect_user_dirs
 from typer._click import Context
 
 # How long a request may take before the test calls it a hang. A run with
@@ -1442,8 +1443,7 @@ def test_static_files_vouch_only_for_templates(
     (tmp_path / "index.html").write_bytes(b"<!DOCTYPE html>planted")
     (tmp_path / "app.js").write_bytes(b"planted()")
     monkeypatch.chdir(tmp_path)
-    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
-        monkeypatch.setenv(name, str(tmp_path))
+    redirect_user_dirs(monkeypatch, tmp_path, separate=False)
     assert dict(_ui().static_files()) == files
 
 
@@ -1517,8 +1517,7 @@ def _stand_in_dirs(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     import platformdirs
 
     monkeypatch.chdir(root)
-    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"):
-        monkeypatch.setenv(name, str(root))
+    redirect_user_dirs(monkeypatch, root, separate=False)
     for name in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(name, str(root))
     monkeypatch.setattr(tempfile, "tempdir", str(root))

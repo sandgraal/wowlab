@@ -29,7 +29,7 @@ def ui_command() -> None:
     The page has five sections. Characters lists every character and shows
     one as the lab-addon last saved it. Backups shows your backups and takes one.
     Addons lists the addons the game may skip. Keybinds shows a character's
-    key bindings. Advanced holds Explorer (the whole install's files, each
+    key bindings and macros. Advanced holds Explorer (the whole install's files, each
     with whether wowlab may edit it, and what a picked file is and who
     writes it), Gaps (the paths the file map does not describe), Commands
     (this wowlab's commands, run with --json) and Looks (the page that
@@ -43,8 +43,8 @@ def ui_command() -> None:
     any of the seven. undo, sv merge and macros fix refuse when something
     changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
-    --follow and looks page --out are not offered. If no browser opens,
-    the URL is printed once on stdout."""
+    --follow, looks page --out and snap export are not offered. If no
+    browser opens, the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it

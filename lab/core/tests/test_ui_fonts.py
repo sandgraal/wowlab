@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _user_dirs import redirect_user_dirs
 
 from wowlab_core import lookspage, ui
 
@@ -230,10 +231,7 @@ def test_the_library_table_is_the_adrs() -> None:
 
 @pytest.fixture
 def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    for name in ("HOME", "USERPROFILE"):
-        monkeypatch.setenv(name, str(tmp_path))
-    for name in ("APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
-        monkeypatch.setenv(name, str(tmp_path / name.lower()))
+    redirect_user_dirs(monkeypatch, tmp_path)
     served = ui.make_server()
     thread = threading.Thread(target=served.serve_forever, args=(0.05,), daemon=True)
     thread.start()

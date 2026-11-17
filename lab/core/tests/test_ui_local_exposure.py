@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 import typer
+from _user_dirs import redirect_user_dirs
 from typer.testing import CliRunner
 
 from wowlab_core import cli, ui
@@ -60,10 +61,7 @@ NOT_LUA = "root:x:0:0:constructed-passwd-line:/root:/bin/sh\n"
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     folder = tmp_path / "home"
     folder.mkdir()
-    for name in ("HOME", "USERPROFILE"):
-        monkeypatch.setenv(name, str(folder))
-    for name in ("APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
-        monkeypatch.setenv(name, str(folder / name.lower()))
+    redirect_user_dirs(monkeypatch, folder)
     return folder
 
 

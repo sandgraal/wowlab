@@ -31,13 +31,20 @@ module that reads a CPU clock (`cpu_clock()`, `process_time()`) outside its
 test functions must be in SERIAL_FILES, and a test function that reads one
 must be in SERIAL_TESTS if its file is not.
 
+It also checks, for every test that has a `tmp_path`, that a test which
+points the user's folders into that `tmp_path` really moved the user data
+directory there (M18-14, `user_store_leaks` below).
+
 This file is also loaded by the hook tests under Python 3.9
 (`make hooks-test`), so it keeps to 3.9 syntax and the standard library.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import os
+import sys
+from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 import pytest
 
@@ -158,3 +165,82 @@ def _undo_monkeypatch_before_tmp_path_cleanup(request: pytest.FixtureRequest) ->
         patches.undo()
     else:
         yield
+
+
+# ─── the user data directory stays in the test's tmp_path (M18-14) ───────────
+
+# platformdirs' own override variable for each Windows folder variable. On
+# Windows platformdirs asks the system for the known folder and ignores the
+# plain variables, so a test that sets only `LOCALAPPDATA` still writes into
+# the runner's real store (`lab/core/tests/_user_dirs.py`).
+WINDOWS_OVERRIDES: dict[str, str] = {
+    "APPDATA": "WIN_PD_OVERRIDE_APPDATA",
+    "LOCALAPPDATA": "WIN_PD_OVERRIDE_LOCAL_APPDATA",
+}
+
+# The variables that move the user data directory, Windows first, then the rest.
+_DATA_DIR_VARIABLES: dict[bool, tuple[str, ...]] = {
+    True: ("APPDATA", "LOCALAPPDATA"),
+    False: ("HOME", "XDG_DATA_HOME"),
+}
+
+
+def _inside(value: str | Path, area: Path) -> bool:
+    path = Path(os.path.realpath(value))
+    return path == area or area in path.parents
+
+
+def user_store_leaks(
+    environ: Mapping[str, str], area: Path, data_dir: Path | None, *, windows: bool
+) -> list[str]:
+    """Why a test that redirected the user's folders into `area` does not
+    have its user data directory there; empty when it does, or when the test
+    redirected nothing into `area`.
+
+    Two rules. On every platform, a plain Windows folder variable pointing
+    into `area` needs its platformdirs override pointing into `area` too, so
+    a fixture is caught on any machine, before Windows CI runs it. And when a
+    variable that moves the data directory on this platform points into
+    `area`, `data_dir` (`platformdirs.user_data_path("wowlab")` at that
+    moment) must be inside `area`.
+    """
+    area = Path(os.path.realpath(area))
+    leaks = []
+    for plain, override in WINDOWS_OVERRIDES.items():
+        value = environ.get(plain, "")
+        if value and _inside(value, area):
+            moved = environ.get(override, "")
+            if not (moved and _inside(moved, area)):
+                leaks.append(
+                    f"{plain} points into tmp_path but {override} does not "
+                    "(use _user_dirs.redirect_user_dirs)"
+                )
+    redirected = any(
+        environ.get(name, "") and _inside(environ[name], area)
+        for name in _DATA_DIR_VARIABLES[windows]
+    )
+    if redirected and data_dir is not None and not _inside(data_dir, area):
+        leaks.append(f"the user data directory {data_dir} is outside tmp_path {area}")
+    return leaks
+
+
+def _user_data_dir() -> Path | None:
+    try:
+        import platformdirs
+    except ImportError:  # the hook tests' Python 3.9 has no workspace packages
+        return None
+    return Path(platformdirs.user_data_path("wowlab"))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_call(item: pytest.Item) -> None:
+    """Fail a test whose redirected user data directory is not in its tmp_path.
+
+    It runs after the test's fixtures are set up, so it sees what they set.
+    """
+    area = getattr(item, "funcargs", {}).get("tmp_path")
+    if not isinstance(area, Path):
+        return
+    leaks = user_store_leaks(os.environ, area, _user_data_dir(), windows=sys.platform == "win32")
+    if leaks:
+        pytest.fail("the user data directory escapes tmp_path: " + "; ".join(leaks), pytrace=False)

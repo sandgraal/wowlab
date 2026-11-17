@@ -95,6 +95,7 @@ from typing import Any
 
 import pytest
 import typer
+from _user_dirs import redirect_user_dirs
 from test_ui_fonts import without_font_faces
 
 from wowlab_core import cli, filemap, lookspage, ui
@@ -134,10 +135,7 @@ def _copy_install(root: Path) -> Path:
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     folder = tmp_path / "home"
     folder.mkdir()
-    for name in ("HOME", "USERPROFILE"):
-        monkeypatch.setenv(name, str(folder))
-    for name in ("APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
-        monkeypatch.setenv(name, str(folder / name.lower()))
+    redirect_user_dirs(monkeypatch, folder)
     return folder
 
 
@@ -342,6 +340,10 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
     # in, which `createElementNS` needs; nothing is fetched from it.
     assert body.count(SVG_NS_LINE) == 1
     body = body.replace(SVG_NS_LINE, "")
+    # The tab icon (M18-11): the server's own path, which needs no key
+    # (test_ui_icon.py); no other `<link`.
+    assert body.count(ICON_LINK) == 1
+    body = body.replace(ICON_LINK, "")
     body = body.replace(DRESSING_PARSE, "").lower()
     for marker in _EXTERNAL:
         assert marker not in body, marker
@@ -426,6 +428,7 @@ DRESSING_HREF = "link.href = checked;"
 # of the attributes is a URL, a handler or a style; none of the elements can
 # fetch, link, run script or animate an attribute.
 SVG_NS_LINE = 'const SVG_NS = "http://www.w3.org/2000/svg";'
+ICON_LINK = '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
 SVG_TAGS = frozenset({"svg", "polyline", "circle", "text"})
 SVG_ATTRS = frozenset({"viewBox", "aria-hidden", "points", "cx", "cy", "r", "x", "y"})
 
