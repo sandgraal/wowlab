@@ -427,6 +427,19 @@ def test_the_smoke_test_on_windows_runs_only_on_actions_or_when_allowed(
         assert "is not a file" in err
 
 
+def test_the_smoke_tests_user_data_is_its_own_home_on_windows_too(tmp_path: Path) -> None:
+    # platformdirs on Windows ignores APPDATA and LOCALAPPDATA and asks the
+    # system for the known folder; only its own overrides move it (M18-14).
+    # Without them the Windows smoke used the runner's real store (M18-16).
+    env = app_smoke._env(tmp_path / "home", tmp_path / "wow", tmp_path / "u", "b")
+    for plain, override in (
+        ("APPDATA", "WIN_PD_OVERRIDE_APPDATA"),
+        ("LOCALAPPDATA", "WIN_PD_OVERRIDE_LOCAL_APPDATA"),
+    ):
+        assert env[override] == env[plain]
+        assert Path(env[override]).is_relative_to(tmp_path / "home")
+
+
 # ─── the smoke script's browser on Windows ───────────────────────────────────
 
 

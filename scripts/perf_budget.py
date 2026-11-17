@@ -192,6 +192,14 @@ def build_sandbox(base: Path, files: int) -> tuple[Path, dict[str, str]]:
             "XDG_CONFIG_HOME": str(home / "config"),
             "XDG_CACHE_HOME": str(home / "cache"),
             "XDG_STATE_HOME": str(home / "state"),
+            # The script is POSIX only (`resource`), but the sandbox is
+            # whole on every platform: on Windows platformdirs moves only
+            # with its own overrides (M18-14, M18-16).
+            "USERPROFILE": str(home),
+            "APPDATA": str(home / "roaming"),
+            "LOCALAPPDATA": str(home / "local"),
+            "WIN_PD_OVERRIDE_APPDATA": str(home / "roaming"),
+            "WIN_PD_OVERRIDE_LOCAL_APPDATA": str(home / "local"),
             "WOWLAB_WOW_ROOT": str(root),
             "NO_COLOR": "1",
         }
