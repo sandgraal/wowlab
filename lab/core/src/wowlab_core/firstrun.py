@@ -256,8 +256,8 @@ def intro_lines(*, store_path: Path) -> list[str]:
         "  - It reads your install and writes nothing there: no temporary, cache or lock "
         "file. If a sync service (OneDrive, Dropbox, iCloud Drive) keeps some of your "
         "files online-only, reading one makes the service download it.",
-        "  - Only snap restore, undo, profile apply, sv merge, addon install and addon remove "
-        "change files in your install. Each one shows what it will change and asks first "
+        "  - Only snap restore, undo, profile apply, sv merge, macros fix, addon install and "
+        "addon remove change files in your install. Each one shows what it will change and asks first "
         "(unless you pass --yes), refuses while the game is running, and takes a snapshot "
         "before it writes, so `wowlab undo` can put things back.",
         "  - It never touches the game's own data (Data/) or its programs, never reads or "

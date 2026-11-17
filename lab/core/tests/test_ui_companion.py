@@ -334,10 +334,11 @@ def _text(html: str) -> str:
 
 # The prose of `page.html` before M18-03 that M18-03 moved under About this
 # data, as a player reads it. The Account tab's intro is split: its backup
-# sentence went to Backups.
+# sentence went to Backups. M13-07 made the six commands that change game
+# files seven (`macros fix`).
 _KEPT = (
     "What every file in your game folder is, who writes it, and whether wowlab may change it. "
-    "Reading never changes anything. Six commands can change game files; each shows a plan and "
+    "Reading never changes anything. Seven commands can change game files; each shows a plan and "
     "runs only when you confirm, after a snapshot.",
     "Every character folder in your game folder, in every flavor, as the lab-addon last saved "
     "it: at logout or /reload , never the session in progress. This tab reads with wowlab char "

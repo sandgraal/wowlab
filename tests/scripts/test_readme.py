@@ -55,8 +55,8 @@ UI_RUNS = (
     "pages), run directly. A command that asks before changing anything (`--yes`) "
     "runs first as a plan that changes nothing, and runs for real only when you "
     "confirm the plan it shows: `snap gc` and `doctor --yes` change only wowlab's "
-    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `addon "
-    "install` and `addon remove` change your install through the same write gate as "
+    "own store, and `snap restore`, `undo`, `profile apply`, `sv merge`, `macros fix`, "
+    "`addon install` and `addon remove` change your install through the same write gate as "
     "on the command line, which takes a snapshot first, so `wowlab undo` reverses "
     "them."
 )

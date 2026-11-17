@@ -39,7 +39,10 @@ The rules:
   Chat and script commands (`CHAT_COMMANDS`, English names only) and lines
   that are not commands are free text and not checked.
 - `showtooltip-not-first`: a `#showtooltip` line, or a `#show` line (the same
-  rule assumed, **[verify]**), that is not the body's first line.
+  rule assumed, **[verify]**), that is not the body's first line. The one rule
+  `wowlab macros fix` corrects (`Finding.fixable`, `macrofix`): when the
+  macro has exactly one such line, its `#` in the first column (whether an
+  indented directive counts is **[verify]**), and ends with its `END`.
 
 A record section whose own probes say values were dropped (a call raised, a
 value was secret or untestable, a needed function was missing) or that holds
@@ -77,6 +80,7 @@ __all__ = [
     "SourceMacro",
     "body_text",
     "check",
+    "first_line_directives",
     "spell_names",
 ]
 
@@ -222,6 +226,11 @@ class Finding(_Model):
     line: int
     detail: str
     same_as: MacroRef | None = None
+    # `wowlab macros fix` corrects this finding (M13-07): only a
+    # `showtooltip-not-first` whose macro has exactly that one `#show` or
+    # `#showtooltip` line, starting with its `#` in the first column, and
+    # ends with its `END`.
+    fixable: bool = False
 
 
 class CannotJudge(_Model):
@@ -540,8 +549,23 @@ def _check_duplicates(macros: Sequence[SourceMacro], findings: list[Finding]) ->
             )
 
 
+def first_line_directives(macro: Macro) -> list[int]:
+    """The 0-based body lines that are a `#showtooltip` or `#show` line, the
+    lines `showtooltip-not-first` reads."""
+    out: list[int] = []
+    for k, text in enumerate(macro.body_lines):
+        parsed = _command(text)
+        if parsed is not None and parsed[0] in _FIRST_LINE:
+            out.append(k)
+    return out
+
+
 def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None:
     for m in macros:
+        # One directive, not on the first line, in a macro that ends with its
+        # END: moving that line up is the whole fix (`macros fix`). With two
+        # or more, which one the player meant is theirs to say.
+        movable = len(first_line_directives(m.macro)) == 1 and m.macro.complete
         for k, text in enumerate(m.macro.body_lines):
             parsed = _command(text)
             line = _body_line(m, k)
@@ -568,6 +592,9 @@ def _check_lines(macros: Sequence[SourceMacro], findings: list[Finding]) -> None
                         name=m.macro.name,
                         line=line,
                         detail=f"{_FIRST_LINE[parsed[0]]} is on body line {k + 1}, not the first",
+                        # A directive with space before its `#`: whether the
+                        # client reads it at all is [verify], so it is not moved.
+                        fixable=movable and text.startswith("#"),
                     )
                 )
 

@@ -85,9 +85,11 @@ def test_expect_fields_name_fields_of_the_reports() -> None:
     assert cli.EXPECT_FIELDS == {
         ("undo",): ("undone",),
         ("sv", "merge"): ("target_sha256", "merged_sha256"),
+        ("macros", "fix"): ("target_sha256", "fixed_sha256"),
     }
     assert "undone" in cli.UndoReport.model_fields
     assert {"target_sha256", "merged_sha256"} <= set(cli.SvMergeReport.model_fields)
+    assert {"target_sha256", "fixed_sha256"} <= set(cli.MacrosFixReport.model_fields)
 
 
 def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on_undo() -> None:

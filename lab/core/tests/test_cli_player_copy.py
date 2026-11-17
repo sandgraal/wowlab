@@ -435,6 +435,7 @@ NOT_RUN = {
     ("snap", "restore"): "writes into the install",
     ("snap", "gc"): "removes from the store",
     ("sv", "merge"): "writes into the install",
+    ("macros", "fix"): "writes into the install",
     ("undo",): "writes into the install",
     ("ui",): "runs a local server",
 }

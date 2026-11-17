@@ -28,7 +28,7 @@ TEMPLATES = Path(ui.__file__).parent / "templates"
 INSTALL = ROOT / "docs" / "INSTALL.md"
 
 SENTENCE = (
-    "Reading never changes anything. Six commands can change game files; each shows "
+    "Reading never changes anything. Seven commands can change game files; each shows "
     "a plan and runs only when you confirm, after a snapshot."
 )
 
@@ -39,6 +39,7 @@ SIX = {
     ("undo",),
     ("profile", "apply"),
     ("sv", "merge"),
+    ("macros", "fix"),
     ("addon", "install"),
     ("addon", "remove"),
 }

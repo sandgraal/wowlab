@@ -13,8 +13,9 @@ The first run prints this too, before it does anything else (ADR-0031):
   or lock file. One side effect to know about: if a sync service (OneDrive,
   Dropbox, iCloud Drive) keeps some of your files online-only, reading one
   makes the service download it.
-- **Only six commands change files in your install:** `snap restore`,
-  `undo`, `profile apply`, `sv merge`, `addon install` and `addon remove`.
+- **Only seven commands change files in your install:** `snap restore`,
+  `undo`, `profile apply`, `sv merge`, `macros fix`, `addon install` and
+  `addon remove`.
   Each one shows what it will change and asks first (unless you pass
   `--yes`), refuses while the game is running, and takes a snapshot before
   it writes, so `wowlab undo` can put things back.
@@ -476,7 +477,7 @@ log in to, they can see the link in their process list while your browser
 starts, and can open it too, until you stop `wowlab ui`. From the page,
 `sv dump` reads only files inside your install.
 
-Reading never changes anything. Six commands can change game files; each
+Reading never changes anything. Seven commands can change game files; each
 shows a plan and runs only when you confirm, after a snapshot.
 
 The page reads the install exactly as the other commands do and writes
@@ -507,9 +508,9 @@ What to look for:
   log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
   the result. Every command is offered except `ui` itself,
-  `log tail --follow`, `looks page --out` and `snap export`. The six that change game
+  `log tail --follow`, `looks page --out` and `snap export`. The seven that change game
   files are `snap restore`, `undo`, `profile apply`, `sv merge`,
-  `addon install` and `addon remove`: each shows its plan first, takes a
+  `macros fix`, `addon install` and `addon remove`: each shows its plan first, takes a
   snapshot before it writes, and `wowlab undo` reverses it.
 - **Character.** One character as the lab-addon last saved it, at logout
   or `/reload`: gear, key bindings and macros, the same answers
