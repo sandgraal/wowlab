@@ -80,8 +80,8 @@ SKIPS: tuple[tuple[str, str, str], ...] = (
     (
         "README.md",
         "uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/"
-        "v0.2.1/wowlab-0.2.1-py3-none-any.whl#sha256="
-        "b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5",
+        "v0.3.0/wowlab-0.3.0-py3-none-any.whl#sha256="
+        "cd4cabd31711918a43f5394355af4ddaeeadd593cdd0d792bc142e0ab89292e5",
         "an install, from the network",
     ),
     (

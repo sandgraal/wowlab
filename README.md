@@ -2,7 +2,7 @@
   <a href="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sandgraal/wowlab/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Local only, uploads nothing" src="https://img.shields.io/badge/local--only-uploads%20nothing-2ea44f">
-  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.2.1"><img alt="Current release, v0.2.1" src="https://img.shields.io/badge/release-v0.2.1-2ea44f"></a>
+  <a href="https://github.com/sandgraal/wowlab/releases/tag/v0.3.0"><img alt="Current release, v0.3.0" src="https://img.shields.io/badge/release-v0.3.0-2ea44f"></a>
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
@@ -37,7 +37,7 @@ The same backup from the command line is `wowlab snap create`. Take one before p
 Level, class, gear and the rest appear once wowlab's small in-game addon has recorded them: run `wowlab addon install lab`, then log out or `/reload` once. Action bars and talents are kept on Blizzard's servers, not in your game folder, so a snapshot cannot put those back, and a bar button that holds a macro runs whichever macro is now at that place in your macro list.
 
 > [!NOTE]
-> The install lines below install v0.2.1, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.2.1 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
+> The install lines below install v0.3.0, the current release. Everything marked 🆕 on this page is new since v0.1.0. If you would rather not use a terminal, v0.3.0 also comes as a Mac app for Apple silicon ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-macos-arm64.zip), [the install guide](docs/INSTALL.md#the-mac-app-apple-silicon-no-terminal-needed)) and a Windows app, which nobody has yet tried on a real Windows install ([download the zip](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-windows-x64.zip), [the install guide](docs/INSTALL.md#the-windows-app-64-bit-no-terminal-needed)). Installed v0.1.0 (`wowlab-core`)? Run `uv tool uninstall wowlab-core` first.
 
 **📦 Install** (you need [uv](https://docs.astral.sh/uv/); it brings Python 3.12):
 
@@ -59,7 +59,7 @@ Or install the release's own file from GitHub, named by its fingerprint:
 
 <!-- not-run: an install, from the network -->
 ```bash
-uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-py3-none-any.whl#sha256=b55b4ce6101e1018e6ecd05fe57ac59eb2005f2e019c5f8385e9507b89693ed5
+uv tool install --python 3.12 https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-py3-none-any.whl#sha256=cd4cabd31711918a43f5394355af4ddaeeadd593cdd0d792bc142e0ab89292e5
 ```
 
 PyPI holds the same two files as the release, byte for byte. The `#sha256=` part is the download's fingerprint, the same as its line in the release's `SHA256SUMS`. `uv tool install` does not check it for you: [the install guide](docs/INSTALL.md) shows how to check the download and install that very file, how to compare PyPI's copy with the release, and what to do when your game is not in the usual place.

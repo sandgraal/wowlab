@@ -75,6 +75,20 @@ INSTALL_V021 = (
     f"wowlab-0.2.1-py3-none-any.whl#sha256={WHEEL_V021_SHA256}"
 )
 
+# The SHA-256 of the v0.3.0 wheel as published: the wheel's line in the
+# release's own SHA256SUMS, downloaded on 2026-11-17 (M18-09). It is also the
+# hash in the release notes' install line, which the release workflow wrote,
+# and PyPI's sha256 for the same file.
+WHEEL_V030_SHA256 = "cd4cabd31711918a43f5394355af4ddaeeadd593cdd0d792bc142e0ab89292e5"
+
+# The line the README gives for v0.3.0, copied byte for byte from the
+# published release notes (M18-09): what `install_line` prints for 0.3.0.
+INSTALL_V030 = (
+    "uv tool install --python 3.12 "
+    "https://github.com/sandgraal/wowlab/releases/download/v0.3.0/"
+    f"wowlab-0.3.0-py3-none-any.whl#sha256={WHEEL_V030_SHA256}"
+)
+
 
 # ─── the workflow ─────────────────────────────────────────────────────────────
 

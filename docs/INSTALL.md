@@ -63,10 +63,10 @@ Since v0.2.1, PyPI's files are the release's files. The release workflow
 uploads to PyPI the very wheel and sdist it built for the GitHub release,
 after checking their SHA-256 against the values it recorded when it built
 them. To compare for yourself, open `https://pypi.org/pypi/wowlab/<version>/json` (for
-example `https://pypi.org/pypi/wowlab/0.2.1/json`): under `urls`, each file
+example `https://pypi.org/pypi/wowlab/0.3.0/json`): under `urls`, each file
 has its `filename` and, under `digests`, its `sha256`. Each must equal
 that file's line in the release's `SHA256SUMS`. For
-v0.2.1 they do: the wheel's is `b55b4ce6…`, the sdist's `21611c78…`. Because
+v0.3.0 they do: the wheel's is `cd4cabd3…`, the sdist's `9acf3cf7…`. Because
 the bytes are the same, the `gh attestation verify` check below works on a
 wheel downloaded from PyPI too.
 
@@ -75,9 +75,9 @@ release workflow uploaded it. It names the repository `sandgraal/wowlab`,
 the workflow `release.yml` and the environment `release`, and is at
 `https://pypi.org/integrity/wowlab/<version>/<file name>/provenance`.
 
-**From a release.** The current release is v0.2.1. The README gives the
+**From a release.** The current release is v0.3.0. The README gives the
 `uv tool install` line that installs its wheel, and its release page
-(https://github.com/sandgraal/wowlab/releases/tag/v0.2.1) carries the wheel,
+(https://github.com/sandgraal/wowlab/releases/tag/v0.3.0) carries the wheel,
 the sdist, `SHA256SUMS` and the Mac and Windows apps. To check a download,
 put the wheel, the sdist and `SHA256SUMS` in one folder and run `sha256sum -c SHA256SUMS --ignore-missing` (on macOS
 `shasum -a 256 -c SHA256SUMS --ignore-missing`); each file has to print
@@ -125,7 +125,7 @@ checked:
    uv tool install --python 3.12 ./wowlab-<version>-py3-none-any.whl
    ```
 
-Replace `<version>` with the release's version, for example `0.2.1`.
+Replace `<version>` with the release's version, for example `0.3.0`.
 The v0.1.0 wheel has an older name: `wowlab_core-0.1.0-py3-none-any.whl`.
 
 **Check where a release was built.** Since v0.2.1,
@@ -145,7 +145,7 @@ added, so it has none: for it, `SHA256SUMS` is the check.
 
 Since v0.2.1, the release page also carries
 `wowlab-<version>-macos-arm64.zip`
-(for v0.2.1: [`wowlab-0.2.1-macos-arm64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-macos-arm64.zip)): wowlab as a Mac app, with its own Python
+(for v0.3.0: [`wowlab-0.3.0-macos-arm64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-macos-arm64.zip)): wowlab as a Mac app, with its own Python
 inside, for Macs with Apple silicon (M1 and later). Intel Macs use the
 `uv tool install` line above. The app is the same wowlab as the wheel, built
 from it by the release workflow; it never updates itself and makes no
@@ -210,7 +210,7 @@ on Windows, but nobody has yet run the first run below with it on a real
 Windows install.
 
 Since v0.2.1, the release page also carries `wowlab-<version>-windows-x64.zip`
-(for v0.2.1: [`wowlab-0.2.1-windows-x64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.2.1/wowlab-0.2.1-windows-x64.zip)): wowlab as
+(for v0.3.0: [`wowlab-0.3.0-windows-x64.zip`](https://github.com/sandgraal/wowlab/releases/download/v0.3.0/wowlab-0.3.0-windows-x64.zip)): wowlab as
 a Windows program, with its own Python inside, for 64-bit Windows on an
 Intel or AMD processor. It is the same wowlab as the wheel, built from it by
 the release workflow; it never updates itself and makes no network request
