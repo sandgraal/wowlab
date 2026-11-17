@@ -3143,6 +3143,8 @@
             (r) => r && typeof r === "object" && typeof r.label === "string" && typeof r.account === "string" &&
               typeof r.realm_folder === "string",
           ),
+          // A backup's record of a folder with no lab record (M18-11).
+          held: Array.isArray(report.records_in_backups) ? objects(report.records_in_backups) : [],
         };
         hub.note = reply.error ? shown(reply.error) : "";
         // Each card fails on its own: an error in one is said in that card,
@@ -3323,6 +3325,11 @@
     if (row.state === "no_lab_record") {
       td.appendChild(make("span", "No lab record: "));
       hubAdvice(td, hubStr(row.advice), hubStr(row.fix_command));
+      const held = heldRow(row);
+      if (held) {
+        td.appendChild(make("span", " "));
+        td.appendChild(heldButton(held));
+      }
     } else {
       td.textContent = "Not read: " + (hubStr(row.error) ? shown(row.error) : "no reason given");
     }
@@ -3933,6 +3940,8 @@
       const note = make("p", why);
       note.className = "card-note";
       body.appendChild(note);
+      const held = heldRow(row);
+      if (held) body.appendChild(heldButton(held));
     }
     card.appendChild(body);
     return card;
@@ -4036,6 +4045,33 @@
     body.appendChild(foot);
     card.appendChild(body);
     return card;
+  }
+
+  // ─── a backup's record of a folder with no lab record (M18-11) ───
+  // A character folder still in the game folder whose WowLab.lua is gone,
+  // or never came, while one of this install's backups holds its record:
+  // `char list --summary` lists that record in `records_in_backups`, named
+  // as the folder is. Its card and table row say so in one line, which
+  // opens the page a kept character opens (`char kept`). Nothing is
+  // restored.
+
+  function heldRow(row) {
+    if (!hub.report || row.state !== "no_lab_record") return null;
+    return hub.report.held.find(
+      (r) => recorded(r) && r.flavor === row.flavor && r.account === row.account &&
+        r.realm_folder === row.realm_folder && r.label === row.label,
+    ) || null;
+  }
+
+  function heldButton(held) {
+    const day = keptDay(held);
+    const words = (day ? "Your backup from " + day : "Your backup") + " has a record of this character";
+    const button = make("button", words);
+    button.type = "button";
+    button.className = "link-button held-button";
+    button.title = "Opens what your backup holds for this character; nothing is restored";
+    button.addEventListener("click", () => openKept(held));
+    return button;
   }
 
   // Opens the character page on a kept character. The Character tab's

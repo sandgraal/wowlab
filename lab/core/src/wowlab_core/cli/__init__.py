@@ -708,6 +708,9 @@ from wowlab_core.cli._cmd_char import (
     _backup_day as _backup_day,
 )
 from wowlab_core.cli._cmd_char import (
+    _bare_folders as _bare_folders,
+)
+from wowlab_core.cli._cmd_char import (
     _bare_words as _bare_words,
 )
 from wowlab_core.cli._cmd_char import (
@@ -736,6 +739,9 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     _file_note as _file_note,
+)
+from wowlab_core.cli._cmd_char import (
+    _folded as _folded,
 )
 from wowlab_core.cli._cmd_char import (
     _gear_change_words as _gear_change_words,
