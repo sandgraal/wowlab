@@ -4700,7 +4700,10 @@ BLP2: a 148-byte header (encoding 1 palette, 2 DXT, 3 BGRA; alpha depth 0,
 1, 4 or 8; mip offsets and sizes), a 1024-byte palette, then mips. The
 decoder returns mip 0 as RGBA rows and a PNG writer (stdlib: `zlib`,
 `crc32`) writes it. DXT1 and DXT5 are what every character texture sampled
-used. Two sources disagree on the DXT choice: the wiki says the alpha
+used (*note, 2026-11-17, M15-07:* not at 1.60.1.70959, where 86 of 300
+sampled character customization textures are palette textures;
+`macos-70959/derived/blp.json`, `docs/LAB_FORMATS.md` §11, amendment of
+2026-11-17). Two sources disagree on the DXT choice: the wiki says the alpha
 type alone decides (0 → DXT1, 1 → DXT3, 7 → DXT5), wow.export says the
 alpha depth decides first (`alphaDepth > 1 ? (alphaType == 7 ? DXT5 :
 DXT3) : DXT1`); they differ for depth 8 with type 0, depth 1 with type 1, depth 4 with type 0, depth 0 with type 1, and depth 0 or 1 with type 7, so the decoder refuses, naming both values, any texture where the
@@ -4877,7 +4880,10 @@ the install's archives and no LZ4 or `F` block (`docs/LAB_FORMATS.md` §10,
 amendment of 2026-10-19); the open and read timings; the streaming
 counts; `humanmale_hd` and `humanfemale_hd` version 272 with bones
 inside; layout 103's sections; every character texture DXT1 or DXT5 with
-mips. From memory or from another project, **[verify]** until a test on
+mips (*note, 2026-11-17, M15-07, `macos-70959/derived/blp.json`:* at
+1.60.1.70959, 86 of 300 sampled character customization textures are
+palette textures, beside DXT1 and DXT5, up to 2048×1024; `blp` decodes
+all three, `docs/LAB_FORMATS.md` §11, amendment of 2026-11-17). From memory or from another project, **[verify]** until a test on
 the install says so: which `.idx` version wins when two exist; whether LZ4
 ever appears; whether any player gear is encrypted; the bonus-id
 semantics (TrinityCore); the `+1` in the item geoset value; attachment
