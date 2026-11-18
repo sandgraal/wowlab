@@ -2489,6 +2489,9 @@ from wowlab_core.cli._common import (
     _QUOTED as _QUOTED,
 )
 from wowlab_core.cli._common import (
+    _RANGE_ERRORS as _RANGE_ERRORS,
+)
+from wowlab_core.cli._common import (
     _READER_WORDS as _READER_WORDS,
 )
 from wowlab_core.cli._common import (
@@ -2577,6 +2580,9 @@ from wowlab_core.cli._common import (
 )
 from wowlab_core.cli._common import (
     _click_error as _click_error,
+)
+from wowlab_core.cli._common import (
+    _click_wording as _click_wording,
 )
 from wowlab_core.cli._common import (
     _client_names as _client_names,

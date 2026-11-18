@@ -175,32 +175,56 @@ def _is_flag(param: Any) -> bool:
 def _render_type(param: Any) -> str:
     if _is_flag(param):
         kind = "flag"
+    elif hasattr(param, "type_descriptor"):
+        kind = _typer_kind(param.type_descriptor)
     else:
-        # Typer 0.29 converts values itself (through Pydantic) and gives a
-        # parameter no Click `ParamType`: what it will accept is described by
-        # `param.type_descriptor`, the declared annotation plus the option's
-        # settings (`min`, `max`, choices, path and file flags).
-        desc = param.type_descriptor
-        annotation = desc.annotation
-        if desc.is_list:  # a repeatable option: the type of one value
-            args = typing.get_args(annotation)
-            annotation = args[0] if len(args) == 1 else str
-        choices = desc.choices
-        if choices is not None:
-            kind = "one of " + ", ".join(_code(str(c)) for c in choices)
-        elif annotation is int:
-            kind = _render_range(desc.parameter_info, "integer")
-        elif annotation is float:
-            kind = _render_range(desc.parameter_info, "number")
-        elif desc.is_path or desc.is_file:
-            kind = "path"
-        elif annotation is bool:
-            kind = "boolean"
-        else:
-            kind = "text"
+        kind = _click_kind(param.type)
     if getattr(param, "multiple", False) or getattr(param, "nargs", 1) == -1:
         kind += ", repeatable"
     return kind
+
+
+def _typer_kind(desc: Any) -> str:
+    """A typer 0.29 parameter's kind. Typer converts values itself (through
+    Pydantic) and gives a parameter no Click `ParamType`: what it accepts is
+    `param.type_descriptor`, the declared annotation plus the option's
+    settings (`min`, `max`, choices, path and file flags)."""
+    annotation = desc.annotation
+    if desc.is_list:  # a repeatable option: the type of one value
+        args = typing.get_args(annotation)
+        annotation = args[0] if len(args) == 1 else str
+    choices = desc.choices
+    if choices is not None:
+        return "one of " + ", ".join(_code(str(c)) for c in choices)
+    if annotation is int:
+        return _render_range(desc.parameter_info, "integer")
+    if annotation is float:
+        return _render_range(desc.parameter_info, "number")
+    if desc.is_path or desc.is_file:
+        return "path"
+    if annotation is bool:
+        return "boolean"
+    return "text"
+
+
+def _click_kind(ptype: Any) -> str:
+    """A plain Click parameter's kind, from its `ParamType`: classified by
+    class names in the MRO and by `ParamType.name`, both of which differ
+    between Click releases and typer's vendored copy before 0.29."""
+    classes = {c.__name__ for c in type(ptype).__mro__}
+    name = str(getattr(ptype, "name", "")).lower()
+    choices = getattr(ptype, "choices", None)
+    if choices is not None:
+        return "one of " + ", ".join(_code(str(c)) for c in choices)
+    if "IntParamType" in classes or name in {"integer", "int"}:
+        return _render_range(ptype, "integer")
+    if "FloatParamType" in classes or name == "float":
+        return _render_range(ptype, "number")
+    if classes & {"Path", "File", "TyperPath"} or name in {"path", "file", "filename"}:
+        return "path"
+    if "BoolParamType" in classes:
+        return "boolean"
+    return "text"
 
 
 def _render_range(info: Any, kind: str) -> str:
