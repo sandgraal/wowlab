@@ -5,9 +5,11 @@ Nothing here touches the network or an install. Tables come through
 (`*.1.60.1.70959*`); characters are the `macos-70450` lab-addon records
 (Sangraal-Sett: Undead, body type 0, with a customization record;
 Dangling-Participle: Orc, body type 0, without one), and the files' states
-replay `fixtures/macos-70959/derived/renderplan-files.json`, recorded from
-the owner's install by `scripts/renderplan_facts.py` (ADR-0033's derived
-layer; the live layer is `test_renderplan_live.py`).
+replay `fixtures/macos-70959/derived/renderplan-gear-files.json` (the body's
+and, since M15-13, the gear's files; the body-only
+`renderplan-files.json` is checked against it), recorded from the owner's
+install by `scripts/renderplan_facts.py` (ADR-0033's derived layer; the live
+layer is `test_renderplan_live.py`). The gear is `test_renderplan_gear.py`'s.
 
 Tests whose id contains `constructed` use a constructed character (an
 identity and a customization record built here) or constructed table rows,
