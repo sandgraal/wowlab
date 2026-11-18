@@ -70,7 +70,8 @@ below is the same whichever tool runs it. Learned on #266 and #267
   the names against `required_status_checks[].context` in
   `.github/rulesets/main.json`; anything not listed there (`review`,
   `lab (macos)`, `lab (windows)`, `Detect doc-only changes`) never holds
-  the merge. `get_check_runs` right after a push may list only `review`;
+  the merge, with one exception: `Lint, typecheck, tests` (the suite) is
+  not listed there since M15-16 and always holds it. `get_check_runs` right after a push may list only `review`;
   the required jobs appear a minute or two later, so an empty or partial
   list is not green, and the set is complete only when every
   `required_status_checks[].context` of the ruleset is present.
@@ -90,8 +91,9 @@ below is the same whichever tool runs it. Learned on #266 and #267
   `gh pr checks --required` do not wait for it. A ticket is still done only
   when CI is green: before marking ready, read that job by name and see it
   SUCCESS on the exact head, then merge with the head pinned
-  (`--match-head-commit`, or `expectedHeadSha`). Do not start a background
-  watcher and end the run while it is pending; report and stop.
+  (`--match-head-commit`, or `expectedHeadSha`). While it is pending, wait
+  for it with §2's blocking poll; never start a background watcher and end
+  the run. A failed suite is handled like a failing required check.
 - **Threads by REST.** `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
   lists the threads without GraphQL; `resolve_review_thread` resolves one
   and `add_reply_to_pull_request_comment` answers one. A bot thread the
@@ -177,7 +179,8 @@ loosened assertion, made after a CLEAN review, put a defect on main.)
 
 Handle, in order:
 
-- **Failing required check** → `gh run view <id> --log-failed`; reproduce
+- **Failing required check, or a failing `Lint, typecheck, tests`** →
+  `gh run view <id> --log-failed`; reproduce
   locally with the same `make` target. If the fix is yours under the rule
   above (formatting, stale lock, rebase artefact): fix, commit, push.
   Otherwise `NEEDS_IMPLEMENTER:` with the run URL. Infra flake (runner

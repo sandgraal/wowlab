@@ -7,8 +7,10 @@ on:
     branches: [main]
 
 # Every job below except `grader-diff` (M16-40; not yet in the ruleset, see
-# the job) is a required status check on main, by exact name (see
-# .github/rulesets/main.json). The Lab suite on the desktop platforms runs
+# the job), `changes` and `quality` is a required status check on main, by
+# exact name (see .github/rulesets/main.json). `quality` ("Lint, typecheck,
+# tests") is not required (owner decision, 2026-11-18, M15-16), but no PR
+# merges before it is green: pr-shepherd reads it by name. The Lab suite on the desktop platforms runs
 # off the pull-request path, after each merge to main, nightly and on demand,
 # and neither is required: `lab (macos)` in macos.yml (it was this file's
 # `lab-desktop` job until 2026-11-17, M18-15, owner decision) and
