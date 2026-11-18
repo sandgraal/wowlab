@@ -720,7 +720,7 @@ def test_the_gear_notes_are_carried_whenever_gear_is_drawn(
     assert renderplan.GEAR_NOTES == (
         "each item is drawn with its own look; transmog is not recorded, so a transmogged item "
         "looks different in game",
-        "the helmet and cloak are drawn even if the character hides them in game (not recorded)",
+        "a worn helmet or cloak is drawn even if the character hides it in game (not recorded)",
     )
     none = _wear(tables, [_e(11, 5351)])
     assert not any(n in none.notes for n in renderplan.GEAR_NOTES)

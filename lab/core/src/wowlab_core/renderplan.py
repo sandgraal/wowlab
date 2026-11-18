@@ -732,7 +732,7 @@ _NO_GEAR_GIVEN = "no gear was given"
 GEAR_NOTES: tuple[str, ...] = (
     "each item is drawn with its own look; transmog is not recorded, so a transmogged item "
     "looks different in game",
-    "the helmet and cloak are drawn even if the character hides them in game (not recorded)",
+    "a worn helmet or cloak is drawn even if the character hides it in game (not recorded)",
 )
 """The notes a plan carries whenever it draws gear: what the record does not
 hold (the module docstring)."""
