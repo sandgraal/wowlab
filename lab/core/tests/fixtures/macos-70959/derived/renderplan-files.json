@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "kind": "renderplan-files-derived",
+  "made_by": "scripts/renderplan_facts.py",
+  "captured": "2026-11-17",
+  "flavor": "_forever_",
+  "product": "wowf",
+  "version": "1.60.1.70959",
+  "build": 70959,
+  "locale": "enUS",
+  "platform": "macos",
+  "tables_build": "1.60.1.70959",
+  "characters": [
+    {
+      "label": "Sangraal-Sett",
+      "chr_model_id": 9,
+      "look": "record",
+      "files": [
+        {
+          "file_data_id": 959310,
+          "role": "body model",
+          "state": "local",
+          "words": "local",
+          "size": 28775314,
+          "content_hash": "bf8ec02811f587739b1d3344dd841f49",
+          "note": null
+        },
+        {
+          "file_data_id": 959287,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350716,
+          "content_hash": "4f0bf299b1d8f3c055be2d7eeb391d45",
+          "note": null
+        },
+        {
+          "file_data_id": 959281,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 23036,
+          "content_hash": "70fd0b4f0c7d2ed418a2b90b32824cb8",
+          "note": null
+        },
+        {
+          "file_data_id": 959239,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 175948,
+          "content_hash": "c1c728106efc251826ca24cca294219d",
+          "note": null
+        },
+        {
+          "file_data_id": 3457610,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350724,
+          "content_hash": "8a38ed81d4764cfab0ebf4033176be58",
+          "note": null
+        },
+        {
+          "file_data_id": 3457561,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350724,
+          "content_hash": "b0be703a6b824f92910e0f451e2caeae",
+          "note": null
+        },
+        {
+          "file_data_id": 3457574,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44876,
+          "content_hash": "b9de92bbcf38a4eb51c84cf93169a02a",
+          "note": null
+        },
+        {
+          "file_data_id": 3484667,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "6335316b9c41a888818b3c855dd8e774",
+          "note": null
+        }
+      ]
+    },
+    {
+      "label": "Dangling-Participle",
+      "chr_model_id": 3,
+      "look": "defaults",
+      "files": [
+        {
+          "file_data_id": 917116,
+          "role": "body model",
+          "state": "local",
+          "words": "local",
+          "size": 31739842,
+          "content_hash": "21270a0840bc0037138075a1f9c7ca26",
+          "note": null
+        },
+        {
+          "file_data_id": 916966,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350716,
+          "content_hash": "3283277abc78b59bbe5f3beb2fcedf35",
+          "note": null
+        },
+        {
+          "file_data_id": 916834,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 175948,
+          "content_hash": "ec204626825656e5357574fcd41d4162",
+          "note": null
+        },
+        {
+          "file_data_id": 916943,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "5cdfa7aefc161f40896eb73f7a160830",
+          "note": null
+        },
+        {
+          "file_data_id": 918869,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 88572,
+          "content_hash": "758f1803b746b65ed83f40d881c72a9e",
+          "note": null
+        },
+        {
+          "file_data_id": 3492828,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "0f6aa45dc612baa26216e9eb328506ca",
+          "note": null
+        }
+      ]
+    }
+  ],
+  "reopens": 0
+}
