@@ -204,8 +204,15 @@ def fingerprint(
         for child in children:
             sub = (*parts, child.name)
             key = "/".join(sub)
+            # `os.lstat`, not `child.stat()`: on Windows a DirEntry's stat is
+            # the copy of the times NTFS keeps in the parent folder's listing,
+            # which it refreshes lazily (a folder's copy only once the folder
+            # itself is opened and closed, as listing it here does), so two
+            # looks a moment apart saw a folder's time move with nothing
+            # written (M15-19). `os.lstat` reads the path's own record, as
+            # the root's `lstat` above does. On POSIX both are lstat(2).
             try:
-                st = child.stat(follow_symlinks=False)
+                st = os.lstat(child.path)
             except OSError as exc:
                 found[key] = Entry(kind="unreadable", error=f"{type(exc).__name__}: {exc.strerror}")
                 continue
