@@ -139,6 +139,7 @@ These are observations about dependencies, not a plan.
   needs **api-types** first. **addon-manager** and **addon-provenance** need
   only Wave 1 plus network fetchers for the addon sites.
 - **crew-book** and **comp-builder** can be picked: the owner accepted
-  ADR-0036 (other players' names stored locally, opt-in) on 2026-11-11.- **keybind-coach** and **macro-doctor** need writers for the WTF text
+  ADR-0036 (other players' names stored locally, opt-in) on 2026-11-11.
+- **keybind-coach** and **macro-doctor** need writers for the WTF text
   formats, which **wow-as-code** needs too; building those writers once serves
   all three.
