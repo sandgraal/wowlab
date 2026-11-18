@@ -8,6 +8,8 @@ files and reads by file data id (M15-05, `--files`), or of its textures as
     uv run python scripts/casc_facts.py --blte --flavor FOLDER --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --files --flavor FOLDER --out PATH [--root INSTALL]
         [--model-table CSV]
+    uv run python scripts/casc_facts.py --m2 --model NAME=FDID [--model …] --flavor FOLDER
+        --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --blp --flavor FOLDER --out PATH [--root INSTALL]
 
 Opens one flavor's build in the install's `Data/` through `wowlab_core.casc`
@@ -59,6 +61,17 @@ states; the open's timings, the time of 300 reads and of the sample's
 local files, and the process's peak resident memory after the open and
 after the reads. Field names say `hash`, not `key`.
 
+With `--m2` (M15-08) the record is of the models each `--model NAME=FDID`
+names, read by file data id through `casc.open_source` and parsed by
+`wowlab_core.m2`, and of every skin their `SFID` names: per model its
+version, chunk tags and sizes, bone, vertex, view, material, texture-combo
+and attachment counts, the textures' types, flags and `TXID` ids, the
+attachment ids, the skin and LOD skin ids and the positions' bounds
+(rounded); per skin its lookup, index and section counts, whether the
+lookup is the identity, the sections' levels and geoset ids in order and
+how far the sections reach into the lookup and the indices. Counts, ids
+and tags only, never a byte of a file and no hash.
+
 With `--blp` the record is of textures (`casc.open_source`, `blp.decode`):
 a census of 8,000 ids evenly spaced over the ids the root takes and of
 300 of `ChrCustomizationMaterial`'s textures (`TextureFileData` by
@@ -91,6 +104,7 @@ import csv
 import hashlib
 import itertools
 import json
+import math
 import struct
 import sys
 import time
@@ -99,7 +113,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from wowlab_core import blp, casc, gamedata
+from wowlab_core import blp, casc, gamedata, m2
 from wowlab_core.gamedata import GameDataError
 from wowlab_core.install import InstallError, discover
 
@@ -751,6 +765,148 @@ def files_facts(
     }
 
 
+# --- M15-08: `--m2`, the record of a few models and their skins -------------
+
+
+def _m2_named(text: str) -> tuple[str, int]:
+    """`NAME=FDID` from `--model`: a label and the model's file data id."""
+    name, sep, value = text.partition("=")
+    if not sep or not name or not value.isdigit():
+        raise argparse.ArgumentTypeError(f"--model takes NAME=FILE_DATA_ID, not {text!r}")
+    return name, int(value)
+
+
+def _m2_mean_edge(skin: m2.Skin, positions: Sequence[float], offset: int) -> float | None:
+    """The mean length of the skin's triangle edges when lookup entry `i`
+    names M2 vertex `offset + i` (None when that reaches past the vertices).
+    Which reading of a LOD skin's lookup is right shows as the short edges:
+    the wrong one joins vertices from all over the body."""
+    lookup, indices = skin.lookup, skin.indices
+    if not indices or 3 * (offset + max(lookup)) + 2 >= len(positions):
+        return None
+    total = 0.0
+    for t in range(0, len(indices), 3):
+        a, b, c = (3 * (offset + lookup[indices[t + k]]) for k in range(3))
+        for u, v in ((a, b), (b, c), (c, a)):
+            total += math.dist(positions[u : u + 3], positions[v : v + 3])
+    return round(total / len(indices), 5)
+
+
+def _m2_skin_facts(source: casc.CascSource, fdid: int, model: m2.M2Model) -> dict[str, Any]:
+    """One skin's counts, levels and geoset ids, read through `m2.parse_skin`
+    with the model's vertex count; the header's size (the first array's
+    offset), the shadow-batch count (the u32 at 0x30, by the wiki) and
+    whether the eight bytes after it are zero, read here from the header
+    for the §12 amendment; and the mean triangle edge under both readings
+    of the lookup. No byte of the file."""
+    started = time.perf_counter()
+    data = source.read(fdid)
+    skin = m2.parse_skin(data, vertex_count=model.vertices.count)
+    seconds = time.perf_counter() - started
+    lookup = skin.lookup
+    sections = skin.sections
+    header_size = int.from_bytes(data[8:12], "little")
+    positions = model.vertices.positions
+    return {
+        "file_data_id": fdid,
+        "decoded_size": len(data),
+        "lookup_count": len(lookup),
+        "lookup_max": max(lookup) if lookup else None,
+        "lookup_is_identity": all(v == i for i, v in enumerate(lookup)),
+        "index_count": len(skin.indices),
+        "bone_index_count": skin.bone_count,
+        "vertex_base": skin.vertex_base,
+        "skin_header_size": header_size,
+        "shadow_batch_count": int.from_bytes(data[0x30:0x34], "little"),
+        "header_bytes_0x38_to_0x40_zero": not any(data[0x38:0x40]) if header_size >= 0x40 else None,
+        "mean_edge_with_vertex_base": _m2_mean_edge(skin, positions, skin.vertex_base),
+        "mean_edge_from_vertex_0": _m2_mean_edge(skin, positions, 0),
+        "section_count": len(sections),
+        "batch_count": len(skin.batches),
+        "levels": {str(k): v for k, v in sorted(Counter(s.level for s in sections).items())},
+        "index_end": max((s.index_start + s.index_count for s in sections), default=0),
+        "vertex_end": max((s.vertex_start + s.vertex_count for s in sections), default=0),
+        "geoset_ids": [s.geoset_id for s in sections],
+        "read_and_parse_seconds": round(seconds, 3),
+    }
+
+
+def _m2_model_facts(source: casc.CascSource, name: str, fdid: int) -> dict[str, Any]:
+    """One model and every skin its `SFID` names, through `m2`. Counts,
+    types, ids, tags and sizes; the position bounds rounded to 1e-4."""
+    stat = source.stat(fdid)
+    if stat.state != "local":
+        return {"name": name, "file_data_id": fdid, "state": stat.state, "words": stat.words}
+    started = time.perf_counter()
+    data = source.read(fdid)
+    model = m2.parse_m2(data)
+    seconds = time.perf_counter() - started
+    positions = model.vertices.positions
+    bounds = [(min(positions[a::3]), max(positions[a::3])) for a in range(3)] if positions else []
+    head = model.attachment(11)  # the head, by the wiki
+    skins = []
+    for skin_id in (*model.skin_file_data_ids, *model.lod_skin_file_data_ids):
+        skin_stat = source.stat(skin_id)
+        if skin_stat.state != "local":
+            skins.append({"file_data_id": skin_id, "state": skin_stat.state})
+            continue
+        skins.append(_m2_skin_facts(source, skin_id, model))
+    return {
+        "name": name,
+        "file_data_id": fdid,
+        "state": stat.state,
+        "decoded_size": len(data),
+        "version": model.version,
+        "md20_name": model.name,
+        "global_flags": f"{model.flags:#x}",
+        "chunks": [{"tag": c.tag, "size": c.size, "read": c.read} for c in model.chunks],
+        "bone_count": model.bone_count,
+        "vertex_count": model.vertices.count,
+        "view_count": model.view_count,
+        "textures": [
+            {"type": t.type, "flags": t.flags, "file_data_id": t.file_data_id}
+            for t in model.textures
+        ],
+        "texture_file_data_ids": list(model.texture_file_data_ids),
+        "material_count": len(model.materials),
+        "texture_combo_count": len(model.texture_combos),
+        "attachment_count": len(model.attachments),
+        "attachment_ids": [a.id for a in model.attachments],
+        "attachment_lookup_count": len(model.attachment_lookup),
+        "head_attachment_z": round(head.position[2], 4) if head else None,
+        "skin_file_data_ids": list(model.skin_file_data_ids),
+        "lod_skin_file_data_ids": list(model.lod_skin_file_data_ids),
+        "position_min": [round(lo, 4) for lo, _ in bounds],
+        "position_max": [round(hi, 4) for _, hi in bounds],
+        "notes": list(model.notes),
+        "read_and_parse_seconds": round(seconds, 3),
+        "skins": skins,
+    }
+
+
+def m2_facts(
+    install_root: str | None,
+    flavor_folder: str,
+    captured: str,
+    models: Sequence[tuple[str, int]],
+) -> dict[str, Any]:
+    """The derived record of a few M2 models and their skins (M15-08):
+    what `m2.parse_m2` and `m2.parse_skin` read, never a byte of a file."""
+    source = casc.open_source(discover(install_root), flavor_folder)
+    report = source.report
+    return {
+        "schema": SCHEMA,
+        "kind": "m2-models-derived",
+        "made_by": "scripts/casc_facts.py --m2",
+        "captured": captured,
+        "flavor": flavor_folder,
+        "product": report.index.product,
+        "version": report.index.version,
+        "build": report.index.build,
+        "models": [_m2_model_facts(source, name, fdid) for name, fdid in models],
+    }
+
+
 # ─── --blp: textures decoded by `blp` (M15-07) ──────────────────────────────
 
 BLP_SAMPLE = 8000  # ids read, evenly spaced over the ids the root takes
@@ -1002,6 +1158,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="write the encoding, root and file-read record (M15-05)",
     )
     mode.add_argument(
+        "--m2",
+        action="store_true",
+        help="write the record of the models --model names and their skins (M15-08)",
+    )
+    parser.add_argument(
+        "--model",
+        action="append",
+        type=_m2_named,
+        default=[],
+        metavar="NAME=FILE_DATA_ID",
+        help="with --m2: a model to record, by a label and its file data id (repeatable)",
+    )
+    mode.add_argument(
         "--blp", action="store_true", help="write the texture record decoded by blp (M15-07)"
     )
     parser.add_argument(
@@ -1016,8 +1185,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         refuse_install(out)
         if out.exists():
             raise FactsError("--out is already there; a fixture is never replaced")
+        if args.m2 and not args.model:
+            raise FactsError("--m2 needs at least one --model NAME=FILE_DATA_ID")
+        if args.model and not args.m2:
+            raise FactsError("--model is read only with --m2")
         if args.files:
             record = files_facts(args.root, args.flavor, args.captured, args.model_table)
+        elif args.m2:
+            record = m2_facts(args.root, args.flavor, args.captured, args.model)
         elif args.blp:
             record = blp_facts(args.root, args.flavor, args.captured)
         else:
@@ -1027,9 +1202,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         text = json.dumps(record, indent=2) + "\n"
         with out.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-    except (FactsError, casc.CascError, InstallError, GameDataError, OSError) as exc:
+    except (FactsError, casc.CascError, m2.M2Error, InstallError, GameDataError, OSError) as exc:
         print(f"casc_facts: {exc}", file=sys.stderr)
         return 1
+    if args.m2:
+        print(
+            f"wrote {out}: {record['product']} {record['version']}, "
+            + ", ".join(
+                f"{m['name']} ({m['state']}, {len(m.get('skins', []))} skins)"
+                for m in record["models"]
+            )
+        )
+        return 0
     if args.files:
         timings = record["timings"]
         print(
