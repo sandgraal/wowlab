@@ -8,7 +8,8 @@ any other buffer; this module opens no file and writes nothing.
 little-endian u32 size. `MD21` holds the whole MD20 blob, whose array
 offsets are relative to the blob's own start. `SFID` holds the skin file
 data ids (one per view the header counts, then the LOD skins), `TXID` the
-texture file data ids (one per texture, non-zero for the type-0 ones).
+texture file data ids (one per texture, non-zero for the type-0 ones in
+the models met).
 Every other chunk (`AFID`, `BFID`, `SKID`, `LDV1`, `TXAC`, `EXP2` …) is
 listed by tag, offset and size and not read. A file that is not chunked
 (it starts with `MD20`) is refused as unsupported: the Lab reads the
@@ -38,18 +39,34 @@ of the 64-byte header (shadow batches, by the wiki) is not read. A section's
 `skinSectionId` is the geoset id (`group * 100 + value`); its `Level` is
 the high half of the index start (`level << 16` is added to the u16
 `indexStart`, as wow.export does; the wiki's "and alike" is not followed
-for the vertex start, which at 70450 never overflows: the lookup of
-`humanmale_hd` has 37,813 entries).
+for the vertex start: in the fourteen skins of `humanmale_hd` and
+`humanfemale_hd` at 70959 the vertex start never needs it (the largest
+lookup has 43,166 entries; §12 amendment of 2026-11-17)).
 
-**Bounds.** Every count and offset is checked against the bytes of the
-chunk (or the skin) before anything is read or allocated: an array that
-would run past its end is refused with `M2MalformedError` naming the
-array, its count and its offset. A count of 2**32 - 1 is refused by that
-check without a byte being allocated. Section ranges are checked against
-the lookup and the indices, every index against the lookup and, when the
-caller gives the model's vertex count, every lookup entry against it.
-Nothing is read past a chunk's end, and arithmetic is on Python integers,
-so nothing wraps.
+**Bounds.** What is checked, and what that bounds:
+
+- Every array's `count, offset` against the bytes of its chunk (or of the
+  skin) before anything is read: an array that would run past the end is
+  refused with `M2MalformedError` naming the array, its count and its
+  offset, so a count of 2**32 - 1 is refused without a byte allocated.
+  Arithmetic is on Python integers, so nothing wraps, and nothing is read
+  past a chunk's end.
+- At most `MAX_CHUNKS` (1,024) chunks; an `M2Chunk` is built for each.
+- At most `MAX_ENTRIES` (65,535) textures, materials, attachments,
+  sections and batches, each of which becomes one Python object.
+- A texture filename of at most `MAX_FILENAME` (1,024) bytes, and the
+  filenames' counts summed at most the chunk's size, since they may all
+  point at one region and each is copied.
+- The sections' index counts summed at most `MAX_SECTION_INDEX_FACTOR` (4)
+  times the indices, so drawing every section's `triangles` builds at most
+  four times the index array. Each section's ranges are checked against
+  the lookup and the indices, every index against the lookup, every
+  batch's section against the sections and, when the caller gives the
+  model's vertex count, every lookup entry against it.
+
+The rest is proportional to the input: the vertex columns are about twice
+the vertex array, the lookup and indices one copy each. The caller bounds
+the input (`casc.CascSource.read` caps a file at `casc.DECODE_LIMIT`).
 """
 
 from __future__ import annotations
@@ -69,7 +86,11 @@ __all__ = [
     "BATCH_SIZE",
     "BONE_SIZE",
     "MATERIAL_SIZE",
+    "MAX_CHUNKS",
+    "MAX_ENTRIES",
+    "MAX_FILENAME",
     "MAX_KNOWN_VERSION",
+    "MAX_SECTION_INDEX_FACTOR",
     "MIN_VERSION",
     "NO_INDEX",
     "SECTION_SIZE",
@@ -138,6 +159,14 @@ _SKIN_VERTEX_BASE = 0x2C  # the wiki's boneCountMax; see `Skin`
 
 _FLOATS_PER_VERTEX = VERTEX_SIZE // 4
 
+# Caps on what a hostile file could make this module build (security review
+# of 2026-11-17). Real files are far below each: 7 chunks, 12 textures with
+# empty filenames, 126 sections and batches, 45 attachments, 11 materials.
+MAX_CHUNKS = 1024
+MAX_FILENAME = 1024  # bytes of one texture filename
+MAX_ENTRIES = 0xFFFF  # textures, materials, attachments, sections, batches: u16-indexed
+MAX_SECTION_INDEX_FACTOR = 4  # the sections' index counts summed, against the indices
+
 
 class M2Error(WowlabError):
     """Base class for everything this module raises on purpose. `path` is
@@ -174,8 +203,8 @@ class M2Chunk(BaseModel):
 class M2Texture(BaseModel):
     """One entry of the header's textures. `type` 0 is a file named by
     `file_data_id` (from `TXID`); other types are filled at render time
-    (1 the body skin, 2 the object skin or cape, 6 the hair, 19 the eyes,
-    15 to 18 the guild tabard; §17.3). `file_data_id` is `None` when
+    (by the wiki, §12 and §17.3: 1 the body skin, 2 the object skin or
+    cape, 6 the hair, 19 the eyes, 15 to 18 the guild tabard). `file_data_id` is `None` when
     `TXID` holds 0 for it or is absent. `filename` is the header's own
     (empty in the chunked models met)."""
 
@@ -344,9 +373,12 @@ class Skin(BaseModel):
     `humanmale_hd` and `humanfemale_hd` at 70959 it is where the skin's
     vertices start in the M2's vertex array (0 for the view skin, then the
     sum of the earlier skins' lookup counts; the last skin's base plus its
-    lookup count is the M2's vertex count). That reading is **[verify]**
-    for other models, so `triangles` does not add it: for the view skin it
-    is 0."""
+    lookup count is the M2's vertex count). For a LOD skin the lookup is,
+    probably, relative to `vertex_base` (in those two models a triangle's
+    mean edge is close to the view skin's with the base added and 2.7 to
+    5.2 times longer without it; recorded in the derived fixture, **[verify]**
+    for other models; §12 amendment of 2026-11-17). `triangles` does not add
+    it: for the view skin it is 0."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -360,10 +392,11 @@ class Skin(BaseModel):
     def triangles(self, section: SkinSection) -> array[int]:
         """The section's triangle indices through the lookup, three per
         face: M2 vertex indices for a skin whose `vertex_base` is 0 (the
-        view skin), relative to `vertex_base` for the LOD skins met."""
+        view skin); for a LOD skin, probably relative to `vertex_base`
+        (**[verify]**, §12 amendment of 2026-11-17)."""
         lookup = self.lookup
         end = section.index_start + section.index_count
-        return array("I", (lookup[i] for i in self.indices[section.index_start : end]))
+        return array("I", map(lookup.__getitem__, self.indices[section.index_start : end]))
 
 
 def _octets(data: Buffer) -> memoryview:
@@ -403,9 +436,23 @@ def _u32s(blob: memoryview, count: int, offset: int) -> array[int]:
     return out
 
 
-def _text(blob: memoryview, at: int, what: str, path: Path | None) -> str:
+def _text(blob: memoryview, at: int, what: str, path: Path | None, cap: int | None = None) -> str:
+    """The text of the `count, offset` array at `at`, up to its first NUL.
+    With `cap`, a count above it is refused before any byte is copied."""
     count, offset = _array(blob, at, 1, what, path)
-    return bytes(blob[offset : offset + count]).split(b"\0", 1)[0].decode("latin-1")
+    if cap is not None and count > cap:
+        raise M2MalformedError(f"the {what} holds {count} bytes; at most {cap} are read", path)
+    raw = blob[offset : offset + count]
+    return bytes(raw).split(b"\0", 1)[0].decode("latin-1")
+
+
+def _entries(count: int, what: str, path: Path | None) -> None:
+    """Refuse more entries of a u16-indexed array than a u16 can name."""
+    if count > MAX_ENTRIES:
+        raise M2MalformedError(
+            f"the {what} array holds {count} entries; a u16 index names at most {MAX_ENTRIES}",
+            path,
+        )
 
 
 def _chunks(data: memoryview, path: Path | None) -> list[M2Chunk]:
@@ -413,6 +460,12 @@ def _chunks(data: memoryview, path: Path | None) -> list[M2Chunk]:
     at = 0
     seen: set[str] = set()
     while at < len(data):
+        if len(chunks) == MAX_CHUNKS:
+            raise M2MalformedError(
+                f"more than {MAX_CHUNKS} chunks (the first: "
+                f"{' '.join(c.tag for c in chunks[:8])} …); real models have a handful",
+                path,
+            )
         if at + _CHUNK_HEAD.size > len(data):
             raise M2MalformedError(
                 f"{len(data) - at} bytes after the last chunk at offset {at}: not a chunk header",
@@ -492,7 +545,9 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
     md21 = by_tag.get("MD21")
     if md21 is None:
         raise M2MalformedError(
-            f"no MD21 chunk among {[c.tag for c in chunks] or 'no chunks'}", path
+            f"no MD21 chunk among {len(chunks)} chunks"
+            + (f" (the first: {' '.join(c.tag for c in chunks[:8])})" if chunks else ""),
+            path,
         )
     blob = octets[md21.offset : md21.offset + md21.size]
     if len(blob) < _HEADER_END:
@@ -519,9 +574,12 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
     v_count, v_offset = _array(blob, _VERTICES, VERTEX_SIZE, "vertices", path)
     (view_count,) = _U32.unpack_from(blob, _VIEWS)
     t_count, t_offset = _array(blob, _TEXTURES, TEXTURE_SIZE, "textures", path)
+    _entries(t_count, "textures", path)
     m_count, m_offset = _array(blob, _MATERIALS, MATERIAL_SIZE, "materials", path)
+    _entries(m_count, "materials", path)
     c_count, c_offset = _array(blob, _TEXTURE_COMBOS, 2, "texture combos", path)
     a_count, a_offset = _array(blob, _ATTACHMENTS, ATTACHMENT_SIZE, "attachments", path)
+    _entries(a_count, "attachments", path)
     l_count, l_offset = _array(blob, _ATTACHMENT_LOOKUP, 2, "attachment lookup", path)
 
     sfid = _ids(octets, by_tag.get("SFID"), path)
@@ -535,6 +593,18 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
     elif len(txid) != t_count:
         notes.append(f"TXID holds {len(txid)} ids for {t_count} textures")
 
+    # The filenames may all point at one region: each is capped, and their
+    # counts summed may not pass the blob, before any is copied.
+    named = sum(
+        _ARRAY.unpack_from(blob, t_offset + i * TEXTURE_SIZE + _TEXTURE.size)[0]
+        for i in range(t_count)
+    )
+    if named > len(blob):
+        raise M2MalformedError(
+            f"the {t_count} texture filenames hold {named} bytes in all, more than the "
+            f"{len(blob)} bytes of the MD21 chunk",
+            path,
+        )
     textures = []
     for i in range(t_count):
         at = t_offset + i * TEXTURE_SIZE
@@ -546,7 +616,9 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
                 type=kind,
                 flags=tex_flags,
                 file_data_id=fdid,
-                filename=_text(blob, at + _TEXTURE.size, f"texture {i}'s filename", path),
+                filename=_text(
+                    blob, at + _TEXTURE.size, f"texture {i}'s filename", path, MAX_FILENAME
+                ),
             )
         )
     materials = []
@@ -604,11 +676,20 @@ def parse_skin(data: Buffer, path: Path | None = None, *, vertex_count: int | No
     ix_count, ix_offset = _array(blob, _SKIN_INDICES, 2, "indices", path)
     bone_count, _ = _array(blob, _SKIN_BONES, _SKIN_BONE_SIZE, "bone indices", path)
     s_count, s_offset = _array(blob, _SKIN_SECTIONS, SECTION_SIZE, "sections", path)
+    _entries(s_count, "sections", path)
     b_count, b_offset = _array(blob, _SKIN_BATCHES, BATCH_SIZE, "batches", path)
+    _entries(b_count, "batches", path)
     (vertex_base,) = _U32.unpack_from(blob, _SKIN_VERTEX_BASE)
 
     lookup = _u16s(blob, lk_count, lk_offset)
     indices = _u16s(blob, ix_count, ix_offset)
+    summed = sum(_SECTION.unpack_from(blob, s_offset + i * SECTION_SIZE)[5] for i in range(s_count))
+    if summed > MAX_SECTION_INDEX_FACTOR * ix_count:
+        raise M2MalformedError(
+            f"the {s_count} sections draw {summed} indices in all, more than "
+            f"{MAX_SECTION_INDEX_FACTOR} times the {ix_count} indices there are",
+            path,
+        )
     if ix_count % 3:
         raise M2MalformedError(f"{ix_count} indices are not whole triangles", path)
     if indices and max(indices) >= lk_count:

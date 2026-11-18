@@ -4858,7 +4858,12 @@ ever appears; whether any player gear is encrypted; the bonus-id
 semantics (TrinityCore); the `+1` in the item geoset value; attachment
 positions being model-space in the bind pose; collection models at the
 origin; the blend-mode enum; the 4-bit palette alpha; the M2 vertex count
-against the skin's (226,301 against 37,813: LOD skins, probably); the
+against the skin's (226,301 against 37,813: LOD skins, probably; *note,
+2026-11-17, M15-08:* settled for `humanmale_hd` and `humanfemale_hd` at
+70959, whose M2 vertices are the seven skins' sets one after another, the
+skin's u32 at 0x2C giving each set's start; whether a LOD skin's lookup is
+relative to that start, and other models, stay [verify]:
+`docs/LAB_FORMATS.md` §12, amendment of 2026-11-17); the
 axis signs for Y-up; why the client's `ecache/` folder exists; the DXT
 choice enum; the HD body models of every race keeping their bones inside
 (no `SKID`); the per-slot geoset-group table and the default geoset rule;

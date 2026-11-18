@@ -94,6 +94,12 @@ def test_writes_the_m2_record_constructed(tmp_path: Path) -> None:
     assert view["lookup_is_identity"] is True and view["vertex_base"] == 0
     assert (view["index_end"], view["vertex_end"]) == (3, 3)
     assert lod == {"file_data_id": 501, "state": "not_local"}
+    assert (view["skin_header_size"], view["shadow_batch_count"]) == (64, 0)
+    assert view["header_bytes_0x38_to_0x40_zero"] is True
+    # The triangle (0,0,0) (1,0,0) (0,0,2): edges 1, sqrt(5) and 2.
+    edge = round((1 + 5**0.5 + 2) / 3, 5)
+    assert view["mean_edge_with_vertex_base"] == view["mean_edge_from_vertex_0"] == edge
+    assert built["head_attachment_z"] == 1.75
     text = out.read_text(encoding="utf-8")
     assert str(tmp_path) not in text and '_key"' not in text and "hash" not in text
 
@@ -128,4 +134,13 @@ def test_a_malformed_model_is_one_line_and_writes_nothing_constructed(
     assert _run(root, out, "--m2", "--model", "bad=100") == 1
     err = capsys.readouterr().err
     assert err.startswith("casc_facts: chunk 'MD21' at offset 0") and err.count("\n") == 1
+    assert not out.exists()
+
+
+def test_model_without_m2_is_refused_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "m2.json"
+    assert _run(tmp_path, out, "--model", "built=100") == 1
+    assert "--model is read only with --m2" in capsys.readouterr().err
     assert not out.exists()

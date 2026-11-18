@@ -572,7 +572,11 @@ the wiki; at 70450 only the index start overflows), the batches
 index, colour index, material index, material layer, texture count, texture
 combo index, …). `humanmale_hd` skin 0 at 70450: 113 sections, 147,966
 indices, levels 0 to 2, a 37,813-entry identity lookup against 226,301
-header vertices (**[verify]** why: LOD skins, probably).
+header vertices (**[verify]** why: LOD skins, probably; *note, 2026-11-17,
+M15-08:* settled for `humanmale_hd` and `humanfemale_hd` at 70959, where
+the M2's vertices are the seven skins' sets one after another; whether a
+LOD skin's lookup is relative to its set and what other models do stay
+**[verify]**, amendment of 2026-11-17).
 
 ## Amendments
 
@@ -1143,34 +1147,50 @@ Dated entries, newest last. Each names the fixture that prompted it.
   **[verify]**. No contradiction with this reference.
 - **2026-11-17, §12, the derived fixture `macos-70959/derived/m2-models.json`
   (M15-08; `humanmale_hd` 1011653 and `humanfemale_hd` 1000764 and their
-  fourteen skins, read through `wowlab_core.m2` at 1.60.1.70959).** Confirmed
-  as §12 states: version 272; chunks `MD21 TXAC AFID LDV1 SFID TXID BFID`,
-  in that order, filling the file, no `SKID`; bones (215, 201) and
-  attachments (45, 43) inside the M2; vertices 48 bytes, Z-up (the
-  positions run from about 0 to 2.1 in z); textures 16 bytes, with `TXID`
-  holding one id per texture, non-zero exactly for the type-0 ones;
-  attachments 40 bytes (id, bone, a u16, position, a 20-byte track; the
-  head's, id 11, at z 1.85 and 1.71); sections 48 and batches 24 bytes;
-  `level << 16` added to the index start makes every section end inside
-  the indices and the furthest end at the last one, while the vertex start
-  needs no shift (the furthest section ends at the last lookup entry, below
-  65,536), so the wiki's "and alike" does not reach the vertex start here.
-  The female model's textures are twelve (types 1, 6, 0, 2, 15, 16, 18, 17,
-  19, 0, 0, 0), and its skin repeats some geoset ids across sections (3202,
-  3203, 3204 twice each). Not in §12 until now: `SFID` holds the header's
-  one view skin, then six LOD skins (the view count at 0x44 is 1). The
-  skin header is 64 bytes, not 48: after the five arrays a u32 at 0x2C,
-  then an array of 104 (male) or 117 (female) entries (shadow batches by the
-  wiki, not read) and eight zero bytes. **Contradiction with the wiki, not
-  with this reference:** the u32 at 0x2C, which the wiki names
-  `boneCountMax`, is in all fourteen skins where that skin's vertices start
-  in the M2's vertex array: 0 for the view skin, then the running sum of
-  the earlier skins' lookup counts (37,813, 75,626, … for the male), the
-  last skin's start plus its lookup count being exactly the model's vertex
-  count (226,301 and 248,970). That settles §17.7's "LOD skins, probably":
-  the M2's vertices are the seven skins' vertex sets one after another, the
-  view skin's first, each skin's lookup indexing its own set (the view
-  skin's is the identity). `m2` keeps the field as `Skin.vertex_base` and
-  does not add it to the lookup (`Skin.triangles` is right as it stands for
-  the view skin, whose base is 0); that it means the same in other models
-  is **[verify]**. The MD20 name is empty in both models.
+  fourteen skins, read through `wowlab_core.m2`).** Confirmed on the launch
+  client (`_forever_`, product `wowf`, 1.60.1.70959) as §12 states it for
+  the beta (`_classic_beta_`, `wow_classic_beta`, 70450): version 272;
+  chunks `MD21 TXAC AFID LDV1 SFID TXID BFID`, in that order, filling the
+  file, no `SKID` (`AFID` and `BFID` point at external animation and bone
+  files, by the wiki; unread here); bones (215, 201) and attachments (45,
+  43) inside the M2; vertices 48 bytes, Z-up (the positions run in z from
+  about 0 to 2.1 for the male and 2.0 for the female); textures 16 bytes,
+  with `TXID` holding one id per texture, non-zero exactly for the type-0
+  ones; attachments 40 bytes (id, bone, a u16, position, a 20-byte track;
+  attachment id 11, the head by the wiki, at z 1.8476 and 1.7119,
+  `head_attachment_z`); sections 48 and batches 24 bytes; `level << 16`
+  added to the index start makes every section end inside the indices and
+  the furthest end at the last one, while the vertex start needs no shift
+  (the furthest section ends at the last lookup entry, below 65,536), so
+  the wiki's "and alike" does not reach the vertex start here. The female
+  model's textures are twelve (types 1, 6, 0, 2, 15, 16, 18, 17, 19, 0, 0,
+  0), and its skin repeats some geoset ids across sections (3202, 3203,
+  3204 twice each). Not in §12 until now: `SFID` holds the header's one
+  view skin, then six LOD skins (the view count at 0x44 is 1). The skin
+  header is 64 bytes, not 48 (`skin_header_size`, the lookup's offset, in
+  all fourteen skins): after the five arrays a u32 at 0x2C, then a u32
+  count at 0x30 of 104 (male) or 117 (female) in every skin
+  (`shadow_batch_count`; shadow batches by the wiki, not read) and its
+  offset, then eight zero bytes (`header_bytes_0x38_to_0x40_zero`).
+  **Contradiction with the wiki, not with this reference:** the u32 at
+  0x2C, which the wiki names `boneCountMax`, is in all fourteen skins where
+  that skin's vertices start in the M2's vertex array: 0 for the view skin,
+  then the running sum of the earlier skins' lookup counts (37,813,
+  75,626, … for the male), the last skin's start plus its lookup count
+  being exactly the model's vertex count (226,301 and 248,970). So, for
+  these two models at 70959, §17.7's vertex-count question is settled: the
+  M2's vertices are the seven skins' vertex sets one after another, the
+  view skin's first (its lookup is the identity). That each LOD skin's
+  lookup indexes its own set, relative to that start, rather than from
+  vertex 0, is supported by one recorded comparison and stays
+  **[verify]**: the lookup maxima fit both readings, but the mean triangle
+  edge with the start added is near the view skin's (0.0423 to 0.0603 for
+  the male against 0.0423; 0.0353 to 0.0500 for the female against
+  0.0353), and from vertex 0 it is 2.7 to 5.2 times longer
+  (`mean_edge_with_vertex_base`, `mean_edge_from_vertex_0`). Other models
+  are **[verify]**. `m2` keeps the field as `Skin.vertex_base` and does not
+  add it to the lookup (`Skin.triangles` is right as it stands for the
+  view skin, whose base is 0). The MD20 name is empty in both models.
+  The fixture was written three times (2026-11-17 twice, 2026-11-18 once
+  for the review's added fields); every value that was in an earlier run
+  was unchanged.

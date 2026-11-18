@@ -293,3 +293,77 @@ def test_skin_magic_and_header_refusals_constructed(data: bytes, match: str) -> 
 def test_empty_skin_arrays_are_read_constructed() -> None:
     result = m2.parse_skin(skin(lookup=(), indices=(), sections=(), batches=()))
     assert len(result.lookup) == 0 and result.sections == () and result.batches == ()
+
+
+def _shared_filename_model(textures: int, length: int) -> bytes:
+    """Constructed hostile file: `textures` textures whose filename arrays
+    all point at one NUL-free run of `length` bytes (the model's name)."""
+    blob = md20(name=b"A" * length, textures=((0, 0),) * textures)
+    _, name_at = struct.unpack_from("<II", blob, 0x08)
+    _, tex_at = struct.unpack_from("<II", blob, 0x50)
+    for i in range(textures):
+        struct.pack_into("<II", blob, tex_at + 16 * i + 8, length, name_at)
+    return chunked(bytes(blob), txid=(0,) * textures)
+
+
+def test_hostile_shared_long_filename_is_refused_without_copies_constructed() -> None:
+    data = _shared_filename_model(2_000, 1_000)
+    tracemalloc.start()
+    try:
+        with pytest.raises(m2.M2MalformedError, match="texture filenames hold 2000000 bytes"):
+            m2.parse_m2(data)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2_000_000, f"{peak} bytes for {len(data)} bytes of input"
+
+
+def test_hostile_filename_over_the_cap_is_refused_constructed() -> None:
+    with pytest.raises(m2.M2MalformedError, match="texture 0's filename holds 1025 bytes"):
+        m2.parse_m2(_shared_filename_model(1, 1_025))
+
+
+def test_filename_within_the_cap_is_read_up_to_its_nul_constructed() -> None:
+    blob = md20(name=b"tex.blp\0junk")
+    _, name_at = struct.unpack_from("<II", blob, 0x08)
+    _, tex_at = struct.unpack_from("<II", blob, 0x50)
+    struct.pack_into("<II", blob, tex_at + 8, 12, name_at)
+    assert m2.parse_m2(chunked(bytes(blob))).textures[0].filename == "tex.blp"
+
+
+@pytest.mark.parametrize("what", ["textures", "materials"])
+def test_hostile_more_entries_than_a_u16_names_is_refused_constructed(what: str) -> None:
+    many = ((0, 0),) * (m2.MAX_ENTRIES + 1)
+    blob = md20(**{what: many})  # type: ignore[arg-type]
+    with pytest.raises(m2.M2MalformedError, match=f"the {what} array holds 65536 entries"):
+        m2.parse_m2(chunked(bytes(blob), txid=None))
+
+
+def test_hostile_more_batches_than_a_u16_names_is_refused_constructed() -> None:
+    data = skin(batches=((0, 0, 0),) * (m2.MAX_ENTRIES + 1))
+    with pytest.raises(m2.M2MalformedError, match="the batches array holds 65536 entries"):
+        m2.parse_skin(data)
+
+
+def test_chunk_count_is_capped_constructed() -> None:
+    extra = ((b"EXP2", b""),) * (m2.MAX_CHUNKS - 3)  # MD21, SFID and TXID make 1,024
+    assert len(m2.parse_m2(chunked(bytes(md20()), extra=extra)).chunks) == m2.MAX_CHUNKS
+    with pytest.raises(m2.M2MalformedError, match="more than 1024 chunks") as caught:
+        m2.parse_m2(chunked(bytes(md20()), extra=(*extra, (b"EXP2", b""))))
+    assert len(str(caught.value)) < 200
+
+
+def test_no_md21_message_names_eight_tags_and_a_count_constructed() -> None:
+    data = b"".join(chunk(f"T{i:03d}".encode(), b"") for i in range(20))
+    with pytest.raises(m2.M2MalformedError) as caught:
+        m2.parse_m2(data)
+    assert str(caught.value) == (
+        "no MD21 chunk among 20 chunks (the first: T000 T001 T002 T003 T004 T005 T006 T007)"
+    )
+
+
+def test_hostile_sections_summing_past_four_times_the_indices_are_refused_constructed() -> None:
+    one = (0, 0, 0, 3, 0, 3)
+    assert len(m2.parse_skin(skin(sections=(one,) * 4)).sections) == 4
+    with pytest.raises(m2.M2MalformedError, match="the 5 sections draw 15 indices in all"):
+        m2.parse_skin(skin(sections=(one,) * 5))

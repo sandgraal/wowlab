@@ -87,6 +87,7 @@ import csv
 import hashlib
 import itertools
 import json
+import math
 import sys
 import time
 from collections import Counter
@@ -757,15 +758,37 @@ def _m2_named(text: str) -> tuple[str, int]:
     return name, int(value)
 
 
-def _m2_skin_facts(source: casc.CascSource, fdid: int, vertex_count: int) -> dict[str, Any]:
+def _m2_mean_edge(skin: m2.Skin, positions: Sequence[float], offset: int) -> float | None:
+    """The mean length of the skin's triangle edges when lookup entry `i`
+    names M2 vertex `offset + i` (None when that reaches past the vertices).
+    Which reading of a LOD skin's lookup is right shows as the short edges:
+    the wrong one joins vertices from all over the body."""
+    lookup, indices = skin.lookup, skin.indices
+    if not indices or 3 * (offset + max(lookup)) + 2 >= len(positions):
+        return None
+    total = 0.0
+    for t in range(0, len(indices), 3):
+        a, b, c = (3 * (offset + lookup[indices[t + k]]) for k in range(3))
+        for u, v in ((a, b), (b, c), (c, a)):
+            total += math.dist(positions[u : u + 3], positions[v : v + 3])
+    return round(total / len(indices), 5)
+
+
+def _m2_skin_facts(source: casc.CascSource, fdid: int, model: m2.M2Model) -> dict[str, Any]:
     """One skin's counts, levels and geoset ids, read through `m2.parse_skin`
-    with the model's vertex count. No byte of the file."""
+    with the model's vertex count; the header's size (the first array's
+    offset), the shadow-batch count (the u32 at 0x30, by the wiki) and
+    whether the eight bytes after it are zero, read here from the header
+    for the §12 amendment; and the mean triangle edge under both readings
+    of the lookup. No byte of the file."""
     started = time.perf_counter()
     data = source.read(fdid)
-    skin = m2.parse_skin(data, vertex_count=vertex_count)
+    skin = m2.parse_skin(data, vertex_count=model.vertices.count)
     seconds = time.perf_counter() - started
     lookup = skin.lookup
     sections = skin.sections
+    header_size = int.from_bytes(data[8:12], "little")
+    positions = model.vertices.positions
     return {
         "file_data_id": fdid,
         "decoded_size": len(data),
@@ -775,6 +798,11 @@ def _m2_skin_facts(source: casc.CascSource, fdid: int, vertex_count: int) -> dic
         "index_count": len(skin.indices),
         "bone_index_count": skin.bone_count,
         "vertex_base": skin.vertex_base,
+        "skin_header_size": header_size,
+        "shadow_batch_count": int.from_bytes(data[0x30:0x34], "little"),
+        "header_bytes_0x38_to_0x40_zero": not any(data[0x38:0x40]) if header_size >= 0x40 else None,
+        "mean_edge_with_vertex_base": _m2_mean_edge(skin, positions, skin.vertex_base),
+        "mean_edge_from_vertex_0": _m2_mean_edge(skin, positions, 0),
         "section_count": len(sections),
         "batch_count": len(skin.batches),
         "levels": {str(k): v for k, v in sorted(Counter(s.level for s in sections).items())},
@@ -797,13 +825,14 @@ def _m2_model_facts(source: casc.CascSource, name: str, fdid: int) -> dict[str, 
     seconds = time.perf_counter() - started
     positions = model.vertices.positions
     bounds = [(min(positions[a::3]), max(positions[a::3])) for a in range(3)] if positions else []
+    head = model.attachment(11)  # the head, by the wiki
     skins = []
     for skin_id in (*model.skin_file_data_ids, *model.lod_skin_file_data_ids):
         skin_stat = source.stat(skin_id)
         if skin_stat.state != "local":
             skins.append({"file_data_id": skin_id, "state": skin_stat.state})
             continue
-        skins.append(_m2_skin_facts(source, skin_id, model.vertices.count))
+        skins.append(_m2_skin_facts(source, skin_id, model))
     return {
         "name": name,
         "file_data_id": fdid,
@@ -826,6 +855,7 @@ def _m2_model_facts(source: casc.CascSource, name: str, fdid: int) -> dict[str, 
         "attachment_count": len(model.attachments),
         "attachment_ids": [a.id for a in model.attachments],
         "attachment_lookup_count": len(model.attachment_lookup),
+        "head_attachment_z": round(head.position[2], 4) if head else None,
         "skin_file_data_ids": list(model.skin_file_data_ids),
         "lod_skin_file_data_ids": list(model.lod_skin_file_data_ids),
         "position_min": [round(lo, 4) for lo, _ in bounds],
@@ -901,6 +931,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise FactsError("--out is already there; a fixture is never replaced")
         if args.m2 and not args.model:
             raise FactsError("--m2 needs at least one --model NAME=FILE_DATA_ID")
+        if args.model and not args.m2:
+            raise FactsError("--model is read only with --m2")
         if args.files:
             record = files_facts(args.root, args.flavor, args.captured, args.model_table)
         elif args.m2:

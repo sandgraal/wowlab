@@ -1,10 +1,11 @@
 """`m2` against the derived fixture of the owner's install (M15-08; ADR-0033
 layer b): what `scripts/casc_facts.py --m2` read through `wowlab_core.m2`
-from `humanmale_hd` and `humanfemale_hd` and their skins at 1.60.1.70959,
-never a byte of a file. Provenance: `fixtures/README.md`, row
+from `humanmale_hd` and `humanfemale_hd` and their skins on the launch
+client (`_forever_`, product `wowf`, 1.60.1.70959), never a byte of a file. Provenance: `fixtures/README.md`, row
 `macos-70959/derived/m2-models.json`.
 
-The checks tie the record to `docs/LAB_PLAN.md` §17.3 (measured at 70450:
+The checks tie the record to `docs/LAB_PLAN.md` §17.3 (measured on the beta,
+`_classic_beta_`, `wow_classic_beta`, at 70450:
 version 272, 215 bones, 45 attachments, 113 sections, eleven textures of
 types 1, 6, 2, 15, 16, 18, 17, 19 and three of type 0, the 37,813-entry
 lookup and 147,966 indices, levels 0 to 2, no `SKID`) and to the reader's
@@ -120,8 +121,10 @@ def test_sections_stay_inside_the_lookup_and_indices_with_the_level_shift(name: 
     for skin in MODELS[name]["skins"]:
         assert skin["index_count"] % 3 == 0
         # Every section was checked by the reader with `level << 16` added to
-        # the index start; the furthest one ends at the last index, which it
-        # could not reach without the shift (the indices pass 65,535).
+        # the index start, and the furthest ends at the last index. For the
+        # skins with more than 131,070 indices that end is unreachable
+        # without the shift (a u16 start plus a u16 count); for the others
+        # it shows the shift keeps every section in bounds.
         assert skin["index_end"] == skin["index_count"] > 0xFFFF
         assert any(int(level) > 0 for level in skin["levels"])
         # The vertex start is not shifted: the furthest section ends at the
@@ -161,3 +164,36 @@ def test_positions_are_z_up(name: str) -> None:
     lo, hi = MODELS[name]["position_min"], MODELS[name]["position_max"]
     extent = [h - low for low, h in zip(lo, hi, strict=True)]
     assert extent[2] == max(extent) and 1.5 < hi[2] < 2.5 and abs(lo[2]) < 0.1
+
+
+@pytest.mark.parametrize("name", ["humanmale_hd", "humanfemale_hd"])
+def test_skin_headers_are_64_bytes_with_shadow_batches_then_zeros(name: str) -> None:
+    counts = {s["shadow_batch_count"] for s in MODELS[name]["skins"]}
+    assert counts == {104 if name == "humanmale_hd" else 117}
+    for skin in MODELS[name]["skins"]:
+        assert skin["skin_header_size"] == 64
+        assert skin["header_bytes_0x38_to_0x40_zero"] is True
+
+
+def test_head_attachment_sits_at_head_height() -> None:
+    assert MODELS["humanmale_hd"]["head_attachment_z"] == 1.8476
+    assert MODELS["humanfemale_hd"]["head_attachment_z"] == 1.7119
+    for model in MODELS.values():
+        assert 11 in model["attachment_ids"]
+        assert model["head_attachment_z"] <= model["position_max"][2]
+
+
+@pytest.mark.parametrize("name", ["humanmale_hd", "humanfemale_hd"])
+def test_lod_lookups_read_relative_to_vertex_base_make_short_edges(name: str) -> None:
+    view, *lods = MODELS[name]["skins"]
+    assert view["mean_edge_with_vertex_base"] == view["mean_edge_from_vertex_0"]
+    for skin in lods:
+        with_base, from_zero = skin["mean_edge_with_vertex_base"], skin["mean_edge_from_vertex_0"]
+        # With the base the edges stay near the view skin's (coarser LODs
+        # are a little longer); without it they are 2.7 to 5.2 times longer.
+        assert (
+            view["mean_edge_with_vertex_base"]
+            <= with_base
+            < 1.5 * view["mean_edge_with_vertex_base"]
+        )
+        assert from_zero > 2.5 * with_base
