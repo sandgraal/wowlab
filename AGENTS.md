@@ -102,7 +102,10 @@ code is written by the `implementer` agent and graders by `test-writer`,
 each in its own worktree; `code-reviewer` grades every branch spec-first;
 `domain-reviewer` and `security-reviewer` are added by area; `pr-shepherd`
 opens the PR, answers every thread, and **merges autonomously** once the
-required checks are green, the reviewer verdicts are clean, and every
+required checks and the test suite's job are green on the head it merges
+(`Lint, typecheck, tests`; the owner took it out of GitHub's required
+checks, 2026-11-18, so the shepherd waits for it by name), the reviewer
+verdicts are clean, and every
 thread the owner opened is answered. Since 2026-10-17 an open thread from
 a bot does not hold a merge (the automated Claude review itself was removed
 2026-11-04; the rule still covers Copilot and other bots): the independent

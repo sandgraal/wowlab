@@ -1448,6 +1448,33 @@ The stub reaches the children from test code only: the test prepends a temporary
 
 ---
 
+## [ ] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's cleanup, 2026-11-18; Windows runs on `main` since 2026-11-17
+
+`lab (windows)` has failed on every completed run on `main` since 2026-11-17 (run 44381681237 at cbd5799: 12 failed, 11,405 passed, 43 min 49 s). The failures are in `lab/core/tests/test_l1_sweep_live.py`: on the constructed install the sweep reports "the install changed (L1)" because folder modification times (`_forever_`, `Data`, `World of Warcraft.app/…`) moved by a millisecond or two between its two looks, so tests that expect a named failure ("did not end as a read may: … exit 2") get the L1 one first. Find why the folder times move on Windows (the tree still settling when the first look is taken, a reader that opens a folder in a way NTFS records, or the sweep's own bookkeeping) and fix the cause; a comparison that ignores folder times is acceptable only if the cause is shown to be the file system's and the sweep still catches a file created, removed or rewritten inside the install.
+
+**Acceptance:** the cause named with evidence from a Windows run; `gh workflow run windows.yml --ref <branch>` green, linked; the sweep's own tests for a created, removed and rewritten file still fail it on every platform; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (the L1 sweep is a safety check). User-facing: none.
+
+---
+
+## [ ] M15-20 — typer 0.29: the command reference generator and one CLI test break
+**Size:** S · **Depends on:** nothing · **Sources:** dependabot #568 (2026-11-16), red on "Lint, typecheck, tests"
+
+With typer 0.29.1 (from 0.28.0) the suite fails: `tests/scripts/test_gen_command_reference.py` and `tests/scripts/test_check_wiki_percent.py` raise `AttributeError: 'TyperOption' object has no attribute …`, and `lab/core/tests/test_cli_uncaught.py::test_a_usage_error_with_nothing_to_escape_prints_as_click_does[bad-value]` no longer matches. Make `scripts/gen_command_reference.py`, the UI's command-tree reader if it reads the same attributes, and the CLI's usage-error path work on 0.29.1, then take the bump (`pyproject.toml`, `uv.lock`) in the same PR and close #568. Text and `--json` output stay byte-identical on every command; the generated command reference does not change except where typer's own help text did, each such line named in the PR.
+
+**Acceptance:** the suite green on typer 0.29.1; `scripts/gen_command_reference.py --check` passes; the UI parity test green; the runtime dependency line in the PR body; `make ci` green. Reviewed by `code-reviewer`. User-facing: none intended; any help-text change listed.
+
+---
+
+## [ ] M15-21 — The tests take too long: measure, then cut and reschedule
+**Size:** M · **Depends on:** nothing · **Sources:** the owner, 2026-11-18 in session ("the tests take seriously way too long"; "schedule it during off hours and/or reduce their length or how often they're called")
+
+Measured 2026-11-18: on a pull request "Lint, typecheck, tests" takes 28.8 min (25.3 parallel, 3.1 serial) for about 14,400 tests; `lab (windows)` takes 44.9 min and runs on every push to `main`, as `lab (macos)` does; a local `make ci` takes about as long and has been run by every implementer, often twice. The review comes first (which tests cost the time, which are duplicates or probes that could run nightly, what each trigger runs); the cuts follow the owner's choices on it.
+
+**Acceptance:** `docs/handoffs/test-time-2026-11.md` with the measurements and the options; the owner's choices recorded here; the changes they pick merged with before and after times. Reviewed by `code-reviewer`, and `security-reviewer` for anything under `.github/`.
+
+---
+
 ## [ ] M15-17 — Leftovers from the M15-06 to M15-09 reviews
 **Size:** XS · **Depends on:** M15-07, M15-08 · **Sources:** the reviews of #595, #597 and #598 (2026-11-18)
 
