@@ -23,7 +23,10 @@ of 256 BGRX colours follows (read only for the palette encoding).
   with `BlpUnsupportedError`. The colour block is the standard BC1 block
   (two RGB565 endpoints, sixteen 2-bit indices, row by row, the low bits
   first): in DXT1, `c0 > c1` gives four opaque colours and `c0 <= c1`
-  three, the fourth transparent black; in DXT3 and DXT5 always four. An
+  three, the fourth transparent black, whatever the header's alpha depth
+  (whether the client draws that pixel opaque in a texture of alpha depth
+  0 is **[verify]**: it matters to skin composited over, M15-10); in DXT3
+  and DXT5 always four. An
   interpolated channel is `(2a + b) // 3` or `(a + b) // 2`, rounded
   down; RGB565 is widened by repeating the top bits. DXT3 alpha is sixteen
   explicit 4-bit values (low nibble first) times 17; DXT5 alpha is two
@@ -35,8 +38,9 @@ of 256 BGRX colours follows (read only for the palette encoding).
   bit first (1), one nibble per pixel, the low nibble first, times 17 (4;
   the wiki is incomplete here, **[verify]**), or one byte per pixel (8).
 - *BGRA* (encoding 3). Four bytes per pixel, B G R A; with alpha depth 0
-  the alpha byte is ignored and the pixel is opaque; depth 8 keeps it.
-  Any other depth is refused.
+  the alpha byte is ignored and the pixel is opaque (**[verify]**: one
+  real texture of depth 0 met, fdid 2912428 at 1.60.1.70959, and no
+  second decoder compared); depth 8 keeps it. Any other depth is refused.
 
 **What is trusted.** Nothing that sizes an allocation. The width and height
 are each held to `MAX_DIMENSION` and their product to `MAX_PIXELS` before
@@ -47,6 +51,17 @@ stored sizes are wrong, §11), and the offset and that computed size must
 lie inside the file (`BlpMalformedError`) before the output is allocated;
 so the output is at most eight times the input (DXT1's ratio) and never
 more than the cap.
+
+**What a decode costs.** The peak is about two and a half to three times
+the output: the copy of mip 0, the output buffer, the stride slices of the
+palette and BGRA paths, and the final `bytes` copy (measured with
+tracemalloc on 4096 x 4096 textures of random data, 2026-11-18: DXT1
+150 MiB, DXT3 159 MiB, DXT5 170 MiB, palette and BGRA 192 MiB, against
+64 MiB of output). The DXT endpoint caches are emptied past `CACHE_LIMIT`
+pairs, so random blocks cannot grow them. Worst-case time at the cap, on
+the owner's M1 under load: DXT1 1.8 s, DXT3 2.1 s, DXT5 3.6 s, palette
+and BGRA under 0.1 s; §17.2's target (a 1024 x 1024 DXT1 in at most
+0.5 s) is about 0.12 s of random blocks.
 """
 
 from __future__ import annotations
@@ -57,7 +72,7 @@ from itertools import chain
 from operator import add
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 MAGIC = b"BLP2"
 VERSION = 1
@@ -80,6 +95,9 @@ MAX_DIMENSION = 8192
 """The widest or tallest texture decoded; past it the header is refused."""
 MAX_PIXELS = 4096 * 4096
 """The most pixels decoded: the output is at most 64 MiB of RGBA."""
+CACHE_LIMIT = 65_536
+"""Endpoint pairs held per DXT cache before it is emptied (a bound on the
+decoder's working memory for a texture of random blocks)."""
 
 _HEADER = struct.Struct("<4sIBBBBII16I16I")
 
@@ -175,7 +193,7 @@ class BlpImage(BaseModel):
     width: int
     height: int
     mip0_size: int
-    rgba: bytes
+    rgba: bytes = Field(repr=False)
 
     @property
     def stored_mip0_size(self) -> int:
@@ -408,7 +426,10 @@ def _alphas(key: int) -> tuple[int, ...]:
 def _dxt(mip: bytes, fmt: Format, width: int, height: int) -> bytes:
     """Decode whole blocks row by row of blocks into padded rows, then cut
     to `width` x `height`. Each block's palette is built once per distinct
-    endpoint pair and the pixels are gathered from it."""
+    endpoint pair and the pixels are gathered from it; each cache is
+    emptied before a row of blocks once it holds more than `CACHE_LIMIT`
+    pairs, so it stays at most `CACHE_LIMIT` plus one row (2,048 blocks at
+    the widest) whatever the texture."""
     block = _BLOCK_BYTES[fmt]
     across = (width + 3) // 4
     down = (height + 3) // 4
@@ -424,6 +445,10 @@ def _dxt(mip: bytes, fmt: Format, width: int, height: int) -> bytes:
     out = bytearray(width * height * 4)
     line = width * 4
     for by in range(down):
+        if len(cache) > CACHE_LIMIT:
+            cache.clear()
+        if len(alpha_cache) > CACHE_LIMIT:
+            alpha_cache.clear()
         blocks = mip[by * row_bytes : (by + 1) * row_bytes]
         keys = [k for (k,) in ends.iter_unpack(blocks)]
         for k in set(keys).difference(cache):

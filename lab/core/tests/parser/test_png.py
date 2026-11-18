@@ -14,6 +14,8 @@ from _blp_build import BLUE, PATTERN, RED, bc1, blp_file
 
 from wowlab_core import blp, png
 
+pytestmark = pytest.mark.parser
+
 
 @dataclass
 class Png:

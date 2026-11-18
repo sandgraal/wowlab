@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "blp-derived",
   "made_by": "scripts/casc_facts.py --blp",
-  "captured": "2026-11-17",
+  "captured": "2026-11-18",
   "flavor": "_forever_",
   "product": "wowf",
   "version": "1.60.1.70959",
@@ -75,8 +75,11 @@
       "17": 123
     },
     "dxt_rules_disagree": 0,
+    "dxt1_alpha_depth_0": 2053,
+    "dxt1_alpha_depth_0_with_index_3_in_a_three_colour_block": 0,
+    "first_of_those": null,
     "stored_mip0_size_differs": 0,
-    "decode_seconds": 50.947
+    "decode_seconds": 275.554
   },
   "character_sample": {
     "what": "ChrCustomizationMaterial's textures (TextureFileData by MaterialResourcesID): 300 of 25116, evenly spaced",
@@ -122,8 +125,11 @@
       "1": 300
     },
     "dxt_rules_disagree": 0,
+    "dxt1_alpha_depth_0": 126,
+    "dxt1_alpha_depth_0_with_index_3_in_a_three_colour_block": 0,
+    "first_of_those": null,
     "stored_mip0_size_differs": 0,
-    "decode_seconds": 7.744
+    "decode_seconds": 42.479
   },
   "textures": [
     {
@@ -145,7 +151,7 @@
       },
       "wiki_rule": "dxt1",
       "wow_export_rule": "dxt1",
-      "decode_seconds": 0.0017,
+      "decode_seconds": 0.0015,
       "format": "dxt1",
       "mip0_size": 8192,
       "rgba_md5": "5eef7a775d00e284acda13ea7bf59087"
@@ -169,7 +175,7 @@
       },
       "wiki_rule": null,
       "wow_export_rule": null,
-      "decode_seconds": 0.0001,
+      "decode_seconds": 0.0003,
       "format": "palette",
       "mip0_size": 32768,
       "rgba_md5": "238a744b11865b64a92b41250132eb1d"
@@ -217,7 +223,7 @@
       },
       "wiki_rule": "dxt1",
       "wow_export_rule": "dxt1",
-      "decode_seconds": 0.0009,
+      "decode_seconds": 0.0017,
       "format": "dxt1",
       "mip0_size": 4096,
       "rgba_md5": "2babf6da89d97debb1e41ba0d3d67d5b"
@@ -241,7 +247,7 @@
       },
       "wiki_rule": "dxt5",
       "wow_export_rule": "dxt5",
-      "decode_seconds": 0.0326,
+      "decode_seconds": 0.2069,
       "format": "dxt5",
       "mip0_size": 131072,
       "rgba_md5": "53a709a4eb9da15b32e2fcf48f2214b4"
@@ -265,7 +271,7 @@
       },
       "wiki_rule": null,
       "wow_export_rule": null,
-      "decode_seconds": 0.0004,
+      "decode_seconds": 0.0001,
       "format": "palette",
       "mip0_size": 32768,
       "rgba_md5": "cae35eab978a0cda39b6376fde15a730"
@@ -289,7 +295,7 @@
       },
       "wiki_rule": "dxt1",
       "wow_export_rule": "dxt1",
-      "decode_seconds": 0.0015,
+      "decode_seconds": 0.0036,
       "format": "dxt1",
       "mip0_size": 8192,
       "rgba_md5": "15848d1cc62ce7e08dc0951720058762"
@@ -337,7 +343,7 @@
       },
       "wiki_rule": "dxt1",
       "wow_export_rule": "dxt1",
-      "decode_seconds": 0.0009,
+      "decode_seconds": 0.0011,
       "format": "dxt1",
       "mip0_size": 4096,
       "rgba_md5": "497b8c50d8958c737ddc5fb7833d70dc"
@@ -361,7 +367,7 @@
       },
       "wiki_rule": "dxt3",
       "wow_export_rule": "dxt3",
-      "decode_seconds": 0.0062,
+      "decode_seconds": 0.046,
       "format": "dxt3",
       "mip0_size": 65536,
       "rgba_md5": "64b55d85e06b13f9ba9ba6dd14cff8fc"
@@ -385,7 +391,7 @@
       },
       "wiki_rule": "dxt5",
       "wow_export_rule": "dxt5",
-      "decode_seconds": 0.0114,
+      "decode_seconds": 0.0586,
       "format": "dxt5",
       "mip0_size": 32768,
       "rgba_md5": "efff32594dd4f6e5947f77a00f852453"
@@ -457,7 +463,7 @@
       },
       "wiki_rule": "dxt3",
       "wow_export_rule": "dxt3",
-      "decode_seconds": 0.0054,
+      "decode_seconds": 0.0084,
       "format": "dxt3",
       "mip0_size": 65536,
       "rgba_md5": "9b2c40c8b661843ba65a993173ce88c6"
@@ -480,8 +486,8 @@
         "stored_mip0_size": 1048576
       },
       "wiki_rule": null,
-      "wow_export_rule": "dxt3",
-      "decode_seconds": 0.0,
+      "wow_export_rule": null,
+      "decode_seconds": 0.0001,
       "refused": "BlpUnsupportedError"
     },
     {
@@ -526,8 +532,8 @@
         "stored_mip0_size": 4194304
       },
       "wiki_rule": null,
-      "wow_export_rule": "dxt1",
-      "decode_seconds": 0.0,
+      "wow_export_rule": null,
+      "decode_seconds": 0.0001,
       "refused": "BlpUnsupportedError"
     }
   ],
@@ -550,7 +556,7 @@
     },
     "wiki_rule": "dxt1",
     "wow_export_rule": "dxt1",
-    "decode_seconds": 0.0875,
+    "decode_seconds": 0.4584,
     "format": "dxt1",
     "mip0_size": 524288,
     "rgba_md5": "7503ca7302a3d609fc87d1175611d794"

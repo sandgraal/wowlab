@@ -68,6 +68,8 @@ SERIAL_FILES: frozenset[str] = frozenset(
         "lab/core/tests/parser/test_wtfconfig_budget_rss_constructed.py",
         # RSS of a child parsing two-line macro records at MACROS_BUDGET (VmHWM).
         "lab/core/tests/review/test_review_m16_25_macros_record_density.py",
+        # RSS of a child decoding a 4096 x 4096 DXT5 of random blocks (M15-07).
+        "lab/core/tests/parser/test_blp_peak_rss_constructed.py",
     }
 )
 
@@ -86,6 +88,8 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_multi_megabyte_document_parses_whole",
         "lab/core/tests/parser/test_toc_constructed.py"
         "::test_hostile_lines_parse_in_linear_time_constructed",
+        "lab/core/tests/parser/test_blp_constructed.py"
+        "::test_a_1024_square_dxt1_decodes_within_half_a_second_constructed",
         "lab/core/tests/test_snap_gc_keep_rule.py"
         "::test_the_keep_rule_takes_exactly_seven_parts_and_stops_splitting_a_long_path_constructed",
         "tests/scripts/test_lab_capture_followup.py"

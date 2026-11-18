@@ -86,6 +86,9 @@ def test_each_recorded_texture_reads_as_recorded(row: dict[str, Any]) -> None:
     )
     assert header.mip_count == 1  # only slot 0 is rebuilt here
     outcome = _outcome(header)
+    if blp.wiki_rule(h["alpha_type"]) is None:
+        # BC5 and other types are refused before either rule is applied
+        assert row["wiki_rule"] is None and row["wow_export_rule"] is None
     if "refused" in row:
         assert outcome == row["refused"]
         assert "rgba_md5" not in row
@@ -123,6 +126,11 @@ def test_the_census_by_header_adds_up_to_the_census_by_outcome(sample: str) -> N
     assert dict(expected) == census["by_outcome"]
     assert census["dxt_rules_disagree"] == disagree == 0
     assert census["stored_mip0_size_differs"] == 0
+    depth0 = census["by_header"].get("encoding 2, alpha depth 0, alpha type 0", 0)
+    assert census["dxt1_alpha_depth_0"] == depth0
+    holes = census["dxt1_alpha_depth_0_with_index_3_in_a_three_colour_block"]
+    assert 0 <= holes <= depth0
+    assert (census["first_of_those"] is None) == (holes == 0)
     assert sum(census["by_header"].values()) == census["blp2"]
 
 

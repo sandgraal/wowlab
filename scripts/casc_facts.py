@@ -66,7 +66,9 @@ a census of 8,000 ids evenly spaced over the ids the root takes and of
 starts `BLP2`: counts by header class (encoding, alpha depth, alpha type),
 by what `blp` decoded or refused, by size, mip count and has-mips byte,
 how many DXT headers the two published DXT rules read differently, how
-many stored mip 0 sizes differ from the computed one; then one row for the
+many stored mip 0 sizes differ from the computed one, how many DXT1
+textures of alpha depth 0 hold a three-colour block with an index of 3
+(decoded as transparent black; the first such id); then one row for the
 first texture of each header class met (its header fields as stored, both
 rules' answers, the format, the computed mip 0 size, the MD5 of the
 decoded RGBA or the refusal, the decode time) and the first 1024 x 1024
@@ -89,6 +91,7 @@ import csv
 import hashlib
 import itertools
 import json
+import struct
 import sys
 import time
 from collections import Counter
@@ -777,7 +780,9 @@ def _blp_row(source: casc.CascSource, fdid: int, why: str, *, timed: int = 1) ->
     stat = source.stat(fdid)
     data = source.read(fdid)
     header = blp.parse_header(data)
-    dxt = header.encoding == blp.ENCODING_DXT
+    # Both rules only where the wiki's has an answer: BC5 (type 11) and
+    # other types are refused before either rule is applied.
+    dxt = header.encoding == blp.ENCODING_DXT and blp.wiki_rule(header.alpha_type) is not None
     seconds: list[float] = []
     for _ in range(timed):
         image, refused, took = _blp_decode(data)
@@ -818,13 +823,24 @@ def _blp_row(source: casc.CascSource, fdid: int, why: str, *, timed: int = 1) ->
     return row
 
 
+_BC1 = struct.Struct("<HHI")
+
+
+def _three_colour_index_3(mip: memoryview) -> bool:
+    """Whether a DXT1 mip 0 has a block with `c0 <= c1` (three colours)
+    and an index of 3 (the pixel `blp` decodes as transparent black) in
+    it; every block, the padding of a side not a multiple of 4 included."""
+    return any(c0 <= c1 and idx & (idx >> 1) & 0x55555555 for c0, c1, idx in _BC1.iter_unpack(mip))
+
+
 def _blp_census(
     source: casc.CascSource, ids: Sequence[int]
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Read every id, keep the `BLP2` files, decode each: counts by header
     class, by format decoded or refusal, by size, by mip count and by the
     has-mips byte, how many DXT headers the wiki's and wow.export's rules
-    read differently, how many stored mip 0 sizes differ from the computed
+    read differently, how many DXT1 textures of alpha depth 0 hold a
+    three-colour block with an index of 3, how many stored mip 0 sizes differ from the computed
     one, the decode time, and
     the first id of each header class (and the first 1024 x 1024 DXT1)."""
     classes: Counter[str] = Counter()
@@ -834,7 +850,8 @@ def _blp_census(
     has_mips: Counter[int] = Counter()
     unread: Counter[str] = Counter()
     first: dict[str, int] = {}
-    textures = other = differ = disagree = 0
+    textures = other = differ = disagree = depth0 = holes = 0
+    first_hole: int | None = None
     seconds = 0.0
     for fdid in ids:
         try:
@@ -872,6 +889,12 @@ def _blp_census(
             outcomes[refused or "?"] += 1
             continue
         outcomes[image.format] += 1
+        if image.format == "dxt1" and header.alpha_depth == 0:
+            depth0 += 1
+            start = header.mip_offsets[0]
+            if _three_colour_index_3(memoryview(data)[start : start + image.mip0_size]):
+                holes += 1
+                first_hole = fdid if first_hole is None else first_hole
         differ += image.mip0_size != image.stored_mip0_size
         if image.format == "dxt1" and image.width == image.height == TIMING_SIDE:
             first.setdefault("timing", fdid)
@@ -887,6 +910,9 @@ def _blp_census(
             "by_mip_count": {str(k): v for k, v in sorted(mips.items())},
             "by_has_mips": {str(k): v for k, v in sorted(has_mips.items())},
             "dxt_rules_disagree": disagree,
+            "dxt1_alpha_depth_0": depth0,
+            "dxt1_alpha_depth_0_with_index_3_in_a_three_colour_block": holes,
+            "first_of_those": first_hole,
             "stored_mip0_size_differs": differ,
             "decode_seconds": round(seconds, 3),
         },

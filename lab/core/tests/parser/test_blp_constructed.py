@@ -11,11 +11,11 @@ and by hand (`test_blp_live.py`, `@live`).
 from __future__ import annotations
 
 import random
-import time
 import tracemalloc
 
 import pytest
 from _blp_build import BLUE, GREEN, GREY, PATTERN, RED, bc1, bc4_alpha, blp_file, explicit_alpha, px
+from _cpu_clock import cpu_clock
 
 from wowlab_core import blp
 
@@ -426,22 +426,41 @@ def test_a_bytearray_and_a_read_only_memoryview_decode_alike_constructed() -> No
     assert blp.decode(memoryview(data)).rgba == want
 
 
+def test_the_endpoint_caches_are_emptied_past_their_limit_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a limit of 1, every row of blocks starts from empty caches and
+    the pixels are the same as with the default."""
+    data = blp_file(16, 16, 2, 8, 7, random.Random(16).randbytes(16 * 16))
+    want = blp.decode(data).rgba
+    monkeypatch.setattr(blp, "CACHE_LIMIT", 1)
+    assert blp.decode(data).rgba == want
+
+
+def test_the_pixels_are_left_out_of_the_repr_constructed() -> None:
+    image = blp.decode(blp_file(4, 4, 2, 0, 0, bc1(RED, BLUE, PATTERN)))
+    assert "rgba" not in repr(image)
+
+
 # ─── §17.2's target ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.serial
 def test_a_1024_square_dxt1_decodes_within_half_a_second_constructed() -> None:
     """§17.2: a 1024 x 1024 DXT1 in at most 0.5 s on the owner's machine.
     Random blocks, so every block has its own endpoints (the worst case
     for the per-endpoint cache; a real texture repeats many). Best of
-    three by wall clock. Measured on the owner's M1 on 2026-11-17: 0.12 s
-    here, 0.09 s for a real 1024 x 1024 DXT1 (`test_blp_live.py`)."""
+    three on the parser suite's CPU clock (`_cpu_clock.py`: wall clock
+    under load counts the wait for a core; on 2026-11-18, at a load
+    average of 64, wall clock gave 0.73 s). Measured on the owner's M1 on
+    2026-11-17: 0.12 s here, 0.09 s for a real 1024 x 1024 DXT1
+    (`test_blp_live.py`)."""
+    clock, name = cpu_clock()
     body = random.Random(1024).randbytes(256 * 256 * 8)
     data = blp_file(1024, 1024, 2, 0, 0, body)
     best = float("inf")
     for _ in range(3):
-        started = time.perf_counter()
+        started = clock()
         image = blp.decode(data)
-        best = min(best, time.perf_counter() - started)
+        best = min(best, clock() - started)
     assert len(image.rgba) == 1024 * 1024 * 4
-    assert best <= 0.5, f"a 1024 x 1024 DXT1 took {best:.3f} s; §17.2's target is 0.5 s"
+    assert best <= 0.5, f"a 1024 x 1024 DXT1 took {best:.3f} s ({name}); §17.2's target is 0.5 s"
