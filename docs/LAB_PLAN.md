@@ -4808,6 +4808,23 @@ bonus ids from `char gear`.
   it rests on: the gear as of the record's last logout or `/reload`, the
   look as of the last barber visit.
 
+*Note, 2026-11-17 (M15-09, `wowlab_core.renderplan`):* the body and
+customization half reads its tables through `gamedata` (`GameData.rows`,
+behind `RenderTables.from_gamedata`, the shape `looks` uses), not
+`db2lake`; this is the access path M15-09 took, not yet §17.9's named
+decision (EV-44), which stays open for the conductor. What the recorded
+tables at 1.60.1.70959 show: `TextureFileData.UsageType` is 0 or 2 only
+(58,615 and 202 rows), and 2,439 material resources have two or more
+usage-0 rows, so "usage 0 is the diffuse" is still **[verify]**; the plan
+takes the first in table order and lists the rest. `ChrCustomizationCondModel`
+still answers 400. `ChrModelTextureTargetID_1` is 0 on every
+`ChrModelTextureLayer` row. No model of a race `ChrRaces` flags playable has
+a fallback id (23 models of other races do). The customization record has
+no date of its own: the plan carries its words, its load count, its client
+build and the file's save time when the caller passes it. A record's
+options the barber shop did not list are not defaulted; without a record,
+only options with no requirement are.
+
 ### 17.5 The body texture
 
 `wowlab_core.compositor` builds the body texture in Python so pytest grades
