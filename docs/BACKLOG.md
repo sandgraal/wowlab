@@ -1287,6 +1287,8 @@ Picked by the owner on 2026-10-19 after the Wave 5 review (`docs/handoffs/M14-re
 
 *Owner decision, 2026-10-21:* paused after M15-05 for M16 (`docs/LAB_PLAN.md` §17.9, §18). M15-06 to M15-13 are not dispatched until the owner resumes the wave.
 
+*Owner decision, 2026-11-17:* resumed after v0.3 (the owner's pick in session: "Ship v0.3, then resume 3D (M15)"; v0.3.0 was published the same day). M15-06 to M15-13 dispatch in their own dependency order and no longer wait for the M16 review.
+
 ## [x] M15-01 — lab-addon schema 4: the character's identity (race, body type, class)
 **Size:** S · **Depends on:** nothing
 
@@ -1335,7 +1337,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-06 — `wowlab casc stat` and `casc cat`
-**Size:** S · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
+**Size:** S · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.1 "What it writes". `wowlab casc stat --fdid N [--json]` prints the file's state in the words of §17.1's four states and, when local, its size and content key; `wowlab casc cat --fdid N [--out PATH]` writes the decoded bytes: without `--out`, to its default place, `casc/<product>-<build>/files/<fdid>-<ckey8>.bin` under the data directory (`ckey8` the first eight hex digits of the content key, so a patched file lands beside the old one and nothing is overwritten, L5); a second `cat` of a file already there with the same content key writes nothing and says "already extracted"; with `--out`, to a path confined to the same `casc/<product>-<build>/` folder, or to stdout (`-`); never elsewhere (a path outside is refused; the install is never a target); `CascStatReport`. The data directory layout `casc/<product>-<build>/` is created on first use and never overwritten across builds (L5). **In the UI** (§17.1, "In the UI"): both commands appear in the Commands tab when this merges; `stat` runs as a plain read; `cat`'s `--out` and its stdout form are refused there as `looks page --out` is, so from the UI it writes only to its default place under the data directory; the parity and allowlist tests say so.
 
@@ -1344,7 +1346,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-07 — `blp`: textures to RGBA and PNG
-**Size:** S · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
+**Size:** S · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.2; `docs/LAB_FORMATS.md` §11. `wowlab_core.blp` decodes mip 0 of a BLP2 (DXT1, DXT3, DXT5; palette with 1-, 4- and 8-bit alpha; BGRA) to RGBA rows, refuses BC5 and any other encoding with a typed error, refuses with both values named a texture where the wiki's and wow.export's DXT rules disagree (§17.2, **[verify]**), computes block sizes rather than trusting the stored mip sizes, and `wowlab_core.png` writes PNG with the stdlib. The header's width and height bound every allocation under a stated cap; a hostile header is refused. §17.2's target: a 1024² DXT1 decode in ≤ 0.5 s on the owner's machine.
 
@@ -1353,7 +1355,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-08 — `m2`: models and skins
-**Size:** M · **Depends on:** M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
+**Size:** M · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.3; `docs/LAB_FORMATS.md` §12. `wowlab_core.m2` reads the chunked M2 (`MD21`, `SFID`, `TXID`; other chunks listed by tag and skipped), the header arrays it needs (vertices, textures, attachments; bones counted, not read), and the `.skin` file (lookup, indices, sections with the geoset id and the level offset, batches); bounded by counts and offsets checked against the chunk size, never past it. A model whose version is above the wiki's table (274) is read with a note, not refused; 272, the HD body models here, is inside the table.
 
@@ -1362,7 +1364,7 @@ The Character tab renders the field under the gear table as one button, **See it
 ---
 
 ## [ ] M15-09 — `renderplan`: the body and its customization
-**Size:** M · **Depends on:** M15-01, M15-05, M16-47 (paused for M16, owner decision 2026-10-21)
+**Size:** M · **Depends on:** M15-01, M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.4, the body and customization bullets. `wowlab_core.renderplan` builds a `RenderPlan` from the lab-addon's `identity` and `customization` records through the game tables (fetched and cached by `gamedata` per build, ADR-0022; `ChrCustomizationCondModel` is unpublished for this build and skipped): the body model id (`ChrRaceXChrModel` → `ChrModel` → `CreatureDisplayInfo` → `CreatureModelData`), the default geoset set (§17.4's numeric rule: id 0, every id ≥ 100 with `id % 100 == 1`, group 32; groups 17 and 35 hidden) with the customization geosets applied, the customization texture layers (an element taken only when its `RelatedChrCustomizationChoiceID` is satisfied; the diffuse `TextureFileData` row by `UsageType`, **[verify]**; sections, layers and blend modes through `ChrModelTextureLayer` and `CharComponentTextureSections`), the `ChrModel` fallback ids applied where a row is missing, the unsupported element kinds listed, each file's `stat` from `casc` in the four states, and the look's as-of date from the record. Without a `customization` record the defaults, with a note. The gear chain is M15-13, which extends the same model.
 
@@ -2106,6 +2108,8 @@ Already on `main` at 3e53e5a, against M16-30's own acceptance line (`scrollWidth
 **Size:** S · **Depends on:** M16-01, M16-02, M16-03T, M16-03, M16-04, M16-05, M16-06, M16-07, M16-08, M16-09T, M16-09, M16-10, M16-11T, M16-11, M16-12, M16-13, M16-14, M16-15, M16-16, M16-17, M16-18, M16-19, M16-20, M16-21, M16-22, M16-23T, M16-23, M16-24, M16-25, M16-26T, M16-26, M16-27, M16-28, M16-29, M16-30, M16-31, M16-32, M16-33, M16-34, M16-35, M16-36, M16-37, M16-38, M16-39T, M16-40, M16-41, M16-42, M16-43, M16-44, M16-45, M16-46, M16-48, M16-49T, M16-49, M16-50, M16-51, M16-52, M16-53, M16-54, M16-55, M16-56, M16-57, M16-58, M16-59, M16-60, M16-61T, M16-62T, M16-62, M16-63, M16-64, M16-65, M16-66T, M16-66, M16-67, M16-68, M16-69T, M16-69, M16-70T, M16-70, M16-71, M16-72, M16-73T, M16-74T, M16-75, M16-76, M16-77, M16-78, M16-79, M16-80, M16-81, M16-82, M16-83, M16-84T, M16-84, M16-85, M16-86, M16-87T, M16-87, M16-88, M16-89, M16-90T, M16-90, M16-91, M16-92, M16-93T, M16-94T, M16-94, M16-95, M16-78T, M16-96, M16-97, M16-98, M16-99, M16-100T
 
 `docs/handoffs/M16-review.md` per §11, including §11 item 5's folding of the amendments. It also covers whether v0.2 is tagged, when the gate's clock started, and whether M15 resumes.
+
+*Owner decision, 2026-11-17:* M15 resumes after v0.3 without waiting for this review, so M16-47 no longer gates M15-06 to M15-09. The review stays open for what is left of M16 (M16-45, M16-46, M16-87T and M16-87, M16-88 and the other open M16 tickets).
 
 **Acceptance:** the review is merged, and the owner picks the next wave.
 
@@ -3331,7 +3335,7 @@ On Windows, platformdirs ignores `HOME`, `APPDATA` and `LOCALAPPDATA`, so tests 
 
 **Acceptance:** no Lab desktop suite on `pull_request`; required checks unchanged. Done in #589.
 
-## [ ] M18-16 — Leftovers from the 2026-11-17 reviews
+## [x] M18-16 — Leftovers from the 2026-11-17 reviews
 **Size:** S · **Depends on:** M18-14 · **Sources:** the reviews of #579, #587 and #581 (2026-11-17)
 
 - `scripts/app_smoke.py` `_env` sets `LOCALAPPDATA` and `APPDATA` but not `WIN_PD_OVERRIDE_*`, so the Windows app smoke uses the runner's real store. Use the same overrides as M18-14. Check `scripts/perf_budget.py` the same way.
