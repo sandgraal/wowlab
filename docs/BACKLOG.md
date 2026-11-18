@@ -1336,7 +1336,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-06 — `wowlab casc stat` and `casc cat`
+## [x] M15-06 — `wowlab casc stat` and `casc cat`
 **Size:** S · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.1 "What it writes". `wowlab casc stat --fdid N [--json]` prints the file's state in the words of §17.1's four states and, when local, its size and content key; `wowlab casc cat --fdid N [--out PATH]` writes the decoded bytes: without `--out`, to its default place, `casc/<product>-<build>/files/<fdid>-<ckey8>.bin` under the data directory (`ckey8` the first eight hex digits of the content key, so a patched file lands beside the old one and nothing is overwritten, L5); a second `cat` of a file already there with the same content key writes nothing and says "already extracted"; with `--out`, to a path confined to the same `casc/<product>-<build>/` folder, or to stdout (`-`); never elsewhere (a path outside is refused; the install is never a target); `CascStatReport`. The data directory layout `casc/<product>-<build>/` is created on first use and never overwritten across builds (L5). **In the UI** (§17.1, "In the UI"): both commands appear in the Commands tab when this merges; `stat` runs as a plain read; `cat`'s `--out` and its stdout form are refused there as `looks page --out` is, so from the UI it writes only to its default place under the data directory; the parity and allowlist tests say so.
@@ -1345,7 +1345,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-07 — `blp`: textures to RGBA and PNG
+## [x] M15-07 — `blp`: textures to RGBA and PNG
 **Size:** S · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.2; `docs/LAB_FORMATS.md` §11. `wowlab_core.blp` decodes mip 0 of a BLP2 (DXT1, DXT3, DXT5; palette with 1-, 4- and 8-bit alpha; BGRA) to RGBA rows, refuses BC5 and any other encoding with a typed error, refuses with both values named a texture where the wiki's and wow.export's DXT rules disagree (§17.2, **[verify]**), computes block sizes rather than trusting the stored mip sizes, and `wowlab_core.png` writes PNG with the stdlib. The header's width and height bound every allocation under a stated cap; a hostile header is refused. §17.2's target: a 1024² DXT1 decode in ≤ 0.5 s on the owner's machine.
@@ -1354,7 +1354,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-08 — `m2`: models and skins
+## [x] M15-08 — `m2`: models and skins
 **Size:** M · **Depends on:** M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.3; `docs/LAB_FORMATS.md` §12. `wowlab_core.m2` reads the chunked M2 (`MD21`, `SFID`, `TXID`; other chunks listed by tag and skipped), the header arrays it needs (vertices, textures, attachments; bones counted, not read), and the `.skin` file (lookup, indices, sections with the geoset id and the level offset, batches); bounded by counts and offsets checked against the chunk size, never past it. A model whose version is above the wiki's table (274) is read with a note, not refused; 272, the HD body models here, is inside the table.
@@ -1363,7 +1363,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-09 — `renderplan`: the body and its customization
+## [x] M15-09 — `renderplan`: the body and its customization
 **Size:** M · **Depends on:** M15-01, M15-05 (the M16 review no longer gates this: the owner resumed M15 after v0.3, 2026-11-17)
 
 §17.4, the body and customization bullets. `wowlab_core.renderplan` builds a `RenderPlan` from the lab-addon's `identity` and `customization` records through the game tables (fetched and cached by `gamedata` per build, ADR-0022; `ChrCustomizationCondModel` is unpublished for this build and skipped): the body model id (`ChrRaceXChrModel` → `ChrModel` → `CreatureDisplayInfo` → `CreatureModelData`), the default geoset set (§17.4's numeric rule: id 0, every id ≥ 100 with `id % 100 == 1`, group 32; groups 17 and 35 hidden) with the customization geosets applied, the customization texture layers (an element taken only when its `RelatedChrCustomizationChoiceID` is satisfied; the diffuse `TextureFileData` row by `UsageType`, **[verify]**; sections, layers and blend modes through `ChrModelTextureLayer` and `CharComponentTextureSections`), the `ChrModel` fallback ids applied where a row is missing, the unsupported element kinds listed, each file's `stat` from `casc` in the four states, and the look's as-of date from the record. Without a `customization` record the defaults, with a note. The gear chain is M15-13, which extends the same model.
@@ -1411,6 +1411,39 @@ The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: 
 Found in review after M15-05 merged. In `casc.py`, `_read_checked` and `_probe_once` (around lines 2598–2608 at 9112f0f) lose the per-call `reopened` flag when the retry after a re-read raises `EncryptedContent` or `CascUnsupportedError`. A later candidate can then call `_reopen()` a second time, giving `reopens == 2` within one `read` or `stat`, while §17.1 allows one re-open per call. Fix: keep the flag for the whole call, on the instance or passed through. Add a labelled constructed test that makes the first candidate fail its MD5, has the retry raise each of the two errors, and asserts `reopens == 1` after the call.
 
 **Acceptance:** the test fails on `main` and passes on the branch; `make test-parser` and `make ci` green; reviewed by `code-reviewer`. User-facing: none.
+
+---
+
+## [ ] M15-15 — The 70450 `@live` tests and a leftover flavor folder
+**Size:** XS · **Depends on:** M15-05 · **Sources:** the reviews of #598 and #597 (2026-11-18)
+
+The owner's install is the launch client now (`_forever_`, product `wowf`). The beta's folder `_classic_beta_` is still on disk, with no row in `.build.info`.
+
+- `test_casc_live.py`, `test_casc_blte_live.py` and `test_casc_source_live.py` open the fixture's flavor before they compare builds, so on this install they raise `BuildRowError` instead of skipping. A flavor whose product has no `.build.info` row is a skip with the reason said, like a build mismatch.
+- `casc.select_build_row` (around `casc.py:879`) tells the player ".build.info has no row for the product … does not pick between rows" when there are zero rows. With zero rows it says that the Battle.net app no longer lists the product and that the folder is left over from a version that is no longer installed, and names `wowlab install show`.
+
+**Acceptance:** constructed tests for the zero-row message (text and `--json`); the three live tests skip, with the reason, on an install whose `.build.info` lacks the fixture's product (the owner's run, pasted); `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer` (the wording). User-facing: one refusal text.
+
+---
+
+## [ ] M15-16 — The live ruleset and `.github/rulesets/main.json` disagree
+**Size:** XS · **Depends on:** nothing · **Sources:** the merges of #598 and #595 (2026-11-18) · **owner** (which checks GitHub requires)
+
+`.github/rulesets/main.json` lists seven required checks. The ruleset on GitHub requires six: "Lint, typecheck, tests" is not among them, so `gh pr checks --required` and the merge button do not wait for the job that runs the suite. On 2026-11-18 the conductor merged #598 and #595 while that job was still running on their heads. Both jobs passed afterwards (#598 at eb9797f: merged 18:46Z, the job finished 19:09Z; #595 at b4f3c29: merged 18:50Z, finished 19:16Z). The owner decides which is right: add the check on GitHub, or take it out of the file. Either way the file and GitHub say the same, `pr-shepherd`'s instructions name the job it must wait for by name, and a test or script compares the file with the live ruleset where a token allows.
+
+**Acceptance:** the owner's decision recorded here; the file and the live ruleset agree (`gh api repos/…/rulesets/<id>` pasted); the shepherd's instructions updated by the conductor. Reviewed by `code-reviewer` and `security-reviewer` (`.github/`).
+
+---
+
+## [ ] M15-17 — Leftovers from the M15-06 to M15-09 reviews
+**Size:** XS · **Depends on:** M15-07, M15-08 · **Sources:** the reviews of #595, #597 and #598 (2026-11-18)
+
+- `blp.py`'s docstring says a decode peaks at "two and a half to three times" the output; by resident memory the palette and BGRA cases reach about three and a half. Say so.
+- `test_blp_peak_rss_constructed.py`'s docstring says the unbounded code took 62 s; that was a loaded machine (about 10 s otherwise). `macos-70959/derived/blp.json`'s timing row (0.458 s) was also taken under load, and `test_blp_derived.py` asserts `≤ 0.5` on that recorded number, which grades the fixture and not the code: drop the bound from the derived test (the CPU-clock test and the `@live` test hold the target).
+- `scripts/casc_facts.py`'s opening sentence names `--blte`, `--files` and `--blp` but not `--m2`.
+- `m2`'s `MAX_ENTRIES` cap has no constructed test for attachments or sections.
+
+**Acceptance:** each item done or explained in the PR; the touched tests green. Reviewed by `code-reviewer`. User-facing: none.
 
 ---
 
