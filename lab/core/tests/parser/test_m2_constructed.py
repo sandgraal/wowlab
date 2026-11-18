@@ -367,3 +367,51 @@ def test_hostile_sections_summing_past_four_times_the_indices_are_refused_constr
     assert len(m2.parse_skin(skin(sections=(one,) * 4)).sections) == 4
     with pytest.raises(m2.M2MalformedError, match="the 5 sections draw 15 indices in all"):
         m2.parse_skin(skin(sections=(one,) * 5))
+
+
+_OVER = m2.MAX_ENTRIES + 1
+
+
+def _peak_of_refusal(data: bytes, match: str) -> int:
+    tracemalloc.start()
+    try:
+        with pytest.raises(m2.M2MalformedError, match=match):
+            m2.parse_m2(data)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        (
+            chunked(bytes(md20(combos=(0,) * _OVER))),
+            "the texture combos array holds 65536 entries",
+        ),
+        (
+            chunked(bytes(md20(lookup=(0,) * _OVER))),
+            "the attachment lookup array holds 65536 entries",
+        ),
+        (chunked(bytes(md20()), sfid=range(_OVER)), "chunk 'SFID' holds 65536 ids"),
+        (chunked(bytes(md20()), txid=(900, 901)), "chunk 'TXID' holds 2 ids; at most 1"),
+    ],
+    ids=["texture-combos", "attachment-lookup", "sfid", "txid-past-textures"],
+)
+def test_hostile_u16_and_id_arrays_are_capped_without_building_them_constructed(
+    data: bytes, match: str
+) -> None:
+    # Constructed hostile files: each array one entry past its cap. The
+    # refusal comes before the tuple is built, so the peak stays far below
+    # the 12 to 24 bytes per entry a tuple of ints would cost.
+    peak = _peak_of_refusal(data, match)
+    assert peak < 200_000, f"{peak} bytes for {len(data)} bytes of input"
+
+
+def test_arrays_at_their_caps_are_read_constructed() -> None:
+    model = m2.parse_m2(
+        chunked(bytes(md20(combos=(0,) * m2.MAX_ENTRIES)), sfid=range(m2.MAX_ENTRIES))
+    )
+    assert len(model.texture_combos) == m2.MAX_ENTRIES
+    assert len(model.skin_file_data_ids) + len(model.lod_skin_file_data_ids) == m2.MAX_ENTRIES

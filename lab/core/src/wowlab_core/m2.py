@@ -53,7 +53,10 @@ lookup has 43,166 entries; §12 amendment of 2026-11-17)).
   past a chunk's end.
 - At most `MAX_CHUNKS` (1,024) chunks; an `M2Chunk` is built for each.
 - At most `MAX_ENTRIES` (65,535) textures, materials, attachments,
-  sections and batches, each of which becomes one Python object.
+  sections and batches, each of which becomes one Python object, and as
+  many texture combos, attachment-lookup entries and `SFID` ids, each of
+  which becomes a Python int in a tuple; `TXID` holds at most one id per
+  texture (both models met hold exactly one).
 - A texture filename of at most `MAX_FILENAME` (1,024) bytes, and the
   filenames' counts summed at most the chunk's size, since they may all
   point at one region and each is copied.
@@ -64,8 +67,10 @@ lookup has 43,166 entries; §12 amendment of 2026-11-17)).
   batch's section against the sections and, when the caller gives the
   model's vertex count, every lookup entry against it.
 
-The rest is proportional to the input: the vertex columns are about twice
-the vertex array, the lookup and indices one copy each. The caller bounds
+The rest is proportional to the input: the vertex columns take about three
+times the vertex array at peak while they are built and one copy once
+built (measured: 161 MB at peak for 48 MB of vertices); the lookup and
+indices one copy each. The caller bounds
 the input (`casc.CascSource.read` caps a file at `casc.DECODE_LIMIT`).
 """
 
@@ -488,12 +493,18 @@ def _chunks(data: memoryview, path: Path | None) -> list[M2Chunk]:
     return chunks
 
 
-def _ids(data: memoryview, chunk: M2Chunk | None, path: Path | None) -> tuple[int, ...]:
+def _ids(data: memoryview, chunk: M2Chunk | None, path: Path | None, limit: int) -> tuple[int, ...]:
+    """A chunk of u32 ids, refused when it holds more than `limit` of them
+    (each becomes a Python int in a tuple)."""
     if chunk is None:
         return ()
     if chunk.size % 4:
         raise M2MalformedError(
             f"chunk {chunk.tag!r} holds {chunk.size} bytes, not a whole number of u32 ids", path
+        )
+    if chunk.size // 4 > limit:
+        raise M2MalformedError(
+            f"chunk {chunk.tag!r} holds {chunk.size // 4} ids; at most {limit} are read", path
         )
     return tuple(_u32s(data, chunk.size // 4, chunk.offset))
 
@@ -578,12 +589,14 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
     m_count, m_offset = _array(blob, _MATERIALS, MATERIAL_SIZE, "materials", path)
     _entries(m_count, "materials", path)
     c_count, c_offset = _array(blob, _TEXTURE_COMBOS, 2, "texture combos", path)
+    _entries(c_count, "texture combos", path)
     a_count, a_offset = _array(blob, _ATTACHMENTS, ATTACHMENT_SIZE, "attachments", path)
     _entries(a_count, "attachments", path)
     l_count, l_offset = _array(blob, _ATTACHMENT_LOOKUP, 2, "attachment lookup", path)
+    _entries(l_count, "attachment lookup", path)
 
-    sfid = _ids(octets, by_tag.get("SFID"), path)
-    txid = _ids(octets, by_tag.get("TXID"), path)
+    sfid = _ids(octets, by_tag.get("SFID"), path, MAX_ENTRIES)
+    txid = _ids(octets, by_tag.get("TXID"), path, t_count)
     if "SFID" not in by_tag:
         notes.append("no SFID chunk: the skin file data ids are unknown")
     elif len(sfid) < view_count:
