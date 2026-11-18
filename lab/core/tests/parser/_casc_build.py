@@ -214,7 +214,7 @@ def blte(
     if not table:
         (only,) = blocks
         return b"BLTE" + struct.pack(">I", 0) + only[0]
-    rows = b""
+    rows = bytearray()  # appended per block: a bytes += would copy it each time
     for i, (stored, size) in enumerate(blocks):
         enc = len(stored) if encoded is None or encoded[i] is None else encoded[i]
         dec = size if decoded is None or decoded[i] is None else decoded[i]
@@ -284,7 +284,7 @@ def encoding_bytes(
     encoding-key spec pages, which the reader never reads."""
     size = page_kib * 1024
     blobs = [encoding_page(rows, size) for rows in pages]
-    index = b""
+    index = bytearray()  # appended per page: a bytes += would copy it each time
     for i, (rows, blob) in enumerate(zip(pages, blobs, strict=True)):
         first = rows[0][0] if rows else bytes(16)
         if firsts is not None and firsts[i] is not None:
@@ -297,7 +297,7 @@ def encoding_bytes(
     header = struct.pack(
         ">2sBBBHHIIBI", magic, version, *hash_sizes, page_kib, 1, count, 1, 0, len(espec)
     )
-    return header + espec + index + b"".join(blobs) + tail
+    return header + espec + bytes(index) + b"".join(blobs) + tail
 
 
 RootBlock = tuple[Sequence[int], Sequence[bytes], int, int]  # ids, content keys, content, locale
@@ -323,7 +323,9 @@ def root_bytes(
     rows = sum(len(ids) for ids, *_ in blocks)
     total = rows if total is None else total
     named = rows if named is None else named
-    out = struct.pack("<4sIIII", magic, header_size, version, total, named)
+    # A bytearray: a bytes += copies the whole buffer per block, quadratic in
+    # the block count (65,537 blocks took about 40 s; M15-21).
+    out = bytearray(struct.pack("<4sIIII", magic, header_size, version, total, named))
     out += bytes(max(0, min(header_size, 64) - len(out)))  # a larger size is a lie
     for i, (ids, ckeys, content, locale) in enumerate(blocks):
         count = len(ids) if counts is None or counts[i] is None else counts[i]
@@ -342,7 +344,7 @@ def root_bytes(
         out += struct.pack(f"<{len(ids)}i", *deltas) + b"".join(ckeys)
         if not (total != named and content & 0x10000000):
             out += b"".join(struct.pack("<Q", 0x1234_5678_9ABC_DEF0 + fdid) for fdid in ids)
-    return out
+    return bytes(out)
 
 
 def ckey_of(data: bytes) -> bytes:
