@@ -93,9 +93,18 @@ def test_make_test_runs_both_passes_over_everything() -> None:
 
 
 def test_make_ci_runs_every_stage() -> None:
+    # M15-21: `test` already runs every parser test and tests/harness under
+    # 3.12, so `make ci` no longer repeats `test-parser` or the 3.12 hook leg;
+    # the 3.9 leg, which `test` cannot run, stays.
     stages = _variable("CI_STAGES").split()
-    assert stages == ["lint", "lint-lua", "test", "test-parser", "hooks-test"]
+    assert stages == ["lint", "lint-lua", "test", "hooks-test-py39"]
     assert "test-fast" not in " ".join(_recipe("ci"))
+    (py39,) = _recipe("hooks-test-py39")
+    assert _pytest_args(py39) == ["tests/harness"] and "--python 3.9" in py39
+    # Both targets stay: a parser change runs `make test-parser`, CI's
+    # parser job calls it, and `make hooks-test` runs both hook legs.
+    assert _recipe("test-parser")
+    assert _recipe("hooks-test") == ["$(UV) run --frozen pytest tests/harness", py39]
 
 
 # Every pytest command in ci.yml and macos.yml, by job, exactly. A marker

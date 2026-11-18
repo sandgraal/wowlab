@@ -10,7 +10,7 @@ UV ?= uv
 # version and checksums). Override with SELENE=<path> to use another binary.
 SELENE ?= $(shell $(UV) run --frozen python scripts/fetch_selene.py --print)
 
-.PHONY: help setup lint lint-lua selene format typecheck test test-fast test-clean test-parser hooks-test ci
+.PHONY: help setup lint lint-lua selene format typecheck test test-fast test-clean test-parser hooks-test hooks-test-py39 ci
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -80,9 +80,16 @@ hooks-test: ## Claude Code hook scripts under 3.12 and 3.9 (hooks run on the sys
 	$(UV) run --frozen pytest tests/harness
 	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
 
+hooks-test-py39: ## The hook tests under 3.9 only (the leg `make test` cannot run)
+	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
+
 # Every stage runs even when an earlier one fails, then a summary; the exit
 # status is non-zero if any stage failed (M13-81).
-CI_STAGES := lint lint-lua test test-parser hooks-test
+# Since M15-21 (2026-11-18) `make ci` runs each test once: `test` already
+# runs every parser test (`make test-parser` is a subset) and tests/harness
+# under 3.12, so those two repeats left the list; the 3.9 hook leg stays.
+# `make test-parser` and `make hooks-test` remain targets of their own.
+CI_STAGES := lint lint-lua test hooks-test-py39
 
 ci: ## Everything CI runs: every stage, then a summary of each stage's result
 	@failed=0; summary=(); \
