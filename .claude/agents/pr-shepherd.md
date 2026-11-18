@@ -85,6 +85,13 @@ below is the same whichever tool runs it. Learned on #266 and #267
   required check" case below, not a wait), `unstable` when only a
   non-required check failed, `clean` otherwise; it has no `reviewDecision`
   or `statusCheckRollup`. `unstable` and `clean` mean the checks allow it.
+- **The suite is not a required check.** "Lint, typecheck, tests" is not in
+  the ruleset (owner decision, 2026-11-18, M15-16), so `clean` and
+  `gh pr checks --required` do not wait for it. A ticket is still done only
+  when CI is green: before marking ready, read that job by name and see it
+  SUCCESS on the exact head, then merge with the head pinned
+  (`--match-head-commit`, or `expectedHeadSha`). Do not start a background
+  watcher and end the run while it is pending; report and stop.
 - **Threads by REST.** `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
   lists the threads without GraphQL; `resolve_review_thread` resolves one
   and `add_reply_to_pull_request_comment` answers one. A bot thread the

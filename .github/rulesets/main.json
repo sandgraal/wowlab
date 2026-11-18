@@ -24,7 +24,6 @@
         "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "Lint, typecheck, tests" },
           { "context": "Parser fixtures and round-trip" },
           { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.9)" },
           { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.12)" },
