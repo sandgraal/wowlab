@@ -49,7 +49,8 @@ The owner accepts ADR-0031 (or amends it on the plan PR). Then the conductor, in
 
 ---
 
-## [ ] M13-02 — Windows is a first-class CI target
+## [x] M13-02 — Windows is a first-class CI target (dropped)
+*Dropped by the owner, 2026-11-18 (in session: "Drop both"). wowlab stays the owner's own tool for now, so no human run on a real Windows install is planned. `lab (windows)` keeps running in CI (M15-19 is its current failure). Not built; ticked so it leaves the owner list.*
 **Size:** M · **Depends on:** M13-01 · **owner** (a human run on a real Windows install)
 
 Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as it did before 2026-09-30 (`docs/LAB_PLAN.md` §9 amendment; it caught the byte-0 lock bug on PR #59). Fix what it finds: junctions, long paths (`\\?\`), case-insensitive name collisions, `WOWLAB_WOW_ROOT` with spaces in it, files the client holds open. Per `docs/LAB_PLAN.md` §15.3 E3, also add a `macos-latest` run of the same suite. Once the Windows job is green on `main`, the conductor adds its exact name to `.github/rulesets/main.json` and an amendment to ADR-0014, and the owner re-applies the ruleset (`scripts/bootstrap-github.sh`). A fix that changes what `guard.py`, `svmerge.py` or `profiles.py` does is split off as a `T` grader ticket that lands first.
@@ -165,7 +166,8 @@ The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: 
 
 ---
 
-## [ ] M13-13 — The 30-day gate
+## [x] M13-13 — The 30-day gate (dropped)
+*Dropped by the owner, 2026-11-18 (in session: "Drop both"). The 30-day gate measured public uptake; the owner is keeping wowlab private for now and decides about public work when they announce it. No gate record is written.*
 **Size:** S · **Depends on:** M13-11 · **owner** (the decision)
 
 Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the counts of `docs/LAB_PLAN.md` §15.4 and the commands that produced them: release-asset downloads, distinct non-owner authors of issues and discussions (bots excluded), and stars. The owner decides: continue public work (at least 50 downloads and at least 5 non-owner issues or discussions, the issue count weighing more) or freeze the public surface and return to personal-lab mode. The conductor does not make the call.
@@ -974,7 +976,8 @@ Found 2026-10-18 in the security review of #269 (M13-55), on `main` before it. `
 
 ---
 
-## [ ] M13-62 — The capture tool hunts `accountList` entries
+## [x] M13-62 — The capture tool hunts `accountList` entries (dropped)
+*Dropped by the owner, 2026-11-18 (in session: the conductor's default, taken). The capture tool already blanks `accountList` in config files; hunting its entries elsewhere needs a slice of the owner's `Config.wtf` and is not worth one. The **[verify]** in `docs/LAB_FORMATS.md` §5 stays.*
 **Size:** XS · **Depends on:** M13-55 · **owner** (needs a slice of the owner's `Config.wtf`)
 
 Left **[verify]** by M13-55 (#269, 2026-10-18; the security and code reviews both asked for a ticket): `accountList` is blanked in config files but its entries are not hunted elsewhere, because the entry separator is not in `docs/LAB_FORMATS.md` and the only real fixture holds the CVar blank. The owner pastes the `SET accountList` line of a real `Config.wtf` with the entries replaced by `A`, `B` (the separator kept); the conductor records the separator with a dated **[verify]** note in `docs/LAB_FORMATS.md` §5; then an implementer splits the value on the separator, drops a leading `!`, and adds each entry the way an `accountName` value is added (M13-55: `_trim_account_piece`'s character test decides what can be hunted, and the capture stops on an entry it cannot), with a labelled constructed test.
@@ -993,7 +996,8 @@ Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_p
 ---
 
 ## [ ] M13-64 — `check_wiki` and `Player-<n>-<hex>` GUIDs
-**Size:** XS · **Depends on:** M13-53 · **owner** (a decision first)
+**Size:** XS · **Depends on:** M13-53
+*Owner decision, 2026-11-18 (in session: the conductor's default, taken): the first option. Record in the `check_wiki` docstring and in a dated note under ADR-0019 that the wiki gate does not match `Player-<n>-<hex>` GUIDs, and why (the owner's own GUIDs never reach the runner; the scrubbed placeholders would be false positives). No matcher is added.*
 
 Found 2026-10-18 in the security review of #277 (M13-53). `check_wiki` has no matcher for `Player-<n>-<hex>` GUIDs: `[x](Player-1234-0ABCDEF0)` exits 1 and prints the GUID, the bare GUID as text passes, and `wiki_diagnose` does not redact it. The owner's own GUIDs are in the set ADR-0019 keeps scrubbed but never reach the runner, and the scrubbed placeholder GUIDs in the repository would be false positives. The owner decides: either record in the `check_wiki` docstring and under ADR-0019 that the wiki gate does not match GUIDs, or add a GUID matcher that exempts the placeholder ranges. Then an implementer does the one chosen.
 
@@ -1011,7 +1015,8 @@ Three small items found 2026-10-18 in the security and code reviews of #278 (M13
 ---
 
 ## [ ] M13-66 — Link-target display: `snap show` prints `-> None` for an unreadable target; `doctor` and `tree` spell the same link differently
-**Size:** XS · **Depends on:** M13-52, M13-51 · **owner** (the second half is a choice)
+**Size:** XS · **Depends on:** M13-52, M13-51
+*Owner decision, 2026-11-18 (in session: the conductor's default, taken): build part (1) only, `snap show` and the profile listing print the same words as `firstrun` for an unreadable target. Part (2) is dropped: `tree` and `doctor` keep their two spellings of a link.*
 
 (1) Found 2026-10-18 in the code review of #271 (M13-52): `cli._stored_target(None)` returns `None`, so `snap show` and `_print_profile` print `-> None` for an entry whose target could not be read, as on `main` before it; `firstrun.py` prints `(target unreadable)` in the same situation. Print the same words. (2) Found 2026-10-18 in the code review of #276 (M13-51), pre-existing on every platform: `layout.link_facts` (`tree`) prints a link's raw stored text (`./Account`, `../Interface/`) while `firstrun._link_target` (`doctor`'s survey) prints it after `Path` normalises it (`Account`, `../Interface`). Making them agree changes one command's bytes; the owner picks which (raw as stored is what §6.1 promises for `tree`, "a link's text as stored … as `tree` spells it", M13-43; the survey's form was never promised). Then the implementer aligns the other and the byte-identity graders that pin it are updated with a dated note.
 
@@ -1134,7 +1139,8 @@ Found 2026-10-19 in the code review of M14-09. The Keys panel prints `char binds
 **Acceptance:** the test passes on the PR's `lab (windows)` job and on macOS and Linux; no change under `lab/core/src/`; `make ci` green; reviewed by `code-reviewer`.
 
 ---
-## [ ] M13-79 — The secret scan's reach: every pushed branch, or the PR's range
+## [x] M13-79 — The secret scan's reach: every pushed branch, or the PR's range (decided: the net stays)
+*Owner decision, 2026-11-18 (in session: the conductor's default, taken): the secret scan keeps reading every branch the checkout fetched. The next fixture hash that trips it gets a narrow per-line regex in `.gitleaks.toml`, never a `paths` key. Nothing to build.*
 **Size:** XS · **Depends on:** nothing · **owner** (a decision first)
 
 Found 2026-10-19 when #307 went red through no change of its own. The `Secret scan (gitleaks)` job checks out with `fetch-depth: 0` and runs `gitleaks git .`, which scans every ref the checkout fetched, so a hex content hash in one branch's fixture (#312, M15-03) failed the required check on every open PR at once. #315 fixed that instance with a per-line allowlist on `main` for the three CASC hash fields. The job's reach itself is a choice: the whole-repository net catches a leak in any branch the moment it is pushed, and a secret committed and later deleted still needs rotating (the job's own comment); the PR-range scan keeps one branch's fixture from blocking the others. The owner rules; if the net stays, the fix for the next such hash is another narrow line regex, never a `paths` key (gitleaks 8.30.1 skips the whole file on one).
@@ -1449,18 +1455,18 @@ The stub reaches the children from test code only: the test prepends a temporary
 ---
 
 ## [ ] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
-**Size:** S · **Depends on:** nothing · **Sources:** the owner's cleanup, 2026-11-18; Windows runs on `main` since 2026-11-17
+**Size:** S · **Depends on:** nothing · **Sources:** the owner's cleanup, 2026-11-18; Windows runs on `main` since 2026-11-17 02:46Z
 
-`lab (windows)` has failed on every completed run on `main` since 2026-11-17 (run 44381681237 at cbd5799: 12 failed, 11,405 passed, 43 min 49 s). The failures are in `lab/core/tests/test_l1_sweep_live.py`: on the constructed install the sweep reports "the install changed (L1)" because folder modification times (`_forever_`, `Data`, `World of Warcraft.app/…`) moved by a millisecond or two between its two looks, so tests that expect a named failure ("did not end as a read may: … exit 2") get the L1 one first. Find why the folder times move on Windows (the tree still settling when the first look is taken, a reader that opens a folder in a way NTFS records, or the sweep's own bookkeeping) and fix the cause; a comparison that ignores folder times is acceptable only if the cause is shown to be the file system's and the sweep still catches a file created, removed or rewritten inside the install.
+`lab (windows)` has been red on `main` since 2026-11-17 02:46Z (last green: run 44003764232 at 8cf5592). It first failed on another test (`test_positive_control_keybinds_after_the_open_leaves_the_kept_page`, through 577bc24); the L1-sweep failures began at run 44156145657 (e1a2e45), the first completed run after #581 (M16-38) added the sweep, which has never been green on Windows. Run 44381681237 at cbd5799: 12 failed, 11,405 passed, 43 min 49 s, all twelve in `lab/core/tests/test_l1_sweep_live.py`, the sweep's own detection tests among them (added and removed paths, a directory time change, a same-size same-time content change), which fail because extra folder-time lines appear in their expected lists: on the constructed install the sweep reports "the install changed (L1)" because folder modification times (`_forever_`, `Data`, `World of Warcraft.app/…`) moved by a millisecond or two between its two looks, so tests that expect a named failure ("did not end as a read may: … exit 2") get the L1 one first. Find why the folder times move on Windows (the tree still settling when the first look is taken, a reader that opens a folder in a way NTFS records, or the sweep's own bookkeeping) and fix the cause; a comparison that ignores folder times is acceptable only if the cause is shown to be the file system's and the sweep still catches a file created, removed or rewritten inside the install.
 
-**Acceptance:** the cause named with evidence from a Windows run; `gh workflow run windows.yml --ref <branch>` green, linked; the sweep's own tests for a created, removed and rewritten file still fail it on every platform; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (the L1 sweep is a safety check). User-facing: none.
+**Acceptance:** the cause named with evidence from a Windows run; `gh workflow run windows.yml --ref <branch>` green, linked; the sweep's own detection tests (a created, a removed and a rewritten file, a directory time change) pass on Windows and still catch each case on every platform; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer` (the L1 sweep is a safety check). User-facing: none.
 
 ---
 
-## [ ] M15-20 — typer 0.29: the command reference generator and one CLI test break
+## [ ] M15-20 — typer 0.29: the command reference generator breaks, and one CLI message changes
 **Size:** S · **Depends on:** nothing · **Sources:** dependabot #568 (2026-11-16), red on "Lint, typecheck, tests"
 
-With typer 0.29.1 (from 0.28.0) the suite fails: `tests/scripts/test_gen_command_reference.py` and `tests/scripts/test_check_wiki_percent.py` raise `AttributeError: 'TyperOption' object has no attribute …`, and `lab/core/tests/test_cli_uncaught.py::test_a_usage_error_with_nothing_to_escape_prints_as_click_does[bad-value]` no longer matches. Make `scripts/gen_command_reference.py`, the UI's command-tree reader if it reads the same attributes, and the CLI's usage-error path work on 0.29.1, then take the bump (`pyproject.toml`, `uv.lock`) in the same PR and close #568. Text and `--json` output stay byte-identical on every command; the generated command reference does not change except where typer's own help text did, each such line named in the PR.
+With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and 13 errors on ubuntu, `lab (macos)` red too). Nearly all are one error, `AttributeError: 'TyperOption' object has no attribute 'type'`, through `scripts/gen_command_reference.py`, reached from the `check_wiki*`, `gen_command_reference`, `change_sentence` and five review-probe tests. One CLI test differs for another reason: `lab/core/tests/test_cli_uncaught.py::test_a_usage_error_with_nothing_to_escape_prints_as_click_does[bad-value]`, where typer now prints "Input should be a valid integer, unable to parse string as an integer" for the old "… int range." message. Make `scripts/gen_command_reference.py`, the UI's command-tree reader if it reads the same attributes, and the CLI's usage-error path work on 0.29.1, then take the bump (`pyproject.toml`, `uv.lock`) in the same PR and close #568. Text and `--json` output stay byte-identical on every command; the generated command reference does not change except where typer's own help text did, each such line named in the PR.
 
 **Acceptance:** the suite green on typer 0.29.1; `scripts/gen_command_reference.py --check` passes; the UI parity test green; the runtime dependency line in the PR body; `make ci` green. Reviewed by `code-reviewer`. User-facing: none intended; any help-text change listed.
 
@@ -1469,7 +1475,7 @@ With typer 0.29.1 (from 0.28.0) the suite fails: `tests/scripts/test_gen_command
 ## [ ] M15-21 — The tests take too long: measure, then cut and reschedule
 **Size:** M · **Depends on:** nothing · **Sources:** the owner, 2026-11-18 in session ("the tests take seriously way too long"; "schedule it during off hours and/or reduce their length or how often they're called")
 
-Measured 2026-11-18: on a pull request "Lint, typecheck, tests" takes 28.8 min (25.3 parallel, 3.1 serial) for about 14,400 tests; `lab (windows)` takes 44.9 min and runs on every push to `main`, as `lab (macos)` does; a local `make ci` takes about as long and has been run by every implementer, often twice. The review comes first (which tests cost the time, which are duplicates or probes that could run nightly, what each trigger runs); the cuts follow the owner's choices on it.
+Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main` (run 44374160065: 25.3 parallel, 3.1 serial, about 14,400 tests; a pull-request run, 44384026727, took 29.4 min); `lab (windows)` takes 44.9 min and runs on every push to `main`, as `lab (macos)` does; a local `make ci` takes about as long: reviewers run it on their first round, and implementers do for guard, parser, lockfile and workflow diffs. The review comes first (which tests cost the time, which are duplicates or probes that could run nightly, what each trigger runs); the cuts follow the owner's choices on it.
 
 **Acceptance:** `docs/handoffs/test-time-2026-11.md` with the measurements and the options; the owner's choices recorded here; the changes they pick merged with before and after times. Reviewed by `code-reviewer`, and `security-reviewer` for anything under `.github/`.
 
@@ -2094,7 +2100,8 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ---
 
 ## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
-**Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10)
+**Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10) · **owner** (parked until M15 closes; then one in-game capture)
+*Owner decision, 2026-11-18 (in session): parked until the character-model wave (M15) is done. The conductor then asks the owner for the schema-5 capture and rebuilds this on current `main`; PR #379 is closed and its branch is gone.*
 
 §18.1 item 9.
 - The chat line prints once per addon version, or after an unclean session.

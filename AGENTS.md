@@ -103,8 +103,9 @@ each in its own worktree; `code-reviewer` grades every branch spec-first;
 `domain-reviewer` and `security-reviewer` are added by area; `pr-shepherd`
 opens the PR, answers every thread, and **merges autonomously** once the
 required checks and the test suite's job are green on the head it merges
-(`Lint, typecheck, tests`; the owner took it out of GitHub's required
-checks, 2026-11-18, so the shepherd waits for it by name), the reviewer
+(`Lint, typecheck, tests`, which is not a GitHub required check: owner
+decision, 2026-11-18, M15-16; so the shepherd waits for it by name), the
+reviewer
 verdicts are clean, and every
 thread the owner opened is answered. Since 2026-10-17 an open thread from
 a bot does not hold a merge (the automated Claude review itself was removed
