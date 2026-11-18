@@ -32,6 +32,7 @@ import difflib
 import importlib
 import re
 import sys
+import typing
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -158,12 +159,13 @@ def _context(cmd: Any, name: str) -> Any:
     return cmd.context_class(cmd, info_name=name)
 
 
-def _argument_name(param: Any, ctx: Any) -> str:
-    """The argument's name as `--help` lists it under "Arguments"."""
-    try:
-        return str(param.make_metavar(ctx))
-    except TypeError:  # Click before 8.2: make_metavar() takes no context
-        return str(param.make_metavar())
+def _argument_name(param: Any) -> str:
+    """The argument's name as `--help` lists it under "Arguments": its
+    metavar as declared, else its name, with `...` when it takes several
+    values (typer 0.29 has no `make_metavar` on an argument)."""
+    if param.metavar is not None:
+        return str(param.metavar)
+    return str(param.name) + ("..." if param.nargs != 1 else "")
 
 
 def _is_flag(param: Any) -> bool:
@@ -174,22 +176,25 @@ def _render_type(param: Any) -> str:
     if _is_flag(param):
         kind = "flag"
     else:
-        # Classified by class names in the MRO and by `ParamType.name`: both
-        # differ between Click releases and Typer's vendored copy (Typer's
-        # own path type is not a subclass of Click's Path, for one).
-        ptype = param.type
-        classes = {c.__name__ for c in type(ptype).__mro__}
-        name = str(getattr(ptype, "name", "")).lower()
-        choices = getattr(ptype, "choices", None)
+        # Typer 0.29 converts values itself (through Pydantic) and gives a
+        # parameter no Click `ParamType`: what it will accept is described by
+        # `param.type_descriptor`, the declared annotation plus the option's
+        # settings (`min`, `max`, choices, path and file flags).
+        desc = param.type_descriptor
+        annotation = desc.annotation
+        if desc.is_list:  # a repeatable option: the type of one value
+            args = typing.get_args(annotation)
+            annotation = args[0] if len(args) == 1 else str
+        choices = desc.choices
         if choices is not None:
             kind = "one of " + ", ".join(_code(str(c)) for c in choices)
-        elif "IntParamType" in classes or name in {"integer", "int"}:
-            kind = _render_range(ptype, "integer")
-        elif "FloatParamType" in classes or name == "float":
-            kind = _render_range(ptype, "number")
-        elif classes & {"Path", "File", "TyperPath"} or name in {"path", "file", "filename"}:
+        elif annotation is int:
+            kind = _render_range(desc.parameter_info, "integer")
+        elif annotation is float:
+            kind = _render_range(desc.parameter_info, "number")
+        elif desc.is_path or desc.is_file:
             kind = "path"
-        elif "BoolParamType" in classes:
+        elif annotation is bool:
             kind = "boolean"
         else:
             kind = "text"
@@ -198,9 +203,9 @@ def _render_type(param: Any) -> str:
     return kind
 
 
-def _render_range(ptype: Any, kind: str) -> str:
-    lo, hi = getattr(ptype, "min", None), getattr(ptype, "max", None)
-    lo_open, hi_open = getattr(ptype, "min_open", False), getattr(ptype, "max_open", False)
+def _render_range(info: Any, kind: str) -> str:
+    lo, hi = getattr(info, "min", None), getattr(info, "max", None)
+    lo_open, hi_open = getattr(info, "min_open", False), getattr(info, "max_open", False)
     bounds = []
     if lo is not None:
         bounds.append(f"more than {lo}" if lo_open else f"at least {lo}")
@@ -345,13 +350,12 @@ def _param_tables(cmd: Any) -> list[str]:
     options = [p for p in params if _is_option(p)]
     lines: list[str] = []
     if arguments:
-        ctx = _context(cmd, str(getattr(cmd, "name", "") or PROG))
         lines += ["| Argument | Type | Default | Help |", "|---|---|---|---|"]
         for p in arguments:
             lines.append(
                 _row(
                     [
-                        _code(_argument_name(p, ctx)),
+                        _code(_argument_name(p)),
                         _render_type(p),
                         _render_default(p),
                         _cell(getattr(p, "help", None) or ""),

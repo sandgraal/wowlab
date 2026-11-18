@@ -24,15 +24,15 @@ from types import TracebackType
 from typing import Annotated, Any, Literal, NoReturn, override
 
 import typer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Typer vendors click as `typer._click` from 0.26 (lab/core/pyproject.toml
-# bounds typer to the 0.27 minor this was tested on) and gives its exceptions
+# bounds typer to the 0.29 minor this was tested on) and gives its exceptions
 # and context no public name: the root command (`_WowlabGroup`) and its
 # context catch click's errors and print them itself (`_click_error`). Prose
 # wraps to the width its context holds (`_width`).
 from typer._click import Context
-from typer._click.exceptions import ClickException, NoArgsIsHelpError, UsageError
+from typer._click.exceptions import BadParameter, ClickException, NoArgsIsHelpError, UsageError
 from typer._click.globals import get_current_context
 from typer.core import TyperGroup
 
@@ -801,10 +801,57 @@ def _click_error(exc: ClickException) -> NoReturn:
                 hint = "--help" if "--help" in names else names[0]
                 lines.append(f"Try '{ctx.command_path} {hint}' for help.")
             lines.append("")
+        if isinstance(exc, BadParameter):
+            exc.message = _click_wording(exc)
         lines.append(f"Error: {exc.format_message()}")
     for line in lines:
         _say_err(line)
     raise typer.Exit(exc.exit_code)
+
+
+# Pydantic's error types for a number outside an option's `min`/`max`.
+_RANGE_ERRORS = frozenset({"greater_than", "greater_than_equal", "less_than", "less_than_equal"})
+
+
+def _click_wording(exc: BadParameter) -> str:
+    """A bad value's message in the words wowlab printed up to typer 0.28.
+
+    Typer 0.29 converts values through Pydantic and words a bad one as
+    Pydantic does ("Input should be a valid integer, ..."). The click
+    wording it replaced, which the CLI's usage errors keep, is rebuilt from
+    the first validation error: an unreadable number (`'x' is not a valid
+    int.`, `int range` when the option has a `min` or `max`), a number out of
+    range (`-1 is not in the range x>=0.`), and a value not among the
+    choices, whose text typer still writes, less Pydantic's "Value error, "
+    prefix. Any other message is typer's, unchanged."""
+    cause = exc.__cause__
+    desc = getattr(exc.param, "type_descriptor", None)
+    if not isinstance(cause, ValidationError) or desc is None or not cause.errors():
+        return exc.message
+    error = cause.errors()[0]
+    kind = error["type"]
+    value = error.get("input")
+    annotation = desc.annotation
+    number = annotation if annotation in (int, float) else None
+    info = desc.parameter_info
+    if number is not None and kind in ("int_parsing", "float_parsing", "int_from_float"):
+        ranged = info.min is not None or info.max is not None
+        return f"{value!r} is not a valid {number.__name__}{' range' if ranged else ''}."
+    if number is not None and kind in _RANGE_ERRORS:
+        try:
+            shown = number(value)
+        except (TypeError, ValueError):
+            shown = value
+        if info.min is None:
+            bounds = f"x<={info.max}"
+        elif info.max is None:
+            bounds = f"x>={info.min}"
+        else:
+            bounds = f"{info.min}<=x<={info.max}"
+        return f"{shown} is not in the range {bounds}."
+    if kind == "value_error":  # typer's message has its control characters escaped
+        return exc.message.removeprefix("Value error, ")
+    return exc.message
 
 
 _CAUSE = "The above exception was the direct cause of the following exception:"

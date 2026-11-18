@@ -889,7 +889,9 @@ def looks_save(
 def looks_show(
     name: Annotated[
         str | None,
-        typer.Argument(metavar="[NAME]", help="A saved look. Default: every saved look."),
+        # Typer 0.29 brackets an optional argument's metavar in the usage
+        # line itself: "NAME" prints `[NAME]` there, as "[NAME]" did before.
+        typer.Argument(metavar="NAME", help="A saved look. Default: every saved look."),
     ] = None,
     build: LooksBuildOpt = None,
     root: RootOpt = None,
