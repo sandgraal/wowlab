@@ -72,10 +72,15 @@ the texture's RGBA, which is at most its section's), row-sized
 temporaries, and the final copy of the canvas: the peak is the canvas plus
 the larger of three textures' RGBA and a second canvas, at most four
 canvases plus one file (`compositor_peak_bytes`; 32 MiB at 2048 x 1024, 256
-MiB at the 4096 x 4096 cap). Time: see §17.5's cost model; per row of a
-layer, a blit row and a fully opaque alpha-blend row are one slice copy, a
-fully transparent row is skipped, and any other row is two (15, 9) or three
-(4, 6, 7) table lookups per channel.
+MiB at the 4096 x 4096 cap; 32 MiB measured with tracemalloc at 2048 x 1024
+with a full-size base texture). Time (§17.5's cost model; CPU time on the
+owner's M1, 2026-11-18): a blit row and a fully opaque alpha-blend row are
+one slice copy per canvas row (0.01 s for a whole 2048 x 1024 canvas), the
+transparent ends of a row cost nothing, and every other pixel costs two
+byte-table lookups per channel for 15 and 9 (about 0.25 s per 2048 x 1024
+pixels) and three for 4, 6 and 7 (about 0.48 s). The fixture characters
+take 0.14 to 0.24 s with their reads and decodes; the busiest recorded body
+layout with every pixel partial, 2.6 s.
 """
 
 from __future__ import annotations

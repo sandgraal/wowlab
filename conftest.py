@@ -90,6 +90,10 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_hostile_lines_parse_in_linear_time_constructed",
         "lab/core/tests/parser/test_blp_constructed.py"
         "::test_a_1024_square_dxt1_decodes_within_half_a_second_constructed",
+        "lab/core/tests/parser/test_compositor_constructed.py"
+        "::test_a_2048x1024_composite_within_three_seconds_constructed",
+        "lab/core/tests/parser/test_compositor_constructed.py"
+        "::test_the_worst_layout_within_the_cost_models_bound_constructed",
         "lab/core/tests/test_snap_gc_keep_rule.py"
         "::test_the_keep_rule_takes_exactly_seven_parts_and_stops_splitting_a_long_path_constructed",
         "tests/scripts/test_lab_capture_followup.py"
