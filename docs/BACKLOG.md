@@ -2101,7 +2101,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
 **Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10) · **owner** (parked until M15 closes; then one in-game capture)
-*Owner decision, 2026-11-18 (in session): parked until the character-model wave (M15) is done. The conductor then asks the owner for the schema-5 capture and rebuilds this on current `main`; PR #379 is closed and its branch is gone.*
+*Owner decision, 2026-11-18 (in session): parked until the character-model wave (M15) is done. The conductor then asks the owner for the schema-5 capture and rebuilds this on current `main`; PR #379 is closed; its branch `m16/45-addon-schema5` (27 files, built to 2026-11-13) stays on GitHub as the starting point.*
 
 §18.1 item 9.
 - The chat line prints once per addon version, or after an unclean session.
