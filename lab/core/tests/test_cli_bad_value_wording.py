@@ -50,6 +50,23 @@ runner = CliRunner()
             "Invalid value for '--fdid': 'x' is not a valid int.",
             id="plain-int-unreadable",
         ),
+        # A command-line byte that is not UTF-8 reaches Python as a lone
+        # surrogate; Pydantic calls it `string_unicode`, click could not read it.
+        pytest.param(
+            ["log", "tail", "-n", "\udcff"],
+            "Invalid value for '--lines' / '-n': '\\udcff' is not a valid int range.",
+            id="ranged-int-undecodable-constructed",
+        ),
+        pytest.param(
+            ["casc", "stat", "--fdid", "1\udcff"],
+            "Invalid value for '--fdid': '1\\udcff' is not a valid int.",
+            id="plain-int-undecodable-constructed",
+        ),
+        pytest.param(
+            ["cvar", "list", "--scope", "\udcff"],
+            "Invalid value for '--scope': '\\udcff' is not one of 'global', 'account', 'character'.",
+            id="choice-undecodable-constructed",
+        ),
         pytest.param(
             ["sv", "merge", "--take", "mine", "a", "b"],
             "Invalid value for '--take': 'mine' is not one of 'ours', 'theirs'.",

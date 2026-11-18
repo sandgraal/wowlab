@@ -834,7 +834,9 @@ def _click_wording(exc: BadParameter) -> str:
     annotation = desc.annotation
     number = annotation if annotation in (int, float) else None
     info = desc.parameter_info
-    if number is not None and kind in ("int_parsing", "float_parsing", "int_from_float"):
+    # Any other error on a number is one click could not read either: text
+    # that is no number, or (`string_unicode`) a byte that is not UTF-8.
+    if number is not None and kind not in _RANGE_ERRORS:
         ranged = info.min is not None or info.max is not None
         return f"{value!r} is not a valid {number.__name__}{' range' if ranged else ''}."
     if number is not None and kind in _RANGE_ERRORS:
