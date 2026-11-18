@@ -19,4 +19,5 @@ condition is kept.
 
 | Merged | Ticket | What changed for the player | Wiki pages (from the PR) |
 |---|---|---|---|
-| #597 | M15-06 | Two new commands: `wowlab casc stat --fdid N` says whether one game file is on this computer, and `wowlab casc cat --fdid N` extracts it into wowlab's data folder (never into the install). Both are in the UI's Commands list; from the UI `casc cat` writes only to its default place | Command-Reference; CLI-Reference; the `wowlab ui` page |
+| #597 | M15-06 | Two new commands: `wowlab casc stat --fdid N` says whether one game file is on this computer, and `wowlab casc cat --fdid N` extracts it into wowlab's data folder (never into the install). Both are in the UI's Commands list; from the UI `casc cat` writes only to its default place | Command-Reference; CLI-Reference; Browser-View; Library-Module-Map (its `wowlab_core.casc` row says no command shows its contents) |
+| #595, #596, #598 | M15-08, M15-09, M15-07 | Nothing a player sees yet: new library modules `m2`, `renderplan`, `blp` and `png` | Library-Module-Map (one row per module) |
