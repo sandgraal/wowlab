@@ -19,3 +19,4 @@ condition is kept.
 
 | Merged | Ticket | What changed for the player | Wiki pages (from the PR) |
 |---|---|---|---|
+| #597 | M15-06 | Two new commands: `wowlab casc stat --fdid N` says whether one game file is on this computer, and `wowlab casc cat --fdid N` extracts it into wowlab's data folder (never into the install). Both are in the UI's Commands list; from the UI `casc cat` writes only to its default place | Command-Reference; CLI-Reference; the `wowlab ui` page |
