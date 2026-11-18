@@ -54,9 +54,10 @@ lookup has 43,166 entries; §12 amendment of 2026-11-17)).
 - At most `MAX_CHUNKS` (1,024) chunks; an `M2Chunk` is built for each.
 - At most `MAX_ENTRIES` (65,535) textures, materials, attachments,
   sections and batches, each of which becomes one Python object, and as
-  many texture combos, attachment-lookup entries and `SFID` ids, each of
-  which becomes a Python int in a tuple; `TXID` holds at most one id per
-  texture (both models met hold exactly one).
+  many texture combos, attachment-lookup entries, `SFID` ids and `TXID`
+  ids, each of which becomes a Python int in a tuple. A `TXID` whose count
+  differs from the textures' is read with a note (both models met hold
+  exactly one id per texture); a texture takes the id at its own index.
 - A texture filename of at most `MAX_FILENAME` (1,024) bytes, and the
   filenames' counts summed at most the chunk's size, since they may all
   point at one region and each is copied.
@@ -596,7 +597,7 @@ def parse_m2(data: Buffer, path: Path | None = None) -> M2Model:
     _entries(l_count, "attachment lookup", path)
 
     sfid = _ids(octets, by_tag.get("SFID"), path, MAX_ENTRIES)
-    txid = _ids(octets, by_tag.get("TXID"), path, t_count)
+    txid = _ids(octets, by_tag.get("TXID"), path, MAX_ENTRIES)
     if "SFID" not in by_tag:
         notes.append("no SFID chunk: the skin file data ids are unknown")
     elif len(sfid) < view_count:

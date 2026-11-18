@@ -395,9 +395,9 @@ def _peak_of_refusal(data: bytes, match: str) -> int:
             "the attachment lookup array holds 65536 entries",
         ),
         (chunked(bytes(md20()), sfid=range(_OVER)), "chunk 'SFID' holds 65536 ids"),
-        (chunked(bytes(md20()), txid=(900, 901)), "chunk 'TXID' holds 2 ids; at most 1"),
+        (chunked(bytes(md20()), txid=range(_OVER)), "chunk 'TXID' holds 65536 ids"),
     ],
-    ids=["texture-combos", "attachment-lookup", "sfid", "txid-past-textures"],
+    ids=["texture-combos", "attachment-lookup", "sfid", "txid"],
 )
 def test_hostile_u16_and_id_arrays_are_capped_without_building_them_constructed(
     data: bytes, match: str
@@ -415,3 +415,15 @@ def test_arrays_at_their_caps_are_read_constructed() -> None:
     )
     assert len(model.texture_combos) == m2.MAX_ENTRIES
     assert len(model.skin_file_data_ids) + len(model.lod_skin_file_data_ids) == m2.MAX_ENTRIES
+
+
+def test_txid_longer_than_the_textures_is_read_with_a_note_constructed() -> None:
+    model = m2.parse_m2(chunked(bytes(md20()), txid=(900, 901)))
+    assert model.texture_file_data_ids == (900, 901)
+    assert [t.file_data_id for t in model.textures] == [900]
+    assert model.notes == ("TXID holds 2 ids for 1 textures",)
+
+
+def test_txid_with_no_textures_is_read_with_a_note_constructed() -> None:
+    model = m2.parse_m2(chunked(bytes(md20(textures=())), txid=(900,)))
+    assert model.textures == () and model.notes == ("TXID holds 1 ids for 0 textures",)
