@@ -1,16 +1,17 @@
-"""renderplan: a recorded character's body and customization as the files and
-rules a renderer needs (M15-09).
+"""renderplan: a recorded character's body, customization and gear as the
+files and rules a renderer needs (M15-09; the gear chain M15-13).
 
-Spec: docs/LAB_PLAN.md §17.4, the body and customization bullets. Data:
-ADR-0022 (tables keyed by the full build string; the build comes from the
-caller or discovery, never from here, L6). The gear chain (§17.4's gear,
-attachment and item-geoset bullets) is M15-13, which extends this model.
+Spec: docs/LAB_PLAN.md §17.4, the body, customization, gear, attachment and
+geoset bullets. Data: ADR-0022 (tables keyed by the full build string; the
+build comes from the caller or discovery, never from here, L6).
 
-Inputs: the lab-addon's `identity` record (schema 4, M15-01) and its
-`customization` record (`labaddon.customization_import`), the game tables of
-one build (`RenderTables`, read through `gamedata`, the table-access path
-this module uses), and optionally a `FileStatter` (`casc.CascSource`) that
-says where each file stands in §17.1's four states.
+Inputs: the lab-addon's `identity` record (schema 4, M15-01), its
+`customization` record (`labaddon.customization_import`) and its `gear`
+section as `char gear` reads it (`equipped_items`: slot, item id, bonus
+ids), the game tables of one build (`RenderTables`, read through
+`gamedata`, the table-access path this module uses), and optionally a
+`FileStatter` (`casc.CascSource`) that says where each file stands in
+§17.1's four states.
 
 What the tables are read as (community convention, wow.export and
 wowdev.wiki; **[verify]** where marked):
@@ -30,7 +31,7 @@ wowdev.wiki; **[verify]** where marked):
   races (1 to 8, 95, 96 by `ChrRaces` at 70058, `looks`' rule; `ChrRaces`
   is not recorded at 70959) have no fallback ids; 23 models of other races
   do. The rule is from memory **[verify]**.
-  `HelmVisFallbackChrModelID` belongs to the gear chain (M15-13).
+  `HelmVisFallbackChrModelID` is the gear's (below).
 - **Choices.** With a customization record, its choices, exactly: an option
   the model has and the record lacks is listed, never defaulted (the barber
   shop did not list it when the record was taken, or the option is newer
@@ -79,6 +80,87 @@ wowdev.wiki; **[verify]** where marked):
   model has come from its skin (M15-08), so the plan carries the rule and
   the selections and `visible_geosets` applies them to the ids a skin lists.
 
+The gear (M15-13), slot by slot in the client's slot order:
+
+- **Slots.** The record's slot numbers are the client's equipment slots
+  (`INVSLOT_*`: 1 head, 3 shoulders, 4 shirt, 5 chest, 6 waist, 7 legs, 8
+  feet, 9 wrists, 10 hands, 15 back, 16 main hand, 17 off hand, 18 ranged,
+  19 tabard). Neck, fingers and trinkets (2, 11 to 14) show nothing on the
+  body and are listed as such; the ranged slot (18: bow, gun, crossbow,
+  wand, thrown; Classic-era characters carry one, Sangraal-Sett a wand) is
+  listed as unsupported in this wave. Any other number is listed.
+- **Appearance.** Item id and bonus ids → `ItemBonus` rows of type 7 of
+  each bonus list (`ParentItemBonusListID` is the bonus id): `Value_0` the
+  appearance modifier, `Value_1` the priority, the lowest priority winning
+  (ties: the earlier bonus id). From TrinityCore, **[verify]**; untestable
+  on Forever while `ItemBonus` has no type-7 row (none at 70959): re-count
+  the type-7 rows of each recorded `ItemBonus` download, and when one
+  appears check the link of such an item in game against its base item.
+  At 70959 `ItemBonus` has no type-7 row at all, so every item
+  draws its default: `ItemModifiedAppearance` with modifier 0, else the
+  lowest (then `OrderIndex`, then id); every item there has exactly one row,
+  modifier 0. A modifier no row lists is noted and the default drawn. →
+  `ItemAppearance.ItemDisplayInfoID` → `ItemDisplayInfo`. A missing row
+  lists the item as not drawn (the plan is still made). The lab-addon does
+  not record transmog (since M11-20 it calls nothing in
+  `C_TransmogCollection`), so a drawn item shows its own look, which may
+  differ from what the game shows; whether Forever has transmog is
+  **[verify]**. Nor does it record whether the character hides its helmet
+  or cloak (whether Forever has the option is **[verify]**): both are drawn.
+  When gear is drawn the plan says both (`GEAR_NOTES`).
+- **Geosets.** Per slot, `GeosetGroup_<n>` selects in the slot's n-th group
+  (`SLOT_GEOSET_GROUPS`, the wow.export table after WoW Model Viewer,
+  **[verify]**) geoset `group * 100 + 1 + value` (the `+1` **[verify]**
+  against wow.export's `calculateEquipmentGeosets`); a value in a cell the
+  slot has no group for is noted, not drawn. The feet's group 20 with value
+  0 selects 2002 (the "feet `0 → 2`" rule, read as: a worn shoe covers the
+  foot; whether it is group 20's or group 5's is **[verify]**). Where two
+  slots select one group the priority decides: chest over shirt for groups
+  8 (sleeves) and 10, chest over legs for 13 (a robe's skirt over the
+  trousers); the first slot of the priority whose value is not 0 takes the
+  group, the first when all are 0 (whether a 0 claims the group is
+  **[verify]**). Gloves whose group-4 value is not 0 leave group 8 at its
+  default ("gloves over chest over shirt for group 8", read as gloves
+  covering the sleeves, **[verify]**). The losers stay in the plan with
+  `overridden_by`. An item's group replaces the customization's.
+- **Helmet.** The head item's `HelmetGeosetVis_<body type>` (0 and 1,
+  **[verify]**) → the `HelmetGeosetData` rows of that visibility id for the
+  race (through `HelmVisFallbackChrModelID`'s race, then race 0, when it
+  has none; the race-0 step is unexercised, **[verify]**): each
+  `HideGeosetGroup` hides its whole group but geoset 0 (0 the hair, 7 the
+  ears, community naming; whether the client hides the whole group or swaps
+  in a scalp geoset is **[verify]**). `RaceBitSelection` is kept, not applied; the
+  column wago.tools names `Field_10_0_0_46047_003` (-1 or 32 at 70959) is
+  not read. `HelmetGeosetVisData` is not published and not needed.
+- **Models.** `ModelResourcesID_<n>` → `ModelFileData` files, filtered by
+  `ComponentModelFileData` (`_pick_file`): race and body type, then the
+  `ModelFallbackChrModelID` walk, then the race with either body type,
+  then any race (`RaceID` 0) with the body type, then any race and either
+  body type (`GenderIndex` 2 or 3: at 70959 the model rows of race 0 are
+  all 2 and the texture rows mostly 3, **[verify]**); a class must be 0 or
+  the character's; a shoulder's model n is side `PositionIndex` n (0 the
+  left, at attachment 6, **[verify]**). A file with no component row
+  (weapons, shields, the belt 244228's at 70959) is drawn as is. The model
+  is drawn at `SLOT_ATTACHMENTS` (head 11, shoulders 6 and 5, back 12, main
+  hand 1, off hand 2, a shield, `InventoryType` 14, at 0) in the bind pose
+  **[verify]**. A model its slot lists no attachment for is, when its file
+  was chosen through a component row (one file per race and body type: the
+  few chests with models), a collection model, skinned to the body and
+  drawn at the origin (**[verify]**); with no component row (the belt
+  244228) it is listed as not placed (kind "no attachment known"): it may
+  be attached at a point the plan does not list, or a collection model,
+  **[verify]**. `ModelType` and `AttachmentGeosetGroup` are kept, not
+  applied (every `AttachmentGeosetGroup` cell is 0 at 70959).
+- **Textures.** `ModelMaterialResourcesID_<n>` → the diffuse
+  `TextureFileData` rows (usage 0, as for the customization) filtered by
+  `ComponentTextureFileData` with the texture fallback; with no model at n
+  the back slot's texture is the cloak's, drawn on the body's cape geosets
+  **[verify]**. Body-texture pieces: `ItemDisplayInfoMaterialRes` rows of
+  the display, each component section placed in the body layout's section
+  of the same type (**[verify]**; at 70959 sections 0 to 7 appear), the
+  file filtered the same way. The order pieces are painted in is the
+  compositor's (M15-10).
+
 Pure data: nothing here opens an install (L1) or the network; the tables
 come from `gamedata` or from rows the caller hands over, and a file's state
 from the statter the caller passes.
@@ -93,7 +175,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import labaddon
+from wowlab_core import itemlink, labaddon
 from wowlab_core.casc import CascFileStat
 from wowlab_core.errors import WowlabError
 
@@ -101,33 +183,52 @@ if TYPE_CHECKING:
     from wowlab_core.gamedata import GameData
 
 __all__ = [
+    "BODY_TABLES",
     "DEFAULT_RULE",
     "DEFAULT_SHOWN_GROUPS",
+    "GEAR_NOTES",
+    "GEAR_TABLES",
     "HIDDEN_GROUPS",
     "REQUIRED_TABLES",
+    "SHIELD_ATTACHMENT",
     "SKIPPED_TABLES",
+    "SLOT_ATTACHMENTS",
+    "SLOT_GEOSET_GROUPS",
     "BodyModel",
     "ChosenChoice",
+    "EquippedItem",
     "FileStatter",
+    "GearAsOf",
+    "GearFileMissing",
+    "GearItem",
+    "GearNotDrawn",
     "GeosetPlan",
     "GeosetSelection",
+    "HelmetHide",
+    "ItemGeosetSelection",
+    "ItemModel",
+    "ItemTexture",
+    "ItemTexturePiece",
     "LookAsOf",
+    "Match",
     "OptionNotChosen",
     "PlanFile",
     "RenderPlan",
     "RenderPlanError",
     "RenderTables",
+    "Role",
     "Section",
     "TextureLayer",
     "UnplacedMaterial",
     "UnsupportedElement",
     "build_plan",
+    "equipped_items",
     "is_default_geoset",
     "plan_for_record",
     "visible_geosets",
 ]
 
-REQUIRED_TABLES: tuple[str, ...] = (
+BODY_TABLES: tuple[str, ...] = (
     "ChrRaceXChrModel",
     "ChrModel",
     "CreatureDisplayInfo",
@@ -142,11 +243,29 @@ REQUIRED_TABLES: tuple[str, ...] = (
     "CharComponentTextureSections",
     "CharComponentTextureLayouts",
 )
-"""The tables a body plan is built from, by name (L6: table names only)."""
+"""The tables the body and its customization are built from."""
 
-SKIPPED_TABLES: tuple[str, ...] = ("ChrCustomizationCondModel",)
+GEAR_TABLES: tuple[str, ...] = (
+    "Item",
+    "ItemBonus",
+    "ItemModifiedAppearance",
+    "ItemAppearance",
+    "ItemDisplayInfo",
+    "ItemDisplayInfoMaterialRes",
+    "ModelFileData",
+    "ComponentModelFileData",
+    "ComponentTextureFileData",
+    "HelmetGeosetData",
+)
+"""The further tables the gear is built from (`TextureFileData` is shared)."""
+
+REQUIRED_TABLES: tuple[str, ...] = BODY_TABLES + GEAR_TABLES
+"""The tables a plan is built from, by name (L6: table names only)."""
+
+SKIPPED_TABLES: tuple[str, ...] = ("ChrCustomizationCondModel", "HelmetGeosetVisData")
 """Tables §17.4 names that are not fetched: not published for this game
-version (wago.tools answers HTTP 400 at 70450 and at 70959)."""
+version (wago.tools answers HTTP 400 at 70450 and at 70959 for the first, at
+70959 for the second; §17.4: the second is not needed)."""
 
 DEFAULT_RULE = (
     "geoset 0, every geoset id of 100 or more whose id % 100 is 1, and every id of "
@@ -176,6 +295,84 @@ _STAND_IN = (
     "each option's first choice (lowest OrderIndex) is drawn as a stand-in, not the "
     "character's look"
 )
+
+# ─── the gear's rules (community convention: wow.export after WoW Model
+# Viewer, TrinityCore for ItemBonus; each [verify], module docstring) ──────────
+
+_BONUS_APPEARANCE = 7  # ItemBonus.Type: Value_0 the appearance modifier, Value_1 the priority
+_GEOSET_GROUP_CELLS = 6  # GeosetGroup_0..5 and AttachmentGeosetGroup_0..5
+_NO_POSITION = -1  # ComponentModelFileData.PositionIndex of a file for either side
+_ANY_BODY_TYPE = frozenset({2, 3})  # GenderIndex of a file for either body type [verify]
+_INVTYPE_SHIELD = 14  # Item.InventoryType of a shield
+
+# The client's equipment slot numbers (INVSLOT_*), the same in every flavor
+# the Lab has read; the words are for the plan's reasons.
+SLOT_HEAD, SLOT_SHOULDER, SLOT_SHIRT, SLOT_CHEST, SLOT_WAIST, SLOT_LEGS = 1, 3, 4, 5, 6, 7
+SLOT_FEET, SLOT_WRIST, SLOT_HANDS, SLOT_BACK = 8, 9, 10, 15
+SLOT_MAIN_HAND, SLOT_OFF_HAND, SLOT_RANGED, SLOT_TABARD = 16, 17, 18, 19
+_SLOT_WORDS: dict[int, str] = {
+    SLOT_HEAD: "head",
+    2: "neck",
+    SLOT_SHOULDER: "shoulders",
+    SLOT_SHIRT: "shirt",
+    SLOT_CHEST: "chest",
+    SLOT_WAIST: "waist",
+    SLOT_LEGS: "legs",
+    SLOT_FEET: "feet",
+    SLOT_WRIST: "wrists",
+    SLOT_HANDS: "hands",
+    11: "finger",
+    12: "finger",
+    13: "trinket",
+    14: "trinket",
+    SLOT_BACK: "back",
+    SLOT_MAIN_HAND: "main hand",
+    SLOT_OFF_HAND: "off hand",
+    SLOT_RANGED: "ranged",
+    SLOT_TABARD: "tabard",
+}
+_NO_LOOK_SLOTS = frozenset({2, 11, 12, 13, 14})
+
+SLOT_GEOSET_GROUPS: Mapping[int, tuple[int, ...]] = {
+    SLOT_HEAD: (27, 21),
+    SLOT_SHOULDER: (26,),
+    SLOT_SHIRT: (8, 10),
+    SLOT_CHEST: (8, 10, 13, 22, 28),
+    SLOT_WAIST: (18,),
+    SLOT_LEGS: (11, 9, 13),
+    SLOT_FEET: (5, 20),
+    SLOT_WRIST: (),
+    SLOT_HANDS: (4, 23),
+    SLOT_BACK: (15,),
+    SLOT_MAIN_HAND: (),
+    SLOT_OFF_HAND: (),
+    SLOT_TABARD: (12,),
+}
+"""Per drawn slot, the geoset group `GeosetGroup_<n>` selects, by n."""
+
+SLOT_ATTACHMENTS: Mapping[int, tuple[int, ...]] = {
+    SLOT_HEAD: (11,),
+    SLOT_SHOULDER: (6, 5),
+    SLOT_BACK: (12,),
+    SLOT_MAIN_HAND: (1,),
+    SLOT_OFF_HAND: (2,),
+}
+"""Per slot, the body attachment `ModelResourcesID_<n>`'s model is drawn at,
+by n. A model with none is a collection model when its file was chosen
+through a component row, and is not placed when it has none (the module
+docstring; both **[verify]**). A shield in the off hand is drawn at
+`SHIELD_ATTACHMENT` instead."""
+SHIELD_ATTACHMENT = 0
+
+# The groups two slots select, the slots in priority order: the first whose
+# value is not 0 takes the group.
+_GROUP_PRIORITY: Mapping[int, tuple[int, ...]] = {
+    8: (SLOT_CHEST, SLOT_SHIRT),
+    10: (SLOT_CHEST, SLOT_SHIRT),
+    13: (SLOT_CHEST, SLOT_LEGS),
+}
+_SLEEVES, _GLOVES = 8, 4
+_FEET_GROUP, _FEET_BARE_VALUE, _FEET_COVERED = 20, 0, 2
 
 
 class RenderPlanError(WowlabError):
@@ -245,20 +442,6 @@ class GeosetSelection(_Frozen):
     modifier: int
 
 
-class GeosetPlan(_Frozen):
-    """The default rule and the customization's selections; apply them to the
-    ids a skin lists with `visible_geosets`."""
-
-    default_rule: str = DEFAULT_RULE
-    default_shown_groups: tuple[int, ...] = tuple(sorted(DEFAULT_SHOWN_GROUPS))
-    hidden_groups: tuple[int, ...] = tuple(sorted(HIDDEN_GROUPS))
-    selections: tuple[GeosetSelection, ...] = ()
-
-    @property
-    def replaced_groups(self) -> tuple[int, ...]:
-        return tuple(sorted({s.group for s in self.selections}))
-
-
 class Section(_Frozen):
     """A rectangle of the texture layout's canvas, in pixels."""
 
@@ -321,8 +504,207 @@ class PlanFile(_Frozen):
     states) when a statter was given (`stat` None: not checked)."""
 
     file_data_id: int
-    role: Literal["body model", "texture"]
+    role: Literal["body model", "texture", "item model", "item texture"]
     stat: CascFileStat | None = None
+
+
+# ─── the gear ────────────────────────────────────────────────────────────────
+
+
+class EquippedItem(_Frozen):
+    """One filled equipment slot as `char gear` reads it: the client's slot
+    number, the link's item id (None when the link has none) and its bonus
+    ids in link order."""
+
+    slot: int
+    item_id: int | None
+    bonus_ids: tuple[int, ...] = ()
+
+
+class GearItem(_Frozen):
+    """An equipped item whose look was found: the appearance modifier (from
+    an `ItemBonus` type-7 row of `appearance_bonus_id`, else the item's
+    default), and the chain's ids. `inventory_type` is `Item.InventoryType`
+    (None when `Item` has no row)."""
+
+    slot: int
+    item_id: int
+    bonus_ids: tuple[int, ...]
+    inventory_type: int | None
+    appearance_modifier: int
+    appearance_bonus_id: int | None
+    item_modified_appearance_id: int
+    item_appearance_id: int
+    item_display_info_id: int
+
+
+class GearNotDrawn(_Frozen):
+    """An equipped item the plan does not draw, and why. `kind`: "no look"
+    (a slot with nothing on the body: neck, fingers, trinkets), "unsupported"
+    (the ranged slot, in this wave), "no appearance" (a row of the chain is
+    missing), "unknown slot", or "no item id"."""
+
+    slot: int
+    item_id: int | None
+    kind: Literal["no look", "unsupported", "no appearance", "unknown slot", "no item id"]
+    reason: str
+
+
+class ItemGeosetSelection(_Frozen):
+    """A geoset an item's display selects: `GeosetGroup_<index>` holds
+    `value`, the slot's table names `group`, and the geoset is `group * 100
+    + 1 + value` (`rule` says when another rule chose it). `overridden_by`
+    set: another item takes the group, and this selection is not drawn."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    index: int
+    group: int
+    value: int
+    geoset_id: int
+    rule: str | None = None
+    overridden_by: str | None = None
+
+
+class HelmetHide(_Frozen):
+    """A geoset group a helmet hides: the `HelmetGeosetData` row of the
+    display's helmet visibility id for the race (`race_id`; another model's
+    race when `from_chr_model_id` names a `HelmVisFallbackChrModelID`)."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    helmet_geoset_vis_id: int
+    helmet_geoset_row_id: int
+    race_id: int
+    group: int
+    race_bit_selection: int
+    from_chr_model_id: int
+
+
+Match = Literal[
+    "race and body type",
+    "fallback model",
+    "race, any body type",
+    "any race, body type",
+    "any race and body type",
+    "no component row",
+]
+
+
+class ItemModel(_Frozen):
+    """One model an item draws: `ModelResourcesID_<index>` → the
+    `ModelFileData` file the component filter chose (`match`, and the
+    model it matched when a fallback did), the rest listed. `kind`
+    "attached": drawn at `attachment_id` of the body; "collection": a file
+    chosen through a component row that its slot lists no attachment for,
+    skinned to the body and drawn at the origin (**[verify]**); "no
+    attachment known": no component row and no attachment listed, so the
+    plan does not place it (attached at a point the plan does not list, or a
+    collection model, **[verify]**). `attachment_geoset_values` are the
+    display's `AttachmentGeosetGroup` cells, kept, not applied."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    index: int
+    model_resources_id: int
+    file_data_id: int
+    other_file_data_ids: tuple[int, ...] = ()
+    match: Match
+    matched_chr_model_id: int | None = None
+    position_index: int | None = None
+    kind: Literal["attached", "collection", "no attachment known"]
+    attachment_id: int | None
+    model_type: int
+    attachment_geoset_values: tuple[int, ...] = ()
+
+
+class ItemTexture(_Frozen):
+    """A model texture of an item: `ModelMaterialResourcesID_<index>` →
+    `TextureFileData`. `target` "item model": the item's model of the same
+    index; "cape": the back slot's texture with no model, drawn on the
+    body's cape geosets; "no model": the display names no model there."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    index: int
+    material_resources_id: int
+    file_data_id: int
+    other_file_data_ids: tuple[int, ...] = ()
+    match: Match
+    matched_chr_model_id: int | None = None
+    target: Literal["item model", "cape", "no model"]
+
+
+class ItemTexturePiece(_Frozen):
+    """A piece of an item painted onto the body texture: an
+    `ItemDisplayInfoMaterialRes` row, its component section, the file the
+    component filter chose, and the body layout's section of that type
+    (None: the layout has none). The order pieces are painted in is the
+    compositor's."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    material_res_row_id: int
+    component_section: int
+    material_resources_id: int
+    file_data_id: int
+    other_file_data_ids: tuple[int, ...] = ()
+    match: Match
+    matched_chr_model_id: int | None = None
+    section: Section | None
+
+
+class GearFileMissing(_Frozen):
+    """A model or texture an item names for which no file was found."""
+
+    slot: int
+    item_id: int
+    item_display_info_id: int
+    what: str
+    reason: str
+
+
+class GearAsOf(_Frozen):
+    """What the gear rests on. `source` "record": the record's gear section,
+    as of its last save (logout or `/reload`): `saved_at` when the caller
+    gives it, `client_build` the record's client block. "none": no gear was
+    drawn, `why` says why."""
+
+    source: Literal["record", "none"]
+    why: str | None = None
+    client_build: str | None = None
+    saved_at: datetime | None = None
+
+
+class GeosetPlan(_Frozen):
+    """The default rule and the customization's selections; apply them to the
+    ids a skin lists with `visible_geosets`."""
+
+    default_rule: str = DEFAULT_RULE
+    default_shown_groups: tuple[int, ...] = tuple(sorted(DEFAULT_SHOWN_GROUPS))
+    hidden_groups: tuple[int, ...] = tuple(sorted(HIDDEN_GROUPS))
+    selections: tuple[GeosetSelection, ...] = ()
+    item_selections: tuple[ItemGeosetSelection, ...] = ()
+    helmet_hidden: tuple[HelmetHide, ...] = ()
+
+    @property
+    def replaced_groups(self) -> tuple[int, ...]:
+        """The groups the customization replaces."""
+        return tuple(sorted({s.group for s in self.selections}))
+
+    @property
+    def item_groups(self) -> tuple[int, ...]:
+        """The groups the drawn items replace."""
+        return tuple(sorted({s.group for s in self.item_selections if s.overridden_by is None}))
+
+    @property
+    def hidden_by_helmet(self) -> tuple[int, ...]:
+        return tuple(sorted({h.group for h in self.helmet_hidden}))
 
 
 class LookAsOf(_Frozen):
@@ -345,8 +727,22 @@ class LookAsOf(_Frozen):
     saved_at: datetime | None = None
 
 
+_NO_GEAR_GIVEN = "no gear was given"
+
+GEAR_NOTES: tuple[str, ...] = (
+    "each item is drawn with its own look; transmog is not recorded, so a transmogged item "
+    "looks different in game",
+    "a worn helmet or cloak is drawn even if the character hides it in game (not recorded)",
+)
+"""The notes a plan carries whenever it draws gear: what the record does not
+hold (the module docstring)."""
+
+
 class RenderPlan(_Frozen):
-    """The body and its customization for one character at one build."""
+    """The body, its customization and its gear for one character at one
+    build. `files` lists every file the plan names, once, in the order
+    body model, customization textures, then per slot the item models, their
+    textures and the body-texture pieces."""
 
     build: str
     class_id: int | None
@@ -358,6 +754,13 @@ class RenderPlan(_Frozen):
     layers: tuple[TextureLayer, ...]
     unplaced: tuple[UnplacedMaterial, ...]
     unsupported: tuple[UnsupportedElement, ...]
+    gear: GearAsOf = GearAsOf(source="none", why=_NO_GEAR_GIVEN)
+    items: tuple[GearItem, ...] = ()
+    items_not_drawn: tuple[GearNotDrawn, ...] = ()
+    item_models: tuple[ItemModel, ...] = ()
+    item_textures: tuple[ItemTexture, ...] = ()
+    item_pieces: tuple[ItemTexturePiece, ...] = ()
+    item_files_missing: tuple[GearFileMissing, ...] = ()
     files: tuple[PlanFile, ...]
     skipped_tables: tuple[str, ...] = SKIPPED_TABLES
     notes: tuple[str, ...]
@@ -380,15 +783,27 @@ def is_default_geoset(geoset_id: int) -> bool:
 
 def visible_geosets(plan: GeosetPlan, available: Iterable[int]) -> list[int]:
     """The ids of `available` (a skin's section geoset ids) the plan shows,
-    sorted: the default rule, then each group a selection names replaced by
-    the ids selected in it. Geoset 0 is never hidden by a selection."""
+    sorted: the default rule; then each group a customization selection
+    names replaced by the ids selected in it; then each group a drawn item
+    selection names replaced the same way (an item's group wins over the
+    customization's); then every group a helmet hides, hidden. Geoset 0 is
+    never hidden."""
     ids = sorted(set(available))
     chosen: dict[int, set[int]] = defaultdict(set)
     for s in plan.selections:
         chosen[s.group].add(s.geoset_id)
+    worn: dict[int, set[int]] = defaultdict(set)
+    for i in plan.item_selections:
+        if i.overridden_by is None:
+            worn[i.group].add(i.geoset_id)
+    for group, gids in worn.items():
+        chosen[group] = gids
+    hidden = set(plan.hidden_by_helmet)
     out: list[int] = []
     for gid in ids:
         group = gid // 100
+        if gid != 0 and group in hidden:
+            continue
         if group in chosen and gid != 0:
             if gid in chosen[group]:
                 out.append(gid)
@@ -427,6 +842,30 @@ class _Row:
 def _rows(table: str, rows: Iterable[Mapping[str, str]]) -> Iterator[_Row]:
     for line, row in enumerate(rows, start=1):
         yield _Row(table, line, row)
+
+
+class _Display:
+    """The `ItemDisplayInfo` columns a plan reads, as numbers."""
+
+    __slots__ = (
+        "attachment_groups",
+        "geoset_groups",
+        "helmet_vis",
+        "model_materials",
+        "model_resources",
+        "model_types",
+    )
+
+    def __init__(self, r: _Row) -> None:
+        def cells(prefix: str, count: int) -> tuple[int, ...]:
+            return tuple(r.number(f"{prefix}_{i}") for i in range(count))
+
+        self.model_resources = cells("ModelResourcesID", 2)
+        self.model_materials = cells("ModelMaterialResourcesID", 2)
+        self.model_types = cells("ModelType", 2)
+        self.geoset_groups = cells("GeosetGroup", _GEOSET_GROUP_CELLS)
+        self.attachment_groups = cells("AttachmentGeosetGroup", _GEOSET_GROUP_CELLS)
+        self.helmet_vis = cells("HelmetGeosetVis", 2)
 
 
 class RenderTables:
@@ -499,6 +938,84 @@ class RenderTables:
             r.number("ID"): (r.number("Width"), r.number("Height"))
             for r in _rows("CharComponentTextureLayouts", tables["CharComponentTextureLayouts"])
         }
+        self._index_gear(tables)
+
+    def _index_gear(self, tables: Mapping[str, Iterable[Mapping[str, str]]]) -> None:
+        # The gear tables are large (ModelFileData is over 120,000 rows at
+        # 70959): only the columns read are kept, as numbers.
+        self.model_races: dict[int, list[int]] = defaultdict(list)  # ChrModel -> races
+        for (race, _sex), model_ids in self.race_models.items():
+            for m in model_ids:
+                if race not in self.model_races[m]:
+                    self.model_races[m].append(race)
+        self.item_inventory: dict[int, int] = {
+            r.number("ID"): r.number("InventoryType") for r in _rows("Item", tables["Item"])
+        }
+        # ItemBonus type 7 (appearance) rows by bonus list: (row, modifier, priority).
+        self.appearance_bonuses: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+        for r in _rows("ItemBonus", tables["ItemBonus"]):
+            if r.number("Type") == _BONUS_APPEARANCE:
+                self.appearance_bonuses[r.number("ParentItemBonusListID")].append(
+                    (r.number("ID"), r.number("Value_0"), r.number("Value_1"))
+                )
+        # ItemModifiedAppearance by item: (row, modifier, appearance, order index).
+        self.item_appearances: dict[int, list[tuple[int, int, int, int]]] = defaultdict(list)
+        for r in _rows("ItemModifiedAppearance", tables["ItemModifiedAppearance"]):
+            self.item_appearances[r.number("ItemID")].append(
+                (
+                    r.number("ID"),
+                    r.number("ItemAppearanceModifierID"),
+                    r.number("ItemAppearanceID"),
+                    r.number("OrderIndex"),
+                )
+            )
+        self.appearance_display: dict[int, int] = {
+            r.number("ID"): r.number("ItemDisplayInfoID")
+            for r in _rows("ItemAppearance", tables["ItemAppearance"])
+        }
+        self.displays: dict[int, _Display] = {
+            r.number("ID"): _Display(r) for r in _rows("ItemDisplayInfo", tables["ItemDisplayInfo"])
+        }
+        # ItemDisplayInfoMaterialRes by display: (row, component section, resource).
+        self.display_pieces: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+        for r in _rows("ItemDisplayInfoMaterialRes", tables["ItemDisplayInfoMaterialRes"]):
+            self.display_pieces[r.number("ItemDisplayInfoID")].append(
+                (r.number("ID"), r.number("ComponentSection"), r.number("MaterialResourcesID"))
+            )
+        self.model_files: dict[int, list[int]] = defaultdict(list)  # resources -> files
+        for r in _rows("ModelFileData", tables["ModelFileData"]):
+            self.model_files[r.number("ModelResourcesID")].append(r.number("FileDataID"))
+        # ComponentModelFileData by file: (race, gender index, class, position).
+        self.component_models: dict[int, tuple[int, int, int, int]] = {
+            r.number("ID"): (
+                r.number("RaceID"),
+                r.number("GenderIndex"),
+                r.number("ClassID"),
+                r.number("PositionIndex"),
+            )
+            for r in _rows("ComponentModelFileData", tables["ComponentModelFileData"])
+        }
+        # ComponentTextureFileData by file: (race, gender index, class, no position).
+        self.component_textures: dict[int, tuple[int, int, int, int]] = {
+            r.number("ID"): (
+                r.number("RaceID"),
+                r.number("GenderIndex"),
+                r.number("ClassID"),
+                _NO_POSITION,
+            )
+            for r in _rows("ComponentTextureFileData", tables["ComponentTextureFileData"])
+        }
+        # HelmetGeosetData by visibility id: (row, race, hidden group, race bits).
+        self.helmet_rows: dict[int, list[tuple[int, int, int, int]]] = defaultdict(list)
+        for r in _rows("HelmetGeosetData", tables["HelmetGeosetData"]):
+            self.helmet_rows[r.number("HelmetGeosetVisDataID")].append(
+                (
+                    r.number("ID"),
+                    r.number("RaceID"),
+                    r.number("HideGeosetGroup"),
+                    r.number("RaceBitSelection") if r.has("RaceBitSelection") else 0,
+                )
+            )
 
     @classmethod
     def from_gamedata(cls, data: GameData, build: str) -> RenderTables:
@@ -846,15 +1363,27 @@ def _layer(
     )
 
 
+Role = Literal["body model", "texture", "item model", "item texture"]
+
+
 def _files(
-    body: BodyModel, layers: Sequence[TextureLayer], statter: FileStatter | None
+    body: BodyModel,
+    layers: Sequence[TextureLayer],
+    worn: _Worn,
+    statter: FileStatter | None,
 ) -> tuple[PlanFile, ...]:
-    wanted: list[tuple[int, Literal["body model", "texture"]]] = [(body.file_data_id, "body model")]
-    seen = {body.file_data_id}
-    for layer in layers:
-        if layer.file_data_id not in seen:
-            seen.add(layer.file_data_id)
-            wanted.append((layer.file_data_id, "texture"))
+    candidates: list[tuple[int, Role]] = [(body.file_data_id, "body model")]
+    candidates += [(la.file_data_id, "texture") for la in layers]
+    for slot in sorted({i.slot for i in worn.items}):
+        candidates += [(m.file_data_id, "item model") for m in worn.models if m.slot == slot]
+        candidates += [(t.file_data_id, "item texture") for t in worn.textures if t.slot == slot]
+        candidates += [(p.file_data_id, "item texture") for p in worn.pieces if p.slot == slot]
+    wanted: list[tuple[int, Role]] = []
+    seen: set[int] = set()
+    for fdid, role in candidates:
+        if fdid not in seen:
+            seen.add(fdid)
+            wanted.append((fdid, role))
     return tuple(
         PlanFile(
             file_data_id=fdid,
@@ -865,12 +1394,531 @@ def _files(
     )
 
 
+# ─── the gear ────────────────────────────────────────────────────────────────
+
+
+class _Worn:
+    """What the gear chain found, gathered while walking the slots."""
+
+    def __init__(self) -> None:
+        self.items: list[GearItem] = []
+        self.not_drawn: list[GearNotDrawn] = []
+        self.geosets: list[ItemGeosetSelection] = []
+        self.helmet: list[HelmetHide] = []
+        self.models: list[ItemModel] = []
+        self.textures: list[ItemTexture] = []
+        self.pieces: list[ItemTexturePiece] = []
+        self.missing: list[GearFileMissing] = []
+
+
+def _slot_word(slot: int) -> str:
+    return _SLOT_WORDS.get(slot, f"slot {slot}")
+
+
+def _model_sex(tables: RenderTables, model_id: int) -> int | None:
+    row = _model_row(tables, model_id)
+    return row.number("Sex") if row.has("Sex") else None
+
+
+def _pick_file(
+    tables: RenderTables,
+    files: Sequence[int],
+    component: Mapping[int, tuple[int, int, int, int]],
+    body: BodyModel,
+    class_id: int | None,
+    position: int | None,
+    fallback_column: str,
+    notes: list[str],
+) -> tuple[int, tuple[int, ...], Match, int | None] | str:
+    """The file a resource draws for this character: (file, the other files
+    of the same rank, the rank, the fallback model matched), or why none.
+    A file with a component row is eligible when its class is 0 or the
+    character's and, for a side (`position`), its position is that side or
+    either. Ranks, best first: the race and body type; a fallback model's
+    (along `fallback_column`); the race with either body type; any race
+    with the body type; any race and either body type. When no file has a
+    component row, the first is drawn. The rank order is the plan's own,
+    **[verify]** against wow.export; one open point: a fallback model's
+    exact match ranks above the character's own race with either body type
+    (no effect at 70959, where no playable model has a fallback id). A
+    "followed … to N" note is written only when the walk supplies the file;
+    a fallback id naming no `ChrModel` row is noted either way."""
+    if not files:
+        return "the resource names no file"
+    rowed = [f for f in files if f in component]
+    if not rowed:
+        return files[0], tuple(files[1:]), "no component row", None
+
+    def eligible(f: int) -> bool:
+        _race, _gender, cls, pos = component[f]
+        if cls not in (0, class_id or 0):
+            return False
+        return position is None or pos in (position, _NO_POSITION)
+
+    pool = [f for f in rowed if eligible(f)]
+
+    def exact(races: Sequence[int], sex: int | None) -> list[int]:
+        return [f for f in pool if component[f][0] in races and component[f][1] == sex]
+
+    def of_model(m: int) -> list[int]:
+        if m == body.chr_model_id:
+            return exact([body.race_id], body.sex)
+        return exact(tables.model_races.get(m, []), _model_sex(tables, m))
+
+    walk: list[str] = []
+    found = _follow(tables, body.chr_model_id, fallback_column, lambda m: bool(of_model(m)), walk)
+    notes += walk if found is not None else [n for n in walk if ": followed " not in n]
+    if found is not None:
+        got = of_model(found)
+        if found == body.chr_model_id:
+            return got[0], tuple(got[1:]), "race and body type", None
+        return got[0], tuple(got[1:]), "fallback model", found
+    tiers: tuple[tuple[Match, list[int]], ...] = (
+        (
+            "race, any body type",
+            [
+                f
+                for f in pool
+                if component[f][0] == body.race_id and component[f][1] in _ANY_BODY_TYPE
+            ],
+        ),
+        (
+            "any race, body type",
+            [f for f in pool if component[f][0] == 0 and component[f][1] == body.sex],
+        ),
+        (
+            "any race and body type",
+            [f for f in pool if component[f][0] == 0 and component[f][1] in _ANY_BODY_TYPE],
+        ),
+        ("no component row", [f for f in files if f not in component]),
+    )
+    for rank, got in tiers:
+        if got:
+            return got[0], tuple(got[1:]), rank, None
+    side = "" if position is None else f", side {position}"
+    return (
+        f"none of its {len(files)} files is for race {body.race_id}, body type {body.sex}"
+        f"{side} (or a fallback model's, or any race or body type)"
+    )
+
+
+def _appearance(
+    tables: RenderTables, item_id: int, bonus_ids: Sequence[int], notes: list[str]
+) -> tuple[tuple[int, int, int, int], int | None] | str:
+    """The `ItemModifiedAppearance` row drawn and the bonus list that chose
+    it (None: the item's default), or why there is none."""
+    rows = tables.item_appearances.get(item_id, [])
+    if not rows:
+        return f"ItemModifiedAppearance has no row for item {item_id}"
+    bonus = [
+        (priority, n, list_id, modifier)
+        for n, list_id in enumerate(bonus_ids)
+        for _row, modifier, priority in tables.appearance_bonuses.get(list_id, [])
+    ]
+    if bonus:
+        _priority, _n, list_id, modifier = min(bonus)
+        matched = [r for r in rows if r[1] == modifier]
+        if matched:
+            return min(matched, key=lambda r: (r[3], r[0])), list_id
+        notes.append(
+            f"item {item_id}: bonus {list_id} selects appearance modifier {modifier}, which "
+            "ItemModifiedAppearance does not list for the item; its default appearance is drawn"
+        )
+    zero = [r for r in rows if r[1] == 0]
+    return min(zero or rows, key=lambda r: (r[1], r[3], r[0])), None
+
+
+def _item_geosets(
+    slot: int, item_id: int, display_id: int, d: _Display, notes: list[str]
+) -> list[ItemGeosetSelection]:
+    groups = SLOT_GEOSET_GROUPS.get(slot, ())
+    out: list[ItemGeosetSelection] = []
+    for index, value in enumerate(d.geoset_groups):
+        if index >= len(groups):
+            if value:
+                notes.append(
+                    f"item {item_id}: ItemDisplayInfo {display_id} sets GeosetGroup_{index} to "
+                    f"{value}, which no geoset group of the {_slot_word(slot)} slot takes; not drawn"
+                )
+            continue
+        group = groups[index]
+        rule = None
+        geoset = group * 100 + 1 + value
+        if slot == SLOT_FEET and group == _FEET_GROUP and value == _FEET_BARE_VALUE:
+            geoset = group * 100 + _FEET_COVERED
+            rule = (
+                f"the feet's value 0 selects {geoset} (read as the foot covered, a community rule)"
+            )
+        out.append(
+            ItemGeosetSelection(
+                slot=slot,
+                item_id=item_id,
+                item_display_info_id=display_id,
+                index=index,
+                group=group,
+                value=value,
+                geoset_id=geoset,
+                rule=rule,
+            )
+        )
+    return out
+
+
+def _resolve_geosets(selections: Sequence[ItemGeosetSelection]) -> list[ItemGeosetSelection]:
+    """Where two slots select one group, the first slot of the group's
+    priority whose value is not 0 takes it (the first in priority when all
+    are 0); gloves whose group-4 value is not 0 leave group 8 at its
+    default."""
+    by_group: dict[int, list[ItemGeosetSelection]] = defaultdict(list)
+    for s in selections:
+        by_group[s.group].append(s)
+    lost: dict[tuple[int, int, int], str] = {}
+    for group, sels in by_group.items():
+        if len({s.slot for s in sels}) < 2:
+            continue
+        order = _GROUP_PRIORITY.get(group, ())
+        ranked = sorted(
+            sels,
+            key=lambda s: (order.index(s.slot) if s.slot in order else len(order), s.slot, s.index),
+        )
+        winner = next((s for s in ranked if s.value != 0), ranked[0])
+        for s in ranked:
+            if s is not winner:
+                lost[(s.slot, s.group, s.index)] = (
+                    f"the {_slot_word(winner.slot)} item takes geoset group {group}"
+                )
+    gloves = any(s.slot == SLOT_HANDS and s.group == _GLOVES and s.value != 0 for s in selections)
+    if gloves:
+        for s in by_group.get(_SLEEVES, []):
+            lost.setdefault(
+                (s.slot, s.group, s.index),
+                f"the gloves cover the sleeves: geoset group {_SLEEVES} is left at its default",
+            )
+    return [
+        s.model_copy(update={"overridden_by": lost[(s.slot, s.group, s.index)]})
+        if (s.slot, s.group, s.index) in lost
+        else s
+        for s in selections
+    ]
+
+
+def _helmet(
+    tables: RenderTables,
+    body: BodyModel,
+    item: GearItem,
+    d: _Display,
+    notes: list[str],
+) -> list[HelmetHide]:
+    if body.sex not in (0, 1):
+        notes.append(
+            f"item {item.item_id}: body type {body.sex} names no helmet visibility; nothing hidden"
+        )
+        return []
+    vis = d.helmet_vis[body.sex]
+    if not vis:
+        return []
+    rows = tables.helmet_rows.get(vis, [])
+
+    def of_model(m: int) -> list[tuple[int, int, int, int]]:
+        races = [body.race_id] if m == body.chr_model_id else tables.model_races.get(m, [])
+        return [r for r in rows if r[1] in races]
+
+    walk: list[str] = []
+    found = _follow(
+        tables, body.chr_model_id, "HelmVisFallbackChrModelID", lambda m: bool(of_model(m)), walk
+    )
+    notes += walk if found is not None else [n for n in walk if ": followed " not in n]
+    if found is not None:
+        chosen, source = of_model(found), found
+    else:
+        chosen, source = [r for r in rows if r[1] == 0], body.chr_model_id
+    if not chosen:
+        notes.append(
+            f"item {item.item_id}: HelmetGeosetData has no row of visibility {vis} for race "
+            f"{body.race_id} (or a fallback model's, or any race); nothing hidden"
+        )
+        return []
+    out: list[HelmetHide] = []
+    seen: set[int] = set()
+    for row_id, race, group, bits in chosen:
+        if group in seen:
+            continue
+        seen.add(group)
+        out.append(
+            HelmetHide(
+                slot=item.slot,
+                item_id=item.item_id,
+                item_display_info_id=item.item_display_info_id,
+                helmet_geoset_vis_id=vis,
+                helmet_geoset_row_id=row_id,
+                race_id=race,
+                group=group,
+                race_bit_selection=bits,
+                from_chr_model_id=source,
+            )
+        )
+    return out
+
+
+def _diffuse(tables: RenderTables, resources: int) -> list[int]:
+    return [f for f, usage in tables.textures.get(resources, []) if usage == _DIFFUSE_USAGE]
+
+
+def _item_files(
+    tables: RenderTables,
+    body: BodyModel,
+    class_id: int | None,
+    item: GearItem,
+    d: _Display,
+    worn: _Worn,
+    notes: list[str],
+) -> None:
+    did, slot = item.item_display_info_id, item.slot
+    attachments = SLOT_ATTACHMENTS.get(slot, ())
+
+    def missing(what: str, reason: str) -> None:
+        worn.missing.append(
+            GearFileMissing(
+                slot=slot,
+                item_id=item.item_id,
+                item_display_info_id=did,
+                what=what,
+                reason=reason,
+            )
+        )
+
+    for index, resources in enumerate(d.model_resources):
+        if not resources:
+            continue
+        position = index if slot == SLOT_SHOULDER else None
+        picked = _pick_file(
+            tables,
+            tables.model_files.get(resources, []),
+            tables.component_models,
+            body,
+            class_id,
+            position,
+            "ModelFallbackChrModelID",
+            notes,
+        )
+        what = f"model {index} (ModelResourcesID {resources})"
+        if isinstance(picked, str):
+            missing(what, picked)
+            continue
+        fdid, others, match, matched = picked
+        attachment = attachments[index] if index < len(attachments) else None
+        if (
+            slot == SLOT_OFF_HAND
+            and attachment is not None
+            and item.inventory_type == _INVTYPE_SHIELD
+        ):
+            attachment = SHIELD_ATTACHMENT
+        kind: Literal["attached", "collection", "no attachment known"] = "attached"
+        if attachment is None:
+            kind = "collection" if match != "no component row" else "no attachment known"
+        if kind == "no attachment known":
+            notes.append(
+                f"item {item.item_id}: model {fdid} has no component row and the "
+                f"{_slot_word(slot)} slot lists no attachment; not placed"
+            )
+        worn.models.append(
+            ItemModel(
+                slot=slot,
+                item_id=item.item_id,
+                item_display_info_id=did,
+                index=index,
+                model_resources_id=resources,
+                file_data_id=fdid,
+                other_file_data_ids=others,
+                match=match,
+                matched_chr_model_id=matched,
+                position_index=position,
+                kind=kind,
+                attachment_id=attachment,
+                model_type=d.model_types[index],
+                attachment_geoset_values=d.attachment_groups,
+            )
+        )
+    for index, resources in enumerate(d.model_materials):
+        if not resources:
+            continue
+        picked = _pick_file(
+            tables,
+            _diffuse(tables, resources),
+            tables.component_textures,
+            body,
+            class_id,
+            None,
+            "TextureFallbackChrModelID",
+            notes,
+        )
+        what = f"model texture {index} (MaterialResourcesID {resources})"
+        if isinstance(picked, str):
+            missing(what, picked)
+            continue
+        fdid, others, match, matched = picked
+        target: Literal["item model", "cape", "no model"] = "item model"
+        if not d.model_resources[index]:
+            target = "cape" if slot == SLOT_BACK else "no model"
+        if target == "no model":
+            notes.append(
+                f"item {item.item_id}: ItemDisplayInfo {did} names a texture for model {index} "
+                "and no model there"
+            )
+        worn.textures.append(
+            ItemTexture(
+                slot=slot,
+                item_id=item.item_id,
+                item_display_info_id=did,
+                index=index,
+                material_resources_id=resources,
+                file_data_id=fdid,
+                other_file_data_ids=others,
+                match=match,
+                matched_chr_model_id=matched,
+                target=target,
+            )
+        )
+    layout = tables.sections.get(body.layout_id, {})
+    for row_id, section, resources in tables.display_pieces.get(did, []):
+        picked = _pick_file(
+            tables,
+            _diffuse(tables, resources),
+            tables.component_textures,
+            body,
+            class_id,
+            None,
+            "TextureFallbackChrModelID",
+            notes,
+        )
+        what = f"body-texture piece {row_id} (section {section}, MaterialResourcesID {resources})"
+        if isinstance(picked, str):
+            missing(what, picked)
+            continue
+        fdid, others, match, matched = picked
+        placed = layout.get(section)
+        if placed is None:
+            notes.append(
+                f"item {item.item_id}: layout {body.layout_id} has no section of type {section}; "
+                f"piece {row_id} is not placed"
+            )
+        worn.pieces.append(
+            ItemTexturePiece(
+                slot=slot,
+                item_id=item.item_id,
+                item_display_info_id=did,
+                material_res_row_id=row_id,
+                component_section=section,
+                material_resources_id=resources,
+                file_data_id=fdid,
+                other_file_data_ids=others,
+                match=match,
+                matched_chr_model_id=matched,
+                section=placed,
+            )
+        )
+
+
+def _gear(
+    tables: RenderTables,
+    body: BodyModel,
+    class_id: int | None,
+    equipped: Sequence[EquippedItem],
+    notes: list[str],
+) -> _Worn:
+    worn = _Worn()
+    geosets: list[ItemGeosetSelection] = []
+    for e in sorted(equipped, key=lambda e: e.slot):
+
+        def skip(
+            kind: Literal["no look", "unsupported", "no appearance", "unknown slot", "no item id"],
+            reason: str,
+            e: EquippedItem = e,
+        ) -> None:
+            worn.not_drawn.append(
+                GearNotDrawn(slot=e.slot, item_id=e.item_id, kind=kind, reason=reason)
+            )
+
+        if e.slot in _NO_LOOK_SLOTS:
+            skip("no look", f"the {_slot_word(e.slot)} slot shows nothing on the body")
+            continue
+        if e.slot == SLOT_RANGED:
+            skip("unsupported", "the ranged slot is not drawn yet")
+            continue
+        if e.slot not in SLOT_GEOSET_GROUPS:
+            skip("unknown slot", f"slot {e.slot} is not an equipment slot the plan knows")
+            continue
+        if e.item_id is None:
+            skip("no item id", "the item link holds no item id")
+            continue
+        inventory = tables.item_inventory.get(e.item_id)
+        if inventory is None:
+            notes.append(f"item {e.item_id}: Item has no row for it; its inventory type is unknown")
+        found = _appearance(tables, e.item_id, e.bonus_ids, notes)
+        if isinstance(found, str):
+            skip("no appearance", found)
+            continue
+        (ima_id, modifier, appearance_id, _order), bonus_id = found
+        display_id = tables.appearance_display.get(appearance_id)
+        if display_id is None:
+            skip("no appearance", f"ItemAppearance has no row {appearance_id}")
+            continue
+        d = tables.displays.get(display_id)
+        if d is None:
+            skip("no appearance", f"ItemDisplayInfo has no row {display_id}")
+            continue
+        item = GearItem(
+            slot=e.slot,
+            item_id=e.item_id,
+            bonus_ids=e.bonus_ids,
+            inventory_type=inventory,
+            appearance_modifier=modifier,
+            appearance_bonus_id=bonus_id,
+            item_modified_appearance_id=ima_id,
+            item_appearance_id=appearance_id,
+            item_display_info_id=display_id,
+        )
+        worn.items.append(item)
+        geosets += _item_geosets(e.slot, e.item_id, display_id, d, notes)
+        if e.slot == SLOT_HEAD:
+            worn.helmet += _helmet(tables, body, item, d, notes)
+        _item_files(tables, body, class_id, item, d, worn, notes)
+    worn.geosets = _resolve_geosets(geosets)
+    return worn
+
+
+def equipped_items(char: labaddon.CharDB) -> tuple[EquippedItem, ...] | str:
+    """The record's equipped items as `char gear` reads them (slot, item id,
+    bonus ids), or why it holds none. A link the reader cannot decode raises
+    `RenderPlanError` (the record reader admits none)."""
+    section = char.gear
+    if section is None:
+        return f"the record has no gear: {labaddon.NOT_IN_FILE}"
+    if isinstance(section, labaddon.AbsentSection):
+        return f"the lab-addon recorded the gear as absent ({section.absent})"
+    out: list[EquippedItem] = []
+    for slot in sorted(section.slots, key=lambda s: s.slot):
+        try:
+            link = itemlink.parse(slot.link)
+        except itemlink.ItemLinkError as exc:
+            raise RenderPlanError(
+                f"slot {slot.slot}: an item link wowlab cannot read: {exc}"
+            ) from exc
+        out.append(
+            EquippedItem(slot=slot.slot, item_id=link.item_id, bonus_ids=tuple(link.bonus_ids))
+        )
+    return tuple(out)
+
+
 def build_plan(
     tables: RenderTables,
     identity: labaddon.CharIdentity,
     customization: labaddon.CustomizationImport | None,
     *,
     no_customization_reason: str | None = None,
+    gear: Sequence[EquippedItem] | None = None,
+    no_gear_reason: str | None = None,
+    gear_build: str | None = None,
     statter: FileStatter | None = None,
     saved_at: datetime | None = None,
 ) -> RenderPlan:
@@ -878,8 +1926,11 @@ def build_plan(
     customization record (`labaddon.customization_import`; None without one,
     `no_customization_reason` saying why). Race and body type come from the
     identity; when it lacks them, from the customization record, noted.
-    `statter` (a `casc.CascSource`) gives each file's state; `saved_at` is
-    the record file's save time, the only date it has."""
+    `gear`: the equipped items (`equipped_items`); None draws no gear
+    (`no_gear_reason` saying why, as a note, when the record holds none).
+    `gear_build`: the client build that recorded them. `statter` (a
+    `casc.CascSource`) gives each file's state; `saved_at` is the record
+    file's save time, the only date it has."""
     notes: list[str] = []
     race_id, sex = identity.race_id, identity.sex
     if race_id is None or sex is None:
@@ -953,6 +2004,23 @@ def build_plan(
         notes.append(why)
 
     geosets, layers, unplaced, unsupported = _elements(tables, body.chr_model_id, chosen, notes)
+
+    if gear is None:
+        worn = _Worn()
+        gear_as_of = GearAsOf(source="none", why=no_gear_reason or _NO_GEAR_GIVEN)
+        if no_gear_reason is not None:
+            notes.append(f"no gear is drawn: {no_gear_reason}")
+    else:
+        if gear_build is not None and gear_build != tables.build:
+            notes.append(
+                f"the gear was recorded by {gear_build} and is read against the tables of "
+                f"{tables.build}; an item's appearance or a bonus id's meaning can change between "
+                "builds"
+            )
+        worn = _gear(tables, body, identity.class_id, gear, notes)
+        if worn.items:
+            notes += GEAR_NOTES
+        gear_as_of = GearAsOf(source="record", client_build=gear_build, saved_at=saved_at)
     return RenderPlan(
         build=tables.build,
         class_id=identity.class_id,
@@ -960,11 +2028,22 @@ def build_plan(
         look=look,
         choices=tuple(chosen),
         not_chosen=tuple(not_chosen),
-        geosets=GeosetPlan(selections=tuple(geosets)),
+        geosets=GeosetPlan(
+            selections=tuple(geosets),
+            item_selections=tuple(worn.geosets),
+            helmet_hidden=tuple(worn.helmet),
+        ),
         layers=tuple(layers),
         unplaced=tuple(unplaced),
         unsupported=tuple(unsupported),
-        files=_files(body, layers, statter),
+        gear=gear_as_of,
+        items=tuple(worn.items),
+        items_not_drawn=tuple(worn.not_drawn),
+        item_models=tuple(worn.models),
+        item_textures=tuple(worn.textures),
+        item_pieces=tuple(worn.pieces),
+        item_files_missing=tuple(worn.missing),
+        files=_files(body, layers, worn, statter),
         notes=tuple(dict.fromkeys(notes)),
     )
 
@@ -977,7 +2056,7 @@ def plan_for_record(
     saved_at: datetime | None = None,
 ) -> RenderPlan:
     """`build_plan` for a character's lab-addon record as read
-    (`labaddon.read_char`)."""
+    (`labaddon.read_char`), its gear included."""
     identity = labaddon.identity_of(char)
     try:
         look: labaddon.CustomizationImport | None = labaddon.customization_import(char)
@@ -985,11 +2064,15 @@ def plan_for_record(
     except labaddon.NoCustomizationError as exc:
         look = None
         reason = exc.reason or str(exc)
+    worn = equipped_items(char)
     return build_plan(
         tables,
         identity,
         look,
         no_customization_reason=reason,
+        gear=None if isinstance(worn, str) else worn,
+        no_gear_reason=worn if isinstance(worn, str) else None,
+        gear_build=labaddon.client_build(char),
         statter=statter,
         saved_at=saved_at,
     )

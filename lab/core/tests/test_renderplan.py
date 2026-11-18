@@ -5,9 +5,11 @@ Nothing here touches the network or an install. Tables come through
 (`*.1.60.1.70959*`); characters are the `macos-70450` lab-addon records
 (Sangraal-Sett: Undead, body type 0, with a customization record;
 Dangling-Participle: Orc, body type 0, without one), and the files' states
-replay `fixtures/macos-70959/derived/renderplan-files.json`, recorded from
-the owner's install by `scripts/renderplan_facts.py` (ADR-0033's derived
-layer; the live layer is `test_renderplan_live.py`).
+replay `fixtures/macos-70959/derived/renderplan-gear-files.json` (the body's
+and, since M15-13, the gear's files; the body-only
+`renderplan-files.json` is checked against it), recorded from the owner's
+install by `scripts/renderplan_facts.py` (ADR-0033's derived layer; the live
+layer is `test_renderplan_live.py`). The gear is `test_renderplan_gear.py`'s.
 
 Tests whose id contains `constructed` use a constructed character (an
 identity and a customization record built here) or constructed table rows,
@@ -42,6 +44,13 @@ DANGLING = CHARS / "Dangling-Participle" / "SavedVariables" / "WowLab.lua"
 DERIVED: dict[str, object] = json.loads(
     (FIXTURES / "macos-70959" / "derived" / "renderplan-files.json").read_text(encoding="utf-8")
 )
+# The same characters with their gear (M15-13): every file the plan names,
+# the body's included. The states replay from this one.
+GEAR_DERIVED: dict[str, object] = json.loads(
+    (FIXTURES / "macos-70959" / "derived" / "renderplan-gear-files.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 # Real ids at 70959, named for the reader.
 ORC, UNDEAD = 2, 5
@@ -50,15 +59,33 @@ UNDEAD_FACE_923 = 923
 UNDEAD_SKIN_TYPE, UNDEAD_SKIN_TYPE_6529 = 567, 6529
 
 
-def _path(table: str) -> Path:
-    for name in (f"{table}.{BUILD}.csv", f"{table}.{BUILD}.subset.csv"):
-        if (WAGO / name).is_file():
-            return WAGO / name
-    raise AssertionError(f"no recording of {table}")
+def _paths(table: str) -> list[Path]:
+    """The recordings of a table at the build: the whole table, or its
+    subsets (`.subset.csv`, `.<part>.subset.csv`), cut on disjoint id sets."""
+    whole = WAGO / f"{table}.{BUILD}.csv"
+    if whole.is_file():
+        return [whole]
+    found = sorted(p for p in WAGO.glob(f"{table}.{BUILD}.*subset.csv") if p.name.count(".") <= 7)
+    if not found:
+        raise AssertionError(f"no recording of {table}")
+    return found
+
+
+def _body(table: str) -> bytes:
+    """The table as one CSV body: the first recording whole, then the data
+    lines of the others (whose header must be the same)."""
+    parts = [p.read_bytes() for p in _paths(table)]
+    out = parts[0]
+    header = out.split(b"\n", 1)[0]
+    for more in parts[1:]:
+        head, _, rest = more.partition(b"\n")
+        assert head == header, f"{table}: the recordings' headers differ"
+        out += rest
+    return out
 
 
 class _FixtureSource:
-    """Serves the recorded tables (whole or subset) as wago's body."""
+    """Serves the recorded tables (whole or subsets) as wago's body."""
 
     name = "fixtures"
 
@@ -68,13 +95,12 @@ class _FixtureSource:
     def fetch_table(self, table: str, build: str, dest: BinaryIO) -> str:
         assert build == BUILD
         assert table not in renderplan.SKIPPED_TABLES
-        with _path(table).open("rb") as handle:
-            shutil.copyfileobj(handle, dest)
+        shutil.copyfileobj(io.BytesIO(_body(table)), dest)
         return f"fixture:{table}.{build}"
 
 
 def _rows(table: str) -> list[dict[str, str]]:
-    return list(csv.DictReader(io.StringIO(_path(table).read_text(encoding="utf-8"), newline="")))
+    return list(csv.DictReader(io.StringIO(_body(table).decode("utf-8"), newline="")))
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +113,7 @@ class _Replay:
     """The derived fixture's states, as `CascSource.stat` gave them."""
 
     def __init__(self, label: str) -> None:
-        chars = DERIVED["characters"]
+        chars = GEAR_DERIVED["characters"]
         assert isinstance(chars, list)
         (char,) = [c for c in chars if c["label"] == label]
         self.files: dict[int, dict[str, object]] = {f["file_data_id"]: f for f in char["files"]}
@@ -183,10 +209,15 @@ def test_the_body_of_the_fixture_character(sangraal: tuple[RenderPlan, _Replay])
         "layout_width": 2048,
         "layout_height": 1024,
     }
-    # The record is of 70450, the tables of 70959: the build gap is the one note.
+    # The record is of 70450, the tables of 70959: the build gap, for the
+    # look and for the gear, and what the record does not hold about the
+    # gear, are all the notes say.
     assert plan.notes == (
         "the record was written by 1.60.1.70450 and is read against the tables of "
         "1.60.1.70959; choice ids can change between builds",
+        "the gear was recorded by 1.60.1.70450 and is read against the tables of "
+        "1.60.1.70959; an item's appearance or a bonus id's meaning can change between builds",
+        *renderplan.GEAR_NOTES,
     )
 
 
@@ -273,10 +304,11 @@ def test_the_fixture_characters_unsupported_elements(
 def test_the_fixture_characters_files_and_their_states(
     sangraal: tuple[RenderPlan, _Replay],
 ) -> None:
-    """The body model first, then each texture once; every one local on the
-    owner's install at 70959, asked as an id a game table names."""
+    """The body model first, then each texture once (the gear's files after
+    them, `test_renderplan_gear.py`); every one local on the owner's install
+    at 70959, asked as an id a game table names."""
     plan, replay = sangraal
-    assert [(f.file_data_id, f.role) for f in plan.files] == [
+    assert [(f.file_data_id, f.role) for f in plan.files][:8] == [
         (959310, "body model"),
         (959287, "texture"),
         (959281, "texture"),
@@ -288,8 +320,23 @@ def test_the_fixture_characters_files_and_their_states(
     ]
     assert all(f.stat is not None and f.stat.state == "local" for f in plan.files)
     assert plan.files[0].stat is not None and plan.files[0].stat.size == 28775314
+    assert {f.role for f in plan.files[8:]} == {"item model", "item texture"}
     assert replay.asked == [(f.file_data_id, True) for f in plan.files]
     assert DERIVED["version"] == DERIVED["tables_build"] == BUILD
+
+
+@pytest.mark.parametrize("label", ["Sangraal-Sett", "Dangling-Participle"])
+def test_the_two_derived_records_agree_on_the_body(label: str) -> None:
+    """The body-only record (2026-11-17) and the one with the gear
+    (2026-11-18) were read from one install at one build: the body's files
+    are the gear record's first ones, with the same states, sizes and
+    hashes."""
+    bodies, gear = DERIVED["characters"], GEAR_DERIVED["characters"]
+    assert isinstance(bodies, list) and isinstance(gear, list)
+    (body,) = [c for c in bodies if c["label"] == label]
+    (worn,) = [c for c in gear if c["label"] == label]
+    assert worn["files"][: len(body["files"])] == body["files"]
+    assert GEAR_DERIVED["version"] == DERIVED["version"] == BUILD
 
 
 def test_the_look_carries_what_the_record_rests_on(sangraal: tuple[RenderPlan, _Replay]) -> None:
@@ -306,7 +353,7 @@ def test_the_look_carries_what_the_record_rests_on(sangraal: tuple[RenderPlan, _
         "client_build": "1.60.1.70450",
         "saved_at": datetime(2026, 10, 19, 12, 0, tzinfo=UTC),
     }
-    assert plan.skipped_tables == ("ChrCustomizationCondModel",)
+    assert plan.skipped_tables == ("ChrCustomizationCondModel", "HelmetGeosetVisData")
 
 
 def test_the_plan_round_trips_as_json(sangraal: tuple[RenderPlan, _Replay]) -> None:
@@ -327,7 +374,12 @@ def test_a_real_character_without_a_record_gets_the_defaults(tables: RenderTable
     assert plan.look.source == "defaults"
     assert plan.look.why is not None
     assert "no barber-shop visit recorded with the addon enabled" in plan.look.why
-    assert plan.notes == (plan.look.why,)
+    assert plan.notes == (
+        plan.look.why,
+        "the gear was recorded by 1.60.1.70450 and is read against the tables of "
+        "1.60.1.70959; an item's appearance or a bonus id's meaning can change between builds",
+        *renderplan.GEAR_NOTES,
+    )
     assert [(c.option_id, c.choice_id, c.source) for c in plan.choices] == [
         (19, 353, "default"),
         (20, 384, "default"),
@@ -339,7 +391,7 @@ def test_a_real_character_without_a_record_gets_the_defaults(tables: RenderTable
     ]
     assert [(n.option_id, "requirement 12" in n.reason) for n in plan.not_chosen] == [(8524, True)]
     assert [g.geoset_id for g in plan.geosets.selections] == [0, 100, 200]
-    assert [f.file_data_id for f in plan.files] == [
+    assert [f.file_data_id for f in plan.files][:6] == [
         917116,
         916966,
         916834,

@@ -51,10 +51,9 @@ def _tables(tmp: Path, *, skip: str | None = None) -> Path:
     for name in renderplan.REQUIRED_TABLES:
         if name == skip:
             continue
-        for suffix in ("csv", "subset.csv"):
-            src = FIXTURES / "wago" / f"{name}.{RECORDED}.{suffix}"
-            if src.is_file():
-                shutil.copyfile(src, folder / f"{name}.{VERSION}.{suffix}")
+        for src in (FIXTURES / "wago").glob(f"{name}.{RECORDED}.*csv"):
+            suffix = src.name.removeprefix(f"{name}.{RECORDED}.")
+            shutil.copyfile(src, folder / f"{name}.{VERSION}.{suffix}")
     return folder
 
 
@@ -98,6 +97,9 @@ def test_writes_the_plan_files_record_constructed(tmp_path: Path) -> None:
     (char,) = facts["characters"]
     assert (char["label"], char["chr_model_id"], char["look"]) == ("Sangraal-Sett", 9, "record")
     assert [f["file_data_id"] for f in char["files"]][:2] == [959310, 959287]
+    # The gear's files too: the textures of both TextureFileData subsets.
+    roles = {f["file_data_id"]: f["role"] for f in char["files"]}
+    assert (roles[146176], roles[151197]) == ("item model", "item texture")
     assert {f["state"] for f in char["files"]} == {"not_in_build"}
     assert str(root) not in out.read_text(encoding="utf-8")
 
@@ -144,6 +146,20 @@ def test_refuses_an_output_under_a_symlinked_folder_into_an_install_constructed(
     assert "inside a game install" in capsys.readouterr().err
     assert tree_state(root) == before
     assert not (root / "Data" / "out.json").exists()
+
+
+def test_reads_every_subset_of_a_table_constructed(tmp_path: Path) -> None:
+    """Two subsets of one table are read one after the other; a third whose
+    header differs is refused."""
+    folder = _tables(tmp_path)
+    tables = facts_script.read_tables(folder, VERSION)
+    assert 151197 in [f for rows in tables.textures.values() for f, _ in rows]
+    assert 959287 in [f for rows in tables.textures.values() for f, _ in rows]
+    (folder / f"TextureFileData.{VERSION}.other.subset.csv").write_text(
+        "FileDataID,MaterialResourcesID\n1,2\n", encoding="utf-8"
+    )
+    with pytest.raises(facts_script.FactsError, match="header"):
+        facts_script.read_tables(folder, VERSION)
 
 
 def test_refuses_a_missing_table_constructed(
