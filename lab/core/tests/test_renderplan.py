@@ -210,12 +210,14 @@ def test_the_body_of_the_fixture_character(sangraal: tuple[RenderPlan, _Replay])
         "layout_height": 1024,
     }
     # The record is of 70450, the tables of 70959: the build gap, for the
-    # look and for the gear, is all the notes say.
+    # look and for the gear, and what the record does not hold about the
+    # gear, are all the notes say.
     assert plan.notes == (
         "the record was written by 1.60.1.70450 and is read against the tables of "
         "1.60.1.70959; choice ids can change between builds",
         "the gear was recorded by 1.60.1.70450 and is read against the tables of "
-        "1.60.1.70959; an item's appearance can change between builds",
+        "1.60.1.70959; an item's appearance or a bonus id's meaning can change between builds",
+        *renderplan.GEAR_NOTES,
     )
 
 
@@ -375,7 +377,8 @@ def test_a_real_character_without_a_record_gets_the_defaults(tables: RenderTable
     assert plan.notes == (
         plan.look.why,
         "the gear was recorded by 1.60.1.70450 and is read against the tables of "
-        "1.60.1.70959; an item's appearance can change between builds",
+        "1.60.1.70959; an item's appearance or a bonus id's meaning can change between builds",
+        *renderplan.GEAR_NOTES,
     )
     assert [(c.option_id, c.choice_id, c.source) for c in plan.choices] == [
         (19, 353, "default"),

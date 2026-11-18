@@ -4875,8 +4875,11 @@ what the item tables at 1.60.1.70959 show (recorded 2026-11-18, full
 downloads counted, subsets committed). `ItemBonus` (31 KB, recorded
 whole) has **no type-7 row**, and every `ItemModifiedAppearance` row has
 modifier 0 with one row per item, so on Forever's data today no bonus id
-changes an item's look and the type-7 priority rule is unexercised (still
-**[verify]**, graded on constructed rows only). No `AttachmentGeosetGroup`
+selects a different appearance and the type-7 priority rule is unexercised
+(**[verify]**; untestable on Forever while `ItemBonus` has no type-7 row:
+re-count the type-7 rows of each recorded `ItemBonus` download, and when
+one appears check the link of such an item in game against its base item;
+graded on constructed rows only). No `AttachmentGeosetGroup`
 cell is non-zero and `GeosetGroupOverride` is 0 everywhere.
 `HelmetGeosetVisData` answers 400, as written above. In
 `ComponentModelFileData` every race-0 row has `GenderIndex` 2; in
@@ -4891,12 +4894,18 @@ shoe), not group 5; where two slots select one group the first slot of
 the priority whose value is not 0 takes it; "gloves over chest over shirt
 for group 8" is read as gloves whose group-4 value is not 0 leaving group 8
 (sleeves) at its default; a shoulder's model n is side `PositionIndex` n,
-drawn at 6 then 5; a model no attachment of its slot takes (a belt's, the
-few chests with models) is a collection model at the origin;
+drawn at 6 then 5; a model with a race and body-type component row and no
+attachment of its slot (the few chests with models) is a collection model at
+the origin; a model with neither (the belt 244228 at 70959) is listed as not
+placed;
 `HelmetGeosetVis_<n>` is read by body type n; an item body-texture piece's
 component section n is placed in the layout's section type n (sections 0
 to 7 occur). The neck, finger and trinket slots are listed as showing
-nothing; the ranged slot is listed as unsupported. Each file's state is in
+nothing; the ranged slot is listed as unsupported. The lab-addon records
+no transmog and no hidden helmet or cloak, so whenever gear is drawn the
+plan says each item is drawn with its own look and that the helmet and
+cloak are drawn even if hidden in game (whether Forever has transmog or the
+hide option is **[verify]**). Each file's state is in
 `macos-70959/derived/renderplan-gear-files.json`: all 43 files of the two
 fixture characters are local.
 

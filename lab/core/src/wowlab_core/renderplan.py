@@ -92,14 +92,22 @@ The gear (M15-13), slot by slot in the client's slot order:
 - **Appearance.** Item id and bonus ids → `ItemBonus` rows of type 7 of
   each bonus list (`ParentItemBonusListID` is the bonus id): `Value_0` the
   appearance modifier, `Value_1` the priority, the lowest priority winning
-  (ties: the earlier bonus id). From TrinityCore, **[verify]** against a
-  real link. At 70959 `ItemBonus` has no type-7 row at all, so every item
+  (ties: the earlier bonus id). From TrinityCore, **[verify]**; untestable
+  on Forever while `ItemBonus` has no type-7 row (none at 70959): re-count
+  the type-7 rows of each recorded `ItemBonus` download, and when one
+  appears check the link of such an item in game against its base item.
+  At 70959 `ItemBonus` has no type-7 row at all, so every item
   draws its default: `ItemModifiedAppearance` with modifier 0, else the
   lowest (then `OrderIndex`, then id); every item there has exactly one row,
   modifier 0. A modifier no row lists is noted and the default drawn. →
   `ItemAppearance.ItemDisplayInfoID` → `ItemDisplayInfo`. A missing row
-  lists the item as not drawn (the plan is still made). Transmog is not
-  rendered: the addon records none, so the item's own look is drawn.
+  lists the item as not drawn (the plan is still made). The lab-addon does
+  not record transmog (since M11-20 it calls nothing in
+  `C_TransmogCollection`), so a drawn item shows its own look, which may
+  differ from what the game shows; whether Forever has transmog is
+  **[verify]**. Nor does it record whether the character hides its helmet
+  or cloak (whether Forever has the option is **[verify]**): both are drawn.
+  When gear is drawn the plan says both (`GEAR_NOTES`).
 - **Geosets.** Per slot, `GeosetGroup_<n>` selects in the slot's n-th group
   (`SLOT_GEOSET_GROUPS`, the wow.export table after WoW Model Viewer,
   **[verify]**) geoset `group * 100 + 1 + value` (the `+1` **[verify]**
@@ -118,8 +126,10 @@ The gear (M15-13), slot by slot in the client's slot order:
 - **Helmet.** The head item's `HelmetGeosetVis_<body type>` (0 and 1,
   **[verify]**) → the `HelmetGeosetData` rows of that visibility id for the
   race (through `HelmVisFallbackChrModelID`'s race, then race 0, when it
-  has none): each `HideGeosetGroup` hides its whole group but geoset 0 (0
-  the hair, 7 the ears). `RaceBitSelection` is kept, not applied; the
+  has none; the race-0 step is unexercised, **[verify]**): each
+  `HideGeosetGroup` hides its whole group but geoset 0 (0 the hair, 7 the
+  ears, community naming; whether the client hides the whole group or swaps
+  in a scalp geoset is **[verify]**). `RaceBitSelection` is kept, not applied; the
   column wago.tools names `Field_10_0_0_46047_003` (-1 or 32 at 70959) is
   not read. `HelmetGeosetVisData` is not published and not needed.
 - **Models.** `ModelResourcesID_<n>` → `ModelFileData` files, filtered by
@@ -128,12 +138,17 @@ The gear (M15-13), slot by slot in the client's slot order:
   then any race (`RaceID` 0) with the body type, then any race and either
   body type (`GenderIndex` 2 or 3: at 70959 the model rows of race 0 are
   all 2 and the texture rows mostly 3, **[verify]**); a class must be 0 or
-  the character's; a shoulder's model n is side `PositionIndex` n. A file
-  with no component row (weapons, shields at 70959) is drawn as is. The
-  model is drawn at `SLOT_ATTACHMENTS` (head 11, shoulders 6 and 5, back 12,
-  main hand 1, off hand 2, a shield, `InventoryType` 14, at 0) in the bind
-  pose **[verify]**; a model no attachment takes (a belt's, a chest's) is a
-  collection model, skinned to the body and drawn at the origin
+  the character's; a shoulder's model n is side `PositionIndex` n (0 the
+  left, at attachment 6, **[verify]**). A file with no component row
+  (weapons, shields, the belt 244228's at 70959) is drawn as is. The model
+  is drawn at `SLOT_ATTACHMENTS` (head 11, shoulders 6 and 5, back 12, main
+  hand 1, off hand 2, a shield, `InventoryType` 14, at 0) in the bind pose
+  **[verify]**. A model its slot lists no attachment for is, when its file
+  was chosen through a component row (one file per race and body type: the
+  few chests with models), a collection model, skinned to the body and
+  drawn at the origin (**[verify]**); with no component row (the belt
+  244228) it is listed as not placed (kind "no attachment known"): it may
+  be attached at a point the plan does not list, or a collection model,
   **[verify]**. `ModelType` and `AttachmentGeosetGroup` are kept, not
   applied (every `AttachmentGeosetGroup` cell is 0 at 70959).
 - **Textures.** `ModelMaterialResourcesID_<n>` → the diffuse
@@ -171,6 +186,7 @@ __all__ = [
     "BODY_TABLES",
     "DEFAULT_RULE",
     "DEFAULT_SHOWN_GROUPS",
+    "GEAR_NOTES",
     "GEAR_TABLES",
     "HIDDEN_GROUPS",
     "REQUIRED_TABLES",
@@ -342,8 +358,10 @@ SLOT_ATTACHMENTS: Mapping[int, tuple[int, ...]] = {
     SLOT_OFF_HAND: (2,),
 }
 """Per slot, the body attachment `ModelResourcesID_<n>`'s model is drawn at,
-by n; a model with none is a collection model. A shield in the off hand is
-drawn at `SHIELD_ATTACHMENT` instead."""
+by n. A model with none is a collection model when its file was chosen
+through a component row, and is not placed when it has none (the module
+docstring; both **[verify]**). A shield in the off hand is drawn at
+`SHIELD_ATTACHMENT` instead."""
 SHIELD_ATTACHMENT = 0
 
 # The groups two slots select, the slots in priority order: the first whose
@@ -579,8 +597,12 @@ class ItemModel(_Frozen):
     """One model an item draws: `ModelResourcesID_<index>` → the
     `ModelFileData` file the component filter chose (`match`, and the
     model it matched when a fallback did), the rest listed. `kind`
-    "attached": drawn at `attachment_id` of the body; "collection": skinned
-    to the body, drawn at the origin. `attachment_geoset_values` are the
+    "attached": drawn at `attachment_id` of the body; "collection": a file
+    chosen through a component row that its slot lists no attachment for,
+    skinned to the body and drawn at the origin (**[verify]**); "no
+    attachment known": no component row and no attachment listed, so the
+    plan does not place it (attached at a point the plan does not list, or a
+    collection model, **[verify]**). `attachment_geoset_values` are the
     display's `AttachmentGeosetGroup` cells, kept, not applied."""
 
     slot: int
@@ -593,7 +615,7 @@ class ItemModel(_Frozen):
     match: Match
     matched_chr_model_id: int | None = None
     position_index: int | None = None
-    kind: Literal["attached", "collection"]
+    kind: Literal["attached", "collection", "no attachment known"]
     attachment_id: int | None
     model_type: int
     attachment_geoset_values: tuple[int, ...] = ()
@@ -706,6 +728,14 @@ class LookAsOf(_Frozen):
 
 
 _NO_GEAR_GIVEN = "no gear was given"
+
+GEAR_NOTES: tuple[str, ...] = (
+    "each item is drawn with its own look; transmog is not recorded, so a transmogged item "
+    "looks different in game",
+    "the helmet and cloak are drawn even if the character hides them in game (not recorded)",
+)
+"""The notes a plan carries whenever it draws gear: what the record does not
+hold (the module docstring)."""
 
 
 class RenderPlan(_Frozen):
@@ -1407,7 +1437,12 @@ def _pick_file(
     either. Ranks, best first: the race and body type; a fallback model's
     (along `fallback_column`); the race with either body type; any race
     with the body type; any race and either body type. When no file has a
-    component row, the first is drawn."""
+    component row, the first is drawn. The rank order is the plan's own,
+    **[verify]** against wow.export; one open point: a fallback model's
+    exact match ranks above the character's own race with either body type
+    (no effect at 70959, where no playable model has a fallback id). A
+    "followed … to N" note is written only when the walk supplies the file;
+    a fallback id naming no `ChrModel` row is noted either way."""
     if not files:
         return "the resource names no file"
     rowed = [f for f in files if f in component]
@@ -1430,7 +1465,9 @@ def _pick_file(
             return exact([body.race_id], body.sex)
         return exact(tables.model_races.get(m, []), _model_sex(tables, m))
 
-    found = _follow(tables, body.chr_model_id, fallback_column, lambda m: bool(of_model(m)), notes)
+    walk: list[str] = []
+    found = _follow(tables, body.chr_model_id, fallback_column, lambda m: bool(of_model(m)), walk)
+    notes += walk if found is not None else [n for n in walk if ": followed " not in n]
     if found is not None:
         got = of_model(found)
         if found == body.chr_model_id:
@@ -1509,7 +1546,9 @@ def _item_geosets(
         geoset = group * 100 + 1 + value
         if slot == SLOT_FEET and group == _FEET_GROUP and value == _FEET_BARE_VALUE:
             geoset = group * 100 + _FEET_COVERED
-            rule = f"the feet's value 0 selects {geoset}, the foot covered"
+            rule = (
+                f"the feet's value 0 selects {geoset} (read as the foot covered, a community rule)"
+            )
         out.append(
             ItemGeosetSelection(
                 slot=slot,
@@ -1584,9 +1623,11 @@ def _helmet(
         races = [body.race_id] if m == body.chr_model_id else tables.model_races.get(m, [])
         return [r for r in rows if r[1] in races]
 
+    walk: list[str] = []
     found = _follow(
-        tables, body.chr_model_id, "HelmVisFallbackChrModelID", lambda m: bool(of_model(m)), notes
+        tables, body.chr_model_id, "HelmVisFallbackChrModelID", lambda m: bool(of_model(m)), walk
     )
+    notes += walk if found is not None else [n for n in walk if ": followed " not in n]
     if found is not None:
         chosen, source = of_model(found), found
     else:
@@ -1672,6 +1713,14 @@ def _item_files(
             and item.inventory_type == _INVTYPE_SHIELD
         ):
             attachment = SHIELD_ATTACHMENT
+        kind: Literal["attached", "collection", "no attachment known"] = "attached"
+        if attachment is None:
+            kind = "collection" if match != "no component row" else "no attachment known"
+        if kind == "no attachment known":
+            notes.append(
+                f"item {item.item_id}: model {fdid} has no component row and the "
+                f"{_slot_word(slot)} slot lists no attachment; not placed"
+            )
         worn.models.append(
             ItemModel(
                 slot=slot,
@@ -1684,7 +1733,7 @@ def _item_files(
                 match=match,
                 matched_chr_model_id=matched,
                 position_index=position,
-                kind="attached" if attachment is not None else "collection",
+                kind=kind,
                 attachment_id=attachment,
                 model_type=d.model_types[index],
                 attachment_geoset_values=d.attachment_groups,
@@ -1965,9 +2014,12 @@ def build_plan(
         if gear_build is not None and gear_build != tables.build:
             notes.append(
                 f"the gear was recorded by {gear_build} and is read against the tables of "
-                f"{tables.build}; an item's appearance can change between builds"
+                f"{tables.build}; an item's appearance or a bonus id's meaning can change between "
+                "builds"
             )
         worn = _gear(tables, body, identity.class_id, gear, notes)
+        if worn.items:
+            notes += GEAR_NOTES
         gear_as_of = GearAsOf(source="record", client_build=gear_build, saved_at=saved_at)
     return RenderPlan(
         build=tables.build,

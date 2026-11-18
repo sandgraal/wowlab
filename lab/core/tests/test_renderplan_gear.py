@@ -53,6 +53,7 @@ BELT_244228, BOOTS_51, CLOAK_2310, DAGGER_727, SHIELD_143, TABARD_746 = (
     746,
 )
 ROBE_56, PANTS_153, GLOVES_203, NO_LOOK_CLOAK_1354, SWORD_753 = 56, 153, 203, 1354, 753
+NO_LOOK_CHEST_77 = 77
 APPRENTICE_SHIRT_APPEARANCE = 65081  # item 6096's, display 2163
 
 
@@ -170,7 +171,16 @@ def test_the_fixture_characters_geosets(sangraal: tuple[RenderPlan, _Replay]) ->
         (7, 9747, 1, 9, 0, 901, None, None),
         (7, 9747, 2, 13, 0, 1301, None, "the chest item takes geoset group 13"),
         (8, 14114, 0, 5, 0, 501, None, None),
-        (8, 14114, 1, 20, 0, 2002, "the feet's value 0 selects 2002, the foot covered", None),
+        (
+            8,
+            14114,
+            1,
+            20,
+            0,
+            2002,
+            "the feet's value 0 selects 2002 (read as the foot covered, a community rule)",
+            None,
+        ),
         (10, 6541, 0, 4, 1, 402, None, None),
         (10, 6541, 1, 23, 0, 2301, None, None),
         (15, 2310, 0, 15, 5, 1506, None, None),
@@ -419,17 +429,18 @@ def test_constructed_the_cloak_boots_and_tabard_geosets(armoured: RenderPlan) ->
     assert (sel[(15, 15)], sel[(8, 5)], sel[(8, 20)], sel[(19, 12)]) == (1506, 502, 2002, 1202)
 
 
-def test_constructed_weapons_shield_and_a_collection_model(armoured: RenderPlan) -> None:
+def test_constructed_weapons_shield_and_an_unplaced_belt_model(armoured: RenderPlan) -> None:
     """The dagger at the main hand (1), the shield (InventoryType 14) at the
-    shield attachment (0), and the belt's model, which no attachment of the
-    waist takes: a collection model at the origin."""
+    shield attachment (0), and the belt's model, which has no component row
+    and which no attachment of the waist takes: not placed, noted (it may be
+    attached at a point the plan does not list)."""
     rows = {
         m.slot: (m.file_data_id, m.kind, m.attachment_id, m.model_type)
         for m in armoured.item_models
         if m.slot in (6, 16, 17)
     }
     assert rows == {
-        6: (8267903, "collection", None, 0),
+        6: (8267903, "no attachment known", None, 0),
         16: (148132, "attached", 1, 0),
         17: (142813, "attached", 0, 0),
     }
@@ -437,6 +448,25 @@ def test_constructed_weapons_shield_and_a_collection_model(armoured: RenderPlan)
     assert textures[(17, 0)] == (142814, "item model")
     assert textures[(15, 0)] == (137297, "cape")
     assert textures[(1, 0)] == (137596, "item model")
+    assert (
+        "item 244228: model 8267903 has no component row and the waist slot lists no "
+        "attachment; not placed"
+    ) in armoured.notes
+
+
+def test_constructed_a_fitted_model_with_no_attachment_is_a_collection_model() -> None:
+    """Constructed row: the belt's file 8267903 given a ComponentModelFileData
+    row for race 5, body type 0. Chosen through it, with no attachment of the
+    waist: a collection model, and no note."""
+    raw = {name: _rows(name) for name in renderplan.REQUIRED_TABLES}
+    raw["ComponentModelFileData"] = [
+        *raw["ComponentModelFileData"],
+        {"ID": "8267903", "GenderIndex": "0", "ClassID": "0", "RaceID": "5", "PositionIndex": "-1"},
+    ]
+    plan = _wear(RenderTables(BUILD, raw), [_e(6, BELT_244228)])
+    (belt,) = plan.item_models
+    assert (belt.kind, belt.attachment_id, belt.match) == ("collection", None, "race and body type")
+    assert not any("not placed" in n for n in plan.notes)
 
 
 def test_constructed_a_one_hand_weapon_in_the_off_hand_is_at_the_left_hand(
@@ -471,11 +501,12 @@ def test_constructed_a_robe_takes_the_trousers_and_gloves_the_sleeves(
 
 
 def test_constructed_an_item_with_no_appearance_row_is_listed(tables: RenderTables) -> None:
-    """Item 1354 has an Item row and no ItemModifiedAppearance row at 70959:
-    listed, and the rest of the plan is made."""
-    plan = _wear(tables, [_e(15, NO_LOOK_CLOAK_1354), _e(16, DAGGER_727)])
+    """Items 77 and 1354 have an Item row and no ItemModifiedAppearance row at
+    70959: listed, and the rest of the plan is made."""
+    plan = _wear(tables, [_e(5, NO_LOOK_CHEST_77), _e(15, NO_LOOK_CLOAK_1354), _e(16, DAGGER_727)])
     assert [(n.slot, n.item_id, n.kind, n.reason) for n in plan.items_not_drawn] == [
-        (15, 1354, "no appearance", "ItemModifiedAppearance has no row for item 1354")
+        (5, 77, "no appearance", "ItemModifiedAppearance has no row for item 77"),
+        (15, 1354, "no appearance", "ItemModifiedAppearance has no row for item 1354"),
     ]
     assert [i.item_id for i in plan.items] == [DAGGER_727]
 
@@ -678,3 +709,31 @@ def test_constructed_gear_files_in_each_of_the_four_states(
     assert got == {fdid: (s, STATE_WORDS[s]) for fdid, s in given.items()}
     item_states = {got[f.file_data_id][0] for f in plan.files if f.role.startswith("item")}
     assert item_states == set(states)
+
+
+def test_the_gear_notes_are_carried_whenever_gear_is_drawn(
+    tables: RenderTables, armoured: RenderPlan
+) -> None:
+    """Transmog and hidden helmets and cloaks are not recorded: said once,
+    whenever an item is drawn, and not when none is."""
+    assert armoured.notes[-2:] == renderplan.GEAR_NOTES
+    assert renderplan.GEAR_NOTES == (
+        "each item is drawn with its own look; transmog is not recorded, so a transmogged item "
+        "looks different in game",
+        "the helmet and cloak are drawn even if the character hides them in game (not recorded)",
+    )
+    none = _wear(tables, [_e(11, 5351)])
+    assert not any(n in none.notes for n in renderplan.GEAR_NOTES)
+
+
+def test_constructed_a_walk_that_supplies_nothing_writes_no_followed_note() -> None:
+    """Constructed: ChrModel 9 given `ModelFallbackChrModelID` and
+    `TextureFallbackChrModelID` 3. The shoulders' files (race 0) and the
+    chest's pieces (race 0) come from the any-race ranks, not from model 3:
+    no "followed" note. The helmet's file is the Undead one: none either."""
+    raw = _with_model_9(ModelFallbackChrModelID="3", TextureFallbackChrModelID="3")
+    plan = _wear(
+        RenderTables(BUILD, raw), [_e(1, HELM_1280), _e(3, SHOULDERS_905), _e(5, CHEST_2435)]
+    )
+    assert {m.match for m in plan.item_models if m.slot == 3} == {"any race and body type"}
+    assert not any(": followed " in n for n in plan.notes)
