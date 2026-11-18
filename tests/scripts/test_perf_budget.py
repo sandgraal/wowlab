@@ -15,6 +15,18 @@ rotting unseen:
   runner), with the home and user data directories redirected into the
   sandbox, and leaves the captured fixture tree it copied unchanged.
 
+The pipeline's children ask the real process list whether the game client
+runs, and the gate refuses when it does (M15-18). The test, not the script,
+answers for them: a temporary `sitecustomize.py` on `PYTHONPATH` (which the
+script's `-P` does not block, and `build_sandbox` copies) empties
+`psutil.process_iter` in every child, so the run passes whether or not a
+client is open on the test machine. Nothing under `scripts/` or `lab/*/src/`
+learns of it, so no setting a player could make changes what the probe or the
+gate answers (L2), and the nightly run keeps the real probe. To prove the
+stub is what carries the test, each pipeline test starts a constructed
+process named like the client first, and a second test shows the same child
+commands refused by the gate without the stub.
+
 Every ratio in the verdict tests is constructed. The smoke run copies the
 captured `macos/` fixture into a temporary folder and grows it with
 constructed files; it reads no real install and calls no network service.
@@ -26,12 +38,18 @@ import hashlib
 import importlib.util
 import os
 import re
+import shutil
+import subprocess
 import sys
+import time
 import types
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 import yaml
+
+from wowlab_core import process
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = ROOT / "docs" / "LAB_PLAN.md"
@@ -197,10 +215,89 @@ def _tree_hash(base: Path) -> str:
     return digest.hexdigest()
 
 
+# Test code only (M15-18): imported by every child Python whose PYTHONPATH
+# starts with its folder. It empties the process list psutil hands the gate's
+# probe; nothing in `scripts/` or `lab/*/src/` knows it exists.
+PROBE_STUB = """\
+# Constructed by tests/scripts/test_perf_budget.py (M15-18); test code only.
+import psutil
+
+psutil.process_iter = lambda *args, **kwargs: iter(())
+"""
+
+# A name the probe matches whatever the install root (`process.KNOWN_CLIENT_NAMES`).
+STAND_IN_NAME = "World of Warcraft"
+STAND_IN_WAIT_S = 10.0
+
+
+def _with_probe_stub(base: Path, env: dict[str, str]) -> dict[str, str]:
+    """`env` with a folder holding `PROBE_STUB` as `sitecustomize.py` first
+    on `PYTHONPATH`."""
+    folder = base / "probe-stub"
+    folder.mkdir()
+    (folder / "sitecustomize.py").write_text(PROBE_STUB, encoding="utf-8")
+    rest = env.get("PYTHONPATH")
+    return {**env, "PYTHONPATH": os.pathsep.join([str(folder), *([rest] if rest else [])])}
+
+
+@pytest.fixture
+def client_stand_in(tmp_path_factory: pytest.TempPathFactory) -> Iterator[int]:
+    """A constructed process named like the game client, running for the
+    test; yields its pid once the real, unstubbed probe reports it.
+
+    It is a copy of the interpreter running the tests, saved as
+    `<tmp>/bin/World of Warcraft` with `<tmp>/lib` linked to the
+    interpreter's own `lib` (where a relocatable build finds its library
+    and standard library), waiting on its standard input. A copy rather than
+    a link, because the operating system names a process after the file it
+    executes; the interpreter rather than a system tool, because macOS kills
+    a copy of one of its own executables run from elsewhere."""
+    assert STAND_IN_NAME in process.KNOWN_CLIENT_NAMES
+    base = tmp_path_factory.mktemp("client-stand-in")
+    real = Path(os.path.realpath(sys.executable))
+    (base / "bin").mkdir()
+    exe = base / "bin" / STAND_IN_NAME
+    shutil.copyfile(real, exe)
+    exe.chmod(0o755)
+    (base / "lib").symlink_to(real.parent.parent / "lib", target_is_directory=True)
+    proc = subprocess.Popen(
+        [str(exe), "-I", "-S", "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + STAND_IN_WAIT_S
+        while not any(c.pid == proc.pid for c in process.running_clients()):
+            if proc.poll() is not None:
+                err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
+                pytest.fail(f"the client stand-in exited {proc.returncode}: {err[-400:]}")
+            if time.monotonic() > deadline:
+                pytest.fail("the probe never reported the client stand-in")
+            time.sleep(0.05)
+        assert process.client_state() is process.ClientState.RUNNING
+        yield proc.pid
+    finally:
+        proc.kill()
+        proc.wait(timeout=STAND_IN_WAIT_S)
+        if proc.stderr is not None:
+            proc.stderr.close()
+        if proc.stdin is not None:
+            proc.stdin.close()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="the budget script is POSIX only")
 def test_constructed_the_pipeline_runs_on_a_small_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    client_stand_in: int,
 ) -> None:
+    # The precondition (the fixture): a process named like the client runs,
+    # so only the stub lets the gate in the children say "not running".
+    stub_env = _with_probe_stub(tmp_path_factory.mktemp("stub"), dict(os.environ))
+    monkeypatch.setenv("PYTHONPATH", stub_env["PYTHONPATH"])
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setattr(perf_budget.tempfile, "tempdir", None)
     before = _tree_hash(perf_budget.FIXTURE)
@@ -215,6 +312,31 @@ def test_constructed_the_pipeline_runs_on_a_small_tree(
     assert _tree_hash(perf_budget.FIXTURE) == before
     # The sandbox, user data included, was removed with its temporary folder.
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the budget script is POSIX only")
+def test_constructed_without_the_stub_the_gate_refuses_the_same_children(
+    tmp_path: Path, client_stand_in: int
+) -> None:
+    """The pipeline's two gated children, run as the script runs them, are
+    refused while a process named like the client runs; with the stub and
+    nothing else changed, both are let through. So the stub, and only the
+    test's stub, is what lets the pipeline test pass, and the script's own
+    run keeps the real check."""
+    root, env = perf_budget.build_sandbox(tmp_path / "sb", 8)
+    fill = {"root": str(root), "snapshot": perf_budget.take_snapshot(root, env, tmp_path)}
+    stubbed = _with_probe_stub(tmp_path, env)
+    restore = perf_budget._argv("whole-restore", fill)
+    gate = [sys.executable, "-P", "-c", perf_budget.GATE_DRIVER, fill["root"], fill["snapshot"]]
+
+    for argv in (restore, gate):
+        code, _, _, err = perf_budget.run_once(argv, env, tmp_path)
+        assert code != 0, f"the gate let {argv[3:5]} through with a client running"
+        assert "the game client is running" in err, err[-800:]
+
+    code, _, _, err = perf_budget.run_once(restore, stubbed, tmp_path)
+    assert code == 0, err[-800:]
+    assert perf_budget.measure_gate(fill, stubbed, tmp_path, 1) >= 0
 
 
 def test_constructed_the_sandbox_redirects_home_and_user_data(tmp_path: Path) -> None:
