@@ -11,20 +11,30 @@ eight hex digits of its content key, so a patched file lands beside the old
 one. Nothing in that folder is ever overwritten (L5): a file already there
 with the same bytes (its size and MD5 are the content key's) is "already
 extracted" and written again by nobody; one there with other bytes is
-refused, never replaced (`write_new`). One subfolder, `characters/`, belongs
-to `char model`, which re-makes its files on request (§17.6); `--out` never
-names a path in it.
+refused, never replaced (`write_new`).
 
-`--out` (`check_out`) may name another path inside the same build folder,
-relative to it or absolute; a path outside it (`..`, another build's
-folder, the rest of the user data directory, anywhere else) is refused, as
-is a path in an install (`lookstore.refuse_install`: it or a folder above it
-holds `.build.info` or `.flavor.info`), a path through a link (a symlink or
-a junction) anywhere below the user data directory's `casc/` folder, and a
-folder or anything that is not a regular file. The checks run before the
-file is decoded, again after its folder is made, and the file is created
-new beside its name and linked into place, so it appears whole or not at
-all and never replaces what another writer put there meanwhile.
+Two first-level names in the build folder are reserved, whatever follows
+them and in any letter case, with trailing dots and spaces ignored as
+Windows ignores them: `files/`, the default place, which only `default_path`
+names, and `characters/`, which belongs to `char model` and is re-made on
+request (§17.6). `--out` (`check_out`) may name any other path inside the
+build folder, relative to it or absolute; refused: a path outside it (`..`,
+another build's folder, the rest of the user data directory, anywhere
+else), a reserved name, a part that ends in a dot or a space or holds a
+`:` (Windows would read it as another name, or as a stream), a path in an
+install (`lookstore.refuse_install`: it or a folder above it holds
+`.build.info` or `.flavor.info`), a path through a link (a symlink or a
+junction) or through a file anywhere below the user data directory's
+`casc/` folder, and a folder or anything that is not a regular file.
+
+The checks run before the file is decoded and again after its folder is
+made. The bytes go to a new temp file beside the target, published under
+the target's name by a hard link, which never replaces; on a file system
+without hard links, by a rename, which on Windows refuses an existing name
+and elsewhere follows a last check that the name is free. The final name is
+never written to directly, so a run killed midway leaves at most a temp
+file (`.<name>.<32 hex digits>.tmp`), and each write first removes such
+files older than a day from the folder it writes into.
 """
 
 from __future__ import annotations
@@ -33,6 +43,7 @@ import hashlib
 import os
 import re
 import stat
+import time
 import uuid
 from collections.abc import Buffer
 from pathlib import Path
@@ -62,8 +73,14 @@ CHARACTERS_DIR = "characters"
 _WHAT = "extracted game files"
 # A product code (`wow`, `wow_classic_beta`) or a version string
 # (`1.60.1.70450`): letters, digits, `_` and `.`, starting with a letter or a
-# digit. No `-` (it joins the two), no separator, never `.` or `..`.
-_SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.]{0,63}")
+# digit and ending with a letter, a digit or `_` (Windows drops a trailing
+# dot). No `-` (it joins the two), no separator, never `.` or `..`.
+_SAFE_PART = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_.]{0,62}[A-Za-z0-9_])?")
+_DEFAULT_NAME = re.compile(r"[0-9]+-[0-9a-f]{8}\.bin")
+# A temp file `write_new` makes beside its target, and how old one must be
+# before a later write removes it (a run killed midway leaves it behind).
+_TEMP_NAME = re.compile(r"\..+\.[0-9a-f]{32}\.tmp")
+_TEMP_AGE_S = 24 * 60 * 60
 _CONTENT_KEY = re.compile(r"[0-9a-f]{32}")
 _FDID_LIMIT = 1 << 31
 _HASH_CHUNK = 1 << 20
@@ -77,7 +94,7 @@ def _safe_part(text: str, what: str) -> str:
     if not _SAFE_PART.fullmatch(text) or ".." in text:
         raise CascOutError(
             f"the {what} {text!r} is not a safe folder name (letters, digits, '_' and '.' "
-            "only), so wowlab will not make a folder for it"
+            "only, not ending in '.'), so wowlab will not make a folder for it"
         )
     return text
 
@@ -114,34 +131,48 @@ def _within(path: Path, folder: Path) -> bool:
     return path == folder or folder in path.parents
 
 
-def _is_link(path: Path) -> bool:
-    """`path` itself is a symlink, or on Windows a junction (not followed)."""
+def _link_reason(path: Path) -> str | None:
+    """Why `path` cannot be passed through or written: it is a symlink, or
+    on Windows a junction (never followed), a part above it is a file, or
+    it cannot be looked at (the worst case). None when it is none of these,
+    or does not exist."""
     try:
         st = path.lstat()
     except FileNotFoundError:
-        return False
-    except (OSError, ValueError):
-        return True  # cannot be looked at: treated as the worst case
+        return None
+    except NotADirectoryError:
+        return "has a part that is a file, not a folder"
+    except (OSError, ValueError) as exc:
+        return f"cannot be looked at ({exc})"
     if stat.S_ISLNK(st.st_mode):
-        return True
+        return f"is reached through a link ({path}); a link is never followed"
     try:
-        return path.is_junction()
-    except OSError:
-        return True
+        junction = path.is_junction()
+    except OSError as exc:
+        return f"cannot be looked at ({exc})"
+    return f"is reached through a link ({path}); a link is never followed" if junction else None
 
 
 def _refuse(target: Path, why: str) -> CascOutError:
     return CascOutError(f"refused: {target} {why}; nothing was written")
 
 
-def check_out(out: Path | str, folder: Path) -> Path:
+def _reserved(part: str) -> str:
+    """A path part as Windows compares it: trailing dots and spaces dropped,
+    letter case folded."""
+    return part.rstrip(" .").casefold()
+
+
+def check_out(out: Path | str, folder: Path, *, default: bool = False) -> Path:
     """The absolute path `out` names inside the build folder `folder`, or
     `CascOutError` for why a file will not go there; reads only. A relative
     `out` is taken inside `folder`. Refused: a path outside `folder` as
-    written or with every link resolved; `folder` itself; a path in its
-    `characters/` subfolder; a path in an install; a path through a link
-    anywhere from the user data directory's `casc/` folder down, or that is
-    itself one; a folder; anything else that is not a regular file."""
+    written or with every link resolved; `folder` itself; a part that ends
+    in a dot or a space or holds a `:`; a path under `characters/`, and one
+    under `files/` unless `default` (then only `files/<fdid>-<ckey8>.bin`);
+    a path in an install; a path through a link or a file anywhere from the
+    user data directory's `casc/` folder down, or that is itself a link; a
+    folder; anything else that is not a regular file."""
     given = Path(out)
     target = Path(os.path.normpath(folder / given if not given.is_absolute() else given))
     folder = Path(os.path.normpath(folder.absolute()))
@@ -150,19 +181,36 @@ def check_out(out: Path | str, folder: Path) -> Path:
         raise _refuse(
             target, f"is not a file inside {folder}, the one folder this build's files go to"
         )
-    # By name in any letter case: a file system may not tell `Characters/` apart.
-    if target.relative_to(folder).parts[0].casefold() == CHARACTERS_DIR:
+    parts = target.relative_to(folder).parts
+    for part in parts:
+        if part != part.rstrip(" .") or ":" in part:
+            raise _refuse(
+                target,
+                f"has a part ({part!r}) that ends in a dot or a space or holds a ':', "
+                "which Windows reads as another name",
+            )
+    first = _reserved(parts[0])
+    if first == CHARACTERS_DIR:
         raise _refuse(target, f"is in {folder / CHARACTERS_DIR}, which is not for extracted files")
+    if first == FILES_DIR and not (
+        default and len(parts) == 2 and _DEFAULT_NAME.fullmatch(parts[1])
+    ):
+        raise _refuse(
+            target,
+            f"is in {folder / FILES_DIR}, where casc cat puts each file under its own name; "
+            "--out names a path outside it",
+        )
     try:
         refuse_install(target, _WHAT)
     except LookLocationError as exc:
         raise CascOutError(f"refused: {exc}; nothing was written") from exc
     top = casc_dir().absolute()
-    for part in (target, *target.parents):
-        if not _within(part, top):
+    for step in (target, *target.parents):
+        if not _within(step, top):
             break
-        if _is_link(part):
-            raise _refuse(target, f"is reached through a link ({part}); a link is never followed")
+        why = _link_reason(step)
+        if why is not None:
+            raise _refuse(target, why)
     try:
         final, home = target.resolve(), folder.resolve()
     except (OSError, RuntimeError) as exc:
@@ -198,7 +246,7 @@ def already_there(target: Path, size: int, content_key: str) -> bool:
     else `CascOutError` (another file there is never replaced)."""
     if not os.path.lexists(target):
         return False
-    if _is_link(target) or not target.is_file():
+    if _link_reason(target) is not None or not target.is_file():
         raise _refuse(target, "exists and is not a regular file")
     if same_file(target, size, content_key):
         return True
@@ -209,25 +257,29 @@ def already_there(target: Path, size: int, content_key: str) -> bool:
     )
 
 
-def write_new(data: Buffer, target: Path, folder: Path, content_key: str) -> bool:
+def write_new(
+    data: Buffer, target: Path, folder: Path, content_key: str, *, default: bool = False
+) -> bool:
     """Write `data`, whose MD5 is `content_key`, to `target` inside the
-    build folder `folder` (as `check_out` returned it, or `default_path`).
-    Returns True when written, False when the same bytes were already there
-    (nothing is written). Another file there is refused, never replaced.
-    The folder is made 0700 under the user data directory, `target` is
-    checked again once it exists, and the bytes are written to a new file
-    beside it and linked into place, so the file appears whole and a file
-    that appeared meanwhile is never replaced."""
+    build folder `folder` (as `check_out` returned it; `default` for
+    `default_path`'s). Returns True when written, False when the same bytes
+    were already there (nothing is written). Another file there is refused,
+    never replaced. The folder is made 0700 under the user data directory,
+    `target` is checked again once it exists, temp files older than a day
+    are removed from it, and the bytes are written once, to a new temp file
+    beside the target, then published under its name without replacing
+    anything: by a hard link, or where there are none by a rename."""
     view = memoryview(data).cast("B")
     size = view.nbytes
     if hashlib.md5(view, usedforsecurity=False).hexdigest() != content_key:
         raise CascOutError(f"the bytes for {target.name} do not match their content key")
-    target = check_out(target, folder)
+    target = check_out(target, folder, default=default)
     if already_there(target, size, content_key):
         return False
     parent = target.parent
     make_private_dirs(parent)  # 0700 under the user data directory (M16-78)
-    target = check_out(target, folder)  # again, now that the folders exist
+    target = check_out(target, folder, default=default)  # again, now the folders exist
+    _sweep(parent)
     tmp = parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
     try:
         with tmp.open("xb") as handle:
@@ -238,35 +290,45 @@ def write_new(data: Buffer, target: Path, folder: Path, content_key: str) -> boo
             # Another run put it there meanwhile: the same bytes, or refused.
             return _raced(target, size, content_key)
         except OSError:
-            # A file system with no hard links (FAT, exFAT): create the name
-            # itself, new, and remove it again if the write does not finish.
-            return _write_exclusive(view, target, size, content_key)
+            # No hard links here (FAT, exFAT). Windows' rename refuses an
+            # existing name; elsewhere it would replace one, so the name is
+            # checked free first (the window between is the last-check one).
+            if os.path.lexists(target):
+                return _raced(target, size, content_key)
+            try:
+                tmp.rename(target)
+            except FileExistsError:
+                return _raced(target, size, content_key)
     finally:
         tmp.unlink(missing_ok=True)
     return True
 
 
 def _raced(target: Path, size: int, content_key: str) -> bool:
-    """After a create found `target` taken: False (nothing written) when it
+    """After a publish found `target` taken: False (nothing written) when it
     holds the same bytes; else refused, never replaced."""
     if already_there(target, size, content_key):
         return False
     raise _refuse(target, "appeared and was removed again while it was written")
 
 
-def _write_exclusive(view: memoryview, target: Path, size: int, content_key: str) -> bool:
-    """`write_new`'s way where a hard link cannot be made: True when
-    written, False when the same bytes appeared there first."""
+def _sweep(folder: Path, now: float | None = None) -> None:
+    """Remove from `folder` (not below it) the temp files `write_new` makes
+    (`.<name>.<32 hex digits>.tmp`) that are regular files, not links, and
+    were last changed more than a day ago: what a run killed midway leaves.
+    A file that cannot be looked at or removed is left."""
+    cutoff = (time.time() if now is None else now) - _TEMP_AGE_S
     try:
-        handle = target.open("xb")
-    except FileExistsError:
-        return _raced(target, size, content_key)
-    done = False
-    try:
-        with handle:
-            handle.write(view)
-        done = True
-    finally:
-        if not done:
-            target.unlink(missing_ok=True)
-    return True
+        names = [e.name for e in os.scandir(folder)]
+    except OSError:
+        return
+    for name in names:
+        if not _TEMP_NAME.fullmatch(name):
+            continue
+        path = folder / name
+        try:
+            st = path.lstat()
+            if stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue

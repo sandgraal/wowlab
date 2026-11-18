@@ -164,7 +164,14 @@ def test_live_every_recorded_file_has_its_state_and_its_bytes(
     for row in FACTS["rows"]:
         in_table = False if row["state"] == "unknown_id" else None
         stat = source.stat(row["fdid"], in_table=in_table)
-        assert (stat.state, stat.words) == (row["state"], row["words"]), row["why"]
+        # The fixture recorded the words of 2026-10-19; since the domain
+        # review of M15-06 (2026-11-18) an id the root lists only for
+        # another locale or platform has its own words, and the recorded
+        # note says which rows those are.
+        words = row["words"]
+        if str(row.get("note") or "").startswith("the root lists it only for another"):
+            words = casc.WORDS_NOT_LOADED
+        assert (stat.state, stat.words) == (row["state"], words), row["why"]
         assert stat.content_key == row["content_hash"]
         assert list(stat.encoding_keys) == row["encoding_hashes"]
         assert list(stat.key_names) == row["encryption_names"]

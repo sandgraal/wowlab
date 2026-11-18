@@ -19,6 +19,7 @@ import json
 import os
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -132,7 +133,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     [
         ("local", "local", "local"),
         ("not_local", "not_local", "not in your client's local files"),
-        ("not_in_build", "not_in_build", "not part of this game version's files"),
+        # Listed only for another locale: part of this game version, but not
+        # among what this client loads (domain review of 2026-11-18).
+        ("not_in_build", "not_in_build", casc.WORDS_NOT_LOADED),
         ("absent", "not_in_build", "not part of this game version's files"),
         ("encrypted", "encrypted", "encrypted"),
     ],
@@ -152,14 +155,20 @@ def test_stat_names_each_state_constructed(env: Env, name: str, state: str, word
     text = env.run("casc", "stat", "--fdid", fdid)
     assert text.exit_code == 0, text.output
     lines = text.stdout.splitlines()
-    assert lines[0] == f"file {fdid}: {words}"
+    assert lines[0] == f"file {fdid} in {FLAVOR} ({PRODUCT} {VERSION}): {words}"
     if state == "local":
         assert lines[1:] == [
             f"  size: {len(PLAIN):,} bytes",
             f"  content key: {ckey_of(PLAIN).hex()}",
         ]
     else:
-        assert len(lines) <= 2, lines  # the answer, then at most one caveat
+        assert len(lines) == 2, lines  # the answer, then one caveat
+    if state == "not_local":
+        assert report.note is not None and report.note.startswith(casc.NOTE_NOT_LOCAL)
+        assert lines[1] == (
+            "  it is part of this game version but not on this computer; wowlab never "
+            "downloads game files, and whether the game fetches it later is not yet confirmed"
+        )
     assert not env.data().joinpath("casc").exists(), "stat writes nothing"
 
 
@@ -171,7 +180,13 @@ def test_stat_of_a_number_that_is_no_file_data_id_is_unknown_constructed(
     assert result.exit_code == 0, result.output
     report = cli.CascStatReport.model_validate_json(result.stdout)
     assert (report.state, report.words) == ("unknown_id", "unknown id")
-    assert env.run("casc", "stat", f"--fdid={fdid}").stdout.startswith(f"file {fdid}: unknown id\n")
+    assert report.note == "a file data id is a whole number from 0 to 2,147,483,647"
+    assert env.run("casc", "stat", f"--fdid={fdid}").stdout.startswith(
+        f"file {fdid} in {FLAVOR} ({PRODUCT} {VERSION}): unknown id\n"
+    )
+    cat = env.run("casc", "cat", f"--fdid={fdid}")
+    assert cat.exit_code == 1
+    assert cat.stderr.startswith(f"wowlab: cannot extract file {fdid}: it is not a file data id: ")
 
 
 def test_stat_without_archives_is_one_error_line_constructed(env: Env) -> None:
@@ -228,7 +243,8 @@ def test_cat_text_names_the_file_written_constructed(env: Env) -> None:
     result = env.run("casc", "cat", "--fdid", str(IDS["local"]))
     assert result.exit_code == 0, result.output
     assert result.stdout == (
-        f"Extracted file {IDS['local']} ({len(PLAIN):,} bytes) to {env.default()}\n"
+        f"Extracted file {IDS['local']} ({len(PLAIN):,} bytes) from {PRODUCT} {VERSION} "
+        f"to {env.default()}\n"
     )
 
 
@@ -301,6 +317,16 @@ def _outside(env: Env) -> list[str]:
         str(folder),  # the folder itself
         ".",
         "characters/x.bin",  # char model's folder
+        "characters. /x.bin",  # the same, as Windows reads trailing dots and spaces
+        "files",  # the default folder's own name (review of 2026-11-18, F1)
+        "files/11-deadbeef.bin",  # another file's default name
+        "files/sub/x.bin",
+        "FILES/x.bin",
+        "files./x.bin",
+        "x.bin.",  # a part ending in a dot (S2)
+        "x.bin ",  # or a space
+        "sub./x.bin",
+        "x.bin:stream",  # a ':' (an alternate data stream on Windows)
         "Characters/x.bin",  # the same, in another letter case
         str(folder.parent / f"{BUILD_FOLDER}x" / "y.bin"),  # a name that only starts the same
     ]
@@ -386,7 +412,7 @@ def test_write_new_without_hard_links_still_writes_once_constructed(
 ) -> None:
     redirect_user_dirs(monkeypatch, tmp_path / "home")
     folder = cascfiles.build_dir("wow_x", "1.2.3.4")
-    target = folder / "files" / "a.bin"
+    target = folder / "sub" / "a.bin"
     data = b"constructed bytes"
     key = ckey_of(data).hex()
 
@@ -394,8 +420,19 @@ def test_write_new_without_hard_links_still_writes_once_constructed(
         raise OSError(1, "hard links are not supported here")
 
     monkeypatch.setattr(os, "link", no_link)
+    renamed: list[tuple[str, str]] = []
+    real_rename = os.rename
+
+    def spy_rename(src: Any, dst: Any) -> None:
+        renamed.append((Path(src).name, Path(dst).name))
+        real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", spy_rename)
     assert cascfiles.write_new(data, target, folder, key) is True
     assert target.read_bytes() == data
+    # Written once, to the temp file, and published by a rename.
+    assert len(renamed) == 1 and renamed[0][1] == "a.bin"
+    assert renamed[0][0].startswith(".a.bin.") and renamed[0][0].endswith(".tmp")
     assert cascfiles.write_new(data, target, folder, key) is False
     assert [p.name for p in target.parent.iterdir()] == ["a.bin"]
     with pytest.raises(cascfiles.CascOutError, match="do not match"):
@@ -428,4 +465,93 @@ def test_json_reports_round_trip_constructed(env: Env) -> None:
     payload = json.loads(result.stdout)
     assert payload["state"] == "encrypted" and payload["key_names"]
     text = env.run("casc", "stat", "--fdid", str(IDS["encrypted"]))
-    assert text.stdout.splitlines()[1].startswith("  wowlab does not decrypt the game's files")
+    assert text.stdout.splitlines()[1].startswith(
+        "  wowlab does not decrypt the game's files (key name "
+    )
+
+
+def test_write_new_without_hard_links_never_replaces_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where a rename refuses an existing name (Windows), a file that
+    appeared after the last check is kept and the write refused."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir("wow_x", "1.2.3.4")
+    target = folder / "a.bin"
+    data = b"constructed bytes"
+
+    def no_link(src: object, dst: object) -> None:
+        raise OSError(1, "hard links are not supported here")
+
+    def windows_rename(src: Any, dst: Any) -> None:
+        Path(dst).write_bytes(b"another program's bytes")  # appears after the check
+        raise FileExistsError(17, "exists", str(dst))
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "rename", windows_rename)
+    with pytest.raises(cascfiles.CascOutError, match="holds other bytes"):
+        cascfiles.write_new(data, target, folder, ckey_of(data).hex())
+    assert target.read_bytes() == b"another program's bytes"
+    assert [p.name for p in folder.iterdir()] == ["a.bin"], "the temp file is removed"
+
+
+def test_write_new_sweeps_temp_files_older_than_a_day_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run killed midway (the UI's timeout kills the whole process group)
+    leaves its temp file; the next write into that folder removes it once it
+    is a day old, and leaves a fresh one, a link and any other name alone."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir("wow_x", "1.2.3.4")
+    files = folder / "files"
+    files.mkdir(parents=True)
+    old = files / f".10-abcdef01.bin.{'a' * 32}.tmp"
+    fresh = files / f".11-abcdef01.bin.{'b' * 32}.tmp"
+    other = files / ".notes.tmp"
+    for path in (old, fresh, other):
+        path.write_bytes(b"cut short")
+    day_ago = time.time() - 2 * 24 * 60 * 60
+    os.utime(old, (day_ago, day_ago))
+    os.utime(other, (day_ago, day_ago))
+    kept = [fresh, other]
+    if os.name == "posix":
+        link = files / f".12-abcdef01.bin.{'c' * 32}.tmp"
+        link.symlink_to(old)
+        os.utime(link, (day_ago, day_ago), follow_symlinks=False)
+        kept.append(link)
+    data = b"constructed bytes"
+    target = files / f"13-{ckey_of(data).hex()[:8]}.bin"
+    assert cascfiles.write_new(data, target, folder, ckey_of(data).hex(), default=True)
+    assert not os.path.lexists(old)
+    assert all(os.path.lexists(p) for p in kept)
+    assert target.read_bytes() == data
+
+
+@pytest.mark.parametrize("version", ["1.2.", "1.2.3.", "1. ", "a:b", "x" * 65])
+def test_a_version_windows_would_rename_is_refused_constructed(version: str) -> None:
+    with pytest.raises(cascfiles.CascOutError, match="not a safe folder name"):
+        cascfiles.build_dir("wow", version)
+
+
+def test_only_the_default_name_goes_into_files_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir("wow_x", "1.2.3.4")
+    good = folder / "files" / "10-abcdef01.bin"
+    assert cascfiles.check_out(good, folder, default=True) == good
+    for bad in ("files/x.bin", "files/10-abcdef01.bin/x", "files/10-ABCDEF01.bin", "files"):
+        with pytest.raises(cascfiles.CascOutError):
+            cascfiles.check_out(bad, folder, default=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the probe makes a file where a folder goes")
+def test_a_file_where_a_folder_goes_is_named_as_such_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir("wow_x", "1.2.3.4")
+    folder.mkdir(parents=True)
+    (folder / "sub").write_bytes(b"a file")
+    with pytest.raises(cascfiles.CascOutError, match="a part that is a file, not a folder"):
+        cascfiles.check_out("sub/x.bin", folder)

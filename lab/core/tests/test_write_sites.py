@@ -207,10 +207,12 @@ ALLOWED: dict[tuple[str, str], str] = {
     + "; a new temp name beside the file (x mode)",
     (_CASCFILES, "target.hardlink_to(tmp)"): _CASC_FILE + "; publishes without replacing",
     (_CASCFILES, "tmp.unlink(missing_ok=True)"): _CASC_FILE + "; its own temp file",
-    (_CASCFILES, 'handle = target.open("xb")'): _CASC_FILE
-    + "; where no hard link can be made, the name itself created new (x mode)",
-    (_CASCFILES, "target.unlink(missing_ok=True)"): _CASC_FILE
-    + "; only the file this call created new (x mode) and did not finish writing",
+    (_CASCFILES, "tmp.rename(target)"): _CASC_FILE
+    + "; where no hard link can be made, the whole temp file renamed onto a name checked "
+    "free (Windows' rename refuses an existing one)",
+    (_CASCFILES, "path.unlink()"): _CASC_FILE
+    + "; the sweep: only a regular file (not a link) named as this module names its temp "
+    "files, in the folder it writes into, last changed over a day ago",
 }
 
 REFERENCED_NAMES = frozenset({"write_text", "write_bytes", "unlink", "rmtree"})

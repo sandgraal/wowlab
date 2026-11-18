@@ -113,9 +113,10 @@ def casc_stat(
 ) -> None:
     """Say where one of the game's files stands in this game version: local
     (on this computer, readable), not in your client's local files (part of
-    this game version, but the game has not downloaded it), not part of this
-    game version's files, or encrypted. For a local file, its size and
-    content key. Reads only; writes nothing anywhere.
+    this game version, but not on this computer), not among the files this
+    client loads, not part of this game version's files, or encrypted. For a
+    local file, its size and content key. wowlab never downloads a game
+    file. Reads only; writes nothing anywhere.
 
     \f
     JSON: CascStatReport."""
@@ -144,14 +145,15 @@ def casc_stat(
     if json_out:
         _emit(report)
         return
-    _say(f"file {fdid}: {found.words}")
+    _say(f"file {fdid} in {folder} ({index.product} {index.version}): {found.words}")
     if found.state == "local":
         if found.size is not None:
             _say(f"  size: {_bytes(found.size)}")
         _say(f"  content key: {found.content_key}")
     elif found.state == "encrypted":
         names = ", ".join(found.key_names)
-        _say_note(f"  wowlab does not decrypt the game's files (key {names})")
+        label = "key name" if len(found.key_names) == 1 else "key names"
+        _say_note(f"  wowlab does not decrypt the game's files ({label} {names})")
     elif found.note:
         _say_note(f"  {found.note}")
 
@@ -166,9 +168,10 @@ def casc_cat(
             "--out",
             metavar="<path>",
             help="Where to write it instead, inside the same casc/<product>-<version>/ folder "
-            "(a relative path is taken inside it), or - for the output (never a terminal). "
-            "Anywhere else is refused. Default: files/<id>-<first 8 digits of its content "
-            "key>.bin in that folder, under wowlab's data folder.",
+            "(a relative path is taken inside it) but outside its files/ and characters/ "
+            "folders, or - for the output (never a terminal). Anywhere else is refused. "
+            "Default: files/<id>-<first 8 digits of its content key>.bin in that folder, "
+            "under wowlab's data folder.",
         ),
     ] = None,
     root: RootOpt = None,
@@ -179,7 +182,8 @@ def casc_cat(
     against its content key, and write it under wowlab's data folder, in a
     folder of its own for this game version. A file already extracted is
     not written again, and nothing there is ever overwritten. Never writes
-    into the install.
+    into the install, and never downloads: a file that is not on this
+    computer, or is encrypted, is reported and not extracted.
 
     \f
     JSON: CascCatReport."""
@@ -209,7 +213,8 @@ def casc_cat(
         raise CliError(f"cannot extract file {fdid}: {exc}") from exc
     if found.state != "local" or found.content_key is None or found.size is None:
         why = f": {found.note}" if found.note else ""
-        raise CliError(f"cannot extract file {fdid}: it is {found.words}{why}; nothing was written")
+        what = "not a file data id" if found.state == "unknown_id" else found.words
+        raise CliError(f"cannot extract file {fdid}: it is {what}{why}; nothing was written")
     build = cascfiles.build_dir(index.product, index.version)
     target: Path | None = None
     if not to_stdout:
@@ -218,6 +223,7 @@ def casc_cat(
             if out is not None
             else cascfiles.default_path(index.product, index.version, fdid, found.content_key),
             build,
+            default=out is None,
         )
         if cascfiles.already_there(target, found.size, found.content_key):
             _casc_done(folder_name, index, fdid, "already_extracted", target, found, json_out)
@@ -232,7 +238,7 @@ def casc_cat(
         return
     if out is None and ckey != found.content_key:
         target = cascfiles.default_path(index.product, index.version, fdid, ckey)
-    written = cascfiles.write_new(data, target, build, ckey)
+    written = cascfiles.write_new(data, target, build, ckey, default=out is None)
     stat = found.model_copy(update={"content_key": ckey, "size": data.nbytes})
     outcome: Literal["written", "already_extracted"] = "written" if written else "already_extracted"
     _casc_done(folder_name, index, fdid, outcome, target, stat, json_out)
@@ -272,4 +278,7 @@ def _casc_done(
         _say(f"Already extracted: {path}")
         _say(f"  file {fdid}, the same content key; nothing was written")
         return
-    _say(f"Extracted file {fdid} ({_bytes(found.size)}) to {path}")
+    _say(
+        f"Extracted file {fdid} ({_bytes(found.size)}) from {index.product} {index.version} "
+        f"to {path}"
+    )

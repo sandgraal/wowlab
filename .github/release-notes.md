@@ -11,7 +11,7 @@ wowlab {{VERSION}} runs on your own machine against your own World of Warcraft i
 
 ## New in v0.4
 
-- **The game's own files, by id.** `wowlab casc stat --fdid N` says whether one of the game's files is on your computer: local, not in your client's local files (part of this game version, not downloaded), not part of this game version's files, or encrypted. `wowlab casc cat --fdid N` extracts a local one into wowlab's own data folder, in a folder for this game version, and never overwrites a file it extracted. Neither changes anything in your game folder. In `wowlab ui` both are on the Commands tab, and there `casc cat` writes only to its default place.
+- **The game's own files, by id.** `wowlab casc stat --fdid N` says whether one of the game's files is on your computer: local, not in your client's local files (part of this game version, but not on this computer), not among the files your client loads for your language and platform, not part of this game version's files, or encrypted. `wowlab casc cat --fdid N` extracts a local one into wowlab's own data folder, in a folder for this game version, and never overwrites a file it extracted. wowlab never downloads a game file; one that is not on your computer or is encrypted is reported, not extracted. Neither changes anything in your game folder. In `wowlab ui` both are on the Commands tab, and there `casc cat` writes only to its default place.
 - **`wowlab macros fix`.** Where `wowlab macros check` finds a `#showtooltip` (or `#show`) line that is not the first line of a macro, `macros fix` moves it to the top and changes nothing else. It shows the plan and asks first, refuses while the game is running, and takes a snapshot before it writes, so `wowlab undo` puts the old macros back. It fixes your account's macros, or one character's with `--character`. In two tests on one game version, a character's macros changed with the game closed were still there after logging in. Account macros, other game versions, and servers that keep their own copy of your macros were not tested.
 
 ## New in v0.3
@@ -100,7 +100,7 @@ Scripts that read `wowlab … --json` depend on the models behind it. Each relea
 
 **Since v0.3.0**, every change adds something; nothing was removed or renamed:
 
-- New: `CascStatReport` (`casc stat --json`): where one of the game's files stands in your game version, by its file data id: `state` (`local`, `not_local`, `not_in_build`, `encrypted` or `unknown_id`) with `words`, the same state as the text output says it, and for a local file its `size` and `content_key`.
+- New: `CascStatReport` (`casc stat --json`): where one of the game's files stands in your game version, by its file data id: `state` (`local`, `not_local`, `not_in_build`, `encrypted` or `unknown_id`) with `words`, the same state as the text output says it (for `not_in_build`, one of three wordings), `note`, and for a local file its `size` and `content_key`.
 - New: `CascCatReport` (`casc cat --json`): the file extracted, its `path`, `size` and `content_key`, and `outcome`: `written`, or `already_extracted` when the same bytes were already there and nothing was written.
 - New: `MacrosFixReport` (`macros fix --json`): the macros it fixes, each with its body before and after, the findings it leaves, whether it wrote, the journal record, and `target_sha256` and `fixed_sha256`, the pin `--expect` takes.
 - `MacrosCheckReport` (`macros check --json`) and `CharMacrosReport` (`char macros --json`): every finding gains `fixable`, true when `macros fix` corrects it.
