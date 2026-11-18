@@ -20,8 +20,12 @@ own internal consistency.
 2. Only then read the diff: `git fetch origin && git diff origin/main...origin/<branch>`.
 3. Prefer executable evidence. In your worktree:
    `git checkout --detach origin/<branch> && make setup`, then `make lint`,
-   the tests the branch touches, the always-run set (`tests/repo`,
-   `lab/core/tests/test_write_sites.py`) and your own probes. Run the full
+   the tests the branch touches, your own probes, and the set that stays
+   on every review whatever the diff (about two minutes with `-n 4`): the
+   `guard` tests (`lab/core/tests/test_guard*.py`), `test_process.py`,
+   `lab/core/tests/parser/`, `tests/scripts/test_lab_capture*.py`, the
+   constructed tests of `test_l1_sweep_live.py`, `test_write_sites.py`,
+   `tests/repo` and `lab/core/tests/test_gamedata*.py`. Run the full
    `make ci` only when the diff touches `guard.py`, `luadata.py`,
    `proposal.py`, `conftest.py`, the root `pyproject.toml`, `uv.lock` or the
    `Makefile` (owner decision, 2026-11-18, M15-21: CI runs the whole suite

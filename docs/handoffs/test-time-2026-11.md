@@ -192,7 +192,7 @@ lists them. Each case copies `lab/addon/` into `tmp_path`, edits
 module pointed at the copy, and calls **every** `test_*` function in it,
 each `path` test once per Lua source, collecting the names that raise
 `AssertionError`; the probe asserts only that the list is not empty
-(`_failing_tests`, for example at line 93 of
+(`_failing_tests`, for example at line 94 of
 `review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py`). So every
 case also runs the grader's own self-tests, which are mutation loops
 themselves: `test_m11_37_a_call_added_outside_a_section_fails` (24.2 s alone
@@ -286,9 +286,10 @@ minutes in the queue (41 minutes from push to result), and Windows run
 
 ### 1.9 Cron times
 
-The owner is in America/Costa_Rica (UTC-6, no daylight time). The 307
-`ci.yml` push runs on `main` that `gh run list` returned since 2026-10-20, by
-local hour of the push:
+The owner's local time is UTC-6, with no daylight time. Of the 307
+`ci.yml` push runs on `main` that `gh run list` returned since 2026-10-20,
+the 276 that the table counts, by local hour of the push (the row sums to
+276; the other 31 were not placed in an hour):
 
 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -298,7 +299,8 @@ The quiet window is 02:00 to 07:00 local (08:00 to 13:00 UTC).
 `windows.yml` at 07:17 UTC is 01:17 local, the tail of late-evening work;
 `macos.yml` at 10:17 UTC is 04:17 local, inside the window;
 `perf-nightly.yml` at 04:17 UTC is 22:17 local, in the evening. The
-workflows' comments reason in Pacific time ("clear of 6-9 AM Pacific").
+comment in `macos.yml` reasons in Pacific time ("clear of 6-9 AM Pacific");
+`windows.yml` has no time-zone comment.
 
 ### 1.10 Local runs per ticket
 
@@ -387,8 +389,8 @@ pass (25.3 min), from the shares above.
   **Saving: one 29-minute Linux run per merge that lands while another is
   running; on a busy day, most of them.** It touches `.github/`, so
   `security-reviewer` reads it.
-- **S5. Correct the text.** The comments in `macos.yml` and `windows.yml`
-  reason in Pacific time. `AGENTS.md` (Verification) says `make test-fast`
+- **S5. Correct the text.** The comment in `macos.yml` reasons in Pacific
+  time. `AGENTS.md` (Verification) says `make test-fast`
   takes "about 10 min"; that file is the owner's to edit.
 
 Looks safe, is not: `--dist loadfile` or `loadgroup` instead of
@@ -462,10 +464,10 @@ O7 not taken. O6 only if, after O4, the UI tests are still most of the time.
 | Local, ordinary ticket | `make test-fast` + the reviewer's `make ci` | touched tests, `make test-fast` when `lab/core/src` changed; no full run by the reviewer |
 
 Cron: `windows.yml`, `macos.yml` and the new nightly Linux full tier at
-09:17 UTC (03:17 in Costa Rica; GitHub can delay a scheduled run 30 to 60
+09:17 UTC (03:17 in the owner's local time; GitHub can delay a scheduled run 30 to 60
 minutes at busy times, which still lands before 05:00 local), and
 `perf-nightly.yml` at 08:47 UTC so it gets an idle runner first. The
-comments say Costa Rica, not Pacific.
+comments give the owner's local time as UTC-6, not Pacific.
 
 ## 6. Questions for the owner
 

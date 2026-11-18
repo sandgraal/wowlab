@@ -120,8 +120,9 @@ the workflow document point here.
 Run the full `make ci` only when your diff touches `guard.py`, `luadata.py`
 or `proposal.py` (AGENTS.md: the full suite and `make test-parser`),
 `conftest.py`, the root `pyproject.toml`, `uv.lock` or the `Makefile`
-(owner decision, 2026-11-18, M15-21). Other areas run their own target and
-nothing wider: a format parser, `make test-parser`; `redact.py` or
+(owner decision, 2026-11-18, M15-21). Other areas add their own target to
+steps 1 to 3, and not the full run: a format parser, `make test-parser`
+(AGENTS.md); `redact.py` or
 `scripts/lab_capture.py`, `tests/scripts/test_lab_capture*.py`;
 `tests/harness` or `.claude/hooks`, `make hooks-test`; a workflow change,
 `tests/repo` (a local suite run proves nothing about a workflow). CI runs
