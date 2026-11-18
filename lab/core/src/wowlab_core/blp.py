@@ -318,26 +318,37 @@ def mip0_size(fmt: Format, width: int, height: int, alpha_depth: int) -> int:
 # ─── decoding ────────────────────────────────────────────────────────────────
 
 
-def decode(data: bytes | bytearray | memoryview) -> BlpImage:
-    """Mip 0 of a BLP2 file as RGBA. Refusals: `BlpMalformedError`,
-    `BlpTooLargeError`, `BlpUnsupportedError`, `BlpRuleConflict`."""
-    view = memoryview(data).cast("B")
-    header = parse_header(view)
+def check_layout(header: BlpHeader, length: int) -> tuple[Format, int]:
+    """Everything `decode` checks before it allocates, from the header and
+    the file's length alone: the format (`format_of`), the size bound
+    (`check_size`), the palette inside the file, and mip 0's computed size
+    at its offset inside the file. Returns the format and mip 0's size."""
     fmt = format_of(header)
     width, height = header.width, header.height
     check_size(width, height)
     size = mip0_size(fmt, width, height, header.alpha_depth)
     offset = header.mip_offsets[0]
-    if fmt == "palette" and len(view) < HEADER_SIZE + PALETTE_SIZE:
+    if fmt == "palette" and length < HEADER_SIZE + PALETTE_SIZE:
         raise BlpMalformedError(
-            f"{len(view)} bytes; a palette texture needs {HEADER_SIZE + PALETTE_SIZE} "
+            f"{length} bytes; a palette texture needs {HEADER_SIZE + PALETTE_SIZE} "
             "for the header and the palette"
         )
-    if offset < HEADER_SIZE or offset + size > len(view):
+    if offset < HEADER_SIZE or offset + size > length:
         raise BlpMalformedError(
             f"mip 0 at offset {offset}, {size} bytes computed for {width} x {height} "
-            f"{fmt.upper()}: not inside the file's {len(view)} bytes after the header"
+            f"{fmt.upper()}: not inside the file's {length} bytes after the header"
         )
+    return fmt, size
+
+
+def decode(data: bytes | bytearray | memoryview) -> BlpImage:
+    """Mip 0 of a BLP2 file as RGBA. Refusals: `BlpMalformedError`,
+    `BlpTooLargeError`, `BlpUnsupportedError`, `BlpRuleConflict`."""
+    view = memoryview(data).cast("B")
+    header = parse_header(view)
+    fmt, size = check_layout(header, len(view))
+    width, height = header.width, header.height
+    offset = header.mip_offsets[0]
     mip = bytes(view[offset : offset + size])
     if fmt == "palette":
         palette = bytes(view[HEADER_SIZE : HEADER_SIZE + PALETTE_SIZE])

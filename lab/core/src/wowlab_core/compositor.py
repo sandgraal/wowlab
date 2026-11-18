@@ -8,37 +8,47 @@ file itself and writes nothing; the composite is returned as bytes inside a
 
 **What is painted.** A canvas of the body's texture layout
 (`plan.body.layout_width` x `layout_height`), opaque black to start, as
-wow.export clears its canvas. Then:
+wow.export clears its canvas (the client's start is **[verify]**; it shows
+only where no whole-canvas blit comes first). Then:
 
 1. The customization layers of texture type 1 (the body), in the plan's
    order: `ChrModelTextureLayer.Layer`, then the element id. wow.export
-   sorts by the texture target id instead; in the recorded table the two
-   orders differ in 67 of 87 layouts, so which the client follows is
-   unconfirmed (**[verify]**). A layer whose mask is -1 covers the whole
-   canvas; any other layer is painted into each section its mask names (a
-   mask with two or more bits does not occur in the recorded table, and
-   painting it into each is unconfirmed). Layers of any other texture type
-   (6 hair, 19 eyes, ...) are separate textures, never painted onto the
-   body: they are listed in `not_painted`, and `separate_layers` gives them.
+   sorts by the texture target id instead; in the full table at 70959 (940
+   rows, not committed; sha256 in the fixtures README's
+   `ChrModelTextureLayer` row) the two orders differ in 67 of 87 layouts,
+   so which the client follows is unconfirmed (**[verify]**). A layer whose
+   mask is -1 covers the whole canvas; any other layer is painted into each
+   section its masks name (checked on all 940 rows: no texture type 1 row
+   names two sections, one row of type 26 does through its two masks, so
+   painting into each is unexercised). Layers of any other texture type (6
+   hair, 19 eyes, ...) are separate textures, never painted onto the body:
+   they are listed in `not_painted`, and `separate_layers` gives them,
+   uncomposed (a separate texture can itself have several layers: eyes,
+   type 19, have two in layouts 105 and 111).
 2. The plan's item body-texture pieces over them, ordered by the slot's
    texture layer (`ITEM_SLOT_LAYER`, wow.export's table: shirt and legs
    first, the cloak last; **[verify]**), then the component section, then
-   the plan's order, each with blend mode 15 (wow.export paints a piece
-   with the blend mode of the layout's layer for that section and turns 0
-   and 1 into 15; every section layer of the recorded layouts is 15).
+   the plan's order, each with blend mode 15. wow.export paints a piece with
+   the blend mode of the layout's layer for that section, turning 0 and 1
+   into 15; every section layer of layouts 105 and 111 is 15, so the two
+   agree there. For a layout whose layer for that section is 4, 6, 7 or 9,
+   wow.export would paint the piece with that mode; the Lab paints 15 (not
+   met at layouts 105 and 111; **[verify]**).
 
 A texture is stretched to its section by whole-pixel repetition: its
-section must be a whole multiple of it on each side (the real textures are
-a half or a quarter of their sections: a 1024 x 512 skin on a 2048 x 1024
-canvas, 128 x 64 item pieces in 512 x 256 sections). wow.export lets the
-GPU magnify with linear filtering; nearest pixels are what the Lab can
-afford in Python, so edges are blockier than in game (**[verify]** how the
-client filters).
+section must be a whole multiple of it on each side (every texture the two
+fixture composites paint is a half or a quarter of its section: a 1024 x
+512 skin on a 2048 x 1024 canvas, 128 x 64 item pieces in 512 x 256
+sections; how other textures relate to their sections is not measured).
+wow.export lets the GPU magnify with linear filtering; nearest pixels are
+what the Lab can afford in Python, so edges are blockier than wow.export's
+(how the client filters is **[verify]**).
 
-**Blend modes** (`ChrModelTextureLayer.BlendMode`, names from wow.export's
-character shader; on texture type 1 the recorded table holds 1, 4, 6, 7, 9
-and 15, all six painted here; 0, 2, 3, 5, 8 and 10 to 14 and anything
-above 15 are refused with `BlendModeError`, the number named). With `d` the
+**Blend modes** (`ChrModelTextureLayer.BlendMode`; names and formulas from
+wow.export's character shader and blend state, the client publishes none,
+**[verify]**). On texture type 1 the full table at 70959 holds 1, 4, 6, 7,
+9 and 15, all six painted here; 0, 2, 3, 5, 8, 10 to 14 and anything above
+15 are refused with `BlendModeError`, the number named. With `d` the
 canvas pixel, `l` the layer pixel, all channels 0 to 255 and
 `m(x, y) = (x * y + 127) // 255`:
 
@@ -49,22 +59,33 @@ canvas pixel, `l` the layer pixel, all channels 0 to 255 and
 - 4 *multiply*: `s = m(d, l)` on all four channels; over step with
   `a = s.alpha`.
 - 7 *screen*: `s = 255 - m(255 - d, 255 - l)` on colour, `s.alpha = l.alpha`.
-- 6 *overlay* (on the layer's value, as wow.export's shader has it):
-  `m(2d, l)` where `l < 128`, else `255 - m(2(255 - d), 255 - l)`;
-  `s.alpha = l.alpha`.
+- 6 *overlay* (on the layer's value, as wow.export's shader has it;
+  switching on the layer, not the canvas, is usually called hard light;
+  kept as wow.export has it, **[verify]**): `m(2d, l)` where `l < 128`,
+  else `255 - m(2(255 - d), 255 - l)`; `s.alpha = l.alpha`.
 
 The over step, per channel: `m(s, a) + m(d, 255 - a)` (the alpha channel
 too: wow.export's blend function `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` applies
 to all four). Each product is rounded on its own, so a channel can be one
-below the exact value; the sum never exceeds 255.
+below the exact value; the sum never exceeds 255. So the composite's alpha
+falls below 255 under any partly transparent layer; it is what that blend
+function leaves, not a transparency the client is known to use. Draw the
+body opaque.
 
 **Bounds.** Everything is checked before the canvas is allocated: the
 layout's size against `blp.MAX_DIMENSION` and `blp.MAX_PIXELS`
 (`CanvasError`), every blend mode (`BlendModeError`), every section inside
-the canvas (`SectionError`), then every texture's header (read, parsed,
-dropped): its encoding decodable and its size at most its section's and a
-whole fraction of it (`LayerSizeError`). Each texture is then read again
-and decoded alone.
+the canvas (`SectionError`), the work (`WorkLimitError`: at most `MAX_JOBS`
+layers and pieces, 256, and their rectangles' areas summed at most
+`MAX_WORK_CANVASES` canvases, 64; the fixture characters paint 13 and 16
+jobs, about 2.2 canvases), then every texture's header and length (read,
+checked by `blp.check_layout`, the checks `blp.decode` makes before it
+allocates, then dropped): decodable, mip 0 inside the file, and its size at
+most its section's and a whole fraction of it (`LayerSizeError`). Each
+texture is then read again and decoded alone; a decode whose format or
+size is not what its header pass approved is refused (`LayerSizeError`),
+and the painter refuses any image that does not cover its rectangle inside
+the canvas, so no write lands outside a section or resizes the canvas.
 
 **What a composite costs.** Memory: the canvas (`W * H * 4` bytes, 8 MiB at
 2048 x 1024), one texture file, one decode (`blp`'s peak, about three times
@@ -73,24 +94,29 @@ temporaries, and the final copy of the canvas: the peak is the canvas plus
 the larger of three textures' RGBA and a second canvas, at most four
 canvases plus one file (`compositor_peak_bytes`; 32 MiB at 2048 x 1024, 256
 MiB at the 4096 x 4096 cap; 32 MiB measured with tracemalloc at 2048 x 1024
-with a full-size base texture). Time (§17.5's cost model; CPU time on the
-owner's M1, 2026-11-18): a blit row and a fully opaque alpha-blend row are
-one slice copy per canvas row (0.01 s for a whole 2048 x 1024 canvas), the
-transparent ends of a row cost nothing, and every other pixel costs two
-byte-table lookups per channel for 15 and 9 (about 0.25 s per 2048 x 1024
-pixels) and three for 4, 6 and 7 (about 0.48 s). The fixture characters
-take 0.14 to 0.24 s with their reads and decodes; the busiest recorded body
-layout with every pixel partial, 2.6 s.
+with a full-size base texture). Time (§17.5's cost model; CPU time measured
+idle on the owner's M1, 2026-11-18): a blit row and a fully opaque
+alpha-blend row are one slice copy per canvas row (0.01 s for a whole 2048
+x 1024 canvas), the transparent ends of a row cost nothing, and every other
+pixel costs two byte-table lookups per channel for 15 and 9 (about 0.25 s
+per 2048 x 1024 pixels) and three for 4, 6 and 7 (about 0.48 s). The
+fixture characters take 0.14 to 0.24 s with their reads and decodes; the
+busiest recorded body layout with every pixel partial, 2.6 s (4.3 to 4.5 s
+measured by review under a load average of 121). At the caps, one
+whole-canvas mode-4 layer of 4096 x 4096 partial pixels is about 4 s idle
+by those rates (6.4 s measured by review under load), and the work budget
+of 64 such canvases about four minutes: the caps bound the work, they do
+not make every allowed plan fast.
 """
 
 from __future__ import annotations
 
 import hashlib
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from functools import cache
 from operator import itemgetter
-from typing import Literal, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,6 +129,8 @@ __all__ = [
     "BODY_TEXTURE_TYPE",
     "ITEM_BLEND_MODE",
     "ITEM_SLOT_LAYER",
+    "MAX_JOBS",
+    "MAX_WORK_CANVASES",
     "BlendModeError",
     "BodyTexture",
     "CanvasError",
@@ -113,6 +141,7 @@ __all__ = [
     "PaintedLayer",
     "SectionError",
     "TextureReader",
+    "WorkLimitError",
     "blend_rows",
     "compose",
     "compositor_peak_bytes",
@@ -136,7 +165,9 @@ BLEND_NAMES: dict[int, str] = {
 """The blend modes painted, by `ChrModelTextureLayer.BlendMode`."""
 
 ITEM_BLEND_MODE = ALPHA_BLEND
-"""The blend mode an item body-texture piece is painted with."""
+"""The blend mode an item body-texture piece is painted with, whatever the
+layout's layer for its section says (wow.export would use that layer's
+mode when it is 4, 6, 7 or 9; not met at layouts 105 and 111)."""
 
 ITEM_SLOT_LAYER: dict[int, int] = {
     4: 10,  # shirt
@@ -157,7 +188,12 @@ ITEM_SLOT_LAYER: dict[int, int] = {
 table; a slot it does not list is 10)."""
 _DEFAULT_SLOT_LAYER = 10
 
-_CANVAS_START = b"\x00\x00\x00\xff"  # opaque black, as wow.export clears it
+MAX_JOBS = 256
+"""The most layers and pieces one composite paints (the fixture characters
+paint 13 and 16)."""
+MAX_WORK_CANVASES = 64
+"""The most canvas area one composite paints, summed over its jobs, in
+canvases (the fixture characters paint about 2.2)."""
 
 
 # ─── errors ──────────────────────────────────────────────────────────────────
@@ -182,6 +218,11 @@ class BlendModeError(CompositorError):
 
 class SectionError(CompositorError):
     """A section is empty or not inside the canvas."""
+
+
+class WorkLimitError(CompositorError):
+    """A plan with more jobs than `MAX_JOBS`, or more summed area than
+    `MAX_WORK_CANVASES` canvases."""
 
 
 class LayerSizeError(CompositorError):
@@ -425,11 +466,23 @@ def paint_jobs(plan: RenderPlan) -> tuple[tuple[PaintJob, ...], tuple[NotPainted
     return tuple(jobs), tuple(skipped)
 
 
-def _scale(job: PaintJob, header: blp.BlpHeader) -> tuple[blp.Format, int, int]:
-    """The texture's format and its whole-pixel scale into the job's
-    section, from the header alone; refused when it does not fit."""
-    fmt = blp.format_of(header)
-    blp.check_size(header.width, header.height)
+class _Fit(NamedTuple):
+    """What the header pass approved for a job: the texture's format and
+    size, and the whole-pixel scale into the job's rectangle."""
+
+    fmt: blp.Format
+    width: int
+    height: int
+    kx: int
+    ky: int
+
+
+def _fit(job: PaintJob, data: bytes | bytearray | memoryview) -> _Fit:
+    """The texture's format, size and whole-pixel scale into the job's
+    section, from its header and length alone (`blp.check_layout`: what
+    `blp.decode` refuses, it refuses here); refused when it does not fit."""
+    header = blp.parse_header(data)
+    fmt, _ = blp.check_layout(header, len(memoryview(data).cast("B")))
     tw, th = header.width, header.height
     if tw > job.width or th > job.height or job.width % tw or job.height % th:
         where = "the whole canvas" if job.section_type is None else f"section {job.section_type}"
@@ -439,7 +492,22 @@ def _scale(job: PaintJob, header: blp.BlpHeader) -> tuple[blp.Format, int, int]:
             "on each side",
             job.file_data_id,
         )
-    return fmt, job.width // tw, job.height // th
+    return _Fit(fmt, tw, th, job.width // tw, job.height // th)
+
+
+def _check_work(jobs: Sequence[PaintJob], width: int, height: int) -> None:
+    """The work bound: at most `MAX_JOBS` jobs, and their rectangles' areas
+    summed at most `MAX_WORK_CANVASES` canvases."""
+    if len(jobs) > MAX_JOBS:
+        raise WorkLimitError(
+            f"{len(jobs)} layers and pieces to paint; the most painted is {MAX_JOBS}"
+        )
+    area = sum(j.width * j.height for j in jobs)
+    if area > MAX_WORK_CANVASES * width * height:
+        raise WorkLimitError(
+            f"{len(jobs)} layers and pieces cover {area:,} pixels; the most painted is "
+            f"{MAX_WORK_CANVASES} canvases of {width} x {height} ({MAX_WORK_CANVASES * width * height:,})"
+        )
 
 
 # ─── blending ────────────────────────────────────────────────────────────────
@@ -538,7 +606,13 @@ def _widen(row: bytes | bytearray, k: int) -> bytes | bytearray:
 
 
 def _paint(
-    canvas: bytearray, stride: int, job: PaintJob, image: blp.BlpImage, kx: int, ky: int
+    canvas: bytearray,
+    stride: int,
+    height: int,
+    job: PaintJob,
+    image: blp.BlpImage,
+    kx: int,
+    ky: int,
 ) -> None:
     """Paint `image` into the job's rectangle, `kx` x `ky` canvas pixels a
     texture pixel. Per texture row: a blit is one slice copy per canvas row;
@@ -546,7 +620,25 @@ def _paint(
     nothing in any mode), a row with nothing else is skipped, an opaque
     alpha blend is a slice copy, and an alpha blend's layer half,
     `m(s, a)`, is computed once at the texture's size; only the canvas half
-    is per canvas pixel. The result is `blend_rows`' byte for byte."""
+    is per canvas pixel. The result is `blend_rows`' byte for byte.
+
+    The image must cover the job's rectangle exactly and the rectangle lie
+    inside the canvas (`compose` checks both); refused here again, so no
+    write can land past a section's row or resize the canvas."""
+    if (
+        image.width * kx != job.width
+        or image.height * ky != job.height
+        or job.x < 0
+        or job.y < 0
+        or (job.x + job.width) * 4 > stride
+        or job.y + job.height > height
+        or len(canvas) != stride * height
+    ):
+        raise LayerSizeError(
+            f"file {job.file_data_id}: {image.width} x {image.height} at {kx} x {ky} does not "
+            f"cover ({job.x}, {job.y}) {job.width} x {job.height} inside the canvas",
+            job.file_data_id,
+        )
     mode = job.blend_mode
     tw = image.width
     line = tw * 4
@@ -605,26 +697,37 @@ def compose(plan: RenderPlan, reader: TextureReader) -> BodyTexture:
     through."""
     width, height = _canvas_size(plan)
     jobs, skipped = paint_jobs(plan)
-    fits: list[tuple[blp.Format, int, int]] = []
-    for job in jobs:  # every header first: nothing is allocated for a plan that fails
-        fits.append(_scale(job, blp.parse_header(reader.read(job.file_data_id))))
-    canvas = bytearray(_CANVAS_START * (width * height))
+    _check_work(jobs, width, height)
+    # Every header first: nothing is allocated for a plan that fails.
+    fits = [_fit(job, reader.read(job.file_data_id)) for job in jobs]
+    pixels = width * height
+    canvas = bytearray(pixels * 4)
+    canvas[3::4] = b"\xff" * pixels  # opaque black, as wow.export clears its canvas
     stride = width * 4
     painted: list[PaintedLayer] = []
-    for job, (fmt, kx, ky) in zip(jobs, fits, strict=True):
+    for job, fit in zip(jobs, fits, strict=True):
         image = blp.decode(reader.read(job.file_data_id))
-        _paint(canvas, stride, job, image, kx, ky)
+        if (image.format, image.width, image.height) != (fit.fmt, fit.width, fit.height):
+            raise LayerSizeError(
+                f"file {job.file_data_id} read as {image.width} x {image.height} "
+                f"{image.format.upper()}, not the {fit.width} x {fit.height} "
+                f"{fit.fmt.upper()} its header gave a moment before; not painted",
+                job.file_data_id,
+            )
+        _paint(canvas, stride, height, job, image, fit.kx, fit.ky)
         painted.append(
             PaintedLayer(
                 job=job,
                 texture_width=image.width,
                 texture_height=image.height,
-                texture_format=fmt,
-                scale_x=kx,
-                scale_y=ky,
+                texture_format=fit.fmt,
+                scale_x=fit.kx,
+                scale_y=fit.ky,
             )
         )
         del image
+    if len(canvas) != pixels * 4:  # the slices above never resize it; never trust that
+        raise CompositorError(f"the canvas is {len(canvas)} bytes, not {pixels * 4}")
     return BodyTexture(
         width=width,
         height=height,

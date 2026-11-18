@@ -586,3 +586,95 @@ def test_the_peak_is_inside_the_stated_bound_constructed() -> None:
     canvas = 2048 * 1024 * 4
     assert len(result.rgba) == canvas
     assert 2 * canvas <= peak <= compositor.compositor_peak_bytes(2048, 1024) + len(base), peak
+
+
+# ─── round 1: a reader that changes its answer, truncated files, the caps ────
+
+
+class Flipping(Reader):
+    """Gives `second` for `fdid` on every read after the first."""
+
+    def __init__(self, files: Mapping[int, bytes], fdid: int, second: bytes) -> None:
+        super().__init__(files)
+        self.fdid = fdid
+        self.second = second
+
+    def read(self, fdid: int) -> bytes:
+        seen = fdid in self.reads
+        data = super().read(fdid)
+        return self.second if fdid == self.fdid and seen else data
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        texture(8, 8, LAYER),  # larger than the header pass saw
+        texture(2, 2, LAYER[:4]),  # smaller: would leave the section half painted
+        blp_file(4, 4, blp.ENCODING_PALETTE, 8, 8, bytes(32)),  # same size, another format
+    ],
+    ids=["larger", "smaller", "another-format"],
+)
+def test_a_texture_that_changes_between_reads_is_refused_constructed(second: bytes) -> None:
+    corner = Section(section_type=3, x=4, y=4, width=4, height=4)
+    files = {1: texture(8, 8, CANVAS), 2: texture(4, 4, LAYER[:16])}
+    reader = Flipping(files, 2, second)
+    with pytest.raises(LayerSizeError, match="its header gave a moment before") as caught:
+        compositor.compose(plan([layer(1, 1, 0), layer(2, 15, 1, sections=[corner])]), reader)
+    assert caught.value.file_data_id == 2
+
+
+def test_paint_refuses_an_image_that_does_not_cover_its_job_constructed() -> None:
+    """The defence below `compose`: `_paint` itself never writes past the
+    job's rectangle or resizes the canvas."""
+    job = compositor.PaintJob(
+        kind="customization",
+        file_data_id=9,
+        blend_mode=1,
+        section_type=0,
+        x=4,
+        y=4,
+        width=4,
+        height=4,
+    )
+    image = blp.decode(texture(8, 8, LAYER))
+    canvas = bytearray(8 * 8 * 4)
+    with pytest.raises(LayerSizeError, match="does not cover"):
+        compositor._paint(canvas, 32, 8, job, image, 1, 1)
+    assert canvas == bytearray(256)
+
+
+@pytest.mark.parametrize("cut", [16, 300])
+def test_a_truncated_texture_is_refused_from_its_header_constructed(cut: int) -> None:
+    """Mip 0 past the file's end, or a palette texture shorter than its
+    palette: refused in the header pass, by `blp.check_layout`, with no file
+    decoded."""
+    files = {
+        2: texture(8, 8, LAYER)[:-cut]
+        if cut == 16
+        else blp_file(8, 8, blp.ENCODING_PALETTE, 8, 8, bytes(128))[:cut],
+    }
+    reader = Reader(files)
+    with pytest.raises(blp.BlpMalformedError):
+        compositor.compose(plan([layer(2, 15, 0)]), reader)
+    assert reader.reads == [2]
+
+
+def test_more_jobs_than_the_cap_are_refused_unread_constructed() -> None:
+    corner = Section(section_type=0, x=0, y=0, width=1, height=1)
+    layers = [layer(2, 15, i, sections=[corner]) for i in range(compositor.MAX_JOBS + 1)]
+    reader = Reader({})
+    with pytest.raises(compositor.WorkLimitError, match=f"{compositor.MAX_JOBS + 1} layers"):
+        compositor.compose(plan(layers), reader)
+    assert reader.reads == []
+    ok = compositor.paint_jobs(plan(layers[: compositor.MAX_JOBS]))[0]
+    assert len(ok) == compositor.MAX_JOBS
+
+
+def test_more_area_than_the_budget_is_refused_unread_constructed() -> None:
+    n = compositor.MAX_WORK_CANVASES + 1
+    reader = Reader({})
+    with pytest.raises(
+        compositor.WorkLimitError, match=f"{n} layers and pieces cover 4,160 pixels"
+    ):
+        compositor.compose(plan([layer(2, 15, i) for i in range(n)]), reader)
+    assert reader.reads == []
