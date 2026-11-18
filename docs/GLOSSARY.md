@@ -16,6 +16,14 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Class** — one of thirteen (Warrior, Evoker, Priest, etc.). Fixed at creation.
 
+**Body type (sex)** — the game's two character bodies. The barber shop and the customization tables number them 0 and 1 (`Enum.UnitSex`, `ChrRaceXChrModel.Sex`); the addon API's `UnitSex()` returns 2 for the first and, from memory, 3 for the second and 1 for unknown, so the lab-addon keeps `sex_raw` and the Lab maps 2 → 0 and 3 → 1. Only 2 has been captured (`macos-70450`, 2026-10-19), so 3 → 1 and the meaning of 1 are **[verify]**. A race and body type name one character model (`ChrModel`), which owns the customization options. For the races the tables flag playable, each body is its own model (Orc: 3 and 4; Undead: 9 and 10); some races map both bodies to one model (Dracthyr: 89), and some races share models (Pandaren 24–26: 47 and 48).
+
+**Customization option, choice, element** — an *option* is a barber-shop row on one character model (Skin Color, Face, Hair Style); a *choice* is one value of it; an *element* (`ChrCustomizationElement`) is how a choice is drawn: a geoset to show, a texture (material) to paint into a region of the body texture, or something the Lab does not draw (bone sets, skinned models, …). One choice can have several elements, and an element can name a *related* choice of another option that must also be chosen for it to apply: a face's skin texture exists once per skin colour. The lab-addon records the chosen choice per option only after a barber-shop visit with the addon enabled.
+
+**Geoset** — a piece of a model's mesh that is shown or hidden as a unit (a hairstyle, a jaw, a sleeve length). Its id is `group * 100 + value`: group 0 holds the body (id 0) and the hairstyles, other groups one region each, and a model shows at most a chosen few per group. A customization choice or a worn item picks the value for a group, so "which geosets are visible" is a computed set, not stored state.
+
+**Texture layout, section** — the body is painted on one composite texture (2048 by 1024 for the playable models at 70959). A *layout* (`CharComponentTextureLayouts`) gives its size and a *section* (`CharComponentTextureSections`) a named rectangle of it (face, arms, torso, …). Customization textures and armour pieces are drawn into sections in layer order with a blend mode, so one model texture can hold skin, face, scars and clothes at once.
+
 **Spec (specialization)** — a subdivision of a class that determines role and playstyle. A class has 2-4 (Demon Hunter has two). A character can freely switch between their class's specs at any time, at no cost. **A character's spec is not stable state** — it changes between activities. Record the spec with each capture; never treat it as a property of the character.
 
 ## Gear
