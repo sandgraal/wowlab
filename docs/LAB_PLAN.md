@@ -2005,6 +2005,33 @@ yet, and a fixture produced by the thing under test proves nothing).
   A Windows or macOS regression is now found after merge, by the nightly run
   or by an on-demand run on the branch before it.
 
+  *Amended 2026-11-18 (owner decisions, M15-21; the measurements are in
+  `docs/handoffs/test-time-2026-11.md`):* what runs when.
+  - A pull request and a push to `main` run `ci.yml`. Its "Lint,
+    typecheck, tests" job runs the parallel pass; the seventeen lab-addon
+    grader mutation probes (marked `addon_mutation` in the root
+    `conftest.py`) are in it only when `lab/addon/**`, `tests/addon/**`,
+    `lab/core/src/wowlab_core/toc.py`, one of the probes, `conftest.py`,
+    `pyproject.toml` or `uv.lock` changed. The serial pass (RSS and CPU-time
+    budgets) is not run there, except its one `os.fork` test of the write
+    gate, which is serial for the fork and not for a budget, and runs alone
+    after the parallel pass. A newer push cancels a run in progress on `main`
+    as on a pull request.
+  - Every night at 09:17 UTC, off-hours for the owner, `nightly.yml` runs
+    the whole Linux suite, both passes with the mutation probes, and
+    `windows.yml` and `macos.yml` run the Lab suite on those platforms
+    (no longer after each merge); `perf-nightly.yml` runs at 08:47 UTC.
+    The desktop suites and the nightly one also run on demand for a branch.
+  - A release tag runs everything in `release.yml`, unchanged.
+  - Locally, `make test` runs both passes with the probes, `make test-fast`
+    leaves out the review probes and the serial pass, and `make ci` runs
+    each test once: it no longer repeats `make test-parser` or the hook
+    tests under 3.12, which `make test` has just run; the hook tests under
+    3.9 stay. `make test-parser` and `make hooks-test` remain targets.
+  A budget regression, or a change outside those paths that breaks the
+  addon grader, is now found the next morning rather than on the pull
+  request.
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:
