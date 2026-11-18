@@ -925,9 +925,15 @@ def test_not_local_notes_name_the_flags_constructed(tmp_path: Path) -> None:
     assert "[verify]" not in flag1.note and "70450" not in flag1.note
     install = source.stat(ids["install"])
     assert install.state == "not_local" and install.note is not None
-    assert install.note.startswith(
-        casc.NOTE_NOT_LOCAL + "; it may be on disk as a loose file in the flavor folder"
+    # An Install-flagged row: not in the archives, maybe a loose file, so not
+    # "not on this computer" (domain review of M15-06, round 2).
+    assert install.note == casc.NOTE_LOOSE_FILE
+    assert install.note == (
+        "it is part of this game version but not in the game-data archives; it may be on "
+        "disk as a loose file in the flavor folder (for example inside the .app). wowlab "
+        "never downloads game files"
     )
+    assert "not on this computer" not in install.note
     assert "0x1" not in install.note and "[verify]" not in install.note
 
 

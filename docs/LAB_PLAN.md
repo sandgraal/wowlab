@@ -4715,7 +4715,8 @@ reach it). An existing file is "already extracted" only when its size and
 MD5 are the file's; any other file there is refused, never replaced, and a
 repeat finds the default file before decoding anything. The final name is
 never written directly: a temp file beside it is published by a hard link
-or, without hard links, by a rename that never replaces, so a killed run
+or, without hard links, by a rename, which on Windows refuses an existing
+name and elsewhere follows a last check that the name is free, so a killed run
 leaves only a temp file, and the next write into that folder removes temp
 files older than a day.
 

@@ -212,9 +212,11 @@ def casc_cat(
     except casc.CascError as exc:
         raise CliError(f"cannot extract file {fdid}: {exc}") from exc
     if found.state != "local" or found.content_key is None or found.size is None:
-        why = f": {found.note}" if found.note else ""
-        what = "not a file data id" if found.state == "unknown_id" else found.words
-        raise CliError(f"cannot extract file {fdid}: it is {what}{why}; nothing was written")
+        if found.state == "unknown_id":
+            what = "not a file data id (a whole number from 0 to 2,147,483,647)"
+        else:
+            what = found.words + (f": {found.note}" if found.note else "")
+        raise CliError(f"cannot extract file {fdid}: it is {what}; nothing was written")
     build = cascfiles.build_dir(index.product, index.version)
     target: Path | None = None
     if not to_stdout:

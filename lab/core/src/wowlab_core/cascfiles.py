@@ -198,7 +198,7 @@ def check_out(out: Path | str, folder: Path, *, default: bool = False) -> Path:
         raise _refuse(
             target,
             f"is in {folder / FILES_DIR}, where casc cat puts each file under its own name; "
-            "--out names a path outside it",
+            "choose an --out outside it, or leave --out off",
         )
     try:
         refuse_install(target, _WHAT)

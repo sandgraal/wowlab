@@ -186,7 +186,10 @@ def test_stat_of_a_number_that_is_no_file_data_id_is_unknown_constructed(
     )
     cat = env.run("casc", "cat", f"--fdid={fdid}")
     assert cat.exit_code == 1
-    assert cat.stderr.startswith(f"wowlab: cannot extract file {fdid}: it is not a file data id: ")
+    assert cat.stderr == (
+        f"wowlab: cannot extract file {fdid}: it is not a file data id (a whole number from 0 "
+        "to 2,147,483,647); nothing was written\n"
+    )
 
 
 def test_stat_without_archives_is_one_error_line_constructed(env: Env) -> None:

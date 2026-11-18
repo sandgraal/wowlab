@@ -136,6 +136,7 @@ __all__ = [
     "DECODE_LIMIT",
     "KEY_BYTES",
     "LOCALE_FLAGS",
+    "NOTE_LOOSE_FILE",
     "NOTE_NOT_LOCAL",
     "PLATFORM_SKIP",
     "RECORD_HEADER_SIZE",
@@ -1754,6 +1755,13 @@ NOTE_NOT_LOCAL = (
     "it is part of this game version but not on this computer; wowlab never downloads game "
     "files, and whether the game fetches it later is not yet confirmed"
 )
+# The same for an id listed in a block flagged `Install`: such a file may be
+# a loose file on disk rather than in the archives (domain review, round 2).
+NOTE_LOOSE_FILE = (
+    "it is part of this game version but not in the game-data archives; it may be on disk "
+    "as a loose file in the flavor folder (for example inside the .app). wowlab never "
+    "downloads game files"
+)
 _NOT_LISTED = "this game version's file list does not name it"
 
 
@@ -2555,13 +2563,8 @@ class CascSource:
         if unlisted:
             notes.append(f"{unlisted} of its content keys are not in the encoding file")
         if state == "not_local":
-            notes.insert(0, NOTE_NOT_LOCAL)
-            if any(h.content_flags & ROOT_INSTALL for h in hits):
-                notes.insert(
-                    1,
-                    "it may be on disk as a loose file in the flavor folder (for example "
-                    "inside the .app), not in the archives",
-                )
+            loose = any(h.content_flags & ROOT_INSTALL for h in hits)
+            notes.insert(0, NOTE_LOOSE_FILE if loose else NOTE_NOT_LOCAL)
             if all(h.content_flags & ROOT_FLAG_1 for h in hits):
                 notes.append(
                     "listed only in parts of the file list whose meaning is not confirmed; "
