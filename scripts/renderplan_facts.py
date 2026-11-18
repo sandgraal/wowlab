@@ -24,8 +24,11 @@ the locale, and no path of the install. Field names say `hash`, not `key`
 The install is `--root`, else `WOWLAB_WOW_ROOT`, else the platform default
 (`wowlab_core.install.discover`).
 
-Refusals (exit 1): `--out` inside a game install or already there (a
-committed fixture is never replaced); a table missing from `--tables` for
+Refusals (exit 1): `--out` that is a link (a dangling one included: a link
+is never written through); `--out` inside a game install, every link of
+its folder resolved (a symlinked folder that leads into an install
+included); `--out` already there (a committed fixture is never replaced);
+a table missing from `--tables` for
 the install's version; any `casc`, `install`, `labaddon` or `renderplan`
 error, in one line on stderr. The output is written only after everything
 is read.

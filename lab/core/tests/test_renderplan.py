@@ -183,6 +183,19 @@ def test_the_body_of_the_fixture_character(sangraal: tuple[RenderPlan, _Replay])
         "layout_width": 2048,
         "layout_height": 1024,
     }
+    # The record is of 70450, the tables of 70959: the build gap is the one note.
+    assert plan.notes == (
+        "the record was written by 1.60.1.70450 and is read against the tables of "
+        "1.60.1.70959; choice ids can change between builds",
+    )
+
+
+def test_constructed_a_record_of_the_tables_build_has_no_build_note(
+    tables: RenderTables,
+) -> None:
+    """Constructed: Sangraal-Sett's record with its client build set to the
+    tables' build."""
+    plan = renderplan.build_plan(tables, _identity(UNDEAD), _sangraal_look(client_build=BUILD))
     assert plan.notes == ()
 
 
@@ -206,7 +219,10 @@ def test_the_fixture_characters_choices_are_the_records(
         (6346, None),
         (8530, None),
     ]
-    assert all("not defaulted" in n.reason for n in plan.not_chosen)
+    assert {n.reason for n in plan.not_chosen} == {
+        "not in the record (the barber shop did not list it when the record was taken, or "
+        "the option is newer than the record's build); not defaulted"
+    }
 
 
 def test_the_fixture_characters_geosets(sangraal: tuple[RenderPlan, _Replay]) -> None:
@@ -340,7 +356,10 @@ def test_constructed_character_without_a_record_gets_defaults_and_the_note(
     """Constructed: an Undead identity and no customization record at all."""
     plan = renderplan.build_plan(tables, _identity(UNDEAD), None)
     assert plan.look.source == "defaults"
-    assert plan.look.why == "no customization record; the model's default choices are drawn"
+    assert plan.look.why == (
+        "no customization record; each option's first choice (lowest OrderIndex) is drawn "
+        "as a stand-in, not the character's look"
+    )
     assert plan.look.why in plan.notes
     assert all(c.source == "default" for c in plan.choices)
     # Eyesight (requirement 4103) and Eye Style (12) are not defaulted.
@@ -355,6 +374,7 @@ def test_constructed_record_for_another_race_is_stale(tables: RenderTables) -> N
     assert plan.body.chr_model_id == 3
     assert plan.look.source == "defaults"
     assert plan.look.why is not None and "race 5" in plan.look.why
+    assert "(the race or body type changed after the record was taken)" in plan.look.why
 
 
 # ─── related choices ──────────────────────────────────────────────────────
@@ -462,6 +482,24 @@ def test_constructed_missing_layout_falls_back_to_the_texture_fallback() -> None
     assert plan.body.file_data_id == 959310
     assert {(la.layout_id, la.layout_from_chr_model_id) for la in plan.layers} == {(105, 3)}
     assert "ChrModel 9: followed TextureFallbackChrModelID to 3" in plan.notes
+
+
+def test_constructed_texture_fallback_to_a_missing_model_leaves_materials_unplaced() -> None:
+    """Constructed: ChrModel 9's layout set to one with no row and its
+    `TextureFallbackChrModelID` to 424242, which has no ChrModel row. The
+    plan is still made: the body drawn, every material unplaced, noted."""
+    raw = _with_model_9(CharComponentTextureLayoutID="999", TextureFallbackChrModelID="424242")
+    plan = renderplan.build_plan(RenderTables(BUILD, raw), _identity(UNDEAD), _sangraal_look())
+    assert plan.body.file_data_id == 959310
+    assert (plan.body.layout_id, plan.body.layout_width) == (999, None)
+    assert plan.layers == ()
+    assert len(plan.unplaced) == 7
+    assert all("places texture target" in u.reason for u in plan.unplaced)
+    assert (
+        "ChrModel 9: TextureFallbackChrModelID names 424242, which has no ChrModel row"
+        in plan.notes
+    )
+    assert [f.role for f in plan.files] == ["body model"]
 
 
 def test_constructed_no_body_and_no_fallback_is_refused() -> None:

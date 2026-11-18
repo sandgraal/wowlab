@@ -122,6 +122,30 @@ def test_refuses_an_output_inside_an_install_constructed(
     assert tree_state(root) == before
 
 
+def test_refuses_an_output_that_is_a_dangling_link_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "nowhere" / "out.json"
+    out = tmp_path / "out.json"
+    out.symlink_to(target)
+    assert _run(_install(tmp_path), _tables(tmp_path), out) == 1
+    assert "--out is a link" in capsys.readouterr().err
+    assert not target.exists() and not target.parent.exists()
+
+
+def test_refuses_an_output_under_a_symlinked_folder_into_an_install_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _install(tmp_path)
+    before = tree_state(root)
+    door = tmp_path / "door"
+    door.symlink_to(root / "Data", target_is_directory=True)
+    assert _run(root, _tables(tmp_path), door / "out.json") == 1
+    assert "inside a game install" in capsys.readouterr().err
+    assert tree_state(root) == before
+    assert not (root / "Data" / "out.json").exists()
+
+
 def test_refuses_a_missing_table_constructed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -24,19 +24,25 @@ wowdev.wiki; **[verify]** where marked):
 - **Fallbacks.** A model whose display chain has no row (or a zero file id)
   is drawn through `ChrModel.ModelFallbackChrModelID`; a texture target the
   model's layout places nowhere (or a layout with no row) is placed through
-  `TextureFallbackChrModelID`'s layout. Each hop is noted. At 70959 the
-  models of the races `ChrRaces` flags playable (1 to 8, 95, 96) have no
-  fallback ids; 23 models of other races do. The rule is from memory
-  **[verify]**.
+  `TextureFallbackChrModelID`'s layout. Each hop is noted; a fallback id
+  naming no `ChrModel` row ends the walk (a material it was to place is
+  listed as unplaced, with a note). At 70959 the models of the playable
+  races (1 to 8, 95, 96 by `ChrRaces` at 70058, `looks`' rule; `ChrRaces`
+  is not recorded at 70959) have no fallback ids; 23 models of other races
+  do. The rule is from memory **[verify]**.
   `HelmVisFallbackChrModelID` belongs to the gear chain (M15-13).
 - **Choices.** With a customization record, its choices, exactly: an option
   the model has and the record lacks is listed, never defaulted (the barber
-  shop did not offer it). Without a record (it exists only after a barber
-  visit with the addon on), or with one for another race or body type,
-  each option of the model whose `Requirement` is 0 takes its choice with
-  the lowest `OrderIndex` (then id), **[verify]** against the client; an
-  option with a requirement is listed, not defaulted, since requirements
-  are not evaluated here.
+  shop did not list it when the record was taken, or the option is newer
+  than the record's build). When the record's client build is not the
+  tables' build, a note says choice ids can change between builds. Without
+  a record (it exists only after a barber visit with the addon on), or with
+  one for another race or body type, each option of the model whose
+  `Requirement` is 0 takes its first choice (lowest `OrderIndex`, then id)
+  as a stand-in, not the character's look; whether the client's own
+  default is the first choice is **[verify]**. An option with a
+  requirement is listed, not defaulted: requirements (the option's and the
+  choice's) are not evaluated here; `looks` has the evaluator.
 - **Elements.** `ChrCustomizationElement` rows of each chosen choice; a row
   whose `RelatedChrCustomizationChoiceID` is non-zero is taken only when
   that choice is among the chosen ones (face and skin materials depend on
@@ -57,7 +63,9 @@ wowdev.wiki; **[verify]** where marked):
   its `TextureType` (1 the body, 6 hair, 19 eyes, as the M2's texture
   types; LAB_FORMATS §12), `Layer` (draw order), `BlendMode` (the raw
   number; the compositor names it, M15-10) and section masks. A mask of -1
-  covers the whole canvas; otherwise bit *n* of `TextureSectionTypeBitMask`
+  covers the whole canvas of the layer's texture type (body 1, hair 6 and
+  eyes 19 are separate textures; hair is never painted onto the body),
+  **[verify]**; otherwise bit *n* of `TextureSectionTypeBitMask`
   is the `CharComponentTextureSections` row of `SectionType` *n* and bit *n*
   of `TextureSectionTypeBitMask2` is `SectionType` 32 + *n* (-1 or 0 there
   meaning none), **[verify]**.
@@ -164,6 +172,10 @@ _DIFFUSE_USAGE = 0  # TextureFileData.UsageType of the diffuse texture [verify]
 _ALL_SECTIONS = -1
 _SECTION_BITS = 32
 _MAX_FALLBACK_HOPS = 8  # more hops than any row at 70959 needs (one)
+_STAND_IN = (
+    "each option's first choice (lowest OrderIndex) is drawn as a stand-in, not the "
+    "character's look"
+)
 
 
 class RenderPlanError(WowlabError):
@@ -259,7 +271,9 @@ class Section(_Frozen):
 
 class TextureLayer(_Frozen):
     """One customization material, placed. `sections` empty with
-    `whole_canvas` true means the layer covers the layout's whole canvas.
+    `whole_canvas` true (mask -1) means the layer covers the whole canvas of
+    its texture type: body 1, hair 6 and eyes 19 are separate textures, so
+    a hair layer is never painted onto the body (**[verify]**).
     `other_file_data_ids`: further diffuse rows of the same resource, not
     drawn. `layout_from_chr_model_id` names the model whose layout placed it
     (the texture fallback's, when followed)."""
@@ -314,9 +328,12 @@ class PlanFile(_Frozen):
 class LookAsOf(_Frozen):
     """What the look rests on. `source` "record": the customization record,
     `as_of` its own words, `recorded_at`, `carried` and `loads_ago` as the
-    addon kept them, `client_build` the record's client block; the record
-    holds no date, so `saved_at` is the file's save time when the caller
-    gives it. `source` "defaults": no record was used, `why` says why."""
+    addon kept them, `client_build` the record's client block. The record
+    holds no date. `saved_at`: when the file was last saved (logout or
+    `/reload`), when the caller gives it. It is a latest-possible date for
+    the record, not the date of the barber visit; with `carried` true the
+    record is older. `source` "defaults": no record was used, `why` says
+    why."""
 
     source: Literal["record", "defaults"]
     why: str | None = None
@@ -518,7 +535,9 @@ def _body_file(tables: RenderTables, model_id: int) -> tuple[int, int, int] | st
 def _follow(
     tables: RenderTables, start: int, column: str, ok: Callable[[int], bool], notes: list[str]
 ) -> int | None:
-    """The first model from `start` along `column` for which `ok` holds."""
+    """The first model from `start` along `column` for which `ok` holds; None
+    when the walk ends (no id, a cycle, an id with no `ChrModel` row, noted,
+    or more hops than any row needs)."""
     seen = [start]
     current = start
     for _ in range(_MAX_FALLBACK_HOPS):
@@ -526,6 +545,9 @@ def _follow(
             return current
         nxt = _model_row(tables, current).number(column)
         if nxt == 0 or nxt in seen:
+            return None
+        if nxt not in tables.models:
+            notes.append(f"ChrModel {current}: {column} names {nxt}, which has no ChrModel row")
             return None
         notes.append(f"ChrModel {current}: followed {column} to {nxt}")
         seen.append(nxt)
@@ -638,7 +660,8 @@ def _record_choices(
             not_chosen.append(
                 OptionNotChosen(
                     option_id=option_id,
-                    reason="not in the record (the barber shop did not list it); not defaulted",
+                    reason="not in the record (the barber shop did not list it when the record "
+                    "was taken, or the option is newer than the record's build); not defaulted",
                 )
             )
     for option_id, choice_id in sorted(recorded.items()):
@@ -888,15 +911,21 @@ def build_plan(
         why = (
             f"the customization record is for race {customization.race_id}, body type "
             f"{customization.body_type}, not the character's race {race_id}, body type {sex} "
-            "(a race or body change since the last barber visit); the model's defaults are drawn"
+            f"(the race or body type changed after the record was taken); {_STAND_IN}"
         )
     elif customization is None:
         why = (
             "no customization record"
             + (f" ({no_customization_reason})" if no_customization_reason else "")
-            + "; the model's default choices are drawn"
+            + f"; {_STAND_IN}"
         )
     if customization is not None and use_record:
+        built = customization.client_build
+        if built is not None and built != tables.build:
+            notes.append(
+                f"the record was written by {built} and is read against the tables of "
+                f"{tables.build}; choice ids can change between builds"
+            )
         if (
             customization.chr_model_id is not None
             and customization.chr_model_id != body.chr_model_id
