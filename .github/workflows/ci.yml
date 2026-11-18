@@ -31,9 +31,14 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels the run in progress, on a pull request and on main
+# alike (M15-21, 2026-11-18; until then only pull requests). The newest commit
+# on main contains every older one, so grading it is enough: a break in an
+# older commit is still red on the newer run, and each change's own pull
+# request run graded it before it merged.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 env:
   UV_VERSION: "0.12.12"
