@@ -140,7 +140,7 @@ ADRs and tickets in one docs PR; dispatch resumes when it merges.
 
 ## Definition of done
 
-CI green (all required checks); the local verification pasted, as "Local
+CI green (all required checks, and `Lint, typecheck, tests`, which is not a required check since M15-16); the local verification pasted, as "Local
 verification" below sets it (local proof, not the proof of done: CI is);
 every acceptance criterion has proof; new external-format parsing has a real, scrubbed
 fixture with a provenance row; any change to a load-bearing file has

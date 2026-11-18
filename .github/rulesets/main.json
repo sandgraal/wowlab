@@ -15,6 +15,8 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "required_reviewers": [],
         "allowed_merge_methods": ["squash"]
       }
     },
@@ -24,7 +26,6 @@
         "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "Lint, typecheck, tests" },
           { "context": "Parser fixtures and round-trip" },
           { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.9)" },
           { "context": "Agent harness (hooks on 3.9 and 3.12, lockfile, workflows) (3.12)" },

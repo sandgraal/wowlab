@@ -1397,7 +1397,7 @@ The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: 
 
 ---
 
-## [ ] M15-13 — `renderplan`: the gear chain
+## [x] M15-13 — `renderplan`: the gear chain
 **Size:** M · **Depends on:** M15-09
 
 §17.4, the gear, attachments and geoset bullets. The equipped items' item ids and bonus ids from `char gear` → `ItemBonus` type 7 (lowest priority wins; from TrinityCore, **[verify]** against one real link the owner checks) → `ItemModifiedAppearance` (modifier 0 preferred, else the lowest) → `ItemAppearance` → `ItemDisplayInfo`: per slot the geoset groups (`group * 100 + 1 + v`, the `+1` **[verify]**) with the sleeve and trouser priorities, the attachment geoset groups, helmet hiding through `HelmetGeosetData`, model resources → `ModelFileData` filtered by `ComponentModelFileData` (race, sex, class, position), model textures and body-texture pieces (`ItemDisplayInfoMaterialRes` by component section, filtered by `ComponentTextureFileData`, with the `ChrModel` fallback ids and the any-race, any-sex rows), the attachments per slot (head 11, shoulders 6 and 5, back 12, main hand 1, off hand 2 or shield 0; the ranged slot 18 listed as unsupported), the feet `0 → 2` and the group-10 chest-over-shirt rules, and the collection models; each file's `stat`. Transmog is not rendered (whether Forever has it in game is **[verify]**): the item's own look is.
@@ -1426,12 +1426,25 @@ The owner's install is the launch client now (`_forever_`, product `wowf`). The 
 
 ---
 
-## [ ] M15-16 — The live ruleset and `.github/rulesets/main.json` disagree
+## [x] M15-16 — The live ruleset and `.github/rulesets/main.json` disagree
 **Size:** XS · **Depends on:** nothing · **Sources:** the merges of #598 and #595 (2026-11-18) · **owner** (which checks GitHub requires)
 
 `.github/rulesets/main.json` lists seven required checks. The ruleset on GitHub requires six: "Lint, typecheck, tests" is not among them, so `gh pr checks --required` and the merge button do not wait for the job that runs the suite. On 2026-11-18 the conductor merged #598 and #595 while that job was still running on their heads. Both jobs passed afterwards (#598 at eb9797f: merged 18:46Z, the job finished 19:09Z; #595 at b4f3c29: merged 18:50Z, finished 19:16Z). The owner decides which is right: add the check on GitHub, or take it out of the file. Either way the file and GitHub say the same, `pr-shepherd`'s instructions name the job it must wait for by name, and a test or script compares the file with the live ruleset where a token allows.
 
+*Owner decision, 2026-11-18:* asked in session whether the full test job should be required on GitHub, the owner answered "no". The file follows GitHub: "Lint, typecheck, tests" leaves `.github/rulesets/main.json`, which now lists the six checks the live ruleset requires. A ticket is still done only when CI is green (`AGENTS.md`), so `pr-shepherd` reads that job by name on the exact head before it merges, and pins the head. The file also gains two pull-request settings that were live on GitHub and missing from it (`require_extra_approval_for_unattributed_changes`, `required_reviewers`), so that re-applying it loosens nothing; a check that compares the whole `rules` array with the live ruleset is not built here.
+
 **Acceptance:** the owner's decision recorded here; the file and the live ruleset agree (`gh api repos/…/rulesets/<id>` pasted); the shepherd's instructions updated by the conductor. Reviewed by `code-reviewer` and `security-reviewer` (`.github/`).
+
+---
+
+## [ ] M15-18 — `test_perf_budget` fails while the game client runs
+**Size:** XS · **Depends on:** nothing · **Sources:** the reviews of #600 and #601 (2026-11-18)
+
+`tests/scripts/test_perf_budget.py::test_constructed_the_pipeline_runs_on_a_small_tree` runs `scripts/perf_budget.py`, whose child processes (`wowlab snap restore … --dry-run` and the gate driver) ask the real process list: the sandbox redirects the home, the user data folders and the install, not the process probe. With the owner's client open the gate refuses ("the game client is running") and the test fails, on `main` too. No test may depend on the real machine (`docs/LAB_PLAN.md` §6.7).
+
+The stub reaches the children from test code only: the test prepends a temporary directory to `PYTHONPATH` holding a `sitecustomize.py` that replaces `psutil.process_iter` in the child (`-P` does not block `PYTHONPATH`, and the sandbox copies the environment). No file under `lab/*/src/` or `scripts/` gains an environment variable, an option, a config key or a file check that changes what the process probe or `guard` answers (L2): a player can set any of those. Only the pytest pipeline test stubs the probe: the nightly `perf_budget` run keeps the real one, so its numbers still include the client check.
+
+**Acceptance:** the diff of `lab/core/src/wowlab_core/{process,guard}.py`, the CLI modules and `scripts/perf_budget.py` shows no new environment read and no new option; the test starts a constructed process named like the client (its precondition) and passes with the stub; a second test shows the same child command without the stub is refused by the gate; `guard`'s refusal tests and the "unknown, or a probe that raises, means running" tests are untouched; `make ci` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
 ---
 

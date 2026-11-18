@@ -27,7 +27,7 @@ own internal consistency.
    with the ticket id, and read a `make ci` log only when its rootdir line
    names your worktree. Run `make ci` once, on the first round. On a
    re-check after a fix round, run the suites the fix touches and your
-   probes only: the PR's required checks run the full suite on every push,
+   probes only: CI runs the full suite on every push,
    and a second full run on a loaded machine is where the timing and
    memory probes flake (owner decision, 2026-10-17).
 

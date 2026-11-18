@@ -70,7 +70,8 @@ below is the same whichever tool runs it. Learned on #266 and #267
   the names against `required_status_checks[].context` in
   `.github/rulesets/main.json`; anything not listed there (`review`,
   `lab (macos)`, `lab (windows)`, `Detect doc-only changes`) never holds
-  the merge. `get_check_runs` right after a push may list only `review`;
+  the merge, with one exception: `Lint, typecheck, tests` (the suite) is
+  not listed there since M15-16 and always holds it. `get_check_runs` right after a push may list only `review`;
   the required jobs appear a minute or two later, so an empty or partial
   list is not green, and the set is complete only when every
   `required_status_checks[].context` of the ruleset is present.
@@ -85,6 +86,14 @@ below is the same whichever tool runs it. Learned on #266 and #267
   required check" case below, not a wait), `unstable` when only a
   non-required check failed, `clean` otherwise; it has no `reviewDecision`
   or `statusCheckRollup`. `unstable` and `clean` mean the checks allow it.
+- **The suite is not a required check.** "Lint, typecheck, tests" is not in
+  the ruleset (owner decision, 2026-11-18, M15-16), so `clean` and
+  `gh pr checks --required` do not wait for it. A ticket is still done only
+  when CI is green: before marking ready, read that job by name and see it
+  SUCCESS on the exact head, then merge with the head pinned
+  (`--match-head-commit`, or `expectedHeadSha`). While it is pending, wait
+  for it with §2's blocking poll; never start a background watcher and end
+  the run. A failed suite is handled like a failing required check.
 - **Threads by REST.** `GET repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`
   lists the threads without GraphQL; `resolve_review_thread` resolves one
   and `add_reply_to_pull_request_comment` answers one. A bot thread the
@@ -170,7 +179,8 @@ loosened assertion, made after a CLEAN review, put a defect on main.)
 
 Handle, in order:
 
-- **Failing required check** → `gh run view <id> --log-failed`; reproduce
+- **Failing required check, or a failing `Lint, typecheck, tests`** →
+  `gh run view <id> --log-failed`; reproduce
   locally with the same `make` target. If the fix is yours under the rule
   above (formatting, stale lock, rebase artefact): fix, commit, push.
   Otherwise `NEEDS_IMPLEMENTER:` with the run URL. Infra flake (runner
@@ -218,15 +228,19 @@ job that is not in `.github/rulesets/main.json`'s required list failed or
 is still pending: `lab (windows)`, `lab (macos)`, or on an old head the
 `review` job of the deleted Claude workflow), every
 **required** check is SUCCESS
-on the head sha, every thread the owner opened has an answer, every other
+on the head sha, the `Lint, typecheck, tests` job is SUCCESS on the head sha
+(it is not a required check since M15-16, and it is the one non-required job
+that does hold the merge: pending or failed, you wait or fix), every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
-the reviewer verdicts are clean. A failed non-required job never holds
+the reviewer verdicts are clean. Any other failed non-required job never holds
 the merge, but it is never silent either: name it, with its run URL and
 the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
 red run on `main` is a bug to fix next, and a red run on the PR is how it
 is seen first). Then
-`gh pr merge <n> --squash` (never `--admin`, and no `--delete-branch`: the
+`gh pr merge <n> --squash --match-head-commit <head sha>` (never `--admin`,
+never `--auto`: auto-merge fires on the required checks alone and would not
+wait for the suite; and no `--delete-branch`: the
 repository deletes the remote branch on merge, and the local half of that
 flag is the cleanup you never do). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
