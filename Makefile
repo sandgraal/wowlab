@@ -49,6 +49,9 @@ typecheck: ## mypy only
 # A command-line -m replaces the one in addopts, so both keep `not live`.
 # worksteal: a few review probes take 10-40 s, and an idle worker takes
 # queued tests from a busy one instead of waiting at the end.
+# Both passes include the lab-addon grader mutation probes (`addon_mutation`,
+# conftest.py), which CI runs on a pull request only when an addon path
+# changed (M15-21); `make test` always runs them, `make test-fast` never.
 PYTEST_PARALLEL := -n auto --dist worksteal -m "not live and not serial"
 PYTEST_SERIAL := -m "serial and not live"
 
@@ -58,8 +61,9 @@ test: ## Full pytest suite (excludes @live): parallel pass, then the serial pass
 
 # Local iteration (M13-81), never the proof of done: everything `make test`
 # runs except the review probes under lab/core/tests/review/ and the `serial`
-# pass, on at most 4 workers so the machine stays usable. `make test`,
-# `make ci` and CI keep running everything; tests/repo/test_make_test_fast.py
+# pass (and with the review probes the lab-addon mutation probes), on at most
+# 4 workers so the machine stays usable. `make test`, `make ci` and the
+# nightly CI run keep running everything; tests/repo/test_make_test_fast.py
 # pins that this recipe leaves out nothing else.
 TEST_FAST_WORKERS = $(shell $(UV) run --frozen python -c "import os; print(min(4, os.cpu_count() or 1))")
 

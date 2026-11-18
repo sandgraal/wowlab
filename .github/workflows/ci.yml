@@ -11,10 +11,14 @@ on:
 # exact name (see .github/rulesets/main.json). `quality` ("Lint, typecheck,
 # tests") is not required (owner decision, 2026-11-18, M15-16), but no PR
 # merges before it is green: pr-shepherd reads it by name. The Lab suite on the desktop platforms runs
-# off the pull-request path, after each merge to main, nightly and on demand,
-# and neither is required: `lab (macos)` in macos.yml (it was this file's
+# off the pull-request path, nightly and on demand (until 2026-11-18 also
+# after each merge to main; M15-21, owner decision), and neither is
+# required: `lab (macos)` in macos.yml (it was this file's
 # `lab-desktop` job until 2026-11-17, M18-15, owner decision) and
 # `lab (windows)` in windows.yml (ADR-0014 amendments of 2026-10-15).
+# The whole Linux suite, with what `quality` leaves out since M15-21 (the
+# lab-addon mutation probes when no addon path changed, the serial pass),
+# runs every night in nightly.yml.
 # Renaming a job means
 # changing the ruleset and re-applying it with scripts/bootstrap-github.sh.
 #
@@ -68,6 +72,12 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.filter.outputs.non_docs == 'false' && steps.filter.outputs.doc_tests == 'false' }}
+      # Whether the lab-addon grader mutation probes run (M15-21; owner
+      # decision, 2026-11-18): only when one of these paths changes. They read
+      # nothing else that can turn them red (conftest.py, ADDON_MUTATION_FILES).
+      # Every night nightly.yml runs them. tests/repo/test_addon_mutation_marking.py
+      # holds this list to the conftest's.
+      addon_probes: ${{ steps.filter.outputs.addon_probes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,6 +103,30 @@ jobs:
               - 'docs/LAB_PLAN.md'
               - 'docs/handoffs/M11-03.md'
               - 'docs/handoffs/M13-10-macos.md'
+            addon_probes:
+              - 'lab/addon/**'
+              - 'tests/addon/**'
+              - 'lab/core/src/wowlab_core/toc.py'
+              - 'conftest.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'lab/core/tests/review/test_m11_01_carry_check_misses_saved_subtables.py'
+              - 'lab/core/tests/review/test_m11_01_clock_check_misses_os_time.py'
+              - 'lab/core/tests/review/test_m11_01_line_based_privacy_tests_fail_open.py'
+              - 'lab/core/tests/review/test_m11_01_pet_guid_check_misses_concatenated_lookup.py'
+              - 'lab/core/tests/review/test_m11_13_stored_value_check_misses_call_stores.py'
+              - 'lab/core/tests/review/test_m11_37_bidi_scan_skips_a_file_with_one_stray_byte.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_accepts_a_client_call_in_carry.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_misses_a_second_namespace_binding.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_misses_client_function_handed_on.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_misses_client_object_kept_in_a_file_local.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_misses_ns_method_call_and_alias.py'
+              - 'lab/core/tests/review/test_m11_37_section_scan_misses_self_and_client_given_parameters.py'
+              - 'lab/core/tests/review/test_m13_05_combat_scan_accepts_a_combat_check_that_never_blocks.py'
+              - 'lab/core/tests/review/test_m13_05_macro_pin_misses_the_name_stored_through_underscore.py'
+              - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_cleaned_value_read_as_a_table_through_an_alias.py'
+              - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_raw_value_not_from_a_named_handle.py'
+              - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py'
 
   quality:
     name: Lint, typecheck, tests
@@ -128,16 +162,29 @@ jobs:
       - name: Generate a decimal-comma locale (serializer determinism graders)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: sudo locale-gen de_DE.UTF-8
-      # Two passes (M13-18): everything not `serial` across the runner's
-      # cores, then the RSS and CPU-time budget tests (`serial`, marked in
-      # conftest.py) alone. A command-line -m replaces the one in addopts,
-      # so both keep `not live`.
+      # The parallel pass (M13-18): everything not `serial` across the
+      # runner's cores. A command-line -m replaces the one in addopts, so it
+      # keeps `not live`.
+      # Since M15-21 (owner decisions, 2026-11-18) this job runs less than the
+      # whole suite; nightly.yml runs all of it every night at 09:17 UTC
+      # (off-hours for the owner), and release.yml on every tag:
+      # - the lab-addon grader mutation probes (`addon_mutation`, marked in
+      #   conftest.py) run only when the `changes` job's `addon_probes` filter
+      #   matched, or when that job failed: exactly one of the next two steps
+      #   runs;
+      # - the serial pass (the RSS and CPU-time budget tests) runs nightly
+      #   only, except its one test that is serial because it calls os.fork,
+      #   not because it measures: it guards the write gate's lock (L2), so
+      #   it stays here, alone, after the parallel pass.
       - name: pytest (parallel)
-        if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
+        if: needs.changes.result != 'success' || (needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.addon_probes == 'true')
         run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial"
-      - name: pytest (serial)
+      - name: pytest (parallel, lab-addon mutation probes skipped)
+        if: needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.addon_probes != 'true'
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial and not addon_mutation"
+      - name: pytest (the write gate's os.fork test)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q -m "serial and not live"
+        run: uv run --frozen pytest -q "lab/core/tests/test_guard_pins_m10_16.py::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits"
       - name: wowlab --version
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen wowlab --version
