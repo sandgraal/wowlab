@@ -1193,4 +1193,4 @@ Dated entries, newest last. Each names the fixture that prompted it.
   view skin, whose base is 0). The MD20 name is empty in both models.
   The fixture was written three times (2026-11-17 twice, 2026-11-18 once
   for the review's added fields); every value that was in an earlier run
-  was unchanged.
+  was unchanged, the timings and `captured` aside.
