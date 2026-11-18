@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Verify the current wowlab branch (lint, the tests the diff touches, make test-fast; the full make ci only for the files that need it), commit in the project format, push, and write the draft PR's body with the proof the reviewers need.
+description: Verify the current wowlab branch (lint, the tests the diff touches, make test-fast when lab/core changed; the full make ci only for the files that need it), commit in the project format, push, and write the draft PR's body with the proof the reviewers need.
 ---
 
 Ship the current branch.
