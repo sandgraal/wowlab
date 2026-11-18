@@ -4811,7 +4811,8 @@ bonus ids from `char gear`.
 *Conductor's ruling, 2026-11-18 (EV-44, §17.9; not an owner decision: the
 owner has been told and may overrule it):* render-plan tables are read
 through `gamedata` (`GameData.rows`, behind `RenderTables.from_gamedata`,
-the shape `looks` uses). `db2lake` (ADR-0028) was never built, so this is
+the shape `looks` uses), not through `db2lake` (ADR-0028, M12-03), which
+is on `main` but adds an SQLite step the render plan does not need; this is
 the one path. Geometry and pixels cross module boundaries as `bytes` or
 `memoryview` inside a Pydantic metadata model. §17.5's blend-mode cost model
 is left to M15-10.
