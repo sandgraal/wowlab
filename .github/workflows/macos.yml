@@ -5,7 +5,8 @@ name: macOS
 #
 # Off the pull-request path (owner decision, 2026-11-17, M18-15): until then
 # it was the `lab-desktop` job in ci.yml and ran on every pull request. It
-# now runs after each merge to main, nightly, and on demand for a branch:
+# now runs nightly and on demand for a branch (until 2026-11-18 also after
+# each merge to main; owner decision, M15-21):
 #   gh workflow run macos.yml --ref <branch>
 # A failed scheduled run is emailed to the owner by GitHub's default
 # notification settings (scheduled runs notify the user who last edited the
@@ -13,22 +14,20 @@ name: macOS
 # runs on main with the Windows ones (docs/AGENT_WORKFLOW.md).
 
 on:
-  push:
-    branches: [main]
   schedule:
-    # 10:17 UTC: 02:17 or 03:17 Pacific, clear of 6-9 AM Pacific.
-    - cron: "17 10 * * *"
+    # 09:17 UTC: 03:17 in the owner's local time (UTC-6, no daylight time), inside the
+    # owner's quiet hours (M15-21, 2026-11-18; it was 10:17 UTC).
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # A run in progress on main is never cancelled. GitHub keeps at most one running and one
-# pending run per group, and a newer queued run replaces the pending one, so
-# merges in quick succession can share a run rather than each getting its
-# own. The nightly run has a group of its own (M18-15), so a merge never
-# replaces it and it never replaces a merge's run. A superseded on-demand
-# branch run is cancelled.
+# pending run per group, and a newer queued run replaces the pending one.
+# The nightly run has a group of its own (M18-15), so an on-demand run never
+# replaces it and it never replaces one. A superseded on-demand branch run is
+# cancelled. (Merges to main started a run here until 2026-11-18, M15-21.)
 concurrency:
   group: macos-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}

@@ -7,8 +7,13 @@ name: Windows
 #
 # Not a required check (owner decisions, ADR-0014 amendments of 2026-10-15 and
 # 2026-10-17): the job took 15 to 30 minutes and every PR waited on it. It runs
-# after each merge to main, nightly, and on demand for a branch:
+# nightly and on demand for a branch:
 #   gh workflow run windows.yml --ref <branch>
+# It also ran after each merge to main until 2026-11-18, when the owner made
+# it nightly only (M15-21): a run took 34 to 44 minutes, a burst of merges
+# queued them, and the result was not read within the day anyway. The night
+# run is at 09:17 UTC, 03:17 in the owner's local time (UTC-6, no daylight time), inside
+# the owner's quiet hours; GitHub can start it 30 to 60 minutes late.
 # From 2026-10-17 to 2026-11-17 it also ran on a pull request that touched
 # lab/, the lockfile, the root pyproject, the root conftest or this file; the
 # owner took it off pull requests again on 2026-11-17 (M18-15; about 44
@@ -20,21 +25,18 @@ name: Windows
 # (.claude/skills/conduct/SKILL.md, docs/AGENT_WORKFLOW.md).
 
 on:
-  push:
-    branches: [main]
   schedule:
-    - cron: "17 7 * * *"
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # A run in progress on main is never cancelled. GitHub keeps at most one running and one
-# pending run per group, and a newer queued run replaces the pending one, so
-# merges in quick succession can share a run rather than each getting its
-# own. The nightly run has a group of its own (M18-15), so a merge never
-# replaces it and it never replaces a merge's run. A superseded on-demand
-# branch run is cancelled.
+# pending run per group, and a newer queued run replaces the pending one.
+# The nightly run has a group of its own (M18-15), so an on-demand run never
+# replaces it and it never replaces one. A superseded on-demand branch run is
+# cancelled. (Merges to main started a run here until 2026-11-18, M15-21.)
 concurrency:
   group: windows-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
