@@ -82,9 +82,11 @@ jobs, about 2.2 canvases), then every texture's header and length (read,
 checked by `blp.check_layout`, the checks `blp.decode` makes before it
 allocates, then dropped): decodable, mip 0 inside the file, and its size at
 most its section's and a whole fraction of it (`LayerSizeError`). Each
-texture is then read again and decoded alone; a decode whose format or
-size is not what its header pass approved is refused (`LayerSizeError`),
-and the painter refuses any image that does not cover its rectangle inside
+texture is then read again and decoded alone; a second read whose header
+gives another format or size than the header pass approved is refused
+before it is decoded, and the decode is compared again (`LayerSizeError`),
+so a file that grows between the two reads costs its bytes, never its
+decode, and the painter refuses any image that does not cover its rectangle inside
 the canvas, so no write lands outside a section or resizes the canvas.
 
 **What a composite costs.** Memory: the canvas (`W * H * 4` bytes, 8 MiB at
@@ -92,7 +94,8 @@ the canvas, so no write lands outside a section or resizes the canvas.
 the texture's RGBA, which is at most its section's), row-sized
 temporaries, and the final copy of the canvas: the peak is the canvas plus
 the larger of three textures' RGBA and a second canvas, at most four
-canvases plus one file (`compositor_peak_bytes`; 32 MiB at 2048 x 1024, 256
+canvases plus one file, whatever the reader returns the second time
+(`compositor_peak_bytes`; 32 MiB at 2048 x 1024, 256
 MiB at the 4096 x 4096 cap; 32 MiB measured with tracemalloc at 2048 x 1024
 with a full-size base texture). Time (§17.5's cost model; CPU time measured
 idle on the owner's M1, 2026-11-18): a blit row and a fully opaque
@@ -495,6 +498,18 @@ def _fit(job: PaintJob, data: bytes | bytearray | memoryview) -> _Fit:
     return _Fit(fmt, tw, th, job.width // tw, job.height // th)
 
 
+def _same(job: PaintJob, fit: _Fit, fmt: blp.Format, width: int, height: int) -> None:
+    """Refuse a texture read again as something other than what its header
+    pass approved."""
+    if (fmt, width, height) != (fit.fmt, fit.width, fit.height):
+        raise LayerSizeError(
+            f"file {job.file_data_id} read as {width} x {height} {fmt.upper()}, not the "
+            f"{fit.width} x {fit.height} {fit.fmt.upper()} its header gave a moment before; "
+            "not painted",
+            job.file_data_id,
+        )
+
+
 def _check_work(jobs: Sequence[PaintJob], width: int, height: int) -> None:
     """The work bound: at most `MAX_JOBS` jobs, and their rectangles' areas
     summed at most `MAX_WORK_CANVASES` canvases."""
@@ -706,14 +721,16 @@ def compose(plan: RenderPlan, reader: TextureReader) -> BodyTexture:
     stride = width * 4
     painted: list[PaintedLayer] = []
     for job, fit in zip(jobs, fits, strict=True):
-        image = blp.decode(reader.read(job.file_data_id))
-        if (image.format, image.width, image.height) != (fit.fmt, fit.width, fit.height):
-            raise LayerSizeError(
-                f"file {job.file_data_id} read as {image.width} x {image.height} "
-                f"{image.format.upper()}, not the {fit.width} x {fit.height} "
-                f"{fit.fmt.upper()} its header gave a moment before; not painted",
-                job.file_data_id,
-            )
+        data = reader.read(job.file_data_id)
+        # The second read's header is checked against the first before
+        # anything is decoded, so a file that grew between the reads is
+        # refused without its decode's allocation; and the decode after.
+        again = blp.parse_header(data)
+        fmt, _ = blp.check_layout(again, len(memoryview(data).cast("B")))
+        _same(job, fit, fmt, again.width, again.height)
+        image = blp.decode(data)
+        del data
+        _same(job, fit, image.format, image.width, image.height)
         _paint(canvas, stride, height, job, image, fit.kx, fit.ky)
         painted.append(
             PaintedLayer(

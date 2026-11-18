@@ -678,3 +678,22 @@ def test_more_area_than_the_budget_is_refused_unread_constructed() -> None:
     ):
         compositor.compose(plan([layer(2, 15, i) for i in range(n)]), reader)
     assert reader.reads == []
+
+
+def test_a_texture_that_grows_on_its_second_read_is_refused_undecoded_constructed() -> None:
+    """A 64 x 64 canvas whose base reads as 64 x 64 for the header pass and
+    as a valid 4096 x 4096 texture (64 MiB of RGBA once decoded) the second
+    time: refused from the second read's header, before any decode, under a
+    1 MiB tracemalloc ceiling (the files are made before the trace starts)."""
+    small = texture(64, 64, [(1, 2, 3, 255)] * (64 * 64))
+    large = blp_file(4096, 4096, blp.ENCODING_BGRA, 8, 8, b"\x10\x20\x30\xff" * (4096 * 4096))
+    reader = Flipping({1: small}, 1, large)
+    the_plan = plan([layer(1, 1, 0)], width=64, height=64)
+    tracemalloc.start()
+    try:
+        with pytest.raises(LayerSizeError, match="read as 4096 x 4096 BGRA"):
+            compositor.compose(the_plan, reader)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1024 * 1024, f"{peak / 2**20:.2f} MiB"
