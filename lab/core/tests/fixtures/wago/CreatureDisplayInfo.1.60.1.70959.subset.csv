@@ -1,0 +1,3 @@
+ID,ModelID,SoundID,SizeClass,CreatureModelScale,CreatureModelAlpha,BloodID,ExtendedDisplayInfoID,NPCSoundID,ParticleColorID,PortraitCreatureDisplayInfoID,PortraitTextureFileDataID,ObjectEffectPackageID,AnimReplacementSetID,Flags,StateSpellVisualKitID,PlayerOverrideScale,PetInstanceScale,UnarmedWeaponType,MountPoofSpellVisualKitID,DissolveEffectID,Gender,DissolveOutEffectID,CreatureModelMinLod,ConditionalCreatureModelID,MountMaxBankingAngle,Field_11_0_0_54210_026,TextureVariationFileDataID_0,TextureVariationFileDataID_1,TextureVariationFileDataID_2,TextureVariationFileDataID_3
+51894,6838,0,1,1,255,0,0,0,0,0,0,0,0,0,0,0,1,-1,0,0,0,0,0,0,45,0,0,0,0,0
+54041,7233,0,1,1,255,0,0,0,0,0,0,0,0,0,0,0,1,-1,0,0,0,0,0,0,45,0,0,0,0,0
