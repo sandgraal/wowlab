@@ -140,6 +140,8 @@ These are observations about dependencies, not a plan.
   only Wave 1 plus network fetchers for the addon sites.
 - **crew-book** and **comp-builder** can be picked: the owner accepted
   ADR-0036 (other players' names stored locally, opt-in) on 2026-11-11.
+  On 2026-11-17 the owner named crew-book as the companion feature they
+  want most, to follow (or run beside) M15. It has no tickets yet.
 - **keybind-coach** and **macro-doctor** need writers for the WTF text
   formats, which **wow-as-code** needs too; building those writers once serves
   all three.
