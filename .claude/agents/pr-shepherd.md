@@ -225,15 +225,19 @@ job that is not in `.github/rulesets/main.json`'s required list failed or
 is still pending: `lab (windows)`, `lab (macos)`, or on an old head the
 `review` job of the deleted Claude workflow), every
 **required** check is SUCCESS
-on the head sha, every thread the owner opened has an answer, every other
+on the head sha, the `Lint, typecheck, tests` job is SUCCESS on the head sha
+(it is not a required check since M15-16, and it is the one non-required job
+that does hold the merge: pending or failed, you wait or fix), every thread the owner opened has an answer, every other
 thread has a reply, and the conductor's dispatch said
-the reviewer verdicts are clean. A failed non-required job never holds
+the reviewer verdicts are clean. Any other failed non-required job never holds
 the merge, but it is never silent either: name it, with its run URL and
 the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
 red run on `main` is a bug to fix next, and a red run on the PR is how it
 is seen first). Then
-`gh pr merge <n> --squash` (never `--admin`, and no `--delete-branch`: the
+`gh pr merge <n> --squash --match-head-commit <head sha>` (never `--admin`,
+never `--auto`: auto-merge fires on the required checks alone and would not
+wait for the suite; and no `--delete-branch`: the
 repository deletes the remote branch on merge, and the local half of that
 flag is the cleanup you never do). Confirm:
 `git fetch origin main && git log origin/main -1 --format=%H%n%s`. Do not
