@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Write a derived fixture of an install's CASC index (M15-03), of its
 archive records and BLTE (M15-04, `--blte`), or of its encoding and root
-files and reads by file data id (M15-05, `--files`) (ADR-0033).
+files and reads by file data id (M15-05, `--files`), or of its textures as
+`blp` decodes them (M15-07, `--blp`) (ADR-0033).
 
     uv run python scripts/casc_facts.py --flavor FOLDER --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --blte --flavor FOLDER --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --files --flavor FOLDER --out PATH [--root INSTALL]
         [--model-table CSV]
+    uv run python scripts/casc_facts.py --blp --flavor FOLDER --out PATH [--root INSTALL]
 
 Opens one flavor's build in the install's `Data/` through `wowlab_core.casc`
 (read-only: every file is read into memory and closed; `shmem` and
@@ -57,6 +59,19 @@ states; the open's timings, the time of 300 reads and of the sample's
 local files, and the process's peak resident memory after the open and
 after the reads. Field names say `hash`, not `key`.
 
+With `--blp` the record is of textures (`casc.open_source`, `blp.decode`):
+a census of 8,000 ids evenly spaced over the ids the root takes and of
+300 of `ChrCustomizationMaterial`'s textures (`TextureFileData` by
+`MaterialResourcesID`, through `gamedata`), each id read and kept when it
+starts `BLP2`: counts by header class (encoding, alpha depth, alpha type),
+by what `blp` decoded or refused, by size, mip count and has-mips byte,
+how many DXT headers the two published DXT rules read differently, how
+many stored mip 0 sizes differ from the computed one; then one row for the
+first texture of each header class met (its header fields as stored, both
+rules' answers, the format, the computed mip 0 size, the MD5 of the
+decoded RGBA or the refusal, the decode time) and the first 1024 x 1024
+DXT1 met, timed best of five. Never a byte of a file or of its pixels.
+
 The install is `--root`, else `WOWLAB_WOW_ROOT`, else the platform default
 (`wowlab_core.install.discover`). Never print or commit its path: the JSON
 holds none.
@@ -81,7 +96,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from wowlab_core import casc, gamedata
+from wowlab_core import blp, casc, gamedata
 from wowlab_core.gamedata import GameDataError
 from wowlab_core.install import InstallError, discover
 
@@ -733,6 +748,218 @@ def files_facts(
     }
 
 
+# ─── --blp: textures decoded by `blp` (M15-07) ──────────────────────────────
+
+BLP_SAMPLE = 8000  # ids read, evenly spaced over the ids the root takes
+CHARACTER_SAMPLE = 300  # character customization textures read
+TIMING_SIDE = 1024  # §17.2's target is a 1024 x 1024 DXT1 decode
+
+
+def _blp_class(header: blp.BlpHeader) -> str:
+    return f"encoding {header.encoding}, alpha depth {header.alpha_depth}, alpha type {header.alpha_type}"
+
+
+def _blp_decode(data: memoryview) -> tuple[blp.BlpImage | None, str | None, float]:
+    """`blp.decode`, its refusal's class name, and the seconds it took."""
+    started = time.perf_counter()
+    try:
+        image = blp.decode(data)
+    except blp.BlpError as exc:
+        return None, type(exc).__name__, time.perf_counter() - started
+    return image, None, time.perf_counter() - started
+
+
+def _blp_row(source: casc.CascSource, fdid: int, why: str, *, timed: int = 1) -> dict[str, Any]:
+    """One texture: its header as stored, both DXT rules' answers, the
+    format decoded, the computed mip 0 size, and the MD5 of the decoded
+    RGBA (or the refusal); with `timed` > 1 the best of that many decodes.
+    No byte of the file or of the pixels."""
+    stat = source.stat(fdid)
+    data = source.read(fdid)
+    header = blp.parse_header(data)
+    dxt = header.encoding == blp.ENCODING_DXT
+    seconds: list[float] = []
+    for _ in range(timed):
+        image, refused, took = _blp_decode(data)
+        seconds.append(took)
+    row: dict[str, Any] = {
+        "why": why,
+        "fdid": fdid,
+        "content_hash": stat.content_key,
+        "file_size": len(data),
+        "header": {
+            "version": header.version,
+            "encoding": header.encoding,
+            "alpha_depth": header.alpha_depth,
+            "alpha_type": header.alpha_type,
+            "has_mips": header.has_mips,
+            "width": header.width,
+            "height": header.height,
+            "mip_count": header.mip_count,
+            "mip0_offset": header.mip_offsets[0],
+            "stored_mip0_size": header.mip_sizes[0],
+        },
+        "wiki_rule": blp.wiki_rule(header.alpha_type) if dxt else None,
+        "wow_export_rule": (
+            blp.wow_export_rule(header.alpha_depth, header.alpha_type) if dxt else None
+        ),
+        "decode_seconds": round(min(seconds), 4),
+    }
+    if image is None:
+        row["refused"] = refused
+    else:
+        row.update(
+            {
+                "format": image.format,
+                "mip0_size": image.mip0_size,
+                "rgba_md5": hashlib.md5(image.rgba, usedforsecurity=False).hexdigest(),
+            }
+        )
+    return row
+
+
+def _blp_census(
+    source: casc.CascSource, ids: Sequence[int]
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Read every id, keep the `BLP2` files, decode each: counts by header
+    class, by format decoded or refusal, by size, by mip count and by the
+    has-mips byte, how many DXT headers the wiki's and wow.export's rules
+    read differently, how many stored mip 0 sizes differ from the computed
+    one, the decode time, and
+    the first id of each header class (and the first 1024 x 1024 DXT1)."""
+    classes: Counter[str] = Counter()
+    outcomes: Counter[str] = Counter()
+    sizes: Counter[str] = Counter()
+    mips: Counter[int] = Counter()
+    has_mips: Counter[int] = Counter()
+    unread: Counter[str] = Counter()
+    first: dict[str, int] = {}
+    textures = other = differ = disagree = 0
+    seconds = 0.0
+    for fdid in ids:
+        try:
+            data = source.read(fdid)
+        except casc.FileUnavailable as exc:
+            unread[exc.state] += 1
+            continue
+        except casc.CascError as exc:
+            unread[type(exc).__name__] += 1
+            continue
+        if bytes(data[:4]) != blp.MAGIC:
+            other += 1
+            continue
+        textures += 1
+        try:
+            header = blp.parse_header(data)
+        except blp.BlpError as exc:
+            outcomes[type(exc).__name__] += 1
+            continue
+        label = _blp_class(header)
+        classes[label] += 1
+        first.setdefault(label, fdid)
+        sizes[f"{header.width}x{header.height}"] += 1
+        mips[header.mip_count] += 1
+        has_mips[header.has_mips] += 1
+        if header.encoding == blp.ENCODING_DXT and blp.wiki_rule(header.alpha_type):
+            rules = (
+                blp.wiki_rule(header.alpha_type),
+                blp.wow_export_rule(header.alpha_depth, header.alpha_type),
+            )
+            disagree += rules[0] != rules[1]
+        image, refused, took = _blp_decode(data)
+        seconds += took
+        if image is None:
+            outcomes[refused or "?"] += 1
+            continue
+        outcomes[image.format] += 1
+        differ += image.mip0_size != image.stored_mip0_size
+        if image.format == "dxt1" and image.width == image.height == TIMING_SIDE:
+            first.setdefault("timing", fdid)
+    return (
+        {
+            "ids_read": len(ids),
+            "not_read": dict(sorted(unread.items())),
+            "not_blp2": other,
+            "blp2": textures,
+            "by_header": dict(classes.most_common()),
+            "by_outcome": dict(outcomes.most_common()),
+            "by_size": dict(sizes.most_common(12)),
+            "by_mip_count": {str(k): v for k, v in sorted(mips.items())},
+            "by_has_mips": {str(k): v for k, v in sorted(has_mips.items())},
+            "dxt_rules_disagree": disagree,
+            "stored_mip0_size_differs": differ,
+            "decode_seconds": round(seconds, 3),
+        },
+        first,
+    )
+
+
+def _character_texture_ids(version: str) -> tuple[list[int], str | None]:
+    """The texture file ids of `ChrCustomizationMaterial` (through
+    `TextureFileData` by `MaterialResourcesID`), through `gamedata`; empty,
+    with the error's words, when a table cannot be had."""
+    data = gamedata.GameData()
+    try:
+        wanted = {r["MaterialResourcesID"] for r in data.rows("ChrCustomizationMaterial", version)}
+        ids = {
+            int(r["FileDataID"])
+            for r in data.rows("TextureFileData", version)
+            if r.get("MaterialResourcesID") in wanted and r.get("FileDataID", "").isdecimal()
+        }
+    except (GameDataError, KeyError) as exc:
+        return [], f"{type(exc).__name__}: {exc}"
+    return sorted(ids), None
+
+
+def blp_facts(install_root: str | None, flavor_folder: str, captured: str) -> dict[str, Any]:
+    """The derived record of the build's textures as `blp` decodes them."""
+    source = casc.open_source(discover(install_root), flavor_folder)
+    report = source.report
+    unique = sorted(set(source.root.ids()))
+    sampled = _sample(unique, BLP_SAMPLE)
+    census, first = _blp_census(source, sampled)
+    char_ids, char_error = _character_texture_ids(report.index.version)
+    char_sampled = _sample(char_ids, CHARACTER_SAMPLE)
+    char_census, char_first = _blp_census(source, char_sampled)
+    rows: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for where, firsts in (("character customization", char_first), ("root", first)):
+        for label, fdid in firsts.items():
+            if label == "timing" or fdid in seen:
+                continue
+            seen.add(fdid)
+            rows.append(_blp_row(source, fdid, f"the first {where} texture with {label}"))
+    timing_id = char_first.get("timing", first.get("timing"))
+    timing = (
+        None
+        if timing_id is None
+        else _blp_row(source, timing_id, "the first 1024 x 1024 DXT1 met; best of 5", timed=5)
+    )
+    return {
+        "schema": SCHEMA,
+        "kind": "blp-derived",
+        "made_by": "scripts/casc_facts.py --blp",
+        "captured": captured,
+        "flavor": flavor_folder,
+        "product": report.index.product,
+        "version": report.index.version,
+        "build": report.index.build,
+        "limits": {"max_dimension": blp.MAX_DIMENSION, "max_pixels": blp.MAX_PIXELS},
+        "root_sample": {
+            "what": f"{len(sampled)} ids evenly spaced over the {len(unique)} the root takes",
+            **census,
+        },
+        "character_sample": {
+            "what": "ChrCustomizationMaterial's textures (TextureFileData by "
+            f"MaterialResourcesID): {len(char_sampled)} of {len(char_ids)}, evenly spaced",
+            "tables_error": char_error,
+            **char_census,
+        },
+        "textures": rows,
+        "timing": timing,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--flavor", required=True, help="the flavor folder, as on disk")
@@ -748,6 +975,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="write the encoding, root and file-read record (M15-05)",
     )
+    mode.add_argument(
+        "--blp", action="store_true", help="write the texture record decoded by blp (M15-07)"
+    )
     parser.add_argument(
         "--model-table",
         type=Path,
@@ -762,6 +992,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise FactsError("--out is already there; a fixture is never replaced")
         if args.files:
             record = files_facts(args.root, args.flavor, args.captured, args.model_table)
+        elif args.blp:
+            record = blp_facts(args.root, args.flavor, args.captured)
         else:
             storage = casc.open_storage(discover(args.root), args.flavor)
             make = blte_facts if args.blte else facts
@@ -779,6 +1011,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"open {timings['open_seconds']} s, {timings['reads']['files']} reads in "
             f"{timings['reads']['seconds']} s, peak RSS {record['memory']['peak_rss_mb_after_reads']} MB; "
             f"ModelFileData sample {record['model_file_data']['states']}"
+        )
+        return 0
+    if args.blp:
+        print(
+            f"wrote {out}: {record['product']} {record['version']}, "
+            f"{record['root_sample']['blp2']} + {record['character_sample']['blp2']} textures "
+            f"decoded, {len(record['textures'])} rows"
         )
         return 0
     report = storage.report
