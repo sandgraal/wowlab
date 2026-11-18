@@ -1287,6 +1287,8 @@ Picked by the owner on 2026-10-19 after the Wave 5 review (`docs/handoffs/M14-re
 
 *Owner decision, 2026-10-21:* paused after M15-05 for M16 (`docs/LAB_PLAN.md` §17.9, §18). M15-06 to M15-13 are not dispatched until the owner resumes the wave.
 
+*Owner decision, 2026-11-17:* resumed after v0.3 (the owner's pick in session: "Ship v0.3, then resume 3D (M15)"; v0.3.0 was published the same day). M15-06 to M15-13 dispatch in their own dependency order and no longer wait for the M16 review.
+
 ## [x] M15-01 — lab-addon schema 4: the character's identity (race, body type, class)
 **Size:** S · **Depends on:** nothing
 
