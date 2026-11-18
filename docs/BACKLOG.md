@@ -50,7 +50,7 @@ The owner accepts ADR-0031 (or amends it on the plan PR). Then the conductor, in
 ---
 
 ## [x] M13-02 — Windows is a first-class CI target (dropped)
-*Dropped by the owner, 2026-11-18 (in session: "Drop both"). wowlab stays the owner's own tool for now, so no human run on a real Windows install is planned. `lab (windows)` keeps running in CI (M15-19 is its current failure). Not built; ticked so it leaves the owner list.*
+*Dropped by the owner, 2026-11-18 (in session, picking the option "Drop both (Recommended)"). The conductor's reason, as the question put it: the owner is keeping wowlab private for now, so no human run on a real Windows install is planned. `lab (windows)` keeps running in CI (M15-19 is its current failure). Not built; ticked so it leaves the owner list.*
 **Size:** M · **Depends on:** M13-01 · **owner** (a human run on a real Windows install)
 
 Bring back the `lab (windows)` job on `windows-latest`, running the Lab suite as it did before 2026-09-30 (`docs/LAB_PLAN.md` §9 amendment; it caught the byte-0 lock bug on PR #59). Fix what it finds: junctions, long paths (`\\?\`), case-insensitive name collisions, `WOWLAB_WOW_ROOT` with spaces in it, files the client holds open. Per `docs/LAB_PLAN.md` §15.3 E3, also add a `macos-latest` run of the same suite. Once the Windows job is green on `main`, the conductor adds its exact name to `.github/rulesets/main.json` and an amendment to ADR-0014, and the owner re-applies the ruleset (`scripts/bootstrap-github.sh`). A fix that changes what `guard.py`, `svmerge.py` or `profiles.py` does is split off as a `T` grader ticket that lands first.
@@ -167,7 +167,7 @@ The conductor writes `docs/handoffs/M13-review.md` per `docs/LAB_PLAN.md` §11: 
 ---
 
 ## [x] M13-13 — The 30-day gate (dropped)
-*Dropped by the owner, 2026-11-18 (in session: "Drop both"). The 30-day gate measured public uptake; the owner is keeping wowlab private for now and decides about public work when they announce it. No gate record is written.*
+*Dropped by the owner, 2026-11-18 (in session, picking the option "Drop both (Recommended)"). The conductor's reason, as the question put it: the gate assumes public growth, and the owner is keeping wowlab private for now. No gate record is written.*
 **Size:** S · **Depends on:** M13-11 · **owner** (the decision)
 
 Thirty days after v0.1, the conductor records in `docs/handoffs/M13-gate.md` the counts of `docs/LAB_PLAN.md` §15.4 and the commands that produced them: release-asset downloads, distinct non-owner authors of issues and discussions (bots excluded), and stars. The owner decides: continue public work (at least 50 downloads and at least 5 non-owner issues or discussions, the issue count weighing more) or freeze the public surface and return to personal-lab mode. The conductor does not make the call.
@@ -977,7 +977,7 @@ Found 2026-10-18 in the security review of #269 (M13-55), on `main` before it. `
 ---
 
 ## [x] M13-62 — The capture tool hunts `accountList` entries (dropped)
-*Dropped by the owner, 2026-11-18 (in session: the conductor's default, taken). The capture tool already blanks `accountList` in config files; hunting its entries elsewhere needs a slice of the owner's `Config.wtf` and is not worth one. The **[verify]** in `docs/LAB_FORMATS.md` §5 stays.*
+*Dropped by the owner, 2026-11-18 (in session: the conductor's default, taken). The capture tool already blanks `accountList` in config files; hunting its entries elsewhere needs a slice of the owner's `Config.wtf` (the conductor's reason for the default, as the question put it). The **[verify]** in `docs/LAB_FORMATS.md` §5 stays.*
 **Size:** XS · **Depends on:** M13-55 · **owner** (needs a slice of the owner's `Config.wtf`)
 
 Left **[verify]** by M13-55 (#269, 2026-10-18; the security and code reviews both asked for a ticket): `accountList` is blanked in config files but its entries are not hunted elsewhere, because the entry separator is not in `docs/LAB_FORMATS.md` and the only real fixture holds the CVar blank. The owner pastes the `SET accountList` line of a real `Config.wtf` with the entries replaced by `A`, `B` (the separator kept); the conductor records the separator with a dated **[verify]** note in `docs/LAB_FORMATS.md` §5; then an implementer splits the value on the separator, drops a leading `!`, and adds each entry the way an `accountName` value is added (M13-55: `_trim_account_piece`'s character test decides what can be hunted, and the capture stops on an entry it cannot), with a labelled constructed test.
@@ -1001,7 +1001,7 @@ Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_p
 
 Found 2026-10-18 in the security review of #277 (M13-53). `check_wiki` has no matcher for `Player-<n>-<hex>` GUIDs: `[x](Player-1234-0ABCDEF0)` exits 1 and prints the GUID, the bare GUID as text passes, and `wiki_diagnose` does not redact it. The owner's own GUIDs are in the set ADR-0019 keeps scrubbed but never reach the runner, and the scrubbed placeholder GUIDs in the repository would be false positives. The owner decides: either record in the `check_wiki` docstring and under ADR-0019 that the wiki gate does not match GUIDs, or add a GUID matcher that exempts the placeholder ranges. Then an implementer does the one chosen.
 
-**Acceptance:** the decision recorded; if a matcher, labelled constructed tests and `make ci` green; reviewed by `security-reviewer`.
+**Acceptance:** the `check_wiki` docstring says the gate does not match `Player-<n>-<hex>` GUIDs and why (written by the implementer); the dated note under ADR-0019 added by the conductor, who alone edits `docs/DECISIONS.md`; the touched tests green; reviewed by `security-reviewer`.
 
 ---
 
@@ -1018,9 +1018,9 @@ Three small items found 2026-10-18 in the security and code reviews of #278 (M13
 **Size:** XS · **Depends on:** M13-52, M13-51
 *Owner decision, 2026-11-18 (in session: the conductor's default, taken): build part (1) only, `snap show` and the profile listing print the same words as `firstrun` for an unreadable target. Part (2) is dropped: `tree` and `doctor` keep their two spellings of a link.*
 
-(1) Found 2026-10-18 in the code review of #271 (M13-52): `cli._stored_target(None)` returns `None`, so `snap show` and `_print_profile` print `-> None` for an entry whose target could not be read, as on `main` before it; `firstrun.py` prints `(target unreadable)` in the same situation. Print the same words. (2) Found 2026-10-18 in the code review of #276 (M13-51), pre-existing on every platform: `layout.link_facts` (`tree`) prints a link's raw stored text (`./Account`, `../Interface/`) while `firstrun._link_target` (`doctor`'s survey) prints it after `Path` normalises it (`Account`, `../Interface`). Making them agree changes one command's bytes; the owner picks which (raw as stored is what §6.1 promises for `tree`, "a link's text as stored … as `tree` spells it", M13-43; the survey's form was never promised). Then the implementer aligns the other and the byte-identity graders that pin it are updated with a dated note.
+(1) Found 2026-10-18 in the code review of #271 (M13-52): `cli._stored_target(None)` returns `None`, so `snap show` and `_print_profile` print `-> None` for an entry whose target could not be read, as on `main` before it; `firstrun.py` prints `(target unreadable)` in the same situation. Print the same words. (2) Found 2026-10-18 in the code review of #276 (M13-51), pre-existing on every platform: `layout.link_facts` (`tree`) prints a link's raw stored text (`./Account`, `../Interface/`) while `firstrun._link_target` (`doctor`'s survey) prints it after `Path` normalises it (`Account`, `../Interface`). Making them agree changes one command's bytes; the owner picks which (raw as stored is what §6.1 promises for `tree`, "a link's text as stored … as `tree` spells it", M13-43; the survey's form was never promised). Then the implementer aligns the other and the byte-identity graders that pin it are updated with a dated note. (Part (2) is dropped, 2026-11-18: see the note above.)
 
-**Acceptance:** `(target unreadable)` in both printers with a labelled constructed test; the owner's choice recorded here; both commands print the same text for the same link; `make ci` green; reviewed by `code-reviewer`.
+**Acceptance:** `(target unreadable)` in both printers (`snap show` and the profile listing) with a labelled constructed test; `tree` and `doctor` output unchanged; `make ci` green; reviewed by `code-reviewer`.
 
 ---
 
