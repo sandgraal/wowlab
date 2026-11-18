@@ -1141,3 +1141,36 @@ Dated entries, newest last. Each names the fixture that prompted it.
   written. Nothing here settles the 2026-09-22 open points: an unlisted
   addon is at the client's default, and which copy the client reads stays
   **[verify]**. No contradiction with this reference.
+- **2026-11-17, §12, the derived fixture `macos-70959/derived/m2-models.json`
+  (M15-08; `humanmale_hd` 1011653 and `humanfemale_hd` 1000764 and their
+  fourteen skins, read through `wowlab_core.m2` at 1.60.1.70959).** Confirmed
+  as §12 states: version 272; chunks `MD21 TXAC AFID LDV1 SFID TXID BFID`,
+  in that order, filling the file, no `SKID`; bones (215, 201) and
+  attachments (45, 43) inside the M2; vertices 48 bytes, Z-up (the
+  positions run from about 0 to 2.1 in z); textures 16 bytes, with `TXID`
+  holding one id per texture, non-zero exactly for the type-0 ones;
+  attachments 40 bytes (id, bone, a u16, position, a 20-byte track; the
+  head's, id 11, at z 1.85 and 1.71); sections 48 and batches 24 bytes;
+  `level << 16` added to the index start makes every section end inside
+  the indices and the furthest end at the last one, while the vertex start
+  needs no shift (the furthest section ends at the last lookup entry, below
+  65,536), so the wiki's "and alike" does not reach the vertex start here.
+  The female model's textures are twelve (types 1, 6, 0, 2, 15, 16, 18, 17,
+  19, 0, 0, 0), and its skin repeats some geoset ids across sections (3202,
+  3203, 3204 twice each). Not in §12 until now: `SFID` holds the header's
+  one view skin, then six LOD skins (the view count at 0x44 is 1). The
+  skin header is 64 bytes, not 48: after the five arrays a u32 at 0x2C,
+  then an array of 104 (male) or 117 (female) entries (shadow batches by the
+  wiki, not read) and eight zero bytes. **Contradiction with the wiki, not
+  with this reference:** the u32 at 0x2C, which the wiki names
+  `boneCountMax`, is in all fourteen skins where that skin's vertices start
+  in the M2's vertex array: 0 for the view skin, then the running sum of
+  the earlier skins' lookup counts (37,813, 75,626, … for the male), the
+  last skin's start plus its lookup count being exactly the model's vertex
+  count (226,301 and 248,970). That settles §17.7's "LOD skins, probably":
+  the M2's vertices are the seven skins' vertex sets one after another, the
+  view skin's first, each skin's lookup indexing its own set (the view
+  skin's is the identity). `m2` keeps the field as `Skin.vertex_base` and
+  does not add it to the lookup (`Skin.triangles` is right as it stands for
+  the view skin, whose base is 0); that it means the same in other models
+  is **[verify]**. The MD20 name is empty in both models.
