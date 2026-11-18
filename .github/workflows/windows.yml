@@ -71,7 +71,9 @@ jobs:
       # reason, so a Windows-only test that skipped shows in the log rather
       # than only as a lower pass count (M13-65).
       - name: pytest lab/core/tests (parallel)
-        run: uv run --frozen pytest -q -rs -s -m "not live and not serial" lab/core/tests/test_m15_19_diag.py lab/core/tests/test_l1_sweep_live.py # TEMPORARY M15-19
+        run: |
+          uv run --frozen pytest -q -rs -s -m "not live and not serial" lab/core/tests/test_m15_19_diag.py
+          uv run --frozen pytest -q -rs -n auto -m "not live and not serial" lab/core/tests/test_l1_sweep_live.py lab/core/tests/test_snapshot.py lab/core/tests/test_guard.py
       - name: pytest lab/core/tests (serial)
         run: uv run --frozen pytest -q -rs -m "serial and not live" lab/core/tests
       # Long paths off (M13-15T): the default on many player PCs. The runner
