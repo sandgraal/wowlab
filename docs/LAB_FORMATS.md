@@ -1141,3 +1141,12 @@ Dated entries, newest last. Each names the fixture that prompted it.
   written. Nothing here settles the 2026-09-22 open points: an unlisted
   addon is at the client's default, and which copy the client reads stays
   **[verify]**. No contradiction with this reference.
+- **2026-11-17, §11, BLP textures (M15-07; `lab/core/tests/fixtures/macos-70959/derived/blp.json`, Forever 1.60.1.70959, product `wowf`).**
+  What `scripts/casc_facts.py --blp` read: 8,000 ids evenly spaced over the root (3,833 of them BLP2), and 300 of `ChrCustomizationMaterial`'s 25,116 textures (`TextureFileData` by `MaterialResourcesID`). Six points against the text above.
+  (1) **Character textures are not all DXT.** Of the 300 character textures, 127 are DXT1, 87 DXT5 and 86 palette (alpha depth 0 or 8), from 128×32 to 2048×1024. This contradicts "every character texture sampled at 70450 was DXT1 or DXT5 … 128² to 512²" for this build; the 70450 sample is not re-read here.
+  (2) **No texture met where the two DXT rules disagree.** Every DXT header was depth/type 0/0, 1/0, 4/1, 8/1 or 8/7, or BC5 (0/11, 8/11; 6 refused). The rule conflict stays **[verify]**: it was not met, so nothing settles which rule the client follows, and the decoder still refuses such a texture.
+  (3) **Palette textures carry alpha type 8, and the palette's fourth byte (X) was 0 in every palette checked by hand** (two depth-8 textures and the rows recorded). The alpha comes from the separate plane after the indices. Depth 1 was met (6 textures) and decodes LSB first, as above. **Depth 4 was not met**, so the 4-bit palette alpha stays **[verify]**.
+  (4) **The has-mips byte takes the values 0, 1, 2, 16 and 17**, so it is not a boolean; what the bits mean is **[verify]**. Mip counts (slots with nonzero offset and size) run from 1 to 12.
+  (5) **No stored mip 0 size differed from the computed one** in 4,133 textures. Whether a later mip's stored size is ever wrong was not checked; the decoder still computes the size.
+  (6) **BGRA (encoding 3) was met** at alpha depth 8 (11 textures) and 0 (1).
+  The capture was taken with the client running; every read was checked against its content hash.
