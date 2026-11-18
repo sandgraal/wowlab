@@ -122,6 +122,7 @@ EXCLUDED: dict[str, str] = {
     "looks save": "writes into wowlab's user data directory",
     "looks import-char": "writes into wowlab's user data directory",
     "looks page": "writes a page into wowlab's user data directory",
+    "casc cat": "writes an extracted file into wowlab's user data directory",
     "snap export": "writes a file outside the install",
     "db2 fetch": "downloads a table into wowlab's cache",
     "db2 builds": "asks wago.tools for its list of versions",
@@ -571,6 +572,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         _offline_tables(f, sweep)
         sweep.cli("addons", "list", *fl, "--json")
         sweep.cli("addons", "check", *fl, "--json")
+        # Reads the game-data archives (M15-06); exit 1 where there are none.
+        sweep.cli("casc", "stat", "--fdid", "1", *fl, "--json")
         sweep.cli("char", "kept", *fl, "--json")
         if _has_combat_log(f.path):
             sweep.cli("log", "tail", "-n", "20", *fl, "--json")

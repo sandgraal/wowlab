@@ -20,7 +20,8 @@ the required `quality` job, with the rest of `lab/core/tests`.
   excluded with `NO_CONFIRM_SHAPE`, and one the server is made to run
   without the step fails this check.
 - `ui` itself is excluded.
-- `looks page --out` and `log tail --follow` are refused.
+- `looks page --out`, `casc cat --out` (a path, or `-` for the output) and
+  `log tail --follow` are refused; `casc cat` without `--out` runs.
 - A dummy command added to the tree in the test appears in the UI, runs, and
   needs no UI code. Dummies the form cannot honestly offer fail parity, so
   each check above is shown to be able to fail.
@@ -91,6 +92,12 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     # Owner rulings of 2026-10-15 (ADR-0029).
     ("log", "tail"): {"follow": "a run must end"},
     ("looks", "page"): {"out": "it can create a file anywhere outside an install"},
+    # M15-06 (§17.1 "In the UI"): `casc cat` writes only to its default place
+    # from the UI; `--out PATH` and `--out -` (its bytes to the output) are
+    # both this one parameter, refused whatever its value.
+    ("casc", "cat"): {
+        "out": "from the UI a file goes only to its default place in wowlab's data folder"
+    },
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""
 
@@ -727,8 +734,20 @@ def test_ui_itself_is_excluded(real: _Served) -> None:
         (("looks", "page"), {"out": "page.html"}),
         (("looks", "page"), {"out": ""}),
         (("log", "tail"), {"follow": True}),
+        (("casc", "cat"), {"out": "files/x.bin"}),
+        (("casc", "cat"), {"out": "-"}),
+        (("casc", "cat"), {"out": ""}),
+        (("casc", "cat"), {"out": "../../../x.bin"}),
     ],
-    ids=["looks page --out", "looks page --out empty", "log tail --follow"],
+    ids=[
+        "looks page --out",
+        "looks page --out empty",
+        "log tail --follow",
+        "casc cat --out",
+        "casc cat -",
+        "casc cat --out empty",
+        "casc cat --out traversal",
+    ],
 )
 def test_looks_page_out_and_log_tail_follow_are_refused(
     real: _Served, path: tuple[str, ...], params: dict[str, object]
@@ -738,6 +757,20 @@ def test_looks_page_out_and_log_tail_follow_are_refused(
     offered = {p["name"]: p for p in item["params"]}
     assert offered[name]["refused"] == REFUSED_PARAMS[path][name]
     assert real.run(path, params) == (403, {"error": "excluded"})
+
+
+def test_casc_cat_without_out_runs_to_its_default_place(real: _Served) -> None:
+    """M15-06: from the UI `casc cat` runs with `--fdid` and never `--out`,
+    so it writes only to its default place under the user data directory."""
+    status, payload = real.run(("casc", "cat"), {"fdid": 5})
+    assert status == 200, payload
+    argv = json.loads(payload["stdout"])
+    assert argv[:2] == ["casc", "cat"]
+    assert "--fdid=5" in argv
+    assert not any(a == "-" or a.startswith("--out") for a in argv), argv
+    stat = real.commands()[("casc", "stat")]
+    assert stat["excluded"] is None and stat["confirm"] is None
+    assert all(p["refused"] is None for p in stat["params"])
 
 
 def test_log_tail_without_follow_still_runs(real: _Served) -> None:

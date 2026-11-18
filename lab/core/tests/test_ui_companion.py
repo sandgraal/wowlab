@@ -353,7 +353,7 @@ _KEPT = (
     "followed. Read only.",
     "Runs the commands of the wowlab you started, on this machine only.",
     "The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved "
-    "looks, the db2 cache, pages), run directly.",
+    "looks, the db2 cache, pages, extracted game files), run directly.",
     "One character as the lab-addon last saved it: the file it wrote at logout or /reload , "
     "never the session in progress, beside the key bindings and macros the client last wrote, "
     "and its earlier saves that your backups hold.",

@@ -139,6 +139,7 @@ def test_commands_are_registered_in_the_order_they_were_before_the_split() -> No
         "profile",
         "looks",
         "char",
+        "casc",  # M15-06, added after the split
     ]
     snap = root.commands["snap"]
     assert isinstance(snap, typer.core.TyperGroup)

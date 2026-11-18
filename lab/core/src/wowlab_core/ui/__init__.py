@@ -59,7 +59,10 @@ arguments after `--`, flags given or not, never through a shell. Refused
 that declares `--yes` (read from the tree) whose plan run has none of the
 three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end), `looks page` with `out` (it can create a file
-anywhere outside an install) and `snap export` (it creates one). `sv dump` always runs with `--install-only`
+anywhere outside an install), `casc cat` with `out` in either form, a path
+or `-` for its output (from the UI an extracted file goes only to its
+default place under the user data directory; §17.1, M15-06) and `snap
+export` (it creates one). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -271,6 +274,12 @@ MAX_PENDING_CONFIRMS: int = 32
 _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
+    # M15-06 (§17.1 "In the UI"): from the UI an extracted file goes only to
+    # its default place under the user data directory; `--out` names another
+    # file there or, as `-`, sends the file's bytes to the output.
+    ("casc", "cat"): {
+        "out": (False, "from the UI a file goes only to its default place in wowlab's data folder")
+    },
 }
 # Flags the server gives a leaf on every run, as it gives `--json`, and never
 # the page, by leaf path (M16-42). `sv dump` reads any file it is named, so

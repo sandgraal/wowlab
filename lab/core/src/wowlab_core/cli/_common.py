@@ -392,6 +392,14 @@ char_app = typer.Typer(
 app.add_typer(
     char_app, name="char", short_help="Characters as the lab-addon recorded them (read only)."
 )
+casc_app = typer.Typer(
+    help="The game's own files, read from the install's game-data archives by file data id. "
+    "Nothing in the install is changed: an extracted file goes into wowlab's own data folder.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    casc_app, name="casc", short_help="Look up and extract the game's files by file data id."
+)
 
 
 # ─── options ─────────────────────────────────────────────────────────────────

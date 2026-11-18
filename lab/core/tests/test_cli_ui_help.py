@@ -27,9 +27,16 @@ def test_keybinds_holds_the_keys_and_the_macros() -> None:
 
 def test_every_command_the_page_refuses_is_named() -> None:
     text = _help()
-    sentence = "ui itself, log tail --follow, looks page --out and snap export are not offered."
+    sentence = (
+        "ui itself, log tail --follow, looks page --out, casc cat --out and snap export are "
+        "not offered, so casc cat writes only to its default place."
+    )
     assert sentence in text
     # Each leaf the server refuses whole is in the sentence.
     for path in ui._EXCLUDED_LEAVES:
         words = "ui itself" if path == ("ui",) else " ".join(path)
         assert words in sentence, path
+    # And each parameter it refuses (M15-06: casc cat --out).
+    for path, names in ui._REFUSED_PARAMS.items():
+        for name in names:
+            assert f"{' '.join(path)} --{name.replace('_', '-')}" in sentence, (path, name)

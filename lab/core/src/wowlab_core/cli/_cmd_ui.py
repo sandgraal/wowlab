@@ -43,8 +43,9 @@ def ui_command() -> None:
     any of the seven. undo, sv merge and macros fix refuse when something
     changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
-    --follow, looks page --out and snap export are not offered. If no
-    browser opens, the URL is printed once on stdout."""
+    --follow, looks page --out, casc cat --out and snap export are not
+    offered, so casc cat writes only to its default place. If no browser
+    opens, the URL is printed once on stdout."""
     # The browser is opened on a thread: `webbrowser` waits for a browser it
     # runs in the foreground (a text browser, or a `BROWSER` program), and
     # that browser's request must find the server already serving. What it
