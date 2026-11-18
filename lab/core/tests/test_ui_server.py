@@ -1217,6 +1217,21 @@ def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> N
     assert len(recorder.calls()) == 2
 
 
+@pytest.mark.parametrize("out", ["files/x.bin", "-", "../../x.bin", "/tmp/x.bin", ""])
+def test_casc_cat_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
+    """M15-06 (§17.1 "In the UI"): `casc cat --out` names another file or,
+    as `-`, sends the file's bytes to the output; from the UI the file goes
+    only to its default place, so `--out` is refused whatever its value,
+    and `casc cat` without it runs."""
+    reply = _run(real, ["casc", "cat"], {"out": out, "fdid": "5"})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    assert recorder.calls() == []
+    argv = _argv_of(_run(real, ["casc", "cat"], {"fdid": "5"}))
+    parsed = _parsed(_real_tree(), ["casc", "cat"], argv)
+    assert (parsed["out"], parsed["fdid"]) == (None, 5), argv
+    assert len(recorder.calls()) == 1
+
+
 def test_no_shell_is_involved(
     planted: Any, recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

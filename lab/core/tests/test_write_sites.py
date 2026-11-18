@@ -78,6 +78,14 @@ _PAGE_FILE = (
     "after creating it, refusing when it or any folder above it holds .build.info or "
     ".flavor.info, and the command runs it before doing any work"
 )
+_CASCFILES = "lab/core/src/wowlab_core/cascfiles.py"
+_CASC_FILE = (
+    "`wowlab casc cat` (§17.1, M15-06): only inside casc/<product>-<version>/ under the "
+    "user data directory, both parts checked as safe folder names; check_out refuses a "
+    "path outside that folder as written or resolved, in an install "
+    "(lookstore.refuse_install), through a link below casc/, or in characters/, before "
+    "the folder is made and again after; an existing file is never replaced"
+)
 _DB2LAKE = "lab/core/src/wowlab_core/db2lake.py"
 _LAKE_DIR = (
     "the db2lake (§14.2, ADR-0028, M12-03): only the lake directory (default the user data "
@@ -95,7 +103,7 @@ _UI_RUN = (
     "`wowlab ui` (ADR-0029, M13-24): starts only the same `wowlab` (this interpreter by "
     "absolute path, `-P -m wowlab_core`) with an argv list and no shell, built from the "
     "Click leaf's declared parameters; every leaf that declares --yes, `ui`, `log tail "
-    "--follow`, `looks page --out` and `snap export` are refused, so the child writes "
+    "--follow`, `looks page --out`, `casc cat --out` and `snap export` are refused, so the child writes "
     "only what the CLI "
     "itself writes, never into an install outside the gate; the server writes no file"
 )
@@ -188,6 +196,23 @@ ALLOWED: dict[tuple[str, str], str] = {
     + "; a new temp name beside the page (x mode)",
     (_LOOKSPAGE, "tmp.replace(final)"): _PAGE_FILE + "; the temp file onto the page, whole",
     (_LOOKSPAGE, "tmp.unlink(missing_ok=True)"): _PAGE_FILE + "; its own temp file",
+    (_CASCFILES, "from wowlab_core.snapshot import make_private_dirs, user_data_dir"): (
+        _CASC_FILE + "; imports the folder maker for the build folder's subfolders only"
+    ),
+    (_CASCFILES, "make_private_dirs(parent)  # 0700 under the user data directory (M16-78)"): (
+        _CASC_FILE + "; the file's folder and its missing parents, all under casc/ in the "
+        "user data directory (M16-78: 0700)"
+    ),
+    (_CASCFILES, 'with tmp.open("xb") as handle:'): _CASC_FILE
+    + "; a new temp name beside the file (x mode)",
+    (_CASCFILES, "target.hardlink_to(tmp)"): _CASC_FILE + "; publishes without replacing",
+    (_CASCFILES, "tmp.unlink(missing_ok=True)"): _CASC_FILE + "; its own temp file",
+    (_CASCFILES, "tmp.rename(target)"): _CASC_FILE
+    + "; where no hard link can be made, the whole temp file renamed onto a name checked "
+    "free (Windows' rename refuses an existing one)",
+    (_CASCFILES, "path.unlink()"): _CASC_FILE
+    + "; the sweep: only a regular file (not a link) named as this module names its temp "
+    "files, in the folder it writes into, last changed over a day ago",
 }
 
 REFERENCED_NAMES = frozenset({"write_text", "write_bytes", "unlink", "rmtree"})

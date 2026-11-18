@@ -399,6 +399,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
                 ["binds", "coach"],
             )
         ],
+        # M15-06: the sandbox has no game-data archives, so both end in
+        # their one error line, which is player copy too.
+        ["casc", "stat", "--fdid", "1"],
+        ["casc", "cat", "--fdid", "1"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],

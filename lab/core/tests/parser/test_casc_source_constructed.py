@@ -600,22 +600,36 @@ def test_the_states_of_files_not_read_constructed(tmp_path: Path) -> None:
     unfetched = source.stat(built.ids["unfetched"])
     assert (unfetched.state, unfetched.words) == ("not_local", "not in your client's local files")
     assert unfetched.encoding_keys == (built.ek["unfetched"].hex(),)
+    # Every not_local stat says it is part of this game version, not on this
+    # computer, and that wowlab never downloads (domain review, 2026-11-18).
+    assert unfetched.note == casc.NOTE_NOT_LOCAL
     french = source.stat(built.ids["french"])
+    # Listed only for another locale: part of this game version, but not
+    # among what this client loads, so not `STATE_WORDS["not_in_build"]`.
     assert (french.state, french.words) == (
         "not_in_build",
-        "not part of this game version's files",
+        "not among the files this client loads for your language and platform",
     )
     assert french.note is not None
-    assert french.note.startswith("the root lists it only for another language or platform")
-    assert "so this client does not load it" in french.note
+    assert french.note.startswith(
+        "this game version's file list names it only for another language or platform"
+    )
     absent = source.stat(12345)
-    assert absent.state == "not_in_build"
-    assert absent.note == "the root does not list it; whether a game table names it was not checked"
+    assert (absent.state, absent.words) == ("not_in_build", "not part of this game version's files")
+    assert absent.note == (
+        "this game version's file list does not name it; whether a game table names it was "
+        "not checked"
+    )
     vouched = source.stat(12345, in_table=True)
-    assert (vouched.state, vouched.note) == ("not_in_build", "the root does not list it")
+    assert (vouched.state, vouched.note) == (
+        "not_in_build",
+        "this game version's file list does not name it",
+    )
     unknown = source.stat(12345, in_table=False)
     assert unknown.state == "unknown_id"
-    assert unknown.note == "the root does not list it, and the caller says no game table names it"
+    assert unknown.note == (
+        "this game version's file list does not name it, and the caller says no game table names it"
+    )
     assert source.stat(2_000_000_000).state == "not_in_build"
     assert source.stat(built.ids["french"], in_table=False).state == "not_in_build"
     assert source.stat(built.ids["plain"], in_table=False).state == "local"
@@ -641,7 +655,7 @@ def test_a_content_key_not_in_the_encoding_is_not_local_constructed(tmp_path: Pa
     source.root._ckeys[at * 16 : at * 16 + 16] = b"\x01" * 16
     stat = source.stat(built.ids["unfetched"])
     assert stat.state == "not_local"
-    assert stat.note == "1 of its content keys are not in the encoding file"
+    assert stat.note == casc.NOTE_NOT_LOCAL + "; 1 of its content keys are not in the encoding file"
     with pytest.raises(casc.FileUnavailable):
         source.read(built.ids["unfetched"])
 
@@ -902,12 +916,24 @@ def test_not_local_notes_name_the_flags_constructed(tmp_path: Path) -> None:
     source = _open(root)
     flag1 = source.stat(ids["flag1"])
     assert flag1.state == "not_local" and flag1.note is not None
-    assert flag1.note.startswith("listed only in root rows with content bit 0x1")
+    assert flag1.note.startswith(casc.NOTE_NOT_LOCAL + "; ")
+    assert flag1.note.endswith(
+        "listed only in parts of the file list whose meaning is not confirmed; on the install "
+        "measured, the game had downloaded almost none of them"
+    )
     assert "loose file" not in flag1.note
     assert "[verify]" not in flag1.note and "70450" not in flag1.note
     install = source.stat(ids["install"])
     assert install.state == "not_local" and install.note is not None
-    assert install.note.startswith("may be on disk as a loose file in the flavor folder")
+    # An Install-flagged row: not in the archives, maybe a loose file, so not
+    # "not on this computer" (domain review of M15-06, round 2).
+    assert install.note == casc.NOTE_LOOSE_FILE
+    assert install.note == (
+        "it is part of this game version but not in the game-data archives; it may be on "
+        "disk as a loose file in the flavor folder (for example inside the .app). wowlab "
+        "never downloads game files"
+    )
+    assert "not on this computer" not in install.note
     assert "0x1" not in install.note and "[verify]" not in install.note
 
 
@@ -920,8 +946,9 @@ def test_the_speech_locale_is_reported_and_named_in_the_note_constructed(
     assert (source.report.locale, source.report.speech_locale) == ("enUS", "deDE")
     stat = source.stat(ids["deDE"])
     assert stat.state == "not_in_build" and stat.note is not None
+    assert stat.words == "listed only for your speech language, which wowlab does not read"
     assert stat.note.startswith(
-        "listed for your speech language (deDE), which this reader does not filter by"
+        "your speech language is deDE; wowlab reads the files for your text language"
     )
     assert "(enUS) alone" in stat.note
     assert "does not load it" not in stat.note

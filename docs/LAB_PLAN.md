@@ -1449,6 +1449,8 @@ wowlab addon install|remove lab [--dry-run] [--yes]  # §13.1 (M11-02)
 wowlab looks races|options|save|show|compare|page …  # §13.2 (M11-06, M11-07)
 wowlab char show [--character C] [--json]           # §13.1 (M11-04)
 wowlab char list [--account A] [--json] [--brief]   # §14.4 (M12-09)
+wowlab casc stat --fdid N [--json]                  # §17.1 (M15-06)
+wowlab casc cat --fdid N [--out PATH|-] [--json]    # §17.1 (M15-06)
 ```
 
 *Amended 2026-09-28:* the Wave 2 commands above are listed for
@@ -4679,12 +4681,44 @@ enUS on macOS). The
 spike's "3 in the root but not local" were probably `0x1` rows of ids
 whose other row is local, which the reader now tries next. Whether a
 partly downloaded install shows more is **[verify]**.
+*Note, 2026-11-18 (M15-06 domain review):* the state names stay four, but
+an id this product's root lists only in blocks this client skips (another
+language or platform, or low violence) is part of this game version, so its
+`not_in_build` stat says "not among the files this client loads for your
+language and platform", and one listed only for the speech language "listed
+only for your speech language, which wowlab does not read"; "not part of
+this game version's files" stays for an id the root does not list. Every
+*not in your client's local files* stat says the file is part of this game
+version but not on this computer, that wowlab never downloads game files,
+and that whether the game fetches it later is **[verify]**.
 
 **What it writes:** nothing inside the install (L1). Decoded files go under
 the data directory, `casc/<product>-<build>/`, keyed by product and build
 (two products may share a version string) and never overwritten (L5): `wowlab casc cat --fdid N` writes `files/<fdid>-<ckey8>.bin` there by default (the content key's first eight hex digits in the name, so a patched file lands beside the old one; a repeat with the same key writes nothing and says so), `--out` may name another path inside the same folder or stdout, and the later modules share the same cache; both parts of the folder name are discovered strings checked as safe folder names. One subfolder is
 exempt from never-overwrite: `characters/`, which holds derived output
 that `char model` re-makes on request (§17.6).
+*Note, 2026-11-17 (M15-06, as built):* the folder is
+`casc/<product>-<version>/`, the version string being the build's (GLOSSARY
+"Build": the full four-part version string, since the last number alone is
+not unique; two products may share it, so the product is in the name); each
+part may hold only letters, digits, `_` and `.`, and may not end in `.`. A
+relative `--out` is taken inside that folder, an absolute one must be inside
+it; refused, with nothing written: a path outside it as written or with
+links resolved; a path whose first part is `files` or `characters`, in any
+letter case and with trailing dots and spaces ignored, whatever follows
+(reserved names of the shared cache: `files/` holds only the default names,
+`characters/` is `char model`'s); a path with a part that ends in a dot or
+a space or holds a `:` (Windows reads those as another name); a path in an
+install; a path through a link or a file below `casc/`; a folder; and
+`--out -` with `--json` or when the output is a terminal (binary bytes would
+reach it). An existing file is "already extracted" only when its size and
+MD5 are the file's; any other file there is refused, never replaced, and a
+repeat finds the default file before decoding anything. The final name is
+never written directly: a temp file beside it is published by a hard link
+or, without hard links, by a rename, which on Windows refuses an existing
+name and elsewhere follows a last check that the name is free, so a killed run
+leaves only a temp file, and the next write into that folder removes temp
+files older than a day.
 
 **In the UI.** `wowlab ui` offers every command the CLI tree has (§15.6),
 so `casc stat` appears in the Commands tab as a plain read when M15-06

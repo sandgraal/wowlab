@@ -136,6 +136,8 @@ __all__ = [
     "DECODE_LIMIT",
     "KEY_BYTES",
     "LOCALE_FLAGS",
+    "NOTE_LOOSE_FILE",
+    "NOTE_NOT_LOCAL",
     "PLATFORM_SKIP",
     "RECORD_HEADER_SIZE",
     "ROOT_BLOCK_LIMIT",
@@ -148,6 +150,8 @@ __all__ = [
     "ROOT_LOW_VIOLENCE",
     "ROOT_NO_NAME_HASH",
     "STATE_WORDS",
+    "WORDS_NOT_LOADED",
+    "WORDS_SPEECH_ONLY",
     "BlteBlock",
     "BlteLayout",
     "BucketMissingError",
@@ -1738,6 +1742,27 @@ STATE_WORDS: dict[str, str] = {
     "encrypted": "encrypted",
     "unknown_id": "unknown id",
 }
+# `not_in_build`'s words for an id the root lists only in blocks this client
+# skips (another locale or platform, or low violence), and for one listed
+# only for the speech locale, which the reader does not filter by: the file
+# is part of this game version, only not among what this client loads
+# (M15-06 domain review, 2026-11-18).
+WORDS_NOT_LOADED = "not among the files this client loads for your language and platform"
+WORDS_SPEECH_ONLY = "listed only for your speech language, which wowlab does not read"
+# What every `not_local` stat says, first in its note (M15-06 domain review):
+# wowlab fetches nothing, and whether the game would is not known.
+NOTE_NOT_LOCAL = (
+    "it is part of this game version but not on this computer; wowlab never downloads game "
+    "files, and whether the game fetches it later is not yet confirmed"
+)
+# The same for an id listed in a block flagged `Install`: such a file may be
+# a loose file on disk rather than in the archives (domain review, round 2).
+NOTE_LOOSE_FILE = (
+    "it is part of this game version but not in the game-data archives; it may be on disk "
+    "as a loose file in the flavor folder (for example inside the .app). wowlab never "
+    "downloads game files"
+)
+_NOT_LISTED = "this game version's file list does not name it"
 
 
 class CascLocaleError(CascError):
@@ -2286,7 +2311,9 @@ def platform_of(flavor_dir: Path) -> Platform:
 
 class CascFileStat(BaseModel):
     """Where one file data id stands (§17.1's four states, and `unknown_id`
-    for an id the caller says is in no table and the root does not list).
+    for an id the caller says is in no table and the root does not list;
+    `words` is `STATE_WORDS[state]` but for `not_in_build` of an id listed only
+    in blocks this client skips, `WORDS_NOT_LOADED` or `WORDS_SPEECH_ONLY`).
     When local: the content key, the encoding key the local index lists and
     the decoded size (the encoding file's). `key_names` are the encryption
     key names met, one per encrypted local copy; `content_keys` and
@@ -2389,13 +2416,17 @@ class CascSource:
         )
 
     def _absent(self, fdid: int, in_table: bool | None) -> CascFileStat:
-        """The stat of an id the root takes no row for."""
+        """The stat of an id the root takes no row for. An id the root lists
+        only in blocks this client skips is `not_in_build` in its own words
+        (`WORDS_NOT_LOADED`, or `WORDS_SPEECH_ONLY` when the skipped rows are
+        for the speech locale): it is part of this game version, just not
+        among what this client loads (M15-06 domain review, 2026-11-18)."""
         if not 0 <= fdid < _FDID_LIMIT:
             return CascFileStat(
                 fdid=fdid,
                 state="unknown_id",
                 words=STATE_WORDS["unknown_id"],
-                note="a file data id is a whole number from 0 to 2**31 - 1",
+                note="a file data id is a whole number from 0 to 2,147,483,647",
             )
         others = self.root.skipped_flags(fdid)
         if others:
@@ -2405,27 +2436,26 @@ class CascSource:
             if speech != self.report.locale and any(lo & bit for _, lo in others):
                 # The client may load it for its speech language; this reader
                 # filters by the text locale alone (LAB_FORMATS §10, [verify]).
+                words = WORDS_SPEECH_ONLY
                 note = (
-                    f"listed for your speech language ({speech}), which this reader does not "
-                    f"filter by: it reads the files for your text language "
-                    f"({self.report.locale}) alone ({flags})"
+                    f"your speech language is {speech}; wowlab reads the files for your text "
+                    f"language ({self.report.locale}) alone ({flags})"
                 )
             else:
+                words = WORDS_NOT_LOADED
                 note = (
-                    "the root lists it only for another language or platform, or for a "
-                    f"low-violence client, so this client does not load it ({flags})"
+                    "this game version's file list names it only for another language or "
+                    f"platform, or for a low-violence client ({flags})"
                 )
-            return CascFileStat(
-                fdid=fdid, state="not_in_build", words=STATE_WORDS["not_in_build"], note=note
-            )
+            return CascFileStat(fdid=fdid, state="not_in_build", words=words, note=note)
         if in_table is False:
             return CascFileStat(
                 fdid=fdid,
                 state="unknown_id",
                 words=STATE_WORDS["unknown_id"],
-                note="the root does not list it, and the caller says no game table names it",
+                note=f"{_NOT_LISTED}, and the caller says no game table names it",
             )
-        note = "the root does not list it"
+        note = _NOT_LISTED
         if in_table is None:
             note += "; whether a game table names it was not checked"
         return CascFileStat(
@@ -2533,17 +2563,12 @@ class CascSource:
         if unlisted:
             notes.append(f"{unlisted} of its content keys are not in the encoding file")
         if state == "not_local":
-            if any(h.content_flags & ROOT_INSTALL for h in hits):
-                notes.insert(
-                    0,
-                    "may be on disk as a loose file in the flavor folder (for example inside "
-                    "the .app); not in the archives",
-                )
+            loose = any(h.content_flags & ROOT_INSTALL for h in hits)
+            notes.insert(0, NOTE_LOOSE_FILE if loose else NOTE_NOT_LOCAL)
             if all(h.content_flags & ROOT_FLAG_1 for h in hits):
                 notes.append(
-                    "listed only in root rows with content bit 0x1, whose meaning is not yet "
-                    "confirmed; on the install measured, the client had fetched almost none "
-                    "of those rows' content"
+                    "listed only in parts of the file list whose meaning is not confirmed; "
+                    "on the install measured, the game had downloaded almost none of them"
                 )
         return CascFileStat(
             fdid=fdid,

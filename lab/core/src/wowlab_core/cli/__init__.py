@@ -222,6 +222,7 @@ from wowlab_core.cli import _cmd_profile
 from wowlab_core.cli import _cmd_addon
 from wowlab_core.cli import _cmd_char
 from wowlab_core.cli import _cmd_looks
+from wowlab_core.cli import _cmd_casc
 from wowlab_core.cli import _cmd_ui
 # isort: on
 
@@ -596,6 +597,36 @@ from wowlab_core.cli._cmd_binds import (
 )
 from wowlab_core.cli._cmd_binds import (
     binds_list as binds_list,
+)
+from wowlab_core.cli._cmd_casc import (
+    _CASC_STDOUT as _CASC_STDOUT,
+)
+from wowlab_core.cli._cmd_casc import (
+    CascCatReport as CascCatReport,
+)
+from wowlab_core.cli._cmd_casc import (
+    CascFdidOpt as CascFdidOpt,
+)
+from wowlab_core.cli._cmd_casc import (
+    CascStatReport as CascStatReport,
+)
+from wowlab_core.cli._cmd_casc import (
+    _casc_done as _casc_done,
+)
+from wowlab_core.cli._cmd_casc import (
+    _casc_flavor as _casc_flavor,
+)
+from wowlab_core.cli._cmd_casc import (
+    _casc_open as _casc_open,
+)
+from wowlab_core.cli._cmd_casc import (
+    _casc_to_stdout as _casc_to_stdout,
+)
+from wowlab_core.cli._cmd_casc import (
+    casc_cat as casc_cat,
+)
+from wowlab_core.cli._cmd_casc import (
+    casc_stat as casc_stat,
 )
 from wowlab_core.cli._cmd_char import (
     _AGREEMENTS as _AGREEMENTS,
@@ -2815,6 +2846,9 @@ from wowlab_core.cli._common import (
     binds_app as binds_app,
 )
 from wowlab_core.cli._common import (
+    casc_app as casc_app,
+)
+from wowlab_core.cli._common import (
     char_app as char_app,
 )
 from wowlab_core.cli._common import (
@@ -2874,6 +2908,7 @@ _PARTS = (
     _cmd_addon,
     _cmd_char,
     _cmd_looks,
+    _cmd_casc,
     _cmd_ui,
 )
 _UNSET = object()

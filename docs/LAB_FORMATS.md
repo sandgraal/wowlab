@@ -532,6 +532,14 @@ the owner's install at 1.60.1.70450 on 2026-10-19 (read-only).
   (X), which this reader does not filter by" and does not say the client
   skips it. Whether the client loads a file listed only for its speech
   locale (spoken audio, for example) is **[verify]**.
+  *Amended 2026-11-18 (M15-06 domain review; `docs/LAB_PLAN.md` §17.1, the
+  note of 2026-11-18):* the state is still `not_in_build`, but its words are
+  now "listed only for your speech language, which wowlab does not read",
+  and its note begins "your speech language is X; wowlab reads the files
+  for your text language (Y) alone". An id listed only in other skipped
+  blocks (another locale, the other platform, `LowViolence`) is worded "not
+  among the files this client loads for your language and platform"; "not
+  part of this game version's files" is kept for an id with no root row.
 
 ## 11. BLP textures (M15-07)
 
