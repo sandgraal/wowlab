@@ -70,18 +70,40 @@ def refuse_install(out: Path) -> None:
             raise FactsError("--out is inside a game install; nothing but guard writes there")
 
 
+def recordings(folder: Path, name: str, version: str) -> list[Path]:
+    """The recordings of one table at one version in `folder`: the whole
+    table (`<Table>.<version>.csv`), or its subsets (`….subset.csv` and
+    `….<part>.subset.csv`, cut on disjoint id sets), in name order."""
+    whole = folder / f"{name}.{version}.csv"
+    if whole.is_file():
+        return [whole]
+    prefix = f"{name}.{version}."
+    return sorted(
+        p
+        for p in folder.glob(f"{name}.{version}.*subset.csv")
+        if p.is_file() and p.name.startswith(prefix) and p.name.count(".") <= prefix.count(".") + 2
+    )
+
+
 def read_tables(folder: Path, version: str) -> renderplan.RenderTables:
-    """The recorded tables of `version` in `folder`, whole or subset."""
+    """The recorded tables of `version` in `folder`, whole or subsets (the
+    rows of every subset of a table, one after another; their headers must
+    agree)."""
     tables: dict[str, list[dict[str, str]]] = {}
     for name in renderplan.REQUIRED_TABLES:
-        for candidate in (f"{name}.{version}.csv", f"{name}.{version}.subset.csv"):
-            path = folder / candidate
-            if path.is_file():
-                with path.open(encoding="utf-8", newline="") as handle:
-                    tables[name] = list(csv.DictReader(handle))
-                break
-        else:
+        paths = recordings(folder, name, version)
+        if not paths:
             raise FactsError(f"--tables has no {name} for {version}")
+        rows: list[dict[str, str]] = []
+        header: list[str] | None = None
+        for path in paths:
+            with path.open(encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                rows += list(reader)
+                if header is not None and list(reader.fieldnames or []) != header:
+                    raise FactsError(f"{path.name}: its header is not the other recordings'")
+                header = list(reader.fieldnames or [])
+        tables[name] = rows
     return renderplan.RenderTables(version, tables)
 
 

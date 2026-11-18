@@ -1,10 +1,10 @@
-"""renderplan's file states on the owner's install, by hand (M15-09;
-ADR-0033 layer c). Never run in CI (ADR-0012):
+"""renderplan's file states on the owner's install, by hand (M15-09, the
+gear's files since M15-13; ADR-0033 layer c). Never run in CI (ADR-0012):
 
     WOWLAB_WOW_ROOT=<the install> uv run pytest -m live lab/core/tests/test_renderplan_live.py -s
 
 Builds the plan of each character the derived fixture
-(`fixtures/macos-70959/derived/renderplan-files.json`) records, from the
+(`fixtures/macos-70959/derived/renderplan-gear-files.json`) records, from the
 recorded tables and the `macos-70450` lab-addon records, against the
 install's own `casc.open_source`, and checks every file's state, size and
 content hash against the fixture. Skipped when the install has patched past
@@ -27,8 +27,13 @@ from wowlab_core import casc, labaddon, renderplan
 from wowlab_core.install import ENV_ROOT, discover
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+# The record with the gear (M15-13): every file the plan names, the body's
+# included (`renderplan-files.json`, the body-only record, is compared with it
+# in `test_renderplan.py`).
 FACTS: dict[str, Any] = json.loads(
-    (FIXTURES / "macos-70959" / "derived" / "renderplan-files.json").read_text(encoding="utf-8")
+    (FIXTURES / "macos-70959" / "derived" / "renderplan-gear-files.json").read_text(
+        encoding="utf-8"
+    )
 )
 CHARS = FIXTURES / "macos-70450" / "forever" / "WTF" / "Account" / "90000001#6" / "1"
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "renderplan_facts.py"

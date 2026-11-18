@@ -4870,6 +4870,36 @@ record's options the barber shop did not list are not defaulted; without a
 record, only options with no requirement take their first choice, as a
 stand-in, not the character's look.
 
+*Note, 2026-11-18 (M15-13, the gear chain in `wowlab_core.renderplan`):*
+what the item tables at 1.60.1.70959 show (recorded 2026-11-18, full
+downloads counted, subsets committed). `ItemBonus` (31 KB, recorded
+whole) has **no type-7 row**, and every `ItemModifiedAppearance` row has
+modifier 0 with one row per item, so on Forever's data today no bonus id
+changes an item's look and the type-7 priority rule is unexercised (still
+**[verify]**, graded on constructed rows only). No `AttachmentGeosetGroup`
+cell is non-zero and `GeosetGroupOverride` is 0 everywhere.
+`HelmetGeosetVisData` answers 400, as written above. In
+`ComponentModelFileData` every race-0 row has `GenderIndex` 2; in
+`ComponentTextureFileData` `GenderIndex` 3 (8,276 rows, all race 0) marks
+a file for either body type and 2 appears only on 143 rows of named races,
+so the plan reads 2 and 3 both as "either body type" (**[verify]**);
+`ClassID` is 0 on every row of both. Weapon, shield and belt model files and
+their textures have no component row and are drawn as they are. Readings
+the plan states (each **[verify]**, in the module docstring): the feet's
+"`0` selects `2`" is applied to group 20 (2002, the foot covered by the
+shoe), not group 5; where two slots select one group the first slot of
+the priority whose value is not 0 takes it; "gloves over chest over shirt
+for group 8" is read as gloves whose group-4 value is not 0 leaving group 8
+(sleeves) at its default; a shoulder's model n is side `PositionIndex` n,
+drawn at 6 then 5; a model no attachment of its slot takes (a belt's, the
+few chests with models) is a collection model at the origin;
+`HelmetGeosetVis_<n>` is read by body type n; an item body-texture piece's
+component section n is placed in the layout's section type n (sections 0
+to 7 occur). The neck, finger and trinket slots are listed as showing
+nothing; the ranged slot is listed as unsupported. Each file's state is in
+`macos-70959/derived/renderplan-gear-files.json`: all 43 files of the two
+fixture characters are local.
+
 ### 17.5 The body texture
 
 `wowlab_core.compositor` builds the body texture in Python so pytest grades
@@ -4920,7 +4950,9 @@ palette textures, beside DXT1 and DXT5, up to 2048×1024; `blp` decodes
 all three, `docs/LAB_FORMATS.md` §11, amendment of 2026-11-17). From memory or from another project, **[verify]** until a test on
 the install says so: which `.idx` version wins when two exist; whether LZ4
 ever appears; whether any player gear is encrypted; the bonus-id
-semantics (TrinityCore); the `+1` in the item geoset value; attachment
+semantics (TrinityCore; *note, 2026-11-18, M15-13:* `ItemBonus` at 70959
+has no type-7 row, so nothing on Forever exercises them yet); the `+1` in
+the item geoset value; attachment
 positions being model-space in the bind pose; collection models at the
 origin; the blend-mode enum; the 4-bit palette alpha; the M2 vertex count
 against the skin's (226,301 against 37,813: LOD skins, probably; *note,

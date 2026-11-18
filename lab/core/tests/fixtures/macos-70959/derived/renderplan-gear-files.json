@@ -1,0 +1,417 @@
+{
+  "schema": 1,
+  "kind": "renderplan-files-derived",
+  "made_by": "scripts/renderplan_facts.py",
+  "captured": "2026-11-18",
+  "flavor": "_forever_",
+  "product": "wowf",
+  "version": "1.60.1.70959",
+  "build": 70959,
+  "locale": "enUS",
+  "platform": "macos",
+  "tables_build": "1.60.1.70959",
+  "characters": [
+    {
+      "label": "Sangraal-Sett",
+      "chr_model_id": 9,
+      "look": "record",
+      "files": [
+        {
+          "file_data_id": 959310,
+          "role": "body model",
+          "state": "local",
+          "words": "local",
+          "size": 28775314,
+          "content_hash": "bf8ec02811f587739b1d3344dd841f49",
+          "note": null
+        },
+        {
+          "file_data_id": 959287,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350716,
+          "content_hash": "4f0bf299b1d8f3c055be2d7eeb391d45",
+          "note": null
+        },
+        {
+          "file_data_id": 959281,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 23036,
+          "content_hash": "70fd0b4f0c7d2ed418a2b90b32824cb8",
+          "note": null
+        },
+        {
+          "file_data_id": 959239,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 175948,
+          "content_hash": "c1c728106efc251826ca24cca294219d",
+          "note": null
+        },
+        {
+          "file_data_id": 3457610,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350724,
+          "content_hash": "8a38ed81d4764cfab0ebf4033176be58",
+          "note": null
+        },
+        {
+          "file_data_id": 3457561,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350724,
+          "content_hash": "b0be703a6b824f92910e0f451e2caeae",
+          "note": null
+        },
+        {
+          "file_data_id": 3457574,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44876,
+          "content_hash": "b9de92bbcf38a4eb51c84cf93169a02a",
+          "note": null
+        },
+        {
+          "file_data_id": 3484667,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "6335316b9c41a888818b3c855dd8e774",
+          "note": null
+        },
+        {
+          "file_data_id": 151197,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "08d421674ac4c6e73f0e8161fa65e14f",
+          "note": null
+        },
+        {
+          "file_data_id": 162791,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "9ae1765222d3cdeecdbdaa9026ee35ef",
+          "note": null
+        },
+        {
+          "file_data_id": 160140,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12098,
+          "content_hash": "7f7d633ffc0a73eb7a05eb1e4a0b2473",
+          "note": null
+        },
+        {
+          "file_data_id": 157418,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "ce7d24052c78cdbee1a1453667cde4ec",
+          "note": null
+        },
+        {
+          "file_data_id": 157422,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "25da3e56010c12fec3d58895ceb1ff64",
+          "note": null
+        },
+        {
+          "file_data_id": 154804,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "1eddb6f55633b7935aeb9bde50878784",
+          "note": null
+        },
+        {
+          "file_data_id": 154963,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "17680d9e4ea892f7ea5fb0cc765dedc4",
+          "note": null
+        },
+        {
+          "file_data_id": 152732,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12098,
+          "content_hash": "1350ad5fcf767ed4f5bca13960208c32",
+          "note": null
+        },
+        {
+          "file_data_id": 148915,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "1caa38d7b6eb29a1afa4142e47865585",
+          "note": null
+        },
+        {
+          "file_data_id": 148771,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "4855abc051e3b24adc8804b78dbad91b",
+          "note": null
+        },
+        {
+          "file_data_id": 153776,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12098,
+          "content_hash": "90f0eab279f334cdba439c59ece7b59b",
+          "note": null
+        },
+        {
+          "file_data_id": 137297,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23036,
+          "content_hash": "8f3d3a5c8f530f623e03a0a4a91a8298",
+          "note": null
+        },
+        {
+          "file_data_id": 146176,
+          "role": "item model",
+          "state": "local",
+          "words": "local",
+          "size": 4884,
+          "content_hash": "e1f62983c371324a5f88e86a28d96e3a",
+          "note": null
+        },
+        {
+          "file_data_id": 146095,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 6652,
+          "content_hash": "633802d6b8442f90e0ded3413f9511bd",
+          "note": null
+        },
+        {
+          "file_data_id": 147020,
+          "role": "item model",
+          "state": "local",
+          "words": "local",
+          "size": 12204,
+          "content_hash": "cb9ef3e42a0d5f8ae17346c06ee13a45",
+          "note": null
+        },
+        {
+          "file_data_id": 147025,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 6652,
+          "content_hash": "2aa76c6700b8c5dde014159061b0cd32",
+          "note": null
+        }
+      ]
+    },
+    {
+      "label": "Dangling-Participle",
+      "chr_model_id": 3,
+      "look": "defaults",
+      "files": [
+        {
+          "file_data_id": 917116,
+          "role": "body model",
+          "state": "local",
+          "words": "local",
+          "size": 31739842,
+          "content_hash": "21270a0840bc0037138075a1f9c7ca26",
+          "note": null
+        },
+        {
+          "file_data_id": 916966,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 350716,
+          "content_hash": "3283277abc78b59bbe5f3beb2fcedf35",
+          "note": null
+        },
+        {
+          "file_data_id": 916834,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 175948,
+          "content_hash": "ec204626825656e5357574fcd41d4162",
+          "note": null
+        },
+        {
+          "file_data_id": 916943,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "5cdfa7aefc161f40896eb73f7a160830",
+          "note": null
+        },
+        {
+          "file_data_id": 918869,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 88572,
+          "content_hash": "758f1803b746b65ed83f40d881c72a9e",
+          "note": null
+        },
+        {
+          "file_data_id": 3492828,
+          "role": "texture",
+          "state": "local",
+          "words": "local",
+          "size": 44900,
+          "content_hash": "0f6aa45dc612baa26216e9eb328506ca",
+          "note": null
+        },
+        {
+          "file_data_id": 162713,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "57df805e04450db4b91b467cfbf2df43",
+          "note": null
+        },
+        {
+          "file_data_id": 160062,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 6635,
+          "content_hash": "c4d04bf08c82ad325f3895b22a287e5b",
+          "note": null
+        },
+        {
+          "file_data_id": 163009,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "8635a3fc9a1bf0867b50c9b9b7e6c172",
+          "note": null
+        },
+        {
+          "file_data_id": 160346,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12098,
+          "content_hash": "59c2d35a2be788ba6beaa720da2a2b39",
+          "note": null
+        },
+        {
+          "file_data_id": 157554,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 13462,
+          "content_hash": "624daf67a50a50c8a1e4a30d45d58714",
+          "note": null
+        },
+        {
+          "file_data_id": 157573,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 88554,
+          "content_hash": "ffc70eeb99f25e4187215be6745b9b29",
+          "note": null
+        },
+        {
+          "file_data_id": 152658,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12124,
+          "content_hash": "84a13ecfe97e2e6cc1fb7755b7ea8bbf",
+          "note": null
+        },
+        {
+          "file_data_id": 149056,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 13462,
+          "content_hash": "1c418109ba82999f847cc63b25ab3056",
+          "note": null
+        },
+        {
+          "file_data_id": 148916,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23018,
+          "content_hash": "75ec5b5f9bd1779dd63e7268c579c2f2",
+          "note": null
+        },
+        {
+          "file_data_id": 153827,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 12098,
+          "content_hash": "8de38b65671e7f8abf16d8a81e62ee64",
+          "note": null
+        },
+        {
+          "file_data_id": 137296,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 23036,
+          "content_hash": "9b5e0110bcb36c60b8222380aa876994",
+          "note": null
+        },
+        {
+          "file_data_id": 147530,
+          "role": "item model",
+          "state": "local",
+          "words": "local",
+          "size": 4192,
+          "content_hash": "80f806c43acf93da1dad5b74307cd1f5",
+          "note": null
+        },
+        {
+          "file_data_id": 147532,
+          "role": "item texture",
+          "state": "local",
+          "words": "local",
+          "size": 6652,
+          "content_hash": "a684daea7a257c1ae500637fa0dbaed5",
+          "note": null
+        }
+      ]
+    }
+  ],
+  "reopens": 0
+}
