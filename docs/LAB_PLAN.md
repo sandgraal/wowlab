@@ -2005,6 +2005,48 @@ yet, and a fixture produced by the thing under test proves nothing).
   A Windows or macOS regression is now found after merge, by the nightly run
   or by an on-demand run on the branch before it.
 
+  *Amended 2026-11-18 (owner decisions, M15-21; the measurements are in
+  `docs/handoffs/test-time-2026-11.md`):* what runs when.
+  - A pull request and a push to `main` run `ci.yml`. Its "Lint,
+    typecheck, tests" job runs the parallel pass; on a pull request the
+    seventeen lab-addon grader mutation probes (marked `addon_mutation` in
+    the root `conftest.py`) are in it only when `lab/addon/**`,
+    `tests/addon/**`, `lab/core/src/wowlab_core/toc.py`, one of the probes,
+    `conftest.py`, `pyproject.toml` or `uv.lock` changed. A push to `main` is
+    never docs-only and always runs the probes, since a newer push now
+    cancels a run in progress on `main` as on a pull request, and the newer
+    run must grade the whole tree. The serial pass is not run in `ci.yml`,
+    except two tests that are serial for what they do to the machine, not
+    for a budget, and guard the write gate; they run alone after the
+    parallel pass: the `os.fork` test of the gate's lock
+    (`test_guard_pins_m10_16.py`) and the perf-budget test that starts a
+    process named like the game client and shows the gate's client check
+    refuses it (`test_perf_budget.py`, M15-18).
+  - What now runs only at night: the serial pass's CPU-time and RSS bounds
+    on hostile input, among them the scrub's linear-time tests
+    (`tests/scripts/test_lab_capture*.py`), `test_guard_listing_memo.py`'s
+    scaling test, and the luadata, WTF, macros and BLP budgets. A
+    regression in one of them merges and is found the next morning.
+  - Every night at 09:17 UTC, off-hours for the owner, `nightly.yml` runs
+    the whole Linux suite, both passes with the mutation probes, and
+    `windows.yml` and `macos.yml` run the Lab suite on those platforms
+    (no longer after each merge); `perf-nightly.yml` runs at 08:47 UTC.
+    The desktop suites and the nightly one also run on demand for a branch.
+  - A release tag runs everything in `release.yml`, unchanged.
+  - Locally, `make test` runs both passes with the probes, `make test-fast`
+    leaves out the review probes and the serial pass, and `make ci` runs
+    each test once: it no longer repeats `make test-parser` or the hook
+    tests under 3.12, which `make test` has just run; the hook tests under
+    3.9 stay. `make test-parser` and `make hooks-test` remain targets.
+    `make test-parser` selects with `-m parser`, which replaces the
+    `not live` of `addopts`, so it is not strictly a subset of `make test`:
+    a parser test marked `live` would run there and never in `make test`
+    (none is, 2026-11-18). Its 24 `serial` parser tests run in `make test`'s
+    serial pass.
+  A budget regression, or a change outside those paths that breaks the
+  addon grader, is now found the next morning rather than on the pull
+  request.
+
 ## 10. Wave 1 tickets
 
 `docs/BACKLOG.md`, milestone `M10`. Dependency shape:

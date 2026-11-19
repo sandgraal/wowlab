@@ -10,7 +10,7 @@ UV ?= uv
 # version and checksums). Override with SELENE=<path> to use another binary.
 SELENE ?= $(shell $(UV) run --frozen python scripts/fetch_selene.py --print)
 
-.PHONY: help setup lint lint-lua selene format typecheck test test-fast test-clean test-parser hooks-test ci
+.PHONY: help setup lint lint-lua selene format typecheck test test-fast test-clean test-parser hooks-test hooks-test-py39 ci
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -49,6 +49,9 @@ typecheck: ## mypy only
 # A command-line -m replaces the one in addopts, so both keep `not live`.
 # worksteal: a few review probes take 10-40 s, and an idle worker takes
 # queued tests from a busy one instead of waiting at the end.
+# Both passes include the lab-addon grader mutation probes (`addon_mutation`,
+# conftest.py), which CI runs on a pull request only when an addon path
+# changed (M15-21); `make test` always runs them, `make test-fast` never.
 PYTEST_PARALLEL := -n auto --dist worksteal -m "not live and not serial"
 PYTEST_SERIAL := -m "serial and not live"
 
@@ -58,8 +61,9 @@ test: ## Full pytest suite (excludes @live): parallel pass, then the serial pass
 
 # Local iteration (M13-81), never the proof of done: everything `make test`
 # runs except the review probes under lab/core/tests/review/ and the `serial`
-# pass, on at most 4 workers so the machine stays usable. `make test`,
-# `make ci` and CI keep running everything; tests/repo/test_make_test_fast.py
+# pass (and with the review probes the lab-addon mutation probes), on at most
+# 4 workers so the machine stays usable. `make test`, `make ci` and the
+# nightly CI run keep running everything; tests/repo/test_make_test_fast.py
 # pins that this recipe leaves out nothing else.
 TEST_FAST_WORKERS = $(shell $(UV) run --frozen python -c "import os; print(min(4, os.cpu_count() or 1))")
 
@@ -80,9 +84,16 @@ hooks-test: ## Claude Code hook scripts under 3.12 and 3.9 (hooks run on the sys
 	$(UV) run --frozen pytest tests/harness
 	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
 
+hooks-test-py39: ## The hook tests under 3.9 only (the leg `make test` cannot run)
+	$(UV) run --python 3.9 --isolated --no-project --with pytest -- pytest tests/harness
+
 # Every stage runs even when an earlier one fails, then a summary; the exit
 # status is non-zero if any stage failed (M13-81).
-CI_STAGES := lint lint-lua test test-parser hooks-test
+# Since M15-21 (2026-11-18) `make ci` runs each test once: `test` already
+# runs every parser test (`make test-parser` is a subset) and tests/harness
+# under 3.12, so those two repeats left the list; the 3.9 hook leg stays.
+# `make test-parser` and `make hooks-test` remain targets of their own.
+CI_STAGES := lint lint-lua test hooks-test-py39
 
 ci: ## Everything CI runs: every stage, then a summary of each stage's result
 	@failed=0; summary=(); \

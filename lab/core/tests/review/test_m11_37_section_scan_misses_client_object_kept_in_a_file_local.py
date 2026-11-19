@@ -132,6 +132,18 @@ def _grader(root: Path, tag: str) -> ModuleType:
     return module
 
 
+# The grader's self-tests are mutation loops of their own and cost most of a
+# full pass over the grader. The probe needs one failing grader test, so they
+# run last and the loop stops at the first failure (M15-21).
+GRADER_SELF_TESTS = frozenset(
+    {
+        "test_m11_37_a_call_added_outside_a_section_fails",
+        "test_m11_37_a_call_added_inside_a_section_passes",
+        "test_m13_05_constructed_secret_edits_fail",
+    }
+)
+
+
 def _failing_tests(tmp_path: Path, tag: str, edits: list[Edit]) -> list[str]:
     shutil.copytree(REPO / "lab" / "addon", tmp_path / "lab" / "addon")
     for name, found, replacement in edits:
@@ -140,8 +152,8 @@ def _failing_tests(tmp_path: Path, tag: str, edits: list[Edit]) -> list[str]:
         assert before.count(found) == 1, "the edit did not apply; the addon source moved"
         target.write_text(before.replace(found, replacement), encoding="utf-8")
     grader = _grader(tmp_path, tag)
-    failing = []
-    for test_name, fn in inspect.getmembers(grader, inspect.isfunction):
+    members = inspect.getmembers(grader, inspect.isfunction)  # sorted by name
+    for test_name, fn in sorted(members, key=lambda m: m[0] in GRADER_SELF_TESTS):
         if not test_name.startswith("test_"):
             continue
         # The grader's own constructed-case tests re-apply their edits on top
@@ -156,8 +168,8 @@ def _failing_tests(tmp_path: Path, tag: str, edits: list[Edit]) -> list[str]:
             try:
                 fn(*args)
             except AssertionError:
-                failing.append(test_name)
-    return failing
+                return [test_name]
+    return []
 
 
 @pytest.mark.parametrize("tag", sorted(CONTROLS))

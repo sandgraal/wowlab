@@ -138,7 +138,44 @@ TIMEOUT_OVERRIDES: dict[str, int] = {
     "lab/core/tests/test_l1_sweep_live.py::test_live_l1_sweep_changes_nothing_in_the_install": 3600,
 }
 
+# The lab-addon grader mutation probes (M15-21): review probes that copy
+# lab/addon/ into tmp_path, edit a Lua source, and run
+# tests/addon/test_lab_addon.py against the copy. They read only the addon,
+# that grader, wowlab_core.toc and three docs (a doc change can only make
+# more grader tests fail, which cannot turn a probe red), and cost about a
+# third of the suite's CPU time. Marked `addon_mutation` here, by node id
+# prefix, for the same reason as the serial list. Owner decision,
+# 2026-11-18: a pull request runs them only when one of the paths in ci.yml's
+# `addon_probes` filter changes (the addon, its grader, toc.py, these files,
+# this conftest, pyproject.toml, uv.lock); the nightly run (nightly.yml),
+# `make test`, release.yml and the desktop suites run them always; `make
+# test-fast` leaves them out with the rest of lab/core/tests/review/.
+# `tests/repo/test_addon_mutation_marking.py` checks that this set is exactly
+# the test files that load that grader, and that ci.yml's filter lists each.
+ADDON_MUTATION_FILES: frozenset[str] = frozenset(
+    {
+        "lab/core/tests/review/test_m11_01_carry_check_misses_saved_subtables.py",
+        "lab/core/tests/review/test_m11_01_clock_check_misses_os_time.py",
+        "lab/core/tests/review/test_m11_01_line_based_privacy_tests_fail_open.py",
+        "lab/core/tests/review/test_m11_01_pet_guid_check_misses_concatenated_lookup.py",
+        "lab/core/tests/review/test_m11_13_stored_value_check_misses_call_stores.py",
+        "lab/core/tests/review/test_m11_37_bidi_scan_skips_a_file_with_one_stray_byte.py",
+        "lab/core/tests/review/test_m11_37_section_scan_accepts_a_client_call_in_carry.py",
+        "lab/core/tests/review/test_m11_37_section_scan_misses_a_second_namespace_binding.py",
+        "lab/core/tests/review/test_m11_37_section_scan_misses_client_function_handed_on.py",
+        "lab/core/tests/review/test_m11_37_section_scan_misses_client_object_kept_in_a_file_local.py",
+        "lab/core/tests/review/test_m11_37_section_scan_misses_ns_method_call_and_alias.py",
+        "lab/core/tests/review/test_m11_37_section_scan_misses_self_and_client_given_parameters.py",
+        "lab/core/tests/review/test_m13_05_combat_scan_accepts_a_combat_check_that_never_blocks.py",
+        "lab/core/tests/review/test_m13_05_macro_pin_misses_the_name_stored_through_underscore.py",
+        "lab/core/tests/review/test_m13_05_secret_scan_misses_a_cleaned_value_read_as_a_table_through_an_alias.py",
+        "lab/core/tests/review/test_m13_05_secret_scan_misses_a_raw_value_not_from_a_named_handle.py",
+        "lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py",
+    }
+)
+
 SERIAL = pytest.mark.serial
+ADDON_MUTATION = pytest.mark.addon_mutation
 
 
 def is_serial(nodeid: str) -> bool:
@@ -147,11 +184,27 @@ def is_serial(nodeid: str) -> bool:
     return base.split("::", 1)[0] in SERIAL_FILES or base in SERIAL_TESTS
 
 
+def is_addon_mutation(nodeid: str) -> bool:
+    """Whether the test with this node id is a lab-addon grader mutation probe."""
+    return nodeid.split("::", 1)[0] in ADDON_MUTATION_FILES
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Registered here, with the list it marks, rather than in pyproject.toml.
+    config.addinivalue_line(
+        "markers",
+        "addon_mutation: a lab-addon grader mutation probe; on a pull request only when "
+        "the addon or its grader changes (conftest.py, M15-21)",
+    )
+
+
 @pytest.hookimpl(tryfirst=True)  # before `-m` deselects by marker
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     for item in items:
         if is_serial(item.nodeid):
             item.add_marker(SERIAL)
+        if is_addon_mutation(item.nodeid):
+            item.add_marker(ADDON_MUTATION)
         seconds = TIMEOUT_OVERRIDES.get(item.nodeid.split("[", 1)[0])
         if seconds is not None:
             item.add_marker(pytest.mark.timeout(seconds))

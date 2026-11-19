@@ -17,7 +17,10 @@ name: Performance budget
 # cache, a read-only token, every action pinned.
 on:
   schedule:
-    - cron: "17 4 * * *"
+    # 08:47 UTC: 02:47 in the owner's local time (UTC-6, no daylight time), half an hour
+    # before the nightly suites at 09:17 UTC, so the timings get an idle
+    # runner (M15-21, 2026-11-18; it was 04:17 UTC, 22:17 local).
+    - cron: "47 8 * * *"
   workflow_dispatch:
 
 permissions:

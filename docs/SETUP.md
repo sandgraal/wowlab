@@ -47,7 +47,7 @@ Then:
 
 ```bash
 make setup    # uv sync --frozen, git hooks via core.hooksPath, pre-commit hook envs, .env
-make ci       # lint, tests, parser suite, hook tests on 3.12 and 3.9
+make ci       # lint, Lua lint, the whole suite (parser and hook tests included), hook tests on 3.9
 uv run wowlab --version
 ```
 

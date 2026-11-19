@@ -44,8 +44,21 @@ def test_what_the_bidi_step_needs_runs_on_every_pr() -> None:
     for i in (*setup, *install):
         assert "if" not in steps[i], steps[i]
         assert i < bidi
-    # Every other step runs either on the full branch or on the docs-only one.
+    # Every other step runs either on the full branch or on the docs-only one,
+    # or (M15-21) is one of the two parallel passes, which split the full
+    # branch by the `addon_probes` filter; neither runs on a docs-only PR
+    # unless the `changes` job failed.
     for i, step in enumerate(steps):
         if i in (*setup, *install) or "actions/checkout" in str(step.get("uses", "")):
             continue
-        assert step.get("if") in (FULL, DOCS_ONLY), step
+        assert step.get("if") in (FULL, DOCS_ONLY, *PROBE_SPLIT), step
+
+
+# The two parallel passes of M15-21 (tests/repo/test_make_test_fast.py pins
+# that exactly one of them runs on a PR that is not docs-only).
+PROBE_SPLIT = (
+    "needs.changes.result != 'success' || (needs.changes.outputs.docs_only != 'true'"
+    " && needs.changes.outputs.addon_probes == 'true')",
+    "needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true'"
+    " && needs.changes.outputs.addon_probes != 'true'",
+)

@@ -107,6 +107,8 @@ ALLOWED: Mapping[str, frozenset[str]] = {
     "macos.yml": frozenset({CHECKOUT, SETUP_UV}),
     # M17-08: the macOS app on a pull request or by hand; no attestation, no release.
     "macos-app.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD}),
+    # M15-21: the whole Linux suite every night.
+    "nightly.yml": frozenset({CHECKOUT, SETUP_UV}),
     "perf-nightly.yml": frozenset({CHECKOUT, SETUP_UV}),
     "release.yml": frozenset({CHECKOUT, SETUP_UV, UPLOAD, DOWNLOAD, ATTEST, PYPI_PUBLISH}),
     # M17-09: the Windows app on a pull request or by hand; as macos-app.yml.
@@ -411,7 +413,8 @@ def test_a_moved_pin_names_the_action_both_refs_and_every_workflow() -> None:
                 step["uses"] = f"astral-sh/setup-uv@{new}"
     assert _moved_pins(workflows) == [
         f"astral-sh/setup-uv moved from {SETUP_UV.partition('@')[2]} to {new} in "
-        "ci.yml, latest-release.yml, macos-app.yml, macos.yml, perf-nightly.yml, release.yml, "
+        "ci.yml, latest-release.yml, macos-app.yml, macos.yml, nightly.yml, perf-nightly.yml, "
+        "release.yml, "
         "windows-app.yml, windows.yml. Re-read "
         f"astral-sh/setup-uv's action.yml at {new}, and every action it nests, "
         "for cache inputs and caches on by default; only then update the pin "

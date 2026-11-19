@@ -1,0 +1,72 @@
+name: Nightly
+
+# The whole Linux suite, every night (M15-21; owner decisions, 2026-11-18):
+# both passes of `make test`, with what ci.yml's "Lint, typecheck, tests"
+# leaves out of a pull request and of a push to main since then: the
+# lab-addon grader mutation probes when no addon path changed
+# (`addon_mutation`, conftest.py) and the serial pass (the RSS and CPU-time
+# budget tests, run alone on an otherwise idle runner). release.yml still
+# runs everything on every tag.
+#
+# A workflow of its own rather than a `schedule` trigger on ci.yml: ci.yml's
+# concurrency group cancels a run in progress on main when a newer push
+# arrives, which would cancel a nightly run in the same group; its `changes`
+# job has no base to compare a scheduled run with; and its other jobs (the
+# scans, the parser and hook jobs) gain nothing from a second run of the
+# commit main already graded.
+#
+# 09:17 UTC is 03:17 in the owner's local time (UTC-6, no daylight time), inside the
+# owner's quiet hours, with windows.yml and macos.yml; perf-nightly.yml runs
+# at 08:47 UTC so it gets an idle runner first. GitHub can start a scheduled
+# run 30 to 60 minutes late at busy times. A failed scheduled run is emailed
+# to the owner by GitHub's default notification settings; nothing here posts
+# anywhere. A red run is a bug to file as a ticket. Not a required check. On
+# demand for a branch: gh workflow run nightly.yml --ref <branch>
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.12.12"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  suite:
+    name: Lab suite (linux, nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Actions cache, restored or saved (M13-42; see the note in ci.yml).
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install
+        id: install
+        run: uv sync --frozen
+      - name: Generate a decimal-comma locale (serializer determinism graders)
+        run: sudo locale-gen de_DE.UTF-8
+      # Two passes (M13-18), as `make test`: everything not `serial` across
+      # the runner's cores, the mutation probes included, then the `serial`
+      # tests alone. A command-line -m replaces the one in addopts, so both
+      # keep `not live`. The serial pass runs even when the parallel one
+      # failed, so one night reports both.
+      - name: pytest (parallel)
+        run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial"
+      - name: pytest (serial)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run --frozen pytest -q -m "serial and not live"

@@ -237,7 +237,16 @@ the merge, but it is never silent either: name it, with its run URL and
 the failing test ids from `gh run view <id> --log-failed`, on the report's
 `checks:` line, so the conductor can file it (`windows.yml`'s header: a
 red run on `main` is a bug to fix next, and a red run on the PR is how it
-is seen first). Then
+is seen first). The desktop suites run only at night and on demand (owner
+decision, 2026-11-18, M15-21), so when the conductor's dispatch says the
+ticket touches path handling, `guard`, `snapshot` or `process`, or when
+`gh pr diff <n> --name-only` lists `guard.py`, `snapshot.py`, `process.py`,
+`longpath.py`, `install.py` or `layout.py` under `lab/core/src/wowlab_core/`
+(read the diff yourself; do not rely on the dispatch alone), first run
+both on the branch, `gh workflow run windows.yml --ref <branch>` and
+`gh workflow run macos.yml --ref <branch>`, wait for both with the §2 poll,
+and merge only when both are green on the head; name both run URLs on the
+report's `checks:` line. Then
 `gh pr merge <n> --squash --match-head-commit <head sha>` (never `--admin`,
 never `--auto`: auto-merge fires on the required checks alone and would not
 wait for the suite; and no `--delete-branch`: the
