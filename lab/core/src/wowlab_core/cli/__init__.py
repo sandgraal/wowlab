@@ -951,6 +951,12 @@ from wowlab_core.cli._cmd_charmodel import (
     _HELD_ITEMS as _HELD_ITEMS,
 )
 from wowlab_core.cli._cmd_charmodel import (
+    _HELD_POINTS as _HELD_POINTS,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _ORIGIN_ITEMS as _ORIGIN_ITEMS,
+)
+from wowlab_core.cli._cmd_charmodel import (
     _PNG_PARTS as _PNG_PARTS,
 )
 from wowlab_core.cli._cmd_charmodel import (
@@ -970,6 +976,9 @@ from wowlab_core.cli._cmd_charmodel import (
 )
 from wowlab_core.cli._cmd_charmodel import (
     _look_words as _look_words,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _partly as _partly,
 )
 from wowlab_core.cli._cmd_charmodel import (
     _plan_brief as _plan_brief,

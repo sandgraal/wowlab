@@ -59,6 +59,17 @@ at most `work_canvases` canvases' area (default `WORK_CANVASES`, 16: the
 fixture characters paint about 2.2, the busiest recorded body layout about
 11); a plan past it is drawn with a grey body and says so.
 
+**What one model may hold.** Each section and each item model can name a
+texture of its own, and sections are capped only at `m2.MAX_ENTRIES`, so
+the scene keeps running totals and checks them before each texture is
+read and decoded: at most `MAX_IMAGES` (64) distinct pictures, at most
+`MAX_DECODED_PIXELS` texture pixels decoded (summed from each header), and
+at most `MAX_SCENE_BYTES` (256 MiB) of PNG, vertex and index bytes. A
+texture past a cap is left out (grey) with the reason in the report; an
+item model whose shape would pass the byte cap is not placed; a body that
+would is `BodyNotDrawnError`. `gltf.encode_glb`'s own cap is never the
+first to trip.
+
 What the result may say, and may not: it lists what was painted and drawn;
 it never says the model looks as the character does in game (`LIKENESS`).
 """
@@ -78,6 +89,9 @@ from wowlab_core.errors import WowlabError
 
 __all__ = [
     "LIKENESS",
+    "MAX_DECODED_PIXELS",
+    "MAX_IMAGES",
+    "MAX_SCENE_BYTES",
     "REST_POSE",
     "STAND_IN",
     "WORK_CANVASES",
@@ -96,6 +110,34 @@ __all__ = [
 
 WORK_CANVASES = 16
 """The most canvas area, in canvases, `build` lets one body texture paint."""
+
+MAX_IMAGES = 64
+"""The most distinct pictures one model holds (the fixture characters: 5 and
+6). A texture past it is left out, its sections grey, before it is read."""
+MAX_DECODED_PIXELS = 64 * 1024 * 1024
+"""The most texture pixels one model decodes, summed (four 4096 x 4096
+textures; the fixture characters decode under a million). Checked from each
+texture's header before it is decoded."""
+MAX_SCENE_BYTES = 256 * 1024 * 1024
+"""The most bytes one model's pictures (PNG) and shapes (vertices and
+indices) take, summed (the fixture characters: about 1 MB). A texture is not
+decoded once the total reaches it; a model whose shape would pass it is not
+drawn. So the file's own cap (`gltf.MAX_FILE_BYTES`) is never the first to
+trip."""
+_VERTEX_BYTES = 32  # POSITION 12, NORMAL 12, TEXCOORD_0 8
+_INDEX_BYTES = 4
+_TOO_MANY_PICTURES = (
+    "left out: the model has more pictures than wowlab draws in one model "
+    f"(at most {MAX_IMAGES}), so its parts are grey"
+)
+_TOO_MANY_PIXELS = (
+    "left out: the model's pictures are larger in total than wowlab decodes for one model, "
+    "so its parts are grey"
+)
+_TOO_MANY_BYTES = (
+    "left out: the model's pictures and shapes already fill what wowlab writes in one file, "
+    "so its parts are grey"
+)
 
 LIKENESS = (
     "This is not a picture of how the character looks in game: the order the body texture's "
@@ -247,6 +289,8 @@ class CharModel(_Frozen):
     left_out: tuple[FileLeftOut, ...]
     notes: tuple[str, ...]
     seconds: dict[str, float]
+    held_bytes: int = 0  # PNG, vertex and index bytes, against MAX_SCENE_BYTES
+    decoded_pixels: int = 0  # texture pixels decoded, against MAX_DECODED_PIXELS
 
 
 # ─── reading ─────────────────────────────────────────────────────────────────
@@ -379,6 +423,10 @@ def _body_texture(
 # ─── the scene ───────────────────────────────────────────────────────────────
 
 
+class _SceneFullError(CharModelError):
+    """A model's shape would pass `MAX_SCENE_BYTES`."""
+
+
 class _Scene:
     def __init__(self, files: _Files) -> None:
         self.files = files
@@ -388,8 +436,19 @@ class _Scene:
         self.image_of: dict[object, int | None] = {}
         self.pngs: list[PngOut] = []
         self.notes: list[str] = []
+        self.bytes = 0  # PNG, vertex and index bytes held so far
+        self.pixels = 0  # texture pixels decoded so far
+
+    def take(self, count: int) -> bool:
+        """Add `count` bytes to the running total, or False (nothing
+        added) when that would pass `MAX_SCENE_BYTES`."""
+        if self.bytes + count > MAX_SCENE_BYTES:
+            return False
+        self.bytes += count
+        return True
 
     def image_png(self, key: object, name: str, data: bytes) -> int:
+        self.bytes += len(data)
         self.images.append(gltf.GltfImage(name=name, png=data))
         self.image_of[key] = len(self.images) - 1
         return len(self.images) - 1
@@ -399,16 +458,33 @@ class _Scene:
         if fdid in self.image_of:
             return self.image_of[fdid]
         self.image_of[fdid] = None
+        # The caps, before anything is read or decoded.
+        if len(self.images) >= MAX_IMAGES:
+            self.files.leave_out(fdid, what, _TOO_MANY_PICTURES)
+            return None
+        if self.bytes >= MAX_SCENE_BYTES:
+            self.files.leave_out(fdid, what, _TOO_MANY_BYTES)
+            return None
         data = self.files.read(fdid, what)
         if data is None:
             return None
         try:
+            header = blp.parse_header(data)
+            pixels = header.width * header.height
+            if self.pixels + pixels > MAX_DECODED_PIXELS:
+                self.files.leave_out(fdid, what, _TOO_MANY_PIXELS)
+                return None
+            self.pixels += pixels
             image = blp.decode(data)
+            del data
             encoded = png.encode(image.width, image.height, image.rgba)
         except (blp.BlpError, png.PngError) as exc:
             self.files.leave_out(
                 fdid, what, f"file {fdid} is not a texture wowlab reads: {exc}", unreadable=True
             )
+            return None
+        if self.bytes + len(encoded) > MAX_SCENE_BYTES:
+            self.files.leave_out(fdid, what, _TOO_MANY_BYTES)
             return None
         return self.image_png(fdid, f"file {fdid}", encoded)
 
@@ -482,6 +558,9 @@ def _mesh(
     if not parts:
         return None, drawn, extra, 0, 0
     used = sorted(set().union(*(set(tris) for lists in parts.values() for tris in lists)))
+    count = sum(len(t) for lists in parts.values() for t in lists)
+    if not scene.take(len(used) * _VERTEX_BYTES + count * _INDEX_BYTES):
+        raise _SceneFullError(name)
     remap: dict[int, int] = {v: i for i, v in enumerate(used)}
     verts = model.vertices
     pos, nrm, uv = verts.positions, verts.normals, verts.uv
@@ -674,9 +753,15 @@ def _item_node(
         if item.kind == "collection"
         else None
     )
-    mesh, drawn, extra, vertices, triangles = _mesh(
-        f"{_ITEM_NODE} {item.item_id}", model, skin, visible, textures, scene
-    )
+    try:
+        mesh, drawn, extra, vertices, triangles = _mesh(
+            f"{_ITEM_NODE} {item.item_id}", model, skin, visible, textures, scene
+        )
+    except _SceneFullError:
+        reason = (
+            "left out: the model's pictures and shapes already fill what wowlab writes in one file"
+        )
+        return _item_drawn(item, skin_file_data_id=skin_id, placed=False, reason=reason), None
     done = _item_drawn(
         item,
         skin_file_data_id=skin_id,
@@ -744,7 +829,16 @@ def build(
     )
     available = [s.geoset_id for s in skin.sections]
     visible = set(renderplan.visible_geosets(plan.geosets, available))
-    mesh, drawn, extra, vertices, triangles = _mesh("body", body, skin, visible, textures, scene)
+    try:
+        mesh, drawn, extra, vertices, triangles = _mesh(
+            "body", body, skin, visible, textures, scene
+        )
+    except _SceneFullError as exc:
+        raise BodyNotDrawnError(
+            f"the body model, file {plan.body.file_data_id}, is larger than wowlab writes in one "
+            "file",
+            plan.body.file_data_id,
+        ) from exc
     if mesh is None:
         raise BodyNotDrawnError(
             f"no section of the body model, file {plan.body.file_data_id}, is shown",
@@ -789,4 +883,6 @@ def build(
         left_out=tuple(files.left_out.values()),
         notes=tuple(dict.fromkeys(scene.notes)),
         seconds=seconds,
+        held_bytes=scene.bytes,
+        decoded_pixels=scene.pixels,
     )

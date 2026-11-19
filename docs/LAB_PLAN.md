@@ -5021,7 +5021,8 @@ both fixture body models at 1.60.1.70959, 959310 and 917116, each with its
 bone's pivot): the points for held items (0 shield, 1 main hand, 2 off
 hand) are stored at (0, 0, 0), on bones whose pivot is (0, 0, 0) too; the
 shoulder (5, 6), head (11) and back (12) points are stored away from the
-origin, each equal to its bone's pivot. Inferred: the hand points are
+origin; every point read sits at its bone's pivot, and the held-item
+points' bones rest at the origin. Inferred: the hand points are
 presumably placed by animation (**[verify]**), so in the rest pose they sit
 at the model's feet. `char model` does not place an item at a point stored
 at the origin and lists it (both fixture characters' weapons: each `.glb`

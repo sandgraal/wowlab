@@ -164,6 +164,12 @@ _HELD_ITEMS = (
     "The game's model file keeps no place for a held item in this pose (its hand points sit at "
     "the model's feet), so weapons, shields and off-hand items are left out for now."
 )
+_ORIGIN_ITEMS = (
+    "The game's model file keeps no place for these items in this pose (their points sit at the "
+    "model's feet), so they are left out for now."
+)
+# The attachment points of held items: shield, main hand, off hand.
+_HELD_POINTS = frozenset({0, 1, 2})
 
 
 def _slot_names() -> dict[int, str]:
@@ -224,25 +230,38 @@ def _stale_pngs(glb: Path, written: set[str]) -> list[Path]:
     return [glb.parent / n for n in names if stale.fullmatch(n) and n not in written]
 
 
+def _partly(exc: Exception, done: list[str], rest: list[str]) -> CliError:
+    """The error for a write that stopped after its first file: what is new
+    and what is not, never "nothing was written"."""
+    why = str(exc).replace("; nothing was written", "")
+    return CliError(
+        f"the model was only partly written ({why}). Done: {', '.join(done)}. Not done: "
+        f"{', '.join(rest)}. Run char model again once the file is free"
+    )
+
+
 def _write_default(
     built: charmodel.CharModel, glb: Path, folder: Path
 ) -> tuple[Literal["written", "replaced"], list[tuple[charmodel.PngOut, Path]], list[str]]:
     """Write the PNGs, remove this character's older PNGs this run does not
     make, then write the `.glb`. Every target and every older PNG is checked
     first, so a refusal there writes nothing; a failure after the first
-    write says which files are new and which are not."""
+    write says which files are new and which are not: an unreached file is
+    "(old)" only when one was there before the first write, else "(not
+    written)"."""
     pngs = [(p, _png_path(glb, p.name)) for p in built.pngs]
     stale = _stale_pngs(glb, {path.name for _, path in pngs})
     for path in (glb, *(path for _, path in pngs), *stale):
         cascfiles.check_character(path, folder)
     existed = os.path.lexists(glb)
-    done: list[str] = []
-    removed: list[str] = []
     steps: list[tuple[str, Path, bytes | None]] = [
         *(("write", path, p.png) for p, path in pngs),
         *(("remove", path, None) for path in stale),
         ("write", glb, built.glb),
     ]
+    there = {path: os.path.lexists(path) for _, path, _ in steps}
+    done: list[str] = []
+    removed: list[str] = []
     for i, (kind, path, data) in enumerate(steps):
         try:
             if kind == "write":
@@ -255,28 +274,37 @@ def _write_default(
         except (OSError, cascfiles.CascOutError) as exc:
             if not done:
                 raise
-            why = str(exc).replace("; nothing was written", "")
-            left = [
-                f"{p.name} ({'not removed' if k == 'remove' else 'old'})" for k, p, _ in steps[i:]
+            rest = [
+                f"{p.name} ("
+                + ("not removed" if k == "remove" else "old" if there[p] else "not written")
+                + ")"
+                for k, p, _ in steps[i:]
             ]
-            raise CliError(
-                f"the model was only partly written ({why}). Done: {', '.join(done)}. Not done: "
-                f"{', '.join(left)}. Run char model again once the file is free"
-            ) from exc
+            raise _partly(exc, done, rest) from exc
     return ("replaced" if existed else "written"), pngs, removed
 
 
 def _write_out(
     built: charmodel.CharModel, glb: Path, folder: Path
 ) -> tuple[Literal["written", "already_there"], list[tuple[charmodel.PngOut, Path]]]:
+    """Write the PNGs, then the `.glb`, each never over another file (a file
+    there with the same bytes is already there). A failure after the first
+    write says which files are new and which are not written."""
     pngs = [(p, cascfiles.check_out(_png_path(glb, p.name), folder)) for p in built.pngs]
-    every = [(built.glb, glb), *((p.png, path) for p, path in pngs)]
+    every = [*((p.png, path) for p, path in pngs), (built.glb, glb)]
     keyed = [
         (data, path, hashlib.md5(data, usedforsecurity=False).hexdigest()) for data, path in every
     ]
     fresh = [k for k in keyed if not cascfiles.already_there(k[1], len(k[0]), k[2])]
-    for data, path, key in fresh:
-        cascfiles.write_new(data, path, folder, key)
+    done: list[str] = []
+    for i, (data, path, key) in enumerate(fresh):
+        try:
+            cascfiles.write_new(data, path, folder, key)
+        except (OSError, cascfiles.CascOutError) as exc:
+            if not done:
+                raise
+            raise _partly(exc, done, [f"{p.name} (not written)" for _, p, _ in fresh[i:]]) from exc
+        done.append(f"{path.name} (new)")
     return ("written" if fresh else "already_there"), pngs
 
 
@@ -513,7 +541,8 @@ def _say_char_model(
     held = [m for m in worn if not m.placed and m.at_origin]
     if held:
         listed = "; ".join(f"{_slot_words(m.slot, slots)}, item {m.item_id}" for m in held)
-        _say_prose(f"Not drawn ({len(held)}): {listed}. {_HELD_ITEMS}", indent="  ")
+        why = _HELD_ITEMS if all(m.attachment_id in _HELD_POINTS for m in held) else _ORIGIN_ITEMS
+        _say_prose(f"Not drawn ({len(held)}): {listed}. {why}", indent="  ")
     for m in worn:
         if not m.placed and not m.at_origin:
             _say_prose(

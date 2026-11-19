@@ -312,3 +312,77 @@ def test_the_derived_fixture_is_consistent() -> None:
         for worn in ("5", "6", "11", "12"):  # shoulders, head, back: away from the origin
             assert any(points[worn]["position"]) and points[worn]["position"][2] > 1.0
         assert all(not m["placed"] for m in char["models"] if m["what"] == "item")
+
+
+def _counting_decode(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count `blp.decode` calls. The tests below build with `work_canvases=0`,
+    so the compositor decodes nothing and every call is `charmodel`'s."""
+    calls: list[int] = []
+    real = charmodel.blp.decode
+
+    def counted(data: object) -> object:
+        calls.append(1)
+        return real(data)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(charmodel.blp, "decode", counted)
+    return calls
+
+
+def _one_item(count: int, first: int) -> tuple[renderplan.RenderPlan, cb.Source]:
+    plan, source, _ = _built("Sangraal-Sett")
+    item = plan.item_models[0]
+    source.files.update(cb.many_textures_item(item.file_data_id, count, first))
+    source.reads.clear()
+    return plan.model_copy(update={"item_models": (item,)}), source
+
+
+def test_a_model_naming_65_textures_holds_64_and_decodes_no_more_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2: an item model whose 65 sections each name a texture of their own."""
+    plan, source = _one_item(65, 9_000_000)
+    calls = _counting_decode(monkeypatch)
+    built = charmodel.build(plan, source, work_canvases=0)
+    assert built.facts.images == charmodel.MAX_IMAGES == len(calls)
+    capped = [f for f in built.left_out if "more pictures than wowlab draws" in f.reason]
+    assert capped and all(f.file_data_id >= 9_000_000 for f in capped)
+    assert all(f.file_data_id not in source.reads for f in capped)
+    assert built.models[1].placed  # the model is drawn, its extra parts grey
+
+
+def test_a_byte_total_at_the_cap_decodes_nothing_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, source = _one_item(10, 9_100_000)
+    monkeypatch.setattr(charmodel, "MAX_SCENE_BYTES", 0)
+    calls = _counting_decode(monkeypatch)
+    with pytest.raises(charmodel.BodyNotDrawnError, match="larger than wowlab writes"):
+        charmodel.build(plan, source, work_canvases=0)
+    assert calls == []
+
+
+def test_an_item_past_the_byte_cap_is_not_placed_and_not_decoded_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, source = _one_item(10, 9_300_000)
+    bare = charmodel.build(plan.model_copy(update={"item_models": ()}), source, work_canvases=0)
+    # Room for the body and a few of the item's pictures, not for its shape.
+    monkeypatch.setattr(charmodel, "MAX_SCENE_BYTES", bare.held_bytes + 300)
+    calls = _counting_decode(monkeypatch)
+    built = charmodel.build(plan, source, work_canvases=0)
+    assert built.facts.nodes == 1 and not built.models[1].placed
+    assert "already fill" in (built.models[1].reason or "")
+    assert built.held_bytes <= charmodel.MAX_SCENE_BYTES
+    assert len(calls) < bare.facts.images + 10  # not every one of the item's ten
+    assert any("already fill what wowlab writes" in f.reason for f in built.left_out)
+
+
+def test_decoded_pixels_past_the_cap_are_not_decoded_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, source = _one_item(10, 9_200_000)
+    monkeypatch.setattr(charmodel, "MAX_DECODED_PIXELS", 16 * 5)  # five 4 x 4 textures
+    calls = _counting_decode(monkeypatch)
+    built = charmodel.build(plan, source, work_canvases=0)
+    assert len(calls) == 5
+    assert any("larger in total than wowlab decodes" in f.reason for f in built.left_out)

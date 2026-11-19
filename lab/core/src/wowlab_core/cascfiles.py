@@ -328,7 +328,7 @@ def write_new(
 # ─── characters/: `char model`'s own output, re-made on request (§17.6) ──────
 
 # A Windows device name, which names a device whatever follows its dot.
-_DEVICE = re.compile(r"(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])", re.IGNORECASE)
+_DEVICE = re.compile(r"(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)", re.IGNORECASE)
 _NOT_IN_NAME = frozenset('<>:"/\\|?*.')
 _NAME_LIMIT = 100
 

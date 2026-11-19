@@ -137,6 +137,32 @@ def item_files(fdid: int, geoset: int = 0) -> dict[int, bytes]:
     }
 
 
+def many_textures_item(fdid: int, count: int, first_texture: int) -> dict[int, bytes]:
+    """An item model of `count` sections, each drawn with a texture of its
+    own (type 0, `TXID` `first_texture + i`), and those textures."""
+    vertices, sections = _triangles([0] * count)
+    blob = mb.md20(
+        vertices=vertices,
+        textures=((0, 0),) * count,
+        combos=tuple(range(count)),
+        attachments=(),
+        lookup=(),
+    )
+    skin_id = fdid + SKIN_OFFSET
+    txids = tuple(first_texture + i for i in range(count))
+    out = {
+        fdid: mb.chunked(bytes(blob), sfid=(skin_id,), txid=txids, extra=()),
+        skin_id: mb.skin(
+            lookup=tuple(range(3 * count)),
+            indices=tuple(range(3 * count)),
+            sections=sections,
+            batches=tuple((i, 0, i) for i in range(count)),
+        ),
+    }
+    out.update({t: texture() for t in txids})
+    return out
+
+
 def files_for(
     plan: renderplan.RenderPlan, attachments: tuple[Point, ...] = ATTACHMENTS
 ) -> dict[int, bytes]:

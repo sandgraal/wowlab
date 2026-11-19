@@ -273,6 +273,27 @@ def test_a_write_that_fails_midway_says_what_is_new_and_what_is_old(
     assert glb.read_bytes() == b"older model"
 
 
+def test_an_out_write_that_fails_midway_says_what_was_written(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3: with --out the PNGs go first, then the .glb; a failure after the
+    first file says what is new and what was not written."""
+    real = cascfiles.write_new
+
+    def busy(data: object, target: Path, folder: Path, key: str, **kw: object) -> bool:
+        if target.suffix == ".glb":
+            raise PermissionError(13, "the file is in use", str(target))
+        return real(data, target, folder, key, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cascfiles, "write_new", busy)
+    result = env.run("--character", "Sangraal-Sett", "--out", "mine.glb")
+    assert result.exit_code == 1
+    err = " ".join(result.stderr.split())
+    assert "only partly written" in err and "nothing was written" not in err
+    assert "mine.body.png (new)" in err and "mine.glb (not written)" in err
+    assert not (env.folder() / "mine.glb").exists()
+
+
 def test_the_first_run_says_it_downloads_the_tables_then_never_again(env: Env) -> None:
     first = env.run("--character", "Sangraal-Sett")
     assert first.exit_code == 0, first.output
@@ -393,7 +414,23 @@ def test_an_unsafe_folder_name_is_refused_before_any_work(
 
 @pytest.mark.parametrize(
     "name",
-    ["a.b", ".", "..", "x/y", "x\\y", "a:b", " a", "a ", "", "NUL", "com1", "a\x01b", "a" * 101],
+    [
+        "a.b",
+        ".",
+        "..",
+        "x/y",
+        "x\\y",
+        "a:b",
+        " a",
+        "a ",
+        "",
+        "NUL",
+        "com1",
+        "CONIN$",
+        "conout$",
+        "a\x01b",
+        "a" * 101,
+    ],
 )
 def test_safe_name_refuses(name: str) -> None:
     with pytest.raises(cascfiles.CascOutError):
@@ -401,7 +438,7 @@ def test_safe_name_refuses(name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["Sangraal-Sett", "90000001#6", "Labrealmb Partb", "Dângling", "1"]
+    "name", ["Sangraal-Sett", "90000001#6", "Labrealmb Partb", "Dângling", "1", "conin", "Con$"]
 )
 def test_safe_name_admits(name: str) -> None:
     assert cascfiles.safe_name(name, "folder") == name
