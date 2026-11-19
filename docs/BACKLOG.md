@@ -1385,6 +1385,8 @@ The Character tab renders the field under the gear table as one button, **See it
 
 **Acceptance:** constructed 8×8 layers with known results per blend mode (labelled; a mode outside the four refused with its number); the fixture character's composite MD5 as a derived fixture with the inputs' ids and a provenance row, asserted by an `@live` test on the owner's install; a layer outside its section refused; the timing against §17.5's target; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer` (the blend-mode enum and the layer order). User-facing: none.
 
+*Noted 2026-11-18 (#603, merged b6b8494):* the compositor paints six blend modes, not the four named above: 1 blit, 4 multiply, 6 overlay, 7 screen, 9 alpha straight and 15 alpha blend, the modes texture type 1 uses in `ChrModelTextureLayer` at 70959 (both fixture characters need 1 and 15). Every other number, 0 included, is refused with its number. Textures smaller than their section are stretched by whole pixels. Accepted by `code-reviewer`, `domain-reviewer` and `security-reviewer`; recorded in `docs/LAB_PLAN.md` §17.5 (note of 2026-11-18).
+
 ---
 
 ## [ ] M15-11 — `gltf` and `wowlab char model`
@@ -1470,6 +1472,8 @@ With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and
 
 **Acceptance:** the suite green on typer 0.29.1; `scripts/gen_command_reference.py --check` passes; the UI parity test green; the runtime dependency line in the PR body; `make ci` green. Reviewed by `code-reviewer`. User-facing: none intended; any help-text change listed.
 
+*Noted 2026-11-18 (#606, merged a277cd7):* green on Linux and macOS; on Windows one test fails since this merge (run 44428717366: `test_cli_explain_detail.py::test_every_view_argv_parses_against_the_click_tree[/install root/World of Warcraft]`, a `--root` value that now comes back as a path and prints with backslashes). M15-23 is the follow-up.
+
 ---
 
 ## [ ] M15-21 — The tests take too long: measure, then cut and reschedule
@@ -1484,11 +1488,20 @@ Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main`
 ---
 
 ## [ ] M15-22 — The CLI imports a command's module when that command runs
-**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18) · **owner** (to see it first: it was not one of the four questions of 2026-11-18)
+**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18); the owner, 2026-11-18 in session (asked which optional extras to do, picked "M15-22: lazy CLI imports")
 
 `python -P -m wowlab_core --version` costs 0.66 s of CPU against 0.02 s for a bare interpreter; about 0.37 s of that is wowlab's own modules, imported whole by `import wowlab_core.cli` whatever the command (`addoncheck` and what it pulls in are the largest). The suite starts about 1,900 such children, 1,700 of them from the UI tests, and `wowlab ui` starts one per command a player runs. Import a command group's module when that command runs. `test_cli_package.py` (M16-111) requires every name of every `cli` module on the package, so the package re-exports lazily and that test's monkeypatch rule is looked at again, with the reviewer.
 
 **Acceptance:** the import cost of `--version` and of one read command measured before and after (CPU, best of several, in the PR); text and `--json` output byte-identical on every command; the UI parity tests green; `make ci` green; the suite's parallel pass timed before and after on CI. Reviewed by `code-reviewer`. User-facing: none but speed.
+
+---
+
+## [ ] M15-23 — `lab (windows)` is red again: a `--root` value compared as text
+**Size:** XS · **Depends on:** M15-20 · **Sources:** the review of #610 (2026-11-18); Windows run 44428717366 on `main` at a277cd7
+
+After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:219`, `test_every_view_argv_parses_against_the_click_tree[/install root/World of Warcraft]`, fails on Windows only: `assert '\\install ro...d of Warcraft' == '/install roo...d of Warcraft'`. typer 0.29 converts values through Pydantic, so `ctx.params["root"]` comes back as a `Path`, and `str()` of it uses backslashes on Windows. Compare paths as paths in that test. Also check whether any library code turns a parsed `--root` (or another path option) into text and compares or prints it where 0.28 gave the text the player typed: the UI builds its argv from strings, so it is probably the test alone, but that is not verified. The run at e2b320b, before #606, was green; the three runs between were cancelled.
+
+**Acceptance:** `gh workflow run windows.yml --ref <branch>` green, linked; what was checked in the library, said in the PR; the touched tests green on Linux. Reviewed by `code-reviewer`. User-facing: none unless the library check finds one.
 
 ---
 
