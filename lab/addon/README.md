@@ -665,8 +665,8 @@ on from one, fails the test until someone lists it on purpose.
 | `C_ClassTalents.GetActiveConfigID` | talents.class: the active config | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `Enum.TraitConfigType` | talents.legacy: config types to ask for | called by forever-addon-kit's walker on 69893; which call found the Legacy config is not recorded: [verify] in M11-03 | n/a (table) |
 | `ToggleLegacySystemUI` | talents.legacy: marker that the Legacy panel exists (never called) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `UnitLevel` | talents.legacy: `player_level` (explains an empty list) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
-| `C_Timer.After` | debounce gathering after change events | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
+| `UnitLevel` | talents.legacy: `player_level` (explains an empty list); crew book: a member's `level` (on another unit: [verify]) | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
+| `C_Timer.After` | debounce gathering after change events; the crew book's debounce and first-pass wait | confirmed by forever-addon-kit on 69893, re-verify in M11-03 | yes |
 | `GetSpecialization` | spec: fallback only, if a client provides the global | confirmed by forever-addon-kit on 69893, re-verify in M11-03: **absent** on Forever | no |
 | `GetSpecializationInfo` | spec: fallback only, with the global above | confirmed by forever-addon-kit on 69893, re-verify in M11-03: **absent** on Forever | no |
 | `C_SpecializationInfo.GetSpecialization` | spec: index | [verify] | yes |
@@ -690,7 +690,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_BarberShop.GetViewingChrModel` | customization: chr model id, or `chr_model_id_absent`: how the call went (schema 2, M11-29) | [verify]: no number on 70058 (M11-23 capture); returned nil on 70425 (M11-29 capture); why stays open | yes |
 | `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5) and on 70450 (M15-01 capture: `identity.race_id` 2 and 5, matching the owner's report); the drop on a race change is untested: [verify] | yes |
 | `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | ran on 70450 (M15-01 capture: 2 on two first-body-type characters, which `Enum.UnitSex` 0 matches on one with a carried barber record); UnitSex 3 not yet seen: [verify] | yes |
-| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept) | ran on 70450 (M15-01 capture: (8, `MAGE`) and (9, `WARLOCK`), matching the owner's report); other classes: [verify] | yes |
+| `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept); crew book: a member's class file (on another unit: [verify]) | ran on 70450 (M15-01 capture: (8, `MAGE`) and (9, `WARLOCK`), matching the owner's report); other classes: [verify] | yes |
 | `C_MountJournal.GetMountIDs` | mounts: every mount id, unfiltered | [verify] | yes |
 | `C_MountJournal.GetMountInfoByID` | mounts: isCollected (11th return) | [verify] | yes |
 | `C_ToyBox.GetNumFilteredToys` | toys: rows through the current filter | [verify] | yes |
@@ -712,8 +712,8 @@ on from one, fails the test until someone lists it on purpose.
 | `C_CurrencyInfo.GetCurrencyFilter` | currencies: filter state, recorded | [verify] | yes |
 | `GetProfessions` | professions: indices | [verify] | yes |
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
-| `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3) | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
-| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | no |
+| `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3); the crew book likewise | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
+| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted; the crew book likewise (counted in `skipped`) | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | no |
 | `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | ran on 70425 (M13-05 capture: `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4); a future-spell item not yet seen: [verify] | n/a (table) |
@@ -730,8 +730,20 @@ on from one, fails the test until someone lists it on purpose.
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
 | `GetBindingKey` | bindings: the keys bound to a command now | ran on 70425 (M13-05 capture: 124 of 298 with a key; the 8 `bindings-cache.wtf` lines match, the other bound commands are unexplained); other builds: [verify] | yes |
+| `IsInGroup` | crew book: whether a pass reads the group at all (not in a group: `current` is emptied) | [verify] | yes |
+| `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise | [verify] | yes |
+| `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
+| `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player | [verify] | yes |
+| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own) | [verify] | yes |
+| `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty | [verify] | yes |
+| `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
+| `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil | [verify] | yes |
+| `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
+| `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
+| `time` | crew book: `started`, `first`, `last` | [verify] | yes |
+| `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |
 
-Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `SLASH_WOWLAB1`.
+Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.
 
 Events. `TRAIT_CONFIG_UPDATED`, `TRAIT_CONFIG_LIST_UPDATED`,
 `TRAIT_TREE_CURRENCY_INFO_UPDATED`, `PLAYER_TALENT_UPDATE` and
