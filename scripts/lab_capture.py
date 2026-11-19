@@ -2830,6 +2830,14 @@ CREW_BOOK_CASING_LABEL = "crew book (WowLabCrewDB) named in another casing"
 CREW_BOOK_NOT_TOP_LABEL = "crew book (WowLabCrewDB) named other than as a top-level assignment"
 CREW_BOOK_NOT_EMPTY_LABEL = "crew book (WowLabCrewDB) not in the one empty shape"
 _CREW_SCAN_RE = re.compile(rb"--|\[=*\[|[\"'{}]")
+_CREW_TEXT_RE = re.compile(rb"--|\[=*\[|[\"']")
+# The client's serializer writes plain `NAME = value` assignments only; these
+# write a global under a computed name (`_G["WowLab\67rewDB"]`), which no
+# content search for the name can see. In code they refuse the file.
+_CREW_GLOBAL_WRITE_RE = re.compile(rb"\b_G\s*\[|\brawset\b|\bsetglobal\b")
+CREW_BOOK_GLOBAL_WRITE_LABEL = (
+    "global-table write (_G[, rawset or setglobal) in code, which the client never writes"
+)
 _CREW_EOL = rb"\r?\n"
 _CREW_INDENT = rb"[ \t]*"
 _CREW_NUMBER = rb"-?[0-9]{1,20}(?:\.[0-9]{1,20})?"
@@ -2946,11 +2954,39 @@ def crew_book_assignment_ok(data: bytes, at: int) -> bool:
     return end is not None and _CREW_CLOSE_RE.match(data, end) is not None
 
 
+def _global_write_in_code(data: bytes) -> bool:
+    """Whether `_G[`, `rawset` or `setglobal` stands in code, outside every
+    quoted string, long-bracket string and comment. One pass; a quoted string
+    with no closing quote ends at its line break, as in `table_shape`."""
+    at = 0
+    while at < len(data):
+        token = _CREW_TEXT_RE.search(data, at)
+        stop = len(data) if token is None else token.start()
+        if _CREW_GLOBAL_WRITE_RE.search(data, at, stop):
+            return True
+        if token is None:
+            return False
+        first = token.group(0)[:1]
+        if first == b"-":
+            end = _skip_comment(data, stop)
+        elif first == b"[":
+            end = _skip_long(data, stop)
+        else:
+            end = _skip_quoted(data, stop)
+        if end < 0:
+            return False  # a long string or comment that runs to the end
+        at = max(end, stop + 1)
+    return False
+
+
 def crew_book_problems(data: bytes) -> list[str]:
     """Why `data` may not be captured because of the crew book; empty if it may.
 
     Decided from content alone, never from a file name. Fail closed: anything
-    other than one top-level empty book (or one `= nil` line) refuses."""
+    other than one top-level empty book (or one `= nil` line) refuses, and so
+    does a global-table write in code, which can hide the name entirely."""
+    if _global_write_in_code(data):
+        return [CREW_BOOK_GLOBAL_WRITE_LABEL]
     if _CREW_UTF16_RE.search(data):
         return [CREW_BOOK_UTF16_LABEL]
     found = _CREW_BOOK_ANY_CASE_RE.search(data)

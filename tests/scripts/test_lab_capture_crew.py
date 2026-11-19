@@ -90,12 +90,23 @@ NIL_BOOK = _lua("WowLabCrewDB = nil")
 PROBE_LOST_TWICE = _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["lost"] = true,',) * 2))
 PROBE_LOST_STRING = _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["lost"] = "yes",',)))
 LOST_AT_TOP = _lua(*_with(EMPTY_LINES, '["skipped"] = 0,', ('["lost"] = true,',)))
-# The name escaped or split: each still holds `CrewDB`.
+# The name escaped or split behind a global-table write: refused for the write.
 # (`"_G[" + ...` keeps the repository scan from reading a bracketed key here.)
 ESCAPED_DECIMAL = _lua("_G[" + '"\\87owLabCrewDB"] = {', '["players"] = {', *PLAYER, "},", "}")
 ESCAPED_HEX = _lua("_G[" + '"\\x57owLabCrewDB"] = {', "}")
 ESCAPED_UNICODE = _lua("_G[" + '"\\u{57}owLabCrewDB"] = {', "}")
 SPLIT = _lua('_G["WowLab".."CrewDB"] = {', "}")
+SPLIT_THREE = _lua('_G["WowLab".."Crew".."DB"] = {', '["players"] = {', *PLAYER, "},", "}")
+ESCAPED_C = _lua("_G[" + '"WowLab\\67rewDB"]={}')
+SPACED_G = _lua("_G [" + '"WowLab\\67rewDB"] = {', "}")
+RAWSET = _lua('rawset(_G, "WowLab".."Crew".."DB", {})')
+SETGLOBAL = _lua('setglobal("WowLab".."Crew".."DB", {})')
+# The same words inside strings and comments are data, not a write.
+WRITE_WORDS_IN_TEXT = _lua(
+    'OtherAddonDB = "_G[1] and rawset and setglobal",', "-- _G[2] rawset(x) setglobal(y)"
+)
+# The name escaped without a global write (a key of another table): it still holds `CrewDB`.
+ESCAPED_KEY = _lua("OtherAddonDB = {", "[" + '"\\87owLabCrewDB"] = 1,', "}")
 CREWDB_BESIDE = EMPTY + _lua('OtherAddonDB = "CrewDB"')
 # UTF-16, each byte order, with and without a BOM.
 UTF16 = {
@@ -143,10 +154,16 @@ REFUSED = {
     "lost twice in probe": (PROBE_LOST_TWICE, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
     "lost as a string": (PROBE_LOST_STRING, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
     "lost outside probe": (LOST_AT_TOP, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
-    "escaped decimal": (ESCAPED_DECIMAL, lab_capture.CREW_BOOK_PART_LABEL),
-    "escaped hex": (ESCAPED_HEX, lab_capture.CREW_BOOK_PART_LABEL),
-    "escaped unicode": (ESCAPED_UNICODE, lab_capture.CREW_BOOK_PART_LABEL),
-    "concatenated": (SPLIT, lab_capture.CREW_BOOK_PART_LABEL),
+    "escaped decimal": (ESCAPED_DECIMAL, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "escaped hex": (ESCAPED_HEX, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "escaped unicode": (ESCAPED_UNICODE, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "concatenated": (SPLIT, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "concatenated in three": (SPLIT_THREE, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "escaped C, no CrewDB left": (ESCAPED_C, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "_G with a space": (SPACED_G, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "rawset": (RAWSET, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "setglobal": (SETGLOBAL, lab_capture.CREW_BOOK_GLOBAL_WRITE_LABEL),
+    "escaped key of another table": (ESCAPED_KEY, lab_capture.CREW_BOOK_PART_LABEL),
     "CrewDB beside an empty book": (CREWDB_BESIDE, lab_capture.CREW_BOOK_PART_LABEL),
     **{case: (data, lab_capture.CREW_BOOK_UTF16_LABEL) for case, data in UTF16.items()},
     "a nil line twice": (NIL_TWICE, lab_capture.CREW_BOOK_TWICE_LABEL),
@@ -205,6 +222,7 @@ ACCEPTED = {
     "a nil line with line feeds": _lua("WowLabCrewDB = nil", eol="\n"),
     "a nil line at the end of the file": NIL_BOOK.rstrip(b"\r\n"),
     "a nil line beside another variable": _lua("OtherAddonDB = nil", "WowLabCrewDB = nil"),
+    "global-write words in strings and comments": WRITE_WORDS_IN_TEXT + EMPTY,
 }
 
 

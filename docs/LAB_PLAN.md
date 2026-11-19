@@ -5753,34 +5753,34 @@ flavor folder) the book stays where it was. The README and the empty-state
 sentence of `crew list` say so.
 
 ```
-  WowLabCrewDB = {
-    schema = 1,
-    on = true,                 -- absent or false: nothing is recorded
-    started = 1794950000,      -- time() when the book was (last) started
-    probe = { loads = 12 },    -- as §13.1's probe, for this file
-    skipped = 0,               -- reads skipped, counted per attempt (below)
-    current = { ["Name-Realm"] = true },  -- counted in the group the player is in now
-    players = {
-      ["Name-Realm"] = {
-        class = "MAGE",        -- the class token, as UnitClass gives it
-        level = 60,            -- only a positive number is stored
-        role = "HEALER",       -- the last role other than NONE; left out when never set
-        guild = "…",           -- the last one seen; never cleared by a nil
-        met = 3,               -- groups shared (below)
-        first = 1794950000,    -- time() of the first group
-        last = 1795640000,     -- time() of the latest
-        where = "…",           -- the instance's name, as the client gives it; left out in the open world
-        where_id = 2291,       -- its instance id
-        rating = "good",       -- "good" or "bad"; left out when unrated
-        note = "…",            -- the player's own text; left out when empty
-      },
+WowLabCrewDB = {
+  schema = 1,
+  on = true,                 -- absent or false: nothing is recorded
+  started = 1794950000,      -- time() when the book was (last) started
+  probe = { loads = 12 },    -- as §13.1's probe, for this file
+  skipped = 0,               -- reads skipped, counted per attempt (below)
+  current = { ["Inventeda-Fakerealm"] = true },  -- counted in the group the player is in now
+  players = {
+    ["Inventeda-Fakerealm"] = {  -- the key is the player's Name-Realm
+      class = "MAGE",        -- the class token, as UnitClass gives it
+      level = 60,            -- only a positive number is stored
+      role = "HEALER",       -- the last role other than NONE; left out when never set
+      guild = "…",           -- the last one seen; never cleared by a nil
+      met = 3,               -- groups shared (below)
+      first = 1794950000,    -- time() of the first group
+      last = 1795640000,     -- time() of the latest
+      where = "…",           -- the instance's name, as the client gives it; left out in the open world
+      where_id = 2291,       -- its instance id
+      rating = "good",       -- "good" or "bad"; left out when unrated
+      note = "…",            -- the player's own text; left out when empty
     },
-  }
+  },
+}
 ```
 
-(Indented two spaces on 2026-11-19, M19-04: the repository test refuses a
-`WowLabCrewDB =` assignment at column 0 in `docs/` unless the capture tool
-accepts it, so that a real book pasted into a document fails.)
+(Keys changed from a `Name-Realm` placeholder to a constructed name on
+2026-11-19, M19-04: in `docs/` a `WowLabCrewDB` assignment's player keys
+must come from the repository test's fixed list of constructed names.)
 
 - **Nothing here is proven on the client.** The repository's captures
   prove only `UnitClass("player")`, `C_Timer.After` and that
@@ -6087,19 +6087,20 @@ commands, and for `sv dump` and `snap diff`, a failure prints the exit
 code only, never the command's output (M19-02 makes that change). The owner's check
 (M19-07) reports the shape of a key, never a key.
 
-*As built (2026-11-19, M19-04).* The capture tool accepts a file that names
-the book only when the name occurs once, at column 0 and brace depth 0, as
-either the empty shape above or one `WowLabCrewDB = nil` line (the client
-writes that for a declared variable never set). In the empty shape `probe`
-holds §13.1's keys only: `loads`, a number, and `lost`, a boolean. Other
-values are numbers, or a boolean for `on`. The tool refuses a file whose
-bytes name the book more than once, in another casing, inside a string or
-a comment, or not at the top level; a file holding `CrewDB` anywhere else,
-in any casing (an escaped or concatenated name); and a file naming it in
-UTF-16. The repository test also allows a fixture with a provenance row
-that the tool accepts as a whole, so a real capture of an empty book can be
-committed; the fixed lists of constructed test files and keys stay for
-files that hold records.
+*As built (2026-11-19, M19-04).* The capture tool accepts the name once, at
+column 0 and depth 0, as the empty shape or one `WowLabCrewDB = nil` line
+(written for a declared variable never set); `probe` may hold §13.1's
+`loads` (a number) and `lost` (a boolean). It refuses the name twice, in
+another casing, in a string or comment, or below the top level; `CrewDB`
+anywhere else; UTF-16; and `_G[`, `rawset` or `setglobal` in code. The
+repository test unpacks every tracked file (gzip, zip, bzip2, xz; zstd and
+7z fail) and fails on the name in UTF-16 or a compressed member anywhere.
+In plain text the addon's `WowLab/*.lua` and `*.toc`, the Lab's
+`src/**/*.py`, `docs/`, the rest of `lab/addon/`, the capture tool and the
+constructed tests may name it; an assignment there must be the empty shape
+or nil line, or every quoted player key in the file a constructed one (a
+`.toc` never assigns it). Elsewhere only an indexed fixture the tool accepts
+whole may, so a real capture of an empty book can be committed.
 
 ### 20.6 What is not known
 

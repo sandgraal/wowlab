@@ -2,22 +2,25 @@
 
 `docs/LAB_PLAN.md` §20.5 term 3, ADR-0036 term 3: the lab-addon's crew book
 (`WowLabCrewDB`) holds other players' names, realms, guilds and the player's
-notes, and never enters the repository. Every tracked file is scanned, and
-every member of a gzip, bzip2 or xz stream or a zip archive in it (found by
-content, not by suffix, and recursively), for the name in any ASCII casing,
-in UTF-8 or UTF-16. A compressed signature the scan cannot unpack (zstd, 7z),
-or a stream that will not unpack, fails closed. The name may appear only in:
+notes, and never enters the repository. Every tracked file, wherever it
+lives, goes through one pipeline: every member of a gzip, bzip2 or xz stream
+or a zip archive in it is unpacked (found by content, not by suffix, and
+recursively; a signature it cannot unpack, zstd or 7z, or a stream that will
+not unpack, fails closed), and each member is searched for the name in any
+ASCII casing and in UTF-16. A compressed member or UTF-16 text naming the
+book fails in every place. Plain text naming it is then judged by place:
 
-- the addon's sources (`.lua` and `.toc` under `lab/addon/`) and the Lab's
-  (`lab/<one folder>/src/`), matched by path segment;
-- `docs/`, the rest of `lab/addon/`, the capture tool that refuses the book
-  (`LAB_TOOL_SOURCES`) and the labelled constructed test files of
-  `CONSTRUCTED_TEST_FILES`; in these, every `WowLabCrewDB =` assignment at
-  column 0 must be one the capture tool accepts (the empty shape or the
-  `= nil` line), so a real book pasted into one still fails;
-- a real fixture with a provenance row in `lab/core/tests/fixtures/README.md`
-  that the capture tool accepts as a whole (`crew_book_problems`), as the L8
-  paragraph of §20.5 allows for an empty book.
+- sources (`lab/addon/WowLab/*.lua` and `*.toc`, the `.py` files under
+  `lab/<one folder>/src/`, by path segment), `docs/`, the rest of
+  `lab/addon/`, the capture tool (`LAB_TOOL_SOURCES`) and the constructed
+  test files (`CONSTRUCTED_TEST_FILES`): every assignment to the name,
+  anywhere on a line and whatever precedes it, must be one the capture tool
+  accepts (the empty shape or the `= nil` line), or the file's every quoted
+  or bracketed player-shaped key must be in `CONSTRUCTED_KEYS`; a `.toc`
+  never assigns it;
+- anywhere else: only a real fixture with a provenance row in
+  `lab/core/tests/fixtures/README.md` that the capture tool accepts as a
+  whole (`crew_book_problems`), as the L8 paragraph of §20.5 allows.
 
 In the constructed test files every player-shaped key (a capitalised word,
 a hyphen and a capitalised word, the client's key shape) and every bracketed
@@ -50,8 +53,11 @@ ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_TOOL = ROOT / "scripts" / "lab_capture.py"
 NAME_RE = re.compile(rb"wowlabcrewdb", re.IGNORECASE)
 NAME_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"wowlabcrewdb"), re.IGNORECASE)
-# An assignment at column 0, in any casing: checked in the allowed non-source files.
-COLUMN_0_RE = re.compile(rb"(?:^|(?<=[\r\n]))wowlabcrewdb[ \t]*=", re.IGNORECASE)
+# An assignment to the name, anywhere on a line and whatever precedes it
+# (`_G.WowLabCrewDB = {`, `> WowLabCrewDB = {`, an indented block), in any casing.
+ASSIGNMENT_RE = re.compile(rb"wowlabcrewdb\s*=(?!=)", re.IGNORECASE)
+# A quoted or bracketed string: its text is checked for a player key.
+QUOTED_RE = re.compile(r"""(["'])([^"'\r\n]{1,64})\1""")
 LAB_TOOL_SOURCES = frozenset({"scripts/lab_capture.py"})
 CONSTRUCTED_TEST_FILES = frozenset(
     {
@@ -96,7 +102,7 @@ FIELD_KEYS = frozenset(
     }
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.
-PLAYER_KEY_RE = re.compile(r"(?<![\w-])([^\W\d_][\w']*)-([^\W\d_]\w*)(?![\w-])")
+PLAYER_KEY_RE = re.compile(r"(?<![\w-])([^\W\d_][\w']*)-([^\W\d_][\w']*)(?![\w-])")
 # A bracketed string key as the client writes it: bracket, quote, key, quote,
 # bracket, nothing between. A player key holds no comma, so text with one is
 # taken for a Python list, not a key.
@@ -170,26 +176,26 @@ def _members(label: str, data: bytes, nesting: int = 0) -> Iterator[tuple[str, b
         yield f"{label}!<cannot unpack>", FAIL_CLOSED
 
 
-def _names_it(content: bytes) -> bool:
-    return bool(NAME_RE.search(content) or NAME_UTF16_RE.search(content))
+def _place(path: str) -> str:
+    """Where a tracked path stands, by path segment:
 
-
-def _source(parts: list[str]) -> bool:
-    """The addon's `.lua` and `.toc` files, and anything under `lab/<one folder>/src/`."""
-    if len(parts) < 3 or parts[0] != "lab":
-        return False
-    if parts[1] == "addon":
-        return parts[-1].casefold().endswith((".lua", ".toc"))
-    return len(parts) > 3 and parts[2] == "src"
-
-
-def _checked_place(path: str) -> bool:
-    """Allowed to name the book, but not to hold one."""
-    return (
-        path.startswith(("docs/", "lab/addon/"))
-        or path in LAB_TOOL_SOURCES
-        or path in CONSTRUCTED_TEST_FILES
-    )
+    - `source`: the addon's own `lab/addon/WowLab/*.lua` and `*.toc`, and the
+      `.py` files under `lab/<one folder>/src/`;
+    - `checked`: `docs/`, every other file under `lab/addon/`, the capture tool;
+    - `constructed`: the labelled constructed test files;
+    - `other`: everything else."""
+    parts = path.split("/")
+    name = parts[-1].casefold()
+    in_addon = parts[:3] == ["lab", "addon", "WowLab"] and len(parts) == 4
+    if in_addon and name.endswith((".lua", ".toc")):
+        return "source"
+    if len(parts) > 3 and parts[0] == "lab" and parts[2] == "src" and name.endswith(".py"):
+        return "source"
+    if path in CONSTRUCTED_TEST_FILES:
+        return "constructed"
+    if path.startswith(("docs/", "lab/addon/")) or path in LAB_TOOL_SOURCES:
+        return "checked"
+    return "other"
 
 
 def _indexed_fixtures(index: bytes) -> frozenset[str]:
@@ -198,14 +204,50 @@ def _indexed_fixtures(index: bytes) -> frozenset[str]:
     return frozenset(FIXTURES + p.decode("utf-8", errors="replace") for p in found)
 
 
+def _line(data: bytes, at: int) -> int:
+    return data.count(b"\n", 0, at) + 1
+
+
+def _player_shaped(key: str) -> bool:
+    """name-realm, each part starting with a letter that is not lower case
+    (the client capitalises names; scripts without case count too)."""
+    match = PLAYER_KEY_RE.fullmatch(key)
+    return match is not None and not (match.group(1)[0].islower() or match.group(2)[0].islower())
+
+
+def _foreign_quoted_keys(data: bytes) -> list[int]:
+    """Lines holding a quoted or bracketed player-shaped key not in CONSTRUCTED_KEYS."""
+    text = data.decode("utf-8", errors="replace")
+    return [
+        number
+        for number, line in enumerate(text.splitlines(), 1)
+        for match in QUOTED_RE.finditer(line)
+        if _player_shaped(match.group(2)) and match.group(2) not in CONSTRUCTED_KEYS
+    ]
+
+
 def _assignment_problems(path: str, data: bytes) -> list[str]:
+    """An assignment to the name anywhere on a line, whatever precedes it,
+    must be one the capture tool accepts (the empty shape or the nil line),
+    or stand in a file whose every quoted player key is a constructed one."""
     problems: list[str] = []
-    for match in COLUMN_0_RE.finditer(data):
+    foreign: list[int] | None = None
+    is_toc = path.casefold().endswith(".toc")
+    for match in ASSIGNMENT_RE.finditer(data):
         start = match.start()
+        if is_toc:
+            # A .toc names the variable on its SavedVariables line; it never assigns one.
+            problems.append(f"{path}:{_line(data, start)}: a crew-book assignment in a .toc")
+            continue
         exact = data.startswith(lab_capture.CREW_BOOK_NAME, start)
-        if not (exact and lab_capture.crew_book_assignment_ok(data, start)):
-            line = data.count(b"\n", 0, start) + 1
-            problems.append(f"{path}:{line}: a crew book the capture tool would refuse")
+        if exact and lab_capture.crew_book_assignment_ok(data, start):
+            continue
+        if foreign is None:
+            foreign = _foreign_quoted_keys(data)
+        if foreign:
+            problems.append(
+                f"{path}:{_line(data, start)}: a crew book holding a key not in CONSTRUCTED_KEYS"
+            )
     return problems
 
 
@@ -214,12 +256,7 @@ def _key_problems(path: str, data: bytes) -> list[str]:
     problems: list[str] = []
     for number, line in enumerate(text.splitlines(), 1):
         for match in PLAYER_KEY_RE.finditer(line):
-            first, second = match.group(1), match.group(2)
-            if (
-                first[0].isupper()
-                and second[0].isupper()
-                and match.group(0) not in CONSTRUCTED_KEYS
-            ):
+            if _player_shaped(match.group(0)) and match.group(0) not in CONSTRUCTED_KEYS:
                 problems.append(f"{path}:{number}: a player key not in CONSTRUCTED_KEYS")
         for match in BRACKET_KEY_RE.finditer(line):
             key = match.group(2)
@@ -231,26 +268,31 @@ def _key_problems(path: str, data: bytes) -> list[str]:
 def scan(entries: Iterable[tuple[str, bytes]], index: bytes | None = None) -> list[str]:
     """Every problem in (tracked path, bytes) pairs: never a key, only where.
 
-    `index` is the fixture index's text; None reads it from the tree."""
+    One pipeline for every path: unpack every member, search each for the name
+    in ASCII (any casing) and in UTF-16, then decide by place. A compressed
+    member or UTF-16 text naming the book fails everywhere. Plain text naming
+    it: a source, checked or constructed file passes the assignment check; any
+    other file passes only as an indexed fixture the capture tool accepts
+    whole. `index` is the fixture index's text; None reads it from the tree."""
     if index is None:
         index = (ROOT / FIXTURE_INDEX).read_bytes()
     indexed = _indexed_fixtures(index)
     problems: list[str] = []
     for path, data in entries:
-        parts = path.split("/")
-        if _source(parts):
-            continue
-        if _checked_place(path):
-            problems.extend(_assignment_problems(path, data))
-            if path in CONSTRUCTED_TEST_FILES:
-                problems.extend(_key_problems(path, data))
-            continue
+        place = _place(path)
+        if place == "constructed":
+            problems.extend(_key_problems(path, data))
         for label, content in _members(path, data):
-            if not _names_it(content):
+            if NAME_UTF16_RE.search(content):
+                problems.append(f"{label}: names the crew book in UTF-16")
+            if not NAME_RE.search(content):
                 continue
-            if label == path and path in indexed and not lab_capture.crew_book_problems(data):
-                continue  # a real capture of an empty book, with its provenance row
-            problems.append(f"{label}: names the crew book outside the allowed places")
+            if label != path:
+                problems.append(f"{label}: names the crew book inside a compressed member")
+            elif place != "other":
+                problems.extend(_assignment_problems(path, data))
+            elif not (path in indexed and not lab_capture.crew_book_problems(data)):
+                problems.append(f"{label}: names the crew book outside the allowed places")
     return problems
 
 
@@ -311,35 +353,122 @@ def test_the_constructed_keys_are_player_shaped() -> None:
 
 # ─── the scan, shown failing on planted content (constructed, in memory) ─────
 
-PLANTED_BOOK = b'\r\nWowLabCrewDB = {\r\n["schema"] = 1,\r\n}\r\n'
-PLANTED_FULL = (
-    b'\r\nWowLabCrewDB = {\r\n["players"] = {\r\n["Inventeda-Fakerealm"] = {\r\n'
-    b'["level"] = 60,\r\n},\r\n},\r\n}\r\n'
-)
+NAME = "WowLab" + "CrewDB"  # assembled, so these lines hold no assignment to scan
 PLANTED_KEY = "Plantedname" + "-" + "Plantedrealm"  # real-looking, not in the list
+PLANTED_BOOK = f'\r\n{NAME} = {{\r\n["schema"] = 1,\r\n}}\r\n'.encode()
+# A full book whose only key is a constructed one, and the same with a real-looking key.
+BOOK_LINES = (
+    "{",
+    '["players"] = {',
+    '["Inventeda-Fakerealm"] = {',
+    '["level"] = 60,',
+    "},",
+    "},",
+    "}",
+)
+PLANTED_FULL = ("\r\n" + NAME + " = " + "\r\n".join(BOOK_LINES) + "\r\n").encode()
+PLANTED_REAL = PLANTED_FULL.replace(b"Inventeda-Fakerealm", PLANTED_KEY.encode())
 NO_INDEX = b""
+OUTSIDE = "names the crew book outside the allowed places"
+
+
+def _real_book_variants() -> dict[str, bytes]:
+    """The reviewers' shapes of a pasted real book in a document (security, round 2)."""
+    lines = PLANTED_REAL.decode().strip().split("\r\n")
+    return {
+        "indented one space": ("```\n" + "\n".join(" " + x for x in lines) + "\n```\n").encode(),
+        "quoted with >": ("\n".join("> " + x for x in lines) + "\n").encode(),
+        "_G. prefix": ("_G." + PLANTED_REAL.decode().strip() + "\n").encode(),
+        "column 0": PLANTED_REAL,
+        "another casing": PLANTED_REAL.replace(NAME.encode(), NAME.lower().encode()),
+        "name and = on two lines": PLANTED_REAL.replace(b" = {", b"\r\n= {", 1),
+    }
 
 
 def test_constructed_a_planted_file_fails() -> None:
     problems = scan([("lab/core/tests/fixtures/macos/planted.lua", PLANTED_BOOK)], NO_INDEX)
-    assert problems == [
-        "lab/core/tests/fixtures/macos/planted.lua: names the crew book outside the allowed places"
-    ]
+    assert problems == [f"lab/core/tests/fixtures/macos/planted.lua: {OUTSIDE}"]
 
 
-def test_constructed_a_planted_file_in_another_casing_or_utf16_fails() -> None:
+def test_constructed_a_planted_file_in_another_casing_fails() -> None:
     assert scan([("tests/planted.txt", PLANTED_BOOK.lower())], NO_INDEX)
-    for encoding in ("utf-16-le", "utf-16-be", "utf-16"):
-        assert scan([("tests/planted.txt", PLANTED_FULL.decode().encode(encoding))], NO_INDEX)
 
 
-def test_constructed_a_planted_src_folder_outside_a_source_tree_fails() -> None:
+def test_constructed_utf16_fails_in_every_place() -> None:
+    for path in (
+        "tests/planted.txt",
+        "docs/a.md",
+        "lab/addon/notes.txt",
+        "lab/addon/WowLab/Crew.lua",
+    ):
+        for encoding in ("utf-16-le", "utf-16-be", "utf-16"):
+            planted = PLANTED_FULL.decode().encode(encoding)
+            assert f"{path}: names the crew book in UTF-16" in scan([(path, planted)], NO_INDEX)
+
+
+def test_constructed_a_compressed_member_fails_in_every_place() -> None:
+    planted = gzip.compress(PLANTED_FULL)
+    for path in (
+        "docs/a.gz",
+        "lab/addon/notes.txt",
+        "lab/addon/fixtures/WowLab.lua.gz",
+        "lab/addon/WowLab/Crew.lua",
+        "lab/core/src/wowlab_core/crewbook.py",
+    ):
+        assert scan([(path, planted)], NO_INDEX) == [
+            f"{path}!gunzip: names the crew book inside a compressed member"
+        ], path
+
+
+def test_constructed_paths_that_are_not_sources_fail() -> None:
     for path in (
         "lab/core/tests/fixtures/macos/src/WowLab.lua",
         "lab/core/tests/src/WowLab.lua",
-        "lab/addon/WowLab/tests/Book.txt",
+        "lab/newthing/src/WowLab.lua",
+        "lab/core/src/wowlab_core/data/b.txt",
+        "lab/core/tests/test_crewbook.py",
     ):
-        assert scan([(path, PLANTED_FULL)], NO_INDEX), path
+        assert scan([(path, PLANTED_FULL)], NO_INDEX) == [f"{path}: {OUTSIDE}"], path
+
+
+def test_constructed_a_real_book_fails_in_addon_files_that_are_not_sources() -> None:
+    for path in ("lab/addon/tests/fixtures/WowLab.lua", "lab/addon/README.md"):
+        assert scan([(path, PLANTED_REAL)], NO_INDEX), path
+        assert scan([(path, PLANTED_FULL)], NO_INDEX) == [], path  # control: constructed keys
+
+
+def test_constructed_a_toc_never_assigns_the_book() -> None:
+    path = "lab/addon/WowLab/Book.toc"
+    assert scan([(path, PLANTED_FULL)], NO_INDEX) == [f"{path}:2: a crew-book assignment in a .toc"]
+    saved_variables = f"## SavedVariables: WowLabDB, {NAME}\n".encode()
+    assert scan([(path, saved_variables)], NO_INDEX) == []  # control
+
+
+def test_constructed_a_real_book_fails_in_a_source_file() -> None:
+    for path in ("lab/addon/WowLab/Crew.lua", "lab/core/src/wowlab_core/crewbook.py"):
+        assert scan([(path, PLANTED_REAL)], NO_INDEX), path
+        # Control: source code that names the variable and creates the empty table.
+        code = f"local book = {NAME}\nif not {NAME} then\n  {NAME} = {{ schema = 1 }}\nend\n"
+        assert scan([(path, code.encode())], NO_INDEX) == [], path
+
+
+def test_constructed_a_pasted_real_book_fails_in_a_doc() -> None:
+    for case, planted in _real_book_variants().items():
+        problems = scan([("docs/a.md", b"prose\n" + planted)], NO_INDEX)
+        assert problems, case
+        assert all("a crew book holding a key not in CONSTRUCTED_KEYS" in p for p in problems)
+        assert all(PLANTED_KEY not in p for p in problems)  # where, never the key
+
+
+def test_constructed_doc_controls_pass() -> None:
+    for planted in (
+        PLANTED_BOOK,  # the empty shape
+        f"\r\n{NAME} = nil\r\n".encode(),  # the nil line
+        PLANTED_FULL,  # an example whose keys are all constructed
+        f"prose naming {NAME} inline, and {NAME} == nil in a sentence\n".encode(),
+    ):
+        for path in ("docs/a.md", "scripts/lab_capture.py", "lab/addon/README.md"):
+            assert scan([(path, planted)], NO_INDEX) == [], (path, planted)
 
 
 def test_constructed_a_planted_gz_fails() -> None:
@@ -348,26 +477,26 @@ def test_constructed_a_planted_gz_fails() -> None:
     problems = scan([("lab/core/tests/fixtures/wago/planted.json.gz", planted)], NO_INDEX)
     assert problems == [
         "lab/core/tests/fixtures/wago/planted.json.gz!gunzip: "
-        "names the crew book outside the allowed places"
+        "names the crew book inside a compressed member"
     ]
 
 
 def test_constructed_planted_bzip2_and_xz_fail() -> None:
     assert scan([("tests/planted.bz2", bz2.compress(PLANTED_BOOK))], NO_INDEX) == [
-        "tests/planted.bz2!bunzip2: names the crew book outside the allowed places"
+        "tests/planted.bz2!bunzip2: names the crew book inside a compressed member"
     ]
     # xz may keep a short input's bytes as they are, so the raw file can fail too.
     xz_problems = scan([("tests/planted.xz", lzma.compress(PLANTED_BOOK))], NO_INDEX)
-    assert "tests/planted.xz!unxz: names the crew book outside the allowed places" in xz_problems
+    assert "tests/planted.xz!unxz: names the crew book inside a compressed member" in xz_problems
 
 
 def test_constructed_a_signature_it_cannot_unpack_fails_closed() -> None:
     for magic, kind in UNPACKABLE:
-        problems = scan([("tests/planted.bin", magic + b"\x00" * 32)], NO_INDEX)
-        assert problems == [
-            f"tests/planted.bin!<{kind}, cannot unpack>: "
-            "names the crew book outside the allowed places"
-        ]
+        for path in ("tests/planted.bin", "docs/planted.bin", "lab/addon/WowLab/Crew.lua"):
+            problems = scan([(path, magic + b"\x00" * 32)], NO_INDEX)
+            assert problems == [
+                f"{path}!<{kind}, cannot unpack>: names the crew book inside a compressed member"
+            ]
 
 
 def test_constructed_a_planted_zip_member_and_nested_gz_fail() -> None:
@@ -375,10 +504,10 @@ def test_constructed_a_planted_zip_member_and_nested_gz_fail() -> None:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("inner/WowLab.lua", PLANTED_BOOK)
         archive.writestr("inner/nested.gz", gzip.compress(PLANTED_BOOK))
-    problems = scan([("tests/planted.bin", buffer.getvalue())], NO_INDEX)
+    problems = scan([("docs/planted.bin", buffer.getvalue())], NO_INDEX)
     assert problems == [
-        "tests/planted.bin!inner/WowLab.lua: names the crew book outside the allowed places",
-        "tests/planted.bin!inner/nested.gz!gunzip: names the crew book outside the allowed places",
+        "docs/planted.bin!inner/WowLab.lua: names the crew book inside a compressed member",
+        "docs/planted.bin!inner/nested.gz!gunzip: names the crew book inside a compressed member",
     ]
 
 
@@ -392,38 +521,16 @@ def test_constructed_a_planted_real_looking_key_fails() -> None:
     assert scan([(path, original)], NO_INDEX) == []
     as_player_key = original.replace(b"Inventeda-Fakerealm", PLANTED_KEY.encode(), 1)
     problems = scan([(path, as_player_key)], NO_INDEX)
-    assert problems and all("a player key not in CONSTRUCTED_KEYS" in p for p in problems)
+    assert problems and all("CONSTRUCTED_KEYS" in p for p in problems)
     assert all(PLANTED_KEY not in p for p in problems)  # where, never the key
     as_bracket_key = original.replace(b'["schema"]', b'["' + b"plantedkey" + b'"]', 1)
     assert [p for p in scan([(path, as_bracket_key)], NO_INDEX) if "bracketed key" in p]
 
 
-def test_constructed_a_full_book_in_a_doc_or_addon_file_fails() -> None:
-    for path in ("docs/LAB_PLAN.md", "lab/addon/README.md", "scripts/lab_capture.py"):
-        problems = scan([(path, b"prose\n" + PLANTED_FULL)], NO_INDEX)
-        assert problems == [f"{path}:3: a crew book the capture tool would refuse"], path
-    # Another casing at column 0 is refused there too.
-    assert scan([("docs/x.md", PLANTED_BOOK.lower())], NO_INDEX)
-
-
-def test_constructed_the_allowed_places_are_not_flagged() -> None:
-    for path in (
-        "lab/addon/WowLab/Crew.lua",
-        "lab/addon/WowLab/WowLab.toc",
-        "lab/core/src/wowlab_core/crewbook.py",
-    ):
-        assert scan([(path, PLANTED_FULL)], NO_INDEX) == [], path
-    for path in ("docs/LAB_PLAN.md", "scripts/lab_capture.py", "lab/addon/README.md"):
-        assert scan([(path, PLANTED_BOOK)], NO_INDEX) == [], path
-        assert scan([(path, b"prose naming WowLabCrewDB inline\n")], NO_INDEX) == [], path
-    # Not a source tree: a Lab app's tests are not allowed by the source rule.
-    assert scan([("lab/core/tests/test_crewbook.py", PLANTED_BOOK)], NO_INDEX)
-
-
 def test_constructed_an_indexed_real_capture_of_an_empty_book_is_allowed() -> None:
     path = FIXTURES + "macos-99999/forever/WTF/Account/X/SavedVariables/WowLab.lua"
     index = b"| `" + path[len(FIXTURES) :].encode() + b"` | savedvariables | ... |\n"
-    nil_line = b"\r\nWowLabDB = {\r\n},\r\nWowLabCrewDB = nil\r\n"
+    nil_line = f"\r\nWowLabDB = {{\r\n}},\r\n{NAME} = nil\r\n".encode()
     assert scan([(path, PLANTED_BOOK)], index) == []
     assert scan([(path, nil_line)], index) == []
     # The same path without its row, or with a record, still fails.
