@@ -1285,3 +1285,25 @@ Dated entries, newest last. Each names the fixture that prompted it.
   to find Stand, and whether id 0 is Stand is from memory. Point 29 is
   believed to be a nameplate point, not a sheath point, which would
   explain its missing rotation on 959310 (**[verify]**).
+- **2026-11-19, §12, drawing held items sheathed (M15-27; no new reading of
+  the install: the derived rows of `macos-70959/derived/charmodel.json`
+  grade it, rebuilt into constructed body models).** `m2.bone_chain` now
+  reads, on request, one bone and its parents (key bone id, flags, parent,
+  pivot at 76) and the first key of each one's rotation track at 36, only
+  when that track runs on a global sequence; no other key and no
+  translation or scale track is read. `char model` rests on these
+  assumptions, every one **[verify]** until the owner's look in a viewer:
+
+  | assumption | taken as |
+  |---|---|
+  | the decoding rule | `(s < 0 ? s + 32768 : s − 32767) / 32767`, (x, y, z, w); a key whose length is more than 0.01 from 1 is refused, others normalised |
+  | the carried angle | the sheath bone's first rotation key on its global sequence |
+  | the transform | `T(pivot)·T(t)·R(q)·T(−pivot)` with t = 0, after the parents' rest transforms (pivot only, so the identity); the point's position is turned with it, its rotation is the item's |
+  | the item's axes | the item model drawn as stored in the point's axes: no axis is taken as its length, its origin is taken as its grip, and no per-`SheatheType` correction is added |
+  | the axis signs | `gltf.to_y_up` for positions, the same mapping of the axis for the rotation |
+  | `SheatheType` → point | 1 → 26/27, 2 → 30/31, 3 → 32/33, 4 → 28; 0 and any other number not drawn sheathed |
+  | left and right | the first of a pair (the community's "left") for the main hand, the second for the off hand and a shield |
+
+  On the fixture characters this puts Sangraal-Sett's dagger (type 3) at 32
+  and its off-hand item (type 3) at 33, and Dangling-Participle's staff
+  (type 2) at 30. The ranged slot stays unsupported.

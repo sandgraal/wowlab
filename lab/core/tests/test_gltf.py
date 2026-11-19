@@ -166,3 +166,35 @@ def test_an_image_that_does_not_exist_is_refused_constructed() -> None:
 def test_a_file_past_the_cap_is_refused_constructed() -> None:
     with pytest.raises(gltf.GltfError, match="cap"):
         gltf.encode_glb(_scene(), limit=100)
+
+
+def test_a_rotation_is_written_and_the_identity_is_not_constructed() -> None:
+    """M15-27: a node's rotation goes into `rotation` (x, y, z, w); a node
+    without one is written as before, so old scenes keep their bytes."""
+    plain = gltf.encode_glb(_scene())[0]
+    nodes = list(_scene().nodes)
+    nodes[1] = nodes[1].model_copy(update={"rotation": gltf.IDENTITY})
+    same = _scene().model_copy(update={"nodes": tuple(nodes)})
+    assert gltf.encode_glb(same)[0] == plain
+    turn = (0.0, 0.7071067811865476, 0.0, 0.7071067811865476)
+    nodes[1] = nodes[1].model_copy(update={"rotation": turn})
+    glb = read_glb(gltf.encode_glb(_scene().model_copy(update={"nodes": tuple(nodes)}))[0])
+    assert "rotation" not in glb.nodes[0]
+    assert glb.nodes[1]["rotation"] == list(turn)
+    assert glb.nodes[1]["translation"] == [0.5, 1.5, -2.0]
+
+
+@pytest.mark.parametrize(
+    "rotation", [(0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 1.0, 1.0), (float("nan"), 0.0, 0.0, 1.0)]
+)
+def test_a_rotation_that_is_not_a_unit_quaternion_is_refused_constructed(
+    rotation: tuple[float, float, float, float],
+) -> None:
+    nodes = list(_scene().nodes)
+    nodes[1] = nodes[1].model_copy(update={"rotation": rotation})
+    with pytest.raises(gltf.GltfError, match="not a unit quaternion"):
+        gltf.encode_glb(_scene().model_copy(update={"nodes": tuple(nodes)}))
+
+
+def test_a_rotation_maps_to_y_up_with_its_axis_constructed() -> None:
+    assert gltf.quaternion_to_y_up(0.1, 0.2, 0.3, 0.9) == (0.1, 0.3, -0.2, 0.9)

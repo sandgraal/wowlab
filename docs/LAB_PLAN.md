@@ -5041,7 +5041,7 @@ attachment position), POSITION, NORMAL, TEXCOORD_0 as float32, uint32
 indices, one PNG material per texture, Y-up (the Z-up swap, axis signs
 **[verify]** in the first viewer ticket). Stdlib only, about two hundred
 lines; a round-trip parser in the tests checks the structure. `wowlab char
-model [--character] [--account] [--root] [--flavor] [--out] [--json]` runs
+model [--character] [--account] [--root] [--flavor] [--out] [--no-held] [--json]` runs
 the whole chain and writes
 `<data>/casc/<product>-<build>/characters/<account>/<realm>/<character>.glb` plus its
 PNGs, the folder and file names taken from the install's own folder names
@@ -5208,6 +5208,18 @@ first key is the sheath bone's orientation relative to its parent (bone
 store a pivot and no rest rotation, so this track is believed to be the
 bone's only orientation. The small movement over the loop is idle motion.
 What stays unverified is listed in the §12 amendment.
+
+*Note, 2026-11-19 (M15-27, as built; the owner's decision "draw them now,
+labelled"):* `char model` draws a main-hand, off-hand or shield item at a
+sheath point, turned by that point's bone's first rotation key, and says
+"drawn sheathed, placement approximate (not yet confirmed)" (`--json`: per
+item; the text: once). `--no-held` leaves them out as before, the `.glb`
+and PNGs byte for byte. An item whose sheathe type, point, bone or key
+cannot be resolved is not drawn, as before, with the reason. No animation is
+played; the body is unchanged. Every assumption, each **[verify]**, is in
+`docs/LAB_FORMATS.md` §12 (amendment of the same date) and in
+`charmodel._sheath`. Only the owner's look in a glTF viewer can confirm a
+placement.
 
 ### 17.7 What is known, and what is [verify]
 

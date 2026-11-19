@@ -6,7 +6,7 @@ The bytes are returned, not written: where they go is the caller's choice
 Pydantic models below; nothing here reads a file.
 
 **What a file holds.** One scene; one node per `GltfNode`, each with its
-mesh and a translation; per mesh one set of vertex attributes shared by its
+mesh, a translation and a rotation; per mesh one set of vertex attributes shared by its
 primitives: POSITION and NORMAL (float32, three a vertex), TEXCOORD_0
 (float32, two a vertex); per primitive its uint32 triangle indices (mode 4,
 triangles) and its material. Each material is metallic-roughness with
@@ -20,7 +20,10 @@ buffer view starting on a four-byte boundary.
 
 **Axes.** The game's models are Z-up; glTF is Y-up. `to_y_up` maps a
 game position or normal `(x, y, z)` to `(x, z, -y)`, the mapping wow.export
-writes; it is a rotation (determinant 1), so the triangles' winding is kept.
+writes; it is a rotation (determinant 1), so the triangles' winding is kept,
+and `quaternion_to_y_up` maps a rotation the same way. A node's rotation,
+when it has one, is written as glTF's `rotation` (x, y, z, w); the identity
+is left out, and so is a zero translation.
 Whether the signs give the model facing the way it does in game is
 **[verify]**: the owner opens one file in a glTF viewer. Texture
 coordinates are written as stored (the game's and glTF's both start at the
@@ -51,6 +54,7 @@ from wowlab_core.errors import WowlabError
 
 __all__ = [
     "GLB_MAGIC",
+    "IDENTITY",
     "MAX_FILE_BYTES",
     "GlbFacts",
     "GltfError",
@@ -62,6 +66,7 @@ __all__ = [
     "GltfScene",
     "encode_glb",
     "floats",
+    "quaternion_to_y_up",
     "to_y_up",
     "uints",
 ]
@@ -72,6 +77,9 @@ _JSON = 0x4E4F534A  # "JSON"
 _BIN = 0x004E4942  # "BIN\0"
 MAX_FILE_BYTES = 2**32 - 1
 """The most bytes a `.glb` can have: its header's length is a uint32."""
+IDENTITY = (0.0, 0.0, 0.0, 1.0)
+"""The quaternion that turns nothing (x, y, z, w)."""
+_UNIT = 1e-3  # how far a rotation's length may be from 1
 
 _FLOAT = 5126
 _UINT = 5125
@@ -136,11 +144,15 @@ class GltfMesh(_Frozen):
 
 
 class GltfNode(_Frozen):
-    """A mesh placed at `translation` (Y-up)."""
+    """A mesh placed at `translation` (Y-up) and turned by `rotation`, a
+    unit quaternion (x, y, z, w) in glTF's axes, applied before the
+    translation (glTF's T·R·S). The identity is not written, so a scene
+    without a rotation is the same bytes as before rotations existed."""
 
     name: str
     mesh: GltfMesh
     translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float, float] = IDENTITY
 
 
 class GltfScene(_Frozen):
@@ -169,6 +181,14 @@ def to_y_up(x: float, y: float, z: float) -> tuple[float, float, float]:
     """The game's Z-up `(x, y, z)` as glTF's Y-up: `(x, z, -y)` (**[verify]**,
     the module docstring)."""
     return (x, z, -y)
+
+
+def quaternion_to_y_up(x: float, y: float, z: float, w: float) -> tuple[float, float, float, float]:
+    """A rotation in the game's Z-up axes as the same rotation in glTF's
+    Y-up axes: its axis mapped as `to_y_up` maps a vector, the angle kept
+    (`to_y_up` is itself a rotation, so this is exact)."""
+    ax, ay, az = to_y_up(x, y, z)
+    return (ax, ay, az, w)
 
 
 def floats(values: Sequence[float] | array[float]) -> bytes:
@@ -224,6 +244,10 @@ def _check(scene: GltfScene) -> None:
             )
         if not all(math.isfinite(v) for v in node.translation):
             raise GltfError(f"{what}: a translation that is not a finite number")
+        if not all(math.isfinite(v) for v in node.rotation) or (
+            abs(math.sqrt(sum(v * v for v in node.rotation)) - 1) > _UNIT
+        ):
+            raise GltfError(f"{what}: a rotation that is not a unit quaternion")
         if not all(map(math.isfinite, _read_floats(mesh.normals))):
             raise GltfError(f"{what}: a normal that is not a finite number")
         if not all(map(math.isfinite, _read_floats(mesh.uvs))):
@@ -323,6 +347,8 @@ def encode_glb(scene: GltfScene, *, limit: int = MAX_FILE_BYTES) -> tuple[bytes,
             primitives.append(entry)
         meshes.append({"name": mesh.name, "primitives": primitives})
         placed: dict[str, object] = {"name": node.name, "mesh": len(meshes) - 1}
+        if node.rotation != IDENTITY:
+            placed["rotation"] = list(node.rotation)
         if any(node.translation):
             placed["translation"] = list(node.translation)
         nodes.append(placed)

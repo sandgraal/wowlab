@@ -104,7 +104,10 @@ class CharModelReport(_Out):
     `already_there` (an `--out` file with the same bytes, nothing written)),
     the PNGs beside it and any older PNG of this character removed, the
     `.glb`'s facts, the plan in brief, every model and whether it was
-    placed, the body texture's painted and not-painted layers, every file
+    placed (a held item drawn sheathed carries `sheathed`, its
+    `sheath_point`, `rotation` and `placement`, "drawn sheathed, placement
+    approximate (not yet confirmed)"; one that could not be, its
+    `sheath_reason`; none with `--no-held`), the body texture's painted and not-painted layers, every file
     the plan names with its state, the files left out and why, the items
     not drawn, the two dates (`gear_as_of`: the record's last save, at
     logout or /reload; `look_as_of`: the barber-shop record, whose
@@ -168,6 +171,7 @@ _ORIGIN_ITEMS = (
     "The game's model file keeps no place for these items in this pose (their points sit at the "
     "model's feet), so they are left out for now."
 )
+_SHEATHED = f"Weapons, shields and off-hand items are {charmodel.SHEATHED}."
 # The attachment points of held items: shield, main hand, off hand.
 _HELD_POINTS = frozenset({0, 1, 2})
 
@@ -365,6 +369,14 @@ def char_model(
             "folder, replaced by each run.",
         ),
     ] = None,
+    no_held: Annotated[
+        bool,
+        typer.Option(
+            "--no-held",
+            help="Leave weapons, shields and off-hand items out instead of drawing them sheathed "
+            "on the back or hip.",
+        ),
+    ] = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -372,7 +384,8 @@ def char_model(
 ) -> None:
     """Draw one character as a 3D model (a .glb file, glTF) from what the
     lab-addon recorded and the game's own files on this computer: its body,
-    its look from the barber shop, and its gear. Without --character, the
+    its look from the barber shop, and its gear, with weapons and shields
+    drawn sheathed on the back or hip. Without --character, the
     character whose WowLab.lua was written last. The model and its textures
     (PNG) go into wowlab's data folder, never into the game folder; a re-run
     replaces them. The first run for a game version downloads the game
@@ -422,7 +435,7 @@ def char_model(
         raise CliError(f"cannot say where the character's files stand: {exc}") from exc
     seconds["plan"] = time.perf_counter() - clock
     try:
-        built = charmodel.build(plan, source)
+        built = charmodel.build(plan, source, held=not no_held)
     except charmodel.BodyNotDrawnError as exc:
         raise CliError(f"cannot draw {realm}/{who}: {exc}; nothing was written") from exc
     seconds.update(built.seconds)
@@ -536,15 +549,23 @@ def _say_char_model(
         _say("Gear:")
     for m in worn:
         if m.placed:
-            where = "drawn on the body" if m.kind == "collection" else "drawn"
+            where = (
+                "drawn on the body"
+                if m.kind == "collection"
+                else "drawn sheathed"
+                if m.sheathed
+                else "drawn"
+            )
             _say_prose(f"{_slot_words(m.slot, slots)}: item {m.item_id}, {where}", indent="  ")
-    held = [m for m in worn if not m.placed and m.at_origin]
+    if any(m.placed and m.sheathed for m in worn):
+        _say_prose(_SHEATHED, indent="  ")
+    held = [m for m in worn if not m.placed and m.at_origin and m.sheath_reason is None]
     if held:
         listed = "; ".join(f"{_slot_words(m.slot, slots)}, item {m.item_id}" for m in held)
         why = _HELD_ITEMS if all(m.attachment_id in _HELD_POINTS for m in held) else _ORIGIN_ITEMS
         _say_prose(f"Not drawn ({len(held)}): {listed}. {why}", indent="  ")
     for m in worn:
-        if not m.placed and not m.at_origin:
+        if not m.placed and (not m.at_origin or m.sheath_reason is not None):
             _say_prose(
                 f"{_slot_words(m.slot, slots)}: item {m.item_id}, not drawn: {m.reason}",
                 indent="  ",

@@ -19,8 +19,9 @@ From the MD20 header (offsets in the blob; every array a `count, offset`
 pair): the version at 0x04 (the wiki's table runs from 256 to 274; below
 264 the header is laid out differently and is refused; above 274 the file
 is read with the 274 layout and a note), the name at 0x08, the global
-flags at 0x10, the bones at 0x2C (counted and bounds-checked, never read:
-no bones are read in this wave, §17.3), the vertices at 0x3C (48 bytes:
+flags at 0x10, the bones at 0x2C (counted and bounds-checked by
+`parse_m2`; `bone_chain` reads one bone and its parents on request, below),
+the vertices at 0x3C (48 bytes:
 position, four bone weights, four bone indices, normal, two UV pairs;
 Z-up, in the bind pose, kept as stored), the view count at 0x44, the
 textures at 0x50 (16 bytes: type, flags, a filename array), the materials
@@ -68,6 +69,14 @@ lookup has 43,166 entries; §12 amendment of 2026-11-17)).
   batch's section against the sections and, when the caller gives the
   model's vertex count, every lookup entry against it.
 
+- `bone_chain` (M15-27) reads one bone and its parents, never the whole
+  bone array: the bone index and every parent against the bone count, the
+  chain at most `MAX_BONE_DEPTH` (256) long and refused on a loop, and of
+  each bone's rotation track only the first key of its first array, when
+  the track runs on a global sequence; the outer and the first inner array
+  checked against the blob, the global sequence against the global
+  sequences' count. A hostile count costs nothing: no array is walked.
+
 The rest is proportional to the input: the vertex columns take about three
 times the vertex array at peak while they are built and one copy once
 built (measured: 161 MB at peak for 48 MB of vertices); the lookup and
@@ -92,6 +101,7 @@ __all__ = [
     "BATCH_SIZE",
     "BONE_SIZE",
     "MATERIAL_SIZE",
+    "MAX_BONE_DEPTH",
     "MAX_CHUNKS",
     "MAX_ENTRIES",
     "MAX_FILENAME",
@@ -103,6 +113,7 @@ __all__ = [
     "TEXTURE_SIZE",
     "VERTEX_SIZE",
     "M2Attachment",
+    "M2Bone",
     "M2Chunk",
     "M2Error",
     "M2MalformedError",
@@ -114,6 +125,8 @@ __all__ = [
     "Skin",
     "SkinBatch",
     "SkinSection",
+    "bone_chain",
+    "decode_quaternion",
     "parse_m2",
     "parse_skin",
 ]
@@ -172,6 +185,22 @@ MAX_CHUNKS = 1024
 MAX_FILENAME = 1024  # bytes of one texture filename
 MAX_ENTRIES = 0xFFFF  # textures, materials, attachments, sections, batches: u16-indexed
 MAX_SECTION_INDEX_FACTOR = 4  # the sections' index counts summed, against the indices
+MAX_BONE_DEPTH = 256  # bones in one chain (the fixture body models: under 20 deep)
+
+# M2CompBone (88 bytes since 264, wowdev.wiki): key bone id i32 at 0, flags
+# u32 at 4, parent i16 at 8, then three M2Tracks of 20 bytes (translation at
+# 16, rotation at 36, scale at 56) and the pivot, three floats, at 76. An
+# M2Track: interpolation u16 at 0, global sequence i16 at 2 (-1: none), the
+# timestamps' and the values' arrays of per-sequence arrays at 4 and 12.
+_BONE_HEAD = struct.Struct("<iIh")
+_BONE_ROTATION = 36
+_BONE_PIVOT = 76
+_TRACK_HEAD = struct.Struct("<Hh")
+_TRACK_TIMES = 4
+_TRACK_VALUES = 12
+_PIVOT = struct.Struct("<3f")
+_QUAT = struct.Struct("<4h")
+_GLOBAL_SEQUENCES = 0x14
 
 
 class M2Error(WowlabError):
@@ -244,6 +273,29 @@ class M2Attachment(BaseModel):
     id: int
     bone: int
     position: tuple[float, float, float]
+
+
+class M2Bone(BaseModel):
+    """One bone, as `bone_chain` reads it: its key bone id, flags, parent
+    (-1: a root) and pivot (Z-up, model space), and its rotation track's
+    first key. `rotation` is that key decoded (`decode_quaternion`, x, y, z,
+    w; the rule is wowdev.wiki's, **[verify]**) when the track runs on a
+    global sequence and holds a key; else None, and `rotation_why` says why.
+    `rotation_global_sequence` and `rotation_interpolation` are the track's,
+    as stored. A track's later keys, its per-animation arrays, and the
+    translation and scale tracks are not read."""
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int
+    key_bone_id: int
+    flags: int
+    parent: int
+    pivot: tuple[float, float, float]
+    rotation: tuple[float, float, float, float] | None
+    rotation_why: str | None = None
+    rotation_global_sequence: int
+    rotation_interpolation: int
 
 
 class M2Vertices(BaseModel):
@@ -774,3 +826,102 @@ def parse_skin(data: Buffer, path: Path | None = None, *, vertex_count: int | No
         sections=tuple(sections),
         batches=tuple(batches),
     )
+
+
+# ─── bones (M15-27) ──────────────────────────────────────────────────────────
+
+
+def decode_quaternion(raw: tuple[int, ...]) -> tuple[float, float, float, float]:
+    """An M2CompQuat's four i16 (x, y, z, w) as floats, each
+    `(s < 0 ? s + 32768 : s - 32767) / 32767` (wowdev.wiki; **[verify]**
+    as a rule: every key decoded on the two fixture body models at 70959 has
+    a length within 5e-5 of 1, `docs/LAB_FORMATS.md` §12, amendment of
+    2026-11-19)."""
+    x, y, z, w = ((s + 32768 if s < 0 else s - 32767) / 32767 for s in raw)
+    return (x, y, z, w)
+
+
+def _md21(data: memoryview, model: M2Model, path: Path | None) -> memoryview:
+    md21 = next((c for c in model.chunks if c.tag == "MD21"), None)
+    if md21 is None or md21.offset + md21.size > len(data):
+        raise M2MalformedError("the bytes given are not the model's: no MD21 chunk there", path)
+    return data[md21.offset : md21.offset + md21.size]
+
+
+def _first_rotation(
+    blob: memoryview, at: int, path: Path | None
+) -> tuple[tuple[float, float, float, float] | None, str | None, int, int]:
+    """The first key of the rotation track at `at`: (value or None, why
+    not, global sequence, interpolation)."""
+    interpolation, global_sequence = _TRACK_HEAD.unpack_from(blob, at)
+    if global_sequence < 0:
+        return None, "its rotation is not on a global sequence", global_sequence, interpolation
+    loops, _ = _array(blob, _GLOBAL_SEQUENCES, 4, "global sequences", path)
+    if global_sequence >= loops:
+        raise M2MalformedError(
+            f"a bone's rotation names global sequence {global_sequence}; the model has {loops}",
+            path,
+        )
+    times, times_at = _array(blob, at + _TRACK_TIMES, 8, "a rotation's timestamps", path)
+    values, values_at = _array(blob, at + _TRACK_VALUES, 8, "a rotation's values", path)
+    if not values or not times:
+        return None, "its rotation track holds no keys", global_sequence, interpolation
+    # The first per-sequence array only: one u32 time and one 8-byte key a
+    # key (a spline's key holds two tangents after its value; the value comes
+    # first, so the first value is read the same way).
+    keys, _ = _array(blob, times_at, 4, "a rotation's first timestamps", path)
+    stride = _QUAT.size * (3 if interpolation in (2, 3) else 1)
+    count, key_at = _array(blob, values_at, stride, "a rotation's first keys", path)
+    if count != keys:
+        raise M2MalformedError(
+            f"a bone's rotation holds {keys} timestamps and {count} keys in its first array", path
+        )
+    if not count:
+        return None, "its rotation track holds no keys", global_sequence, interpolation
+    return decode_quaternion(_QUAT.unpack_from(blob, key_at)), None, global_sequence, interpolation
+
+
+def bone_chain(
+    data: Buffer, model: M2Model, bone: int, path: Path | None = None
+) -> tuple[M2Bone, ...]:
+    """Bone `bone` of `model` (`data` the bytes `parse_m2` read it from),
+    then its parent, and so on to the root: each bone's head, pivot and the
+    first key of its rotation (`M2Bone`). Raises `M2MalformedError` for an
+    index past the bones, a chain that loops or runs deeper than
+    `MAX_BONE_DEPTH`, or a track that runs past the blob (the module
+    docstring)."""
+    blob = _md21(_octets(data), model, path)
+    count, offset = _array(blob, _BONES, BONE_SIZE, "bones", path)
+    chain: list[M2Bone] = []
+    seen: set[int] = set()
+    at_bone = bone
+    while at_bone >= 0:
+        if at_bone >= count:
+            raise M2MalformedError(f"bone {at_bone} is named; the model has {count} bones", path)
+        if at_bone in seen:
+            raise M2MalformedError(f"bone {at_bone}'s parents loop back to it", path)
+        if len(chain) == MAX_BONE_DEPTH:
+            raise M2MalformedError(
+                f"bone {bone}'s chain runs deeper than {MAX_BONE_DEPTH} bones", path
+            )
+        seen.add(at_bone)
+        at = offset + BONE_SIZE * at_bone
+        key, flags, parent = _BONE_HEAD.unpack_from(blob, at)
+        rotation, why, global_sequence, interpolation = _first_rotation(
+            blob, at + _BONE_ROTATION, path
+        )
+        chain.append(
+            M2Bone(
+                index=at_bone,
+                key_bone_id=key,
+                flags=flags,
+                parent=parent,
+                pivot=_PIVOT.unpack_from(blob, at + _BONE_PIVOT),
+                rotation=rotation,
+                rotation_why=why,
+                rotation_global_sequence=global_sequence,
+                rotation_interpolation=interpolation,
+            )
+        )
+        at_bone = parent
+    return tuple(chain)

@@ -26,6 +26,26 @@ Vertex = tuple[
     tuple[float, float],  # uv2
 ]
 Section = tuple[int, int, int, int, int, int]  # geoset, level, v start, v count, i start, i count
+# A bone (M15-27): parent, pivot, and its rotation track as (global sequence,
+# interpolation, keys as four i16 each), or None for a track with no array
+# on no global sequence. Every other field is zero, the key bone id -1, and
+# the translation and scale tracks on no global sequence.
+Bone = tuple[
+    int,
+    tuple[float, float, float],
+    tuple[int, int, Sequence[tuple[int, int, int, int]]] | None,
+]
+
+
+def quat_i16(v: float) -> int:
+    """The i16 that `m2.decode_quaternion` reads as `v` (the inverse of
+    `(s < 0 ? s + 32768 : s - 32767) / 32767`, rounded)."""
+    return round(v * 32767) - 32768 if v >= 0 else round(v * 32767) + 32767
+
+
+def quat(x: float, y: float, z: float, w: float) -> tuple[int, int, int, int]:
+    return (quat_i16(x), quat_i16(y), quat_i16(z), quat_i16(w))
+
 
 ONE_TRIANGLE: list[Vertex] = [
     ((0.0, 0.0, 0.0), b"\xff\0\0\0", b"\0\0\0\0", (0.0, 0.0, 1.0), (0.0, 0.0), (0.5, 0.5)),
@@ -53,8 +73,13 @@ def md20(
         (11, 1, (0.0, 0.25, 1.75)),
     ),
     lookup: Sequence[int] = (0xFFFF,) * 11 + (0,),
+    bone_list: Sequence[Bone] | None = None,
+    global_sequences: Sequence[int] = (),
 ) -> bytearray:
-    """An MD20 blob: the header, then each array's entries, in that order."""
+    """An MD20 blob: the header, then each array's entries, in that order.
+    With `bone_list`, the bones are those (`bones` is ignored), each
+    rotation track's keys placed before the bone array, and the global
+    sequences' durations at 0x14."""
     header = bytearray(HEADER)
     body = bytearray()
 
@@ -68,7 +93,31 @@ def md20(
     struct.pack_into("<I", header, 4, version)
     _arr(header, 0x08, len(name), place(name))
     struct.pack_into("<I", header, 0x10, flags)
-    _arr(header, 0x2C, bones, place(bytes(88 * bones)))
+    if bone_list is None:
+        _arr(header, 0x2C, bones, place(bytes(88 * bones)))
+    else:
+        _arr(
+            header,
+            0x14,
+            len(global_sequences),
+            place(struct.pack(f"<{len(global_sequences)}I", *global_sequences)),
+        )
+        records = []
+        for parent, pivot, rotation in bone_list:
+            record = bytearray(88)
+            struct.pack_into("<iIhH", record, 0, -1, 0, parent, 0)
+            for track in (16, 36, 56):
+                struct.pack_into("<Hh", record, track, 0, -1)
+            if rotation is not None:
+                gseq, interpolation, keys = rotation
+                times = place(struct.pack(f"<{len(keys)}I", *range(len(keys))))
+                values = place(b"".join(struct.pack("<4h", *k) for k in keys))
+                outer_t = place(struct.pack("<II", len(keys), times))
+                outer_v = place(struct.pack("<II", len(keys), values))
+                struct.pack_into("<HhIIII", record, 36, interpolation, gseq, 1, outer_t, 1, outer_v)
+            struct.pack_into("<3f", record, 76, *pivot)
+            records.append(bytes(record))
+        _arr(header, 0x2C, len(records), place(b"".join(records)))
     raw = b"".join(
         struct.pack("<3f", *p) + w + b + struct.pack("<3f2f2f", *n, *uv, *uv2)
         for p, w, b, n, uv, uv2 in vertices

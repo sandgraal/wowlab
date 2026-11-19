@@ -42,6 +42,14 @@ the bytes go (never an install, L1).
   read (**[verify]**). The head, shoulder and back points recorded are
   stored away from the origin and are used as stored (**[verify]**: no
   fixture character wears a model there, so none has been drawn).
+  *Held items, sheathed (M15-27, the owner's decision of 2026-11-19: "draw
+  them now, labelled").* A main-hand, off-hand or shield item is drawn at
+  the sheath point its `Item.SheatheType` names (`SHEATH_POINTS`), turned
+  by that point's bone's first rotation key about its pivot (`_sheath`
+  lists every assumption; each is **[verify]**), and says `SHEATHED`. An
+  item whose sheathe type, point, bone or key cannot be resolved is placed
+  as before, with `sheath_reason`; `build(..., held=False)` places every
+  held item as before (the `.glb` and PNGs unchanged byte for byte).
   Kind "collection" at the origin, its
   sections filtered by the same visible geosets (**[verify]**); kind "no
   attachment known" is not placed and is listed. An item model's texture
@@ -78,6 +86,7 @@ it never says the model looks as the character does in game (`LIKENESS`).
 
 from __future__ import annotations
 
+import math
 import time
 from array import array
 from collections.abc import Callable, Mapping
@@ -96,17 +105,25 @@ __all__ = [
     "MAX_SCENE_BYTES",
     "MAX_TEXTURE_READS",
     "REST_POSE",
+    "SHEATHED",
+    "SHEATH_POINTS",
     "STAND_IN",
     "WORK_CANVASES",
     "BodyNotDrawnError",
     "BodyTextureFacts",
+    "BonePose",
     "CharModel",
     "CharModelError",
     "FileLeftOut",
     "ModelDrawn",
     "PngOut",
     "Source",
+    "apply",
+    "bone_transform",
     "build",
+    "chain_transform",
+    "compose",
+    "rotate",
     "stand_in_words",
     "state_words",
 ]
@@ -242,7 +259,11 @@ class ModelDrawn(_Frozen):
     the scene, `reason` says why. `sections` the view skin's, `drawn` the
     ones shown; `extra_batches` the further batches of drawn sections, not
     drawn. `at_origin`: not placed because the body model stores its
-    attachment point at the origin (the hand points read so far)."""
+    attachment point at the origin (the hand points read so far).
+    `sheathed`: a held item drawn at `sheath_point` (`position`, Y-up),
+    turned by `rotation` (Y-up, x, y, z, w), with `placement` `SHEATHED`;
+    `sheath_reason`: why a held item was not drawn sheathed (then it is
+    placed, or not, as before M15-27)."""
 
     what: Literal["body", "item"]
     slot: int | None = None
@@ -255,6 +276,11 @@ class ModelDrawn(_Frozen):
     placed: bool
     reason: str | None = None
     at_origin: bool = False
+    sheathed: bool = False
+    sheath_point: int | None = None
+    rotation: tuple[float, float, float, float] | None = None
+    placement: str | None = None
+    sheath_reason: str | None = None
     sections: int = 0
     drawn: int = 0
     extra_batches: int = 0
@@ -356,13 +382,16 @@ class _Files:
             return None
 
 
-def _body(files: _Files, plan: renderplan.RenderPlan) -> tuple[m2.M2Model, int, m2.Skin]:
+def _body(
+    files: _Files, plan: renderplan.RenderPlan
+) -> tuple[m2.M2Model, memoryview, int, m2.Skin]:
     fdid = plan.body.file_data_id
     stat = files.stat(fdid)
     if stat.state != "local":
         raise BodyNotDrawnError(f"the body model, file {fdid}, is {state_words(stat)}", fdid)
     try:
-        model = m2.parse_m2(files.source.read(fdid))
+        data = memoryview(files.source.read(fdid)).cast("B")
+        model = m2.parse_m2(data)
     except (CascError, m2.M2Error) as exc:
         raise BodyNotDrawnError(
             f"the body model, file {fdid}, cannot be read: {exc}", fdid
@@ -381,7 +410,7 @@ def _body(files: _Files, plan: renderplan.RenderPlan) -> tuple[m2.M2Model, int, 
         raise BodyNotDrawnError(
             f"the body model's skin, file {skin_id}, cannot be read: {exc}", skin_id
         ) from exc
-    return model, skin_id, skin
+    return model, data, skin_id, skin
 
 
 # ─── the body texture ────────────────────────────────────────────────────────
@@ -702,6 +731,151 @@ def _texture_map(
     return texture_of
 
 
+# ─── held items, sheathed (M15-27) ───────────────────────────────────────────
+
+Quaternion = tuple[float, float, float, float]
+Vector = tuple[float, float, float]
+Transform = tuple[Quaternion, Vector]
+"""A rigid transform: rotate by the quaternion (x, y, z, w), then move."""
+
+_NO_TURN: Quaternion = (0.0, 0.0, 0.0, 1.0)
+_UNIT = 0.01  # how far a decoded key's length may be from 1 and still be read as a rotation
+
+
+class BonePose(_Frozen):
+    """A bone's pose: its pivot (model space, Z-up), its rotation (a unit
+    quaternion, x, y, z, w) and its translation. The rest pose of an M2 bone
+    is its pivot alone: no rotation, no translation (bones store none)."""
+
+    pivot: Vector
+    rotation: Quaternion = _NO_TURN
+    translation: Vector = (0.0, 0.0, 0.0)
+
+
+def _q_mul(a: Quaternion, b: Quaternion) -> Quaternion:
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    )
+
+
+def rotate(q: Quaternion, v: Vector) -> Vector:
+    """`v` turned by the unit quaternion `q`."""
+    x, y, z, _ = _q_mul(_q_mul(q, (v[0], v[1], v[2], 0.0)), (-q[0], -q[1], -q[2], q[3]))
+    return (x, y, z)
+
+
+def apply(transform: Transform, v: Vector) -> Vector:
+    """`v` moved by `transform`."""
+    q, t = transform
+    r = rotate(q, v)
+    return (r[0] + t[0], r[1] + t[1], r[2] + t[2])
+
+
+def compose(outer: Transform, inner: Transform) -> Transform:
+    """`outer` after `inner`: the transform that applies `inner`, then `outer`."""
+    return _q_mul(outer[0], inner[0]), apply(outer, inner[1])
+
+
+def bone_transform(pose: BonePose) -> Transform:
+    """`T(pivot)·T(translation)·R(rotation)·T(-pivot)`: the bone turned about
+    its pivot, then moved (wowdev.wiki's order for an M2 bone, **[verify]**)."""
+    p, t = pose.pivot, pose.translation
+    r = rotate(pose.rotation, p)
+    return pose.rotation, (p[0] + t[0] - r[0], p[1] + t[1] - r[1], p[2] + t[2] - r[2])
+
+
+def chain_transform(chain: tuple[BonePose, ...]) -> Transform:
+    """The transform of the first bone of `chain` (the bone, then its parent,
+    to the root) in model space: each bone's after its parent's."""
+    out: Transform = (_NO_TURN, (0.0, 0.0, 0.0))
+    for pose in reversed(chain):
+        out = compose(out, bone_transform(pose))
+    return out
+
+
+SHEATHED = "drawn sheathed, placement approximate (not yet confirmed)"
+"""What `--json` says of each held item drawn sheathed, and the text says once."""
+
+SHEATH_POINTS: Mapping[int, tuple[int, int]] = {1: (26, 27), 2: (30, 31), 3: (32, 33), 4: (28, 28)}
+"""`Item.SheatheType` → the body's attachment point for (the main hand, the
+off hand or a shield). Each is an assumption, **[verify]** (the community's
+names for the points, M15-24's note): 1 (two-hand weapons) the angled back
+points 26 and 27; 2 (staves, polearms) the large-weapon points 30 and 31; 3
+(one-hand weapons and off-hand items) the hip points 32 and 33; 4 (shields)
+the shield point 28. The first of a pair, the "left" one by the community's
+names, is the main hand's (a weapon worn on the left is drawn with the right
+hand), **[verify]**. Type 0 and any other number is not drawn sheathed."""
+
+_HELD_SIDE: Mapping[int, int] = {1: 0, 2: 1, renderplan.SHIELD_ATTACHMENT: 1}
+"""A held item's attachment (`renderplan.SLOT_ATTACHMENTS`: 1 the main
+hand, 2 the off hand, the shield point) → which point of a pair it takes."""
+
+
+class _Sheath(_Frozen):
+    point: int
+    translation: Vector  # Y-up
+    rotation: Quaternion  # Y-up
+
+
+def _sheath(item: renderplan.ItemModel, body: m2.M2Model, data: memoryview) -> _Sheath | str:
+    """Where a held item is drawn sheathed, or why it cannot be (plain words).
+    The assumptions, each **[verify]** (docs/LAB_PLAN.md §17.6, note of
+    2026-11-19, M15-27): the point by `SHEATH_POINTS`; the sheath bone's
+    first rotation key (on its global sequence) is its carried angle, decoded
+    by `m2.decode_quaternion`, applied about its pivot after its parents'
+    rest transforms (pivot only: no rotation, no translation, so the
+    identity); the item model is drawn in the point's axes as it is stored,
+    with no turn of its own (so no axis of the item is taken to be its
+    length, and its origin is taken as its grip); the Z-up to Y-up mapping
+    is `gltf.to_y_up`'s, signs **[verify]**."""
+    side = _HELD_SIDE.get(item.attachment_id) if item.attachment_id is not None else None
+    if side is None:
+        return "it is not a held item"
+    if item.sheathe_type is None:
+        return "the game's tables give no sheathe type for this item"
+    pair = SHEATH_POINTS.get(item.sheathe_type)
+    if pair is None:
+        return (
+            f"its sheathe type in the game's tables ({item.sheathe_type}) is not one wowlab places"
+        )
+    point_id = pair[side]
+    point = body.attachment(point_id)
+    if point is None:
+        return f"the body model has no sheath point {point_id}"
+    try:
+        chain = m2.bone_chain(data, body, point.bone)
+    except m2.M2Error as exc:
+        return f"the bone of sheath point {point_id} cannot be read: {exc}"
+    first = chain[0]
+    if first.rotation is None:
+        return f"the bone of sheath point {point_id} gives no angle ({first.rotation_why})"
+    length = math.sqrt(sum(v * v for v in first.rotation))
+    if not math.isfinite(length) or abs(length - 1) > _UNIT:
+        return f"the bone of sheath point {point_id} gives no angle (its key is not a rotation)"
+    q = (
+        first.rotation[0] / length,
+        first.rotation[1] / length,
+        first.rotation[2] / length,
+        first.rotation[3] / length,
+    )
+    poses = (
+        BonePose(pivot=first.pivot, rotation=q),
+        *(BonePose(pivot=b.pivot) for b in chain[1:]),
+    )
+    world = chain_transform(poses)
+    at = apply(world, point.position)
+    return _Sheath(
+        point=point_id,
+        translation=gltf.to_y_up(*at),
+        rotation=gltf.quaternion_to_y_up(*world[0]),
+    )
+
+
 def _item_drawn(item: renderplan.ItemModel, **rest: object) -> ModelDrawn:
     return ModelDrawn.model_validate(
         {
@@ -722,7 +896,10 @@ def _item_node(
     body: m2.M2Model,
     files: _Files,
     scene: _Scene,
+    sheath: _Sheath | str | None = None,
 ) -> tuple[ModelDrawn, gltf.GltfNode | None]:
+    """`sheath`: where a held item is drawn sheathed (`_sheath`), or why it
+    is not (then the item is placed as before), or None: not asked."""
     what = f"item {item.item_id}"
     if item.kind == "no attachment known":
         reason = (
@@ -730,14 +907,25 @@ def _item_node(
         )
         return _item_drawn(item, placed=False, reason=reason), None
     translation = (0.0, 0.0, 0.0)
-    if item.kind == "attached":
+    rotation = gltf.IDENTITY
+    kept: dict[str, object] = {"sheath_reason": sheath} if isinstance(sheath, str) else {}
+    sheathed = kept
+    if isinstance(sheath, _Sheath):
+        translation, rotation = sheath.translation, sheath.rotation
+        sheathed = {
+            "sheathed": True,
+            "sheath_point": sheath.point,
+            "rotation": rotation,
+            "placement": SHEATHED,
+        }
+    elif item.kind == "attached":
         point = body.attachment(item.attachment_id) if item.attachment_id is not None else None
         if point is None:
             reason = (
                 f"the body model lacks the point this item is held at ({item.attachment_id}), "
                 "so it has no place for it"
             )
-            return _item_drawn(item, placed=False, reason=reason), None
+            return _item_drawn(item, placed=False, reason=reason, **kept), None
         if not any(point.position):
             # The model's origin, at the feet: the game moves this point
             # with the character's animation, which is not read (§17.6 note).
@@ -745,12 +933,17 @@ def _item_node(
                 f"the body model stores attachment point {item.attachment_id} at its origin, so it "
                 "has no place in the rest pose; the item is not drawn"
             )
-            return _item_drawn(item, placed=False, at_origin=True, reason=reason), None
+            if isinstance(sheath, str):
+                reason = (
+                    f"{sheath}, so it is not drawn sheathed, and in this pose the model keeps no "
+                    "place for it in the hand"
+                )
+            return _item_drawn(item, placed=False, at_origin=True, reason=reason, **kept), None
         translation = gltf.to_y_up(*point.position)
     data = files.read(item.file_data_id, f"the model of {what}")
     if data is None:
         reason = files.left_out[item.file_data_id].reason
-        return _item_drawn(item, placed=False, reason=reason), None
+        return _item_drawn(item, placed=False, reason=reason, **kept), None
     try:
         model = m2.parse_m2(data)
         if not model.skin_file_data_ids:
@@ -759,12 +952,15 @@ def _item_node(
         skin_data = files.read(skin_id, f"the skin of {what}'s model")
         if skin_data is None:
             reason = files.left_out[skin_id].reason
-            return _item_drawn(item, skin_file_data_id=skin_id, placed=False, reason=reason), None
+            return (
+                _item_drawn(item, skin_file_data_id=skin_id, placed=False, reason=reason, **kept),
+                None,
+            )
         skin = m2.parse_skin(skin_data, vertex_count=model.vertices.count)
     except m2.M2Error as exc:
         reason = f"not a model wowlab reads: {exc}"
         files.leave_out(item.file_data_id, f"the model of {what}", reason, unreadable=True)
-        return _item_drawn(item, placed=False, reason=reason), None
+        return _item_drawn(item, placed=False, reason=reason, **kept), None
     textures = _texture_map(
         model,
         scene,
@@ -786,7 +982,10 @@ def _item_node(
         reason = (
             "left out: the model's pictures and shapes already fill what wowlab writes in one file"
         )
-        return _item_drawn(item, skin_file_data_id=skin_id, placed=False, reason=reason), None
+        return (
+            _item_drawn(item, skin_file_data_id=skin_id, placed=False, reason=reason, **kept),
+            None,
+        )
     done = _item_drawn(
         item,
         skin_file_data_id=skin_id,
@@ -798,11 +997,15 @@ def _item_node(
         extra_batches=extra,
         vertices=vertices,
         triangles=triangles,
+        **(sheathed if mesh is not None else kept),
     )
     if mesh is None:
         return done, None
     return done, gltf.GltfNode(
-        name=f"{_ITEM_NODE} {item.item_id} (slot {item.slot})", mesh=mesh, translation=translation
+        name=f"{_ITEM_NODE} {item.item_id} (slot {item.slot})",
+        mesh=mesh,
+        translation=translation,
+        rotation=rotation,
     )
 
 
@@ -812,14 +1015,18 @@ def build(
     *,
     work_canvases: int = WORK_CANVASES,
     limit: int = gltf.MAX_FILE_BYTES,
+    held: bool = True,
 ) -> CharModel:
     """The plan drawn: the body (or `BodyNotDrawnError`), its texture, the
     separate textures and the placed item models, as one `.glb` and its
-    PNGs (the module docstring)."""
+    PNGs (the module docstring). `held` False: held items are placed as
+    before M15-27 (at their hand points, which the fixture body models store
+    at the origin, so not drawn), never sheathed; the `.glb` and the PNGs
+    are then the bytes they were before."""
     seconds: dict[str, float] = {}
     clock = time.perf_counter()
     files = _Files(plan, source)
-    body, skin_id, skin = _body(files, plan)
+    body, body_data, skin_id, skin = _body(files, plan)
     seconds["body_model"] = time.perf_counter() - clock
 
     clock = time.perf_counter()
@@ -885,7 +1092,10 @@ def build(
     ]
     nodes = [gltf.GltfNode(name="body", mesh=mesh)]
     for item in plan.item_models:
-        done, node = _item_node(plan, item, body, files, scene)
+        sheath = None
+        if held and item.kind == "attached" and item.attachment_id in _HELD_SIDE:
+            sheath = _sheath(item, body, body_data)
+        done, node = _item_node(plan, item, body, files, scene, sheath)
         models.append(done)
         if node is not None:
             nodes.append(node)

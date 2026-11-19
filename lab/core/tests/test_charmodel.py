@@ -188,12 +188,20 @@ def test_an_attachment_stored_at_the_origin_is_not_placed_constructed() -> None:
     )
     assert bytes(blob) != source.files[body]
     source.reads.clear()
-    built = charmodel.build(plan, source)
+    built = charmodel.build(plan, source, held=False)  # as before M15-27
     main, off = built.models[1:]
     assert (main.attachment_id, main.placed) == (1, False)
     assert "rest pose" in (main.reason or "") and main.file_data_id not in source.reads
     assert (off.attachment_id, off.placed) == (2, True)
     assert built.facts.nodes == 2
+    # Held items on (M15-27): this body has no sheath point, so the main
+    # hand stays not drawn with that reason, and its model is still not read.
+    source.reads.clear()
+    held = charmodel.build(plan, source)
+    main = held.models[1]
+    assert not main.placed and main.at_origin and main.file_data_id not in source.reads
+    assert main.sheath_reason == "the body model has no sheath point 32"
+    assert held.facts.nodes == 2
 
 
 def test_a_separate_texture_with_two_layers_draws_the_first_and_says_so_constructed() -> None:
