@@ -209,8 +209,9 @@ def addon_remove(
     and `wowlab undo` puts them back. A file the gate will not delete refuses the
     whole removal (exit 3).
 
-    Its SavedVariables (WowLab.lua and WowLab.lua.bak under WTF/, holding WowLabDB
-    and each character's WowLabCharDB) are never touched: they are the captures.
+    Its SavedVariables (WowLab.lua and WowLab.lua.bak under WTF/, holding WowLabDB,
+    the crew book if you turned it on, and each character's WowLabCharDB) are never
+    touched: they are the captures. `wowlab crew forget --all` empties the crew book.
     The folder stays; the gate deletes files, not folders.
 
     \f

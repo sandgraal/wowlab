@@ -1322,6 +1322,14 @@ EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("undo",): ("undone",),
     ("sv", "merge"): ("target_sha256", "merged_sha256"),
     ("macros", "fix"): ("target_sha256", "fixed_sha256"),
+    ("crew", "forget"): (
+        "target_sha256",
+        "written_sha256",
+        "backup_sha256",
+        "backup_written_sha256",
+    ),
+    ("crew", "rate"): ("target_sha256", "written_sha256"),
+    ("crew", "note"): ("target_sha256", "written_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed
