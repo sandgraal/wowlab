@@ -3571,3 +3571,97 @@ Not dispatched until the owner answers. ADR-0036's term 5 has the player remove 
 `docs/handoffs/M19-review.md`: what shipped, each ADR-0036 term with its proof, what stayed [verify], the wiki rows, whether M19-09 was built or dropped, and what the owner might pick next.
 
 **Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
+
+---
+
+# Milestone M20 — the PvP book
+
+Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both `Proposed`. Nothing here is dispatched before M19-08 merges and the owner has accepted both.
+
+## [ ] M20-01 — `crewdb`: the database and the sync
+**Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
+
+`wowlab_core.crewdb`: the SQLite file of §21.3 (path, `STRICT` tables, indexes, the fixed `application_id`, `meta`), and the sync from a schema 1 book by rules 1 to 6. `wowlab crew sync`; `crew list` and `crew show` sync first and answer from the database, marking a player the game no longer lists; `--json` gains fields and renames none. The three daily copies. No network import; nothing written into the install.
+
+**Acceptance:** tests on constructed books and databases built at run time: each sync rule, a sync run twice changing nothing, an interrupted sync leaving the old state, an unreadable or unknown-schema book syncing nothing, a hostile name, guild and note stored and shown only through the escaping path, 50,000 players listed within a stated time; the L1 sweep and the no-network tests green; `crewdb` shares no code with `db2lake` that assumes a rebuildable cache. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `crew sync`, and `crew list` and `crew show` answering from the database.
+
+---
+
+## [ ] M20-02 — The write commands, `doctor` and the repository keep the terms for the database
+**Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.3 ("Writing"), §21.4; ADR-0036 terms 3 to 5
+
+`crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it; `crew forget` removes the player from the saved file, its backup, the database and its copies, and `--all` deletes the database and its copies. `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
+
+**Acceptance:** tests on constructed rows: after a forget the key's bytes are in no database file or copy; a write to the database alone touches nothing in the install; the repository test green and shown failing on a planted file; `doctor --redact` searched for every constructed name, guild and note. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed sentences of `crew forget`, `crew rate`, `crew note`, `doctor` and `snap export`.
+
+---
+
+## [ ] M20-03 — The desk reads and writes schema 2 of the saved file
+**Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
+
+`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `guard.py` and `luadata.py` are not changed.
+
+**Acceptance:** every M19 test of these modules passes on a schema 1 and a schema 2 constructed book; a schema 3 book is still refused with its number; the capture tool still refuses any book that is not empty; `docs/LAB_FORMATS.md` describes schema 2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
+
+---
+
+## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
+**Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
+
+Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`); the limit constants; the near-full line; and the probe, which may test each candidate scoreboard call with `type()` and record only a count and Lua type names. No scoreboard call's return value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
+
+**Acceptance:** a constructed `Crew.lua` doing all of §21.2 short of opponents passes when installed in a copy of the addon; each rule shown failing on a constructed edit; M19's checks unchanged for what they covered; `make lint-lua` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
+
+---
+
+## [ ] M20-05 — The addon, schema 2: the larger list, the migration and the probe
+**Size:** M · **Depends on:** M20-03, M20-04 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.2
+
+`Crew.lua` at schema 2: 20,000 players, the once-per-session line when a list is within 10% of full, the migration of a schema 1 book at load, and the scoreboard probe writing `probe.pvp`. No opponent is recorded yet. The README and the turn-on notice say what changed.
+
+**Acceptance:** M20-04's checks green on the real file with no relaxation added; `make lint-lua` green; `wowlab addon install lab` on a constructed install; §21.2 and the README mark what is confirmed and what stays [verify]. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: the larger list, the near-full line; the README and the wiki's addon page.
+
+---
+
+## [ ] M20-06 — Owner: one battleground, and a login timing
+**Size:** S · **Depends on:** M20-05 · **owner** (a short in-game check)
+
+With the conductor's runbook: install the addon from `main`, play one battleground to its end, log out, and let `wowlab crew sync` read `probe.pvp`. Note how long a login takes as the book stands.
+
+**Acceptance:** every [verify] of §21.2 and §21.5 resolved or kept with what was seen, dated; the conductor then writes M20-07 and M20-08's exact calls into §21.2.
+
+---
+
+## [ ] M20-07 — Static checks for reading the scoreboard
+**Size:** M · **Depends on:** M20-06 · **Sources:** `docs/LAB_PLAN.md` §21.2 as amended after M20-06
+
+Tests only, by a session that does not write M20-08: the scoreboard calls M20-06 confirmed, gated as the roster calls are, read only after the match has ended and out of combat, each value through the secret-value test; keys built only from a row's name and realm; `matches` entries of the fixed shape; nothing from a scoreboard stored but name, realm, class and side.
+
+**Acceptance:** as M20-04's, on a constructed source doing all of §21.2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
+
+---
+
+## [ ] M20-08 — The addon: matches and opponents
+**Size:** M · **Depends on:** M20-07 · **Sources:** `docs/LAB_PLAN.md` §21.2
+
+`Crew.lua` records each finished match and both teams, raises the counters, and adds "with you N times, against you M" to the warning.
+
+**Acceptance:** M20-07's checks green on the real file with no relaxation added; the README and the turn-on notice say opponents are kept; `crew --help` carries the same sentence. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: opponents are recorded; the wiki's addon page.
+
+---
+
+## [ ] M20-09 — Matches at the desk
+**Size:** M · **Depends on:** M20-02, M20-03 · **Sources:** `docs/LAB_PLAN.md` §21.3
+
+The sync copies `matches` into the database once each; `crew matches [NAME-REALM]`; `crew list --faced`, `--allied`, `--map`, `--since` and the two sorts; `crew show` with the record with and against; `crew forget` clears a player from every match; the Crew tab shows the same.
+
+**Acceptance:** tests on constructed books and databases; text and `--json` say the same; hostile map names shown as text; the UI parity tests cover the new commands; no new endpoint. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: one new command, new options and the Crew tab's match history.
+
+---
+
+## [ ] M20-10 — PvP book wave review
+**Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-07, M20-08, M20-09
+
+`docs/handoffs/M20-review.md`: what shipped, each ADR-0036 term with its proof for the database, what stayed [verify], what the option A gap lost in practice, and whether world PvP is worth a wave.
+
+**Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
