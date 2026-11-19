@@ -638,7 +638,6 @@ def crew_sync(
         ),
     ] = False,
     account: AccountOpt = None,
-    yes: YesOpt = False,
     root: RootOpt = None,
     flavor: FlavorOpt = None,
     json_out: JsonOpt = False,
@@ -650,8 +649,8 @@ def crew_sync(
 
     When the book is not the one the database was filled from, or wowlab put
     WowLab.lua back since the last sync (a snapshot restore, an undo or a
-    merge), the sync shows what it would change and asks first, and it never
-    lowers a count.
+    merge), the sync shows what it would change and asks first (type y to
+    sync), and it never lowers a count.
 
     \f
     JSON: CrewSyncReport."""
@@ -685,7 +684,8 @@ def crew_sync(
         show(why)
         show(_sync_plan_line(plan))
         try:
-            _confirm("Sync this crew book into wowlab's crew database?", yes)
+            # No --yes: a held sync is confirmed only by a typed answer.
+            _confirm("Sync this crew book into wowlab's crew database?", False)
         except typer.Exit:
             return False
         return True

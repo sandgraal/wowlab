@@ -674,7 +674,7 @@ def test_a_restored_book_is_held_until_a_sync_by_hand_constructed(make: Any) -> 
     assert declined.exit_code == 1 and cli.CONFIRM_DECLINED in declined.stderr
     assert "A sync would add 0 players and 0 matches, update" in declined.stdout
     assert env.db_sha() == before
-    done = env.run("crew", "sync", "--yes")
+    done = env.run("crew", "sync", input="y\n")
     assert done.exit_code == 0, done.output
     assert env.rows()[KEY_A].met == 4  # never lowered
     assert env.sync().state == "unchanged"  # and the next one runs by itself
@@ -686,7 +686,7 @@ def test_a_restored_book_after_a_later_session_is_still_held_constructed(make: A
     env.gate("restore 20261119-000000-abcd (WTF)", _older(env))
     env.save(_three(met_a=2))  # a session played after the restore
     assert env.sync().state == "held"
-    assert env.run("crew", "sync", "--yes").exit_code == 0
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
     assert env.rows()[KEY_A].met == 4
 
 
@@ -706,7 +706,7 @@ def test_an_imported_foreign_book_is_held_constructed(make: Any) -> None:
     outcome = env.sync()
     assert outcome.state == "held" and outcome.held == ["other_book", "put_back"]
     assert KEY_D not in env.rows()
-    assert env.run("crew", "sync", "--yes").exit_code == 0
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
     assert KEY_D in env.rows()
     assert env.sync().state == "unchanged"
 
@@ -720,7 +720,7 @@ def test_a_new_book_after_the_old_was_lost_is_held_once_then_syncs_constructed(
     outcome = env.sync()
     assert outcome.state == "held" and outcome.held == ["other_book"]
     assert "is not the one wowlab's crew database was filled from" in outcome.words
-    done = env.run("crew", "sync", "--yes")
+    done = env.run("crew", "sync", input="y\n")
     assert done.exit_code == 0, done.output
     env.save(book({KEY_D: player(met=2)}, started=T1))
     assert env.sync().state == "synced"
@@ -778,7 +778,7 @@ def test_a_journal_that_cannot_be_read_holds_without_a_crash_constructed(make: A
     assert outcome.state == "held" and outcome.held == ["journal_unreadable"]
     result = env.run("crew", "list")
     assert result.exit_code == 0 and "cannot read its own record of changes" in result.stdout
-    assert env.run("crew", "sync", "--yes").exit_code == 0
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
     assert env.rows()[KEY_A].met == 5
 
 
@@ -821,7 +821,7 @@ def test_a_held_sync_by_hand_keeps_a_rating_changed_in_the_database_constructed(
         }
     )
     env.gate("restore 20261119-000000-abcd (WTF)", account_file(restored))
-    assert env.run("crew", "sync", "--yes").exit_code == 0
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
     rows = env.rows()
     assert rows[KEY_A].rating == "good"  # the database's own change is kept
     assert rows[KEY_C].rating == "bad"  # unchanged since it agreed: replaced
@@ -844,7 +844,7 @@ def test_a_second_install_root_is_refused_until_adopted_constructed(make: Any) -
     assert listed.exit_code == 0 and "run `wowlab crew sync --adopt`" in listed.stdout
     assert second.run("crew", "sync").exit_code == 1
     assert first.db_sha() == before
-    adopted = second.run("crew", "sync", "--adopt", "--yes")
+    adopted = second.run("crew", "sync", "--adopt", input="y\n")
     assert adopted.exit_code == 0, adopted.output
     assert _meta(second.db())["install_root"] == os.path.realpath(second.root)
     assert first.sync().state == "elsewhere"  # and now the first root is the other one
@@ -910,7 +910,7 @@ def test_adopt_never_merges_and_takes_only_wowlabs_files_constructed(make: Any) 
 
 def test_adopt_with_nothing_to_adopt_changes_nothing_constructed(make: Any) -> None:
     env = make(_three())
-    result = env.run("crew", "sync", "--adopt", "--yes")
+    result = env.run("crew", "sync", "--adopt", input="y\n")
     assert result.exit_code == 1 and "nothing to adopt" in result.stderr
     assert not os.path.lexists(env.db())
 
