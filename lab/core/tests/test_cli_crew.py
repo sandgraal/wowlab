@@ -437,3 +437,21 @@ def test_crewbook_reads_through_labaddon_root_anchored_read() -> None:
     source = Path(crewbook.__file__).read_text(encoding="utf-8")
     assert "labaddon.read_file_bytes(path, root=root)" in source
     assert "open(" not in source
+
+
+def test_several_flavors_with_a_book_list_the_candidates_constructed(make: Any) -> None:
+    """Two flavor folders (constructed: the captured one copied under a
+    second invented name), each with a book: none is picked without
+    --flavor; with it, that flavor's book is read."""
+    import shutil
+
+    env = make(book({KEY_A: player()}))
+    other = "_inventedflavor_"
+    shutil.copytree(env.root / FLAVOR, env.root / other)
+    env.settle()
+    result = env.run("crew", "list", flavor=False)
+    assert result.exit_code == 2, result.output
+    assert f"in {FLAVOR}" in result.stderr and f"in {other}" in result.stderr
+    picked = env.run("crew", "list", "--json", "--flavor", other, flavor=False)
+    assert picked.exit_code == 0, picked.output
+    assert cli.CrewReport.model_validate_json(picked.stdout).flavor_folder == other

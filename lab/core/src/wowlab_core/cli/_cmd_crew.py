@@ -180,6 +180,11 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
                 flavor_folder=f.folder, account=acct.folder, file=rel, holds_book=holds
             )
             found.append((place, book, error))
+    if not found and account is None:
+        raise CliError(
+            "no account folders under WTF/Account/ in any flavor folder "
+            f"({', '.join(f.folder for f in flavors)})"
+        )
     if not found:
         raise CliError(
             f"no account folder {account!r} in any flavor folder "
