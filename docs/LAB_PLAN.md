@@ -6373,7 +6373,8 @@ before any sync saw it is gone. Rated and noted players are never dropped.
 and you have not synced". The addon cannot know about a sync, so it says
 "open wowlab so nothing is lost" when either list holds 90% of its limit
 (every player counts toward the 20,000, rated or not), and not more than
-once in seven days, by a time kept in the book. A list that has reached
+once in seven days, by a time kept in the book as `warned` (`time()` of
+the last such line; left out until the first). A list that has reached
 its limit stays there, so without the seven days the line would print at
 every login for good (§21.7, decision 8).
 
@@ -6409,8 +6410,11 @@ The book's `schema` becomes 2. What changes from §20.1:
   true, and inside `/wowlab crew on` before the book is turned on. A book
   that is off is not touched and stays at schema 1 (off means off, §20.1).
   A book of any other schema is left alone, as now (#631). This amends
-  two of #631's pins, which M20-04 states: `crewLoaded` may call the
-  migration, and the migration is one more function allowed to store. The
+  #631's pins, which M20-04 states: `crewLoaded` may call the migration;
+  the head of `ns.CrewCommand` lets the word `on` through for a schema 1
+  book, which is migrated before the schema refusal is tested, and still
+  refuses every other word and every other schema; and the migration is
+  one more function allowed to store. The
   desk reads schema 1 and 2 and writes back the schema it read. An addon
   older than this wave that meets a schema 2 book leaves it alone, prints
   its one fixed line and records nothing; the README says so.
@@ -6551,6 +6555,8 @@ whether arenas exist on Forever at all.
 | M20-10 | Wave review | — |
 
 M20-01 needs nothing from the game and starts first; M20-02 follows it.
+M20-02 and M20-03 both change `crew forget` and `doctor`, so they run one
+after the other, M20-02 first.
 M20-03 lands before M20-05 ships, so no released wowlab meets a book it
 cannot read. M20-04 comes before M20-05 and M20-07 before M20-08, as
 M19-01 came before M19-10: the session that writes the addon does not

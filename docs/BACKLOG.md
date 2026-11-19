@@ -3597,9 +3597,9 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ---
 
 ## [ ] M20-03 — The desk reads and writes schema 2 of the saved file
-**Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
+**Size:** M · **Depends on:** M20-01, M20-02 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
 
-`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block. `guard.py` and `luadata.py` are not changed.
+`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, `warned`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block. `guard.py` and `luadata.py` are not changed.
 
 **Acceptance:** every M19 test of these modules passes on a schema 1 and a schema 2 constructed book; a schema 3 book is still refused with its number; the capture tool still refuses any book that is not empty; `docs/LAB_FORMATS.md` describes schema 2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
@@ -3608,7 +3608,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
 **Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
 
-Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends two of #631's pins and says so: `crewLoaded` may call it, and it is one more function allowed to store; the limit constants; the near-full line and its seven days; and the probe, gated and only in an instance of type `pvp` or `arena`, which may record for each candidate scoreboard call whether it exists, a count and Lua type names, and for the first row three yes-or-no answers (§21.2). No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
+Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends #631's pins and says so: `crewLoaded` may call it, the head of `ns.CrewCommand` lets `on` through for a schema 1 book and migrates it before the schema refusal is tested, and it is one more function allowed to store; the limit constants; the near-full line, its seven days and the `warned` field; and the probe, gated and only in an instance of type `pvp` or `arena`, which may record for each candidate scoreboard call whether it exists, a count and Lua type names, and for the first row three yes-or-no answers (§21.2). No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
 
 **Acceptance:** a constructed `Crew.lua` doing all of §21.2 short of opponents passes when installed in a copy of the addon; each rule shown failing on a constructed edit; M19's checks unchanged for what they covered; `make lint-lua` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
