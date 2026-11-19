@@ -296,7 +296,8 @@ def test_the_derived_fixture_is_consistent() -> None:
     hand points stored at the origin, no path and no geometry; and the
     held-items probe's rows (M15-24): points 26 to 33 away from the origin,
     the hand bones' parents at the origin and the next bone up not, and
-    each named bone's key id, flags and track counts."""
+    each named bone's key id, flags and track counts; and the rotation
+    probe's rows (M15-26), which agree with those counts."""
     import json
 
     path = cb.FIXTURES / "macos-70959" / "derived" / "charmodel.json"
@@ -357,6 +358,38 @@ def test_the_derived_fixture_is_consistent() -> None:
                 above = bones[str(link["bone"])]
                 assert above["key_bone_id"] >= 0 and above["translation"]["global_sequence"] == -1
                 assert above["translation"]["sequences"] > 1
+
+        # M15-26, the rotation probe: points 26 to 33's bones' rotation keys
+        # and the hand points' bones' keys agree with the counts above, and
+        # every decoded rotation read is a unit quaternion.
+        def agrees(track: dict[str, Any], counted: dict[str, Any]) -> None:
+            assert track["global_sequence"] == counted["global_sequence"]
+            assert track["arrays"] == counted["sequences"]
+            first = track["first_array"]
+            assert (first is None) == (track["arrays_with_keys"] == 0)
+            for read in (first, track["animation_0_array"]):
+                if read is None or read["first_value"] is None:
+                    continue
+                assert read["in_m2"] and read["first_time"] is not None
+                if read["first_norm"] is not None:
+                    assert abs(read["first_norm"] - 1) < 1e-3
+                    assert 0 <= read["max_degrees_from_first"] <= 180
+            if first is not None and first["index"] == 0:
+                assert first["keys"] == counted["first_keys"]
+
+        sheath_keys = char["sheath_rotation_keys"]
+        assert sorted(sheath_keys, key=int) == [str(i) for i in range(26, 34)]
+        for point, row in sheath_keys.items():
+            assert row["bone"] == by_id[int(point)]["bone"]
+            agrees(row["rotation"], bones[str(row["bone"])]["rotation"])
+        hand_keys = char["hand_bone_keys"]
+        assert sorted(hand_keys, key=int) == ["1", "2"]
+        for point, rows in hand_keys.items():
+            chain = [points[point]["bone"], *(link["bone"] for link in parents[point])]
+            assert [r["bone"] for r in rows] == chain
+            for r in rows:
+                for kind in ("translation", "rotation"):
+                    agrees(r[kind], bones[str(r["bone"])][kind])
 
     # The hand bones' two ancestors carry the same key ids on both body models.
     def ancestor_keys(char: dict[str, Any]) -> dict[str, list[int]]:

@@ -5190,6 +5190,19 @@ Nothing here has been drawn or checked in a viewer, and nothing is decided.
 Whether held items are drawn at all, and where, is the owner's call (the
 M15-24 acceptance).
 
+*Note, 2026-11-19 (M15-26, the rotation probe; nothing drawn changes).*
+Rows `sheath_rotation_keys`, `hand_bone_keys` of the same fixture; the
+numbers are there and in `docs/LAB_FORMATS.md` §12 (amendment of
+2026-11-19). *Observed:* each sheath bone's rotation is one linear key
+array on a global sequence (loops of 688 to 1,079 s); its first key turns
+99° to 180°, no later key differs by over 1.5°, and 26/27 and 30/31 are
+mirror pairs. Point 29: no track (959310), identity (917116). The hand
+points' parents hold one translation key per animation, in the M2; on
+959310 array 0 is animation 5, not 0. *Inferred, **[verify]**:* the first
+key is a usable carry angle. Unverified: the decoding rule, composing it
+with the animated spine parent, an item's long axis, the axis signs, the
+`SheatheType` mapping, and whether animation 0 is the stand.
+
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root

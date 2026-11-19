@@ -1231,3 +1231,43 @@ Dated entries, newest last. Each names the fixture that prompted it.
   writes this table (key order, bracketed keys, CRLF) is expected to follow
   §4.2 as amended, like `WowLabDB`; no capture shows it yet **[verify]**.
   The empty shape the capture tool accepts is §20.5's "As built" note.
+- **2026-11-19, §12, bone tracks and their keys (M15-26,
+  `macos-70959/derived/charmodel.json`, rows `sheath_rotation_keys` and
+  `hand_bone_keys`; read by `scripts/charmodel_facts.py`, the library
+  still reads no key).** The layout read, wowdev.wiki's, held on
+  `humanmale_hd` (959310) and `humanfemale_hd` (917116) at 70959: an
+  M2Track is interpolation u16 at 0, global sequence i16 at 2 (−1 when
+  none), then two arrays of per-sequence arrays (`count, offset`),
+  timestamps (u32) at 4 and values at 12; a rotation value is four i16
+  (x, y, z, w), each decoded as `(s < 0 ? s + 32768 : s − 32767) / 32767`;
+  a translation is three floats. The sequences are at MD20 0x1C (64 bytes
+  each, animation id u16 at 0, flags u32 at 12), the global sequence
+  durations at 0x14 (u32, ms). Observed: every track read is linear
+  (interpolation 1); every decoded rotation has a length within 5e-5 of 1,
+  which supports the decoding rule (still **[verify]** as a rule); a track
+  on a global sequence has one array, and its keys are inside the M2; each
+  per-sequence array read belongs to a sequence with flag 0x20 and its
+  keys are inside the M2 (the `.anim` case was not met). The array index
+  is the sequence index, not the animation id: on 959310 sequence 0 is
+  animation id 5. The first rotation keys of the bones under points 26 to
+  33, as (x, y, z, w) and the angle turned (2·acos w):
+
+  | point | 959310 | 917116 |
+  |---|---|---|
+  | 26 | (−0.304, 0.450, 0.638, 0.546), 113.9° | (−0.411, 0.282, 0.576, 0.648), 99.2° |
+  | 27 | (0.304, 0.450, −0.638, 0.546), 113.9° | (0.411, 0.282, −0.576, 0.648), 99.2° |
+  | 28 | (0.464, −0.412, 0.517, 0.590), 107.7° | (0.379, −0.542, 0.575, 0.481), 122.5° |
+  | 29 | no track | (0, 0, 0, 1), 0° |
+  | 30 | (−0.641, −0.579, −0.299, 0.406), 132.1° | (−0.572, −0.646, −0.416, 0.288), 146.6° |
+  | 31 | (0.641, −0.579, 0.299, 0.406), 132.1° | (0.572, −0.646, 0.416, 0.288), 146.6° |
+  | 32 | (0.252, 0.247, −0.933, 0.068), 172.2° | (0.225, 0.147, −0.963, 0.001), 179.8° |
+  | 33 | (−0.250, 0.255, 0.932, 0.066), 172.5° | (0.235, −0.131, −0.961, 0.067), 172.3° |
+
+  Global sequence and keys: 959310, all on 0 (1,079,000 ms), 207 keys
+  (26 to 28, 30, 31) and 333 (32, 33); 917116, 2 (688,333 ms, 24 keys) for
+  26 to 28, 30, 31, and 0 (1,060,333 ms, 476 keys) for 29, 32, 33. No key
+  of these loops is more than 1.5° from its first. The hand points' parents
+  (keys 66, 67), first array of animation id 0, translation: 959310
+  (0.077, −0.791, 1.137) and (0.078, 0.792, 1.136); 917116
+  (−0.020, ∓0.573, 0.909). What the numbers mean for drawing is
+  `docs/LAB_PLAN.md` §17.6's note of the same date.
