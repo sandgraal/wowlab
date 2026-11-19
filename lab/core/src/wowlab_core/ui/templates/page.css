@@ -564,6 +564,29 @@ pre:empty { display: none; }
 .hub-advice code { font-family: var(--font-mono); font-size: 13px; unicode-bidi: isolate; }
 .hub-advice .copy { margin-left: var(--space-2); }
 
+/* ─── the crew book (M19-06) ─── */
+/* Names, guilds, notes and instance names are other people's text: each is
+   isolated, so a right-to-left mark in one cannot reorder its neighbours. */
+.crew-words { margin: 0 0 var(--space-3); max-width: 60rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
+#crew-status { margin: 0 0 var(--space-2); color: var(--muted); font-size: 14px; }
+#crew-status:empty, #crew-act-status:empty { display: none; }
+#crew-status.error, #crew-act-status.error { color: var(--ruin); }
+.char-table.crew td, .char-table.crew .hub-open { unicode-bidi: isolate; }
+.crew-unread, .crew-lines, .crew-notes { margin: var(--space-2) 0; padding-left: var(--space-4); }
+.crew-unread li, .crew-lines li, .crew-notes li { overflow-wrap: anywhere; unicode-bidi: isolate; }
+.crew-player { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); }
+.crew-player h3 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 18px; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.crew-player h4 { margin: 0 0 var(--space-2); font-family: var(--font-display); font-size: 16px; font-weight: 600; color: var(--text); }
+.crew-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0; }
+.crew-action { display: inline-flex; align-items: center; gap: var(--space-2); }
+.crew-action label { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; font-weight: 500; color: var(--muted); }
+.crew-action select, .crew-action input {
+  min-height: 44px; padding: 0 var(--space-2); font: inherit; color: var(--text);
+  background: var(--bar); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+}
+.crew-action input { width: 18rem; max-width: 60vw; }
+#crew-act-status { margin: var(--space-2) 0 0; }
+
 /* ─── Backups (M17-04): a line per game version, the prompt when the game
    updated, and what changed since the previous backup ─── */
 .backup { padding: 20px var(--space-5); }

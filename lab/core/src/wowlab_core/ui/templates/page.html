@@ -14,7 +14,7 @@
 <div class="bar">
 <h1 class="brand"><svg class="mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" focusable="false"><path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></svg>wowlab</h1>
 <div class="sections" role="tablist" aria-label="Sections">
-<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view">Characters</button>
+<button id="sec-characters" class="sec" type="button" role="tab" aria-selected="true" aria-controls="account-view character-view crew-view">Characters</button>
 <button id="sec-backups" class="sec" type="button" role="tab" aria-selected="false" aria-controls="backups-view">Backups</button>
 <button id="sec-addons" class="sec" type="button" role="tab" aria-selected="false" aria-controls="addons-view">Addons</button>
 <button id="sec-keybinds" class="sec" type="button" role="tab" aria-selected="false" aria-controls="character-view">Keybinds</button>
@@ -27,6 +27,7 @@
 <nav id="characters-tabs" class="tabs" role="tablist" aria-label="Characters">
 <button id="tab-account" class="tab" type="button" role="tab" aria-selected="true" aria-controls="account-view">All characters</button>
 <button id="tab-character" class="tab" type="button" role="tab" aria-selected="false" aria-controls="character-view">Character</button>
+<button id="tab-crew" class="tab" type="button" role="tab" aria-selected="false" aria-controls="crew-view">Crew</button>
 </nav>
 <nav id="advanced-tabs" class="tabs" role="tablist" aria-label="Advanced" hidden>
 <button id="tab-explorer" class="tab" type="button" role="tab" aria-selected="false" aria-controls="explorer-view">Explorer</button>
@@ -156,6 +157,48 @@
 <h3 id="char-history-title">Every save</h3>
 <div id="char-history"></div>
 </section>
+</div>
+</details>
+</section>
+<section id="crew-view" role="tabpanel" aria-labelledby="tab-crew" hidden>
+<div class="chars-head">
+<h2 class="page-title">Crew</h2>
+<span class="chars-when">the players you grouped with, as of your last logout or /reload</span>
+</div>
+<p id="crew-words" class="crew-words"></p>
+<p id="crew-offer" class="crew-words" hidden></p>
+<div id="crew-tools" class="toolbar panel" hidden>
+<label>Find <input id="crew-search" type="search" placeholder="part of a name, realm, guild or note" autocomplete="off" spellcheck="false"></label>
+<label>Rating <select id="crew-rated"></select></label>
+<label>Order <select id="crew-sort"></select></label>
+</div>
+<p id="crew-status" role="status"></p>
+<div id="crew-table" class="panel hub-table" role="region" aria-label="Crew" tabindex="0"></div>
+<ul id="crew-unread" class="crew-unread" hidden></ul>
+<section id="crew-player" class="panel crew-player" aria-labelledby="crew-player-title" hidden>
+<h3 id="crew-player-title" tabindex="-1"></h3>
+<ul id="crew-player-lines" class="crew-lines"></ul>
+<div id="crew-actions" class="crew-actions" hidden>
+<div class="crew-action"><label>Your rating <select id="crew-rate-value"></select></label><button id="crew-rate" type="button">Show the plan</button></div>
+<div class="crew-action"><label>Your note <input id="crew-note-text" type="text" autocomplete="off" spellcheck="false"></label><button id="crew-note" type="button">Show the plan</button></div>
+<div class="crew-action"><button id="crew-forget" type="button">Forget this player…</button></div>
+</div>
+<p id="crew-act-status" role="status"></p>
+<div id="crew-confirm-box" class="confirm-box" hidden>
+<div id="crew-plan-box" hidden>
+<h4 id="crew-plan-heading" tabindex="-1">Plan</h4>
+<pre id="crew-plan-lines" class="plan-lines" hidden></pre>
+</div>
+<p id="crew-confirm-note" role="status"></p>
+<button id="crew-confirm" type="button" hidden>Confirm</button>
+</div>
+<pre id="crew-act-said" class="plan-lines" hidden></pre>
+</section>
+<details class="about"><summary>About this data</summary>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints. Names, guilds, notes and instance names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written.</p>
+<div id="crew-about" class="crew-about">
+<p id="crew-keeps"></p>
+<ul id="crew-notes" class="crew-notes"></ul>
 </div>
 </details>
 </section>

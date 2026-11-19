@@ -728,6 +728,39 @@ def test_the_reason_confirm_flow_m14_has_left_the_code() -> None:
     assert "_CONFIRM_READY" not in source
 
 
+def test_the_crew_commands_both_ways(real: _Served) -> None:
+    """M19-06 (the Crew tab): `crew list` and `crew show` are read leaves
+    that run as asked; `crew forget`, `crew rate` and `crew note` are in the
+    confirm step with the declined shape and their pins, and a form can set
+    neither `--yes` nor `--expect`. A name that starts with `-` reaches each
+    as an argument, after `--` (constructed values)."""
+    listed = real.commands()
+    name = "-" + "Crewname-Crewrealm".lower()  # starts with a dash: an argument
+    for path in (("crew", "list"), ("crew", "show")):
+        assert path not in CONFIRM_STEP and listed[path]["confirm"] is None, path
+        assert listed[path]["excluded"] is None, path
+    status, payload = real.run(("crew", "show"), {"name": name})
+    assert status == 200 and "confirm" not in payload
+    assert json.loads(payload["stdout"]) == ["crew", "show", "--json", "--", name]
+    writes = {
+        ("crew", "forget"): {},
+        ("crew", "rate"): {"rating": "good"},
+        ("crew", "note"): {"text": "-x"},
+    }
+    for path, extra in writes.items():
+        assert CONFIRM_STEP[path] == "declined" and listed[path]["confirm"] == "declined", path
+        names = {p["name"] for p in listed[path]["params"]}
+        assert not names & {"yes", "expect"}, (path, names)
+        for params in ({"yes": True}, {"expect": "a" * 64}):
+            assert real.run(path, params) == (403, {"error": "unknown_parameter"}), path
+        status, payload = real.run(path, {"name": name, **extra})
+        assert status == 200, payload
+        # The plan run: no `--yes`, no `--expect`, the name after `--`.
+        assert json.loads(payload["stdout"]) == [*path, "--json", "--", name, *extra.values()]
+        # The echo is no declined plan, so nothing is offered.
+        assert payload["confirm"]["token"] is None
+
+
 def test_ui_itself_is_excluded(real: _Served) -> None:
     assert real.commands()[("ui",)]["excluded"] == EXCLUDED[("ui",)]
     assert real.run(("ui",), {}) == (403, {"error": "excluded"})
