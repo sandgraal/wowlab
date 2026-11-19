@@ -168,19 +168,14 @@ def test_an_unknown_schema_is_refused_with_its_number_constructed(make: Any) -> 
 
 
 def test_a_malformed_entry_is_listed_as_unread_constructed(make: Any) -> None:
-    # M20-01 (§21.3, "The book is checked whole"): a book holding an entry
-    # wowlab cannot read is not synced at all, so the list answers from the
-    # crew database as it was (empty here) and says why.
     env = make(book({KEY_A: player(level="x"), KEY_B: player()}))
     result = env.run("crew", "list")
     assert result.exit_code == 0, result.output
     assert "1 entry could not be read:" in result.stdout
     assert f"  {KEY_A}: level is not a whole number of 1 or more" in result.stdout
-    assert "was not synced into wowlab's crew database: a player's entry" in result.stdout
     report = cli.CrewReport.model_validate(env.json("crew", "list"))
-    assert report.players == [] and report.total == 1
+    assert [p.key for p in report.players] == [KEY_B] and report.total == 2
     assert [u.key for u in report.unread] == [KEY_A]
-    assert report.sync is not None and report.sync.state == "refused"
 
 
 # ─── list and show ───────────────────────────────────────────────────────────
@@ -364,10 +359,24 @@ _RAW = re.compile(
 
 
 def test_hostile_text_reaches_the_terminal_escaped_constructed(make: Any) -> None:
-    # Within the 256 bytes the crew database takes for a key (M20-01).
+    # M20-01 (ruling of 2026-11-19): a key over the crew database's 256 bytes
+    # makes its entry unread, listed with its key through the escaping path;
+    # the hostile fields ride on an entry whose key is within the bound.
+    long_key = _hostile(KEY_A, 10_000)
     key = _hostile(KEY_A, 250)
     guild, note, where = _hostile(KEY_B), _hostile(KEY_C), _hostile(KEY_B)
-    env = make(book({key: player(guild=guild, note=note, where=where, rating="bad")}))
+    env = make(
+        book(
+            {
+                long_key: player(),
+                key: player(guild=guild, note=note, where=where, rating="bad"),
+            }
+        )
+    )
+    listed = env.run("crew", "list")
+    assert "1 entry could not be read:" in listed.stdout and not _RAW.search(listed.stdout)
+    report = cli.CrewReport.model_validate_json(env.run("crew", "list", "--json").stdout)
+    assert [u.key for u in report.unread] == [long_key]
     for args in (("crew", "list"), ("crew", "show", key), ("crew", "list", "--notes")):
         result = env.run(*args)
         assert result.exit_code == 0, result.output

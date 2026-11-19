@@ -260,6 +260,10 @@ class SyncOutcome(_Model):
     held: list[HoldReason] = Field(default_factory=list)
     plan: SyncPlan | None = None
     database: str | None = None
+    left_out: int = 0
+    """Entries of the book not synced because they could not be read or are
+    outside what a sync takes (each listed as unread); every other entry is
+    synced."""
 
 
 class AdoptOutcome(_Model):
@@ -630,40 +634,64 @@ def _refused(kind: str, rule: str) -> str:
 
 
 def check_book(book: crewbook.CrewBook) -> str | None:
-    """Why this book may not be synced, in the player's words naming the
-    kind of field and never its content; None when every field is within
-    bounds (§21.3, "The book is checked whole")."""
-    if book.unread:
-        return _refused("a player's entry", "every field of the form the lab-addon writes")
-    if len(book.players) > MAX_PLAYERS:
+    """Why this book may not be synced at all, in the player's words naming
+    the kind of field and never its content; None when the book itself is
+    within bounds (§21.3, "The book is checked whole", as ruled on
+    2026-11-19: a violation inside one player's entry makes only that entry
+    unread, `entry_problems`)."""
+    if len(book.players) + len(book.unread) > MAX_PLAYERS:
         return _refused("the number of players", f"at most {MAX_PLAYERS:,}")
     if book.started is not None and not TIME_MIN <= book.started <= TIME_MAX:
         return _refused("the book's start time", "a date from 2004 to 2099")
     for name, value in (("count of skipped reads", book.skipped), ("load count", book.probe_loads)):
         if value is not None and not 0 <= value <= COUNTER_MAX:
             return _refused(f"the book's {name}", f"a whole number from 0 to {COUNTER_MAX:,}")
-    for p in book.players:
-        if not _key_ok(p.key):
-            return _refused(
-                "a player's name",
-                f"Name-Realm, not ending in a dash, at most {KEY_MAX_BYTES} bytes of text",
-            )
-        for field, kind, limit in _TEXTS:
-            text = getattr(p, field)
-            if text is None:
-                continue
-            size = _bytes_of(text)
-            if size is None or size > limit:
-                return _refused(f"a player's {kind}", f"at most {limit} bytes of text")
-        if p.met is not None and not 0 <= p.met <= COUNTER_MAX:
-            return _refused("a player's count of groups", f"from 0 to {COUNTER_MAX:,}")
-        if p.level is not None and not 1 <= p.level <= LEVEL_MAX:
-            return _refused("a player's level", f"from 1 to {LEVEL_MAX:,}")
-        for field, kind in _TIMES:
-            value = getattr(p, field)
-            if value is not None and not TIME_MIN <= value <= TIME_MAX:
-                return _refused(f"a player's {kind}", "a date from 2004 to 2099")
     return None
+
+
+def _entry_problem(p: crewbook.CrewPlayer) -> str | None:
+    """Why one player's entry is outside what a sync takes, in wowlab's
+    words (as the reader gives its reasons), never quoting the entry."""
+    if not _key_ok(p.key):
+        return (
+            f"the key is not Name-Realm within {KEY_MAX_BYTES} bytes of text, so it is not synced"
+        )
+    for field, kind, limit in _TEXTS:
+        text = getattr(p, field)
+        if text is None:
+            continue
+        size = _bytes_of(text)
+        if size is None or size > limit:
+            return f"the {kind} is not text of at most {limit} bytes, so it is not synced"
+    if p.met is not None and not 0 <= p.met <= COUNTER_MAX:
+        return f"the count of groups is over {COUNTER_MAX:,}, so it is not synced"
+    if p.level is not None and not 1 <= p.level <= LEVEL_MAX:
+        return f"the level is over {LEVEL_MAX:,}, so it is not synced"
+    for field, kind in _TIMES:
+        value = getattr(p, field)
+        if value is not None and not TIME_MIN <= value <= TIME_MAX:
+            return f"the {kind} is not a date from 2004 to 2099, so it is not synced"
+    return None
+
+
+def entry_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
+    """The entries the reader read but a sync does not take, each with its
+    stored key and why. With the reader's own `unread`, they are what
+    `crew list` lists as entries that could not be read."""
+    out = []
+    for p in book.players:
+        why = _entry_problem(p)
+        if why is not None:
+            out.append(crewbook.UnreadEntry(key=p.key, reason=why))
+    return out
+
+
+def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int]:
+    """The book with only the entries a sync takes, and how many it left out
+    (the reader's unread entries included)."""
+    kept = [p for p in book.players if _entry_problem(p) is None]
+    left_out = len(book.players) - len(kept) + len(book.unread)
+    return book.model_copy(update={"players": kept}), left_out
 
 
 # ─── the hold ────────────────────────────────────────────────────────────────
@@ -947,6 +975,7 @@ def sync(
     why = check_book(book)
     if why is not None:
         return SyncOutcome(state="refused", words=why, database=str(path))
+    book, left_out = _usable(book)
     exists = os.path.lexists(path)
     if not exists:
         orphan = _orphans(target)
@@ -961,7 +990,18 @@ def sync(
         raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
     assert conn is not None
     try:
-        return _sync_open(conn, path, target, data, book, by_hand=by_hand, confirm=confirm)
+        outcome = _sync_open(conn, path, target, data, book, by_hand=by_hand, confirm=confirm)
+        if not left_out or outcome.state not in ("synced", "unchanged"):
+            return outcome
+        entries = "1 entry" if left_out == 1 else f"{left_out} entries"
+        verb = "was" if left_out == 1 else "were"
+        return outcome.model_copy(
+            update={
+                "left_out": left_out,
+                "words": f"{outcome.words} {entries} of the book could not be read and "
+                f"{verb} not synced.",
+            }
+        )
     except sqlite3.OperationalError as exc:
         if _locked(exc):
             return _skipped(path)
@@ -1179,6 +1219,92 @@ def copies(flavor_folder: str, account: str) -> list[Path]:
     )
 
 
+# ─── forget (§21.3, "Writing"; brought forward from M20-02 on 2026-11-19) ───
+
+_SQL_FORGET_PLAYER = "DELETE FROM players WHERE player_key = ?"
+_SQL_FORGET_IN_MATCHES = "DELETE FROM match_players WHERE player_key = ?"
+
+
+def _files(path: Path) -> list[Path]:
+    """The database and every copy wowlab keeps of it."""
+    out = [path] if os.path.lexists(path) else []
+    try:
+        entries = list(path.parent.iterdir())
+    except OSError:
+        return out
+    rest = [
+        f
+        for f in entries
+        if f.name.startswith(path.name)
+        and (
+            _DAILY.search(f.name[len(path.name) :])
+            or _BEFORE_SCHEMA.search(f.name[len(path.name) :])
+        )
+    ]
+    return out + sorted(rest)
+
+
+def _gone(path: Path) -> None:
+    """Remove a file and SQLite's rollback journal beside it."""
+    for f in (path, path.with_name(path.name + "-journal")):
+        with contextlib.suppress(FileNotFoundError):
+            f.unlink()
+
+
+def _forget_in(path: Path, keys: Sequence[str]) -> None:
+    """Delete the players `keys` from one database file, with
+    `secure_delete` on, in one transaction, and leave no rollback journal."""
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+        raise _not_ours(path)
+    conn = _connect(path)
+    try:
+        if conn.execute(_SQL_READ_APP_ID).fetchone()[0] != APPLICATION_ID:
+            raise _not_ours(path)
+        _settings(conn)
+        with _transaction(conn):
+            for key in keys:
+                conn.execute(_SQL_FORGET_PLAYER, (key,))
+                conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+    finally:
+        conn.close()
+
+
+def holds(flavor_folder: str, account: str) -> list[str]:
+    """The keys of every player wowlab's crew database keeps for this book."""
+    return [r.key for r in read(flavor_folder, account)]
+
+
+def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
+    """Remove players from wowlab's crew database and from every copy it
+    keeps (`keys`), or, with None, delete the database and its copies. A
+    copy that cannot be opened is deleted; the database itself is refused
+    then, as everywhere. Returns how many files were rewritten or deleted.
+    Not undoable: snapshots do not cover the database."""
+    path = database_path(flavor_folder, account)
+    files = _files(path)
+    if keys is None:
+        for f in files:
+            _gone(f)
+        return len(files)
+    for f in files:
+        try:
+            if f == path:
+                conn = _open(f, create=False)  # checked: a newer database is refused
+                if conn is not None:
+                    conn.close()
+            _forget_in(f, keys)
+        except (sqlite3.DatabaseError, CrewDbError, OSError) as exc:
+            if f == path:
+                if isinstance(exc, CrewDbError):
+                    raise
+                raise CrewDbError(
+                    f"The crew database {path} could not be changed ({exc}); run the forget again."
+                ) from exc
+            _gone(f)  # a copy wowlab cannot open still may hold them: deleted
+    return len(files)
+
+
 __all__ = [
     "APPLICATION_ID",
     "COUNTER_MAX",
@@ -1197,6 +1323,9 @@ __all__ = [
     "copies",
     "crew_root",
     "database_path",
+    "entry_problems",
+    "forget",
+    "holds",
     "read",
     "sync",
 ]

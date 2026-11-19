@@ -6687,6 +6687,15 @@ what a sync takes in stays. Two guards, both before the transaction:
   confirmed by hand records the book's identity and the journal's newest
   record, so the next sync runs by itself.
 
+  *Ruled 2026-11-19 (M20-01, conductor; §20.2's fourth outcome stands):*
+  a violation inside one player's entry (a key of the wrong shape or over
+  its bound, a field of the wrong type or out of range) makes that entry
+  unread, as the reader lists it: it is not synced, it is counted and said,
+  and every other entry syncs. A violation of the book itself (unknown
+  schema, unreadable, more than 20,000 players, a top-level field of the
+  wrong type or out of range) syncs nothing. Either way no invalid value
+  enters the database.
+
   Not caught: a saved file replaced by hand, outside wowlab, and a
   restore made through a snapshot store kept somewhere other than the
   user data directory, whose journal the sync does not read. Such a book
@@ -6704,8 +6713,12 @@ older. A journal record that changed the account's `WowLab.lua`, not
 rolled back, holds, unless labelled `crew forget`, `rate` or `note` and
 undoing nothing. Another flavor folder's database is offered to `--adopt`
 only when the install folder it was filled from is gone. Copies:
-`<account>.sqlite.daily-<date>`, `.before-schema-<n>`. Until M20-02 a
-forget does not reach the database: the player stays listed, marked.
+`<account>.sqlite.daily-<date>`, `.before-schema-<n>`. Brought forward
+from M20-02 (conductor, 2026-11-19): `crew forget` removes the player from
+the database and every copy (a copy it cannot open is deleted), `--all`
+deletes them, and a player only in the database is forgotten from it alone,
+after a plan and a yes; the plan and result carry the sentences of
+"Writing". `crew rate` and `crew note` reach the database at the next sync.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

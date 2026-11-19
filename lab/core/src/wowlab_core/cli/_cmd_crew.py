@@ -345,7 +345,7 @@ def _header(opened: _Opened, kept: int) -> str:
     book, place = opened.book, opened.place
     assert place is not None
     where = _place_words(place)
-    n = kept + len(book.unread)
+    n = kept + len(_unread(book))
     started = f"started {_date(book.started)}"
     if book.state == "off":
         return (
@@ -378,12 +378,19 @@ def _row(p: crewbook.CrewPlayer) -> str:
     return f"  {p.key}: " + "; ".join(parts)
 
 
+def _unread(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
+    """The entries not read: the reader's, and those a sync into wowlab's
+    crew database does not take (each is left out; the rest are synced)."""
+    return [*book.unread, *crewdb.entry_problems(book)]
+
+
 def _unread_lines(book: crewbook.CrewBook) -> list[str]:
-    if not book.unread:
+    unread = _unread(book)
+    if not unread:
         return []
-    n = len(book.unread)
+    n = len(unread)
     lines = [f"{n} {'entry' if n == 1 else 'entries'} could not be read:"]
-    lines += [f"  {u.key}: {u.reason}" for u in book.unread]
+    lines += [f"  {u.key}: {u.reason}" for u in unread]
     return lines
 
 
@@ -452,13 +459,13 @@ def crew_list(
         probe_loads=book.probe_loads,
         skipped=book.skipped,
         current_count=book.current_count,
-        total=len(kept) + len(book.unread),
+        total=len(kept) + len(_unread(book)),
         sort=sort,
         rated=rated,
         noted=noted,
         search=search,
         players=shown,
-        unread=book.unread,
+        unread=_unread(book),
         places=opened.places,
         words=words,
         keeps=CREW_BOOK_SENTENCE,
@@ -540,7 +547,7 @@ def crew_show(
         assert place is not None
         found = crewbook.match(kept, name)
         if not found:
-            unread = [u.key for u in book.unread if crewbook.fold(u.key) == crewbook.fold(name)]
+            unread = [u.key for u in _unread(book) if crewbook.fold(u.key) == crewbook.fold(name)]
             why = " (its entry could not be read)" if unread else ""
             also = f" {caveat}" if caveat is not None else ""
             raise CliError(
@@ -743,7 +750,11 @@ class CrewEditReport(_Out):
     `written_sha256` (the bytes it would write; None with nothing to
     change), and for `forget` also `backup_sha256` and
     `backup_written_sha256` (the backup as read and as it would be: the same
-    when it is left alone, `absent` when there is none)."""
+    when it is left alone, `absent` when there is none).
+
+    `database_forgotten` (forget only) is true once the players were removed
+    from wowlab's crew database and every copy it keeps (with `--all`: the
+    database and its copies deleted)."""
 
     command: CrewCommand
     flavor_folder: str
@@ -764,6 +775,7 @@ class CrewEditReport(_Out):
     backup_written_sha256: str | None
     not_reached: str | None
     notes: list[str]
+    database_forgotten: bool = False
 
 
 def _sha(data: bytes) -> str:
@@ -921,9 +933,12 @@ def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool
     saves = "saved" if done else "saves"
     return (
         f"This command first {saves} a copy that still holds {them}, so `wowlab undo` can "
-        f"bring them back. That copy and every earlier snapshot stay in wowlab's snapshot "
-        f"folder ({store.path}): wowlab cannot remove a snapshot yet. Archives you made "
-        "with `snap export` keep theirs."
+        "bring them back into WowLab.lua, and a sync by hand would add them to wowlab's crew "
+        "database again; the history the database held (counts from before the game's list "
+        "dropped them) is gone for good. That copy and every earlier snapshot stay in "
+        f"wowlab's snapshot folder ({store.path}): wowlab cannot remove a snapshot yet. "
+        "Archives you made with `snap export` keep theirs. Backups your system made of "
+        "wowlab's folder (Time Machine, File History, a cloud-synced folder) keep theirs too."
     ) + (
         " The character's name alone, without the realm, may still be in your notes about "
         "other players: forget looks for the whole name."
@@ -1040,8 +1055,11 @@ def _apply(
     store: snapshot.SnapshotStore,
     yes: bool,
     json_out: bool,
+    after: Callable[[], object] | None = None,
 ) -> None:
-    """Show the plan, ask, write through the gate, say what was done."""
+    """Show the plan, ask, write through the gate, run `after` (a forget's
+    step in wowlab's crew database) once the write is done, say what was
+    done."""
     _check_pin(pin, got, edit.rel)
     show = _say if not json_out else _say_err
     if not yes:
@@ -1053,6 +1071,8 @@ def _apply(
             _emit(report(written=False))
         raise
     record = _write(edit, new=new, new_backup=new_backup, pin=pin, label=label, store=store)
+    if after is not None:
+        after()
     finished = report(written=True, transaction=record)
     if json_out:
         _emit(finished)
@@ -1129,7 +1149,8 @@ def crew_forget(
         )
     live_keys = crewedit.keys_held(edit.data)
     backup_keys = crewedit.keys_held(edit.backup_data) if edit.backup_data is not None else []
-    known = list(dict.fromkeys([*live_keys, *backup_keys]))
+    in_db = crewdb.holds(edit.place.flavor_folder, edit.place.account)
+    known = list(dict.fromkeys([*live_keys, *backup_keys, *in_db]))
     try:
         if name is None:
             keys = known
@@ -1159,6 +1180,21 @@ def crew_forget(
     backup_after = _sha(new_backup) if new_backup is not None and backup_changed else backup_sha
     written_sha = _sha(new) if changed else None
     count = max(len(keys), 1)
+    if name is None:
+        db_has = (
+            bool(in_db)
+            or bool(crewdb.copies(edit.place.flavor_folder, edit.place.account))
+            or crewdb.database_path(edit.place.flavor_folder, edit.place.account).exists()
+        )
+    else:
+        db_has = keys[0] in in_db or bool(
+            crewdb.copies(edit.place.flavor_folder, edit.place.account)
+        )
+
+    def forget_db() -> int:
+        return crewdb.forget(
+            edit.place.flavor_folder, edit.place.account, None if name is None else keys
+        )
 
     def report(*, written: bool = False, transaction: str | None = None) -> CrewEditReport:
         return CrewEditReport(
@@ -1183,7 +1219,34 @@ def crew_forget(
             if changed
             else None,
             notes=[],
+            database_forgotten=written and db_has,
         )
+
+    if not changed and db_has:
+        # Only wowlab's crew database (and its copies) hold them: no file of
+        # the game is written, and nothing of this can be undone.
+        _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
+        show = _say if not json_out else _say_err
+        who = keys[0] if name is not None else "every player"
+        show(
+            f"Forget {who} from wowlab's crew database for {edit.words()}: neither "
+            f"{labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME} holds them. The database and every "
+            "copy wowlab keeps of it are rewritten, and this cannot be undone; backups your "
+            "system made of wowlab's folder (Time Machine, File History, a cloud-synced "
+            "folder) keep theirs."
+        )
+        try:
+            _confirm("Forget this player?" if name is not None else "Forget every player?", yes)
+        except typer.Exit:
+            if json_out:
+                _emit(report())
+            raise
+        forget_db()
+        if json_out:
+            _emit(report(written=True))
+            return
+        _say(f"Forgot {who}: wowlab's crew database and its copies no longer hold them.")
+        return
 
     if not changed:
         _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
@@ -1208,13 +1271,17 @@ def crew_forget(
             show(f"  {edit.backup_rel}, the game's backup, does not hold {them}: left alone")
         else:
             show(f"  There is no {_BACKUP_NAME} beside it.")
+        if db_has:
+            show("  remove them from wowlab's crew database and every copy it keeps")
         show(_not_reached(store, count, done=False, one=name is not None))
 
     def done(finished: CrewEditReport) -> None:
         who = keys[0] if name is not None else _plural(len(keys), "player")
         names = "the name" if name is not None else "their names"
+        also = ", nor wowlab's crew database or its copies," if db_has else ""
         _say(
-            f"Forgot {who}: neither {labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME} holds {names} now."
+            f"Forgot {who}: neither {labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME}{also} holds "
+            f"{names} now."
         )
         assert finished.not_reached is not None
         _say(finished.not_reached)
@@ -1233,6 +1300,7 @@ def crew_forget(
         store=store,
         yes=yes,
         json_out=json_out,
+        after=forget_db if db_has else None,
     )
 
 

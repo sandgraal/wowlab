@@ -582,9 +582,9 @@ _PLANTED = "Inventedplanted"  # a value the refusal must never quote
 @pytest.mark.parametrize(
     ("label", "players", "top", "kind"),
     [
-        ("key_too_long", {KEY_A + _PLANTED + _over(250): player()}, {}, "a player's name"),
-        ("key_ends_in_dash", {_PLANTED + "-": player()}, {}, "a player's name"),
-        ("key_has_no_dash", {_PLANTED: player()}, {}, "a player's name"),
+        ("key_too_long", {KEY_A + _PLANTED + _over(250): player()}, {}, "name"),
+        ("key_ends_in_dash", {_PLANTED + "-": player()}, {}, "name"),
+        ("key_has_no_dash", {_PLANTED: player()}, {}, "name"),
         ("class_too_long", {KEY_A: player(**{"class": _PLANTED + _over(256)})}, {}, "class"),
         ("role_too_long", {KEY_A: player(role=_PLANTED + _over(256))}, {}, "role"),
         ("guild_too_long", {KEY_A: player(guild=_PLANTED + _over(256))}, {}, "guild"),
@@ -609,17 +609,38 @@ _PLANTED = "Inventedplanted"  # a value the refusal must never quote
 def test_one_field_out_of_range_syncs_nothing_constructed(
     make: Any, label: str, players: dict[str, Any], top: dict[str, Any], kind: str
 ) -> None:
+    """One field out of range (§21.3, as ruled on 2026-11-19): inside a
+    player's entry, that entry is left out and listed as unread, and every
+    other entry syncs; in the book itself (`top`), nothing syncs. Either
+    way no invalid value enters the database, and the sentence never quotes
+    the value."""
     env = make(_three())
     env.sync()
-    before = env.db_sha()
-    env.save(book(players, **top))
+    before_rows = env.rows()
+    env.save(book({**players, KEY_D: player(met=4, last=T1)}, **top))
     outcome = env.sync()
-    assert outcome.state == "refused", label
-    assert kind in outcome.words, (label, outcome.words)
-    assert _PLANTED not in outcome.words and "Nothing was synced" in outcome.words
-    assert env.db_sha() == before
-    result = env.run("crew", "sync")
-    assert result.exit_code == 1 and _PLANTED not in result.output
+    assert _PLANTED not in outcome.words
+    raw = env.db().read_bytes()
+    assert _PLANTED.encode() not in raw, label
+    if top:
+        assert outcome.state == "refused", label
+        assert kind in outcome.words and "Nothing was synced" in outcome.words
+        assert env.rows() == before_rows
+        result = env.run("crew", "sync")
+        assert result.exit_code == 1 and _PLANTED not in result.output
+        return
+    assert outcome.state == "synced" and outcome.left_out == 1, (label, outcome.words)
+    assert "1 entry of the book could not be read and was not synced" in outcome.words
+    rows = env.rows()
+    assert rows[KEY_D].met == 4  # every other entry synced
+    if KEY_A in players:  # the bad entry did not change what the database kept
+        assert rows[KEY_A] == before_rows[KEY_A].model_copy(update={"in_game_list": False})
+    listed = env.run("crew", "list")
+    assert listed.exit_code == 0 and "1 entry could not be read:" in listed.stdout
+    report = cli.CrewReport.model_validate_json(env.run("crew", "list", "--json").stdout)
+    (unread,) = report.unread
+    assert report.total == len(rows) + 1 and _PLANTED not in unread.reason
+    assert f"  {unread.key}: {unread.reason}" in listed.stdout or unread.key != unread.key.strip()
 
 
 def test_more_than_20000_players_syncs_nothing_constructed(make: Any) -> None:
@@ -630,16 +651,18 @@ def test_more_than_20000_players_syncs_nothing_constructed(make: Any) -> None:
     assert not os.path.lexists(env.db())
 
 
-def test_text_that_is_not_valid_unicode_syncs_nothing_constructed(make: Any) -> None:
+def test_text_that_is_not_valid_unicode_is_left_out_constructed(make: Any) -> None:
     env = make(None)
-    crew = book({KEY_A: player(guild="Inventedguild")})
+    crew = book({KEY_A: player(guild="Inventedguild"), KEY_B: player()})
     env.save(crew.replace(b"Inventedguild", b"Invented\xffguild"))
     outcome = env.sync()
-    assert outcome.state == "refused" and "guild" in outcome.words
+    assert outcome.state == "synced" and outcome.left_out == 1
+    assert set(env.rows()) == {KEY_B}
 
 
-def test_a_refused_first_sync_creates_nothing_constructed(make: Any) -> None:
-    env = make(book({KEY_A: player(note=_over(201))}))
+def test_a_first_sync_of_a_book_refused_whole_creates_nothing_constructed(make: Any) -> None:
+    env = make(None)
+    env.save(book({KEY_A: player()}, skipped=crewdb.COUNTER_MAX + 1))
     assert env.sync().state == "refused"
     assert not os.path.lexists(snapshot.user_data_dir() / "crew")
 
@@ -736,8 +759,111 @@ def test_a_crew_forget_of_the_most_recent_player_does_not_hold_constructed(
     assert forgot.exit_code == 0, forgot.output
     outcome = env.sync()
     assert outcome.state == "synced", outcome.words
-    assert not env.rows()[KEY_A].in_game_list
+    assert KEY_A not in env.rows()  # the forget reached the database too
     assert _meta(env.db())["journal_record"] == guard.history()[-1].id
+
+
+# ─── forget reaches the database (brought forward from M20-02, 2026-11-19) ───
+
+
+def _all_db_bytes(env: Env) -> list[tuple[str, bytes]]:
+    folder = env.db().parent
+    return [(f.name, f.read_bytes()) for f in sorted(folder.iterdir())]
+
+
+def _with_copies(env: Env) -> None:
+    """A database with a daily copy and a pre-schema-change copy beside it,
+    each holding every player of `_three()`."""
+    env.sync()
+    env.save(_three(met_a=5))
+    env.sync()  # today's daily copy
+    pre = env.db().with_name(env.db().name + ".before-schema-0")
+    pre.write_bytes(crewdb.copies(FLAVOR, ACCOUNT)[0].read_bytes())
+    assert len(crewdb.copies(FLAVOR, ACCOUNT)) == 2
+
+
+def test_a_forget_leaves_the_key_in_no_database_file_free_page_or_copy_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    _with_copies(env)
+    assert all(KEY_C.encode() in data for _, data in _all_db_bytes(env))
+    result = env.run("crew", "forget", KEY_C, "--yes")
+    assert result.exit_code == 0, result.output
+    assert "nor wowlab's crew database or its copies" in result.stdout
+    files = _all_db_bytes(env)
+    assert len(files) == 3  # the database and both copies, rewritten
+    for name, data in files:
+        assert KEY_C.encode() not in data, name
+        assert not name.endswith("-journal"), name
+    assert KEY_A.encode() in files[0][1]  # the others are kept
+    listed = env.run("crew", "list")
+    assert KEY_C not in listed.stdout
+    report = cli.CrewEditReport.model_validate_json(
+        env.run("crew", "forget", KEY_B, "--yes", "--json").stdout
+    )
+    assert report.database_forgotten is True
+
+
+def test_the_forget_plan_says_what_undo_brings_back_and_what_it_cannot_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    env.sync()
+    plan = env.run("crew", "forget", KEY_A, input="")
+    assert plan.exit_code == 1
+    flat = " ".join(plan.stdout.split())
+    assert "remove them from wowlab's crew database and every copy it keeps" in flat
+    assert "bring them back into WowLab.lua" in flat
+    assert "the history the database held" in flat and "is gone for good" in flat
+    assert "Backups your system made of wowlab's folder" in flat
+    assert KEY_A in env.rows()  # declined: nothing changed
+
+
+def test_forget_all_deletes_the_database_and_its_copies_constructed(make: Any) -> None:
+    env = make(_three())
+    _with_copies(env)
+    result = env.run("crew", "forget", "--all", "--yes")
+    assert result.exit_code == 0, result.output
+    assert list(env.db().parent.iterdir()) == []
+
+
+def test_a_player_only_in_the_database_can_be_forgotten_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    env.save(book({KEY_A: player(met=3, last=T1)}))  # the game dropped B and C
+    env.sync()
+    before = env.data()
+    declined = env.run("crew", "forget", KEY_B, input="")
+    assert declined.exit_code == 1 and "this cannot be undone" in " ".join(declined.stdout.split())
+    assert KEY_B in env.rows()
+    done = env.run("crew", "forget", KEY_B, input="y\n")
+    assert done.exit_code == 0, done.output
+    assert KEY_B not in env.rows() and env.data() == before  # no game file written
+    assert KEY_B.encode() not in env.db().read_bytes()
+
+
+def test_a_copy_that_cannot_be_opened_is_deleted_by_a_forget_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    _with_copies(env)
+    bad = env.db().with_name(env.db().name + ".daily-2026-01-01")
+    bad.write_bytes(b"not a database, but it holds " + KEY_C.encode())
+    assert env.run("crew", "forget", KEY_C, "--yes").exit_code == 0
+    assert not bad.exists()
+
+
+def test_a_rating_changed_at_the_desk_reaches_the_database_at_the_next_sync_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    env.sync()
+    assert env.run("crew", "rate", KEY_C, "bad", "--yes").exit_code == 0
+    assert env.run("crew", "note", KEY_C, "invented: at the desk", "--yes").exit_code == 0
+    assert env.sync().state == "synced"
+    row = env.rows()[KEY_C]
+    assert (row.rating, row.note) == ("bad", "invented: at the desk")
 
 
 def test_an_undo_of_a_crew_forget_is_held_constructed(make: Any) -> None:
