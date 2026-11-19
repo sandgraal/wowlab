@@ -23,7 +23,7 @@ import shlex
 import shutil
 import sys
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import platformdirs
@@ -216,7 +216,14 @@ def test_every_view_argv_parses_against_the_click_tree(root: str | None) -> None
         ctx = leaf.make_context(view.command[-1], list(view.argv[len(view.command) :]))
         for name, value in ctx.params.items():
             if name in view.params:
-                assert str(value) == view.params[name], (entry_id, view.argv, name)
+                # typer 0.29 hands a path option over as a `Path` (M15-23),
+                # and `str()` of one uses backslashes on Windows: compare a
+                # path as a path, everything else as the text given.
+                given = view.params[name]
+                if isinstance(value, PurePath):
+                    assert value == type(value)(given), (entry_id, view.argv, name)
+                else:
+                    assert str(value) == given, (entry_id, view.argv, name)
             else:  # everything else is left at its default
                 default = next(p.default for p in leaf.params if p.name == name)
                 assert value == default, (entry_id, view.argv, name)
