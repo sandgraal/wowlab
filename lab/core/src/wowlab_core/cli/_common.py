@@ -6,6 +6,7 @@ conventions (M16-111)."""
 import contextlib
 import errno
 import functools
+import importlib
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ import sys
 import textwrap
 import time
 import traceback
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, MutableMapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
@@ -31,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # and context no public name: the root command (`_WowlabGroup`) and its
 # context catch click's errors and print them itself (`_click_error`). Prose
 # wraps to the width its context holds (`_width`).
-from typer._click import Context
+from typer._click import Command, Context
 from typer._click.exceptions import BadParameter, ClickException, NoArgsIsHelpError, UsageError
 from typer._click.globals import get_current_context
 from typer.core import TyperGroup
@@ -262,18 +263,71 @@ class _WowlabGroup(TyperGroup):
     Every command that takes `--json` ends its help with one shared footer,
     `JSON_FOOTER`, rather than naming its model there: the model is named
     after a form feed in the command's docstring, which `--help` does not
-    print and the generated command reference reads (M16-15)."""
+    print and the generated command reference reads (M16-15).
+
+    A command's module is imported when the command is looked up, not when
+    the package is (M15-22): `get_command` imports the modules
+    `_COMMAND_MODULES` names for that root command or group, `list_commands`
+    those of the root commands, and `commands`, an unknown name, or a
+    name nothing maps, every module. A lookup that registered something new
+    rebuilds the tree from the app, with every group's commands in the order
+    the modules were registered in when they were all imported at once
+    (`_PART_NAMES`), so help, the command reference and `wowlab ui` see the
+    same tree whatever ran first."""
 
     context_class = _WowlabContext
 
     def __init__(self, **attrs: Any) -> None:
+        # `TyperGroup.__init__` sets `commands`; the setter keeps them unloaded.
+        self._loaded: set[str | None] = set()
         super().__init__(**attrs)
-        pending: list[Any] = list(self.commands.values())
+        self._seen = _registrations()
+        if _sort_registrations():
+            self._rebuild()
+            return
+        pending: list[Any] = list(self._commands.values())
         while pending:
             cmd = pending.pop()
             pending.extend(getattr(cmd, "commands", {}).values())
             if any("--json" in getattr(p, "opts", ()) for p in cmd.params):
                 cmd.epilog = JSON_FOOTER
+
+    @property
+    def commands(self) -> MutableMapping[str, Command]:
+        """Every command, each module imported first."""
+        self._load(None)
+        return self._commands
+
+    @commands.setter
+    def commands(self, value: MutableMapping[str, Command]) -> None:
+        self._commands = value
+
+    @override
+    def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
+        self._load(cmd_name if cmd_name in _COMMAND_MODULES else None)
+        return self._commands.get(cmd_name)
+
+    @override
+    def list_commands(self, ctx: Context) -> list[str]:
+        self._load(_ROOT_COMMANDS)
+        return list(self._commands)
+
+    def _load(self, key: str | None) -> None:
+        """Import the modules of `key` (None: all of them) and, when that
+        registered a command this tree lacks, rebuild it."""
+        if None in self._loaded or key in self._loaded:
+            return
+        _import_parts(_PART_NAMES if key is None else _COMMAND_MODULES[key])
+        self._loaded.add(key)
+        _sort_registrations()
+        if _registrations() != self._seen:
+            self._rebuild()
+
+    def _rebuild(self) -> None:
+        fresh = typer.main.get_group(app)
+        assert isinstance(fresh, _WowlabGroup)
+        self._commands = fresh._commands
+        self._seen = fresh._seen
 
     def make_context(
         self,
@@ -403,6 +457,98 @@ casc_app = typer.Typer(
 app.add_typer(
     casc_app, name="casc", short_help="Look up and extract the game's files by file data id."
 )
+
+# The modules of this package in the order they register their commands when
+# all are imported, which is the order `wowlab --help` lists them in. Each
+# module imports from the modules before it only.
+_PART_NAMES = (
+    "_common",
+    "_cmd_log",
+    "_cmd_doctor",
+    "_cmd_install",
+    "_cmd_filemap",
+    "_cmd_sv",
+    "_cmd_cvar",
+    "_cmd_binds",
+    "_cmd_macros",
+    "_cmd_addons",
+    "_cmd_db2",
+    "_cmd_names",
+    "_changes",
+    "_cmd_snap",
+    "_cmd_restore",
+    "_cmd_profile",
+    "_cmd_addon",
+    "_cmd_char",
+    "_cmd_looks",
+    "_cmd_casc",
+    "_cmd_charmodel",
+    "_cmd_ui",
+)
+# The key of the modules that register commands on the root itself.
+_ROOT_COMMANDS = ""
+# The modules to import before a root command or group is looked up (M15-22),
+# and under `_ROOT_COMMANDS` those of every root command, for a listing; a
+# group itself is registered above and needs none to be listed.
+# `test_cli_package` checks every registration against this table.
+_COMMAND_MODULES: dict[str, tuple[str, ...]] = {
+    _ROOT_COMMANDS: ("_cmd_doctor", "_cmd_filemap", "_cmd_restore", "_cmd_ui"),
+    "doctor": ("_cmd_doctor",),
+    "tree": ("_cmd_filemap",),
+    "explain": ("_cmd_filemap",),
+    "undo": ("_cmd_restore",),
+    "ui": ("_cmd_ui",),
+    "install": ("_cmd_install",),
+    "filemap": ("_cmd_filemap",),
+    "sv": ("_cmd_sv",),
+    "cvar": ("_cmd_cvar",),
+    "binds": ("_cmd_binds",),
+    "macros": ("_cmd_macros",),
+    "addons": ("_cmd_addons",),
+    "addon": ("_cmd_addon",),
+    "db2": ("_cmd_db2",),
+    "names": ("_cmd_names",),
+    "snap": ("_cmd_snap", "_cmd_restore"),
+    "log": ("_cmd_log",),
+    "profile": ("_cmd_profile",),
+    "looks": ("_cmd_looks",),
+    "char": ("_cmd_char", "_cmd_charmodel"),
+    "casc": ("_cmd_casc",),
+}
+
+
+def _import_parts(names: Sequence[str]) -> None:
+    """Import these modules of the package, in `_PART_NAMES` order; a name
+    not in `_PART_NAMES` raises `ValueError` before anything is imported."""
+    for name in sorted(names, key=_PART_NAMES.index):
+        importlib.import_module(f"{__package__}.{name}")
+
+
+def _typer_apps() -> list[typer.Typer]:
+    return [app, *(g.typer_instance for g in app.registered_groups if g.typer_instance)]
+
+
+def _registrations() -> int:
+    return sum(len(t.registered_commands) for t in _typer_apps())
+
+
+def _registration_order(info: Any) -> int:
+    module = str(getattr(info.callback, "__module__", ""))
+    part = module.rpartition(".")[2] if module.startswith(f"{__package__}.") else ""
+    return _PART_NAMES.index(part) if part in _PART_NAMES else len(_PART_NAMES)
+
+
+def _sort_registrations() -> bool:
+    """Put every group's registered commands in the order of the modules that
+    registered them (stable: a module's own stay in its order). Whether
+    anything moved."""
+    moved = False
+    for t in _typer_apps():
+        ordered = sorted(t.registered_commands, key=_registration_order)
+        if any(a is not b for a, b in zip(ordered, t.registered_commands, strict=True)):
+            t.registered_commands[:] = ordered
+            moved = True
+    return moved
 
 
 # ─── options ─────────────────────────────────────────────────────────────────
