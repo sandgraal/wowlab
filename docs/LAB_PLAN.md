@@ -6249,6 +6249,25 @@ crew data (an armory link would send a name off the machine). Graded on
 constructed hostile names, guilds and notes (markup, ESC and CSI
 sequences, U+009B, U+202E).
 
+*As built (2026-11-19, M19-06).* The tab is the third under Characters. Its
+search, rating filter and order are `crew list`'s own `--search`, `--rated`
+and `--sort`, so every change reads the list again and the page holds no
+matching or sorting rule. Its sentences are the CLI's: `CrewReport` gains
+`words` (the sentence the text output opens with: the book's state, or
+that it was never turned on and how to turn it on in game) and `keeps`
+(term 2's sentence, read from the CLI at run time), and `CrewShowReport`
+gains `lines`, what the text output prints, which a row opens. Show,
+rate, note and forget name the game account and flavor folder the list
+read, and the player's stored key, which the server puts after `--`.
+Confirm's note gives each pin's check (`ui._PIN_CHECKS`). The one `title`
+the tab sets is a fixed sentence; no title, class or id is made from crew
+data. No route was added: everything goes through `/api/run`.
+A stored note holding a character the page shows as a code goes into the
+note field as those codes, with one sentence beside it, before any edit:
+it holds characters that cannot be typed, and saving it replaces them with
+the codes shown (`crew note` refuses control characters, so the original
+cannot be kept). The edit is not refused.
+
 ### 20.5 The terms of ADR-0036, each with its proof
 
 | Term | In this wave | Proof |
