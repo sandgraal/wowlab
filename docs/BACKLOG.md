@@ -3576,7 +3576,7 @@ Not dispatched until the owner answers. ADR-0036's term 5 has the player remove 
 
 # Milestone M20 — the PvP book
 
-Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both `Proposed`. Nothing here is dispatched before M19-08 merges and the owner has accepted both.
+Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Nothing here is dispatched before M19-08 merges.
 
 ## [ ] M20-01 — `crewdb`: the database and the sync
 **Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036

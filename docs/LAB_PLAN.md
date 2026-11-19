@@ -6336,15 +6336,15 @@ Each is the smallest thing that does the job; say so and it changes.
 *Picked by the owner on 2026-11-19, after `docs/handoffs/pvp-book-proposal.md`
 and its six answers (recorded there): two stores, a generous in-game list
 with a warning, 20,000 players in game, opponents from the scoreboard,
-world PvP left out, and M19 finishes first. Nothing here is dispatched
-before M19-08 merges and the owner has accepted ADR-0036's amendment of
-2026-11-19 and ADR-0039.*
+world PvP left out, and M19 finishes first. The owner accepted ADR-0036's
+amendment of 2026-11-19 and ADR-0039 in session on 2026-11-19. Nothing
+here is dispatched before M19-08 merges.*
 
 **Aim.** The crew book (§20) remembers the players you group with, up to
 5,000. This wave removes the limit at the desk, and adds the players you
-fight against in battlegrounds and arenas. It changes two ADRs, both
-`Proposed` until the owner accepts them: an amendment to ADR-0036
-(opponents may be recorded) and ADR-0039 (the database).
+fight against in battlegrounds and arenas. It rests on two decisions the
+owner accepted on 2026-11-19: an amendment to ADR-0036 (opponents may be
+recorded) and ADR-0039 (the database).
 
 Every statement here about the Forever client's PvP calls is from memory
 of other versions of the game and is **[verify]** until M20-06. What is
