@@ -27,3 +27,6 @@ condition is kept.
 | 2026-11-19 | M15-25 (#622) | `char model` files sit in a folder per realm; an empty `--root` is a usage error | CLI-Reference (regenerate), Lab-Addon-and-Characters (the path) |
 | 2026-11-19 | M15-22 (#621) | Commands start faster; nothing else changes | none |
 | 2026-11-19 | M19-02 (#625) | `wowlab crew list` and `crew show` read the crew book, as of the last logout or /reload; nothing is changed. Not in a release until the addon's crew book (M19-10) is merged | CLI-Reference (regenerate), Command-Reference, Lab-Addon-and-Characters |
+| 2026-11-19 | M19-03 (#630) | `wowlab crew forget`, `crew rate` and `crew note` change the crew book through the write gate, with `undo`; ten commands can now change the install. Not in a release until M19-10 is merged | CLI-Reference (regenerate), Command-Reference, Snapshots-and-Undo, Safety-and-Guarantees (seven commands becomes ten), Lab-Addon-and-Characters |
+| 2026-11-19 | M19-05 (#627) | `doctor` says whether the crew book is on and how many players it keeps, never a record | CLI-Reference (regenerate), FAQ (what a bug report holds) |
+| 2026-11-19 | M19-11 (#629) | `snap export` and the plans of `snap restore`, `undo` and `sv merge` say when they carry the crew book | Snapshots-and-Undo, SavedVariables-and-Merging |

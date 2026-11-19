@@ -3502,7 +3502,7 @@ Tests only, in `tests/addon/test_lab_addon.py`, before any addon code. One per-f
 
 ---
 
-## [ ] M19-03 — `crew forget`, `crew rate`, `crew note`
+## [x] M19-03 — `crew forget`, `crew rate`, `crew note`
 **Size:** M · **Depends on:** M19-02 · **Sources:** `docs/LAB_PLAN.md` §20.3; ADR-0036 term 5; ADR-0021
 
 Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 says: `crew forget NAME-REALM` (from `players` and `current`, in `WowLab.lua` and `WowLab.lua.bak`, with the backup's three cases), `crew forget --all`, `crew rate NAME-REALM good|bad|none`, `crew note NAME-REALM TEXT`. Exact key or a single match only; the plan shows the stored key; the commands declare `--expect` (each file's hash as read and as it would be written) and join `cli.EXPECT_FIELDS`; no command creates `WowLabCrewDB`, changes `on` or accepts an unknown `schema`; the guard label names no player and no note. The plan and result of `forget` carry §20.3's sentence on what it does not reach. `svmerge`'s quoting helper becomes shared. `addon remove`'s note about SavedVariables left in place mentions the crew book and `crew forget --all`. The `WowLab.lua` row of `docs/LAB_FILE_MAP.md` says wowlab can edit the crew book. `guard.py` and `luadata.py` are not changed.
@@ -3520,7 +3520,7 @@ Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 
 
 ---
 
-## [ ] M19-05 — Crew records stay out of what a player shares
+## [x] M19-05 — Crew records stay out of what a player shares
 **Size:** S · **Depends on:** M19-02 · **Sources:** `docs/LAB_PLAN.md` §20.5 term 4; ADR-0036 term 4; ADR-0031
 
 `wowlab doctor --redact` never prints a crew record, a name from one or a note, from `WowLab.lua` or its `.bak`; it may say on or off and a count; it reports an unreadable `WowLab.lua` without quoting the failed token. A test pins that profiles never carry `WowLab.lua` or its `.bak`. The bug-report template's warning names the crew book. Not in parallel with M19-02 (both touch `doctor`).
@@ -3529,7 +3529,7 @@ Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 
 
 ---
 
-## [ ] M19-11 — Plans and exports say when they carry the crew book
+## [x] M19-11 — Plans and exports say when they carry the crew book
 **Size:** S · **Depends on:** M19-02 · **Sources:** `docs/LAB_PLAN.md` §20.3 ("Other routes"), §20.5 term 4; the security review of #613 (2026-11-18)
 
 `snap export` says, when any object in the archive holds a non-empty crew book (by content, through `crewbook`), that the archive includes it and how many players. The plans of `snap restore`, `undo` and `sv merge` say when they bring back the crew book ("on, N players"). Not in parallel with M19-09 (both touch `cli/_cmd_snap.py`).
