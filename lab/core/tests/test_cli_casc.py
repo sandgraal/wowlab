@@ -206,10 +206,9 @@ def test_stat_without_archives_is_one_error_line_constructed(env: Env) -> None:
 
 
 _LEFTOVER = (
-    f"cannot read the game-data archives of {FLAVOR}: .build.info has no row for the "
-    f"product '{PRODUCT}': the Battle.net app no longer lists it, so the folder '{FLAVOR}' "
-    "is left over from a version that is no longer installed (`wowlab install show` lists "
-    "the versions that are)."
+    f"cannot read the game-data archives of {FLAVOR}: the folder '{FLAVOR}' is left over "
+    "from a game version no longer installed: this install's .build.info has no row for "
+    f"its product '{PRODUCT}' (`wowlab install show` lists the versions that are)."
 )
 
 

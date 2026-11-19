@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import random
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -531,27 +531,54 @@ def test_a_product_without_exactly_one_active_row_is_refused_constructed(
 
 
 LEFTOVER = (
-    f".build.info has no row for the product '{PRODUCT}': the Battle.net app no longer "
-    f"lists it, so the folder '{FLAVOR}' is left over from a version that is no longer "
-    "installed (`wowlab install show` lists the versions that are)."
+    f"the folder '{FLAVOR}' is left over from a game version no longer installed: this "
+    f"install's .build.info has no row for its product '{PRODUCT}' (`wowlab install show` "
+    "lists the versions that are)."
+)
+UNREADABLE = (
+    ".build.info lists no game version wowlab can read (`wowlab install show` shows what it holds)."
 )
 
 
-@pytest.mark.parametrize(
-    "rows", [[("1", "wow_other_product")], []], ids=["other-product-only", "no-rows"]
-)
-def test_a_product_with_no_row_is_a_leftover_folder_constructed(
-    tmp_path: Path, rows: list[tuple[str, str]]
-) -> None:
-    """Zero rows for the product (M15-15): the launcher no longer lists it,
-    so the folder is left over; the refusal says so and names
+def test_a_product_with_no_row_is_a_leftover_folder_constructed(tmp_path: Path) -> None:
+    """Another product has a row and the flavor's does not (M15-15): the
+    folder is left over; the refusal says so first and names
     `wowlab install show`, and does not speak of picking between rows."""
-    root, _ = make_install(tmp_path, rows=rows)
+    root, _ = make_install(tmp_path, rows=[("1", "wow_other_product")])
     with pytest.raises(casc.BuildRowError) as caught:
         casc.open_storage(read_install(root), FLAVOR)
     assert str(caught.value) == LEFTOVER
     assert (caught.value.product, caught.value.count) == (PRODUCT, 0)
     assert caught.value.path == root / ".build.info"
+
+
+def _no_product_column(root: Path) -> None:
+    info = root / ".build.info"
+    lines = info.read_text(encoding="utf-8").splitlines()
+    info.write_text("\n".join(line.rsplit("|", 1)[0] for line in lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("rows", "edit"),
+    [
+        ([], None),
+        (None, lambda root: (root / ".build.info").write_bytes(b"")),
+        (None, _no_product_column),
+    ],
+    ids=["no-rows", "empty-file", "no-product-column"],
+)
+def test_a_build_info_listing_no_product_is_not_called_a_leftover_constructed(
+    tmp_path: Path, rows: list[tuple[str, str]] | None, edit: Callable[[Path], object] | None
+) -> None:
+    """No product listed at all (M15-15 review): nothing says the folder is
+    left over, only that the file lists nothing wowlab can read."""
+    root, _ = make_install(tmp_path, rows=rows)
+    if edit is not None:
+        edit(root)
+    with pytest.raises(casc.BuildRowError) as caught:
+        casc.open_storage(read_install(root), FLAVOR)
+    assert str(caught.value) == UNREADABLE
+    assert (caught.value.product, caught.value.count) == (PRODUCT, 0)
 
 
 def test_one_active_row_among_others_is_taken_constructed(tmp_path: Path) -> None:
