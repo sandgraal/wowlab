@@ -5075,36 +5075,91 @@ option (§17.8). The axis signs stay **[verify]** until the owner opens a
 `.glb` in a viewer.
 
 *Note, 2026-11-19 (M15-24, the held-items probe; no drawing code, the
-attachment mapping above is unchanged):* observed
-(`macos-70959/derived/charmodel.json`, rows `other_attachment_points` and
-`held_point_parents`, read by `scripts/charmodel_facts.py` from 959310
-and 917116 at 1.60.1.70959; game axes, Z up). (a) The files hold 45
-(959310) and 47 (917116) attachment points; every one sits at its bone's
-pivot, and seven of them (19, 21, 22, 35, 36, 37, 38, on both) are stored
-at the origin. All eight of 26 to 33 are there on both, each stored away
-from the origin, at a height of 1.28 to 1.83 (959310) and 1.39 to 2.04
-(917116): 26, 27, 28, 30 and 31 at x from −0.24 to −0.41, 29 at x 0.09
-and 0.14, 32 and 33 at x −0.03 (959310) and 0.22 (917116), 32 and 33
-mirrored left and right (y ±0.21 and ±0.32). (b) The bone each hand point sits on (203,
-213, 214 on 959310; 200, 206, 207 on 917116) has a parent whose pivot is
-also (0, 0, 0) (50, 121, 128; 49, 100, 107); the bone above that rests
-away from the origin: for the shield point 36 at (−0.02, 0.54, 1.47) on
-959310, within 1e-6 of where that file stores point 4, and at (−0.12,
-0.48, 1.49) on 917116; for the main and off hand 44 and 47 at (0.04,
-∓0.74, 1.25) on 959310 and 43 and 46 at (−0.08, ∓0.57, 1.08) on 917116,
-mirrored left and right. Hypotheses, each **[verify]**: (a) 26 to 33 are
-the community list's sheath points (main hand, off hand, shield, then
-large and hip weapons), the negative x being behind the body (the
-facing direction is itself **[verify]**), so a weapon could be drawn
-sheathed at a stored position; that needs the item's sheathe type from the game tables, and
-gives a position without the bone's rotation, so the angle is unknown.
-(b) The two bones at the origin under each hand point are moved only by
-the animation, and the next bone up is the forearm or wrist of the rest
-pose (the main and off hand ones lie mirrored, 0.57 to 0.74 out from
-the centre line at z 1.08 to 1.25); a weapon placed there would sit near the
-hand, again with no rotation. Neither reading has been drawn or checked in
-a viewer, and none is decided here: whether held items are drawn at all,
-and where, is the owner's call (the M15-24 acceptance).
+attachment mapping above is unchanged).* Read by
+`scripts/charmodel_facts.py` from the body models 959310 and 917116 at
+1.60.1.70959 (`macos-70959/derived/charmodel.json`, rows
+`other_attachment_points`, `held_point_parents`, `sheath_point_parents`
+and `bones`; game axes, Z up; "point" is an attachment id, "bone" a bone
+index).
+
+*Observed.*
+- The files hold 45 (959310) and 47 (917116) attachment points. Each one
+  sits at its bone's pivot, and seven (points 19, 21, 22 and 35 to 38, on
+  both files) are stored at the origin.
+- Points 26 to 33 are all present on both files, each stored away from
+  the origin at z 1.28 to 1.83 (959310) and 1.39 to 2.04 (917116). Points
+  26, 27, 28, 30 and 31 lie at x −0.24 to −0.41, as point 12 (the back
+  point §17.4 uses) does (x −0.33 and −0.29). Point 29 alone lies on the
+  centre line (y 0) at positive x (0.09 and 0.14). Points 32 and 33 lie at
+  x −0.03 (959310) and 0.22 (917116), mirrored in y (±0.21 and ±0.32).
+  Point 54 is at (−0.31, −0.17, 1.99) on 959310 and (−0.42, −0.29, 2.13)
+  on 917116.
+- Each bone under points 26 to 33 has key bone id −1 and no translation
+  track; its rotation runs on a global sequence (0 on 959310; 2 for 26 to
+  31 and 0 for 32 and 33 on 917116). The parent of the bones under 26, 27,
+  28, 30 and 31 is bone 14 on both files (key bone id 53), at
+  (−0.15, 0, 1.54) and (−0.02, 0, 1.63). The bones under 32 and 33 hang
+  from bone 2 (key 51) on 959310 and bone 3 (key 4) on 917116. Point 29's
+  bone is a root (key 23, no parent).
+- For point 0 (the shield), points 1 and 2 (main and off hand): the bone
+  under each (203, 213, 214 on 959310; 200, 206, 207 on 917116) has key
+  bone id −1 and no translation track. Its parent (bones 50, 121, 128;
+  49, 100, 107; key bone ids 63, 66, 67 on both) also has its pivot at
+  (0, 0, 0). In sequence 0 these parents have one translation key and one
+  rotation key each, except bone 49 (key 63) on 917116, which has 75
+  translation keys and 18 rotation keys. The bone above each parent rests
+  away from the origin.
+  - For point 0, that is bone 36 (key 62) at (−0.02, 0.54, 1.47) on
+    959310, within 1e-6 of where that file stores point 4, and bone 36
+    (key 62) at (−0.12, 0.48, 1.49) on 917116, where point 4 is at
+    (−0.36, 0.49, 1.46).
+  - For points 1 and 2, those are bones 44 and 47 (keys 64 and 65) at
+    (0.04, ∓0.74, 1.25) on 959310, and bones 43 and 46 (keys 64 and 65) at
+    (−0.08, ∓0.57, 1.08) on 917116, mirrored in y.
+  - On both files, the key-65 bone's parent is the key-62 bone.
+  - Keys 62, 64 and 65 have 19 translation and 19 rotation keys in
+    sequence 0 on 959310. On 917116, key 62 has 0 translation and 74
+    rotation keys, key 64 has 65 and 75, and key 65 has 63 and 72.
+  - Every track with per-sequence keys holds 332 (959310) or 369
+    (917116) sequences.
+  - Every bone read has flags 0 or 0x200 (meaning **[verify]**).
+- The arm line. On 959310: point 4 at (−0.02, 0.54, 1.47), then bone 47
+  at (0.04, 0.74, 1.25), then point 74 at (0.07, 0.87, 1.14). Each step
+  drops about as far as it moves out, near 45°, and the mirror side
+  matches (points 3 and 73, bone 44). On 917116: bone 36 at
+  (−0.12, 0.48, 1.49), then bone 46 at (−0.08, 0.57, 1.08), then point 74
+  at (−0.09, 0.69, 0.82). The first step is nearly straight down.
+- In the recorded 70959 `Item` subset, `SheatheType` is 2 for the staff,
+  3 for the one-hand weapons and the off-hand item, 4 for the shield and
+  0 for the wand.
+
+*Hypotheses, each **[verify]**.*
+- 26 to 28 and 30 to 33 are the community list's sheath points: main hand,
+  off hand, shield, large weapon left and right, hip weapon left and right.
+  The list gives 29 another use (from memory, **[verify]**), and the files
+  agree in so far as 29 alone sits on the centre line in front. The list
+  names 54 the bow and crossbow point. Negative x is behind the body,
+  consistent with point 12 at negative x on both files; this stays
+  **[verify]** until viewed, as does the facing direction itself.
+- A weapon could be drawn sheathed at one of these stored positions. That
+  needs the item's `SheatheType` mapped to a point (the mapping is
+  **[verify]**). Bones store a pivot and no rest rotation, so a weapon
+  placed there with no rotation would stand upright or lie level, not
+  across the back. "Drawn sheathed" would be an approximation.
+- The bones above the hand points' bones, keys 63, 66 and 67 (pivots at
+  the origin), are put in place by the animation: their translation keys
+  in sequence 0 presumably move them off the origin. Placing a held item would then mean reading
+  that key, which is the bones-and-stand-animation work of Wave 7
+  (§17.8).
+- Bones 44 and 47 (959310) and 43 and 46 (917116), keys 64 and 65, read as
+  the wrists. The rest pose is not arms straight out: on 959310 the arms
+  hang about 45° down, and on 917116 the upper arm hangs nearly straight
+  down. The key bone ids show that these are the same bones in both files.
+  They do not name them, and no name is settled here.
+
+Nothing here has been drawn or checked in a viewer, and nothing is decided.
+Whether held items are drawn at all, and where, is the owner's call (the
+M15-24 acceptance).
 
 ### 17.7 What is known, and what is [verify]
 

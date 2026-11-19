@@ -20,9 +20,12 @@ build's time, and for each body model the attachment points 0, 1, 2, 5,
 6, 11 and 12 with their bone, stored position and that bone's pivot (read
 here from the bone array), and (M15-24, the held-items probe) every other
 attachment point the body model holds with the same three facts, and for
-the hand points 0, 1 and 2 the parent of the bone each sits on with its
-pivot (and the next bone up when that pivot is the origin). No geometry,
-no pixel, no byte of any file, no install path.
+the hand points 0, 1 and 2 and the points 26 to 33 the parent of the bone
+each sits on with its pivot (and the next bone up when that pivot is the
+origin), and for each of those bones its key bone id, flags, parent and
+its translation and rotation tracks counted (global sequence, number of
+sequences, keys in the first). No geometry, no pixel,
+no key value, no byte of any file, no install path.
 
 Refusals (exit 1), as `renderplan_facts.py`'s: `--out` that is a link, one
 inside a game install, one already there; a table missing from `--tables`;
@@ -142,16 +145,27 @@ def attachment_points(body: m2.M2Model, data: Buffer) -> dict[str, Any]:
 # M15-24, the held-items probe. The parent of a bone (M2CompBone.parent_bone,
 # an i16 at 8; -1 for a root bone, wowdev.wiki, M2 since 264), and the hand
 # points whose bones' parents are recorded.
-_PARENT_AT = 8
-_PARENT = struct.Struct("<h")
+_HEAD = struct.Struct("<iIh")  # M2CompBone: key_bone_id i32 at 0, flags u32 at 4, parent i16 at 8
+_TRANSLATION_AT = 16  # M2Track<C3Vector>, 20 bytes
+_ROTATION_AT = 36  # M2Track<C4Quaternion>, 20 bytes
+_GLOBAL_AT = 2  # in an M2Track: its global sequence, i16 (-1 when none)
+_GLOBAL = struct.Struct("<h")
+_TIMESTAMPS_AT = 4  # in an M2Track: the per-sequence timestamp arrays, count and offset
 HELD = (0, 1, 2)
+SHEATH = tuple(range(26, 34))  # the community list's 26 to 33, read for their bones' parents
 PARENT_LEVELS = 2  # the parent, and one more level when the parent rests at the origin
 
 
 def _bones(body: m2.M2Model, data: Buffer) -> tuple[memoryview, int, int]:
+    """The MD21 chunk's bytes and its bone array's count and offset, the
+    array checked to lie inside the chunk."""
     md21 = next(c for c in body.chunks if c.tag == "MD21")
     blob = memoryview(data).cast("B")[md21.offset : md21.offset + md21.size]
+    if len(blob) < _BONES_AT + _BONE.size:
+        raise facts.FactsError("the MD21 chunk ends before its bone array")
     count, offset = _BONE.unpack_from(blob, _BONES_AT)
+    if offset + _BONE_SIZE * count > len(blob):
+        raise facts.FactsError(f"the bone array ({count} at {offset}) ends past the MD21 chunk")
     return blob, count, offset
 
 
@@ -160,8 +174,39 @@ def _bone(blob: memoryview, count: int, offset: int, bone: int) -> tuple[int, li
     if not 0 <= bone < count:
         raise facts.FactsError(f"bone {bone} of {count}")
     at = offset + _BONE_SIZE * bone
-    (parent,) = _PARENT.unpack_from(blob, at + _PARENT_AT)
+    _key, _flags, parent = _HEAD.unpack_from(blob, at)
     return parent, list(_PIVOT.unpack_from(blob, at + _PIVOT_AT))
+
+
+def _track(blob: memoryview, track: int) -> dict[str, Any]:
+    """The M2Track at `track`, counted: its global sequence (-1 when none),
+    its number of per-sequence timestamp arrays, and the number of keys in
+    the first (sequence 0's, or the global sequence's when it has one;
+    `None` when there is no array). Only counts: the keys themselves may
+    live in an `.anim` file, and are not read."""
+    (global_sequence,) = _GLOBAL.unpack_from(blob, track + _GLOBAL_AT)
+    sequences, at = _BONE.unpack_from(blob, track + _TIMESTAMPS_AT)
+    first: int | None = None
+    if sequences:
+        if at + _BONE.size > len(blob):
+            raise facts.FactsError(f"a bone track's sequences ({sequences} at {at}) end past MD21")
+        first = int(_BONE.unpack_from(blob, at)[0])
+    return {"global_sequence": global_sequence, "sequences": sequences, "first_keys": first}
+
+
+def _chain(blob: memoryview, count: int, offset: int, bone: int) -> list[dict[str, Any]]:
+    """The bones above `bone`: the parent with its pivot, and the parent's
+    parent when the parent's pivot is (0, 0, 0) (at most `PARENT_LEVELS`;
+    none above a root bone)."""
+    chain: list[dict[str, Any]] = []
+    parent, _ = _bone(blob, count, offset, bone)
+    while parent >= 0 and len(chain) < PARENT_LEVELS:
+        above, pivot = _bone(blob, count, offset, parent)
+        chain.append({"bone": parent, "bone_pivot": pivot})
+        if any(pivot):
+            break
+        parent = above
+    return chain
 
 
 def other_attachment_points(body: m2.M2Model, data: Buffer) -> list[dict[str, Any]]:
@@ -182,26 +227,56 @@ def other_attachment_points(body: m2.M2Model, data: Buffer) -> list[dict[str, An
     ]
 
 
-def held_point_parents(body: m2.M2Model, data: Buffer) -> dict[str, list[dict[str, Any]]]:
-    """For each hand point of `HELD` the body model has, the bones above the
-    one it sits on: the parent with its pivot, and the parent's parent when
-    the parent's pivot is (0, 0, 0) (at most `PARENT_LEVELS`; none above a
-    root bone). The probe of M15-24."""
+def _point_parents(
+    body: m2.M2Model, data: Buffer, points: Sequence[int]
+) -> dict[str, list[dict[str, Any]]]:
     blob, count, offset = _bones(body, data)
     out: dict[str, list[dict[str, Any]]] = {}
-    for point_id in HELD:
+    for point_id in points:
+        point = body.attachment(point_id)
+        if point is not None:
+            out[str(point_id)] = _chain(blob, count, offset, point.bone)
+    return out
+
+
+def held_point_parents(body: m2.M2Model, data: Buffer) -> dict[str, list[dict[str, Any]]]:
+    """For each hand point of `HELD` the body model has, the bones above the
+    one it sits on (`_chain`). The probe of M15-24."""
+    return _point_parents(body, data, HELD)
+
+
+def sheath_point_parents(body: m2.M2Model, data: Buffer) -> dict[str, list[dict[str, Any]]]:
+    """The same for each point of `SHEATH` the body model has (M15-24)."""
+    return _point_parents(body, data, SHEATH)
+
+
+def bone_facts(body: m2.M2Model, data: Buffer) -> dict[str, dict[str, Any]]:
+    """For each bone the rows above name (the bones of `POINTS`, `HELD` and
+    `SHEATH`, and the bones of their chains), by index in ascending order:
+    its `key_bone_id` (-1 when none), its `flags`, its parent, and its
+    translation and rotation tracks counted (`_track`). Counts only, no key
+    value (M15-24)."""
+    blob, count, offset = _bones(body, data)
+    named: set[int] = set()
+    for point_id in (*POINTS, *SHEATH):
         point = body.attachment(point_id)
         if point is None:
             continue
-        chain: list[dict[str, Any]] = []
-        parent, _ = _bone(blob, count, offset, point.bone)
-        while parent >= 0 and len(chain) < PARENT_LEVELS:
-            above, pivot = _bone(blob, count, offset, parent)
-            chain.append({"bone": parent, "bone_pivot": pivot})
-            if any(pivot):
-                break
-            parent = above
-        out[str(point_id)] = chain
+        named.add(point.bone)
+        if point_id in HELD or point_id in SHEATH:
+            named.update(link["bone"] for link in _chain(blob, count, offset, point.bone))
+    out: dict[str, dict[str, Any]] = {}
+    for bone in sorted(named):
+        _bone(blob, count, offset, bone)  # the range check
+        at = offset + _BONE_SIZE * bone
+        key, flags, parent = _HEAD.unpack_from(blob, at)
+        out[str(bone)] = {
+            "key_bone_id": key,
+            "flags": flags,
+            "parent": parent,
+            "translation": _track(blob, at + _TRANSLATION_AT),
+            "rotation": _track(blob, at + _ROTATION_AT),
+        }
     return out
 
 
@@ -242,6 +317,8 @@ def model_facts(
                 "attachment_points": points,
                 "other_attachment_points": other_attachment_points(body, data),
                 "held_point_parents": held_point_parents(body, data),
+                "sheath_point_parents": sheath_point_parents(body, data),
+                "bones": bone_facts(body, data),
             }
         )
     return {

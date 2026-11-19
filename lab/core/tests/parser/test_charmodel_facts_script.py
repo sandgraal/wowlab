@@ -115,7 +115,13 @@ class _Body:
         self,
         bones: list[tuple[int, tuple[float, float, float]]],
         points: list[tuple[int, int, tuple[float, float, float]]],
+        heads: dict[int, tuple[int, int]] | None = None,
+        tracks: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]] | None = None,
     ) -> None:
+        """`heads` gives a bone its key bone id and flags (else -1 and 0);
+        `tracks` its translation and rotation tracks as (global sequence,
+        sequences, keys in the first), the per-sequence arrays written
+        after the bone array (else no sequence, global -1)."""
         self.attachments = tuple(
             m2.M2Attachment(index=i, id=pid, bone=bone, position=pos)
             for i, (pid, bone, pos) in enumerate(points)
@@ -124,8 +130,18 @@ class _Body:
         blob = bytearray(at + 88 * len(bones))
         struct.pack_into("<II", blob, 0x2C, len(bones), at)
         for i, (parent, pivot) in enumerate(bones):
-            struct.pack_into("<h", blob, at + 88 * i + 8, parent)
+            key, flags = (heads or {}).get(i, (-1, 0))
+            struct.pack_into("<iIh", blob, at + 88 * i, key, flags, parent)
             struct.pack_into("<3f", blob, at + 88 * i + 76, *pivot)
+            for track_at in (16, 36):
+                struct.pack_into("<h", blob, at + 88 * i + track_at + 2, -1)
+        for i, pair in (tracks or {}).items():
+            for track_at, (global_sequence, sequences, first) in zip((16, 36), pair, strict=True):
+                arrays = len(blob)
+                blob += struct.pack("<II", first, 0) * sequences
+                track = at + 88 * i + track_at
+                struct.pack_into("<h", blob, track + 2, global_sequence)
+                struct.pack_into("<II", blob, track + 4, sequences, arrays)
         self.data = bytes(blob)
         self.chunks = (m2.M2Chunk(tag="MD21", offset=0, size=len(blob), read=True),)
 
@@ -185,3 +201,71 @@ def test_a_bone_past_the_array_is_refused_constructed() -> None:
     parentless = _Body([(5, ZERO)], [(1, 0, ZERO)])
     with pytest.raises(script.facts.FactsError, match="bone 5 of 1"):
         script.held_point_parents(parentless, parentless.data)
+
+
+def test_sheath_point_parents_walk_points_26_to_33_only_constructed() -> None:
+    bones = [(-1, (0.0, 0.0, 1.5)), (0, ZERO), (-1, ZERO)]
+    body = _Body(bones, [(26, 1, ZERO), (29, 0, ZERO), (34, 1, ZERO), (1, 1, ZERO)])
+    assert script.sheath_point_parents(body, body.data) == {
+        "26": [{"bone": 0, "bone_pivot": [0.0, 0.0, 1.5]}],
+        "29": [],
+    }
+
+
+def test_bone_facts_name_the_points_bones_and_their_chains_constructed() -> None:
+    bones = [
+        (-1, ZERO),  # 0: the hand chain's root, at the origin
+        (0, ZERO),  # 1: point 1's parent
+        (1, ZERO),  # 2: point 1's bone
+        (-1, (0.0, 0.0, 2.0)),  # 3: point 5's parent, not walked
+        (3, (0.0, 0.5, 1.5)),  # 4: point 5's bone
+        (3, (-0.3, 0.0, 1.5)),  # 5: point 26's bone
+        (-1, ZERO),  # 6: no point's
+    ]
+    body = _Body(
+        bones,
+        [(1, 2, ZERO), (5, 4, (0.0, 0.5, 1.5)), (26, 5, (-0.3, 0.0, 1.5)), (40, 6, ZERO)],
+        heads={1: (66, 0x200), 3: (23, 0)},
+        tracks={1: ((-1, 3, 1), (-1, 3, 1)), 5: ((-1, 0, 0), (2, 1, 24))},
+    )
+    none = {"global_sequence": -1, "sequences": 0, "first_keys": None}
+    plain = {"key_bone_id": -1, "flags": 0, "translation": none, "rotation": none}
+    assert script.bone_facts(body, body.data) == {
+        "0": {**plain, "parent": -1},
+        "1": {
+            "key_bone_id": 66,
+            "flags": 0x200,
+            "parent": 0,
+            "translation": {"global_sequence": -1, "sequences": 3, "first_keys": 1},
+            "rotation": {"global_sequence": -1, "sequences": 3, "first_keys": 1},
+        },
+        "2": {**plain, "parent": 1},
+        "3": {**plain, "key_bone_id": 23, "parent": -1},
+        "4": {**plain, "parent": 3},
+        "5": {
+            **plain,
+            "parent": 3,
+            "rotation": {"global_sequence": 2, "sequences": 1, "first_keys": 24},
+        },
+    }
+
+
+def test_a_bone_array_past_the_chunk_is_refused_constructed() -> None:
+    body = _Body([(-1, ZERO)], [(1, 0, ZERO)])
+    hostile = bytearray(body.data)
+    struct.pack_into("<I", hostile, 0x2C, 0xFFFF_FFFF)  # a count no chunk holds
+    for read in (script.other_attachment_points, script.held_point_parents, script.bone_facts):
+        with pytest.raises(script.facts.FactsError, match="ends past the MD21 chunk"):
+            read(body, bytes(hostile))
+    short = _Body([(-1, ZERO)], [(1, 0, ZERO)])
+    short.chunks = (m2.M2Chunk(tag="MD21", offset=0, size=0x20, read=True),)
+    with pytest.raises(script.facts.FactsError, match="ends before its bone array"):
+        script.bone_facts(short, short.data)
+
+
+def test_a_track_whose_sequences_lie_past_the_chunk_is_refused_constructed() -> None:
+    body = _Body([(-1, ZERO)], [(1, 0, ZERO)], tracks={0: ((-1, 1, 1), (-1, 0, 0))})
+    hostile = bytearray(body.data)
+    struct.pack_into("<I", hostile, 0x100 + 16 + 8, len(hostile) - 4)  # 4 bytes left, 8 needed
+    with pytest.raises(script.facts.FactsError, match="end past MD21"):
+        script.bone_facts(body, bytes(hostile))
