@@ -25,20 +25,16 @@ from typing import Any
 import pytest
 
 from wowlab_core import casc, m2
-from wowlab_core.install import ENV_ROOT, discover
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _live_install import live_source
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "macos-70959" / "derived"
 FACTS: dict[str, Any] = json.loads((FIXTURE / "m2-models.json").read_text(encoding="utf-8"))
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "casc_facts.py"
 _WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 _TIMES = "read_and_parse_seconds"
-
-
-def _root() -> Path:
-    value = os.environ.get(ENV_ROOT, "")
-    if not value.strip():
-        pytest.skip(f"set {ENV_ROOT} to the install to run the live m2 tests")
-    return Path(value)
 
 
 def _script() -> ModuleType:
@@ -63,12 +59,7 @@ def _untimed(record: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def source() -> casc.CascSource:
-    opened = casc.open_source(discover(_root()), FACTS["flavor"])
-    if opened.report.index.version != FACTS["version"]:
-        pytest.skip(
-            f"the install is at {opened.report.index.version}; the fixture at {FACTS['version']}"
-        )
-    return opened
+    return live_source(FACTS, "m2")
 
 
 @pytest.mark.live

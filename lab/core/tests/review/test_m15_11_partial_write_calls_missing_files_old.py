@@ -48,7 +48,7 @@ def test_positive_control_on_a_rerun_old_files_are_there(
     result = env.run("--character", "Sangraal-Sett")
     assert result.exit_code == 1
     text = " ".join(result.stderr.split())
-    assert "1-Sangraal-Sett.glb (old)" in text
+    assert "Sangraal-Sett.glb (old)" in text
     assert env.glb().exists()
 
 
@@ -61,4 +61,4 @@ def test_a_first_run_does_not_call_missing_files_old(
     text = " ".join(result.stderr.split())
     assert not env.glb().exists()
     # Fails on 8d6a328: "Not done: …hair.png (old), …eyes.png (old), …glb (old)".
-    assert "1-Sangraal-Sett.glb (old)" not in text, text
+    assert "Sangraal-Sett.glb (old)" not in text, text

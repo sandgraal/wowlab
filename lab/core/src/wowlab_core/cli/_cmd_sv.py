@@ -223,7 +223,7 @@ def sv_list(
                 for f in files
                 if f.realm_folder == char.realm_folder and f.character_folder == char.folder
             ]
-    given_root = str(inst.root) if root is not None and str(root) != "" else None
+    given_root = str(inst.root) if root is not None else None
     no_account = (
         _no_account_notes(walk, chosen.folder, given_root)
         if account is None and character is None

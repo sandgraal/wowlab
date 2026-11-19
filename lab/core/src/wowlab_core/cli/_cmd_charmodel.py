@@ -7,7 +7,7 @@ before it starts) → the install's own files (`casc`, read-only) → the
 body texture (`compositor`) → one `.glb` and its PNGs (`charmodel`,
 `gltf`). It reads the install and writes only wowlab's own data
 (`cascfiles`): by default `casc/<product>-<version>/characters/<account>/
-<realm>-<character>.glb` and `<realm>-<character>.<part>.png` beside it,
+<realm>/<character>.glb` and `<character>.<part>.png` beside it,
 which a re-run replaces (§17.1's exemption for `characters/`); with
 `--out`, a path inside the same build folder outside `files/` and
 `characters/`, never over another file. No write gate and no `--yes`:
@@ -361,7 +361,7 @@ def char_model(
             help="Where to write the .glb instead, inside the same casc/<product>-<version>/ "
             "folder (a relative path is taken inside it) but outside its files/ and "
             "characters/ folders; its PNGs go beside it. Never over another file. Default: "
-            "characters/<account>/<realm>-<character>.glb in that folder, under wowlab's data "
+            "characters/<account>/<realm>/<character>.glb in that folder, under wowlab's data "
             "folder, replaced by each run.",
         ),
     ] = None,

@@ -4761,6 +4761,25 @@ or, without hard links, by a rename, which on Windows refuses an existing
 name and elsewhere follows a last check that the name is free, so a killed run
 leaves only a temp file, and the next write into that folder removes temp
 files older than a day.
+*Note, 2026-11-19 (M15-25, as built):* `characters/` nests one folder per
+part, `characters/<account>/<realm>/<character>.glb` with the PNGs beside it
+as `<character>.<part>.png`, replacing M15-11's joined
+`characters/<account>/<realm>-<character>.glb`, under which realm `A-B` with
+character `C` and realm `A` with character `B-C` shared one name, and one
+run replaced and removed the other's files. Each part is still checked as a
+safe file name. A name on the way down that differs from the wanted one only
+by letter case or Unicode normalisation is refused with nothing written,
+rather than written into: APFS folds both case and normalisation (fully, so
+`ß` and `ss`, `ς` and `σ` are one name there); NTFS and exFAT fold letter
+case only, by a one-to-one uppercase table (so `ı` and `i` are one name
+there). Two keys are compared, the full case fold of the canonical form and
+the per-character uppercase, and sharing either refuses. On a case-sensitive
+volume two folders that differ only by case are refused too, by choice, so
+every machine gives the same answer. A listed name that is the wanted one in
+another normalisation and is the very entry the wanted name opens is the
+volume's own spelling of it (HFS+ keeps names decomposed) and is not a twin;
+a folder on the way that exists but cannot be listed is refused. Files a run
+of M15-11's layout left at the old joined names are not moved or removed.
 
 **In the UI.** `wowlab ui` offers every command the CLI tree has (§15.6),
 so `casc stat` appears in the Commands tab as a plain read when M15-06
@@ -5024,7 +5043,7 @@ indices, one PNG material per texture, Y-up (the Z-up swap, axis signs
 lines; a round-trip parser in the tests checks the structure. `wowlab char
 model [--character] [--account] [--root] [--flavor] [--out] [--json]` runs
 the whole chain and writes
-`<data>/casc/<product>-<build>/characters/<account>/<realm>-<character>.glb` plus its
+`<data>/casc/<product>-<build>/characters/<account>/<realm>/<character>.glb` plus its
 PNGs, the folder and file names taken from the install's own folder names
 and checked as safe names; `characters/` is re-made on request (the L5
 exemption of §17.1), so a run after a gear change replaces the file.
@@ -5039,7 +5058,8 @@ it the same way.
 *Note, 2026-11-18 (M15-11, `wowlab_core.gltf`, `charmodel`, `char model`; as
 built):* the `.glb` is self-contained (its images are PNGs in the binary
 chunk) and the body, hair and eyes textures are also written beside it as
-`<realm>-<character>.<body|hair|eyes>.png`. Each folder name is checked as a
+`<realm>-<character>.<body|hair|eyes>.png` (since 2026-11-19, M15-25:
+`<realm>/<character>.<body|hair|eyes>.png`, §17.1). Each folder name is checked as a
 safe file name (no dot, no control character, none of `<>:"/\|?*`, no space
 at either end, not a Windows device name, at most 100 characters; an account
 folder's `#` is admitted). A re-run writes each file to a new temp file

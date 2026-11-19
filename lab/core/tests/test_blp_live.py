@@ -27,7 +27,10 @@ from typing import Any
 import pytest
 
 from wowlab_core import blp, casc, png
-from wowlab_core.install import ENV_ROOT, discover
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _live_install import live_source
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "macos-70959" / "derived" / "blp.json"
 FACTS: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -47,15 +50,7 @@ sys.addaudithook(_audit)
 
 @pytest.fixture(scope="module")
 def source() -> casc.CascSource:
-    value = os.environ.get(ENV_ROOT, "")
-    if not value.strip():
-        pytest.skip(f"set {ENV_ROOT} to the install to run the live blp tests")
-    opened = casc.open_source(discover(Path(value)), FACTS["flavor"])
-    if opened.report.index.version != FACTS["version"]:
-        pytest.skip(
-            f"the install is at {opened.report.index.version}; the fixture at {FACTS['version']}"
-        )
-    return opened
+    return live_source(FACTS, "blp")
 
 
 def _rows() -> list[dict[str, Any]]:

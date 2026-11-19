@@ -2832,6 +2832,9 @@ from wowlab_core.cli._common import (
     _Report as _Report,
 )
 from wowlab_core.cli._common import (
+    _RootArg as _RootArg,
+)
+from wowlab_core.cli._common import (
     _roots as _roots,
 )
 from wowlab_core.cli._common import (

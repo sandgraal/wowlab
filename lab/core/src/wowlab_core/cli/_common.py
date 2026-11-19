@@ -407,10 +407,33 @@ app.add_typer(
 
 # ─── options ─────────────────────────────────────────────────────────────────
 
+
+class _RootArg(Path):
+    """`--root` as given empty. Click turns `--root ""` into `.`, the
+    current folder, so `parse` keeps it apart, and `given` (which `_handled`
+    runs on every command's `root`) refuses it with a usage error: an empty
+    `--root` names no folder (M15-25)."""
+
+    @staticmethod
+    def parse(text: str) -> Path:
+        return _RootArg() if text == "" else Path(text)
+
+    @staticmethod
+    def given(root: object) -> None:
+        if isinstance(root, _RootArg):
+            raise CliError(
+                "--root is empty; name the install folder (the one that holds .build.info), "
+                "or leave --root out to use $WOWLAB_WOW_ROOT or the usual install locations",
+                EXIT_USAGE,
+            )
+
+
 RootOpt = Annotated[
     Path | None,
     typer.Option(
         "--root",
+        parser=_RootArg.parse,
+        metavar="<path>",
         help="The install folder, the one that holds .build.info. Default: "
         "$WOWLAB_WOW_ROOT, then the usual install locations.",
     ),
@@ -1386,6 +1409,7 @@ def _handled[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         json_out = bool(kwargs.get("json_out"))
         _new_report(json_out)
         try:
+            _RootArg.given(kwargs.get("root"))
             return fn(*args, **kwargs)
         except _HANDLED_ERRORS as exc:
             message, code = _error_words(exc, json_out)
@@ -1431,7 +1455,7 @@ class ErrorReport(_Out):
 
 
 def _found_by(root: Path | None) -> str:
-    if root is not None and str(root) != "":
+    if root is not None:
         return "--root"
     if os.environ.get(install.ENV_ROOT, "").strip():
         return f"${install.ENV_ROOT}"

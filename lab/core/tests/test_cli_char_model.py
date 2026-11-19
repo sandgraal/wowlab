@@ -151,6 +151,7 @@ def _env(
     copy_as: str | None = None,
     *,
     origin_hands: bool | tuple[int, ...] = False,
+    copy_to: tuple[str, str] | None = None,
 ) -> Iterator[Env]:
     monkeypatch.delenv("WOWLAB_WOW_ROOT", raising=False)
     monkeypatch.delenv("WOWLAB_FLAVOR", raising=False)
@@ -168,6 +169,9 @@ def _env(
     if copy_as is not None:
         realm = root / FLAVOR / "WTF" / "Account" / cb.ACCOUNT / "1"
         shutil.copytree(realm / "Sangraal-Sett", realm / copy_as)
+    if copy_to is not None:
+        account = root / FLAVOR / "WTF" / "Account" / cb.ACCOUNT
+        shutil.copytree(account / "1" / "Sangraal-Sett", account / copy_to[0] / copy_to[1])
     before = tree_state(root)
     yield Env(root, home, served)
     assert tree_state(root) == before, "the constructed install changed"
@@ -184,14 +188,14 @@ def test_writes_the_glb_and_its_pngs_into_characters(env: Env) -> None:
     report = json.loads(result.stdout)
     glb = env.glb()
     assert report["path"] == str(glb) and report["outcome"] == "written"
-    assert glb.parent == env.folder() / "characters" / cb.ACCOUNT
+    assert glb.parent == env.folder() / "characters" / cb.ACCOUNT / "1"
     data = glb.read_bytes()
     parsed = read_glb(data)
     assert len(parsed.nodes) == report["glb"]["nodes"] == 3  # the body and two weapons
     assert report["glb"]["bytes"] == len(data)
     names = sorted(p.name for p in glb.parent.iterdir())
     assert names == sorted(
-        ["1-Sangraal-Sett.glb", *(f"1-Sangraal-Sett.{n}.png" for n in ("body", "hair", "eyes"))]
+        ["Sangraal-Sett.glb", *(f"Sangraal-Sett.{n}.png" for n in ("body", "hair", "eyes"))]
     )
     assert [p["name"] for p in report["pngs"]] == ["body", "hair", "eyes"]
     assert report["gear_as_of"]["source"] == "record"
@@ -295,7 +299,7 @@ def test_a_write_that_fails_midway_says_what_is_new_and_what_is_old(
     assert result.exit_code == 1
     err = " ".join(result.stderr.split())
     assert "only partly written" in err and "nothing was written" not in err
-    assert "1-Sangraal-Sett.body.png (new)" in err and "1-Sangraal-Sett.glb (old)" in err
+    assert "Sangraal-Sett.body.png (new)" in err and "Sangraal-Sett.glb (old)" in err
     assert glb.read_bytes() == b"older model"
 
 
@@ -342,9 +346,9 @@ def test_a_stand_in_look_says_so(env: Env) -> None:
 def test_a_rerun_replaces_the_model_and_removes_a_png_it_no_longer_makes(env: Env) -> None:
     assert env.run("--character", "Sangraal-Sett").exit_code == 0
     glb = env.glb()
-    stale = glb.with_name("1-Sangraal-Sett.texture8.png")
+    stale = glb.with_name("Sangraal-Sett.texture8.png")
     stale.write_bytes(b"left by an older run")
-    other = glb.with_name("1-Sangraal-Sett.notes.txt")
+    other = glb.with_name("Sangraal-Sett.notes.txt")
     other.write_bytes(b"not ours")
     glb.write_bytes(b"an older model")
     result = env.run("--character", "Sangraal-Sett", "--json")
@@ -354,6 +358,164 @@ def test_a_rerun_replaces_the_model_and_removes_a_png_it_no_longer_makes(env: En
     assert not stale.exists() and other.read_bytes() == b"not ours"
     read_glb(glb.read_bytes())
     assert not [p for p in glb.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_constructed_hyphens_in_realm_and_character_never_share_a_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: realm `1` with character `Sangraal-Sett` and realm
+    `1-Sangraal` with character `Sett` once shared `1-Sangraal-Sett.glb`
+    (M15-25); each now has its own realm folder, and one run leaves the
+    other's files alone."""
+    for env in _env(tmp_path, monkeypatch, set(), copy_to=("1-Sangraal", "Sett")):
+        first = env.run("--character", "1/Sangraal-Sett", "--json")
+        assert first.exit_code == 0, first.output
+        mine = json.loads(first.stdout)
+        glb = Path(mine["path"])
+        before = {p: p.read_bytes() for p in glb.parent.iterdir()}
+        glb.write_bytes(b"an older model")  # the other run must not replace it
+        before[glb] = b"an older model"
+        second = env.run("--character", "1-Sangraal/Sett", "--json")
+        assert second.exit_code == 0, second.output
+        theirs = json.loads(second.stdout)
+        assert theirs["outcome"] == "written" and theirs["removed"] == []
+        other = Path(theirs["path"])
+        assert other == env.folder() / "characters" / cb.ACCOUNT / "1-Sangraal" / "Sett.glb"
+        assert glb == env.folder() / "characters" / cb.ACCOUNT / "1" / "Sangraal-Sett.glb"
+        assert {p: p.read_bytes() for p in glb.parent.iterdir()} == before
+        assert sorted(p.name for p in other.parent.iterdir()) == sorted(
+            ["Sett.glb", *(f"Sett.{n}.png" for n in ("body", "hair", "eyes"))]
+        )
+
+
+def test_constructed_a_name_differing_only_by_letter_case_is_refused(env: Env) -> None:
+    """Constructed: `characters/` already holds `sangraal-sett.glb`, which a
+    volume that folds letter case takes for `Sangraal-Sett.glb`; the run is
+    refused before any work rather than replacing it, on any volume."""
+    twin = env.glb().with_name("sangraal-sett.glb")
+    twin.parent.mkdir(parents=True)
+    twin.write_bytes(b"another character's model")
+    result = env.run("--character", "Sangraal-Sett")
+    assert result.exit_code == 1, result.output
+    err = " ".join(result.stderr.split())
+    assert "differs from it only by letter case" in err and "nothing was written" in err
+    assert twin.read_bytes() == b"another character's model"
+    assert [p.name for p in twin.parent.iterdir()] == ["sangraal-sett.glb"]
+    assert env.tables.asked == []
+
+
+@pytest.mark.parametrize(
+    ("existing", "wanted"),
+    [
+        (("R\u00c9ALM", "x.glb"), ("re\u0301alm", "x.glb")),  # case and composition
+        (("Realm", "Bob.body.png"), ("Realm", "bob.body.png")),  # a twin's PNG
+        (("Realm", "Bob.glb"), ("REALM", "Bob.glb")),  # the realm folder
+        (("Realm", "Wei\u00df.glb"), ("Realm", "Weiss.glb")),  # APFS folds ß into ss
+        (("Realm", "A\u03c2.glb"), ("Realm", "A\u03c3.glb")),  # final and medial sigma
+        (("Realm", "Sa\u017fa.glb"), ("Realm", "Sasa.glb")),  # long s
+        (("Realm", "A\u00b5.glb"), ("Realm", "A\u03bc.glb")),  # micro sign and mu
+        (("Realm", "A\ufb00.glb"), ("Realm", "Aff.glb")),  # the ff ligature
+        (("Realm", "\u0131x.glb"), ("Realm", "ix.glb")),  # dotless i: NTFS's uppercase key
+    ],
+    ids=[
+        "constructed-case-and-normalisation",
+        "constructed-png",
+        "constructed-folder",
+        "constructed-sharp-s",
+        "constructed-sigma",
+        "constructed-long-s",
+        "constructed-micro",
+        "constructed-ligature",
+        "constructed-dotless-i",
+    ],
+)
+def test_check_character_refuses_a_folded_twin_on_the_way_down(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing: tuple[str, str],
+    wanted: tuple[str, str],
+) -> None:
+    """Constructed: a folder or file whose name is the wanted one with
+    letter case or Unicode normalisation folded is refused, at any level."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    home = folder / "characters" / "acct"
+    (home / existing[0]).mkdir(parents=True)
+    (home / existing[0] / existing[1]).write_bytes(b"theirs")
+    with pytest.raises(cascfiles.CascOutError, match="only by letter case or accent encoding"):
+        cascfiles.check_character(home / wanted[0] / wanted[1], folder)
+    assert (home / existing[0] / existing[1]).read_bytes() == b"theirs"
+
+
+def test_the_two_fold_keys() -> None:
+    """Constructed: dotless i and `i` differ under the full case fold and share
+    the per-character uppercase key (`I`), so they are refused (fail
+    closed: NTFS takes them for one name); `ß` and `ss` share the full fold
+    (APFS) and not the uppercase key (`ß` has no one-character uppercase)."""
+    dotless, plain = cascfiles._folded("\u0131x"), cascfiles._folded("ix")
+    assert dotless[0] != plain[0] and dotless[1] == plain[1] == "IX"
+    sharp, double = cascfiles._folded("Wei\u00df"), cascfiles._folded("Weiss")
+    assert sharp[0] == double[0] and sharp[1] != double[1]
+
+
+def test_check_character_takes_its_own_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: the same spelling is the character's own file, and a
+    name that folds to no other name there is free."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    home = folder / "characters" / "acct" / "Realm"
+    home.mkdir(parents=True)
+    (home / "Stra\u00dfe.glb").write_bytes(b"one")
+    for name in ("Stra\u00dfe.glb", "Strasze.glb"):
+        assert cascfiles.check_character(home / name, folder) == home / name
+
+
+def test_a_name_in_another_normalisation_is_refused_unless_the_volume_maps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: a folder listed as `Re\u0301alm` (decomposed) when
+    `R\u00e9alm` (composed) is wanted. Where the composed name opens that
+    very folder (APFS, HFS+: the volume stores or maps one spelling onto
+    the other), it is taken for the volume's own spelling and passes; where
+    it does not (a volume that keeps the two apart), it is a twin and is
+    refused."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    home = folder / "characters" / "acct"
+    (home / "Re\u0301alm").mkdir(parents=True)
+    target = home / "R\u00e9alm" / "x.glb"
+    if (home / "R\u00e9alm").exists():
+        assert cascfiles.check_character(target, folder) == target
+    else:
+        with pytest.raises(cascfiles.CascOutError, match="only by letter case"):
+            cascfiles.check_character(target, folder)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot make a folder unlistable")
+def test_a_folder_that_cannot_be_listed_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: the realm folder exists but cannot be listed, so whether
+    another character's files are in it cannot be told; refused."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    realm = folder / "characters" / "acct" / "Realm"
+    realm.mkdir(parents=True)
+    realm.chmod(0o300)  # search but not read: the file can be named, not listed
+    try:
+        try:
+            next(realm.iterdir(), None)
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("this user can list a folder without read permission")
+        with pytest.raises(cascfiles.CascOutError, match="cannot be read") as caught:
+            cascfiles.check_character(realm / "Bob.glb", folder)
+        assert "nothing was written" in str(caught.value)
+    finally:
+        realm.chmod(0o700)
 
 
 def test_a_link_in_characters_is_refused_and_nothing_written(env: Env, tmp_path: Path) -> None:

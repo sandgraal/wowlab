@@ -29,7 +29,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[t.Env]:
 def _prime(env: t.Env) -> tuple[Path, Path]:
     assert env.run("--character", "Sangraal-Sett").exit_code == 0
     glb = env.glb()
-    body = glb.with_name("1-Sangraal-Sett.body.png")
+    body = glb.with_name("Sangraal-Sett.body.png")
     body.write_bytes(b"older body texture")
     glb.write_bytes(b"older model")
     return glb, body
@@ -47,7 +47,7 @@ def test_a_refused_rerun_writes_nothing(env: t.Env, tmp_path: Path) -> None:
     glb, body = _prime(env)
     victim = tmp_path / "victim.png"
     victim.write_bytes(b"v")
-    (glb.parent / "1-Sangraal-Sett.texture9.png").symlink_to(victim)
+    (glb.parent / "Sangraal-Sett.texture9.png").symlink_to(victim)
     result = env.run("--character", "Sangraal-Sett")
     assert result.exit_code == 1, result.output
     assert "nothing was written" in result.stderr

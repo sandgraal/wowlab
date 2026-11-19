@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -25,7 +24,10 @@ from typing import Any
 import pytest
 
 from wowlab_core import casc, compositor, labaddon, renderplan
-from wowlab_core.install import ENV_ROOT, discover
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _live_install import live_source
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 FACTS: dict[str, Any] = json.loads(
@@ -46,15 +48,7 @@ def _script() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def source() -> casc.CascSource:
-    value = os.environ.get(ENV_ROOT, "")
-    if not value.strip():
-        pytest.skip(f"set {ENV_ROOT} to the install to run the live compositor tests")
-    opened = casc.open_source(discover(Path(value)), FACTS["flavor"])
-    if opened.report.index.version != FACTS["version"]:
-        pytest.skip(
-            f"the install is at {opened.report.index.version}; the fixture at {FACTS['version']}"
-        )
-    return opened
+    return live_source(FACTS, "compositor")
 
 
 @pytest.mark.live

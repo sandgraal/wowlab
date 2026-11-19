@@ -767,7 +767,7 @@ def _doctor(
     steps: list[NextStep] = []
     # The --root the player gave, as given, for the commands the next
     # steps name; None when the install was found without one.
-    given_root = str(root) if root is not None and str(root) != "" else None
+    given_root = str(root) if root is not None else None
     if inst is None:
         steps.append(_install_step(build_info_missing))
     else:
