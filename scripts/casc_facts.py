@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Write a derived fixture of an install's CASC index (M15-03), of its
 archive records and BLTE (M15-04, `--blte`), or of its encoding and root
-files and reads by file data id (M15-05, `--files`), or of its textures as
-`blp` decodes them (M15-07, `--blp`) (ADR-0033).
+files and reads by file data id (M15-05, `--files`), or of a few models
+and their skins (M15-08, `--m2`), or of its textures as `blp` decodes them
+(M15-07, `--blp`) (ADR-0033).
 
     uv run python scripts/casc_facts.py --flavor FOLDER --out PATH [--root INSTALL]
     uv run python scripts/casc_facts.py --blte --flavor FOLDER --out PATH [--root INSTALL]

@@ -417,6 +417,37 @@ def test_arrays_at_their_caps_are_read_constructed() -> None:
     assert len(model.skin_file_data_ids) + len(model.lod_skin_file_data_ids) == m2.MAX_ENTRIES
 
 
+def test_hostile_attachments_past_the_cap_are_refused_without_building_them_constructed() -> None:
+    # Constructed hostile file (M15-17): one attachment past `MAX_ENTRIES`.
+    # The refusal comes before any `M2Attachment` is built.
+    data = chunked(bytes(md20(attachments=((0, 0, (0.0, 0.0, 0.0)),) * _OVER)))
+    peak = _peak_of_refusal(data, "the attachments array holds 65536 entries")
+    assert peak < 200_000, f"{peak} bytes for {len(data)} bytes of input"
+
+
+def test_hostile_sections_past_the_cap_are_refused_without_building_them_constructed() -> None:
+    # Constructed hostile skin (M15-17): one section past `MAX_ENTRIES`, each
+    # drawing nothing, so the cap and not the index sum is what refuses it.
+    data = skin(sections=((0, 0, 0, 0, 0, 0),) * _OVER)
+    tracemalloc.start()
+    try:
+        with pytest.raises(m2.M2MalformedError, match="the sections array holds 65536 entries"):
+            m2.parse_skin(data)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 200_000, f"{peak} bytes for {len(data)} bytes of input"
+
+
+def test_attachments_and_sections_at_their_caps_are_read_constructed() -> None:
+    model = m2.parse_m2(
+        chunked(bytes(md20(attachments=((0, 0, (0.0, 0.0, 0.0)),) * m2.MAX_ENTRIES)))
+    )
+    assert len(model.attachments) == m2.MAX_ENTRIES
+    result = m2.parse_skin(skin(sections=((0, 0, 0, 0, 0, 0),) * m2.MAX_ENTRIES))
+    assert len(result.sections) == m2.MAX_ENTRIES
+
+
 def test_txid_longer_than_the_textures_is_read_with_a_note_constructed() -> None:
     model = m2.parse_m2(chunked(bytes(md20()), txid=(900, 901)))
     assert model.texture_file_data_ids == (900, 901)

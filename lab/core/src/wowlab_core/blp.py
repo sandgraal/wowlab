@@ -52,12 +52,17 @@ lie inside the file (`BlpMalformedError`) before the output is allocated;
 so the output is at most eight times the input (DXT1's ratio) and never
 more than the cap.
 
-**What a decode costs.** The peak is about two and a half to three times
-the output: the copy of mip 0, the output buffer, the stride slices of the
-palette and BGRA paths, and the final `bytes` copy (measured with
-tracemalloc on 4096 x 4096 textures of random data, 2026-11-18: DXT1
-150 MiB, DXT3 159 MiB, DXT5 170 MiB, palette and BGRA 192 MiB, against
-64 MiB of output). The DXT endpoint caches are emptied past `CACHE_LIMIT`
+**What a decode costs.** The peak is a few times the output: the copy of
+mip 0, the output buffer, the stride slices of the palette and BGRA paths,
+and the final `bytes` copy. How many times depends on the measure. By
+tracemalloc (Python's own allocations) it is about two and a half to three
+times (4096 x 4096 textures of random data, 2026-11-18: DXT1 150 MiB, DXT3
+159 MiB, DXT5 170 MiB, palette and BGRA 192 MiB, against 64 MiB of
+output). By resident memory, which also counts what the allocator holds
+and has not returned, the palette and BGRA cases reach about three and a
+half times (a rise of 224 MiB for the same 64 MiB output, the security
+review of #598). `check_layout` allocates nothing, so a refusal from it
+costs none of this. The DXT endpoint caches are emptied past `CACHE_LIMIT`
 pairs, so random blocks cannot grow them. Worst-case time at the cap, on
 the owner's M1 under load: DXT1 1.8 s, DXT3 2.1 s, DXT5 3.6 s, palette
 and BGRA under 0.1 s; §17.2's target (a 1024 x 1024 DXT1 in at most
