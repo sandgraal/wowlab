@@ -166,6 +166,8 @@ ALLOWED: dict[tuple[str, str], str] = {
     (_CREWDB, "tmp.chmod(0o600)"): _CREW_DB,
     (_CREWDB, "tmp.replace(dest)"): _CREW_DB + "; a copy put in place",
     (_CREWDB, "old.unlink()"): _CREW_DB + "; a daily copy older than the three newest",
+    (_CREWDB, "f.unlink()"): _CREW_DB
+    + "; crew forget: the database, a copy and their -journal, all from database_path's folder",
     (_CREWDB, "frm.replace(to)"): _CREW_DB + "; --adopt's move",
     (_SNAPARCHIVE, "import zipfile"): _EXPORT_FILE,
     (_SNAPARCHIVE, "fd = os.open(target.name, _CREATE_FLAGS, _ARCHIVE_MODE, dir_fd=dir_fd)"): (
