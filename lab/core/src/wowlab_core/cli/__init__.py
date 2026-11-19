@@ -223,6 +223,7 @@ from wowlab_core.cli import _cmd_addon
 from wowlab_core.cli import _cmd_char
 from wowlab_core.cli import _cmd_looks
 from wowlab_core.cli import _cmd_casc
+from wowlab_core.cli import _cmd_charmodel
 from wowlab_core.cli import _cmd_ui
 # isort: on
 
@@ -933,6 +934,60 @@ from wowlab_core.cli._cmd_char import (
 )
 from wowlab_core.cli._cmd_char import (
     char_show as char_show,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _AS_OF_LOOK as _AS_OF_LOOK,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _CHAR_MODEL_NOTES as _CHAR_MODEL_NOTES,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _CHAR_MODEL_STDOUT as _CHAR_MODEL_STDOUT,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _GLB as _GLB,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _PNG_PARTS as _PNG_PARTS,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    CharModelPlan as CharModelPlan,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    CharModelPng as CharModelPng,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    CharModelReport as CharModelReport,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _check_out as _check_out,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _download_note as _download_note,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _look_words as _look_words,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _model_words as _model_words,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _plan_brief as _plan_brief,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _png_path as _png_path,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _say_char_model as _say_char_model,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _write_default as _write_default,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _write_out as _write_out,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    char_model as char_model,
 )
 from wowlab_core.cli._cmd_cvar import (
     _ACCOUNT_BINDINGS as _ACCOUNT_BINDINGS,
@@ -2909,6 +2964,7 @@ _PARTS = (
     _cmd_char,
     _cmd_looks,
     _cmd_casc,
+    _cmd_charmodel,
     _cmd_ui,
 )
 _UNSET = object()

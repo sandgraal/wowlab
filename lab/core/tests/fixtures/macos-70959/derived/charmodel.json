@@ -1,0 +1,241 @@
+{
+  "schema": 1,
+  "kind": "charmodel-derived",
+  "made_by": "scripts/charmodel_facts.py",
+  "captured": "2026-11-18",
+  "flavor": "_forever_",
+  "product": "wowf",
+  "version": "1.60.1.70959",
+  "build": 70959,
+  "tables_build": "1.60.1.70959",
+  "client_running": false,
+  "characters": [
+    {
+      "label": "Sangraal-Sett",
+      "body_file_data_id": 959310,
+      "glb": {
+        "bytes": 978040,
+        "nodes": 1,
+        "meshes": 1,
+        "primitives": 5,
+        "materials": 5,
+        "images": 5,
+        "vertices": 6542,
+        "triangles": 9091,
+        "json_md5": "b83f51bca91f4eb74a44a8a2c2887ffc",
+        "bin_md5": "b84a0f3d013ff8f73303c59ce4fc7686"
+      },
+      "glb_md5": "19796fc712ca22942e912684a477007e",
+      "models": [
+        {
+          "what": "body",
+          "slot": null,
+          "item_id": null,
+          "file_data_id": 959310,
+          "skin_file_data_id": 959362,
+          "kind": "body",
+          "attachment_id": null,
+          "placed": true,
+          "sections": 110,
+          "drawn": 17,
+          "extra_batches": 0,
+          "vertices": 6542,
+          "triangles": 9091
+        },
+        {
+          "what": "item",
+          "slot": 16,
+          "item_id": 2632,
+          "file_data_id": 146176,
+          "skin_file_data_id": null,
+          "kind": "attached",
+          "attachment_id": 1,
+          "placed": false,
+          "sections": 0,
+          "drawn": 0,
+          "extra_batches": 0,
+          "vertices": 0,
+          "triangles": 0
+        },
+        {
+          "what": "item",
+          "slot": 17,
+          "item_id": 15969,
+          "file_data_id": 147020,
+          "skin_file_data_id": null,
+          "kind": "attached",
+          "attachment_id": 2,
+          "placed": false,
+          "sections": 0,
+          "drawn": 0,
+          "extra_batches": 0,
+          "vertices": 0,
+          "triangles": 0
+        }
+      ],
+      "pngs": [
+        {
+          "name": "body",
+          "texture_type": 1,
+          "file_data_id": null,
+          "size": [
+            2048,
+            1024
+          ],
+          "md5": "11ffb0764f10ecdc49cc841fd3f3ec2d",
+          "not_drawn": []
+        },
+        {
+          "name": "hair",
+          "texture_type": 6,
+          "file_data_id": 3457574,
+          "size": [
+            256,
+            256
+          ],
+          "md5": "a70654905a9eea1012c25ed3cf9e9524",
+          "not_drawn": []
+        },
+        {
+          "name": "eyes",
+          "texture_type": 19,
+          "file_data_id": 3484667,
+          "size": [
+            256,
+            128
+          ],
+          "md5": "3072aaa3434b8cdaa38a354b85cdaebb",
+          "not_drawn": []
+        }
+      ],
+      "body_texture_painted": 16,
+      "left_out": [],
+      "seconds": {
+        "body_model": 0.147,
+        "body_texture": 0.251,
+        "models": 0.089,
+        "glb": 0.003
+      },
+      "attachment_points": {
+        "1": {
+          "bone": 213,
+          "position": [
+            -0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "2": {
+          "bone": 214,
+          "position": [
+            -0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "label": "Dangling-Participle",
+      "body_file_data_id": 917116,
+      "glb": {
+        "bytes": 1081516,
+        "nodes": 1,
+        "meshes": 1,
+        "primitives": 5,
+        "materials": 5,
+        "images": 6,
+        "vertices": 3959,
+        "triangles": 6296,
+        "json_md5": "00467b991a4f2915f25d84eaf345bec0",
+        "bin_md5": "0198d07de0bcdb527ee1a733078afc6f"
+      },
+      "glb_md5": "d8250da20c6593d03526eec8ad3ab63f",
+      "models": [
+        {
+          "what": "body",
+          "slot": null,
+          "item_id": null,
+          "file_data_id": 917116,
+          "skin_file_data_id": 917168,
+          "kind": "body",
+          "attachment_id": null,
+          "placed": true,
+          "sections": 151,
+          "drawn": 15,
+          "extra_batches": 0,
+          "vertices": 3959,
+          "triangles": 6296
+        },
+        {
+          "what": "item",
+          "slot": 16,
+          "item_id": 5778,
+          "file_data_id": 147530,
+          "skin_file_data_id": null,
+          "kind": "attached",
+          "attachment_id": 1,
+          "placed": false,
+          "sections": 0,
+          "drawn": 0,
+          "extra_batches": 0,
+          "vertices": 0,
+          "triangles": 0
+        }
+      ],
+      "pngs": [
+        {
+          "name": "body",
+          "texture_type": 1,
+          "file_data_id": null,
+          "size": [
+            2048,
+            1024
+          ],
+          "md5": "f182e887b0d1ed119166216e0e27c2b6",
+          "not_drawn": []
+        },
+        {
+          "name": "hair",
+          "texture_type": 6,
+          "file_data_id": 918869,
+          "size": [
+            512,
+            256
+          ],
+          "md5": "14e7b14b5927514f5977a9db2b72ecb7",
+          "not_drawn": []
+        },
+        {
+          "name": "eyes",
+          "texture_type": 19,
+          "file_data_id": 3492828,
+          "size": [
+            256,
+            128
+          ],
+          "md5": "5fc0193d08c10e4ec26bb40b462ead3c",
+          "not_drawn": []
+        }
+      ],
+      "body_texture_painted": 13,
+      "left_out": [],
+      "seconds": {
+        "body_model": 0.163,
+        "body_texture": 0.134,
+        "models": 0.162,
+        "glb": 0.003
+      },
+      "attachment_points": {
+        "1": {
+          "bone": 206,
+          "position": [
+            -0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    }
+  ]
+}

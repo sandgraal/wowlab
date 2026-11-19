@@ -403,6 +403,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # their one error line, which is player copy too.
         ["casc", "stat", "--fdid", "1"],
         ["casc", "cat", "--fdid", "1"],
+        # M15-11: likewise; its full text is linted by test_cli_char_model.py.
+        ["char", "model"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],

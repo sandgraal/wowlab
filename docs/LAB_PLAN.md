@@ -4993,6 +4993,37 @@ the rest pose. It is a read of the install and a write of wowlab's own data
 with `--out` refused there (§17.1, "In the UI"), and the Wave 7 viewer runs
 it the same way.
 
+*Note, 2026-11-18 (M15-11, `wowlab_core.gltf`, `charmodel`, `char model`; as
+built):* the `.glb` is self-contained (its images are PNGs in the binary
+chunk) and the body, hair and eyes textures are also written beside it as
+`<realm>-<character>.<body|hair|eyes>.png`. Each folder name is checked as a
+safe file name (no dot, no control character, none of `<>:"/\|?*`, no space
+at either end, not a Windows device name, at most 100 characters; an account
+folder's `#` is admitted). A re-run writes each file to a new temp file
+beside the old one and moves it over the name (`os.replace`), removes this
+character's PNGs of those names that it no longer makes, and touches nothing
+else; `files/` and every `--out` keep never-overwrite (`--out` names a
+`.glb` inside the build folder outside `files/` and `characters/`, its PNGs
+beside it, and a file there with other bytes is refused). The first run for
+a build says on stderr how many tables it will download before it does. The
+body texture's budget for a command is 16 canvases of area (the
+compositor's own ceiling is 64); past it the body is drawn grey and the
+report says why. Only the view skin is read. A section is drawn with its
+first batch's texture; type 1 the body texture (opaque), 6 and 19 the
+separate hair and eye textures (the first layer by `Layer` when a type has
+several, the rest listed), 2 the back item's cape texture, 0 the `TXID`
+file, any other type grey. **Attachments, against the reading above:** on
+both fixture body models at 1.60.1.70959 (959310, 917116) the hand and
+shield points (1, 2, 0) are stored at (0, 0, 0) on bones whose pivots are
+(0, 0, 0), so in the rest pose they sit at the model's feet: the game moves
+them with the character's animation. `char model` does not place an item at
+a point stored at the origin and lists it (both fixture characters' weapons:
+each `.glb` holds the body alone; `macos-70959/derived/charmodel.json`); the
+head, shoulder and back points hold real positions and are used as stored.
+Placing weapons needs the bones and the stand animation, the Wave 7 option
+(§17.8). The axis signs stay **[verify]** until the owner opens a `.glb` in
+a viewer.
+
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root
@@ -5013,7 +5044,9 @@ ever appears; whether any player gear is encrypted; the bonus-id
 semantics (TrinityCore; *note, 2026-11-18, M15-13:* `ItemBonus` at 70959
 has no type-7 row, so nothing on Forever exercises them yet); the `+1` in
 the item geoset value; attachment
-positions being model-space in the bind pose; collection models at the
+positions being model-space in the bind pose (*note, 2026-11-18, M15-11:*
+not so for the hand and shield points of the two fixture body models at
+70959, stored at the origin and moved by animation; §17.6's note); collection models at the
 origin; the blend-mode enum; the 4-bit palette alpha; the M2 vertex count
 against the skin's (226,301 against 37,813: LOD skins, probably; *note,
 2026-11-17, M15-08:* settled for `humanmale_hd` and `humanfemale_hd` at

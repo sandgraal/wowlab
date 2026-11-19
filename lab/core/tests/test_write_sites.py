@@ -86,6 +86,15 @@ _CASC_FILE = (
     "(lookstore.refuse_install), through a link below casc/, or in characters/, before "
     "the folder is made and again after; an existing file is never replaced"
 )
+_CHAR_FILE = (
+    "`wowlab char model` (§17.1's one exemption, §17.6, M15-11): only inside "
+    "casc/<product>-<version>/characters/ under the user data directory, the account, realm "
+    "and character parts checked by safe_name; check_character refuses a path outside "
+    "characters/ as written or resolved, in an install (lookstore.refuse_install), through a "
+    "link or a file anywhere below casc/, or that is a link or not a regular file, before the "
+    "folder is made and again after"
+)
+_BOTH = " (casc cat's write_new, and char model's replace_derived: " + _CHAR_FILE + ")"
 _DB2LAKE = "lab/core/src/wowlab_core/db2lake.py"
 _LAKE_DIR = (
     "the db2lake (§14.2, ADR-0028, M12-03): only the lake directory (default the user data "
@@ -201,12 +210,20 @@ ALLOWED: dict[tuple[str, str], str] = {
     ),
     (_CASCFILES, "make_private_dirs(parent)  # 0700 under the user data directory (M16-78)"): (
         _CASC_FILE + "; the file's folder and its missing parents, all under casc/ in the "
-        "user data directory (M16-78: 0700)"
+        "user data directory (M16-78: 0700)" + _BOTH
     ),
     (_CASCFILES, 'with tmp.open("xb") as handle:'): _CASC_FILE
-    + "; a new temp name beside the file (x mode)",
+    + "; a new temp name beside the file (x mode)"
+    + _BOTH,
     (_CASCFILES, "target.hardlink_to(tmp)"): _CASC_FILE + "; publishes without replacing",
-    (_CASCFILES, "tmp.unlink(missing_ok=True)"): _CASC_FILE + "; its own temp file",
+    (_CASCFILES, "tmp.unlink(missing_ok=True)"): _CASC_FILE + "; its own temp file" + _BOTH,
+    (_CASCFILES, "tmp.replace(target)"): _CHAR_FILE
+    + "; replace_derived: the whole temp file moved over the character's own .glb or PNG, "
+    "which characters/ re-makes on request (os.replace replaces a link there, never writes "
+    "through it)",
+    (_CASCFILES, "target.unlink()"): _CHAR_FILE
+    + "; remove_derived: a regular file named <realm>-<character>.<body|hair|eyes|texture<n>>"
+    ".png beside the character's .glb that this run no longer makes",
     (_CASCFILES, "tmp.rename(target)"): _CASC_FILE
     + "; where no hard link can be made, the whole temp file renamed onto a name checked "
     "free (Windows' rename refuses an existing one)",
