@@ -45,7 +45,16 @@ What it checks:
   HTML entities and Markdown escapes are decoded, NFKC normalisation, and
   removal of zero-width and other format characters. A character's
   `Name-Realm` is not personal data (ADR-0019 amendment, 2026-10-17, M13-49):
-  character and realm names are public, so the wiki may name them;
+  character and realm names are public, so the wiki may name them.
+  A `Player-<n>-<hex>` GUID is not matched either (M13-64, owner decision
+  2026-11-18; the dated note under ADR-0019 records it). ADR-0019 keeps the
+  owner's own GUIDs scrubbed, but they live in the owner's SavedVariables
+  and combat logs, which this check never reads and which never reach the
+  machine that runs it; the GUIDs a page can quote are the scrubbed
+  placeholders of the fixtures and docs (`Player-9999-00000001`,
+  `Player-1234-0ABCDEF0`), and a matcher would refuse those as false
+  positives. So a GUID in prose passes, and a link whose target is one fails
+  only as a broken link, and that failure line quotes the GUID;
 - with `--base REF` (a commit in DIR): the change against REF stays under a
   fixed size cap, so no single run can rewrite the wiki, and no link goes to
   a host the wiki at REF does not already link to (Markdown links, reference
@@ -297,6 +306,9 @@ def personal_kinds(text: str) -> list[str]:
 
 
 def _kinds(text: str) -> Iterator[str]:
+    # No `Player-<n>-<hex>` GUID matcher, on purpose (M13-64): see the module
+    # docstring. The owner's own GUIDs never reach this check; the ones a
+    # page can hold are scrubbed placeholders, which would be false positives.
     for _ in _HOME_PATH.finditer(text):
         yield "an absolute home path"
     for m in _INSTALL_DIR.finditer(text):
