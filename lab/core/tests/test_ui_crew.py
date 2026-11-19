@@ -183,10 +183,10 @@ def crew_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     monkeypatch.delenv(discovery.ENV_FLAVOR, raising=False)
     made: list[Any] = []
 
-    def build(crew: bytes | None) -> Crew:
+    def build(crew: bytes | None, accounts: tuple[str, ...] = (ACCOUNT,)) -> Crew:
         folder = tmp_path / f"m19-06-{len(made)}"
         folder.mkdir()
-        root = install(folder, crew)
+        root = install(folder, crew, accounts=accounts)
         monkeypatch.setenv(discovery.ENV_ROOT, str(root))
         data = folder / "userdata"
         log = folder / "argv.jsonl"
@@ -442,7 +442,8 @@ function crewView() {
     unread: ids["crew-unread"].children.map((c) => c.textContent),
     player: { hidden: ids["crew-player"].hidden, title: t("crew-player-title"),
       lines: ids["crew-player-lines"].children.map((c) => c.textContent), actionsHidden: ids["crew-actions"].hidden,
-      rate: ids["crew-rate-value"].value, note: ids["crew-note-text"].value },
+      rate: ids["crew-rate-value"].value, note: ids["crew-note-text"].value,
+      codes: !ids["crew-note-codes"].hidden },
     act: { status: t("crew-act-status"), role: ids["crew-act-status"].getAttribute("role"),
       said: t("crew-act-said"), saidHidden: ids["crew-act-said"].hidden },
     confirm: { boxHidden: ids["crew-confirm-box"].hidden, planHidden: ids["crew-plan-box"].hidden,
@@ -778,3 +779,46 @@ def test_the_book_of_an_account_file_is_built_at_run_time() -> None:
     data = account_file(_three())
     assert crewbook.CREW_VARIABLE.encode() in data
     assert crewbook.parse_book(data).state == "on"
+
+
+def test_a_note_with_characters_that_cannot_be_typed_says_so_before_an_edit_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    odd = "invented " + "\x1b" + "x" + chr(0x202E) + "y"  # assembled at run time
+    crew = crew_at(_three(note=odd))
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_open": 0},
+        {"crew_open": 1},
+        {"crew_open": 0},
+        {"crew_set": "crew-note-text", "value": _visible(odd) + " more", "event": "input"},
+        {"crew_click": "crew-note"},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    _, odd_one, plain, again, _, planned = out["steps"]
+    # The sentence is page.html's, shown beside the field before any edit.
+    html = (_TEMPLATES / "page.html").read_text(encoding="utf-8")
+    assert (
+        '<p id="crew-note-codes" class="crew-note-codes" hidden>This note holds characters '
+        "that cannot be typed, shown here as codes. Saving it replaces them with the codes "
+        "shown.</p>"
+    ) in html
+    assert odd_one["player"]["codes"] is True
+    assert odd_one["player"]["note"] == "invented ⟨U+001B⟩x⟨U+202E⟩y"
+    # A player whose note holds none: no sentence.
+    assert plain["player"]["codes"] is False
+    assert again["player"]["codes"] is True
+    # The edit is not refused: the plan writes the codes as text.
+    assert planned["confirm"]["buttonHidden"] is False
+    assert _bodies(planned)[0]["params"]["text"] == "invented ⟨U+001B⟩x⟨U+202E⟩y more"
+
+
+def test_a_list_that_cannot_be_read_hides_the_table_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    second = ACCOUNT + "B"
+    crew = crew_at(_three(), accounts=(ACCOUNT, second))
+    out = _drive(crew, tmp_path / "node", [{"crew_tab": True}])
+    (view,) = out["steps"]
+    assert "2 crew books to choose from" in view["status"] and view["statusRole"] == "alert"
+    assert view["tableHidden"] is True and view["rows"] == [] and view["toolsHidden"] is True

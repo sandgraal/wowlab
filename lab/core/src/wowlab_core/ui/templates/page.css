@@ -586,6 +586,7 @@ pre:empty { display: none; }
 }
 .crew-action input { width: 18rem; max-width: 60vw; }
 #crew-act-status { margin: var(--space-2) 0 0; }
+.crew-note-codes { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 14px; }
 
 /* ─── Backups (M17-04): a line per game version, the prompt when the game
    updated, and what changed since the previous backup ─── */

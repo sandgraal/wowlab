@@ -3713,6 +3713,7 @@
     if (!report || typeof report !== "object" || typeof report.state !== "string") {
       crew.report = null;
       byId("crew-table").replaceChildren();
+      byId("crew-table").hidden = true;
       byId("crew-tools").hidden = true;
       byId("crew-words").textContent = "";
       byId("crew-offer").hidden = true;
@@ -3771,6 +3772,7 @@
     crewActSay("", false);
     byId("crew-player").hidden = false;
     byId("crew-actions").hidden = true;
+    byId("crew-note-codes").hidden = true;
     byId("crew-player-title").textContent = visible(key);
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));
@@ -3789,7 +3791,10 @@
       byId("crew-rate-value").value = hubStr(player.rating) || "none";
       // The note as it is shown: a control character in it is shown as its
       // code here too, and a plan of an edited note writes what is seen.
-      byId("crew-note-text").value = typeof player.note === "string" ? visible(player.note) : "";
+      const stored = typeof player.note === "string" ? player.note : "";
+      byId("crew-note-text").value = visible(stored);
+      // Said before any edit: saving writes the codes as they are shown.
+      byId("crew-note-codes").hidden = visible(stored) === stored;
       byId("crew-actions").hidden = false;
     }
     byId("crew-player-title").focus();

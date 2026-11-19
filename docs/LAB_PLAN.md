@@ -6203,6 +6203,11 @@ read, and the player's stored key, which the server puts after `--`.
 Confirm's note gives each pin's check (`ui._PIN_CHECKS`). The one `title`
 the tab sets is a fixed sentence; no title, class or id is made from crew
 data. No route was added: everything goes through `/api/run`.
+A stored note holding a character the page shows as a code goes into the
+note field as those codes, with one sentence beside it, before any edit:
+it holds characters that cannot be typed, and saving it replaces them with
+the codes shown (`crew note` refuses control characters, so the original
+cannot be kept). The edit is not refused.
 
 ### 20.5 The terms of ADR-0036, each with its proof
 
