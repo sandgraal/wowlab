@@ -170,10 +170,11 @@ class _Book:
     """The parsed file and its book's table, for one edit."""
 
     def __init__(self, data: bytes) -> None:
+        self.document = luadata.parse(data)
+        self.loaded = self.document.to_python()
         # Refuses an unknown schema and a book whose top level is unreadable
         # (`crewbook.CrewBookError`) before anything is planned.
-        self.read = crewbook.parse_book(data)
-        self.document = luadata.parse(data)
+        self.read = crewbook.load_book(self.loaded.get(crewbook.CREW_VARIABLE))
         self.index = _book_index(self.document)
 
     @property
@@ -192,12 +193,14 @@ class _Book:
         value = self.table.entries[at].value
         return value if isinstance(value, LuaTable) else None
 
-    def replaced(self, name: str, new: LuaTable) -> bytes:
-        """The file's bytes with the book's field `name` replaced by `new`."""
-        at = _field_index(self.table, name)
-        assert at is not None
+    def replaced(self, new: dict[str, LuaTable]) -> bytes:
+        """The file's bytes with each of the book's fields named in `new`
+        replaced by its table, serialized once."""
         entries = list(self.table.entries)
-        entries[at] = entries[at]._replace(value=new)
+        for name, table in new.items():
+            at = _field_index(self.table, name)
+            assert at is not None
+            entries[at] = entries[at]._replace(value=table)
         book = self.table._replace(entries=tuple(entries))
         assignments = list(self.document.assignments)
         assert self.index is not None
@@ -209,7 +212,10 @@ def keys_held(data: bytes) -> list[str]:
     """Every player key the book in `data` holds, as stored, in `players`
     (read or not) and in `current`, once each in file order; empty when the
     file holds no book. Refuses an unknown schema (`crewbook.CrewBookError`)."""
-    book = _Book(data)
+    return _keys(_Book(data))
+
+
+def _keys(book: _Book) -> list[str]:
     if book.index is None:
         return []
     out: dict[str, None] = {}
@@ -238,12 +244,15 @@ def _same(a: object, b: object) -> bool:
     return type(a) is type(b) and a == b
 
 
-def _checked(before: bytes, after: bytes, change: Callable[[dict[str, object]], None]) -> bytes:
+def _checked(
+    before: dict[str, object], after: bytes, change: Callable[[dict[str, object]], None]
+) -> bytes:
     """`after`, once it is shown to hold exactly `before` with `change`
-    applied to its book (as loaded values): every other variable, and every
+    applied to its book (`before` holds the loaded values of the file as
+    read, and is changed here): every other variable, and every
     other part of the book, as it was. Anything else is refused: wowlab
     would rather change nothing than change something it did not mean to."""
-    want = luadata.parse(before).to_python()
+    want = before
     book = want.get(crewbook.CREW_VARIABLE)
     assert isinstance(book, dict)
     change(book)
@@ -289,18 +298,15 @@ def forget(data: bytes, keys: Collection[str]) -> bytes:
             key = entry.value.value if isinstance(entry.value, LuaString) else None
         return key in wanted
 
-    out = data
+    new: dict[str, LuaTable] = {}
     for name in (_PLAYERS, _CURRENT):
         table = book.field(name)
-        if table is None or not any(drop(i, e) for i, e in enumerate(table.entries)):
-            continue
-        book = _Book(out)
-        table = book.field(name)
-        assert table is not None
-        out = book.replaced(name, _without(table, drop))
-    if out == data:
+        if table is not None and any(drop(i, e) for i, e in enumerate(table.entries)):
+            new[name] = _without(table, drop)
+    if not new:
         return data
-    return _checked(data, out, _drop_keys(wanted))
+    out = book.replaced(new)
+    return _checked(book.loaded, out, _drop_keys(wanted))
 
 
 def forget_all(data: bytes) -> bytes:
@@ -308,26 +314,22 @@ def forget_all(data: bytes) -> bytes:
     `started`, `probe`, `skipped` and anything else in the book as they
     were (§20.3). The same bytes when both are already empty, or the file
     holds no book."""
-    keys = keys_held(data)
-    if not keys:
-        return data
     book = _Book(data)
-    out = data
+    if book.index is None or not _keys(book):
+        return data
+    new: dict[str, LuaTable] = {}
     for name in (_PLAYERS, _CURRENT):
         table = book.field(name)
-        if table is None or not table.entries:
-            continue
-        book = _Book(out)
-        table = book.field(name)
-        assert table is not None
-        out = book.replaced(name, table._replace(entries=(), close_lead=None))
+        if table is not None and table.entries:
+            new[name] = table._replace(entries=(), close_lead=None)
+    out = book.replaced(new)
 
     def change(value: dict[str, object]) -> None:
         for name in (_PLAYERS, _CURRENT):
             if isinstance(value.get(name), (dict, list)):
                 value[name] = {}
 
-    return _checked(data, out, change)
+    return _checked(book.loaded, out, change)
 
 
 def set_field(data: bytes, key: str, field: Field, value: str | None) -> bytes:
@@ -374,7 +376,7 @@ def set_field(data: bytes, key: str, field: Field, value: str | None) -> bytes:
         return data
     entries = list(players.entries)
     entries[found[0]] = entry._replace(value=new)
-    out = book.replaced(_PLAYERS, players._replace(entries=tuple(entries)))
+    out = book.replaced({_PLAYERS: players._replace(entries=tuple(entries))})
     if out == data:
         return data
 
@@ -388,7 +390,7 @@ def set_field(data: bytes, key: str, field: Field, value: str | None) -> bytes:
         else:
             record[field] = value
 
-    return _checked(data, out, change)
+    return _checked(book.loaded, out, change)
 
 
 def names_left(data: bytes, keys: Collection[str]) -> list[str]:
