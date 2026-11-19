@@ -15,9 +15,11 @@ book fails in every place. Plain text naming it is then judged by place:
   `lab/addon/`, the capture tool (`LAB_TOOL_SOURCES`) and the constructed
   test files (`CONSTRUCTED_TEST_FILES`): every assignment to the name,
   anywhere on a line and whatever precedes it, must be one the capture tool
-  accepts (the empty shape or the `= nil` line), or the file's every quoted
-  or bracketed player-shaped key must be in `CONSTRUCTED_KEYS`; a `.toc`
-  never assigns it;
+  accepts (the empty shape or the `= nil` line), or a table whose every key,
+  bracketed (either quote, any length) or bare, is in `CONSTRUCTED_KEYS` or
+  `FIELD_KEYS`, with no guess at what a player key looks like; a `.toc`
+  never assigns it. The constructed test files, Python source, are graded
+  whole by the key check below instead;
 - anywhere else: only a real fixture with a provenance row in
   `lab/core/tests/fixtures/README.md` that the capture tool accepts as a
   whole (`crew_book_problems`), as the L8 paragraph of §20.5 allows.
@@ -49,6 +51,8 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_TOOL = ROOT / "scripts" / "lab_capture.py"
 NAME_RE = re.compile(rb"wowlabcrewdb", re.IGNORECASE)
@@ -56,8 +60,25 @@ NAME_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"wowlabcrewdb"), r
 # An assignment to the name, anywhere on a line and whatever precedes it
 # (`_G.WowLabCrewDB = {`, `> WowLabCrewDB = {`, an indented block), in any casing.
 ASSIGNMENT_RE = re.compile(rb"wowlabcrewdb\s*=(?!=)", re.IGNORECASE)
-# A quoted or bracketed string: its text is checked for a player key.
-QUOTED_RE = re.compile(r"""(["'])([^"'\r\n]{1,64})\1""")
+# A table opened right after the assignment's `=`.
+OPEN_TABLE_RE = re.compile(rb"\s*\{")
+# Inside a book: comments, long strings, a bracket, quoted strings and braces.
+BOOK_TOKEN_RE = re.compile(rb"--|\[=*\[|\[|[\"'{}]")
+# Quoted strings, each quote read on its own, a backslash escaping the next byte.
+QUOTED_STRING_RE = {
+    b'"': re.compile(rb'"(?:[^"\\\r\n]|\\.)*"'),
+    b"'": re.compile(rb"'(?:[^'\\\r\n]|\\.)*'"),
+}
+# A bracketed key: a quoted string (either quote, any length) or a number.
+# Anything else in brackets (a computed key, a long string, an unterminated
+# string) is not a plain key and counts against the book.
+KEY_RE = re.compile(
+    rb"\[\s*(?:\"(?P<double>(?:[^\"\\\r\n]|\\.)*)\""
+    rb"|'(?P<single>(?:[^'\\\r\n]|\\.)*)'"
+    rb"|(?P<number>-?[0-9][0-9.eExX+-]*))\s*\]"
+)
+# A bare `name =` key, in code.
+NAMED_KEY_RE = re.compile(rb"(?<![\w.:])([A-Za-z_]\w*)[ \t]*=(?!=)")
 LAB_TOOL_SOURCES = frozenset({"scripts/lab_capture.py"})
 CONSTRUCTED_TEST_FILES = frozenset(
     {
@@ -103,12 +124,15 @@ FIELD_KEYS = frozenset(
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.
 PLAYER_KEY_RE = re.compile(r"(?<![\w-])([^\W\d_][\w']*)-([^\W\d_][\w']*)(?![\w-])")
-# A bracketed string key as the client writes it: bracket, quote, key, quote,
-# bracket, nothing between. A player key holds no comma, so text with one is
-# taken for a Python list, not a key.
-BRACKET_KEY_RE = re.compile(r"""\[(["'])([^"'\[\],\r\n]*)\1\]""")
+# In the constructed test files (Python source): a bracketed string key,
+# bracket, quote, key, the same quote, bracket; each quote read on its own, so
+# a key holding the other quote is seen whole. Text with a comma is taken for
+# a Python list (`["--sv", "x"]`), not a key: a player key holds no comma.
+BRACKET_KEY_RE = re.compile(r"""\[(?:"([^",\r\n]*)"|'([^',\r\n]*)')\]""")
 MAX_UNPACKED = 512 * 1024 * 1024
 MAX_NESTING = 4
+# Members unpacked per tracked file, all archives in it together; past it, fail closed.
+MAX_MEMBERS = 1000
 # Compressed formats the standard library of 3.12 cannot unpack: fail closed.
 UNPACKABLE = ((b"\x28\xb5\x2f\xfd", "zstd"), (b"7z\xbc\xaf\x27\x1c", "7z"))
 BZIP2_RE = re.compile(rb"BZh[1-9]1AY&SY")
@@ -139,8 +163,17 @@ def _bounded(decompressor: bz2.BZ2Decompressor | lzma.LZMADecompressor, data: by
     return unpacked
 
 
-def _members(label: str, data: bytes, nesting: int = 0) -> Iterator[tuple[str, bytes]]:
-    """`data` itself, then every member of a compressed stream or archive it is, recursively."""
+def _members(
+    label: str, data: bytes, nesting: int = 0, budget: list[int] | None = None
+) -> Iterator[tuple[str, bytes]]:
+    """`data` itself, then every member of a compressed stream or archive it is,
+    recursively; at most MAX_MEMBERS for one tracked file, then fail closed."""
+    if budget is None:
+        budget = [MAX_MEMBERS]
+    if budget[0] <= 0:
+        yield f"{label}!<more than {MAX_MEMBERS} members>", FAIL_CLOSED
+        return
+    budget[0] -= 1
     yield label, data
     for magic, kind in UNPACKABLE:
         if data.startswith(magic):
@@ -156,22 +189,27 @@ def _members(label: str, data: bytes, nesting: int = 0) -> Iterator[tuple[str, b
                 unpacked = stream.read(MAX_UNPACKED + 1)
             if len(unpacked) > MAX_UNPACKED:
                 raise OSError("too large")
-            yield from _members(f"{label}!gunzip", unpacked, nesting + 1)
+            yield from _members(f"{label}!gunzip", unpacked, nesting + 1, budget)
         elif BZIP2_RE.match(data):
             yield from _members(
-                f"{label}!bunzip2", _bounded(bz2.BZ2Decompressor(), data), nesting + 1
+                f"{label}!bunzip2", _bounded(bz2.BZ2Decompressor(), data), nesting + 1, budget
             )
         elif data.startswith(XZ_MAGIC):
             yield from _members(
-                f"{label}!unxz", _bounded(lzma.LZMADecompressor(), data), nesting + 1
+                f"{label}!unxz", _bounded(lzma.LZMADecompressor(), data), nesting + 1, budget
             )
         elif zipfile.is_zipfile(io.BytesIO(data)):
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                for info in archive.infolist():
+                infos = archive.infolist()
+                if len(infos) > budget[0]:
+                    # Counted before anything is read: no member is unpacked.
+                    yield f"{label}!<more than {MAX_MEMBERS} members>", FAIL_CLOSED
+                    return
+                for info in infos:
                     if info.file_size > MAX_UNPACKED:
                         raise OSError("too large")
                     member = archive.read(info)
-                    yield from _members(f"{label}!{info.filename}", member, nesting + 1)
+                    yield from _members(f"{label}!{info.filename}", member, nesting + 1, budget)
     except (OSError, EOFError, ValueError, lzma.LZMAError, zipfile.BadZipFile):
         yield f"{label}!<cannot unpack>", FAIL_CLOSED
 
@@ -208,46 +246,106 @@ def _line(data: bytes, at: int) -> int:
     return data.count(b"\n", 0, at) + 1
 
 
-def _player_shaped(key: str) -> bool:
-    """name-realm, each part starting with a letter that is not lower case
-    (the client capitalises names; scripts without case count too)."""
-    match = PLAYER_KEY_RE.fullmatch(key)
-    return match is not None and not (match.group(1)[0].islower() or match.group(2)[0].islower())
+def _book_end(data: bytes, start: int) -> int:
+    """End of the table opening at `start` (its `{`), braces counted outside
+    strings and comments; the end of the data when it never closes."""
+    depth = 0
+    at = start
+    while (token := BOOK_TOKEN_RE.search(data, at)) is not None:
+        at = token.end()
+        first = token.group(0)[:1]
+        if first == b"{":
+            depth += 1
+        elif first == b"}":
+            depth -= 1
+            if depth == 0:
+                return at
+        elif first == b"-" or (token.group(0).startswith(b"[") and len(token.group(0)) > 1):
+            closer = (
+                lab_capture._skip_comment(data, token.start())
+                if first == b"-"
+                else lab_capture._skip_long(data, token.start())
+            )
+            if closer < 0:
+                return len(data)
+            at = closer
+        elif first in (b'"', b"'"):
+            string = QUOTED_STRING_RE[first].match(data, token.start())
+            at = string.end() if string else _end_of_line(data, token.start())
+    return len(data)
 
 
-def _foreign_quoted_keys(data: bytes) -> list[int]:
-    """Lines holding a quoted or bracketed player-shaped key not in CONSTRUCTED_KEYS."""
-    text = data.decode("utf-8", errors="replace")
-    return [
-        number
-        for number, line in enumerate(text.splitlines(), 1)
-        for match in QUOTED_RE.finditer(line)
-        if _player_shaped(match.group(2)) and match.group(2) not in CONSTRUCTED_KEYS
-    ]
+def _end_of_line(data: bytes, at: int) -> int:
+    found = re.compile(rb"[\r\n]").search(data, at)
+    return len(data) if found is None else found.start()
+
+
+def _book_key_problems(data: bytes, start: int, end: int) -> int:
+    """How many table keys in `data[start:end]` are not a fixed name: a
+    bracketed string key not in CONSTRUCTED_KEYS or FIELD_KEYS, whatever its
+    shape, quoting or length; an unterminated or computed bracketed key; and
+    a bare `name =` key not in FIELD_KEYS. Strings and comments are skipped."""
+    bad = 0
+    at = start
+    while at < end:
+        token = BOOK_TOKEN_RE.search(data, at, end)
+        code_end = end if token is None else token.start()
+        for named in NAMED_KEY_RE.finditer(data, at, code_end):
+            if named.group(1).decode("ascii") not in FIELD_KEYS:
+                bad += 1
+        if token is None:
+            break
+        text = token.group(0)
+        first = text[:1]
+        at = token.end()
+        if first == b"-":
+            at = lab_capture._skip_comment(data, token.start())
+        elif first == b"[" and len(text) > 1:
+            at = lab_capture._skip_long(data, token.start())
+        elif first == b"[":
+            key = KEY_RE.match(data, token.start())
+            if key is None:
+                bad += 1  # a computed, long-string or unterminated key
+                at = _end_of_line(data, token.start())
+                continue
+            if key.group("number") is None:
+                quoted = (
+                    key.group("double") if key.group("double") is not None else key.group("single")
+                )
+                if quoted.decode("utf-8", errors="replace") not in FIELD_KEYS | CONSTRUCTED_KEYS:
+                    bad += 1
+            at = key.end()
+        elif first in (b'"', b"'"):
+            string = QUOTED_STRING_RE[first].match(data, token.start())
+            at = string.end() if string else _end_of_line(data, token.start())
+        if at < 0:
+            break
+    return bad
 
 
 def _assignment_problems(path: str, data: bytes) -> list[str]:
-    """An assignment to the name anywhere on a line, whatever precedes it,
-    must be one the capture tool accepts (the empty shape or the nil line),
-    or stand in a file whose every quoted player key is a constructed one."""
+    """An assignment to the name, anywhere on a line and whatever precedes it,
+    must be one the capture tool accepts (the empty shape or the nil line), or
+    a table whose every key is a fixed name (CONSTRUCTED_KEYS or FIELD_KEYS).
+    A `.toc` never assigns it."""
     problems: list[str] = []
-    foreign: list[int] | None = None
     is_toc = path.casefold().endswith(".toc")
     for match in ASSIGNMENT_RE.finditer(data):
         start = match.start()
+        line = _line(data, start)
         if is_toc:
             # A .toc names the variable on its SavedVariables line; it never assigns one.
-            problems.append(f"{path}:{_line(data, start)}: a crew-book assignment in a .toc")
+            problems.append(f"{path}:{line}: a crew-book assignment in a .toc")
             continue
         exact = data.startswith(lab_capture.CREW_BOOK_NAME, start)
         if exact and lab_capture.crew_book_assignment_ok(data, start):
             continue
-        if foreign is None:
-            foreign = _foreign_quoted_keys(data)
-        if foreign:
-            problems.append(
-                f"{path}:{_line(data, start)}: a crew book holding a key not in CONSTRUCTED_KEYS"
-            )
+        opened = OPEN_TABLE_RE.match(data, match.end())
+        if opened is None:
+            continue  # not a table: no record can follow
+        table = opened.end() - 1
+        if _book_key_problems(data, table, _book_end(data, table)):
+            problems.append(f"{path}:{line}: a crew book holding a key not in the fixed lists")
     return problems
 
 
@@ -256,10 +354,12 @@ def _key_problems(path: str, data: bytes) -> list[str]:
     problems: list[str] = []
     for number, line in enumerate(text.splitlines(), 1):
         for match in PLAYER_KEY_RE.finditer(line):
-            if _player_shaped(match.group(0)) and match.group(0) not in CONSTRUCTED_KEYS:
+            first, second = match.group(1), match.group(2)
+            shaped = not (first[0].islower() or second[0].islower())
+            if shaped and match.group(0) not in CONSTRUCTED_KEYS:
                 problems.append(f"{path}:{number}: a player key not in CONSTRUCTED_KEYS")
         for match in BRACKET_KEY_RE.finditer(line):
-            key = match.group(2)
+            key = match.group(1) if match.group(1) is not None else match.group(2)
             if key not in FIELD_KEYS and key not in CONSTRUCTED_KEYS:
                 problems.append(f"{path}:{number}: a bracketed key not in the fixed lists")
     return problems
@@ -289,8 +389,10 @@ def scan(entries: Iterable[tuple[str, bytes]], index: bytes | None = None) -> li
                 continue
             if label != path:
                 problems.append(f"{label}: names the crew book inside a compressed member")
-            elif place != "other":
+            elif place in ("source", "checked"):
                 problems.extend(_assignment_problems(path, data))
+            elif place == "constructed":
+                continue  # graded whole by _key_problems above
             elif not (path in indexed and not lab_capture.crew_book_problems(data)):
                 problems.append(f"{label}: names the crew book outside the allowed places")
     return problems
@@ -456,8 +558,92 @@ def test_constructed_a_pasted_real_book_fails_in_a_doc() -> None:
     for case, planted in _real_book_variants().items():
         problems = scan([("docs/a.md", b"prose\n" + planted)], NO_INDEX)
         assert problems, case
-        assert all("a crew book holding a key not in CONSTRUCTED_KEYS" in p for p in problems)
+        assert all("a crew book holding a key not in the fixed lists" in p for p in problems)
         assert all(PLANTED_KEY not in p for p in problems)  # where, never the key
+
+
+def _doc_book(*entries: str) -> bytes:
+    """A book in a document, its `players` table holding `entries` (Lua text)."""
+    lines = (f"{NAME} = {{", '["players"] = {', *entries, "},", "}")
+    return ("prose\n```\n" + "\n".join(lines) + "\n```\n").encode()
+
+
+# Written with `<`, `>` and `~` for `[`, `]` and `-`, translated at run time,
+# so this file holds none of these keys for its own key check to find.
+_LUA = str.maketrans("<>~", "[]-")
+# Keys that do not fit any "looks like a player" guess (code and security
+# review, round 3). Every one is invented; none is in CONSTRUCTED_KEYS.
+FOREIGN_KEYS = {
+    "a realm with a space": '<"Fakeperson~Fake Land"> = { <"note"> = "x", },',
+    "a realm with a hyphen": '<"Fakeperson~Fake~Land"> = { <"note"> = "x", },',
+    "a region suffix": '<"Fakeperson~Fakeland~EU"> = { <"note"> = "x", },',
+    "lower case": '<"fakeperson~fakeland"> = { <"note"> = "x", },',
+    "an apostrophe in double quotes": '<"Fakeperson~Kel\'Fakezad"> = { <"note"> = "x", },',
+    "a double quote in single quotes": '<\'Fakeperson~"Fakeland\'> = { <"note"> = "x", },',
+    "a name alone": '<"Fakeperson"> = true,',
+    "an over-long key": '<"' + "Fakeperson" * 30 + '"> = true,',
+    "an unterminated key": '<"Fakeperson~Fakeland> = true,',
+    "a computed key": '<"Fake" .. "person"> = true,',
+    "a long-string key": "< <<Fakeperson~Fakeland>> > = true,",
+    "an escaped quote in a key": '<"Fake\\"person"> = true,',
+    "a bare name key": "Fakeperson = true,",
+    "a nested key under a field": '<"class"> = { <"Fakeperson~Fakeland"> = 1, },',
+}
+
+
+@pytest.mark.parametrize("case", sorted(FOREIGN_KEYS))
+def test_constructed_a_book_key_not_in_the_fixed_lists_fails(case: str) -> None:
+    planted = _doc_book(FOREIGN_KEYS[case].translate(_LUA))
+    for path in ("docs/x.md", "lab/addon/README.md", "lab/addon/WowLab/Crew.lua"):
+        problems = scan([(path, planted)], NO_INDEX)
+        assert problems == [f"{path}:3: a crew book holding a key not in the fixed lists"], path
+
+
+def test_constructed_a_book_of_fixed_names_passes() -> None:
+    controls = (
+        '<"Inventeda~Fakerealm"> = { <"class"> = "MAGE", <"note"> = "it\'s a test", },',
+        "<'Inventedb~Fakerealm'> = { level = 60, role = \"HEALER\", },",
+        '<"Inventedc~Otherfakerealm"> = { ~~ <"Fakeperson~Fakeland"> in a comment',
+        '<"note"> = "a value holding <\\"Fakeperson~Fakeland\\"> is not a key", },',
+        "<1> = true,",
+    )
+    planted = _doc_book(*(line.translate(_LUA) for line in controls))
+    for path in ("docs/x.md", "lab/addon/README.md", "lab/addon/WowLab/Crew.lua"):
+        assert scan([(path, planted)], NO_INDEX) == [], path
+    # The specification's own example (§20.1) stays legal.
+    plan = (ROOT / "docs" / "LAB_PLAN.md").read_bytes()
+    assert scan([("docs/LAB_PLAN.md", plan)], NO_INDEX) == []
+
+
+def test_constructed_too_many_archive_members_fail_closed() -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for number in range(MAX_MEMBERS + 1):
+            archive.writestr(f"m{number}.txt", b"x")
+    path = "docs/many.zip"
+    problems = scan([(path, buffer.getvalue())], NO_INDEX)
+    assert problems == [
+        path + f"!<more than {MAX_MEMBERS} members>: names the crew book inside a compressed member"
+    ]
+    # Control: fewer members are unpacked and hold nothing.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for number in range(MAX_MEMBERS - 2):
+            archive.writestr(f"m{number}.txt", b"x")
+    assert scan([("docs/many.zip", buffer.getvalue())], NO_INDEX) == []
+
+
+def test_constructed_the_member_cap_counts_nested_archives_together() -> None:
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as archive:
+        for number in range(MAX_MEMBERS // 2 + 1):
+            archive.writestr(f"m{number}.txt", b"x")
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as archive:
+        archive.writestr("a.zip", inner.getvalue())
+        archive.writestr("b.zip", inner.getvalue())
+    problems = scan([("docs/nested.zip", outer.getvalue())], NO_INDEX)
+    assert any(f"more than {MAX_MEMBERS} members" in p for p in problems)
 
 
 def test_constructed_doc_controls_pass() -> None:

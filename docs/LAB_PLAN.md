@@ -6088,19 +6088,19 @@ code only, never the command's output (M19-02 makes that change). The owner's ch
 (M19-07) reports the shape of a key, never a key.
 
 *As built (2026-11-19, M19-04).* The capture tool accepts the name once, at
-column 0 and depth 0, as the empty shape or one `WowLabCrewDB = nil` line
-(written for a declared variable never set); `probe` may hold §13.1's
-`loads` (a number) and `lost` (a boolean). It refuses the name twice, in
-another casing, in a string or comment, or below the top level; `CrewDB`
-anywhere else; UTF-16; and `_G[`, `rawset` or `setglobal` in code. The
-repository test unpacks every tracked file (gzip, zip, bzip2, xz; zstd and
-7z fail) and fails on the name in UTF-16 or a compressed member anywhere.
-In plain text the addon's `WowLab/*.lua` and `*.toc`, the Lab's
-`src/**/*.py`, `docs/`, the rest of `lab/addon/`, the capture tool and the
-constructed tests may name it; an assignment there must be the empty shape
-or nil line, or every quoted player key in the file a constructed one (a
-`.toc` never assigns it). Elsewhere only an indexed fixture the tool accepts
-whole may, so a real capture of an empty book can be committed.
+column 0 and depth 0, as the empty shape (`probe` holding §13.1's `loads`,
+a number, and `lost`, a boolean) or one `WowLabCrewDB = nil` line. It
+refuses the name twice, in another casing, in a string or comment, or below
+the top level; `CrewDB` elsewhere; UTF-16; `_G[`, `rawset`, `setglobal` in
+code. The repository test unpacks every tracked file (gzip, zip, bzip2, xz,
+at most 1000 members; zstd, 7z fail) and fails on the name in UTF-16 or a
+compressed member. In plain text the addon's `WowLab/*.lua` and `*.toc`, the
+Lab's `src/**/*.py`, `docs/`, the rest of `lab/addon/`, the tool and the
+constructed tests may name it; an assignment there is the empty shape, the
+nil line, or a table whose every key is a constructed name or a §20.1 field
+(never in a `.toc`). Elsewhere only an indexed fixture the tool accepts may.
+Accepted, not caught: `getfenv()[…]`, a bare Markdown table row, a
+`["Name"]` key with a separate `realm` field, a file not naming the book.
 
 ### 20.6 What is not known
 
