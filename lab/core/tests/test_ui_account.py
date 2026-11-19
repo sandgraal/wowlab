@@ -242,7 +242,7 @@ def test_account_is_the_first_tab_and_opens_by_default(server: Any) -> None:
     body = _page(server).body.decode("utf-8")
     tabs = re.findall(r'<button id="tab-([a-z]+)" class="tab"[^>]*role="tab"', body)
     # Explorer moves after Character.
-    assert tabs == ["account", "character", "explorer", "gaps", "commands", "looks"]
+    assert tabs == ["account", "character", "crew", "explorer", "gaps", "commands", "looks"]
     assert re.search(r'<button id="tab-account"[^>]*aria-selected="true"', body)
     selected = re.findall(r'<button id="tab-([a-z]+)"[^>]*aria-selected="true"', body)
     assert selected == ["account"]
