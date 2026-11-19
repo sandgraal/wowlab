@@ -188,7 +188,7 @@ make test-fast     # local loop, about 10 min (owner, 2026-11-09): no review/ pr
 make test-clean    # remove finished pytest temp dirs and .pytest_cache, prune the uv cache; never while tests run
 make test-parser   # parser fixtures + round-trip (run on any parser change)
 make hooks-test    # harness hooks under 3.12 and 3.9
-make ci            # lint, lint-lua, test, test-parser, hooks-test
+make ci            # lint, lint-lua, test, hooks-test-py39 (test already runs the parser tests and the hooks under 3.12; M15-21)
 uv run wowlab --version
 ```
 
