@@ -1526,3 +1526,81 @@ def test_another_book_keeps_a_note_the_database_changed_constructed(make: Any) -
     assert env.sync().held == ["other_book"]
     assert env.run("crew", "sync", input="y\n").exit_code == 0
     assert env.rows()[KEY_A].note == "invented: desk"
+
+
+# ─── fix round 2 (2026-11-19): a forget racing a sync's daily copy ──────────
+
+
+def _forget_before_the_lock(monkeypatch: pytest.MonkeyPatch, keys: list[str] | None) -> list[int]:
+    """The reviewer's interleaving: a database-only forget lands after the
+    sync opened the database and before it takes the write lock (here, as
+    the sync reads the journal)."""
+    real = crewdb._journal
+    ran: list[int] = []
+
+    def racing(*a: Any, **k: Any) -> Any:
+        if not ran:
+            ran.append(crewdb.forget(FLAVOR, ACCOUNT, keys))
+        return real(*a, **k)
+
+    monkeypatch.setattr(crewdb, "_journal", racing)
+    return ran
+
+
+def _crew_files() -> list[Path]:
+    crew = crewdb.crew_root()
+    return [f for f in crew.rglob("*") if f.is_file()] if crew.exists() else []
+
+
+def test_forget_all_racing_a_sync_leaves_no_copy_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+    env.save(_three(met_a=5))
+    ran = _forget_before_the_lock(monkeypatch, None)
+    outcome = env.sync()
+    assert ran and outcome.state == "skipped"
+    assert outcome.words.startswith("wowlab's crew database was deleted or replaced")
+    for f in _crew_files():  # nothing made again, nothing holds the key
+        assert KEY_A.encode() not in f.read_bytes(), f
+    assert not os.path.lexists(env.db()) and crewdb.copies(FLAVOR, ACCOUNT) == []
+
+
+def test_a_sync_after_forget_all_starts_a_fresh_database_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    assert env.run("crew", "forget", "--all", "--yes").exit_code == 0
+    assert not os.path.lexists(env.db())
+    env.save(book({KEY_D: player(met=1)}))
+    assert env.sync().state == "synced"
+    assert set(env.rows()) == {KEY_D}
+    assert KEY_A.encode() not in env.db().read_bytes()
+
+
+def test_a_keyed_forget_racing_a_sync_leaves_no_copy_holding_the_key_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+    env.save(book({KEY_B: player(met=9, last=T0 + 10), KEY_C: player(met=2, last=T0)}))
+    ran = _forget_before_the_lock(monkeypatch, [KEY_A])  # A is only in the database
+    outcome = env.sync()
+    assert ran and outcome.state == "synced", outcome.words
+    assert len(crewdb.copies(FLAVOR, ACCOUNT)) == 1  # today's, made under the lock
+    for f in _crew_files():
+        assert KEY_A.encode() not in f.read_bytes(), f
+    assert KEY_A not in env.rows()
+
+
+def test_the_cli_says_a_plain_sentence_when_the_database_goes_mid_sync_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+    env.save(_three(met_a=5))
+    _forget_before_the_lock(monkeypatch, None)
+    result = env.run("crew", "list")
+    assert result.exit_code == 0, result.output
+    assert "Traceback" not in result.output
+    assert "wowlab's crew database was deleted or replaced while this sync ran" in result.stdout

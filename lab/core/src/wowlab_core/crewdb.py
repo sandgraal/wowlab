@@ -913,10 +913,18 @@ def _today() -> str:
 
 def _daily_copy(conn: sqlite3.Connection, path: Path) -> None:
     """Keep today's copy of the database (made once a day, before the first
-    change), and the newest `DAILY_COPIES` in all."""
+    change), and the newest `DAILY_COPIES` in all. Called under `conn`'s
+    write lock, before it changes anything: the copy is read through a
+    second connection, which may read while the lock is held (a backup from
+    the locking connection itself would wait on its own lock)."""
+    del conn
     dest = path.with_name(f"{path.name}.daily-{_today()}")
     if not os.path.lexists(dest):
-        _copy(conn, dest)
+        reader = _connect(path)
+        try:
+            _copy(reader, dest)
+        finally:
+            reader.close()
     dated = sorted(
         (m.group(1), f)
         for f in path.parent.iterdir()
@@ -1023,8 +1031,17 @@ def sync(
         raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
     assert conn is not None
     try:
+        ident = _ident(path)
         outcome = _sync_open(
-            conn, path, target, data, book, by_hand=by_hand, confirm=confirm, reread=reread
+            conn,
+            path,
+            target,
+            data,
+            book,
+            by_hand=by_hand,
+            confirm=confirm,
+            reread=reread,
+            ident=ident,
         )
         if not left_out or outcome.state not in ("synced", "unchanged"):
             return outcome
@@ -1036,6 +1053,16 @@ def sync(
                 "words": f"{outcome.words} {entries} of the book could not be read and "
                 f"{verb} not synced.",
             }
+        )
+    except (_Replaced, FileNotFoundError):
+        return SyncOutcome(
+            state="skipped",
+            words=(
+                "wowlab's crew database was deleted or replaced while this sync ran (a forget "
+                "of every player does that), so nothing was synced or made again; run the "
+                "command again."
+            ),
+            database=str(path),
         )
     except _StaleBook:
         return SyncOutcome(
@@ -1058,6 +1085,27 @@ def sync(
 
 class _StaleBook(Exception):  # noqa: N818 - a signal, not an error
     """The saved file was written after this sync read it."""
+
+
+class _Replaced(Exception):  # noqa: N818 - a signal, not an error
+    """The database at the path is no longer the file this sync opened."""
+
+
+def _ident(path: Path) -> tuple[int, int]:
+    st = path.stat()
+    return (st.st_dev, st.st_ino)
+
+
+def _still(path: Path, ident: tuple[int, int] | None) -> None:
+    """Under the lock: the file at `path` is still the one opened."""
+    if ident is None:
+        return
+    try:
+        now = _ident(path)
+    except FileNotFoundError:
+        raise _Replaced from None
+    if now != ident:
+        raise _Replaced
 
 
 def _written_since(
@@ -1099,6 +1147,7 @@ def _sync_open(
     by_hand: bool,
     confirm: Callable[[SyncPlan, str], bool] | None,
     reread: Callable[[], bytes] | None = None,
+    ident: tuple[int, int] | None = None,
 ) -> SyncOutcome:
     meta = _meta(conn)
     synced_before = "install_root" in meta
@@ -1111,6 +1160,7 @@ def _sync_open(
     if not reasons and meta.get("book_sha256") == sha:
         if meta.get("journal_record") != newest:
             with _transaction(conn):
+                _still(path, ident)
                 conn.execute(_SQL_META_SET, ("journal_record", newest))
         return SyncOutcome(
             state="unchanged",
@@ -1134,11 +1184,15 @@ def _sync_open(
                 plan=plan,
                 database=str(path),
             )
-    if synced_before:
-        _daily_copy(conn, path)
     with _transaction(conn):
+        # Under the write lock: the file is still the one opened, the book
+        # was not written since it was read, and only then today's copy is
+        # made, of the state this lock protects.
+        _still(path, ident)
         if _written_since(target, data, newest, reread):
             raise _StaleBook
+        if synced_before:
+            _daily_copy(conn, path)
         rows = _rows(conn)
         added, updated, plan = _changes(rows, book, mode, now)
         _write(conn, added, updated, _meta_rows(target, book, data, newest))
@@ -1410,38 +1464,47 @@ class Forgetting:
 
     def finish(self) -> int:
         """Remove the players (or everything) and return how many files
-        were rewritten or deleted."""
+        were rewritten or deleted. All of it happens while the database's
+        write lock is held, so no sync copies or recreates what is being
+        removed."""
         conn, self._conn = self._conn, None
         if self.keys is None:
+            files = [self.path, *_copies_of(self.path), *_temps_of(self.path)]
+            held_open: list[Path] = []
+            for f in files:
+                try:
+                    _gone(f)
+                except PermissionError:  # an open file on Windows: after the close
+                    held_open.append(f)
             if conn is not None:
                 with contextlib.suppress(sqlite3.Error):
                     conn.execute(_SQL_ROLLBACK)
                 conn.close()
-            files = [self.path, *_copies_of(self.path), *_temps_of(self.path)]
-            for f in files:
+            for f in held_open:
                 _gone(f)
             return len(files)
         done = 0
-        if conn is not None:
-            try:
+        try:
+            if conn is not None:
                 _forget_rows(conn, self.keys)
+                done += 1
+            _clear_temps(self.path)
+            for f in _copies_of(self.path):
+                try:
+                    _forget_in(f, self.keys)
+                except (sqlite3.DatabaseError, CrewDbError, OSError):
+                    _gone(f)  # a copy wowlab cannot open still may hold them: deleted
+                done += 1
+            if conn is not None:
                 conn.execute(_SQL_COMMIT)
-            except sqlite3.Error as exc:
+        except sqlite3.Error as exc:
+            if conn is not None:
                 with contextlib.suppress(sqlite3.Error):
                     conn.execute(_SQL_ROLLBACK)
-                raise CrewDbError(
-                    f"The crew database {self.path} was not changed ({exc})."
-                ) from exc
-            finally:
+            raise CrewDbError(f"The crew database {self.path} was not changed ({exc}).") from exc
+        finally:
+            if conn is not None:
                 conn.close()
-            done += 1
-        _clear_temps(self.path)
-        for f in _copies_of(self.path):
-            try:
-                _forget_in(f, self.keys)
-            except (sqlite3.DatabaseError, CrewDbError, OSError):
-                _gone(f)  # a copy wowlab cannot open still may hold them: deleted
-            done += 1
         return done
 
     def release(self) -> None:
