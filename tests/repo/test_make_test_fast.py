@@ -143,7 +143,7 @@ CI_PYTEST = {
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL],
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", WITHOUT_PROBES],
         ["-q", *GATE_SERIAL_TESTS],
-        ["-q", "tests/repo/test_bidi_controls.py"],
+        ["-q", "tests/repo/test_bidi_controls.py", "tests/repo/test_crew_book_out_of_repo.py"],
     ],
     "harness": [["-q", "tests/harness"]],
 }

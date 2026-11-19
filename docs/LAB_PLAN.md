@@ -5865,9 +5865,9 @@ WowLabCrewDB = {
   started = 1794950000,      -- time() when the book was (last) started
   probe = { loads = 12 },    -- as §13.1's probe, for this file
   skipped = 0,               -- reads skipped, counted per attempt (below)
-  current = { ["Name-Realm"] = true },  -- counted in the group the player is in now
+  current = { ["Inventeda-Fakerealm"] = true },  -- counted in the group the player is in now
   players = {
-    ["Name-Realm"] = {
+    ["Inventeda-Fakerealm"] = {  -- the key is the player's Name-Realm
       class = "MAGE",        -- the class token, as UnitClass gives it
       level = 60,            -- only a positive number is stored
       role = "HEALER",       -- the last role other than NONE; left out when never set
@@ -5883,6 +5883,10 @@ WowLabCrewDB = {
   },
 }
 ```
+
+(Keys changed from a `Name-Realm` placeholder to a constructed name on
+2026-11-19, M19-04: in `docs/` a `WowLabCrewDB` assignment's player keys
+must come from the repository test's fixed list of constructed names.)
 
 - **Nothing here is proven on the client.** The repository's captures
   prove only `UnitClass("player")`, `C_Timer.After` and that
@@ -6188,6 +6192,23 @@ constructed `--root`. The live L1 sweep is run by the owner; for the crew
 commands, and for `sv dump` and `snap diff`, a failure prints the exit
 code only, never the command's output (M19-02 makes that change). The owner's check
 (M19-07) reports the shape of a key, never a key.
+
+*As built (2026-11-19, M19-04).* The capture tool accepts the name once, at
+column 0 and depth 0, as the empty shape (`probe` holding §13.1's `loads`,
+a number, and `lost`, a boolean) or one `WowLabCrewDB = nil` line. It
+refuses the name twice, in another casing, in a string or comment, or below
+the top level; `CrewDB` elsewhere; UTF-16; `_G[`, `rawset`, `setglobal` in
+code. The repository test unpacks every tracked file (gzip, zip, bzip2, xz,
+at most 1000 members; zstd, 7z fail) and fails on the name in UTF-16 or a
+compressed member. In plain text the addon's `WowLab/*.lua` and `*.toc`, the
+Lab's `src/**/*.py`, `docs/`, the rest of `lab/addon/`, the tool and the
+constructed tests may name it; an assignment there is the empty shape, the
+nil line, or a table whose every key is a constructed name or a §20.1 field
+(never in a `.toc`). Elsewhere only an indexed fixture the tool accepts may.
+Not caught: `getfenv()[…]`, a bare Markdown table row, a `["Name"]` key with
+a `realm` field, a file not naming the book, `WowLabCrewDB = f` then a table
+on the next line, a table hand-written after an accepted empty book, a
+comment or line break between the name and a field path.
 
 ### 20.6 What is not known
 
