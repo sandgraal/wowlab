@@ -17,6 +17,7 @@ Reads only the bytes it is given; writes nothing (L1).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -67,24 +68,26 @@ class _Found:
     value: object  # the book as data, for comparing two files' books
 
 
+_UNREADABLE = _Found("unreadable", frozenset(), None)
+
+
 def names_the_book(data: bytes) -> bool:
     """Whether `data` holds the book's name at all: the cheap test before
     any parse; a file without it carries no book."""
     return _NAME_BYTES in data
 
 
-def _found(data: bytes) -> _Found | None:
+def _read_found(data: bytes) -> _Found | None:
     """The book `data` holds, or None when it holds none (it never names
     it, names it outside data, or assigns nil)."""
     if not names_the_book(data):
         return None
-    unreadable = _Found("unreadable", frozenset(), None)
     if len(data) > luadata.MAX_FILE_BYTES:
-        return unreadable if _ASSIGNED.search(data) else None
+        return _UNREADABLE if _ASSIGNED.search(data) else None
     try:
         values = luadata.parse(data).to_python()
     except luadata.LuaDataError:
-        return unreadable if _ASSIGNED.search(data) else None
+        return _UNREADABLE if _ASSIGNED.search(data) else None
     value = values.get(_NAME)
     if value is None:
         return None
@@ -98,6 +101,29 @@ def _found(data: bytes) -> _Found | None:
         return None
     keys = frozenset([p.key for p in book.players] + [u.key for u in book.unread])
     return _Found(book.state, keys, value)
+
+
+class _Reader:
+    """`_read_found` once per distinct content: the same bytes listed under
+    several paths are parsed once. An error nothing expected counts as a
+    book that cannot be read, never as no book and never as a traceback."""
+
+    def __init__(self) -> None:
+        self._seen: dict[bytes, _Found | None] = {}
+
+    def found(self, data: bytes) -> _Found | None:
+        try:
+            if not names_the_book(data):
+                return None
+            digest = hashlib.sha256(data).digest()
+        except Exception:  # the crew check never stops what it describes
+            return _UNREADABLE
+        if digest not in self._seen:
+            try:
+                self._seen[digest] = _read_found(data)
+            except Exception:
+                self._seen[digest] = _UNREADABLE
+        return self._seen[digest]
 
 
 def _summary(found: list[tuple[str, _Found]]) -> CrewBookCarried | None:
@@ -119,10 +145,12 @@ def _summary(found: list[tuple[str, _Found]]) -> CrewBookCarried | None:
 def carried(files: Iterable[tuple[str, bytes]]) -> CrewBookCarried | None:
     """What `files` (each a name and its bytes) carry of the crew book:
     None when no file holds one. A book that is empty (no player) still
-    counts here; `snap export` says only a non-empty or unreadable one."""
+    counts here; `snap export` says only a non-empty or unreadable one.
+    Each distinct content is parsed once, however many names it has."""
+    reader = _Reader()
     found: list[tuple[str, _Found]] = []
     for path, data in files:
-        f = _found(data)
+        f = reader.found(data)
         if f is not None:
             found.append((path, f))
     return _summary(found)
@@ -137,15 +165,23 @@ def brought_back(
     as data, as the one there now brings nothing back and is left out;
     None when no file brings one back. The read of what is there now is
     made only for a file whose new bytes hold a book."""
+    reader = _Reader()
     found: list[tuple[str, _Found]] = []
     for path, data, now in files:
-        f = _found(data)
+        f = reader.found(data)
         if f is None:
             continue
         if f.state != "unreadable":
             current = now()
-            there = _found(current) if current is not None else None
+            there = reader.found(current) if current is not None else None
             if there is not None and there.state != "unreadable" and there.value == f.value:
                 continue
         found.append((path, f))
     return _summary(found)
+
+
+def unreadable(paths: Iterable[str]) -> CrewBookCarried:
+    """What is said when the crew check itself failed: every file that
+    names the book, as a book that cannot be read."""
+    named = sorted(set(paths))
+    return CrewBookCarried(paths=named, on=False, readable=0, players=0, unreadable=len(named))

@@ -338,7 +338,7 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
                         zf.writestr(_member(f"objects/{digest}"), content)
                         # Read here, not again: what the archive says it
                         # carries is decided from the bytes it holds (M19-11).
-                        if crewcount.names_the_book(content):
+                        if _names_the_book(content):
                             held.extend((path, content) for path in named[digest])
                 out.flush()
                 os.fsync(out.fileno())
@@ -356,8 +356,29 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
         objects=len(sizes),
         bytes=sum(sizes.values()),
         archive_bytes=archive_bytes,
-        crew_book=crewcount.carried(held),
+        crew_book=_crew_book(held),
     )
+
+
+def _names_the_book(content: bytes) -> bool:
+    """`crewcount.names_the_book`, never raising into the export: an error
+    there counts the content as naming the book, which `_crew_book` then
+    says it cannot read (M19-11)."""
+    try:
+        return crewcount.names_the_book(content)
+    except Exception:
+        return True
+
+
+def _crew_book(held: list[tuple[str, bytes]]) -> crewcount.CrewBookCarried | None:
+    """What the archive carries of the crew book (M19-11). The archive is
+    already written and is the same either way; an error nothing expected
+    in the check is said as a book wowlab cannot read, never silence and
+    never a traceback that hides a finished export."""
+    try:
+        return crewcount.carried(held)
+    except Exception:
+        return crewcount.unreadable(path for path, _ in held)
 
 
 def _member(name: str) -> zipfile.ZipInfo:

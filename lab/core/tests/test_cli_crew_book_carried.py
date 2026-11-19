@@ -235,6 +235,68 @@ def test_the_archive_bytes_are_not_changed_by_the_sentence_constructed(
             assert zf.read(f"objects/{digest}") == store.read_object(digest, size=size)
 
 
+def test_one_content_under_several_paths_is_parsed_once_constructed(
+    tmp_path: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same book under five paths: one parse in the export, one per
+    distinct content in a plan (counted calls, no time budget)."""
+    _with(flavor, LAB_FILE, THREE_ON)
+    same = (flavor / LAB_FILE).read_bytes()
+    for n in range(4):
+        (flavor / SV_DIR / f"Copy{n}.lua").write_bytes(same)
+    calls: list[int] = []
+    real = crewcount._read_found
+
+    def counted(data: bytes) -> Any:
+        calls.append(len(data))
+        return real(data)
+
+    monkeypatch.setattr(crewcount, "_read_found", counted)
+    manifest = _snapshot("five paths")
+    text, report, _, _ = _export(tmp_path, "g")  # two exports: text and --json
+    assert "This archive includes the crew book: on, 3 players." in text
+    assert len(report["crew_book"]["paths"]) == 5 and report["crew_book"]["readable"] == 5
+    assert calls == [len(same)] * 2
+    calls.clear()
+    files = [(f"p{n}", same) for n in range(5)]
+    assert crewcount.carried(files) is not None and calls == [len(same)]
+    calls.clear()
+    # A plan: five paths written with the same book, none on disk now.
+    for n in range(4):
+        (flavor / SV_DIR / f"Copy{n}.lua").unlink()
+    _with(flavor, LAB_FILE, None)
+    lines, _ = _restore_plan(manifest)  # text and --json
+    assert _sentence(lines, "This brings back") == [
+        "This brings back the crew book: on, 3 players."
+    ]
+    assert calls == [len(same)] * 2
+
+
+@pytest.mark.parametrize("where", ["_read_found", "names_the_book", "carried"])
+def test_an_error_in_the_crew_check_is_said_as_unreadable_constructed(
+    tmp_path: Path, flavor: Path, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """The export still succeeds, with the archive it would have written,
+    and says it holds a book it cannot read: no traceback, no silence."""
+    _with(flavor, LAB_FILE, THREE_ON)
+    manifest = _snapshot("raises")
+    good = tmp_path / "good.zip"
+    snaparchive.export_snapshot(SnapshotStore(), manifest.id, good)
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("constructed failure in the crew check")
+
+    monkeypatch.setattr(crewcount, where, boom)
+    text, report, text_zip, json_zip = _export(tmp_path, "h")
+    assert (
+        "This archive includes a crew book wowlab cannot read, which may hold the players "
+        "you grouped with."
+    ) in text
+    assert "constructed failure" not in text
+    assert report["crew_book"]["unreadable"] >= 1 and report["crew_book"]["players"] == 0
+    assert text_zip.read_bytes() == json_zip.read_bytes() == good.read_bytes()
+
+
 # ─── snap restore ────────────────────────────────────────────────────────────
 
 

@@ -470,7 +470,11 @@ def _crew_undone(
 
     def items() -> Iterator[tuple[str, bytes, Callable[[], bytes | None]]]:
         for path, sha, now in put_back:
-            data = _stored(store, sha)  # bounded; one it cannot read is the undo's to refuse
+            # Bounded by the detail limit (64 MiB): a book in a file larger
+            # than that gets no sentence in undo's plan (accepted in the
+            # review of M19-11). One the store cannot read is the undo's to
+            # refuse.
+            data = _stored(store, sha)
             if isinstance(data, bytes):
                 yield path, data, functools.partial(_crew_side, now)
 
