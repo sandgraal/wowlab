@@ -57,7 +57,8 @@ local MAX_PARTY = 4
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
 -- Changed for M19-10's domain review: battleground and arena teams count
 -- (owner decision, 2026-11-19), and the backup "probably" holds it ([verify]).
-local TERMS = "The crew book keeps, for each player in your party, raid, battleground or arena team, their name, "
+local TERMS = "The crew book keeps, for each player in your party or raid, including your own side in a "
+    .. "battleground or arena (never your opponents), their name, "
     .. "realm, guild, class, level and role, when you first and last grouped, how many times and in which instance, "
     .. "and your own rating and note. "
     .. "It keeps them in WowLab.lua (and probably the game's backup of it, WowLab.lua.bak) in this game account's "
@@ -504,7 +505,21 @@ local function pass()
     if crewBlocked() then
         return
     end
-    if not firstDone or featureMissing() ~= nil or not bookIntact() then
+    if not firstDone then
+        return
+    end
+    -- The login line is said even when nothing can be recorded, with why.
+    local missing = featureMissing()
+    local intact = pcall(bookIntact)
+    if missing ~= nil or not intact then
+        if not greeted then
+            greeted = true
+            if not intact then
+                say("Crew book on, but it cannot be read, so nothing is recorded. /wowlab crew off to stop.")
+            else
+                say("Crew book on, but nothing is recorded: " .. missing .. ". /wowlab crew off to stop.")
+            end
+        end
         return
     end
     local inGroup = IsInGroup()
@@ -544,7 +559,7 @@ local function pass()
     end
     if not greeted then
         greeted = true
-        say("Crew book on: " .. plural(countPlayers(), "player", "players") .. ". /wowlab crew off to stop.")
+        say("Crew book on: " .. plural(ns.Number(countPlayers()) or 0, "player", "players") .. ". /wowlab crew off to stop.")
     end
 end
 
@@ -771,10 +786,15 @@ function ns.CrewCommand(word)
     tail = tail or ""
     if verb == "on" then
         if type(WowLabCrewDB) ~= "table" then
+            -- Without the client's time function the book starts with no date.
+            local startedAt = nil
+            if type(time) == "function" then
+                startedAt = ns.Number(time())
+            end
             WowLabCrewDB = {
                 schema = CREW_SCHEMA,
                 on = true,
-                started = ns.Number(time()),
+                started = startedAt,
                 probe = { loads = 1 },
                 skipped = 0,
                 players = {},
@@ -782,9 +802,19 @@ function ns.CrewCommand(word)
             }
             say("a new, empty crew book was started.")
         elseif not pcall(bookIntact) then
-            say("this crew book cannot be read; it is left as it is and stays off.")
+            if WowLabCrewDB.on == true then
+                say("the crew book cannot be read; nothing is recorded.")
+            else
+                say("this crew book cannot be read; it is left as it is and stays off.")
+            end
             return
-        else
+        elseif WowLabCrewDB.on ~= true then
+            -- Nothing was counted while it was off: the group the player is
+            -- in now is counted afresh.
+            local current = WowLabCrewDB.current
+            for key in pairs(WowLabCrewDB.current) do
+                current[key] = nil
+            end
             WowLabCrewDB.on = true
         end
         -- This notice stands for the login line in this session.
@@ -815,9 +845,15 @@ function ns.CrewCommand(word)
         WowLabCrewDB.on = false
         local ok, kept = pcall(countPlayers)
         if ok then
+            -- The group counted so far is forgotten: a later group is counted
+            -- afresh once the book is on again.
+            local current = WowLabCrewDB.current
+            for key in pairs(WowLabCrewDB.current) do
+                current[key] = nil
+            end
             say(
                 "Crew book off: nothing more is recorded; the "
-                    .. plural(kept, "player", "players")
+                    .. plural(ns.Number(kept) or 0, "player", "players")
                     .. " in it are kept. /wowlab crew on starts it again. "
                     .. KEPT
             )
@@ -830,9 +866,9 @@ function ns.CrewCommand(word)
         local ok, kept = pcall(countPlayers)
         local count = "an unreadable number of players"
         if ok then
-            count = plural(kept, "player", "players")
+            count = plural(ns.Number(kept) or 0, "player", "players")
         end
-        local since = ""
+        local since = ", start date unknown"
         local started = ns.Number(WowLabCrewDB.started)
         if type(date) == "function" and printable(started) then
             since = ", started " .. date("%Y-%m-%d", started)
@@ -941,6 +977,12 @@ function ns.CrewCommand(word)
     if found == nil then
         if verb == "clear" then
             say(shown(wanted) .. " is not in the crew book. Nothing was changed.")
+        elseif verb == "note" then
+            say(
+                shown(wanted)
+                    .. " is not in the crew book or your group (or the book is full; a first word with a - "
+                    .. "is read as a name). Nothing was changed."
+            )
         else
             say(
                 shown(wanted)

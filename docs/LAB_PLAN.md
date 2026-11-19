@@ -6106,6 +6106,16 @@ must come from the repository test's fixed list of constructed names.)
   cleared. The term-2 notice printed in game says "and probably the game's
   backup of it" (the backup is [verify]) and that battleground and arena
   teams count, as the sentence of §20.5 now does (changed the same day).
+  *Fix round 2 (2026-11-19, code review):* `/wowlab crew off`, and `on`
+  for a book that was off, empty `current`, so a group joined while the
+  book was off is counted and warned about once it is on. Without the
+  client's `time` a new book has no `started` and the status says the date
+  is unknown. The login line is said even when nothing can be recorded (a
+  missing call or event, an unreadable book), with the reason. It cannot be
+  said when the world loads in combat: every file-level handler of
+  `Crew.lua` but the pinned probe must start with the on and combat tests
+  (M19-01's `_crew_on_call_ok` and `_crew_handler_ok`), so nothing runs then;
+  the next loading screen or `/wowlab crew` command says it.
   *Not done (2026-11-19):* stripping spaces from a cross-realm member's
   realm (domain review): the key rule of M19-01 accepts only
   `<name> .. "-" .. <realm>` built straight from the name calls' locals, so a
@@ -6249,8 +6259,8 @@ sequences, U+009B, U+202E).
 | 5. Visible and deletable | `crew list`, `crew show`, `crew forget` (the live file and the game's backup), `snap rm` for the copies in snapshots (M19-09), and the sentence that says what a forget does not reach | §20.3's tests; M19-09's |
 
 The sentence of term 2: "The crew book keeps, for each player in your
-party, raid, battleground or arena team, their name, realm, guild, class,
-level and role, when you first and last grouped, how many times and in
+party or raid, including your own side in a battleground or arena (never
+your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
 which instance, and your own rating and note. It keeps them in WowLab.lua
 (and probably the game's backup of it, WowLab.lua.bak) in this game
 account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
@@ -6258,8 +6268,8 @@ is sent anywhere. The book knows names, not people: a player who renames or
 moves realm appears as a new entry, and someone else may later take a name
 you rated."
 
-(Changed 2026-11-19, owner decision: battleground and arena teams count,
-so the sentence names them; and whether the game's backup holds the book
+(Changed 2026-11-19, owner decision: your own side in a battleground or
+arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
 is **[verify]** (§20.6), hence "probably". The in-game notice and
 `wowlab crew --help` carry this wording, M19-10.)
 

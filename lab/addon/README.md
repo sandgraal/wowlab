@@ -555,8 +555,8 @@ read other players' names and realms, and only while the book is on.
 
 - `/wowlab crew on` turns it on. With no book yet it starts a new, empty
   one and says so; either way it prints what the book keeps: "The crew book
-  keeps, for each player in your party, raid, battleground or arena team,
-  their name, realm, guild, class, level and role, when you first and last
+  keeps, for each player in your party or raid, including your own side in a
+  battleground or arena (never your opponents), their name, realm, guild, class, level and role, when you first and last
   grouped, how many times and in which instance, and your own rating and
   note. It keeps them in WowLab.lua (and probably the game's
   backup of it, WowLab.lua.bak) in this game account's
@@ -612,17 +612,17 @@ through `issecretvalue` where the client has it: a secret name or realm
 skips the member, any other secret value leaves its field as it was, and
 each adds one to `skipped`; each member is read inside its own `pcall`. No
 GUID is read. `/wowlab skip` does not reach this file: its switch is `on`.
-Battleground and arena teams count as groups. If you are in combat when the
+Your own side in a battleground or arena counts as a group (never your
+opponents). If you are in combat when the
 world loads, the book waits, silently, for the next loading screen or the
 next `/wowlab crew` command; `/wowlab crew` then says it was waiting.
 
 Known limits. The group count is kept for the account, but a group belongs
 to one character: logging out to an alt and back while still in a group
-counts that group again. One player may get two entries: a same-realm
-player's realm comes from `GetNormalizedRealmName` (believed to have no
-spaces) and a cross-realm player's from `UnitName` (believed to keep them),
-and a realm with a space cannot be typed after `/wowlab crew good`
-(**[verify]**). A book written by another version of WowLab (another
+counts that group again. A player from a realm whose name has a space may
+appear twice, once with the space and once without, and you cannot type
+their name after `/wowlab crew good`; target them and type the command with
+nothing after it (not yet confirmed). A book written by another version of WowLab (another
 `schema`) is left wholly alone: nothing is recorded into it and
 `/wowlab crew` does nothing with it.
 

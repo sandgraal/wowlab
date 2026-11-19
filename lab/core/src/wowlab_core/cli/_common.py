@@ -464,7 +464,8 @@ app.add_typer(
 # book keeps, where, and that it knows names, not people. `crew --help` says
 # it whole; a test pins it.
 CREW_BOOK_SENTENCE = (
-    "The crew book keeps, for each player in your party, raid, battleground or arena team, their "
+    "The crew book keeps, for each player in your party or raid, including your own side in a "
+    "battleground or arena (never your opponents), their "
     "name, realm, guild, class, level and role, when you first and last grouped, how many times "
     "and in which instance, and your own rating and note. It keeps them in WowLab.lua (and "
     "probably the game's backup of it, WowLab.lua.bak) in this game account's SavedVariables "

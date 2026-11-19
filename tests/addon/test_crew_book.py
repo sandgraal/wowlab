@@ -152,8 +152,7 @@ def test_crew_book_source_scan_the_book_is_created_and_turned_on_only_by_crew_on
         if t[k].text == BOOK and t[k + 1].text == "=" and not g._is_field(t, k)
     ]
     assert len(created) == 1 and on_start < created[0] < on_end
-    guard = g._render(t[created[0] - 8 : created[0]])
-    assert guard == f'if type ( {BOOK} ) ~= "table" then', guard
+    assert _block_starting(flow, created[0], f'if type ( {BOOK} ) ~= "table" then')
     turned_on = [k for k in range(len(t) - 4) if g._render(t[k : k + 5]) == f"{BOOK} . on = true"]
     assert len(turned_on) == 1 and on_start < turned_on[0] < on_end
     assert "local " + _text(flow, "crewOn") == g.CREW_ON
@@ -282,6 +281,11 @@ def test_crew_book_source_scan_every_printed_field_is_flattened() -> None:
             args = t[k + 2 : close]
             if not (args[-1].kind == "string" and args[-3].kind == "string"):
                 bad.append(f"line {x.line}: plural's words are not literals")
+            # Fix round 2 (code review): plural prints its count, so the
+            # count can only be a number: `ns.Number(...) or <n>`, or a local
+            # every value of which is that.
+            if not _a_number(flow, k + 2, close - 4):
+                bad.append(f"line {x.line}: plural's count is not surely a number")
     assert not bad, bad
 
 
@@ -322,6 +326,37 @@ def _printable(flow: g._Flow, s: int, e: int, seen: set[int]) -> bool:
             return False
         k += 1
     return True
+
+
+_NUMBER_FORM = re.compile(r"ns \. Number \( .* \) or \d+")
+
+
+def _a_number(flow: g._Flow, s: int, e: int) -> bool:
+    """Is t[s:e] `ns.Number(...) or <number>`, or one local every value of
+    which (its declaration and each assignment) is that?"""
+    t = flow.tokens
+    if _NUMBER_FORM.fullmatch(g._render(t[s:e])) and t[s + 3].text == "(":
+        return flow.pair[s + 3] == e - 3
+    if e != s + 1 or t[s].kind != "name":
+        return False
+    decl = flow.resolve(t[s].text, s)
+    if decl is None:
+        return False
+    name = t[s].text
+    values = []
+    for p in range(len(t) - 3):
+        if t[p].text == "local" and t[p + 1].text == name:
+            end = _line_end(t, p)
+            if end < len(t) and flow.resolve(name, end) is decl:
+                if t[p + 2].text != "=":
+                    return False
+                values.append((p + 3, end))
+    for root, ts in flow.rebound:
+        if root == name and flow.resolve(name, ts) is decl:
+            values.append((ts + 2, _line_end(t, ts)))
+    return bool(values) and all(
+        _NUMBER_FORM.fullmatch(g._render(t[a:b])) is not None for a, b in values
+    )
 
 
 def _line_end(t: list[g.Token], k: int) -> int:
@@ -395,3 +430,19 @@ def test_crew_book_source_scan_a_word_without_a_dash_is_refused_not_the_target()
     )
     assert 'whom = "your target, " .. shown ( found )' in command
     assert 'say ( whom .. ": note kept. " .. KEPT )' in command
+
+
+# --- `met` counts each group once (§20.1 "met") --------------------------------
+
+
+def test_crew_book_source_scan_off_and_on_forget_the_group_counted_so_far() -> None:
+    """Labelled source scan (fix round 2, code review): turning the book off,
+    and turning an off book on, empties `current`, so a group joined while the
+    book was off is counted (and warned about) once it is on."""
+    flow = _flow()
+    command = _text(flow, g.CREW_COMMAND)
+    empty = f"local current = {BOOK} . current for key in pairs ( {BOOK} . current ) do current [ key ] = nil end"
+    off = command[command.index('if verb == "off" then') :]
+    assert empty in off[: off.index("return end")]
+    on = command[command.index(f"elseif {BOOK} . on ~= true then") :]
+    assert on.index(empty) < on.index(f"{BOOK} . on = true")
