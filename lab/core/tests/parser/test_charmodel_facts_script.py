@@ -14,6 +14,7 @@ import struct
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from _casc_build import FLAVOR, make_source_install, tree_state
@@ -269,3 +270,164 @@ def test_a_track_whose_sequences_lie_past_the_chunk_is_refused_constructed() -> 
     struct.pack_into("<I", hostile, 0x100 + 16 + 8, len(hostile) - 4)  # 4 bytes left, 8 needed
     with pytest.raises(script.facts.FactsError, match="end past MD21"):
         script.bone_facts(body, bytes(hostile))
+
+
+# M15-26, the rotation probe: tracks with their keys (constructed).
+IDENTITY = (32767, 32767, 32767, -1)  # M2CompQuat of (0, 0, 0, 1)
+QUARTER_Z = (32767, 32767, -9598, -9598)  # about (0, 0, 0.7071, 0.7071): 90 degrees about z
+Tracks = dict[tuple[int, int], tuple[int, int, list[tuple[list[int], bytes]]]]
+
+
+def _keyed(
+    body: _Body,
+    tracks: Tracks,
+    sequences: tuple[tuple[int, int], ...] = (),
+    loops: tuple[int, ...] = (),
+) -> _Body:
+    """`body` with its sequences (animation id, flags), its global sequence
+    durations, and `tracks`, by (bone, 16 or 36): (interpolation, global
+    sequence, per-sequence arrays of (timestamps, the values' bytes))."""
+    blob = bytearray(body.data)
+    struct.pack_into("<II", blob, 0x1C, len(sequences), len(blob))
+    for animation, flags in sequences:
+        record = bytearray(64)
+        struct.pack_into("<H", record, 0, animation)
+        struct.pack_into("<I", record, 12, flags)
+        blob += record
+    struct.pack_into("<II", blob, 0x14, len(loops), len(blob))
+    blob += struct.pack(f"<{len(loops)}I", *loops)
+    for (bone, track_at), (interpolation, global_sequence, arrays) in tracks.items():
+        heads = []
+        for times, values in arrays:
+            times_at = len(blob)
+            blob += struct.pack(f"<{len(times)}I", *times)
+            values_at = len(blob)
+            blob += values
+            heads.append((len(times), times_at, values_at))
+        times_heads = len(blob)
+        blob += b"".join(struct.pack("<II", n, at) for n, at, _ in heads)
+        values_heads = len(blob)
+        blob += b"".join(struct.pack("<II", n, at) for n, _, at in heads)
+        track = 0x100 + 88 * bone + track_at
+        struct.pack_into("<Hh", blob, track, interpolation, global_sequence)
+        struct.pack_into(
+            "<IIII", blob, track + 4, len(arrays), times_heads, len(arrays), values_heads
+        )
+    body.data = bytes(blob)
+    body.chunks = (m2.M2Chunk(tag="MD21", offset=0, size=len(blob), read=True),)
+    return body
+
+
+def _quats(*raw: tuple[int, int, int, int]) -> bytes:
+    return b"".join(struct.pack("<4h", *q) for q in raw)
+
+
+def test_sheath_rotation_keys_read_a_global_sequences_first_key_constructed() -> None:
+    body = _keyed(
+        _Body([(-1, ZERO), (0, (-0.3, 0.0, 1.5))], [(26, 1, (-0.3, 0.0, 1.5)), (29, 0, ZERO)]),
+        {(1, 36): (1, 1, [([0, 50, 100], _quats(IDENTITY, QUARTER_Z, IDENTITY))])},
+        loops=(100, 200),
+    )
+    rows = script.sheath_rotation_keys(body, body.data)
+    assert rows["29"] == {
+        "bone": 0,
+        "rotation": {
+            "interpolation": 0,
+            "global_sequence": -1,
+            "global_duration": None,
+            "arrays": 0,
+            "arrays_with_keys": 0,
+            "first_array": None,
+            "animation_0_array": None,
+        },
+    }
+    rotation = rows["26"]["rotation"]
+    first = rotation.pop("first_array")
+    assert rotation == {
+        "interpolation": 1,
+        "global_sequence": 1,
+        "global_duration": 200,
+        "arrays": 1,
+        "arrays_with_keys": 1,
+        "animation_0_array": None,
+    }
+    assert first["first_value"] == [0.0, 0.0, 0.0, 1.0] and first["first_norm"] == 1.0
+    assert first["max_degrees_from_first"] == pytest.approx(90.0, abs=0.01)
+    assert (first["index"], first["sequence_id"], first["in_m2"]) == (0, None, True)
+    assert (first["keys"], first["first_time"]) == (3, 0)
+
+
+def test_a_per_sequence_track_names_its_animation_and_reads_animation_0_constructed() -> None:
+    """Array 0 is animation 5, array 1 is empty, array 2 is animation 0; a
+    sequence without flag 0x20 keeps its keys in an `.anim` file: counted,
+    not read."""
+    vec = struct.pack("<3f", 0.25, -0.75, 1.0)
+    body = _keyed(
+        _Body([(-1, ZERO), (0, ZERO)], [(1, 1, ZERO)]),
+        {
+            (0, 16): (1, -1, [([7], struct.pack("<3f", 1, 2, 3)), ([], b""), ([0, 9], vec * 2)]),
+            (1, 16): (1, -1, [([], b""), ([0], vec)]),
+            (1, 36): (1, -1, [([0], _quats(QUARTER_Z)), ([0], _quats(IDENTITY))]),
+        },
+        sequences=((5, 0x20), (0, 0x00), (0, 0x20)),
+    )
+    hand = script.hand_bone_keys(body, body.data)["1"]
+    assert [row["bone"] for row in hand] == [1, 0]
+    own = hand[0]["translation"]
+    assert own["first_array"]["sequence_id"] == 0 and not own["first_array"]["in_m2"]
+    assert own["first_array"]["keys"] == 1 and own["first_array"]["first_value"] is None
+    assert own["animation_0_array"] == own["first_array"]
+    rotation = hand[0]["rotation"]["first_array"]
+    assert rotation["sequence_id"] == 5
+    assert rotation["first_value"] == pytest.approx([0.0, 0.0, 0.7071, 0.7071], abs=1e-4)
+    parent = hand[1]["translation"]
+    assert parent["arrays"] == 3 and parent["arrays_with_keys"] == 2
+    assert parent["first_array"]["sequence_id"] == 5
+    assert parent["first_array"]["first_value"] == [1.0, 2.0, 3.0]
+    assert parent["first_array"]["first_time"] == 7
+    assert parent["animation_0_array"]["index"] == 2
+    assert parent["animation_0_array"]["first_value"] == [0.25, -0.75, 1.0]
+    assert parent["animation_0_array"]["first_norm"] is None
+
+
+def test_a_hermite_rotation_steps_over_its_tangents_constructed() -> None:
+    """A key of interpolation 3 is the value and two tangents: the second
+    key is three quaternions on, and the tangents are not keys."""
+    junk = (0, 0, 0, 0)
+    body = _keyed(
+        _Body([(-1, ZERO)], [(26, 0, ZERO)]),
+        {(0, 36): (3, 0, [([0, 10], _quats(IDENTITY, junk, junk, QUARTER_Z, junk, junk))])},
+        loops=(10,),
+    )
+    first = script.sheath_rotation_keys(body, body.data)["26"]["rotation"]["first_array"]
+    assert first["max_degrees_from_first"] == pytest.approx(90.0, abs=0.01)
+
+
+def _sheath(tracks: Tracks, **kw: Any) -> _Body:
+    return _keyed(_Body([(-1, ZERO)], [(26, 0, ZERO)]), tracks, **kw)
+
+
+def test_hostile_tracks_are_refused_constructed() -> None:
+    one = [([0], _quats(IDENTITY))]
+    unknown = _sheath({(0, 36): (1, 3, one)}, loops=(1, 2))
+    with pytest.raises(script.facts.FactsError, match="global sequence 3 of 2"):
+        script.sheath_rotation_keys(unknown, unknown.data)
+    unsequenced = _sheath({(0, 36): (1, -1, one * 2)}, sequences=((0, 0x20),))
+    with pytest.raises(script.facts.FactsError, match="2 arrays for 1 sequences"):
+        script.sheath_rotation_keys(unsequenced, unsequenced.data)
+    past = _sheath({(0, 36): (1, 0, one)}, loops=(1,))
+    hostile = bytearray(past.data)
+    values_heads = struct.unpack_from("<I", hostile, 0x100 + 36 + 16)[0]
+    struct.pack_into("<I", hostile, values_heads, 0x7FFF_FFFF)  # a key count unlike its times'
+    with pytest.raises(script.facts.FactsError, match="1 times and 2147483647 values"):
+        script.sheath_rotation_keys(past, bytes(hostile))
+    times_heads = struct.unpack_from("<I", hostile, 0x100 + 36 + 8)[0]
+    struct.pack_into("<I", hostile, times_heads, 0x7FFF_FFFF)  # both counts past the chunk
+    with pytest.raises(script.facts.FactsError, match=r"timestamps .* end past MD21"):
+        script.sheath_rotation_keys(past, bytes(hostile))
+    struct.pack_into("<I", hostile, 0x100 + 36 + 12, 2)  # two value arrays for one
+    with pytest.raises(script.facts.FactsError, match="1 timestamp and 2 value arrays"):
+        script.sheath_rotation_keys(past, bytes(hostile))
+    struct.pack_into("<II", hostile, 0x100 + 36 + 12, 1, len(hostile) - 4)
+    with pytest.raises(script.facts.FactsError, match=r"values .* end past MD21"):
+        script.sheath_rotation_keys(past, bytes(hostile))

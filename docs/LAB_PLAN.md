@@ -5190,6 +5190,25 @@ Nothing here has been drawn or checked in a viewer, and nothing is decided.
 Whether held items are drawn at all, and where, is the owner's call (the
 M15-24 acceptance).
 
+*Note, 2026-11-19 (M15-26, the rotation probe; nothing drawn changes).*
+Rows `sheath_rotation_keys`, `hand_bone_keys` of the same fixture; the
+numbers are there and in `docs/LAB_FORMATS.md` §12 (amendment of
+2026-11-19). *Observed:* each sheath bone's rotation is one linear key
+array on a global sequence (loops of 688 to 1,079 s); its first key turns
+99° to 180°, no later key differs by over 1.5°, and 26/27 and 30/31 are
+mirror pairs. Point 29: no track (959310), identity (917116). The hand
+points' parents hold one translation key in each array read (arrays 0
+and 2 on 959310, 0 on 917116), in the M2; that the rest hold one too is
+inferred. On 959310 array 0 is animation 5, not 0. So M15-24's
+"sequence 0" figures for 959310 describe animation 5 (Run, by
+AnimationData **[verify]**), not the stand. *Inferred, **[verify]**:* the
+first key is the sheath bone's orientation relative to its parent (bone
+14, or bone 2 or 3 for 32/33), applied about the pivot
+(`T(pivot)·T(t)·R(q)·T(−pivot)`, after the parent's transform); M2 bones
+store a pivot and no rest rotation, so this track is believed to be the
+bone's only orientation. The small movement over the loop is idle motion.
+What stays unverified is listed in the §12 amendment.
+
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root

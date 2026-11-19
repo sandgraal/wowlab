@@ -111,9 +111,9 @@
       "body_texture_painted": 16,
       "left_out": [],
       "seconds": {
-        "body_model": 0.146,
-        "body_texture": 0.252,
-        "models": 0.088,
+        "body_model": 0.148,
+        "body_texture": 0.245,
+        "models": 0.086,
         "glb": 0.003
       },
       "attachment_points": {
@@ -1218,6 +1218,550 @@
             "first_keys": null
           }
         }
+      },
+      "sheath_rotation_keys": {
+        "26": {
+          "bone": 182,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 207,
+              "first_time": 0,
+              "first_value": [
+                -0.304422132023072,
+                0.4497512741477706,
+                0.6382030701620532,
+                0.5456099124118778
+              ],
+              "first_norm": 0.999971188759648,
+              "max_degrees_from_first": 1.2301627118245857
+            },
+            "animation_0_array": null
+          }
+        },
+        "27": {
+          "bone": 183,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 207,
+              "first_time": 0,
+              "first_value": [
+                0.304391613513596,
+                0.4497512741477706,
+                -0.6382335886715292,
+                0.5456099124118778
+              ],
+              "first_norm": 0.9999813764293759,
+              "max_degrees_from_first": 0.9890390175083582
+            },
+            "animation_0_array": null
+          }
+        },
+        "28": {
+          "bone": 184,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 207,
+              "first_time": 0,
+              "first_value": [
+                0.4643086031678213,
+                -0.4118778038880581,
+                0.5167699209570604,
+                0.5896176030762658
+              ],
+              "first_norm": 0.9999629360004652,
+              "max_degrees_from_first": 1.3952673228222867
+            },
+            "animation_0_array": null
+          }
+        },
+        "29": {
+          "bone": 157,
+          "rotation": {
+            "interpolation": 0,
+            "global_sequence": -1,
+            "global_duration": null,
+            "arrays": 0,
+            "arrays_with_keys": 0,
+            "first_array": null,
+            "animation_0_array": null
+          }
+        },
+        "30": {
+          "bone": 185,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 207,
+              "first_time": 0,
+              "first_value": [
+                -0.640858180486465,
+                -0.5792413098544267,
+                -0.2988372447889645,
+                0.4055604724265267
+              ],
+              "first_norm": 1.0000013491021809,
+              "max_degrees_from_first": 0.0
+            },
+            "animation_0_array": null
+          }
+        },
+        "31": {
+          "bone": 186,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 207,
+              "first_time": 0,
+              "first_value": [
+                0.640827661976989,
+                -0.5792413098544267,
+                0.2988067262794885,
+                0.4055604724265267
+              ],
+              "first_norm": 0.9999726715573075,
+              "max_degrees_from_first": 1.1980889888326174
+            },
+            "animation_0_array": null
+          }
+        },
+        "32": {
+          "bone": 169,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 333,
+              "first_time": 0,
+              "first_value": [
+                0.2520828882717368,
+                0.24741355632190923,
+                -0.9330423902096622,
+                0.06823938718832973
+              ],
+              "first_norm": 0.9999919831195017,
+              "max_degrees_from_first": 0.6489108541828624
+            },
+            "animation_0_array": null
+          }
+        },
+        "33": {
+          "bone": 170,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1079000,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 333,
+              "first_time": 0,
+              "first_value": [
+                -0.25037385174108095,
+                0.2553788872951445,
+                0.9315469832453382,
+                0.06552323984496597
+              ],
+              "first_norm": 0.9999892592748395,
+              "max_degrees_from_first": 0.7511022049298341
+            },
+            "animation_0_array": null
+          }
+        }
+      },
+      "hand_bone_keys": {
+        "1": [
+          {
+            "bone": 213,
+            "translation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            },
+            "rotation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            }
+          },
+          {
+            "bone": 121,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.03750886023044586,
+                  -0.7922817468643188,
+                  1.1333308219909668
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.07675496488809586,
+                  -0.7910454869270325,
+                  1.1368567943572998
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.2729575487533189,
+                  -0.01098666341135899,
+                  0.1609546189764092,
+                  0.9483932004760888
+                ],
+                "first_norm": 0.9999912910988049,
+                "max_degrees_from_first": 0.6763383135355208
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.34595782341990416,
+                  -0.03189184240241707,
+                  0.10748619037446211,
+                  0.9315164647358622
+                ],
+                "first_norm": 0.9999900551467861,
+                "max_degrees_from_first": 0.7227389367525752
+              }
+            }
+          },
+          {
+            "bone": 44,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 299,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 19,
+                "first_time": 0,
+                "first_value": [
+                  0.002452010056003928,
+                  -0.009061997756361961,
+                  -0.009856411255896091
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 58,
+                "first_time": 0,
+                "first_value": [
+                  -0.0,
+                  -3.3877199712151196e-06,
+                  0.0
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 19,
+                "first_time": 0,
+                "first_value": [
+                  0.1620227668080691,
+                  -0.1511886959440901,
+                  -0.020020142216254158,
+                  0.9749137852107304
+                ],
+                "first_norm": 0.9999835465814874,
+                "max_degrees_from_first": 34.78184507143536
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 80,
+                "first_time": 0,
+                "first_value": [
+                  0.11618396557512131,
+                  -0.07516708883938109,
+                  -0.19040498062074648,
+                  0.9718924527726066
+                ],
+                "first_norm": 0.9999889006898469,
+                "max_degrees_from_first": 6.32056186535679
+              }
+            }
+          }
+        ],
+        "2": [
+          {
+            "bone": 214,
+            "translation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            },
+            "rotation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            }
+          },
+          {
+            "bone": 128,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.05991983413696289,
+                  0.7484868168830872,
+                  1.1386741399765015
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.07777786254882812,
+                  0.7916668057441711,
+                  1.136111855506897
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.3540757469405194,
+                  -0.06277657399212623,
+                  -0.05197302163762322,
+                  0.9316385387737662
+                ],
+                "first_norm": 0.9999810471805647,
+                "max_degrees_from_first": 0.9977433694370665
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.27964110232856226,
+                  -0.040345469527268286,
+                  -0.14270455030976287,
+                  0.9485457930234688
+                ],
+                "first_norm": 0.9999653059804335,
+                "max_degrees_from_first": 1.349922007507054
+              }
+            }
+          },
+          {
+            "bone": 47,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 298,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 19,
+                "first_time": 0,
+                "first_value": [
+                  -0.004798430018126965,
+                  -0.017709875479340553,
+                  0.01926119066774845
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 22,
+                "first_time": 0,
+                "first_value": [
+                  -0.0,
+                  3.376195309101604e-06,
+                  0.0
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 332,
+              "arrays_with_keys": 332,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 5,
+                "in_m2": true,
+                "keys": 19,
+                "first_time": 0,
+                "first_value": [
+                  -0.16156498916592912,
+                  0.08850367748039185,
+                  0.06689657277138585,
+                  0.9805902279732658
+                ],
+                "first_norm": 0.9999842465243933,
+                "max_degrees_from_first": 28.835273999330337
+              },
+              "animation_0_array": {
+                "index": 2,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 81,
+                "first_time": 0,
+                "first_value": [
+                  0.00271614734336375,
+                  -0.019806512649922177,
+                  0.03399761955626087,
+                  0.9992065187536241
+                ],
+                "first_norm": 0.9999845902087547,
+                "max_degrees_from_first": 10.682185933868443
+              }
+            }
+          }
+        ]
       }
     },
     {
@@ -1306,9 +1850,9 @@
       "body_texture_painted": 13,
       "left_out": [],
       "seconds": {
-        "body_model": 0.158,
-        "body_texture": 0.134,
-        "models": 0.161,
+        "body_model": 0.157,
+        "body_texture": 0.129,
+        "models": 0.157,
         "glb": 0.003
       },
       "attachment_points": {
@@ -2441,6 +2985,592 @@
             "first_keys": 324
           }
         }
+      },
+      "sheath_rotation_keys": {
+        "26": {
+          "bone": 174,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 2,
+            "global_duration": 688333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 24,
+              "first_time": 0,
+              "first_value": [
+                -0.4106265449995422,
+                0.28192999053926204,
+                0.575640125736259,
+                0.6484267708365123
+              ],
+              "first_norm": 0.9999587544088268,
+              "max_degrees_from_first": 1.4718715041373625
+            },
+            "animation_0_array": null
+          }
+        },
+        "27": {
+          "bone": 175,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 2,
+            "global_duration": 688333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 24,
+              "first_time": 0,
+              "first_value": [
+                0.4105960264900662,
+                0.28192999053926204,
+                -0.575670644245735,
+                0.6484267708365123
+              ],
+              "first_norm": 0.9999637915038054,
+              "max_degrees_from_first": 1.3790707821390096
+            },
+            "animation_0_array": null
+          }
+        },
+        "28": {
+          "bone": 176,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 2,
+            "global_duration": 688333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 24,
+              "first_time": 0,
+              "first_value": [
+                0.3793450727866451,
+                -0.5422223578600421,
+                0.5751518295846431,
+                0.48091067232276374
+              ],
+              "first_norm": 0.9999912356812451,
+              "max_degrees_from_first": 0.6784867778757848
+            },
+            "animation_0_array": null
+          }
+        },
+        "29": {
+          "bone": 154,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1060333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 476,
+              "first_time": 0,
+              "first_value": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "first_norm": 1.0,
+              "max_degrees_from_first": 0.0
+            },
+            "animation_0_array": null
+          }
+        },
+        "30": {
+          "bone": 177,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 2,
+            "global_duration": 688333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 24,
+              "first_time": 0,
+              "first_value": [
+                -0.5720694601275673,
+                -0.6459852900784325,
+                -0.4156315805536058,
+                0.28757591479232153
+              ],
+              "first_norm": 1.0000049898527967,
+              "max_degrees_from_first": 0.0
+            },
+            "animation_0_array": null
+          }
+        },
+        "31": {
+          "bone": 178,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 2,
+            "global_duration": 688333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 24,
+              "first_time": 0,
+              "first_value": [
+                0.5720389416180913,
+                -0.6459852900784325,
+                0.4156010620441298,
+                0.28757591479232153
+              ],
+              "first_norm": 0.9999748473167273,
+              "max_degrees_from_first": 1.1494070973226669
+            },
+            "animation_0_array": null
+          }
+        },
+        "32": {
+          "bone": 161,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1060333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 476,
+              "first_time": 0,
+              "first_value": [
+                0.2251655629139073,
+                0.14746543778801843,
+                -0.9631031220435194,
+                0.0014038514358958708
+              ],
+              "first_norm": 1.0000075902477827,
+              "max_degrees_from_first": 0.0
+            },
+            "animation_0_array": null
+          }
+        },
+        "33": {
+          "bone": 162,
+          "rotation": {
+            "interpolation": 1,
+            "global_sequence": 0,
+            "global_duration": 1060333,
+            "arrays": 1,
+            "arrays_with_keys": 1,
+            "first_array": {
+              "index": 0,
+              "sequence_id": null,
+              "in_m2": true,
+              "keys": 476,
+              "first_time": 0,
+              "first_value": [
+                0.2349009674367504,
+                -0.13144322031311992,
+                -0.9607837153233436,
+                0.06692709128086184
+              ],
+              "first_norm": 1.0000201837197333,
+              "max_degrees_from_first": 0.0
+            },
+            "animation_0_array": null
+          }
+        }
+      },
+      "hand_bone_keys": {
+        "1": [
+          {
+            "bone": 206,
+            "translation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": 0,
+              "global_duration": 1060333,
+              "arrays": 1,
+              "arrays_with_keys": 1,
+              "first_array": {
+                "index": 0,
+                "sequence_id": null,
+                "in_m2": true,
+                "keys": 324,
+                "first_time": 0,
+                "first_value": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "first_norm": 1.0,
+                "max_degrees_from_first": 0.0
+              },
+              "animation_0_array": null
+            }
+          },
+          {
+            "bone": 100,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 350,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.020321279764175415,
+                  -0.5728012919425964,
+                  0.9086340069770813
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.020321279764175415,
+                  -0.5728012919425964,
+                  0.9086340069770813
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 350,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.0018616290780358287,
+                  -0.040192876979888305,
+                  0.0,
+                  0.9991760002441481
+                ],
+                "first_norm": 0.9999858061425865,
+                "max_degrees_from_first": 0.8634403281588822
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.0018616290780358287,
+                  -0.040192876979888305,
+                  0.0,
+                  0.9991760002441481
+                ],
+                "first_norm": 0.9999858061425865,
+                "max_degrees_from_first": 0.8634403281588822
+              }
+            }
+          },
+          {
+            "bone": 43,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 338,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 65,
+                "first_time": 0,
+                "first_value": [
+                  7.2793759500200395e-06,
+                  -6.395740001607919e-06,
+                  -3.148811401842977e-06
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 65,
+                "first_time": 0,
+                "first_value": [
+                  7.2793759500200395e-06,
+                  -6.395740001607919e-06,
+                  -3.148811401842977e-06
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 350,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 75,
+                "first_time": 0,
+                "first_value": [
+                  0.0989104892117069,
+                  -0.01315347758415479,
+                  0.09479049043244728,
+                  0.9904782250434889
+                ],
+                "first_norm": 0.9999943250890878,
+                "max_degrees_from_first": 5.998192837333338
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 75,
+                "first_time": 0,
+                "first_value": [
+                  0.0989104892117069,
+                  -0.01315347758415479,
+                  0.09479049043244728,
+                  0.9904782250434889
+                ],
+                "first_norm": 0.9999943250890878,
+                "max_degrees_from_first": 5.998192837333338
+              }
+            }
+          }
+        ],
+        "2": [
+          {
+            "bone": 207,
+            "translation": {
+              "interpolation": 0,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 0,
+              "arrays_with_keys": 0,
+              "first_array": null,
+              "animation_0_array": null
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": 0,
+              "global_duration": 1060333,
+              "arrays": 1,
+              "arrays_with_keys": 1,
+              "first_array": {
+                "index": 0,
+                "sequence_id": null,
+                "in_m2": true,
+                "keys": 324,
+                "first_time": 0,
+                "first_value": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "first_norm": 1.0,
+                "max_degrees_from_first": 0.0
+              },
+              "animation_0_array": null
+            }
+          },
+          {
+            "bone": 107,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 350,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.020321104675531387,
+                  0.5728009939193726,
+                  0.9086338877677917
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  -0.020321104675531387,
+                  0.5728009939193726,
+                  0.9086338877677917
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 350,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.0018311105685598315,
+                  -0.040192876979888305,
+                  0.0,
+                  0.9991760002441481
+                ],
+                "first_norm": 0.9999857497933301,
+                "max_degrees_from_first": 0.8651525445868761
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 1,
+                "first_time": 0,
+                "first_value": [
+                  0.0018311105685598315,
+                  -0.040192876979888305,
+                  0.0,
+                  0.9991760002441481
+                ],
+                "first_norm": 0.9999857497933301,
+                "max_degrees_from_first": 0.8651525445868761
+              }
+            }
+          },
+          {
+            "bone": 46,
+            "translation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 336,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 63,
+                "first_time": 0,
+                "first_value": [
+                  -0.0,
+                  0.0,
+                  4.237885605107294e-06
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 63,
+                "first_time": 0,
+                "first_value": [
+                  -0.0,
+                  0.0,
+                  4.237885605107294e-06
+                ],
+                "first_norm": null,
+                "max_degrees_from_first": null
+              }
+            },
+            "rotation": {
+              "interpolation": 1,
+              "global_sequence": -1,
+              "global_duration": null,
+              "arrays": 369,
+              "arrays_with_keys": 347,
+              "first_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 72,
+                "first_time": 0,
+                "first_value": [
+                  -0.10281685842463455,
+                  -0.027558214056825465,
+                  -0.0391247291482284,
+                  0.9935300759910886
+                ],
+                "first_norm": 0.9999817587676755,
+                "max_degrees_from_first": 10.419551346470762
+              },
+              "animation_0_array": {
+                "index": 0,
+                "sequence_id": 0,
+                "in_m2": true,
+                "keys": 72,
+                "first_time": 0,
+                "first_value": [
+                  -0.10281685842463455,
+                  -0.027558214056825465,
+                  -0.0391247291482284,
+                  0.9935300759910886
+                ],
+                "first_norm": 0.9999817587676755,
+                "max_degrees_from_first": 10.419551346470762
+              }
+            }
+          }
+        ]
       }
     }
   ]

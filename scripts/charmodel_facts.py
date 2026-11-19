@@ -24,8 +24,12 @@ the hand points 0, 1 and 2 and the points 26 to 33 the parent of the bone
 each sits on with its pivot (and the next bone up when that pivot is the
 origin), and for each of those bones its key bone id, flags, parent and
 its translation and rotation tracks counted (global sequence, number of
-sequences, keys in the first). No geometry, no pixel,
-no key value, no byte of any file, no install path.
+sequences, keys in the first), and (M15-26, the rotation probe) for the
+bones of points 26 to 33 their rotation track's first key, and for the
+bones of the hand points 1 and 2 and the bones above them their
+translation and rotation tracks' first keys (`_keys`: numbers decoded from
+the file, never its bytes). No geometry, no pixel, no byte of any file,
+no install path.
 
 Refusals (exit 1), as `renderplan_facts.py`'s: `--out` that is a link, one
 inside a game install, one already there; a table missing from `--tables`;
@@ -39,6 +43,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import struct
 import sys
 from collections.abc import Buffer, Sequence
@@ -280,6 +285,201 @@ def bone_facts(body: m2.M2Model, data: Buffer) -> dict[str, dict[str, Any]]:
     return out
 
 
+# M15-26, the rotation probe: the first key of a track, read. An M2Track is
+# interpolation u16 at 0, global sequence i16 at 2, the timestamps (an array
+# of per-sequence u32 arrays) at 4 and the values (the same shape) at 12; a
+# rotation value is an M2CompQuat, four i16 (x, y, z, w), a translation three
+# floats; a Bezier or Hermite key (interpolation 2 or 3) holds the value and
+# two tangents (wowdev.wiki, M2, since WotLK). A sequence's keys are in the
+# M2 itself only when its M2Sequence (64 bytes, the array at 0x1C, flags u32
+# at 12) has flag 0x20; else they are in an `.anim` file, which is not read.
+# A global sequence's (durations: u32, the array at 0x14) keys are taken to be
+# in the M2 (**[verify]**: the decoded quaternions' norms are recorded).
+_SEQUENCES_AT = 0x1C
+_SEQUENCE_SIZE = 64
+_SEQUENCE_FLAGS_AT = 12
+_IN_M2 = 0x20
+_GLOBAL_LOOPS_AT = 0x14
+_U16 = struct.Struct("<H")
+_U32 = struct.Struct("<I")
+_VALUES_AT = 12
+_QUAT = struct.Struct("<4h")
+_SPLINES = (2, 3)  # Bezier, Hermite: value, in tangent, out tangent
+HAND = (1, 2)  # the hand points whose bones' first keys are read
+
+
+def _array_in(blob: memoryview, count: int, at: int, size: int, what: str) -> None:
+    if at + count * size > len(blob):
+        raise facts.FactsError(f"{what} ({count} at {at}) end past MD21")
+
+
+def _quat(raw: tuple[int, ...]) -> list[float]:
+    """An M2CompQuat as four floats (wowdev.wiki: `(s < 0 ? s + 32768 :
+    s - 32767) / 32767`)."""
+    return [(s + 32768 if s < 0 else s - 32767) / 32767 for s in raw]
+
+
+def _degrees(a: Sequence[float], b: Sequence[float]) -> float:
+    """The angle between two rotations, in degrees (unit quaternions)."""
+    dot = min(1.0, abs(sum(x * y for x, y in zip(a, b, strict=True))))
+    return math.degrees(2 * math.acos(dot))
+
+
+def _sequences(blob: memoryview) -> list[tuple[int, bool]]:
+    """Each M2Sequence's animation id and whether its keys are in the M2
+    (flag 0x20), in file order; the array checked to lie inside MD21."""
+    count, at = _BONE.unpack_from(blob, _SEQUENCES_AT)
+    _array_in(blob, count, at, _SEQUENCE_SIZE, "the sequences")
+    return [
+        (
+            _U16.unpack_from(blob, at + _SEQUENCE_SIZE * i)[0],
+            bool(_U32.unpack_from(blob, at + _SEQUENCE_SIZE * i + _SEQUENCE_FLAGS_AT)[0] & _IN_M2),
+        )
+        for i in range(count)
+    ]
+
+
+def _key_array(
+    blob: memoryview,
+    times_at: int,
+    values_at: int,
+    index: int,
+    sequence: tuple[int, bool] | None,
+    stride: int,
+    rotation: bool,
+) -> dict[str, Any]:
+    """Array `index` of a track: its sequence's animation id (`None` on a
+    global sequence), whether its keys are in the M2, its key count, and,
+    when they are, its first timestamp and first value, and for a rotation
+    that value's norm and the largest angle, in degrees, of any of its keys
+    from the first."""
+    sequence_id, in_m2 = sequence if sequence is not None else (None, True)
+    keys, key_times = _BONE.unpack_from(blob, times_at + _BONE.size * index)
+    key_values, value_data = _BONE.unpack_from(blob, values_at + _BONE.size * index)
+    if key_values != keys:
+        raise facts.FactsError(
+            f"a bone track's array {index} has {keys} times and {key_values} values"
+        )
+    out: dict[str, Any] = {
+        "index": index,
+        "sequence_id": sequence_id,
+        "in_m2": in_m2,
+        "keys": keys,
+        "first_time": None,
+        "first_value": None,
+        "first_norm": None,
+        "max_degrees_from_first": None,
+    }
+    if not in_m2 or not keys:
+        return out
+    _array_in(blob, keys, key_times, _U32.size, "a bone track's timestamps")
+    _array_in(blob, keys, value_data, stride, "a bone track's keys")
+    out["first_time"] = _U32.unpack_from(blob, key_times)[0]
+    if not rotation:
+        out["first_value"] = list(_PIVOT.unpack_from(blob, value_data))
+        return out
+    quats = [_quat(_QUAT.unpack_from(blob, value_data + stride * k)) for k in range(keys)]
+    out["first_value"] = quats[0]
+    out["first_norm"] = math.sqrt(sum(x * x for x in quats[0]))
+    out["max_degrees_from_first"] = max(_degrees(quats[0], q) for q in quats)
+    return out
+
+
+def _keys(blob: memoryview, track: int, rotation: bool) -> dict[str, Any]:
+    """The track at `track` with its first key read: the interpolation, the
+    global sequence and its duration, how many per-sequence arrays it has and
+    how many of them hold a key, the first array holding one (`_key_array`),
+    and, on a track without a global sequence, the first array holding one
+    whose sequence's animation id is 0 (which animation that is stays
+    **[verify]**)."""
+    (interpolation,) = _U16.unpack_from(blob, track)
+    (global_sequence,) = _GLOBAL.unpack_from(blob, track + _GLOBAL_AT)
+    arrays, times_at = _BONE.unpack_from(blob, track + _TIMESTAMPS_AT)
+    values, values_at = _BONE.unpack_from(blob, track + _VALUES_AT)
+    if values != arrays:
+        raise facts.FactsError(f"a bone track has {arrays} timestamp and {values} value arrays")
+    _array_in(blob, arrays, times_at, _BONE.size, "a bone track's sequences")
+    _array_in(blob, values, values_at, _BONE.size, "a bone track's values")
+    out: dict[str, Any] = {
+        "interpolation": interpolation,
+        "global_sequence": global_sequence,
+        "global_duration": None,
+        "arrays": arrays,
+        "arrays_with_keys": 0,
+        "first_array": None,
+        "animation_0_array": None,
+    }
+    sequences: list[tuple[int, bool]] | None = None
+    if global_sequence >= 0:
+        loops, loops_at = _BONE.unpack_from(blob, _GLOBAL_LOOPS_AT)
+        if global_sequence >= loops:
+            raise facts.FactsError(f"global sequence {global_sequence} of {loops}")
+        _array_in(blob, loops, loops_at, _U32.size, "the global sequences")
+        out["global_duration"] = _U32.unpack_from(blob, loops_at + _U32.size * global_sequence)[0]
+    elif arrays:
+        sequences = _sequences(blob)
+        if arrays > len(sequences):
+            raise facts.FactsError(
+                f"a bone track has {arrays} arrays for {len(sequences)} sequences"
+            )
+    counts = [_BONE.unpack_from(blob, times_at + _BONE.size * i)[0] for i in range(arrays)]
+    out["arrays_with_keys"] = sum(1 for n in counts if n)
+    stride = (_QUAT if rotation else _PIVOT).size * (3 if interpolation in _SPLINES else 1)
+
+    def read(index: int) -> dict[str, Any]:
+        sequence = sequences[index] if sequences is not None else None
+        return _key_array(blob, times_at, values_at, index, sequence, stride, rotation)
+
+    first = next((i for i, n in enumerate(counts) if n), None)
+    if first is not None:
+        out["first_array"] = read(first)
+    if sequences is not None:
+        zero = next((i for i, n in enumerate(counts) if n and sequences[i][0] == 0), None)
+        if zero is not None:
+            out["animation_0_array"] = read(zero)
+    return out
+
+
+def sheath_rotation_keys(body: m2.M2Model, data: Buffer) -> dict[str, dict[str, Any]]:
+    """For each point of `SHEATH` the body model has, its bone and that
+    bone's rotation track with its first key read (`_keys`). The probe of
+    M15-26: whether a sheath bone's rotation could give a carry angle."""
+    blob, count, offset = _bones(body, data)
+    out: dict[str, dict[str, Any]] = {}
+    for point_id in SHEATH:
+        point = body.attachment(point_id)
+        if point is None:
+            continue
+        _bone(blob, count, offset, point.bone)  # the range check
+        at = offset + _BONE_SIZE * point.bone
+        out[str(point_id)] = {"bone": point.bone, "rotation": _keys(blob, at + _ROTATION_AT, True)}
+    return out
+
+
+def hand_bone_keys(body: m2.M2Model, data: Buffer) -> dict[str, list[dict[str, Any]]]:
+    """For each point of `HAND` the body model has, its bone and the bones
+    above it (`_chain`), in that order, each with its translation and
+    rotation tracks' first keys read (`_keys`). The probe of M15-26: the one
+    stored position of the hand points' bones."""
+    blob, count, offset = _bones(body, data)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for point_id in HAND:
+        point = body.attachment(point_id)
+        if point is None:
+            continue
+        _bone(blob, count, offset, point.bone)
+        bones = [point.bone, *(link["bone"] for link in _chain(blob, count, offset, point.bone))]
+        out[str(point_id)] = [
+            {
+                "bone": bone,
+                "translation": _keys(blob, offset + _BONE_SIZE * bone + _TRANSLATION_AT, False),
+                "rotation": _keys(blob, offset + _BONE_SIZE * bone + _ROTATION_AT, True),
+            }
+            for bone in bones
+        ]
+    return out
+
+
 def _running(inst: Install, flavor: str) -> bool | None:
     try:
         state = process.client_state([inst.root], flavor_folders=[flavor])
@@ -319,6 +519,8 @@ def model_facts(
                 "held_point_parents": held_point_parents(body, data),
                 "sheath_point_parents": sheath_point_parents(body, data),
                 "bones": bone_facts(body, data),
+                "sheath_rotation_keys": sheath_rotation_keys(body, data),
+                "hand_bone_keys": hand_bone_keys(body, data),
             }
         )
     return {
