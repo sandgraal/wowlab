@@ -4920,6 +4920,57 @@ pieces over them. Rows are composed as byte slices. Hair and eyes are
 separate materials and stay separate textures. **Target:** a 2048×1024
 composite in at most 3 s.
 
+*Note, 2026-11-18 (M15-10, `wowlab_core.compositor`; EV-44's cost model):*
+what was built and measured. **The enum.** `ChrModelTextureLayer` at
+1.60.1.70959 (940 rows, downloaded whole, the 26-row subset committed)
+holds blend modes 1, 3, 4, 6, 7, 9, 15, 16 and 17, and on texture type 1
+(the body) only 1, 4, 6, 7, 9 and 15. The compositor paints exactly those
+six, named and computed as wow.export's character shader and blend state
+do: 1 blit (the layer replaces the canvas, alpha included), 15 alpha blend,
+9 alpha straight (15 with the alpha channel composited over), 4 multiply, 6
+overlay (switched on the layer's value, as wow.export writes it), 7 screen;
+every other number is refused with the number named. The names and the
+semantics are wow.export's, not the client's (**[verify]**). The two fixture
+characters use only 1 and 15. **The order.** Customization layers in
+`Layer` order, the plan's; wow.export sorts by texture target id instead,
+and the two orders differ in 67 of the table's 87 layouts (**[verify]**);
+for both fixture characters the two orders give the same composite. Item
+pieces are painted after them, by wow.export's per-slot texture layer
+(shirt and legs first, the cloak last), with mode 15 (wow.export turns a
+section's blit into 15 for items; every section layer of layouts 105 and
+111 is 15). For a layout whose layer for that section is 4, 6, 7 or 9,
+wow.export would paint the piece with that mode; the Lab paints 15 (not
+met at layouts 105 and 111; **[verify]**). **The stretch.** Every texture
+the two fixture composites paint is a half or a quarter of its section
+(the 1024×512 skin on the 2048×1024 canvas, 128×64 item pieces
+in 512×256 sections; other textures are not measured), so a texture is stretched by whole-pixel repetition;
+a texture larger than its section, or one its section is not a whole
+multiple of, is refused. wow.export lets the GPU filter linearly, so the
+Lab's edges are blockier (how the client filters is **[verify]**). **The
+cost model** (CPU time measured idle on the owner's M1, 2026-11-18): a blit row and an opaque
+alpha-blend row are one slice copy per canvas row, about 0.01 s for a
+whole 2048×1024 canvas; a transparent row, or a row's transparent ends,
+cost nothing; any other pixel costs two byte-table lookups per channel for
+15 and 9 (the layer's half computed once per texture pixel), about 0.25 s
+per 2,097,152 canvas pixels at a 2× stretch, and three for 4, 6 and 7,
+about 0.48 s. A composite costs the sum over its layers of their partial
+pixels at those rates. Measured: Sangraal-Sett 0.24 s and
+Dangling-Participle 0.14 s on the install, reads and decodes included
+(`macos-70959/derived/compositor.json`); the busiest recorded body layout
+(105: a blit, four whole-canvas layers of modes 4, 6, 6 and 9, six section
+layers of mode 15, eleven item pieces) with every pixel partial, 2.6 s measured idle on the
+owner's M1, the constructed worst case, inside the target (4.3 to 4.5 s
+measured by review under a load average of 121). The work is capped
+before anything is allocated: at most 256 layers and pieces, and their
+areas summed at most 64 canvases (the fixture characters: 13 and 16 jobs,
+about 2.2 canvases); one whole 4096×4096 canvas of mode 4 with every pixel
+partial is about 4 s idle by these rates. Memory: the canvas, one texture
+file, one decode (about three times the texture's RGBA, which is at most its
+section's) and the final copy, at most four canvases plus the file; 32 MiB
+measured at 2048×1024 with a full-size base. No three-colour DXT1 block's
+transparent pixel was met: the DXT1 inputs of alpha depth 0 decode with no
+alpha-0 pixel.
+
 ### 17.6 `gltf` and `wowlab char model`
 
 `wowlab_core.gltf` writes glTF 2.0 binary (`.glb`): one node per model
@@ -4988,6 +5039,24 @@ question; the DXT rule conflict; the
 `TextureFileData` usage type; whether the tables describe how Forever's
 playable races look (the owner's look at the GLB settles it); whether
 Forever has transmog in game at all; the rest pose.
+
+*Note, 2026-11-18 (M15-10, `wowlab_core.compositor`, §17.5's note):* the
+body texture adds these, each **[verify]**: whether the client draws
+`ChrModelTextureLayer` rows in `Layer` order (the Lab's) or texture target
+id order (wow.export's; they differ in 67 of the 87 layouts at 70959, not
+for the two fixture characters); wow.export's per-slot texture layer table
+for item pieces (shirt and legs 10 up to the cloak 23), and whether those
+numbers share a number space with `ChrModelTextureLayer.Layer` (layout 105
+has type-1 layers at `Layer` 9 to 12, rows 630 and 668 to 670, which the
+Lab paints before every item piece); the blend formulas and names, which are
+wow.export's (overlay switched on the layer, usually called hard light);
+item pieces always painted with mode 15, where wow.export would use the
+section layer's mode when it is 4, 6, 7 or 9 (not met at layouts 105 and
+111); how the client filters a texture stretched to a larger section (the
+Lab repeats whole pixels, wow.export filters linearly); the canvas starting
+opaque black (wow.export's); and whether the 918 opaque black pixels of base
+skin 959287's mip 0 (colour, not a DXT1 index 3, which `blp` makes
+transparent; the compositor copies them as they are) ever show in game.
 
 ### 17.8 Wave 7, sketched (the viewer; not M15 tickets)
 

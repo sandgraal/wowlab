@@ -1,0 +1,837 @@
+{
+  "schema": 1,
+  "kind": "compositor-derived",
+  "made_by": "scripts/compositor_facts.py",
+  "captured": "2026-11-18",
+  "flavor": "_forever_",
+  "product": "wowf",
+  "version": "1.60.1.70959",
+  "build": 70959,
+  "tables_build": "1.60.1.70959",
+  "characters": [
+    {
+      "label": "Sangraal-Sett",
+      "chr_model_id": 9,
+      "layout_id": 111,
+      "size": [
+        2048,
+        1024
+      ],
+      "rgba_md5": "58ebc85d56fae39255e2cccbb7d7e1fb",
+      "target_order_rgba_md5": "58ebc85d56fae39255e2cccbb7d7e1fb",
+      "painted": [
+        {
+          "kind": "customization",
+          "file_data_id": 959287,
+          "blend_mode": 1,
+          "blend": "blit",
+          "section_type": null,
+          "rect": [
+            0,
+            0,
+            2048,
+            1024
+          ],
+          "layer": 0,
+          "layer_row_id": 121,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            1024,
+            512
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 959281,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": 2,
+          "layer_row_id": 123,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            256,
+            128
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 959239,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 10,
+          "rect": [
+            1024,
+            0,
+            1024,
+            1024
+          ],
+          "layer": 4,
+          "layer_row_id": 125,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            512,
+            512
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 3457610,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 9,
+          "rect": [
+            1024,
+            0,
+            1024,
+            1024
+          ],
+          "layer": 6,
+          "layer_row_id": 127,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            512,
+            512
+          ],
+          "format": "dxt5",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 3457561,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 9,
+          "rect": [
+            1024,
+            0,
+            1024,
+            1024
+          ],
+          "layer": 8,
+          "layer_row_id": 129,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            512,
+            512
+          ],
+          "format": "dxt5",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 157422,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 7,
+          "component_section": 5,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 154804,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 6,
+          "rect": [
+            512,
+            640,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 7,
+          "component_section": 6,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 154963,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 6,
+          "rect": [
+            512,
+            640,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 8,
+          "component_section": 6,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 152732,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 7,
+          "rect": [
+            512,
+            896,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 8,
+          "component_section": 7,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 151197,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 0,
+          "rect": [
+            0,
+            0,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 5,
+          "component_section": 0,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 162791,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 3,
+          "rect": [
+            512,
+            0,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 5,
+          "component_section": 3,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 160140,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 4,
+          "rect": [
+            512,
+            256,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 5,
+          "component_section": 4,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 157418,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 6,
+          "component_section": 5,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 148915,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 1,
+          "rect": [
+            0,
+            256,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 9,
+          "component_section": 1,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 148771,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 1,
+          "rect": [
+            0,
+            256,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 10,
+          "component_section": 1,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 153776,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 2,
+          "rect": [
+            0,
+            512,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 10,
+          "component_section": 2,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        }
+      ],
+      "not_painted": [
+        {
+          "kind": "customization",
+          "file_data_id": 3457574,
+          "texture_type": 6,
+          "slot": null,
+          "reason": "texture type 6 is a texture of its own, not part of the body texture"
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 3484667,
+          "texture_type": 19,
+          "slot": null,
+          "reason": "texture type 19 is a texture of its own, not part of the body texture"
+        }
+      ],
+      "dxt1_depth0_alpha0_pixels": {
+        "959239": 0,
+        "959281": 0,
+        "959287": 0
+      },
+      "seconds_best_of_3": 0.242
+    },
+    {
+      "label": "Dangling-Participle",
+      "chr_model_id": 3,
+      "layout_id": 105,
+      "size": [
+        2048,
+        1024
+      ],
+      "rgba_md5": "0002710a190b89295f570bdcbddb7f66",
+      "target_order_rgba_md5": "0002710a190b89295f570bdcbddb7f66",
+      "painted": [
+        {
+          "kind": "customization",
+          "file_data_id": 916966,
+          "blend_mode": 1,
+          "blend": "blit",
+          "section_type": null,
+          "rect": [
+            0,
+            0,
+            2048,
+            1024
+          ],
+          "layer": 0,
+          "layer_row_id": 41,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            1024,
+            512
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 916834,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 10,
+          "rect": [
+            1024,
+            0,
+            1024,
+            1024
+          ],
+          "layer": 3,
+          "layer_row_id": 44,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            512,
+            512
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 916943,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": 8,
+          "layer_row_id": 49,
+          "slot": null,
+          "component_section": null,
+          "texture": [
+            256,
+            128
+          ],
+          "format": "dxt5",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 162713,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 3,
+          "rect": [
+            512,
+            0,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 4,
+          "component_section": 3,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 160062,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 4,
+          "rect": [
+            512,
+            256,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 4,
+          "component_section": 4,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 157573,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 7,
+          "component_section": 5,
+          "texture": [
+            256,
+            128
+          ],
+          "format": "palette",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 152658,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 7,
+          "rect": [
+            512,
+            896,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 8,
+          "component_section": 7,
+          "texture": [
+            256,
+            64
+          ],
+          "format": "dxt1",
+          "scale": [
+            2,
+            2
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 163009,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 3,
+          "rect": [
+            512,
+            0,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 5,
+          "component_section": 3,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 160346,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 4,
+          "rect": [
+            512,
+            256,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 5,
+          "component_section": 4,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 157554,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 5,
+          "rect": [
+            512,
+            384,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 6,
+          "component_section": 5,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 149056,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 1,
+          "rect": [
+            0,
+            256,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 9,
+          "component_section": 1,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 148916,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 1,
+          "rect": [
+            0,
+            256,
+            512,
+            256
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 10,
+          "component_section": 1,
+          "texture": [
+            128,
+            64
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        },
+        {
+          "kind": "item",
+          "file_data_id": 153827,
+          "blend_mode": 15,
+          "blend": "alpha blend",
+          "section_type": 2,
+          "rect": [
+            0,
+            512,
+            512,
+            128
+          ],
+          "layer": null,
+          "layer_row_id": null,
+          "slot": 10,
+          "component_section": 2,
+          "texture": [
+            128,
+            32
+          ],
+          "format": "palette",
+          "scale": [
+            4,
+            4
+          ]
+        }
+      ],
+      "not_painted": [
+        {
+          "kind": "customization",
+          "file_data_id": 918869,
+          "texture_type": 6,
+          "slot": null,
+          "reason": "texture type 6 is a texture of its own, not part of the body texture"
+        },
+        {
+          "kind": "customization",
+          "file_data_id": 3492828,
+          "texture_type": 19,
+          "slot": null,
+          "reason": "texture type 19 is a texture of its own, not part of the body texture"
+        }
+      ],
+      "dxt1_depth0_alpha0_pixels": {
+        "152658": 0,
+        "916834": 0,
+        "916966": 0
+      },
+      "seconds_best_of_3": 0.139
+    }
+  ]
+}
