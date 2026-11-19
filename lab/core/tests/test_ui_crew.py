@@ -719,17 +719,15 @@ def test_a_name_starting_with_a_dash_is_an_argument_not_an_option_constructed(
         "--expect" in planned["confirm"]["note"]
         and "the game's backup" in planned["confirm"]["note"]
     )
-    # The panel went with the player: the list's line says what was done,
-    # what a forget does not reach, and the journal record.
-    assert confirmed["status"].startswith(
-        "After Confirm: Done (exit code 0). This command first saved"
-    )
-    assert "wowlab cannot remove a snapshot yet" in confirmed["status"]
-    assert "Journaled as " in confirmed["status"]
-    # Forgotten: gone from the file, the list and the panel.
+    # Forgotten from the file. M20-01: the list is read from wowlab's crew
+    # database, which keeps a player the saved file no longer holds
+    # (docs/LAB_PLAN.md §21.3, sync rule 1); a forget reaches the database
+    # with M20-02, which brings back "gone from the list and the panel" here.
+    assert confirmed["act"]["status"] == "After Confirm: Done (exit code 0)."
+    assert "wowlab cannot remove a snapshot yet" in confirmed["confirm"]["plan"]
+    assert "Journaled as " in confirmed["confirm"]["note"]
     assert dashed.encode() not in crew.live.read_bytes()
-    assert [r[0] for r in confirmed["rows"]] == [KEY_B]
-    assert confirmed["player"]["hidden"] is True
+    assert [r[0] for r in confirmed["rows"]] == [dashed, KEY_B]
 
 
 def test_a_file_changed_between_plan_and_confirm_is_refused_on_the_page_constructed(

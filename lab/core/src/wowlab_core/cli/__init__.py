@@ -1028,6 +1028,9 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_crew import (
         CrewShowReport as CrewShowReport,
     )
+    from wowlab_core.cli._cmd_crew import (
+        CrewSyncReport as CrewSyncReport,
+    )
     from wowlab_core.cli._cmd_cvar import (
         _ACCOUNT_BINDINGS as _ACCOUNT_BINDINGS,
     )

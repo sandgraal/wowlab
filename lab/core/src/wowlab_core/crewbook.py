@@ -326,7 +326,7 @@ def fold(text: str) -> str:
     return folded.translate(_IGNORED)
 
 
-def match(players: Sequence[CrewPlayer], typed: str) -> list[CrewPlayer]:
+def match[P: CrewPlayer](players: Sequence[P], typed: str) -> list[P]:
     """The players `typed` names: the one whose stored key is exactly
     `typed`, else every one whose folded key equals the folded `typed`."""
     exact = [p for p in players if p.key == typed]
@@ -336,18 +336,18 @@ def match(players: Sequence[CrewPlayer], typed: str) -> list[CrewPlayer]:
     return [p for p in players if fold(p.key) == want]
 
 
-def select(
-    players: Iterable[CrewPlayer],
+def select[P: CrewPlayer](
+    players: Iterable[P],
     *,
     rated: RatedFilter | None = None,
     noted: bool = False,
     search: str | None = None,
-) -> list[CrewPlayer]:
+) -> list[P]:
     """The players that pass every filter given: a rating (`any`: either),
     a note, and a folded search text found in the key, the guild or the
     note."""
     want = fold(search) if search else ""
-    out: list[CrewPlayer] = []
+    out: list[P] = []
     for p in players:
         if rated is not None and (p.rating is None or (rated != "any" and p.rating != rated)):
             continue
@@ -359,7 +359,7 @@ def select(
     return out
 
 
-def ordered(players: Iterable[CrewPlayer], by: SortBy = "last") -> list[CrewPlayer]:
+def ordered[P: CrewPlayer](players: Iterable[P], by: SortBy = "last") -> list[P]:
     """`last`: newest first; `met`: most groups first; `name`: by the folded
     key. A missing value sorts last; ties go by the stored key."""
     items = sorted(players, key=lambda p: p.key)

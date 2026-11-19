@@ -6283,8 +6283,9 @@ party or raid, including your own side in a battleground or arena (never
 your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
 which instance, and your own rating and note. It keeps them in WowLab.lua
 (and probably the game's backup of it, WowLab.lua.bak) in this game
-account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
-is sent anywhere. The book knows names, not people: a player who renames or
+account's SavedVariables folder, in wowlab's snapshots of it, and in
+wowlab's own crew database on this computer, which keeps them after the
+game's list drops them. Nothing is sent anywhere. The book knows names, not people: a player who renames or
 moves realm appears as a new entry, and someone else may later take a name
 you rated."
 
@@ -6292,6 +6293,11 @@ you rated."
 arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
 is **[verify]** (§20.6), hence "probably". The in-game notice and
 `wowlab crew --help` carry this wording, M19-10.)
+
+(Changed 2026-11-19, M20-01, by §21.4 term 2: the sentence names wowlab's
+own crew database as a place records are kept. A test keeps the four
+copies, `crew --help`, `Crew.lua`'s notice, this quote and the addon
+README's, identical.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is
@@ -6685,6 +6691,21 @@ what a sync takes in stays. Two guards, both before the transaction:
   restore made through a snapshot store kept somewhere other than the
   user data directory, whose journal the sync does not read. Such a book
   syncs like any other.
+
+*As built (2026-11-19, M20-01).* Bounds: a key holds a `-`, not last, in
+256 bytes; class, role, guild, instance 256 bytes and a note 200, valid
+UTF-8; `met`, `skipped`, loads 0 to 10,000,000; level 1 to 1,000; times
+2004 to 2099 (fixed, no clock read). Lock wait 5 s. A player not in the
+saved file keeps 0 as the value it last showed, so a return adds the whole
+new count. Confirmed by hand, another book adds by rule 2; a put-back one
+takes the larger of each count, never counting twice. Class, level, role,
+guild and instance come from the saved file only when its `last` is not
+older. A journal record that changed the account's `WowLab.lua`, not
+rolled back, holds, unless labelled `crew forget`, `rate` or `note` and
+undoing nothing. Another flavor folder's database is offered to `--adopt`
+only when the install folder it was filled from is gone. Copies:
+`<account>.sqlite.daily-<date>`, `.before-schema-<n>`. Until M20-02 a
+forget does not reach the database: the player stays listed, marked.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

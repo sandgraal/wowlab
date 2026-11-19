@@ -119,6 +119,7 @@ EXCLUDED: dict[str, str] = {
     "crew forget": "writes into the install",
     "crew rate": "writes into the install",
     "crew note": "writes into the install",
+    "crew sync": "writes into wowlab's crew database, and with --adopt moves one",
     "snap restore": "writes into the install",
     "profile apply": "writes into the install",
     "addon install": "writes into the install",
@@ -138,6 +139,59 @@ EXCLUDED: dict[str, str] = {
     "db2 builds": "asks wago.tools for its list of versions",
     "ui": "its server is started in this process instead, and its read requests made",
 }
+
+
+# The parts of wowlab's user data directory a read may change, with why: the
+# one named exemption of the data directory check (M20-01, docs/LAB_PLAN.md
+# §21.3). `crew list` and `crew show` sync the crew book into wowlab's crew
+# database before they answer. Everything else under the data directory must
+# stay as it was; a folder on the way to `crew/` may be made, and its time
+# and size (a folder's size counts its entries on some systems) may move, and
+# nothing else about it.
+DATA_EXEMPT: dict[str, str] = {
+    "crew": "crew list and crew show sync the crew book into wowlab's crew database first",
+}
+
+
+def _exempt_keys(data_dir: Path) -> list[str]:
+    """`DATA_EXEMPT`'s folders as fingerprint keys relative to `data_dir`."""
+    base = Path(os.path.realpath(data_dir))
+    keys = []
+    for name in DATA_EXEMPT:
+        folder = Path(os.path.realpath(snapshot.user_data_dir() / name))
+        with contextlib.suppress(ValueError):
+            keys.append(folder.relative_to(base).as_posix())
+    return keys
+
+
+def data_differences(
+    before: dict[str, Entry], after: dict[str, Entry], data_dir: Path
+) -> list[str]:
+    """`differences` of the user data directory, but for `DATA_EXEMPT`."""
+    exempt = _exempt_keys(data_dir)
+    on_the_way = {"."} | {
+        "/".join(e.split("/")[:i]) for e in exempt for i in range(1, e.count("/") + 1)
+    }
+
+    def kept(key: str) -> bool:
+        return not any(key == e or key.startswith(e + "/") for e in exempt)
+
+    old = {k: v for k, v in before.items() if kept(k)}
+    new = {k: v for k, v in after.items() if kept(k)}
+    for key in on_the_way:
+        a, b = old.get(key), new.get(key)
+        if (
+            b is not None
+            and b.kind == "dir"
+            and (
+                a is None
+                or dataclasses.replace(a, mtime_ns=0, size=0)
+                == dataclasses.replace(b, mtime_ns=0, size=0)
+            )
+        ):
+            old.pop(key, None)
+            new.pop(key, None)
+    return differences(old, new)
 
 
 # ─── the fingerprint ─────────────────────────────────────────────────────────
@@ -826,7 +880,7 @@ def sweep_and_compare(root: Path, data_dir: Path) -> Sweep:
         data_after = store_fingerprint(data_dir)
     hashed = sum(1 for e in before.values() if e.sha256 is not None)
     changed = differences(before, after)
-    data_changed = differences(data_before, data_after)
+    data_changed = data_differences(data_before, data_after, data_dir)
     flagged = [r for r in sweep.ran if r.problem]
     verdicts = [
         f"wowlab {_version()}; flavors: "
@@ -1563,3 +1617,27 @@ def test_a_failed_crew_dump_or_diff_run_prints_its_exit_code_only_constructed() 
     ]
     assert lines[5] == "wowlab doctor --json: exit 2\ndoctor's own error"
     assert len(lines) == 6
+
+
+def test_only_the_crew_database_may_change_under_the_data_directory_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one exemption of the data directory check (M20-01): what a crew
+    read writes under `crew/`, and the folders made on the way, pass; any
+    other change under the data directory is still found."""
+    data = tmp_path / "data"
+    monkeypatch.setattr(snapshot, "user_data_dir", lambda: data / "wowlab")
+    (data / "wowlab" / "store").mkdir(parents=True)
+    (data / "wowlab" / "store" / "kept").write_bytes(b"x")
+    before = store_fingerprint(data)
+    time.sleep(0.01)
+    crew = data / "wowlab" / "crew" / "_flavor_"
+    crew.mkdir(parents=True)
+    (crew / "ACCOUNT.sqlite").write_bytes(b"constructed")
+    after = store_fingerprint(data)
+    assert differences(before, after) != []
+    assert data_differences(before, after, data) == []
+    (data / "wowlab" / "store" / "added").write_bytes(b"y")
+    found = data_differences(before, store_fingerprint(data), data)
+    assert any("store/added" in line for line in found)
+    assert not [line for line in found if "crew" in line]
