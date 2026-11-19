@@ -2,16 +2,18 @@
 `snap restore`, `undo` and `profile apply` print, and what a restore leaves
 alone (M16-111)."""
 
+import functools
 import hashlib
 import os
 import stat
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 
 from wowlab_core import (
+    crewcount,
     guard,
     layout,
     longpath,
@@ -428,6 +430,53 @@ def _plan_item_lines(
     return _detail_lines(item.path, before, after, limit=_DETAIL_PLAN_LIMIT)
 
 
+def _crew_side(side: _Side) -> bytes | None:
+    """A side as bytes for the crew book's comparison: None when nothing
+    is there or it cannot be read."""
+    return side if isinstance(side, bytes) else None
+
+
+def _crew_restored(
+    store: snapshot.SnapshotStore, flavor_path: Path, plan: Sequence[guard.PlanItem]
+) -> crewcount.CrewBookCarried | None:
+    """The crew book a write plan brings back (M19-11): from the content
+    each item writes (a stored object), compared with what the install
+    holds there now. A stored object that cannot be read is left to the
+    write, which refuses it."""
+
+    def items() -> Iterator[tuple[str, bytes, Callable[[], bytes | None]]]:
+        for item in plan:
+            if item.after is None:
+                continue
+            try:
+                data = store.read_object(item.after, size=item.size)
+            except (snapshot.SnapshotError, OSError):
+                continue
+
+            def now(item: guard.PlanItem = item) -> bytes | None:
+                return _crew_side(_on_disk(store, flavor_path, item.path, item.before))
+
+            yield item.path, data, now
+
+    return crewcount.brought_back(items())
+
+
+def _crew_undone(
+    store: snapshot.SnapshotStore, put_back: Sequence[tuple[str, str, _Side]]
+) -> crewcount.CrewBookCarried | None:
+    """The crew book an undo brings back (M19-11): from the content it puts
+    back at each path (a stored object), compared with what the install
+    holds there now, as the plan read it."""
+
+    def items() -> Iterator[tuple[str, bytes, Callable[[], bytes | None]]]:
+        for path, sha, now in put_back:
+            data = _stored(store, sha)  # bounded; one it cannot read is the undo's to refuse
+            if isinstance(data, bytes):
+                yield path, data, functools.partial(_crew_side, now)
+
+    return crewcount.brought_back(items())
+
+
 class SkippedPath(_Out):
     """A file a whole-snapshot restore left alone (owner decision 2026-09-27)."""
 
@@ -493,6 +542,9 @@ class RestoreReport(_Out):
     # The text plan, line by line, as the terminal shows it before the
     # prompt, with keys, macros and CVars by name (M16-10).
     plan_lines: list[str] = Field(default_factory=list)
+    # The crew book the restore brings back, decided from the files' content:
+    # counts only, never a name (M19-11). None when it brings none back.
+    crew_book: crewcount.CrewBookCarried | None = None
 
 
 class UndoReport(_Out):
@@ -522,6 +574,9 @@ class UndoReport(_Out):
     # after the plan read them, which the text result names after "Undone."
     # (M16-105).
     unlisted_written: list[str] = Field(default_factory=list)
+    # The crew book the undo brings back, decided from the files' content:
+    # counts only, never a name (M19-11). None when it brings none back.
+    crew_book: crewcount.CrewBookCarried | None = None
 
 
 def _client_managed(

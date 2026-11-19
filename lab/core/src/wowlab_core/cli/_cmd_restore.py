@@ -10,6 +10,7 @@ import typer
 from pydantic import ValidationError
 
 from wowlab_core import (
+    crewcount,
     guard,
     install,
     layout,
@@ -33,6 +34,8 @@ from wowlab_core.cli._changes import (
     _added_since,
     _changed_executables,
     _client_managed,
+    _crew_restored,
+    _crew_undone,
     _detail_lines,
     _disk_now,
     _executable_note,
@@ -44,6 +47,7 @@ from wowlab_core.cli._changes import (
     _relogin_notes,
     _screenshot_note,
     _set_aside,
+    _Side,
     _skipped_lines,
     _stored,
     _unchanged,
@@ -67,6 +71,7 @@ from wowlab_core.cli._common import (
     RootOpt,
     YesOpt,
     _confirm,
+    _crew_plan_line,
     _discover,
     _emit,
     _flavor_list,
@@ -363,9 +368,13 @@ def snap_restore(
             notes=notes,
             into=into_report,
             plan_lines=[_safe(line) for line in plan_lines],
+            crew_book=crew,
         )
 
     shots_differ = any(a.disk != "same" for a in aside)
+    # What the restore brings back of the crew book, from the content it
+    # writes (M19-11): said in the plan, never a name.
+    crew = _crew_restored(store, chosen.path, plan)
     plan_lines: list[str] = []
     if plan or skipped or aside or left_alone:
         plan_lines.append(
@@ -384,6 +393,9 @@ def snap_restore(
             detail = _plan_item_lines(store, chosen.path, item)
             plan_lines.extend(detail)
             detailed = detailed or (bool(detail) and wtfdiff.kind_of(item.path) is not None)
+        crew_line = _crew_plan_line(crew)
+        if crew_line is not None:
+            plan_lines.append(crew_line)
         plan_lines.extend(_skipped_lines(skipped))
         if aside:
             plan_lines.extend(_not_restored_lines(manifest.id, aside))
@@ -448,6 +460,14 @@ def _undo_lines(last: guard.HistoryRecord) -> list[str]:
 
 
 def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
+    """`undo`'s text plan and the paths it lists (`_undo_plan_crew`)."""
+    lines, listed, _ = _undo_plan_crew(last)
+    return lines, listed
+
+
+def _undo_plan_crew(
+    last: guard.HistoryRecord,
+) -> tuple[list[str], list[str], crewcount.CrewBookCarried | None]:
     """`undo`'s text plan, and the paths it lists: only the steps the undo will take. A path whose
     disk already holds what was there before that transaction (a file a
     rollback already put back or removed) is skipped by the undo, so it is
@@ -461,7 +481,9 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
     (`_CHANGED_LINE`; a state this version does not know gets
     `_CHANGED_UNKNOWN_STATE`, which guesses no one). In every state it also says that the undo
     replaces those changes, that its own snapshot keeps a copy of them
-    first, and that a second undo, run next, brings them back."""
+    first, and that a second undo, run next, brings them back. Last, what
+    the undo brings back of the crew book, from the content it puts back
+    (M19-11), counts only."""
     store = snapshot.SnapshotStore()
     flavor_path = Path(last.flavor_path)
     changed = _CHANGED_LINE.get(last.state, _CHANGED_UNKNOWN_STATE)
@@ -471,6 +493,7 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
     ]
     detailed = False
     listed: list[str] = []
+    put_back: list[tuple[str, str, _Side]] = []  # path, content put back, disk now
     for p in last.paths:
         now = _disk_now(flavor_path, p.path)
         now_sha = (
@@ -479,6 +502,8 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
         if not isinstance(now, _Unread) and now_sha == p.before:
             continue  # already as it was before: the undo leaves it alone
         listed.append(p.path)
+        if p.before is not None:
+            put_back.append((p.path, p.before, now))
         if p.before is None:
             lines.append(f"  delete     {p.path}  (created by that transaction)")
         elif p.after is None:
@@ -492,6 +517,10 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
                 lines.append(changed)
             lines.extend(detail)
             detailed = detailed or (bool(detail) and wtfdiff.kind_of(p.path) is not None)
+    crew = _crew_undone(store, put_back)
+    crew_line = _crew_plan_line(crew)
+    if crew_line is not None:
+        lines.append(crew_line)
     folders = [d for d in last.created_dirs if os.path.lexists(flavor_path / d)]
     lines.extend(f"  remove folder {d}  (created by that transaction, if empty)" for d in folders)
     if not listed and not folders:
@@ -501,7 +530,7 @@ def _undo_plan(last: guard.HistoryRecord) -> tuple[list[str], list[str]]:
         else:
             lines.append(_NOTHING_TO_PUT_BACK_UNFINISHED if unfinished else _NOTHING_TO_PUT_BACK)
     lines.extend(_plan_footer(detailed, listed))
-    return lines, listed
+    return lines, listed, crew
 
 
 def _closed_unsnapshotted(closed: guard.HistoryRecord, now: guard.HistoryRecord | None) -> str:
@@ -636,10 +665,12 @@ def undo(
             plan_lines=[_safe(line) for line in plan_lines],
             written_paths=list(written),
             unlisted_written=[w for w in written if w not in set(listed)],
+            crew_book=crew,
         )
 
     plan_lines: list[str] = []
     listed: list[str] = []
+    crew: crewcount.CrewBookCarried | None = None
     # An `open` record that names no file still needs closing (a change
     # killed before it changed anything): it goes on to the plan and
     # `guard.undo`, which closes it, so `doctor` stops reporting it.
@@ -649,7 +680,7 @@ def undo(
         else:
             _say(f'The most recent transaction, {last.id} ("{last.label}"), changed no files.')
         return
-    plan_lines, listed = _undo_plan(last)
+    plan_lines, listed, crew = _undo_plan_crew(last)
     # With --json, the text plan goes to stderr when a prompt will ask first.
     show = _say if not json_out else _say_err
     if not json_out or not yes:
