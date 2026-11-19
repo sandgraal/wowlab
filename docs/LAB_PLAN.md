@@ -6492,7 +6492,7 @@ it is, saying the sync was skipped.
 | `players` | player: the key, name, realm, class, level, role, guild, `met`, first, last, where, rating, note, and the four counters | key; `last`; rating; `faced`; `allied` |
 | `matches` | match: `at`, map, `map_id`, kind, won | (`at`, `map_id`), unique |
 | `match_players` | player in a match: the match, the key, the side | match; key |
-| `meta` | fact: the schema of the database, the last sync, the saved file's hash at that sync | name |
+| `meta` | fact: the schema of the database, the last sync, the saved file's hash at that sync, the book's identity, the install root, the journal's newest record at that sync | name |
 
 **Sync rules.** (1) A player in the saved file is added or updated; a
 player only in the database stays. (2) Rating and note come from the saved
@@ -6513,17 +6513,26 @@ what a sync takes in stays. Two guards, both before the transaction:
   `kind` is `bg` or `arena`, and there are at most 20,000 players and 500
   matches. One violation and nothing is synced; the sentence says which
   kind of field, never its content.
-- *The book is the one the database knows, and not an older copy of it.*
-  `meta` keeps the book's identity (its `started` and the account folder)
-  and the newest `last` seen. A book with another identity (one imported
-  from someone else, §20.3 "Other routes"), or one whose newest `last` is
-  older than the database's (a restored snapshot, an `undo`, an
-  `sv merge` of an older file), is not synced automatically. The `crew`
-  command still answers, from the database as it is, and says why the
-  sync was held. `wowlab crew sync` run by hand then shows a plan (how
-  many players and matches it would add, how many ratings and notes it
-  would change) and asks; from such a book it never lowers a counter and
-  never replaces a rating or note that the database changed later. (4) A sync is one transaction: all or nothing. (5) An
+- *The book is the one the database knows, and was not put back by
+  wowlab.* `meta` keeps the book's identity (its `started` and the
+  account folder) and the journal record that was newest at the last
+  sync. A sync is held, not run, when the identity differs (a book
+  imported from someone else, §20.3 "Other routes"; or the player's own
+  new book after the old one was lost, §13.4), or when `guard`'s journal
+  shows a `snap restore`, `undo`, `sv merge` or import that wrote the
+  account's `WowLab.lua` since the last sync (wowlab's own `crew` writes
+  do not count). The `crew` command still answers, from the database as
+  it is, and says why the sync was held. `wowlab crew sync` run by hand
+  then shows a plan (how many players and matches it would add, how many
+  ratings and notes it would change) and asks. From a held book it never
+  lowers a counter, and it replaces a rating or note only where the
+  database's own row has not changed since it last agreed with the saved
+  file (each row keeps when its rating and note last changed). A sync
+  confirmed by hand records the book's identity and the journal's newest
+  record, so the next sync runs by itself.
+
+  Not caught: a saved file replaced by hand, outside wowlab. The journal
+  knows nothing of it, and such a book syncs like any other. (4) A sync is one transaction: all or nothing. (5) An
 unreadable book, or one of an unknown schema, syncs nothing and says so,
 as `crew list` does now. (6) Before the database's own schema is changed
 by a newer wowlab, a copy is kept beside it.
@@ -6640,15 +6649,15 @@ text is what M20-07 is built from.
 12. `crew forget --all` deletes the database and its copies.
 13. The probe stores counts, type names and three yes-or-no answers, and
     runs only while the book is on.
-16. A book that is older than the database, or is another book, is never
-    synced without a plan and a yes (the security review's advice: a
-    restored or imported book could otherwise change the database for
-    good).
-17. Forget's promise covers the files wowlab keeps, and says that system
-    backups keep theirs.
 14. `kind` is `bg` or `arena` only; `crew matches` and the new `crew list`
     options are the conductor's choice of how to ask the database.
 15. The warning's added words: "with you N times, against you M".
+16. A book that wowlab itself put back (a restore, an undo, a merge, an
+    import), or that is another book, is never synced without a plan and a
+    yes (the security review's advice: it could otherwise change the
+    database for good).
+17. Forget's promise covers the files wowlab keeps, and says that system
+    backups keep theirs.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
