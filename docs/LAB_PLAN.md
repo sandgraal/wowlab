@@ -6347,7 +6347,11 @@ fight against in battlegrounds and arenas. It changes two ADRs, both
 (opponents may be recorded) and ADR-0039 (the database).
 
 Every statement here about the Forever client's PvP calls is from memory
-of other versions of the game and is **[verify]** until M20-06.
+of other versions of the game and is **[verify]** until M20-06. What is
+known points to the modern client, not the old one: `docs/DATA_SOURCES.md`
+records Forever's API as the current mainline surface, and the capture of
+2026-10-16 found a global `issecretvalue`. So the newer calls are the
+better guess and the older ones are kept as candidates.
 
 ### 21.1 Two stores
 
@@ -6397,16 +6401,28 @@ The book's `schema` becomes 2. What changes from §20.1:
   the player leaves before its end has no scoreboard read and no entry;
   its teammates were counted by the roster pass as any group's are.
 - **`probe.pvp`**, what M20-05's probe found. It runs only while the book
-  is on, inside the roster pass (already gated and out of combat), when
-  `GetInstanceInfo` gives the instance type `pvp` or `arena`. For each
-  candidate call it stores whether the call exists and the count and Lua
-  type names of what it returned; and for the first scoreboard row only,
-  three yes-or-no answers: the name is a string, the name holds a `-`, the
-  name is a secret value. No name, no other value and no error text is
-  stored. `doctor` prints the block (M20-03), which is how the owner reads
-  it at M20-06. The block is file content like any other, so `doctor`
-  prints only whole numbers, true or false, and type names from Lua's
-  fixed set; anything else is shown as `?`.
+  is on and out of combat, in an instance of type `pvp` or `arena`, twice
+  per match: once after entry, and once after a winner is reported. Each
+  time it stores, and nothing else:
+  - for each candidate call, whether it exists;
+  - for a call that returns several values, the Lua type name at each
+    position; for one that returns a table (as the newer score call is
+    believed to), the table's field names and each field's type name.
+    Field names are the game's own vocabulary, not anyone's data;
+  - the number of scoreboard rows, and whether a request for the data was
+    made first;
+  - how many of the candidate events arrived since entry;
+  - as plain whole numbers, the side value of the first row, the player's
+    own side value, and the winner value;
+  - for the first row, three yes-or-no answers: the name is a string, the
+    name holds a `-`, the name is a secret value.
+  No name, no GUID, no other value and no error text is stored; a row
+  table holds a GUID field and the probe never indexes it. `doctor`
+  prints the block (M20-03), which is how the owner reads it at M20-06.
+  The block is file content like any other, so `doctor` prints only whole
+  numbers, true or false, the game's field names checked against a fixed
+  list, and type names from Lua's fixed set; anything else is shown as
+  `?`.
 - **Migration.** The addon of this wave turns a schema 1 book into schema 2
   in one pinned function that adds nothing but the new number and an empty
   `matches`. It runs only for a book that is on: at load when `on` is
@@ -6431,15 +6447,44 @@ match's scoreboard once: each row's name and realm, class, and which side
 it is on, and the winner. Nothing else on a scoreboard row is read: no
 GUID, rating, matchmaking value, honor, race, faction, spec, or damage,
 healing and kill totals (the amendment to ADR-0036 names them). It builds
-`team` and `foes`, raises the counters, and adds or updates each player as §20.1 does for a group
-member, except that level, role and guild are not on a scoreboard and are
-left as they were. Candidate calls, each **[verify]**:
-`GetNumBattlefieldScores`, `GetBattlefieldScore`,
-`RequestBattlefieldScoreData`, `GetBattlefieldWinner`, `C_PvP.GetScoreInfo`,
-and the events `UPDATE_BATTLEFIELD_SCORE` and `PVP_MATCH_COMPLETE`. Which
-exist, what they return, whether a name on the scoreboard carries its
-realm, and whether any of it is a secret value decide M20-07 and M20-08;
-they are not written before M20-06 reports.
+`team` and `foes`, raises the counters, and adds or updates each player as
+§20.1 does for a group member, except that level, role and guild are not
+on a scoreboard and are left as they were.
+
+What is believed, each **[verify]**:
+
+- *The calls.* Newer clients: `C_PvP.GetScoreInfo(i)`, returning one table
+  per row. Older ones: `GetNumBattlefieldScores` and `GetBattlefieldScore`.
+  Also `RequestBattlefieldScoreData`, `GetBattlefieldWinner`,
+  `GetBattlefieldArenaFaction`, `IsActiveBattlefieldArena`, and the events
+  `UPDATE_BATTLEFIELD_SCORE` and `PVP_MATCH_COMPLETE`.
+- *The data is asked for and arrives later.* A request is answered by an
+  event, and until then there may be no rows.
+- *Both teams are listed during the match*, not only after it. Reading
+  then would usually be in combat, so the addon still reads after the end.
+- *A side is a team number, not a faction.* A row carries 0 or 1, the
+  player's own number comes from its own call or its own row, and
+  `GetBattlefieldWinner` gives nothing while the match runs. The addon
+  never infers a side from the player's faction, since a client may let a
+  player fight for the other one. What a draw gives is not known.
+- *The scoreboard does not last.* The player is moved out about two
+  minutes after the end, can leave at once, and leaving empties it.
+
+**Once per match.** The score event fires many times and a `/reload`
+after the end would read again, so one marker per match is saved with the
+book, as `current` is for a group, and a match is counted once. `at` is
+the time of the read. A match the player leaves before the end, or before
+being out of combat after it, has no entry.
+
+**`met` and `allied` are different counts.** In a battleground the roster
+pass counts teammates in `met`, as in any group; `allied` counts matches.
+The warning's "with you N times" is `allied`. Whether queueing as a
+premade group empties `current` when the battleground's raid replaces the
+party, and so counts a friend's `met` again, is **[verify]**.
+
+Which calls exist, what they return and whether any of it is a secret
+value decide M20-07 and M20-08; they are not written before M20-06
+reports.
 
 **The warning.** As §20.1: one line when a rated player joins your team,
 now with "with you N times, against you M". Whether the client lists the
@@ -6598,11 +6643,15 @@ database, it is never synced without that step (above).
 
 ### 21.5 What is not known
 
-Beyond §20.6: every scoreboard call and event in §21.2; whether the
-scoreboard is filled before the match ends; whether a scoreboard name
-carries the realm and in which form; whether names there are secret
-values; how long a login takes with 20,000 players in the saved file;
-whether arenas exist on Forever at all.
+Beyond §20.6: every item under "What is believed" in §21.2; whether names
+on a scoreboard are secret values after a match; whether a premade group
+is counted twice; whether arenas exist on Forever at all; and the 20,000
+limit itself. 20,000 players is about 5.6 MB of saved file by ADR-0039's
+figures, with about 1 MB of matches, and nobody has loaded one that size
+on this client: how long a login takes, and whether the client loads it
+at all (older clients are said to have failed on very large saved files),
+is not known. M20-06 times a login at the book's real size, which will be
+small (§21.7, decision 18).
 
 ### 21.6 Tickets and order
 
@@ -6663,6 +6712,14 @@ text is what M20-07 is built from.
     database for good).
 17. Forget's promise covers the files wowlab keeps, and says that system
     backups keep theirs.
+18. The 20,000 limit ships without a test at full size. Testing it means
+    putting a constructed 20,000-player book into the owner's install
+    through the write gate, logging in, and undoing it; the conductor has
+    not planned that and asks before doing so. Until then the limit is
+    **[verify]**, and a snapshot is the way back if a large book fails to
+    load.
+19. One saved marker per match, so a repeated event or a `/reload` never
+    counts a match twice.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
