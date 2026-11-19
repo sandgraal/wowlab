@@ -5074,6 +5074,38 @@ drawn). Placing weapons needs the bones and the stand animation, the Wave 7
 option (§17.8). The axis signs stay **[verify]** until the owner opens a
 `.glb` in a viewer.
 
+*Note, 2026-11-19 (M15-24, the held-items probe; no drawing code, the
+attachment mapping above is unchanged):* observed
+(`macos-70959/derived/charmodel.json`, rows `other_attachment_points` and
+`held_point_parents`, read by `scripts/charmodel_facts.py` from 959310
+and 917116 at 1.60.1.70959; game axes, Z up). (a) The files hold 45
+(959310) and 47 (917116) attachment points; every one sits at its bone's
+pivot, and seven of them (19, 21, 22, 35, 36, 37, 38, on both) are stored
+at the origin. All eight of 26 to 33 are there on both, each stored away
+from the origin, at a height of 1.28 to 1.83 (959310) and 1.39 to 2.04
+(917116): 26, 27, 28, 30 and 31 at x from −0.24 to −0.41, 29 at x 0.09
+and 0.14, 32 and 33 at x −0.03 (959310) and 0.22 (917116), 32 and 33
+mirrored left and right (y ±0.21 and ±0.32). (b) The bone each hand point sits on (203,
+213, 214 on 959310; 200, 206, 207 on 917116) has a parent whose pivot is
+also (0, 0, 0) (50, 121, 128; 49, 100, 107); the bone above that rests
+away from the origin: for the shield point 36 at (−0.02, 0.54, 1.47) on
+959310, within 1e-6 of where that file stores point 4, and at (−0.12,
+0.48, 1.49) on 917116; for the main and off hand 44 and 47 at (0.04,
+∓0.74, 1.25) on 959310 and 43 and 46 at (−0.08, ∓0.57, 1.08) on 917116,
+mirrored left and right. Hypotheses, each **[verify]**: (a) 26 to 33 are
+the community list's sheath points (main hand, off hand, shield, then
+large and hip weapons), the negative x being behind the body (the
+facing direction is itself **[verify]**), so a weapon could be drawn
+sheathed at a stored position; that needs the item's sheathe type from the game tables, and
+gives a position without the bone's rotation, so the angle is unknown.
+(b) The two bones at the origin under each hand point are moved only by
+the animation, and the next bone up is the forearm or wrist of the rest
+pose (the main and off hand ones lie mirrored, 0.57 to 0.74 out from
+the centre line at z 1.08 to 1.25); a weapon placed there would sit near the
+hand, again with no rotation. Neither reading has been drawn or checked in
+a viewer, and none is decided here: whether held items are drawn at all,
+and where, is the owner's call (the M15-24 acceptance).
+
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root

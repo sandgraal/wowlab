@@ -18,8 +18,11 @@ section, vertex and triangle counts, each PNG's name, source file, size and
 MD5, the body texture's painted count, the files left out, and the
 build's time, and for each body model the attachment points 0, 1, 2, 5,
 6, 11 and 12 with their bone, stored position and that bone's pivot (read
-here from the bone array). No geometry, no pixel, no byte of any file, no
-install path.
+here from the bone array), and (M15-24, the held-items probe) every other
+attachment point the body model holds with the same three facts, and for
+the hand points 0, 1 and 2 the parent of the bone each sits on with its
+pivot (and the next bone up when that pivot is the origin). No geometry,
+no pixel, no byte of any file, no install path.
 
 Refusals (exit 1), as `renderplan_facts.py`'s: `--out` that is a link, one
 inside a game install, one already there; a table missing from `--tables`;
@@ -136,6 +139,72 @@ def attachment_points(body: m2.M2Model, data: Buffer) -> dict[str, Any]:
     return out
 
 
+# M15-24, the held-items probe. The parent of a bone (M2CompBone.parent_bone,
+# an i16 at 8; -1 for a root bone, wowdev.wiki, M2 since 264), and the hand
+# points whose bones' parents are recorded.
+_PARENT_AT = 8
+_PARENT = struct.Struct("<h")
+HELD = (0, 1, 2)
+PARENT_LEVELS = 2  # the parent, and one more level when the parent rests at the origin
+
+
+def _bones(body: m2.M2Model, data: Buffer) -> tuple[memoryview, int, int]:
+    md21 = next(c for c in body.chunks if c.tag == "MD21")
+    blob = memoryview(data).cast("B")[md21.offset : md21.offset + md21.size]
+    count, offset = _BONE.unpack_from(blob, _BONES_AT)
+    return blob, count, offset
+
+
+def _bone(blob: memoryview, count: int, offset: int, bone: int) -> tuple[int, list[float]]:
+    """Bone `bone`'s parent index and pivot."""
+    if not 0 <= bone < count:
+        raise facts.FactsError(f"bone {bone} of {count}")
+    at = offset + _BONE_SIZE * bone
+    (parent,) = _PARENT.unpack_from(blob, at + _PARENT_AT)
+    return parent, list(_PIVOT.unpack_from(blob, at + _PIVOT_AT))
+
+
+def other_attachment_points(body: m2.M2Model, data: Buffer) -> list[dict[str, Any]]:
+    """Every attachment the body model holds whose id is not in `POINTS`, in
+    file order: its id, bone, stored position and that bone's pivot (game
+    axes). The probe of M15-24: which sheath points (26 to 33 by the
+    community list) the file holds, and where, read rather than assumed."""
+    blob, count, offset = _bones(body, data)
+    return [
+        {
+            "id": a.id,
+            "bone": a.bone,
+            "position": list(a.position),
+            "bone_pivot": _bone(blob, count, offset, a.bone)[1],
+        }
+        for a in body.attachments
+        if a.id not in POINTS
+    ]
+
+
+def held_point_parents(body: m2.M2Model, data: Buffer) -> dict[str, list[dict[str, Any]]]:
+    """For each hand point of `HELD` the body model has, the bones above the
+    one it sits on: the parent with its pivot, and the parent's parent when
+    the parent's pivot is (0, 0, 0) (at most `PARENT_LEVELS`; none above a
+    root bone). The probe of M15-24."""
+    blob, count, offset = _bones(body, data)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for point_id in HELD:
+        point = body.attachment(point_id)
+        if point is None:
+            continue
+        chain: list[dict[str, Any]] = []
+        parent, _ = _bone(blob, count, offset, point.bone)
+        while parent >= 0 and len(chain) < PARENT_LEVELS:
+            above, pivot = _bone(blob, count, offset, parent)
+            chain.append({"bone": parent, "bone_pivot": pivot})
+            if any(pivot):
+                break
+            parent = above
+        out[str(point_id)] = chain
+    return out
+
+
 def _running(inst: Install, flavor: str) -> bool | None:
     try:
         state = process.client_state([inst.root], flavor_folders=[flavor])
@@ -171,6 +240,8 @@ def model_facts(
                 "label": label,
                 **character_facts(charmodel.build(plan, source), plan),
                 "attachment_points": points,
+                "other_attachment_points": other_attachment_points(body, data),
+                "held_point_parents": held_point_parents(body, data),
             }
         )
     return {

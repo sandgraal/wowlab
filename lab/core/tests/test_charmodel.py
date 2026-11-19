@@ -292,7 +292,9 @@ def test_the_derived_fixture_is_consistent() -> None:
     """The recorded facts of the two fixture characters at 70959 (written by
     `scripts/charmodel_facts.py` on the owner's install; asserted against
     the install by `test_charmodel_live.py`): one node per placed model, the
-    hand points stored at the origin, no path and no geometry."""
+    hand points stored at the origin, no path and no geometry; and the
+    held-items probe's rows (M15-24): the sheath points 26 to 33 away from
+    the origin, the hand bones' parents at the origin, the next bone up not."""
     import json
 
     path = cb.FIXTURES / "macos-70959" / "derived" / "charmodel.json"
@@ -312,6 +314,21 @@ def test_the_derived_fixture_is_consistent() -> None:
         for worn in ("5", "6", "11", "12"):  # shoulders, head, back: away from the origin
             assert any(points[worn]["position"]) and points[worn]["position"][2] > 1.0
         assert all(not m["placed"] for m in char["models"] if m["what"] == "item")
+        # M15-24, the held-items probe. Every other point the file holds, in
+        # file order, none of the seven above, each at its bone's pivot.
+        others = char["other_attachment_points"]
+        ids = [o["id"] for o in others]
+        assert ids == sorted(set(ids)) and not set(ids) & {int(p) for p in points}
+        assert all(o["position"] == o["bone_pivot"] for o in others)
+        sheath = {o["id"]: o for o in others if 26 <= o["id"] <= 33}
+        assert sorted(sheath) == list(range(26, 34))  # all eight, away from the origin
+        assert all(o["position"][2] > 1.0 for o in sheath.values())
+        # The hand bones' parents rest at the origin; the next bone up does not.
+        parents = char["held_point_parents"]
+        assert sorted(parents, key=int) == ["0", "1", "2"]
+        for chain in parents.values():
+            assert len(chain) == 2
+            assert not any(chain[0]["bone_pivot"]) and any(chain[1]["bone_pivot"])
 
 
 def _counting_decode(monkeypatch: pytest.MonkeyPatch) -> list[int]:
