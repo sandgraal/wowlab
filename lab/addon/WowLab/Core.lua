@@ -706,8 +706,13 @@ SlashCmdList.WOWLAB = function(message)
         end
         ns.Refresh()
         say("tables refreshed in memory; the file is written at the next /reload or logout.")
+    elseif command == "crew" then
+        -- The crew book (Crew.lua), handed the whole typed text: a name and a
+        -- note are not lowercased.
+        ns.CrewCommand(message)
     else
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
+        say("/wowlab crew  the crew book of players you group with: off until you turn it on.")
     end
 end

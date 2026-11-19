@@ -5934,6 +5934,12 @@ must come from the repository test's fixed list of constructed names.)
   a `/reload` or relog inside the same group does not count or warn again,
   and is emptied when a pass finds the player in no group. A crash loses
   what was not saved, like everything else here.
+  *Limit (2026-11-19, owner decision on M19-10's domain review):* `current`
+  is account-wide but a group belongs to one character, so logging out to
+  an alt and back while still in a group counts that group again (and
+  warns again). The saved shape does not change for it; the README says so.
+  Battleground and arena teams count as groups (owner decision, same date):
+  the owner wants PvP teammates recorded.
 - **The key** is `Name-Realm`. A realm that comes back nil or empty means
   the player's own realm, filled from `GetNormalizedRealmName()`; if that
   is nil too the member is skipped, and a key ending in `-` is never
@@ -6063,6 +6069,58 @@ must come from the repository test's fixed list of constructed names.)
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
+- *As built (2026-11-19, M19-10).* `lab/addon/WowLab/Crew.lua`, the TOC
+  lines above and `/wowlab crew` with `on`, `off`, `good`, `bad`, `clear`,
+  `note` and `who`. **Confirmed** on the client only by earlier captures:
+  `UnitClass("player")`, `UnitLevel("player")`, `C_Timer.After`,
+  `InCombatLockdown` out of combat and that `issecretvalue` can be probed.
+  Still **[verify]** until M19-07: every other call and event in the list
+  above, plus `UnitIsPlayer` (the target is used only when it is a player);
+  the realm parts; roles; `GetInstanceInfo` in the open world and in an
+  instance; secret values in instances; `WowLab.lua.bak`; the chat log; the
+  account probe across a logout; the drop order. Choices made in building
+  it: the name call is `UnitName` (not `UnitFullName`); the walk is
+  `raid1`..`raid40` or `party1`..`party4`, a unit that does not exist giving
+  a nil name; the first pass waits 15 s after entering the world, like
+  Core.lua's, so `/wowlab crew off` can be typed first, and a typed
+  `/wowlab crew` command runs a pass at once; `where` is set when a member
+  is first counted (left out when that group is in the open world) and
+  whenever a later pass finds the group in an instance; the warning gives
+  the groups and the date as they stood before this group; a typed name is
+  matched exactly, or case-blind when exactly one key matches; ratings and
+  notes are refused while the book is off. The roster events are
+  registered once per session, at the first `PLAYER_ENTERING_WORLD` the
+  book is on and out of combat, or by any `/wowlab crew` command while it
+  is on (`/wowlab crew` says when it was waiting). Lines are printed with
+  `print`, which writes to the default chat frame, not with
+  `DEFAULT_CHAT_FRAME:AddMessage`.
+  *Fix round 1 (2026-11-19, M19-10 reviews):* the file's schema is the
+  pinned `local CREW_SCHEMA = 1`; a book of any other schema is left wholly
+  alone (`crewOn`, `crewLoaded` and the slash handler's first lines test
+  it, and every store sits behind the gate, in the slash handler or in the
+  pinned probe handler). `good`, `bad` and `clear` given a word without a
+  `-` are refused rather than applied to the target; a note given to the
+  target names the target in its reply. Printed fields also lose the
+  bidirectional embeddings and isolates (U+202A to U+202E, U+2066 to
+  U+2069). The warning says "last seen in <guild>", since a guild is never
+  cleared. The term-2 notice printed in game says "and probably the game's
+  backup of it" (the backup is [verify]) and that battleground and arena
+  teams count, as the sentence of §20.5 now does (changed the same day).
+  *Fix round 2 (2026-11-19, code review):* `/wowlab crew off`, and `on`
+  for a book that was off, empty `current`, so a group joined while the
+  book was off is counted and warned about once it is on. Without the
+  client's `time` a new book has no `started` and the status says the date
+  is unknown. The login line is said even when nothing can be recorded (a
+  missing call or event, an unreadable book), with the reason. It cannot be
+  said when the world loads in combat: every file-level handler of
+  `Crew.lua` but the pinned probe must start with the on and combat tests
+  (M19-01's `_crew_on_call_ok` and `_crew_handler_ok`), so nothing runs then;
+  the next loading screen or `/wowlab crew` command says it.
+  *Not done (2026-11-19):* stripping spaces from a cross-realm member's
+  realm (domain review): the key rule of M19-01 accepts only
+  `<name> .. "-" .. <realm>` built straight from the name calls' locals, so a
+  `string.gsub` of the realm cannot be a key part. One player can therefore
+  have two keys (§20.6).
 
 ### 20.2 What the Lab reads
 
@@ -6200,14 +6258,20 @@ sequences, U+009B, U+202E).
 | 4. Shared output | `doctor --redact` never prints a crew record, from the live file or its `.bak`; it may say on or off and a count, never a key, and an unreadable `WowLab.lua` is reported without quoting the token that failed. `snap export` says, when any object in the archive holds a non-empty crew book (decided from content, not the file name), that it includes it. Profiles never carry `WowLab.lua` (`profile_presets.toml` excludes it), which a test pins. The `char advise --send` packet of ADR-0032, when built, never reads `WowLabCrewDB` | tests of each on constructed records |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew forget` (the live file and the game's backup), `snap rm` for the copies in snapshots (M19-09), and the sentence that says what a forget does not reach | §20.3's tests; M19-09's |
 
-The sentence of term 2: "The crew book keeps, for each player you group
-with, their name, realm, guild, class, level and role, when you first and
-last grouped, how many times and in which instance, and your own rating
-and note. It keeps them in WowLab.lua (and the game's backup,
-WowLab.lua.bak) in this game account's SavedVariables folder, and in
-wowlab's snapshots of it. Nothing is sent anywhere. The book knows names,
-not people: a player who renames or moves realm appears as a new entry,
-and someone else may later take a name you rated."
+The sentence of term 2: "The crew book keeps, for each player in your
+party or raid, including your own side in a battleground or arena (never
+your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
+which instance, and your own rating and note. It keeps them in WowLab.lua
+(and probably the game's backup of it, WowLab.lua.bak) in this game
+account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
+is sent anywhere. The book knows names, not people: a player who renames or
+moves realm appears as a new entry, and someone else may later take a name
+you rated."
+
+(Changed 2026-11-19, owner decision: your own side in a battleground or
+arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
+is **[verify]** (§20.6), hence "probably". The in-game notice and
+`wowlab crew --help` carry this wording, M19-10.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is
@@ -6268,7 +6332,14 @@ ones that could change the record or the wording:
   reaches `WoWChatLog.txt`;
 - whether the account file's probe survives a logout (the §13.4 loader
   bug would wipe a book; a snapshot is the way back);
-- the 5,000 drop order, which no in-game check can reach.
+- the 5,000 drop order, which no in-game check can reach;
+- whether one player gets two keys: a same-realm key takes its realm from
+  `GetNormalizedRealmName()` (believed to have its spaces removed), a
+  cross-realm key from `UnitName`'s realm (believed to keep them, "Argent
+  Dawn"), and a realm with a space cannot be typed as one word after
+  `/wowlab crew good` (2026-11-19, M19-10 domain review);
+- whether `IsInGroup()` and `IsInRaid()` are true in a battleground and an
+  arena, where the team counts as a group (owner decision, 2026-11-19).
 
 The reader and the CLI take the key as an opaque string whatever the
 answers are.

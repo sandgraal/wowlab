@@ -16,6 +16,10 @@ globals:
     property: full-write
   WowLabDB:
     property: full-write
+  # The crew book (Crew.lua, docs/LAB_PLAN.md §20.1): account-wide, created
+  # only by `/wowlab crew on`.
+  WowLabCrewDB:
+    property: full-write
   SLASH_WOWLAB1:
     property: full-write
   SlashCmdList:
@@ -208,3 +212,46 @@ globals:
     property: read-only
   GetBindingKey:
     property: read-only
+
+  # --- The crew book (Crew.lua only, docs/LAB_PLAN.md §20.1, M19-10) ---------
+  # Every one is [verify] until the owner's in-game check (M19-07), tested for
+  # before it is called, and called only while the book is on and out of
+  # combat. tests/addon/test_lab_addon.py lets no other file use the name
+  # calls (UnitName, GetNormalizedRealmName, GetGuildInfo).
+  IsInGroup:
+    args: []
+  IsInRaid:
+    args: []
+  UnitIsUnit:
+    args:
+      - type: string
+      - type: string
+  UnitIsPlayer:
+    args:
+      - type: string
+  UnitName:
+    args:
+      - type: string
+  GetNormalizedRealmName:
+    args: []
+  UnitGroupRolesAssigned:
+    args:
+      - type: string
+  GetGuildInfo:
+    args:
+      - type: string
+  GetInstanceInfo:
+    args: []
+  UNKNOWNOBJECT:
+    property: read-only
+  # The clock, for `first`, `last`, `started` and the warning's date.
+  time:
+    args:
+      - required: false
+        type: table
+  date:
+    args:
+      - required: false
+        type: string
+      - required: false
+        type: number
