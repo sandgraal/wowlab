@@ -29,10 +29,23 @@ Each step says what it settles.
    - Type `/wowlab crew`. *Report:* does it say on, and does it list
      anything as missing or `absent`? Copy the reasons (they hold no names).
 
-4. **Log out once, to the character screen, and back in.**
-   - *Report:* did a "crew book is on" line appear after login? (It waits
-     up to 15 seconds.)
-   - This also settles whether the book survives a logout at all.
+4. **Exit the game fully, then start it again.** While it is closed, run
+   these two at the desk:
+
+   ```bash
+   uv run wowlab crew list
+   ```
+
+   ```bash
+   uv run wowlab snap create
+   ```
+
+   - *Report:* did `crew list` say the book is on (with no players yet)?
+     That settles whether the book survives a logout at all.
+   - The snapshot is your way back if a later login loses the book: nothing
+     else takes one for you.
+   - After logging back in, *report:* did a "crew book is on" line appear?
+     (It waits up to 15 seconds.)
 
 5. **Join a group in the open world**, with a player from your own realm
    and, if one is to hand, one from another realm. Wait a few seconds out
@@ -56,14 +69,19 @@ Each step says what it settles.
    - *Report:* did anyone's count go up? (It should not.)
 
 8. **Fight something with the group**, and if someone joins or leaves
-   during the fight, note it. After the fight, `/wowlab crew`.
-   - *Report:* the "skipped" number before and after the fight.
+   during the fight, note it. After the fight, out of combat,
+   `/wowlab crew who`.
+   - *Report:* was a player who joined during the fight listed afterwards?
+     (Nothing is read in combat; the addon catches up when the fight
+     ends. The count of skipped reads is not shown in game: step 14 gives
+     it once, at the desk.)
 
 9. **Enter an instance with the group** (a dungeon is enough). Out of
    combat inside, `/wowlab crew who`.
-   - *Report:* does anyone show as skipped or missing inside the
-     instance? This is the secret-value question: if names cannot be read
-     in an instance, the skipped number climbs and nobody new is listed.
+   - *Report:* is everyone in the group listed, or is someone missing
+     who joined inside the instance? This is the secret-value question: if
+     names cannot be read in an instance, nobody new is listed there and
+     step 14's skipped count is above zero.
 
 10. **See the warning.** Type `/chatlog` to start the chat log. Leave the
     group and rejoin it, or have the rated player leave and rejoin.
@@ -89,7 +107,9 @@ Each step says what it settles.
     - *Report:* does the count match what you saw in game? Is each line's
       class, level and "last instance recorded" sensible? For the players
       met only in the open world, does it show no instance?
-    - What role does it show for each (tank, healer, damage, or none)?
+    - For one player, `uv run wowlab crew show NAME-REALM` (the name stays
+      on your screen; do not paste it). *Report:* what role it shows
+      (tank, healer, damage, or none).
 
 14. The reader's own check, which prints counts and key shapes only:
 
@@ -97,7 +117,8 @@ Each step says what it settles.
     WOWLAB_WOW_ROOT="/path/to/World of Warcraft" uv run pytest -m live lab/core/tests/test_crewbook_live.py -s -p no:cacheprovider
     ```
 
-    - *Report:* paste its output. It holds no names.
+    - *Report:* paste its output. It holds no names, and it gives the
+      skipped count and how many players have each role.
 
 15. Does the game's backup hold the book? This prints a number only:
 
@@ -123,10 +144,13 @@ Each step says what it settles.
 
 - **A Lua error popup:** copy its first two lines. They name a file and a
   line number, not a player.
-- **The book is gone after a login:** do not log out again. Close the game
-  and run `uv run wowlab snap list`; the newest snapshot holds the book as
-  it was, and `uv run wowlab undo` or `snap restore` brings it back. Tell
-  the conductor: this is the loader bug §20.6 names.
+- **The book is gone after a login:** do not play on. Close the game and
+  tell the conductor: this is the loader bug §20.6 names. The snapshot
+  from step 4 holds the book as it was then (`uv run wowlab snap list`
+  shows it, and `uv run wowlab snap restore` puts it back, asking first).
+  What was recorded after that snapshot is lost. `wowlab undo` does not
+  help here: it reverses wowlab's own last change, which is the addon
+  install.
 - **To stop:** `/wowlab crew off` keeps what is stored and records nothing
   more. `uv run wowlab crew forget --all` (game closed) removes it all.
 
@@ -139,8 +163,11 @@ Each step says what it settles.
 | 5, 7 | whether a roster update arrives before names are loaded; `met` across a `/reload` |
 | 8, 9 | whether names are secret values in combat or in an instance |
 | 9, 13 | what `GetInstanceInfo` gives in the open world and in an instance |
-| 11 | whether a battleground team counts as a group |
+| 11 | whether a battleground team counts as a group (an arena is not checked) |
 | 13 | what roles come back |
 | 15, 16 | whether the backup holds the records; whether a printed line reaches the chat log |
 
-Not reachable by any in-game check: the 5,000 drop order.
+Not reached by this check: the 5,000 drop order; whether an arena team
+counts as a group; and whether `UNIT_NAME_UPDATE` follows a roster update
+that came before names were loaded (step 5's count against the group size
+shows only the result).
