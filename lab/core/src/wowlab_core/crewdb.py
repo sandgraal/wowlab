@@ -472,7 +472,9 @@ def _open(path: Path, *, create: bool) -> sqlite3.Connection | None:
         st = os.lstat(path)
     except FileNotFoundError:
         st = None
-    if st is not None and not stat.S_ISREG(st.st_mode):
+    if st is not None and (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1):
+        # SQLite writes the file in place: a second hard link could be
+        # anyone's file, so it is never opened.
         raise _not_ours(path)
     if st is None and not create:
         return None

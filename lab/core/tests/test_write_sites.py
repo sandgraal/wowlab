@@ -143,7 +143,30 @@ _EXPORT_CLEANUP = (
     "path elsewhere) still names the file this export created, by device and inode, and "
     "is not a link: an install's file reached through a swapped folder is never removed"
 )
+_CREWDB = "lab/core/src/wowlab_core/crewdb.py"
+_CREW_DB = (
+    "wowlab's crew database (§21.3, ADR-0039, M20-01): only <user data>/wowlab/crew/<flavor "
+    "folder>/<account folder>.sqlite, its daily copies and the copy kept before a schema "
+    "change beside it (and SQLite's -journal); each name is one discovered folder name, "
+    "never a separator or '..', and the path is refused unless it resolves under the "
+    "resolved crew/ folder with no link on the way, and when the file is a link, not a "
+    "regular file, or has a second hard link; folders 0700 and files 0600; --adopt moves "
+    "a file only from one crew/ folder to another"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_CREWDB, "import sqlite3"): _CREW_DB,
+    (_CREWDB, "snapshot.make_private_dirs(folder)"): _CREW_DB,
+    (_CREWDB, "f.chmod(0o700)"): _CREW_DB,
+    (
+        _CREWDB,
+        "fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)",
+    ): _CREW_DB,
+    (_CREWDB, "path.chmod(0o600)"): _CREW_DB,
+    (_CREWDB, "tmp.unlink()"): _CREW_DB + "; a copy's temporary file only",
+    (_CREWDB, "tmp.chmod(0o600)"): _CREW_DB,
+    (_CREWDB, "tmp.replace(dest)"): _CREW_DB + "; a copy put in place",
+    (_CREWDB, "old.unlink()"): _CREW_DB + "; a daily copy older than the three newest",
+    (_CREWDB, "frm.replace(to)"): _CREW_DB + "; --adopt's move",
     (_SNAPARCHIVE, "import zipfile"): _EXPORT_FILE,
     (_SNAPARCHIVE, "fd = os.open(target.name, _CREATE_FLAGS, _ARCHIVE_MODE, dir_fd=dir_fd)"): (
         _EXPORT_FILE

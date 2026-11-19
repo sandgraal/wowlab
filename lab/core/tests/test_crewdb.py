@@ -548,7 +548,9 @@ def test_an_unreadable_book_syncs_nothing_and_says_so_constructed(make: Any) -> 
     env = make(_three())
     env.sync()
     before = env.db_sha()
-    env.file.write_bytes(account_file(None) + b"WowLabCrewDB = {\r\n")  # cut short
+    env.file.write_bytes(
+        account_file(None) + crewbook.CREW_VARIABLE.encode("ascii") + b" = {\r\n"
+    )  # cut short
     for args in (("crew", "sync"), ("crew", "list")):
         result = env.run(*args)
         assert result.exit_code == 1, (args, result.output)
@@ -1191,3 +1193,17 @@ def test_crew_help_names_the_database() -> None:
     assert "wowlab's own crew database" in " ".join(result.stdout.split())
     sync_help = runner.invoke(cli.app, ["crew", "sync", "--help"], terminal_width=200)
     assert sync_help.exit_code == 0 and "--adopt" in sync_help.stdout
+
+
+def test_a_database_file_with_a_second_hard_link_is_refused_constructed(
+    make: Any, tmp_path: Path
+) -> None:
+    env = make(_three())
+    env.sync()
+    other = tmp_path / "other-name"
+    os.link(env.db(), other)
+    before = other.read_bytes()
+    env.save(_three(met_a=6))
+    with pytest.raises(crewdb.CrewDbError, match="is not a crew database wowlab made"):
+        env.sync()
+    assert other.read_bytes() == before
