@@ -6099,8 +6099,9 @@ Lab's `src/**/*.py`, `docs/`, the rest of `lab/addon/`, the tool and the
 constructed tests may name it; an assignment there is the empty shape, the
 nil line, or a table whose every key is a constructed name or a §20.1 field
 (never in a `.toc`). Elsewhere only an indexed fixture the tool accepts may.
-Accepted, not caught: `getfenv()[…]`, a bare Markdown table row, a
-`["Name"]` key with a separate `realm` field, a file not naming the book.
+Not caught: `getfenv()[…]`, a bare Markdown table row, a `["Name"]` key with
+a `realm` field, a file not naming the book, `WowLabCrewDB = f` then a table
+on the next line, a table hand-written after an accepted empty book.
 
 ### 20.6 What is not known
 

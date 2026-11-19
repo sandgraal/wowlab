@@ -46,6 +46,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 import zipfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -60,6 +61,14 @@ NAME_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"wowlabcrewdb"), r
 # An assignment to the name, anywhere on a line and whatever precedes it
 # (`_G.WowLabCrewDB = {`, `> WowLabCrewDB = {`, an indented block), in any casing.
 ASSIGNMENT_RE = re.compile(rb"wowlabcrewdb\s*=(?!=)", re.IGNORECASE)
+# Every place the name may be assigned: `= value`, or followed by `.`, `[` or
+# `:` (a field or index assignment, `WowLabCrewDB.players = {…}`).
+SITE_RE = re.compile(rb"(?P<name>wowlabcrewdb)\s*(?:(?P<assign>=)(?!=)|[.\[:])", re.IGNORECASE)
+# An index path straight to `=`: `.field`, `:field` and `[…]` parts only.
+INDEX_PATH_RE = re.compile(
+    rb"(?P<path>(?:[ \t]*(?:[.:][ \t]*[A-Za-z_]\w*|\[[^\]\r\n]*\]))+)[ \t]*=(?!=)"
+)
+INDEX_PART_RE = re.compile(rb"[.:][ \t]*(?P<field>[A-Za-z_]\w*)|(?P<bracket>\[[^\]\r\n]*\])")
 # After the assignment's `=`: a comment, a long string, a line break, or any
 # other non-blank byte (`_value_end` walks the value with these).
 VALUE_TOKEN_RE = re.compile(rb"--|\[=*\[|\r\n|[\r\n]|[^ \t\f\v]")
@@ -247,49 +256,65 @@ def _line(data: bytes, at: int) -> int:
     return data.count(b"\n", 0, at) + 1
 
 
-def _value_end(data: bytes, start: int) -> int:
+def _value_end(data: bytes, start: int, limit: int) -> int | None:
     """End of the value assigned at `start` (just after its `=`), whatever
     form it takes (`{…}`, `({…})`, `nil or {…}`, a comment before the brace):
     the first line break at bracket depth 0 after something other than
-    blanks and comments; strings and comments are skipped; the end of the
-    data when brackets never balance."""
+    blanks and comments; strings and comments are skipped. A value never runs
+    past `limit`, the next assignment site: None when its brackets, a string
+    or a comment are still open there (the caller fails the file and stops,
+    so no byte is walked twice)."""
     depth = 0
     seen = False
     at = start
-    while (token := VALUE_TOKEN_RE.search(data, at)) is not None:
+    while (token := VALUE_TOKEN_RE.search(data, at, limit)) is not None:
         text = token.group(0)
         first = text[:1]
         at = token.end()
         if first in b"\r\n":
             if depth <= 0 and seen:
                 return token.start()
-        elif text == b"--":
+            continue
+        seen = seen or text != b"--"  # a comment alone is not yet the value
+        if text == b"--":
             at = lab_capture._skip_comment(data, token.start())
-            if at < 0:
-                return len(data)
         elif first == b"[" and len(text) > 1:
-            seen = True
             at = lab_capture._skip_long(data, token.start())
-            if at < 0:
-                return len(data)
         elif first in (b'"', b"'"):
-            seen = True
             string = QUOTED_STRING_RE[first].match(data, token.start())
             at = string.end() if string else _end_of_line(data, token.start())
         elif first in b"{(":
-            seen = True
             depth += 1
         elif first in b"})":
-            seen = True
             depth -= 1
-        else:
-            seen = True
-    return len(data)
+        if at < 0 or at > limit:
+            return None
+    return limit if depth <= 0 else None
+
+
+_LINE_BREAK_RE = re.compile(rb"[\r\n]")
 
 
 def _end_of_line(data: bytes, at: int) -> int:
-    found = re.compile(rb"[\r\n]").search(data, at)
+    found = _LINE_BREAK_RE.search(data, at)
     return len(data) if found is None else found.start()
+
+
+def _index_path_problems(path_bytes: bytes) -> int:
+    """How many parts of an index path (`.players`, `["players"]`, `[1]`) are
+    not a fixed name."""
+    bad = 0
+    for part in INDEX_PART_RE.finditer(path_bytes):
+        if part.group("field") is not None:
+            bad += part.group("field").decode("ascii") not in FIELD_KEYS
+            continue
+        key = KEY_RE.fullmatch(part.group("bracket"))
+        if key is None:
+            bad += 1
+        elif key.group("number") is None:
+            quoted = key.group("double") if key.group("double") is not None else key.group("single")
+            bad += quoted.decode("utf-8", errors="replace") not in FIELD_KEYS | CONSTRUCTED_KEYS
+    return bad
 
 
 def _book_key_problems(data: bytes, start: int, end: int) -> int:
@@ -342,20 +367,37 @@ def _assignment_problems(path: str, data: bytes) -> list[str]:
     A `.toc` never assigns it."""
     problems: list[str] = []
     is_toc = path.casefold().endswith(".toc")
-    for match in ASSIGNMENT_RE.finditer(data):
-        start = match.start()
-        line = _line(data, start)
+    sites: list[tuple[int, int, bytes]] = []  # (name start, value start, index path)
+    for match in SITE_RE.finditer(data):
+        if match.group("assign") is not None:
+            sites.append((match.start(), match.end(), b""))
+            continue
+        # The name then `.`, `[` or `:`: a statement only when an index path
+        # of fields and bracketed keys runs straight to `=` on the same line.
+        # Anything else after the name (prose, a call, a comparison) is a
+        # mention, not an assignment site.
+        chain = INDEX_PATH_RE.match(data, match.end("name"))
+        if chain is not None:
+            sites.append((match.start(), chain.end(), chain.group("path")))
+    line, counted = 1, 0
+    for number, (start, value, index_path) in enumerate(sites):
+        line += data.count(b"\n", counted, start)
+        counted = start
         if is_toc:
             # A .toc names the variable on its SavedVariables line; it never assigns one.
             problems.append(f"{path}:{line}: a crew-book assignment in a .toc")
             continue
         exact = data.startswith(lab_capture.CREW_BOOK_NAME, start)
-        if exact and lab_capture.crew_book_assignment_ok(data, start):
+        if not index_path and exact and lab_capture.crew_book_assignment_ok(data, start):
             continue
         # Any other value, whatever its form, is checked: no form is "not a
-        # table, therefore fine".
-        value = match.end()
-        if _book_key_problems(data, value, _value_end(data, value)):
+        # table, therefore fine". It never runs past the next site.
+        limit = sites[number + 1][0] if number + 1 < len(sites) else len(data)
+        end = _value_end(data, value, limit)
+        if end is None:
+            problems.append(f"{path}:{line}: a crew-book value that never closes")
+            return problems  # fail closed, and stop: one pass over the file
+        if _index_path_problems(index_path) or _book_key_problems(data, value, end):
             problems.append(f"{path}:{line}: a crew book holding a key not in the fixed lists")
     return problems
 
@@ -633,6 +675,80 @@ def test_constructed_any_value_form_is_checked(case: str) -> None:
     fixed = entry.replace("Fakeperson~Fake Land".translate(_LUA), "Inventeda-Fakerealm")
     control = f"prose\n```\n{NAME} {opener}\n{fixed}\n{closer}\n```\n".encode()
     assert scan([("docs/x.md", control)], NO_INDEX) == []
+
+
+# Field and index assignments (security check, round 4), same spelling.
+FIELD_FORMS = {
+    "a field after an empty book": (
+        '{NAME} = {{}}\n{NAME}.players = {{<"Fakeperson~Fake Land"> = {{ <"note"> = "x" }}}}'
+    ),
+    "an index path holding the key": (
+        '{NAME}<"players"><"Fakeperson~Fake Land"> = {{ <"note"> = "x" }}'
+    ),
+    "an index alone": '{NAME}<"players"> = {{ <"Fakeperson~Fake Land"> = true }}',
+    "a field in another casing": '{lower}.players = {{ <"Fakeperson~Fake Land"> = true }}',
+    "a field not on the lists": "{NAME}.friends = {{ }}",
+    "spaces around the dot": '{NAME} . players = {{ <"Fakeperson~Fake Land"> = true }}',
+}
+
+
+@pytest.mark.parametrize("case", sorted(FIELD_FORMS))
+def test_constructed_a_field_or_index_assignment_is_checked(case: str) -> None:
+    text = FIELD_FORMS[case].format(NAME=NAME, lower=NAME.lower()).translate(_LUA)
+    problems = scan([("docs/x.md", f"prose\n{text}\n".encode())], NO_INDEX)
+    assert problems and all("not in the fixed lists" in p for p in problems), problems
+
+
+def test_constructed_prose_and_fixed_field_assignments_pass() -> None:
+    lines = (
+        f'The addon keeps `{NAME}.players` and `{NAME}["current"]` per account.',
+        f"Compare `{NAME}.on == true` with `{NAME}:Count()`; nothing is assigned.",
+        f'{NAME}.players = {{ <"Inventeda~Fakerealm"> = {{ level = 60 }} }}'.translate(_LUA),
+        f'{NAME}<"probe"><"loads"> = 3'.translate(_LUA),
+    )
+    planted = ("\n".join(lines) + "\n").encode()
+    for path in ("docs/x.md", "lab/addon/README.md", "lab/addon/WowLab/Crew.lua"):
+        assert scan([(path, planted)], NO_INDEX) == [], path
+
+
+def test_constructed_a_value_that_never_closes_fails_once_and_stops() -> None:
+    planted = f"{NAME} = {{\n".encode() * 50
+    assert scan([("docs/h.md", planted)], NO_INDEX) == [
+        "docs/h.md:1: a crew-book value that never closes"
+    ]
+    unclosed_long = f"{NAME} = [[\n".encode() * 50
+    assert scan([("docs/h.md", unclosed_long)], NO_INDEX) == [
+        "docs/h.md:1: a crew-book value that never closes"
+    ]
+
+
+def _balanced_book(players: int) -> bytes:
+    entry = '<"Inventeda~Fakerealm"> = { <"level"> = 60, <"note"> = "x" },'.translate(_LUA)
+    return (
+        f'{NAME} = {{\n<"players"> = {{\n'.translate(_LUA) + (entry + "\n") * players + "}\n}\n"
+    ).encode()
+
+
+def test_constructed_the_scan_is_linear_in_the_input() -> None:
+    # Growth, not a budget: doubling the input may at most about double the
+    # CPU time (best of three, with room for noise). Before the fix, one
+    # assignment per line walked to the end of the file each time: 8.5 KB
+    # took 1.46 s and 34 KB 22.88 s.
+    for small, large in (
+        (f"{NAME} = {{\n".encode() * 20_000, f"{NAME} = {{\n".encode() * 40_000),
+        (f"{NAME} = nil\n".encode() * 20_000, f"{NAME} = nil\n".encode() * 40_000),
+        (_balanced_book(10_000), _balanced_book(20_000)),
+    ):
+        best: list[float] = []
+        for data in (small, large):
+            runs = []
+            for _ in range(3):
+                started = time.process_time()
+                scan([("docs/h.md", data)], NO_INDEX)
+                runs.append(time.process_time() - started)
+            best.append(min(runs))
+        first, second = best
+        assert second <= max(3 * first, 0.05), (first, second)
 
 
 def test_constructed_a_book_of_fixed_names_passes() -> None:
