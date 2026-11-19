@@ -23,9 +23,12 @@ docs PR, as `docs/LAB_PLAN.md` §11 asks.
    times", "my record with this player on my team", "who did I meet in
    Warsong last week" come from indexed tables, not from re-reading a text
    file.
-4. **The same warning in game, for both sides.** When a match starts and a
-   player you rated is in it, you get one line: your rating, your note, how
-   often you met, and whether it was with or against you.
+4. **The same warning in game.** When a player you rated joins your team,
+   you get one line: your rating, your note, how often you met, and whether
+   it was with or against you. A warning about a rated *opponent* at the
+   start of a match depends on the game listing the other team before the
+   match ends, which is not known (**[verify]**); if it does not, you learn
+   who you faced when the match is over.
 
 What stays as it is: off until you turn it on, nothing leaves your machine,
 no GUIDs, no chat, and `crew forget` removes a player everywhere.
@@ -68,12 +71,15 @@ choose between:
   20,000 players. It says once per session when it is within 10% of full
   and you have not synced. Simple; relies on you opening wowlab now and
   then.
-- **B. The addon only drops what wowlab has archived.** After a sync,
-  wowlab writes "archived up to this time" into the saved file, through the
-  write gate, with the game closed. The addon drops only players older than
-  that mark. Nothing is ever lost, but it adds a write to your install on
-  sync, which today's sync does not need. The conductor recommends A first,
-  and B only if A loses data in practice.
+- **B. The addon only drops what wowlab has archived.** wowlab writes
+  "archived up to this time" into the saved file, and the addon drops only
+  players older than that mark. Nothing is ever lost. The price is a write
+  to your install: through the write gate, with the game closed, with a
+  plan, a confirmation and a snapshot each time, as every write has. That
+  cannot ride along on `crew list`, `crew show` or the Crew tab, which
+  promise to change nothing, so it would be a command of its own
+  (`crew archive`, say) that you run now and then. The conductor recommends
+  A first, and B only if A loses data in practice.
 
 ## Where the names come from
 
@@ -81,9 +87,10 @@ Three sources, in order of how sure they are. Every statement about the
 Forever client here is from memory of how other versions of the game work
 and is **[verify]** until an in-game check says so.
 
-1. **Your own team (built today, in review).** The crew book already
+1. **Your own team (built on 2026-11-19, in review as M19-10).** The crew book already
    records your party or raid, and a battleground or arena team is a raid.
-   The owner ruled on 2026-11-19 that these count.
+   The owner ruled in session on 2026-11-19 that these count; §20.5's
+   sentence is amended with that date in the addon's PR.
 2. **The scoreboard, for opponents (new).** At the end of a match the game
    has a scoreboard listing both teams: name, realm, class, faction, and
    each player's totals. An addon can read it once the match is over, out
@@ -93,7 +100,7 @@ and is **[verify]** until an in-game check says so.
 3. **World PvP (not proposed yet).** There is no scoreboard in the open
    world. Knowing who killed you, or whom you killed, means reading the
    combat log, which carries GUIDs and arrives during combat, when the
-   client may hand addons secret values. The static checks merged this week
+   client may hand addons secret values. The static checks (#626, #631)
    refuse the combat log outright. A lighter version records a hostile
    player only when you target them and type a command. The conductor
    proposes to leave world PvP out of the first build and decide it after
@@ -114,14 +121,16 @@ and it is too much to keep in the game's file.
 
 Not recorded: GUIDs, chat, whispers, anything about a player you did not
 share a match or a group with. Per-player kills and deaths *against you*
-are not available from the scoreboard (it has each player's match totals
-only) and would need the combat log.
+are believed not to be available from the scoreboard (on other versions of
+the game it has each player's match totals only, **[verify]** on Forever)
+and would need the combat log.
 
 ## What changes in the rules
 
 - **ADR-0036** already allows other players' names "as the game shows
   them", local only, opt-in, deletable. Its plan section, not the ADR,
-  limited the book to your group (§20.8, decision 2). Recording opponents
+  limited the book to "the players you group with" (§20's aim; §20.8
+  decision 2 says the same of the warning). Recording opponents
   is still a wider use than the owner had in view when accepting it, so the
   conductor proposes a dated amendment that says so in plain words:
   opponents from a match's scoreboard may be recorded, on the same five
@@ -142,7 +151,7 @@ only) and would need the combat log.
 
 - The saved-file format changes (new counters), so the book goes to its
   schema 2. The reader, the write commands, the capture-tool rule and the
-  repository scan merged this week all need a matching change. The addon's
+  repository scan (#625, #630, #624) all need a matching change. The addon's
   new rule that a book of another schema is left alone is what makes that
   safe.
 - `crew forget` must now clear three places: the saved file, the game's
@@ -155,8 +164,8 @@ only) and would need the combat log.
   calls exist, what they return, and how long a login takes with a large
   list.
 
-A rough size: the database and sync are about as large as this week's
-reader and write commands together; the scoreboard half of the addon is
+A rough size: the database and sync are about as large as the reader and
+the write commands (#625, #630) together; the scoreboard half of the addon is
 smaller than the roster half, but it needs the in-game check first, because
 every fact it rests on is unconfirmed.
 
