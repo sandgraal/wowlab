@@ -174,6 +174,12 @@ ALLOWED: dict[tuple[str, str], str] = {
         "a closed pipe on stdout (M16-14): the null device, opened to stand in for "
         "stdout once its reader has gone; it is a device, never a file in an install"
     ),
+    (_CLI, 'importlib.import_module(f"{__package__}.{name}")'): (
+        "a command's module imported when the command is looked up (M15-22): only a "
+        "module of the `wowlab_core.cli` package itself, by a name `_PART_NAMES` lists "
+        "(`_import_parts` sorts by that tuple's index first, so any other name raises "
+        "before an import); the modules are the CLI's own, already scanned here"
+    ),
     (_DB2LAKE, "import sqlite3"): _LAKE_DIR,
     (_DB2LAKE, "from wowlab_core.snapshot import make_private_dirs"): _LAKE_DIR
     + "; imports the folder maker for the lake directory only (M16-78)",
