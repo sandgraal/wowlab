@@ -6458,7 +6458,11 @@ Each is the smallest thing that does the job; say so and it changes.
    which lists a missing manifest among the frozen cases. Whether
    `wowlab ui` offers the command is the owner's ruling too. Without
    M19-09 the forget sentence keeps saying wowlab cannot remove a
-   snapshot yet.
+   snapshot yet. *Corrected 2026-11-19 (M19-09's code review):* "and
+   every earlier one" was wrong, and it was said to the owner that way.
+   `undo` only ever reverses the most recent change, so removing an older
+   change's snapshot does not touch `undo`; it ends `snap restore` from
+   that snapshot. The command says which of the two applies (§6.9).
 10. The addon uses the clock (`time`, `date`) in `Crew.lua`, which §13.1
     rules out for the per-character record.
 11. The instance is kept by name, as the client gives it, so no game

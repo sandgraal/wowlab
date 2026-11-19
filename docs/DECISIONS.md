@@ -340,6 +340,8 @@ The decision itself is unchanged. This amendment only stages it, so that the fir
 - *What changes.* `GET` and `HEAD /favicon.svg` with no query are served without the session key. The response is one fixed file shipped in the package (`templates/favicon.svg`: `svg`, `rect` and `path` only, no script, style or link). Host and Origin are checked as before. It carries the same headers as every other response (CSP, `nosniff`, `no-store`, `Cross-Origin-Resource-Policy: same-origin`). With any query, or any other method, the key is required as before. `/favicon.ico` stays refused.
 - *Sentence this replaces.* In the 2026-11-12 amendment, "every request but `GET`/`HEAD /` must carry the session key" now reads "every request but `GET`/`HEAD /` and `GET`/`HEAD /favicon.svg` must carry the session key".
 - *Residual.* A request without the key learns that a wowlab ui server is listening, which the keyless `GET /` already tells it. The security review of #580 sent 180 requests (six methods, 30 paths) and found nothing else reachable without the key.
+**Note (2026-11-19, M19-09; owner decision in session, recorded in `docs/LAB_PLAN.md` §20.8 decision 9):** the owner ruled that `wowlab snap rm` is built on the command line only and that `wowlab ui` does not offer it. So the Parity bullet's "every `--yes` command goes through the confirm step" has one stated exception: a `--yes` leaf may be kept out of the UI by an owner ruling, listed in the parity test's `EXCLUDED_YES` with its reason, and refused by the server (403) for a plan run, a confirm and any request that sets `--yes`. The decision is otherwise unchanged.
+
 ---
 
 ## ADR-0030 — Languages: one per purpose, each admitted by an ADR
