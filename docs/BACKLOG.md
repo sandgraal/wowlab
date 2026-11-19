@@ -3547,7 +3547,7 @@ Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 
 
 ---
 
-## [ ] M19-06 — The Crew tab
+## [x] M19-06 — The Crew tab
 **Size:** M · **Depends on:** M19-02, M19-03 · **Sources:** `docs/LAB_PLAN.md` §20.4; ADR-0029
 
 A Crew tab in `wowlab ui` after "All characters" and "Character": the list with search, the rating filter and the sort, from `crew list --json`; a row opens `crew show`; forget, rate and note through the confirm flow with their pins (the pin-check sentence added). Names, guilds and notes reach the page as text nodes only, through `visible()`; no link or URL is built from crew data; the write commands are sent with the exact stored key from `crew list --json`.
