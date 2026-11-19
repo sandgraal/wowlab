@@ -1515,14 +1515,14 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 ---
 
 ## [ ] M15-25 — Leftovers from the M15-11 and M15-23 reviews
-**Size:** XS · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
+**Size:** S · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
 
 - Two characters share one `char model` file stem when a realm folder and a character folder both carry a hyphen (realm `A-B` with character `C`, realm `A` with character `B-C`), and when two folders differ only by letter case or Unicode normalisation on a volume that folds them; one run then replaces and removes the other's files. A real install cannot produce the first (character names have no hyphen). Nest the files as `characters/<account>/<realm>/<character>.glb`, or refuse the hyphen in the character folder name; §17.1 gets the dated note either way.
-- `tests/scripts/test_lab_capture_own_guids.py::test_constructed_many_own_link_lines_scrub_in_linear_time` times on the wall clock against 5 s (its call takes about 1.8 s alone) and failed once under a loaded `make test-fast` (the review of #616). Time CPU with `cpu_clock()` from `lab/core/tests/parser/_cpu_clock.py`, as `lab/core/tests/review/README.md` prescribes for timing tests.
+- `tests/scripts/test_lab_capture_own_guids.py::test_constructed_many_own_link_lines_scrub_in_linear_time` times on the wall clock against 5 s (its call takes well under a second alone) and failed once under a loaded `make test-fast` (the review of #616). Time CPU with `cpu_clock()` from `lab/core/tests/parser/_cpu_clock.py`, as `lab/core/tests/review/README.md` prescribes for timing tests.
 - `test_m2_live.py`, `test_renderplan_live.py`, `test_compositor_live.py` and `test_blp_live.py` open the fixture's flavor before comparing versions, so they will fail, not skip, once that product loses its `.build.info` row, as the 70450 tests did. Share the `_install()` skip that #616 added to the three `casc` live tests (one helper, not seven copies).
 - `str(root) != ""` in `_cmd_doctor.py`, `_common.py`, `_cmd_char.py`, `_cmd_filemap.py` and `_cmd_sv.py` can never be false, because an empty `--root` becomes `.`: decide what `--root ""` should mean (refused, most likely) and make the five sites say it (`install._resolve`, which also takes a `str`, is not one of them).
 
-**Acceptance:** each item fixed or explained in the PR; constructed tests. Reviewed by `code-reviewer`; `security-reviewer` on the first item. User-facing: none expected.
+**Acceptance:** each item fixed or explained in the PR; constructed tests. Reviewed by `code-reviewer`; `security-reviewer` on the first item. User-facing: where `char model` puts its files, or what it refuses, and what an empty `--root` does, if either changes.
 
 ---
 
