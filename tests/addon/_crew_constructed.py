@@ -14,13 +14,22 @@ from __future__ import annotations
 BOOK = "WowLabCrewDB"
 
 # Pinned helper texts that name the book (rendered tokens).
+# Follow-up (M19-10 security review): a book whose schema is not this file's
+# is left alone, so crewOn, crewLoaded and the slash handler's head all test
+# it against the pinned file-level constant CREW_SCHEMA (`local CREW_SCHEMA =
+# 1`, in the grader).
 CREW_ON = (
     "local function crewOn ( ) "
-    'return type ( WowLabCrewDB ) == "table" and WowLabCrewDB . on == true end'
+    'return type ( WowLabCrewDB ) == "table" and WowLabCrewDB . schema == CREW_SCHEMA '
+    "and WowLabCrewDB . on == true end"
+)
+CREW_BOOK_SCHEMA_TEST = (
+    'if type ( WowLabCrewDB ) == "table" and WowLabCrewDB . schema ~= CREW_SCHEMA then return end'
 )
 CREW_PROBE = (
     "local function crewLoaded ( _ , name ) "
-    'if name ~= "WowLab" or type ( WowLabCrewDB ) ~= "table" then return end '
+    'if name ~= "WowLab" or type ( WowLabCrewDB ) ~= "table" '
+    "or WowLabCrewDB . schema ~= CREW_SCHEMA then return end "
     # Fix round 5: the shape of Core.lua's loadProbe (§13.1), so the
     # unrelaxed M11-13 stored-value check accepts it.
     "local probe = { loads = 1 } "
@@ -47,8 +56,11 @@ _CREW_COMMAND_HEAD = "function ns.CrewCommand(word)\n"
 _CREW_SOURCE = (
     """local _, ns = ...
 
+local CREW_SCHEMA = 1
+
 local function crewOn()
-    return type(WowLabCrewDB) == "table" and WowLabCrewDB.on == true
+    return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA
+        and WowLabCrewDB.on == true
 end
 
 local function crewBlocked()
@@ -216,7 +228,7 @@ local function onWorld()
 end
 
 local function crewLoaded(_, name)
-    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then
+    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= CREW_SCHEMA then
         return
     end
     local probe = { loads = 1 }
@@ -237,12 +249,15 @@ ns.On("PLAYER_ENTERING_WORLD", onWorld)
     + """    if type(word) ~= "string" then
         return
     end
+    if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then
+        return
+    end
     if type(UnitFullName) ~= "function" then
         print("the client has no UnitFullName function")
     end
     if word == "on" then
         if type(WowLabCrewDB) ~= "table" then
-            WowLabCrewDB = { schema = 1, players = {}, current = {}, started = ns.Number(time()) }
+            WowLabCrewDB = { schema = CREW_SCHEMA, players = {}, current = {}, started = ns.Number(time()) }
         end
         WowLabCrewDB.on = true
         print(date("%Y-%m-%d", WowLabCrewDB.started))
@@ -347,12 +362,57 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     ],
     "the on test always true": [
         (
-            '    return type(WowLabCrewDB) == "table" and WowLabCrewDB.on == true\n',
+            '    return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA\n'
+            "        and WowLabCrewDB.on == true\n",
             "    return true\n",
         )
     ],
     "the on test without the value": [
-        (" and WowLabCrewDB.on == true", " and WowLabCrewDB.on ~= nil")
+        ("        and WowLabCrewDB.on == true\n", "        and WowLabCrewDB.on ~= nil\n")
+    ],
+    # Follow-up (M19-10 security review): a book of another schema is left alone.
+    "the on test without the schema test": [(" and WowLabCrewDB.schema == CREW_SCHEMA\n", "\n")],
+    "the on test with >= for the schema": [
+        ("WowLabCrewDB.schema == CREW_SCHEMA\n", "WowLabCrewDB.schema >= CREW_SCHEMA\n")
+    ],
+    "the on test with ~= for the schema": [
+        ("WowLabCrewDB.schema == CREW_SCHEMA\n", "WowLabCrewDB.schema ~= CREW_SCHEMA\n")
+    ],
+    "the schema constant reassigned": [
+        ("local CREW_SCHEMA = 1\n", "local CREW_SCHEMA = 1\nCREW_SCHEMA = 2\n")
+    ],
+    "the schema constant shadowed": [
+        (
+            "local function nameAbsent()\n",
+            "local function nameAbsent()\n    local CREW_SCHEMA = 2\n",
+        )
+    ],
+    "the schema constant not 1": [("local CREW_SCHEMA = 1\n", "local CREW_SCHEMA = 2\n")],
+    "the schema constant as a parameter": [
+        ("local function countBook()\n", "local function countBook(CREW_SCHEMA)\n")
+    ],
+    "the probe handler without the schema test": [
+        (" or WowLabCrewDB.schema ~= CREW_SCHEMA then\n", " then\n")
+    ],
+    "the slash handler without the schema test": [
+        (
+            '    if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then\n'
+            "        return\n    end\n",
+            "",
+        )
+    ],
+    "a book written from an ungated helper": [
+        (
+            "local function countBook()\n",
+            "local function touch()\n    WowLabCrewDB.skipped = 0\nend\n\nlocal function countBook()\n",
+        )
+    ],
+    "a book entry written from an ungated helper": [
+        (
+            "local function countBook()\n",
+            "local function touch(key)\n    local e = {}\n    e = WowLabCrewDB.players\n"
+            "    e.note = 1\nend\n\nlocal function countBook()\n",
+        )
     ],
     "the combat test never blocking": [
         ("    if not ok or locked then\n", "    if not ok and locked then\n")
@@ -475,8 +535,8 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     # Fix round 2, item 1: the typed text and other parameters carry nothing.
     "the slash handler's string test removed": [
         (
-            '    if type(word) ~= "string" then\n        return\n    end\n    if type(UnitFullName)',
-            "    if type(UnitFullName)",
+            '    if type(word) ~= "string" then\n        return\n    end\n    if type(WowLabCrewDB)',
+            "    if type(WowLabCrewDB)",
         )
     ],
     "a parameter used as a box": [
@@ -699,7 +759,8 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     # Fix round 3, item 3: the ungated probe handler, pinned.
     "the probe handler creating the book": [
         (
-            '    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then\n        return\n    end\n',
+            '    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= CREW_SCHEMA then\n'
+            "        return\n    end\n",
             '    if name ~= "WowLab" then\n        return\n    end\n'
             '    if type(WowLabCrewDB) ~= "table" then\n        WowLabCrewDB = {}\n    end\n',
         )
