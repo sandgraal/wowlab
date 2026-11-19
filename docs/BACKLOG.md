@@ -3608,7 +3608,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
 **Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
 
-Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends #631's pins and says so: `crewLoaded` may call it, the head of `ns.CrewCommand` lets `on` through for a schema 1 book and migrates it before the schema refusal is tested, and it is one more function allowed to store; the limit constants; the near-full line, its seven days and the `warned` field; and the probe, gated, out of combat and only in an instance of type `pvp` or `arena`, which may record exactly what §21.2 lists: whether each candidate call exists, type names by position or a returned table's field names and their type names, the row count, the event counts, three whole numbers (the first row's side, the player's own, the winner) and three yes-or-no answers for the first row. It never indexes a row's GUID field. No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
+Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends #631's pins and says so: `crewLoaded` may call it, the head of `ns.CrewCommand` lets `on` through for a schema 1 book and migrates it before the schema refusal is tested, and it is one more function allowed to store; the limit constants; the near-full line, its seven days and the `warned` field; and the probe, gated, out of combat and only in an instance of type `pvp` or `arena`, twice per match (after entry, and after a winner is reported), which may record exactly what §21.2 lists: whether each candidate call exists, type names by position or a returned table's field names and their type names, the row count, the event counts, three whole numbers (the first row's side, the player's own, the winner) and three yes-or-no answers for the first row. It never indexes a row's GUID field. No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
 
 **Acceptance:** a constructed `Crew.lua` doing all of §21.2 short of opponents passes when installed in a copy of the addon; each rule shown failing on a constructed edit; M19's checks unchanged for what they covered; `make lint-lua` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
@@ -3626,7 +3626,7 @@ Tests only, before any addon code, by a session that does not write M20-05: the 
 ## [ ] M20-06 — Owner: one battleground, and a login timing
 **Size:** S · **Depends on:** M20-05 · **owner** (a short in-game check)
 
-With the conductor's runbook: install the addon from `main`, play one battleground to its end, log out, and let `wowlab crew sync` read `probe.pvp`. Note how long a login takes as the book stands, which will be small: the 20,000 limit is not tested at full size here (§21.7, decision 18).
+With the conductor's runbook: install the addon from `main`, play one battleground to its end; after the end stay on the scoreboard, out of combat, for about 30 seconds before leaving or being moved out, so the second probe runs; log out, and let `wowlab crew sync` read `probe.pvp`. Note how long a login takes as the book stands, which will be small: the 20,000 limit is not tested at full size here (§21.7, decision 18).
 
 **Acceptance:** every [verify] of §21.2 and §21.5 resolved or kept with what was seen, dated; the conductor then writes M20-07 and M20-08's exact calls into §21.2.
 
@@ -3646,7 +3646,7 @@ Tests only, by a session that does not write M20-08: the scoreboard calls M20-06
 
 `Crew.lua` records each finished match and both teams, raises the counters, and adds "with you N times, against you M" to the warning.
 
-**Acceptance:** M20-07's checks green on the real file with no relaxation added; the README and the turn-on notice say opponents are kept; `crew --help` carries the same sentence. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: opponents are recorded; the wiki's addon page.
+**Acceptance:** M20-07's checks green on the real file with no relaxation added; the one term-2 sentence (the turn-on notice, `crew --help`, §20.5, the README) loses "(never your opponents)" and names opponents in its place, identical in all four. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: opponents are recorded; the wiki's addon page.
 
 ---
 

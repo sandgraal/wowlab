@@ -6415,7 +6415,9 @@ The book's `schema` becomes 2. What changes from §20.1:
   - as plain whole numbers, the side value of the first row, the player's
     own side value, and the winner value;
   - for the first row, three yes-or-no answers: the name is a string, the
-    name holds a `-`, the name is a secret value.
+    name holds a `-`, the name is a secret value. The answers taken after
+    the winner is reported decide M20-08, because that is when the addon
+    reads.
   No name, no GUID, no other value and no error text is stored; a row
   table holds a GUID field and the probe never indexes it. `doctor`
   prints the block (M20-03), which is how the owner reads it at M20-06.
@@ -6636,7 +6638,7 @@ database, it is never synced without that step (above).
 | Term | What holds it | Proof |
 |---|---|---|
 | 1. Local only | The database is under the user data directory; nothing reads it but `crewdb`; no network module is imported | the no-network tests; an import scan |
-| 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and opponents from M20-08 | text tests |
+| 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and opponents from M20-08, which removes "(never your opponents)" from the sentence of #634 and names opponents in its place | text tests |
 | 3. Out of the repository | A repository test refuses any tracked SQLite file (by its file signature, and any `*.sqlite*` name) outside the listed `db2lake` test paths, whatever its `application_id`; the capture tool refuses any SQLite file, and a schema 2 book whose `matches` is not empty; tests build databases at run time from the constructed keys of M19-04 | the tests, shown failing on a planted file, a planted journal and a renamed copy |
 | 4. Shared output | `doctor --redact` gives the path with the home-path login and the account folder redacted, a size and row counts, never a row and never `meta`'s install root; `snap export` does not include the database and says so; no command exports it; the bug-report template says not to attach it | tests on constructed rows |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew matches`; `crew forget` and `--all` reach the database and its copies | tests that a forgotten key's bytes are in no database file |
