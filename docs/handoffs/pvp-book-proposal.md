@@ -44,7 +44,7 @@ logout. Two costs grow with its size:
   client is not measured.
 - **At the desk:** wowlab parses the whole file on every read. Measured on
   constructed books: 5,000 players is about 1.4 MB and reads in 0.2 s;
-  50,000 players is about 13 MB and takes 2.5 s.
+  50,000 players is about 13 MB and takes 2.5 to 2.7 s.
 
 The limit was set to keep both small. The answer is not a bigger text file.
 It is two stores with two jobs:
@@ -183,6 +183,14 @@ every fact it rests on is unconfirmed.
 5. **World PvP**, decided then.
 
 ## Decisions for the owner
+
+*Answered by the owner in session on 2026-11-19:* (1) yes, the two-store
+design; (2) option A, a generous list and a warning; (3) 20,000 players in
+the in-game list, login time measured at the in-game check; (4) yes,
+opponents from the scoreboard; (5) world PvP is left out for now; (6) the
+current wave (M19) finishes first. Later the same day: both ADR texts
+accepted; M20-01 may start once the addon and the Crew tab have merged;
+no full-size test of the 20,000 limit. The questions as they were asked:
 
 1. Is the two-store design (a bounded list in game, everything in a
    database at the desk) what you want?
