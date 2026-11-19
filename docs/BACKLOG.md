@@ -1505,12 +1505,12 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
-## [ ] M15-24 — Held items in `char model`: a place for weapons, shields and off-hand items
-**Size:** M · **Depends on:** M15-11 · **Sources:** the domain review of #611 (2026-11-18); `docs/LAB_PLAN.md` §17.6 note of 2026-11-18
+## [ ] M15-24 — Held items in `char model`: is there a place for weapons, shields and off-hand items
+**Size:** S · **Depends on:** M15-11 · **Sources:** the domain review of #611 (2026-11-18); `docs/LAB_PLAN.md` §17.6 note of 2026-11-18
 
-`char model` leaves out every item whose attachment point the body model stores at its origin: on both fixture body models at 70959 that is points 0, 1 and 2 (shield and hands), so no weapon is drawn. Two ideas from the review, both hypotheses until a probe reads the files: (a) the sheath points (the community list gives 26 to 33) may hold real stored positions, so a weapon could be drawn sheathed, as a player sees it out of combat; that needs the item's sheathe type from the game tables and gives a position without the bone's rotation; (b) the pivot of the hand point's parent bone. Probe first with `scripts/charmodel_facts.py` (record the sheath points and their bones' pivots for both body models, as a derived fixture row), report what is there, and stop if neither idea holds: reading bones and the stand animation is Wave 7's subject, not this ticket's.
+`char model` leaves out every item whose attachment point the body model stores at its origin: on both fixture body models at 70959 that is points 0, 1 and 2 (shield and hands), so no weapon is drawn. A probe only. Two ideas from the review, both hypotheses until a probe reads the files: (a) the sheath points (the community list gives 26 to 33) may hold real stored positions, so a weapon could be drawn sheathed, as a player sees it out of combat; that would need the item's sheathe type from the game tables and gives a position without the bone's rotation; (b) the pivot of the parent of the bone a hand point sits on (that bone's own pivot is (0, 0, 0), §17.6 note). With `scripts/charmodel_facts.py`, record the sheath points, their bones' pivots and the hand bones' parents' pivots for both body models, as derived fixture rows, and report what is there. No drawing code: §17.4's attachment mapping stays as it is, and reading bones and the stand animation is Wave 7's subject.
 
-**Acceptance:** the probe's rows in the derived fixture with a provenance row; if a place is found, held items drawn there with the report saying how ("drawn sheathed", not "as in game"), constructed tests, the `@live` test updated and the owner's viewer check listed in the PR; if not, a dated note in §17.6 and no code. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: weapons in `char model`, or none.
+**Acceptance:** the probe's rows in the derived fixture with a provenance row, and a dated note in §17.6 reporting what is there. If a place is found, the conductor asks the owner whether to draw held items there ("drawn sheathed", not "as in game") before any code, and the drawing is filed as its own ticket. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: none.
 
 ---
 
@@ -1518,7 +1518,7 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 **Size:** XS · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
 
 - Two characters share one `char model` file stem when a realm folder and a character folder both carry a hyphen (realm `A-B` with character `C`, realm `A` with character `B-C`), and when two folders differ only by letter case or Unicode normalisation on a volume that folds them; one run then replaces and removes the other's files. A real install cannot produce the first (character names have no hyphen). Nest the files as `characters/<account>/<realm>/<character>.glb`, or refuse the hyphen in the character folder name; §17.1 gets the dated note either way.
-- `str(root) != ""` in `_cmd_doctor.py`, `_common.py`, `_cmd_char.py`, `_cmd_filemap.py` and `_cmd_sv.py` can never be false, because an empty `--root` becomes `.`: decide what `--root ""` should mean (refused, most likely) and make the five sites say it.
+- `str(root) != ""` in `_cmd_doctor.py`, `_common.py`, `_cmd_char.py`, `_cmd_filemap.py` and `_cmd_sv.py` can never be false, because an empty `--root` becomes `.`: decide what `--root ""` should mean (refused, most likely) and make the five sites say it (`install._resolve`, which also takes a `str`, is not one of them).
 
 **Acceptance:** each item fixed or explained in the PR; constructed tests. Reviewed by `code-reviewer`; `security-reviewer` on the first item. User-facing: none expected.
 
