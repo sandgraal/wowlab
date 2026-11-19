@@ -7365,9 +7365,22 @@ def _crew_problems(path: Path, text: str) -> list[str]:
     problems += _crew_parameter_problems(flow)
     problems += _crew_book_key_problems(flow)
     # The slash handler's first statement, pinned (fix round 2, item 1).
+    # Then the schema branch: one `print("<a plain string literal>")` (the
+    # wording is the addon's) and `return`, nothing else (follow-up, #631).
     n_head = len(CREW_COMMAND_HEAD.split(" "))
     for head, label in flow.labels.items():
-        if label == CREW_COMMAND and _render(t[head : head + n_head]) != CREW_COMMAND_HEAD:
+        if label != CREW_COMMAND:
+            continue
+        branch = t[head + n_head : head + n_head + 6]
+        ok = (
+            _render(t[head : head + n_head]) == CREW_COMMAND_HEAD
+            and [x.text for x in branch[:2]] == ["print", "("]
+            and len(branch) == 6
+            and branch[2].kind == "string"
+            and [(x.kind, x.text) for x in branch[3:]]
+            == [("op", ")"), ("name", "return"), ("name", "end")]
+        )
+        if not ok:
             problems.append(
                 f"{CREW_COMMAND} does not start with the pinned string and schema tests"
             )

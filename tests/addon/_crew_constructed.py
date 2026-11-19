@@ -24,7 +24,7 @@ CREW_ON = (
     "and WowLabCrewDB . on == true end"
 )
 CREW_BOOK_SCHEMA_TEST = (
-    'if type ( WowLabCrewDB ) == "table" and WowLabCrewDB . schema ~= CREW_SCHEMA then return end'
+    'if type ( WowLabCrewDB ) == "table" and WowLabCrewDB . schema ~= CREW_SCHEMA then'
 )
 CREW_PROBE = (
     "local function crewLoaded ( _ , name ) "
@@ -250,6 +250,7 @@ ns.On("PLAYER_ENTERING_WORLD", onWorld)
         return
     end
     if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then
+        print("constructed: this book is from another version")
         return
     end
     if type(UnitFullName) ~= "function" then
@@ -397,8 +398,38 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     "the slash handler without the schema test": [
         (
             '    if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then\n'
+            '        print("constructed: this book is from another version")\n'
             "        return\n    end\n",
             "",
+        )
+    ],
+    # Follow-up (#631): the schema branch says one fixed line, then returns.
+    "the schema branch with no print": [
+        ('        print("constructed: this book is from another version")\n', "")
+    ],
+    "the schema branch printing a variable": [
+        (
+            '        print("constructed: this book is from another version")\n',
+            "        print(word)\n",
+        )
+    ],
+    "the schema branch printing a concatenation": [
+        (
+            '        print("constructed: this book is from another version")\n',
+            '        print("constructed: schema " .. WowLabCrewDB.schema)\n',
+        )
+    ],
+    "the schema branch with another statement": [
+        (
+            '        print("constructed: this book is from another version")\n',
+            '        print("constructed: this book is from another version")\n        nameAbsent()\n',
+        )
+    ],
+    "the schema branch with a store": [
+        (
+            '        print("constructed: this book is from another version")\n',
+            '        print("constructed: this book is from another version")\n'
+            "        WowLabCrewDB.on = false\n",
         )
     ],
     "a book written from an ungated helper": [
