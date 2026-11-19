@@ -5617,7 +5617,7 @@ the crew book as the companion feature they want most on 2026-11-17 and, on
 the plan section and tickets, have them reviewed, then build). ADR-0036
 (accepted 2026-11-11) is the decision that lets a feature keep other
 players' names; its five terms are quoted by number below. The tickets are
-M19-01 to M19-09 in `docs/BACKLOG.md`. The wave starts when M15-12 closes.*
+M19-01 to M19-11 in `docs/BACKLOG.md`. The wave starts when M15-12 closes.*
 
 **Aim.** Remember the players you group with: who they were, when and
 where you last grouped, and your own rating and note about them; and say so
@@ -5665,7 +5665,8 @@ WowLabCrewDB = {
       met = 3,               -- groups shared (below)
       first = 1794950000,    -- time() of the first group
       last = 1795640000,     -- time() of the latest
-      where = 2291,          -- instance id of the latest group; left out in the open world
+      where = "…",           -- the instance's name, as the client gives it; left out in the open world
+      where_id = 2291,       -- its instance id
       rating = "good",       -- "good" or "bad"; left out when unrated
       note = "…",            -- the player's own text; left out when empty
     },
@@ -5746,9 +5747,13 @@ WowLabCrewDB = {
 - **Where.** `GetInstanceInfo()`'s instance type decides: when it is
   `"none"` (the open world) `where` is left out, because the id returned
   there is believed to be the continent's, and 0 is a real one. Otherwise
-  `where` is the instance id, which the Lab reads as a `Map` table id.
+  `where` is the instance's name as the client gives it (in the client's
+  language, with `|` removed) and `where_id` its id. Keeping the name
+  means the Lab needs no game table to show it: no `Map` download, and
+  nothing changes in `names fetch`, `doctor` or the "What leaves your
+  machine" block.
 - **Times.** Unlike the per-character record (§13.1, "no wall-clock time"),
-  crew records carry `time()`: "last grouped on a date" is the point of the
+  crew records carry `time()`, and the warning formats one with `date()`: "last grouped on a date" is the point of the
   feature, and these records never enter the repository (term 3), so the
   scrub tool has no time to shift.
 - **Limits.** At most 5,000 players. When full, the unrated, un-noted
@@ -5789,21 +5794,31 @@ WowLabCrewDB = {
   message: the static checks refuse, for the whole addon,
   `SendChatMessage`, `BNSendWhisper`, `ChatFrame_OpenChat`,
   `ChatEdit_InsertLink`, `C_ChatInfo` and `C_Club` (the last two are
-  refused today; M19-01 adds the rest). Whether a line
+  refused on `main` on 2026-11-18; M19-01 adds the rest). Whether a line
   printed this way reaches `Logs/WoWChatLog.txt` when the player has
   `/chatlog` on is **[verify]** (believed not).
-- **Static checks.** `tests/addon/test_lab_addon.py` today refuses, for
-  the whole addon: the name-reading calls (`FORBIDDEN_APIS`), `time`
-  (`CLOCK`), `name` and `realm` as keys or locals (`NAME_FIELDS`), and the
-  declaration of `UnitName`, `GetNormalizedRealmName` and `GetGuildInfo`
-  in `wow_client.yml` (`STD_PRIVACY`, which is global, not per file).
-  M19-01 relaxes each for `Crew.lua` only, names each relaxation, and
-  adds a test that every other file still refuses them. In `Crew.lua`
-  each name call sits behind the `on` test. `UnitGUID` stays refused
-  everywhere. Behaviour a source scan cannot prove (the drop order, the
-  note rule) is pinned as named constants and short functions whose text
-  the scans grade, and the note rule is mirrored in Python, where M19-03
-  tests it.
+- **Static checks.** On `main` on 2026-11-18,
+  `tests/addon/test_lab_addon.py` refuses for the whole addon everything
+  `Crew.lua` must do: the name-reading calls (`FORBIDDEN_APIS`); `time`
+  and `date` (`CLOCK`); `name` and `realm` as keys or locals
+  (`NAME_FIELDS`); the declaration of `UnitName`,
+  `GetNormalizedRealmName` and `GetGuildInfo` in `wow_client.yml`
+  (`STD_PRIVACY`, which is global, not per file); any unit token but
+  `"player"`, and a unit call with a non-literal argument
+  (`test_every_unit_token_argument_is_player`); an index built by
+  concatenation, which `players[name .. "-" .. realm]` is
+  (`test_sources_build_no_index_by_concatenation`,
+  `test_no_concatenated_value_is_used_as_an_index`); and a TOC with any
+  saved variable but `WowLabDB` (`test_toc_saved_variables`). M19-01, a
+  tests-only ticket that lands first, builds one per-file relaxation
+  mechanism for `Crew.lua`, names each relaxation, adds the chat
+  refusals above, and adds a test that every other file still refuses
+  all of it. In `Crew.lua` each name call sits behind the `on` test.
+  `UnitGUID` stays refused everywhere. Behaviour a source scan cannot
+  prove (the drop order, the note rule) is pinned as named constants and
+  short functions whose text the scans grade; the 200-byte measure is
+  mirrored in Python, where M19-03 tests it (the character rule differs
+  on purpose: the game removes, the desk refuses).
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
@@ -5813,22 +5828,23 @@ WowLabCrewDB = {
 A new module `wowlab_core.crewbook`: finds
 `WTF/Account/<account>/SavedVariables/WowLab.lua` through `layout`, parses
 it with `luadata` and reads `WowLabCrewDB` into Pydantic models
-(`CrewBook`, `CrewPlayer`). An absent table, `on` absent, an unknown
-`schema` and a malformed entry each have a stated outcome (not turned on;
-turned off with N kept; refused with the number; the entry listed as
-unread with its key, the rest read). It writes nothing. As everywhere, the
+(`CrewBook`, `CrewPlayer`), through the root-anchored read `labaddon`
+already uses for the same file. An absent table, `on` absent or false, an
+unknown `schema` and a malformed entry each have a stated outcome (not
+turned on; turned off with N kept; refused with the number; the entry
+listed as unread with its key, the rest read). It writes nothing and
+imports no network module. As everywhere, the
 file is the previous session's (GLOSSARY): the report says "as of your last
 logout or /reload".
 
-`wowlab crew` (a new command group):
+`wowlab crew` (a new command group). Every crew command takes `--flavor`
+and `--account` as `char` does; with more than one book to choose from and
+none named, it lists the candidates and exits 2.
 
 - `crew list [--rated good|bad|any] [--noted] [--search TEXT] [--sort last|met|name]`:
   one line per player, newest first by default. `--json` is `CrewReport`.
 - `crew show NAME-REALM`: everything kept about one player.
-- Instance names come from the `Map` game table (id, name, instance
-  type; **[verify]** on the Forever build). `gamedata.NAME_TABLES` does
-  not hold `Map` today, so M19-02 adds it to the names download; until it
-  is cached the id is shown and the missing-names line says "instances".
+- The instance is shown by the name the record holds (§20.1, "Where").
 - `crew show` matches the typed name after Unicode NFC and case folding,
   ignoring spaces and the apostrophes U+0027 and U+2019, and lists the
   candidates when more than one key matches. The stored key is never
@@ -5854,28 +5870,38 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   beside every SavedVariables file, believed to be the previous save:
   `docs/LAB_FILE_MAP.md`; left alone, it would hold the forgotten player
   for as long as the addon is disabled or removed). After it the bytes of
-  the name are in neither file. `--all` leaves `schema`, `on`, `started`
-  and `probe` as they were and empties `players` and `current`.
+  the name are in neither file. `--all` leaves `schema`, `on`, `started`,
+  `probe` and `skipped` as they were and empties `players` and `current`.
 - What a forget does not reach, said in its plan and in its result: "This
   command first saves a copy that still holds this player, so `wowlab
   undo` can bring them back. That copy and every earlier snapshot stay in
   wowlab's snapshot folder (<path>) until you remove them with `wowlab
   snap rm` and run `wowlab snap gc`. Archives you made with `snap export`
-  keep theirs." `snap rm` does not exist today; M19-09 builds it, and
-  until it merges the sentence says "wowlab cannot remove a snapshot
-  yet".
+  keep theirs." `snap rm` did not exist on 2026-11-18; M19-09 would
+  build it, if the owner agrees (§20.8, decision 9), and until it exists
+  the sentence says "wowlab cannot remove a snapshot yet". Removing a
+  forget's own snapshot ends `undo` for that change and every earlier
+  one, which `snap rm`'s plan must say.
+- **The backup's cases.** `WowLab.lua.bak` absent: left absent. It does
+  not hold the player: left alone. It cannot be read, or holds a schema
+  wowlab does not know: the forget refuses, naming the file, and changes
+  nothing.
 - `crew rate NAME-REALM good|bad|none` and `crew note NAME-REALM TEXT`:
   the same edits the slash commands make, for a player who would rather
   type a note at the desk. A note over 200 bytes, or holding a control
   character or `|`, is refused. The edit is a targeted change to the one
-  entry, its string written with the quoting helper `svmerge` already
-  uses: every other byte of `WowLab.lua` is kept (L4).
+  entry, its string written with `svmerge`'s quoting helper (private
+  on 2026-11-18; M19-03 makes it shared): every other byte of `WowLab.lua` is kept (L4).
 - **Which entry.** A write command acts only on an exact stored key or on
   the single key the matching rule of §20.2 finds; with more than one
   match it refuses and lists the stored keys. The plan shows the stored
-  key. The confirm step pins the file as `sv merge` does
-  (`--expect=<sha256>`), so a file that changed between plan and confirm
-  cannot resolve to another entry. `wowlab ui` passes the exact key from
+  key. The crew write commands declare `--expect`, not `--dry-run`, as
+  `sv merge` and `macros fix` do: the pin is each file's SHA-256 as read
+  and the SHA-256 of the bytes it would write (`WowLab.lua`, then
+  `WowLab.lua.bak` when it is written), joined by `:`, so a file that
+  changed between plan and confirm cannot resolve to another entry.
+  M19-03 registers them in `cli.EXPECT_FIELDS`; M19-06 adds the UI's
+  pin-check sentence. `wowlab ui` passes the exact key from
   `crew list --json`.
 - **What these commands never do.** They never create `WowLabCrewDB`,
   never change `on`, and refuse a `schema` they do not know. Their guard
@@ -5897,7 +5923,7 @@ and reports.
 
 ### 20.4 In `wowlab ui`
 
-A **Crew** tab after Account and Character: the list with a search box, the
+A **Crew** tab after "All characters" and "Character": the list with a search box, the
 rating filter and the sort, drawn from `crew list --json` through
 `/api/run`; a row opens what `crew show` prints. Forget, rate and note run
 through the confirm flow (ADR-0029) like every other write in the UI. With
@@ -5915,7 +5941,7 @@ sequences, U+009B, U+202E).
 |---|---|---|
 | 1. Local only | Records live in `WowLab.lua`, in the game's own `WowLab.lua.bak` and, as copies, in the snapshot store. No network call is added anywhere | the existing no-network tests still pass; `crewbook` imports no network module |
 | 2. Opt-in | `on` absent by default; the in-game notice and `wowlab crew --help` both carry the sentence below | static scan: every name call behind `on`; a help-text test |
-| 3. Out of the repository | Tests use constructed records, labelled. `scripts/lab_capture.py` refuses, by content and whatever the file is called, any captured file whose bytes hold `WowLabCrewDB` (any casing), unless every occurrence is a top-level assignment whose whole table matches one strict empty shape (`schema`, `on`, `started`, `probe`, `skipped`, `players = {}`, `current = {}`, nothing else). The refusal names the file and the reason, never a key. There is no emptying flag: the tool cannot empty a table safely without parsing | capture-tool tests on constructed files; a repository test over every tracked file, `.gz` and zip members included, that fails on `WowLabCrewDB` outside a list of labelled constructed test files, and on any key in those files that is not from one fixed list of constructed names |
+| 3. Out of the repository | Tests use constructed records, labelled. `scripts/lab_capture.py` refuses, by content and whatever the file is called, any captured file whose bytes hold `WowLabCrewDB` (any casing), unless every occurrence is a top-level assignment whose whole table matches one strict empty shape (`schema`, `on`, `started`, `probe`, `skipped`, an empty `players`, an empty `current`, nothing else), matched as the client writes it: bracketed string keys in any order, and `{` and `}` on separate lines for an empty table. The refusal names the file and the reason, never a key. There is no emptying flag: the tool cannot empty a table safely without parsing | capture-tool tests on constructed files; a repository test over every tracked file, `.gz` and zip members included, that fails on `WowLabCrewDB` in any tracked file other than the addon and Lab sources, `docs/`, and a fixed list of labelled constructed test files, and on any key in those test files that is not from one fixed list of constructed names |
 | 4. Shared output | `doctor --redact` never prints a crew record, from the live file or its `.bak`; it may say on or off and a count, never a key, and an unreadable `WowLab.lua` is reported without quoting the token that failed. `snap export` says, when any object in the archive holds a non-empty crew book (decided from content, not the file name), that it includes it. Profiles never carry `WowLab.lua` (`profile_presets.toml` excludes it), which a test pins. The `char advise --send` packet of ADR-0032, when built, never reads `WowLabCrewDB` | tests of each on constructed records |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew forget` (the live file and the game's backup), `snap rm` for the copies in snapshots (M19-09), and the sentence that says what a forget does not reach | §20.3's tests; M19-09's |
 
@@ -5933,15 +5959,24 @@ merge`, `--json` output and `wowlab ui` showing these records locally is
 storage and display under term 1. Term 3 covers crew records only: other
 addons' SavedVariables, captured by default or with `--sv`, stay under
 ADR-0019's amendment of 2026-10-17, and the sentence of term 2 promises
-nothing about them. `disclosure`'s row for the names download gains
-"instance names" when `Map` joins it (only the version is sent, as
-before), and the bug-report template's warning names the crew book.
+nothing about them. The bug-report template's warning names the crew
+book.
+
+**L8 and the reader.** L8 and ADR-0026 grade the reader of the addon's
+record on real captures; ADR-0036 term 3 forbids a real crew record in the
+repository. So `crewbook` is graded on constructed files, labelled, plus
+one `@live` test the owner runs on their own install: CI never runs it,
+and it prints only counts and key shapes (the pattern of ADR-0033). A real
+capture whose book is in the allowed empty shape may be committed, as a
+real fixture for the empty-book case. AGENTS.md's L8 names this exception
+from 2026-11-18.
 
 **No real name through process.** No agent runs `crew list`, `crew show`,
 `sv dump` of the account `WowLab.lua`, `snap diff` or an undo, restore or
 merge plan against the owner's install; proofs and probes use a
-constructed `--root`. The live L1 sweep runs the crew commands with a
-placeholder key and prints none of their output. The owner's check
+constructed `--root`. The live L1 sweep is run by the owner; for the crew
+commands, and for `sv dump` and `snap diff`, a failure prints the exit
+code only, never the command's output (M19-02 makes that change). The owner's check
 (M19-07) reports the shape of a key, never a key.
 
 ### 20.6 What is not known
@@ -5969,22 +6004,27 @@ answers are.
 
 | Ticket | What | Reviewers |
 |---|---|---|
-| M19-01 | The addon: `Crew.lua`, the TOC, the slash commands, the warning, the static checks | code, domain, security |
+| M19-01 | The addon's static checks: the per-file relaxation for `Crew.lua` (tests only) | code, security |
+| M19-10 | The addon: `Crew.lua`, the TOC, the slash commands, the warning | code, domain, security |
 | M19-02 | `crewbook` and `crew list` / `crew show` | code, domain |
 | M19-03 | `crew forget`, `crew rate`, `crew note` through `guard` | code, security |
 | M19-04 | The capture-tool rule and the repository test (term 3) | code, security |
-| M19-05 | `doctor --redact` and `snap export` (term 4) | code, security |
+| M19-05 | `doctor --redact`, the profiles pin, the bug template (term 4) | code, security |
+| M19-11 | "Brings back the crew book": `snap export`, `snap restore`, `undo`, `sv merge` | code, security |
 | M19-06 | The Crew tab | code, security |
 | M19-07 | Owner: the in-game check | owner |
-| M19-09 | `wowlab snap rm` | code, security |
+| M19-09 | `wowlab snap rm`, only on the owner's yes | code, security |
 | M19-08 | Wave review | — |
 
-M19-01 and M19-02 run together from this section's record shape (the
-reader is graded on constructed files and does not need the addon merged).
-M19-04, M19-05 and M19-09 are independent of both. M19-03 follows M19-02; M19-06
-follows M19-02 and M19-03. M19-07 follows M19-01 and M19-02 and can happen
-any time after; a finding from it that changes the record shape is fixed
-before M19-08.
+M19-01, M19-02 and M19-04 start together: the reader is graded on
+constructed files from this section's record shape and does not need the
+addon. M19-10 follows M19-01. M19-03, M19-05 and M19-11 follow M19-02;
+M19-05 and M19-02 both touch `doctor`, and M19-11 and M19-09 both touch
+`cli/_cmd_snap.py`, so each pair runs one after the other. M19-06 follows
+M19-03. M19-07 follows M19-10 and M19-02; a finding from it that changes
+the record shape is fixed before M19-08. M19-10 and the parked
+`m16/45-addon-schema5` branch both edit `Core.lua`'s slash handler, the
+TOC, the README and `test_lab_addon.py`: whichever lands second rebases.
 
 ### 20.8 Decisions the conductor took, for the owner to overturn
 
@@ -6002,8 +6042,21 @@ Each is the smallest thing that does the job; say so and it changes.
    review's advice: left alone it keeps the record for as long as the
    addon is off).
 8. A note over 200 bytes is refused, not cut.
-9. The wave adds `wowlab snap rm`, because ADR-0036's term 5 speaks of
-   the player removing snapshots and wowlab has no command for it.
+9. **Needs the owner's yes before it is built:** `wowlab snap rm`
+   (M19-09). ADR-0036's term 5 speaks of the player removing snapshots and
+   wowlab has no command for it. Removing a snapshot a change needs ends
+   `undo` for that change and every earlier one (undo always acts on the
+   newest record), and a forget's own snapshot is always the newest. On
+   `main`, `undo` then refuses with its message for an unreadable
+   snapshot; any kinder wording would need an amendment to ADR-0037,
+   which lists a missing manifest among the frozen cases. Whether
+   `wowlab ui` offers the command is the owner's ruling too. Without
+   M19-09 the forget sentence keeps saying wowlab cannot remove a
+   snapshot yet.
+10. The addon uses the clock (`time`, `date`) in `Crew.lua`, which §13.1
+    rules out for the per-character record.
+11. The instance is kept by name, as the client gives it, so no game
+    table is added to anyone's download.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
