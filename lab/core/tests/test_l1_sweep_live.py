@@ -125,6 +125,7 @@ EXCLUDED: dict[str, str] = {
     "addon remove": "writes into the install",
     "snap create": "writes into wowlab's store",
     "snap gc": "writes into wowlab's store",
+    "snap rm": "writes into wowlab's store",  # M19-09
     "snap import": "writes into wowlab's store",
     "profile save": "writes into wowlab's store",
     "profile delete": "writes into wowlab's store",

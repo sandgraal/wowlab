@@ -42,6 +42,8 @@ ASKS_FIRST = {
     "wowlab crew rate",
     "wowlab crew note",
     "wowlab snap gc",
+    # M19-09: removes snapshots from the Lab's store.
+    "wowlab snap rm",
     # On a first run it offers a first snapshot into the Lab's store (M13-04).
     "wowlab doctor",
 }

@@ -28,9 +28,9 @@ def test_keybinds_holds_the_keys_and_the_macros() -> None:
 def test_every_command_the_page_refuses_is_named() -> None:
     text = _help()
     sentence = (
-        "ui itself, log tail --follow, looks page --out, casc cat --out, char model --out and "
-        "snap export are not offered, so casc cat and char model write only to their default "
-        "places."
+        "ui itself, log tail --follow, looks page --out, casc cat --out, char model --out, "
+        "snap export and snap rm are not offered, so casc cat and char model write only to "
+        "their default places."
     )
     assert sentence in text
     # Each leaf the server refuses whole is in the sentence.

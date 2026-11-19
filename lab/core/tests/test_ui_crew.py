@@ -724,7 +724,7 @@ def test_a_name_starting_with_a_dash_is_an_argument_not_an_option_constructed(
     assert confirmed["status"].startswith(
         "After Confirm: Done (exit code 0). This command first saved"
     )
-    assert "wowlab cannot remove a snapshot yet" in confirmed["status"]
+    assert "wowlab snap rm" in confirmed["status"]
     assert "Journaled as " in confirmed["status"]
     # Forgotten: gone from the file, the list and the panel.
     assert dashed.encode() not in crew.live.read_bytes()

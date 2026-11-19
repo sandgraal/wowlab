@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -178,7 +180,12 @@ def test_forget_plan_writes_nothing_and_says_what_it_does_not_reach_constructed(
     assert (
         "This command first saves a copy that still holds this player, so `wowlab undo` can" in out
     )
-    assert "wowlab cannot remove a snapshot yet" in out
+    assert (
+        f"stay in wowlab's snapshot folder ({snapshot.default_store_path()}) until you remove "
+        "them with `wowlab snap rm` and run `wowlab snap gc`; files stored in the last hour "
+        "stay until a `snap gc` run after that hour." in out
+    )
+    assert "cannot remove a snapshot" not in out
     assert "Archives you made with `snap export` keep theirs." in out
     assert str(snapshot.default_store_path()) in out
     assert env.live() == data and env.bak().read_bytes() == data
@@ -958,3 +965,58 @@ def test_a_note_with_a_line_or_paragraph_separator_is_refused_constructed(
     result = env.run("crew", "note", KEY_A, f"one{char}two", "--yes")
     assert result.exit_code == 2, (result.stdout, result.stderr)
     assert env.live() == data and guard.history() == ()
+
+
+def test_forget_then_snap_rm_then_gc_says_what_it_kept_young_and_a_later_gc_drops_it_constructed(
+    make: Any,
+) -> None:
+    """M19-09, security review: `snap gc` keeps objects younger than an hour,
+    and a forget's pre-write snapshot holds fresh ones, so gc straight after
+    `snap rm` keeps the forgotten player's copy. It says how many it kept
+    and that a later run removes them; past the hour they go."""
+    data = _three(rating="bad", note=NOTE)
+    env = make(data)
+    env.ok("crew", "forget", KEY_A, "--yes")
+    (record,) = guard.history()
+    store = snapshot.default_store_path()
+    removed = runner.invoke(
+        cli.app, ["snap", "rm", record.snapshot_id, "--break-undo", "--yes"], terminal_width=10_000
+    )
+    assert removed.exit_code == 0, (removed.stdout, removed.stderr)
+    assert "files stored in the last hour stay until a run after that hour." in removed.stdout
+
+    def objects() -> dict[Path, bytes]:
+        return {
+            p: zlib.decompress(p.read_bytes())
+            for p in (store / "objects").rglob("*")
+            if p.is_file() and len(p.parent.name) == 2
+        }
+
+    held = [p for p, b in objects().items() if KEY_A.encode() in b]
+    assert held, "the forgotten player's copy is in the store before gc"
+    before = set(objects())
+
+    text = runner.invoke(cli.app, ["snap", "gc", "--yes"], terminal_width=10_000)
+    assert text.exit_code == 0, (text.stdout, text.stderr)
+    said = snapshot.GcReport.model_validate_json(
+        runner.invoke(cli.app, ["snap", "gc", "--dry-run", "--json"]).stdout
+    )
+    young = said.kept_young
+    assert young >= len(held) and said.unreferenced == ()
+    out = " ".join(text.stdout.split())
+    assert out.startswith("Nothing to collect")
+    assert (
+        f"Kept {young} object(s) no snapshot needs because they were stored in the last hour "
+        "(in case a snapshot is being written); a `wowlab snap gc` run after that hour "
+        "removes them." in out
+    )
+    assert set(objects()) == before, "nothing young was removed"
+
+    for path in before:  # constructed: the hour has passed
+        old = path.stat().st_mtime - 2 * cli.GC_GRACE_SECONDS
+        os.utime(path, (old, old))
+    later = snapshot.GcReport.model_validate_json(
+        runner.invoke(cli.app, ["snap", "gc", "--yes", "--json"]).stdout
+    )
+    assert len(later.removed) == young and later.kept_young == 0
+    assert not any(KEY_A.encode() in b for b in objects().values())

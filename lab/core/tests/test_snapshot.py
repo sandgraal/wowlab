@@ -572,6 +572,10 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         "add_snapshot",  # M16-04: writes a new manifest, never one already there
         "imported_ids",  # M16-04: lists imported/ only
         "exposure",  # M16-41: lstat and listings only
+        # M19-09 (§6.9 as amended 2026-11-19): deletes one manifest whole, by
+        # full id, and never rewrites the bytes of one that stays; not run
+        # above, since it would leave no manifest file to compare.
+        "remove",
     }
 
 

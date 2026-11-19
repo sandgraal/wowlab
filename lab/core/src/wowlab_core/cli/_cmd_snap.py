@@ -1,6 +1,7 @@
-"""`wowlab snap create`, `list`, `show`, `diff`, `verify`, `gc`, `export` and
-`import` (M16-111)."""
+"""`wowlab snap create`, `list`, `show`, `diff`, `verify`, `gc`, `rm` (M19-09),
+`export` and `import` (M16-111)."""
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -60,6 +61,7 @@ from wowlab_core.cli._common import (
     _pre_write_ids,
     _safe,
     _say,
+    _say_err,
     _say_notes,
     _say_prose,
     _select_flavor,
@@ -540,7 +542,8 @@ def snap_gc(
     json_out: JsonOpt = False,
 ) -> None:
     """Remove stored objects that nothing keeps, once they are older than an
-    hour (in case a snapshot is being written). Kept: every
+    hour (in case a snapshot is being written); it says how many younger ones
+    it kept, which a run after that hour removes. Kept: every
     object a snapshot refers to, and what each committed write left in a
     character's WowLab.lua (the lab-addon's per-character file, in any
     install), which the SavedVariables loader check of `sv merge` compares
@@ -610,6 +613,236 @@ def snap_gc(
         )
     else:
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
+    if report.kept_young:
+        _say(_kept_young_line(report.kept_young))
+
+
+def _kept_young_line(n: int) -> str:
+    """What `snap gc` left only because it is younger than an hour (M19-09):
+    a file a snapshot just removed with `snap rm` may still be one of them."""
+    return (
+        f"Kept {n} object(s) no snapshot needs because they were stored in the last hour "
+        "(in case a snapshot is being written); a `wowlab snap gc` run after that hour "
+        "removes them."
+    )
+
+
+class SnapRmItem(_Out):
+    """One snapshot `snap rm` removes, or would."""
+
+    id: str
+    created_at: str
+    label: str
+    kind: snapshot.SnapshotKind
+    files: int
+    needed_by: list[str]
+    """The journal records whose pre-write snapshot this is (the files as
+    they were just before that change), oldest first; empty when no record
+    names it. Removing such a snapshot needs `--break-undo`."""
+    undo_reverses: bool
+    """True when this is the pre-write snapshot of the change `wowlab undo`
+    reverses now (the most recent one), so removing it ends that undo. Undo
+    only ever reverses the most recent change, so for an older change's
+    snapshot this is False and undo is not affected."""
+
+
+class SnapRmReport(_Out):
+    """`wowlab snap rm --json`. `applied` is true only after the manifests
+    were removed; a dry run or a declined plan removes nothing. `removed`
+    names the snapshots removed, in the order of `snapshots`."""
+
+    store: str
+    snapshots: list[SnapRmItem]
+    breaks_undo: bool
+    """True when a snapshot in the plan is the one `wowlab undo` reverses
+    the most recent change from (an item with `undo_reverses`)."""
+    journal_named: bool
+    """True when a snapshot in the plan is one a journal record names (an
+    item with `needed_by`); the run then went ahead only with
+    `--break-undo`."""
+    dry_run: bool
+    applied: bool
+    removed: list[str]
+    plan_lines: list[str]
+    """The plan as the text output shows it, line by line."""
+
+
+def _rm_plan_lines(
+    store: snapshot.SnapshotStore,
+    items: list[SnapRmItem],
+    journal: Sequence[guard.HistoryRecord],
+) -> list[str]:
+    """`snap rm`'s plan, as printed (and as `plan_lines` carries it)."""
+    records = {r.id: r for r in journal}
+    lines = [
+        f"Remove {len(items)} snapshot(s) from wowlab's snapshot folder ({store.path}):",
+    ]
+    for item in items:
+        lines.append(f"  {item.id}  taken {item.created_at}, {item.kind}, {item.files} file(s)")
+        if item.label:
+            lines.append(f'    label: "{item.label}"')
+        for rec_id in item.needed_by:
+            rec = records.get(rec_id)
+            what = f' ("{rec.label}", {rec.created_at})' if rec is not None else ""
+            if item.undo_reverses and rec_id == item.needed_by[-1]:
+                lines.append(
+                    "    It is the copy wowlab took just before your most recent change "
+                    f"{rec_id}{what}: `wowlab undo` will no longer be able to reverse it."
+                )
+            else:
+                lines.append(
+                    f"    It is the copy wowlab took just before your change {rec_id}{what}. "
+                    "`wowlab undo` only ever reverses your most recent change, so it is not "
+                    "affected; `wowlab snap restore` from this snapshot will no longer be "
+                    "possible."
+                )
+    lines.append(
+        "Only the snapshots' records go now. The stored files stay until `wowlab snap gc` "
+        "removes the ones no other snapshot needs; files stored in the last hour stay until "
+        "a `wowlab snap gc` run after that hour."
+    )
+    return [_safe(line) for line in lines]
+
+
+@snap_app.command("rm", short_help="Remove snapshots you no longer want (asks first).")
+@_handled
+def snap_rm(
+    snapshot_ids: Annotated[
+        list[str],
+        typer.Argument(
+            metavar="ID",
+            help="The snapshots to remove: each a snapshot id or a unique start or end of "
+            "one, as snap list shows them (latest, latest-user and ~N work too).",
+        ),
+    ],
+    break_undo: Annotated[
+        bool,
+        typer.Option(
+            "--break-undo",
+            help="Remove a snapshot even when it is the copy wowlab took just before one of "
+            "your changes. The files can then no longer be put back as they were before that "
+            "change; for your most recent change, `wowlab undo` can no longer reverse it.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Only show what would be removed.")
+    ] = False,
+    yes: YesOpt = False,
+    json_out: JsonOpt = False,
+) -> None:
+    """Remove snapshots from wowlab's snapshot folder. Shows the plan and
+    asks first. Every ID must name a snapshot, or nothing is removed.
+    Nothing in your game folder is touched. A snapshot wowlab took just
+    before one of your changes is refused unless you add --break-undo: the
+    files can then no longer be put back as they were before that change,
+    and for your most recent change `wowlab undo` can no longer reverse it.
+    The files a snapshot holds stay in the store until
+    `wowlab snap gc` removes the ones no other snapshot needs. Holds the
+    store lock for the whole run.
+
+    \f
+    JSON: SnapRmReport."""
+    store = snapshot.SnapshotStore()
+    if not store.path.is_dir():
+        raise CliError(f"there is no snapshot store at {store.path} yet; nothing was removed")
+    with guard.store_lock(store.path):
+        # Everything below is read under the store lock, so no transaction,
+        # `snap create` or `snap gc` runs between the plan and the removal.
+        records = guard.history(store=store.path)
+        target = guard._undo_target(records)
+        pre_write = frozenset(r.snapshot_id for r in records if r.snapshot_id)
+        imported = store.imported_ids()
+        items: list[SnapRmItem] = []
+        try:
+            for given in snapshot_ids:
+                full = _resolve_ref(store, given)  # an unknown id refuses the whole run
+                if any(item.id == full for item in items):
+                    continue  # an id given twice is removed once
+                m = store.show(full)
+                items.append(
+                    SnapRmItem(
+                        id=m.id,
+                        created_at=m.created_at,
+                        label=m.label,
+                        kind=snapshot.kind_of(m, pre_write, imported),
+                        files=sum(1 for e in m.entries if e.kind == "file"),
+                        needed_by=[r.id for r in records if r.snapshot_id == m.id],
+                        undo_reverses=target is not None and target.snapshot_id == m.id,
+                    )
+                )
+        except snapshot.ManifestIntegrityError:
+            # The loader's own words name a model and its validators; the
+            # player gets the fact, and `snap verify` for the detail.
+            raise CliError(
+                "a snapshot you named, or one wowlab had to read to find it, is damaged: "
+                "its record in the snapshot folder cannot be read. snap rm leaves a damaged "
+                "snapshot alone, and nothing was removed. `wowlab snap verify` names it."
+            ) from None
+        needed = [item for item in items if item.needed_by]
+        if needed and not break_undo:
+            by_id = {r.id: r for r in records}
+            said = "; ".join(
+                f"{item.id} is the copy wowlab took just before your change "
+                f'"{by_id[item.needed_by[-1]].label}" ({by_id[item.needed_by[-1]].created_at})'
+                for item in needed
+            )
+            them = "it" if len(needed) == 1 else "them"
+            raise CliError(
+                f"{said}. Removing {them} means the files can no longer be put back as they "
+                "were before that change, so nothing was removed. Add --break-undo to remove "
+                f"{them} anyway."
+            )
+        plan_lines = _rm_plan_lines(store, items, records)
+
+        def report(*, applied: bool, removed: list[str]) -> SnapRmReport:
+            return SnapRmReport(
+                store=str(store.path),
+                snapshots=items,
+                breaks_undo=any(item.undo_reverses for item in items),
+                journal_named=bool(needed),
+                dry_run=dry_run,
+                applied=applied,
+                removed=removed,
+                plan_lines=plan_lines,
+            )
+
+        # With --json, the plan goes to stderr when a prompt will ask first.
+        show = _say if not json_out else _say_err
+        if not json_out or not (yes or dry_run):
+            for line in plan_lines:
+                show(line)
+        if dry_run:
+            if json_out:
+                _emit(report(applied=False, removed=[]))
+            else:
+                _say("Dry run: nothing was removed.")
+            return
+        try:
+            _confirm("Remove them?", yes)
+        except typer.Exit:
+            if json_out:
+                _emit(report(applied=False, removed=[]))
+            raise
+        removed: list[str] = []
+        for item in items:
+            try:
+                store.remove(item.id)
+            except snapshot.SnapshotError as exc:
+                done = (
+                    f"; removed before it: {', '.join(removed)}, and not the rest"
+                    if removed
+                    else "; nothing was removed"
+                )
+                raise CliError(f"{exc}{done}") from exc
+            removed.append(item.id)
+    if json_out:
+        _emit(report(applied=True, removed=removed))
+        return
+    _say(
+        f"Removed {len(removed)} snapshot(s). `wowlab snap gc` removes the stored files no "
+        "snapshot needs any more; files stored in the last hour stay until a run after that "
+        "hour."
+    )
 
 
 @snap_app.command("export", short_help="Write one snapshot to a file you can carry elsewhere.")
