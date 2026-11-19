@@ -1378,12 +1378,14 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-10 — `compositor`: the body texture
+## [x] M15-10 — `compositor`: the body texture
 **Size:** M · **Depends on:** M15-07, M15-09, M15-13
 
 §17.5. `wowlab_core.compositor` composes the body texture from the plan's layers into the layout's canvas: section rectangles, layer order, the blend modes (alpha-over, multiply, overlay, screen; others refused with the mode named, **[verify]**), rows as byte slices; hair and eyes left as separate textures. Target: a 2048×1024 composite in ≤ 3 s on the owner's machine.
 
 **Acceptance:** constructed 8×8 layers with known results per blend mode (labelled; a mode outside the four refused with its number); the fixture character's composite MD5 as a derived fixture with the inputs' ids and a provenance row, asserted by an `@live` test on the owner's install; a layer outside its section refused; the timing against §17.5's target; `make ci` green. Reviewed by `code-reviewer` and `domain-reviewer` (the blend-mode enum and the layer order). User-facing: none.
+
+*Noted 2026-11-18 (#603, merged b6b8494):* the compositor paints six blend modes, not the four named above: 1 blit, 4 multiply, 6 overlay, 7 screen, 9 alpha straight and 15 alpha blend, the modes texture type 1 uses in `ChrModelTextureLayer` at 70959 (both fixture characters need 1 and 15). Every other number, 0 included, is refused with its number. Textures smaller than their section are stretched by whole pixels. Accepted by `code-reviewer`, `domain-reviewer` and `security-reviewer`; recorded in `docs/LAB_PLAN.md` §17.5 (note of 2026-11-18).
 
 ---
 
@@ -1443,7 +1445,7 @@ The owner's install is the launch client now (`_forever_`, product `wowf`). The 
 
 ---
 
-## [ ] M15-18 — `test_perf_budget` fails while the game client runs
+## [x] M15-18 — `test_perf_budget` fails while the game client runs
 **Size:** XS · **Depends on:** nothing · **Sources:** the reviews of #600 and #601 (2026-11-18)
 
 `tests/scripts/test_perf_budget.py::test_constructed_the_pipeline_runs_on_a_small_tree` runs `scripts/perf_budget.py`, whose child processes (`wowlab snap restore … --dry-run` and the gate driver) ask the real process list: the sandbox redirects the home, the user data folders and the install, not the process probe. With the owner's client open the gate refuses ("the game client is running") and the test fails, on `main` too. No test may depend on the real machine (`docs/LAB_PLAN.md` §6.7).
@@ -1454,7 +1456,7 @@ The stub reaches the children from test code only: the test prepends a temporary
 
 ---
 
-## [ ] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
+## [x] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's cleanup, 2026-11-18; Windows runs on `main` since 2026-11-17 02:46Z
 
 `lab (windows)` has been red on `main` since 2026-11-17 02:46Z (last green: run 44003764232 at 8cf5592). It first failed on another test (`test_positive_control_keybinds_after_the_open_leaves_the_kept_page`, through 577bc24); the L1-sweep failures began at run 44156145657 (e1a2e45), the first completed run after #581 (M16-38) added the sweep, which has never been green on Windows. Run 44381681237 at cbd5799: 12 failed, 11,405 passed, 43 min 49 s, all twelve in `lab/core/tests/test_l1_sweep_live.py`, the sweep's own detection tests among them (added and removed paths, a directory time change, a same-size same-time content change), which fail because extra folder-time lines appear in their expected lists: on the constructed install the sweep reports "the install changed (L1)" because folder modification times (`_forever_`, `Data`, `World of Warcraft.app/…`) moved by a millisecond or two between its two looks, so tests that expect a named failure ("did not end as a read may: … exit 2") get the L1 one first. Find why the folder times move on Windows (the tree still settling when the first look is taken, a reader that opens a folder in a way NTFS records, or the sweep's own bookkeeping) and fix the cause; a comparison that ignores folder times is acceptable only if the cause is shown to be the file system's and the sweep still catches a file created, removed or rewritten inside the install.
@@ -1463,12 +1465,14 @@ The stub reaches the children from test code only: the test prepends a temporary
 
 ---
 
-## [ ] M15-20 — typer 0.29: the command reference generator breaks, and one CLI message changes
+## [x] M15-20 — typer 0.29: the command reference generator breaks, and one CLI message changes
 **Size:** S · **Depends on:** nothing · **Sources:** dependabot #568 (2026-11-16), red on "Lint, typecheck, tests"
 
 With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and 13 errors on ubuntu, `lab (macos)` red too). Nearly all are one error, `AttributeError: 'TyperOption' object has no attribute 'type'`, through `scripts/gen_command_reference.py`, reached from the `check_wiki*`, `gen_command_reference`, `change_sentence` and five review-probe tests. One CLI test differs for another reason: `lab/core/tests/test_cli_uncaught.py::test_a_usage_error_with_nothing_to_escape_prints_as_click_does[bad-value]`, where typer now prints "Input should be a valid integer, unable to parse string as an integer" for the old "… int range." message. Make `scripts/gen_command_reference.py`, the UI's command-tree reader if it reads the same attributes, and the CLI's usage-error path work on 0.29.1, then take the bump (`pyproject.toml`, `uv.lock`) in the same PR and close #568. Text and `--json` output stay byte-identical on every command; the generated command reference does not change except where typer's own help text did, each such line named in the PR.
 
 **Acceptance:** the suite green on typer 0.29.1; `scripts/gen_command_reference.py --check` passes; the UI parity test green; the runtime dependency line in the PR body; `make ci` green. Reviewed by `code-reviewer`. User-facing: none intended; any help-text change listed.
+
+*Noted 2026-11-18 (#606, merged a277cd7):* green on Linux and macOS; on Windows one test fails since this merge (run 44428717366: `test_cli_explain_detail.py::test_every_view_argv_parses_against_the_click_tree[/install root/World of Warcraft]`, a `--root` value that now comes back as a path and prints with backslashes). M15-23 is the follow-up.
 
 ---
 
@@ -1484,11 +1488,20 @@ Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main`
 ---
 
 ## [ ] M15-22 — The CLI imports a command's module when that command runs
-**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18)
+**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18); the owner, 2026-11-18 in session (asked which optional extras to do, picked "M15-22: lazy CLI imports")
 
 `python -P -m wowlab_core --version` costs 0.66 s of CPU against 0.02 s for a bare interpreter; about 0.37 s of that is wowlab's own modules, imported whole by `import wowlab_core.cli` whatever the command (`addoncheck` and what it pulls in are the largest). The suite starts about 1,900 such children, 1,700 of them from the UI tests, and `wowlab ui` starts one per command a player runs. Import a command group's module when that command runs. `test_cli_package.py` (M16-111) requires every name of every `cli` module on the package, so the package re-exports lazily and that test's monkeypatch rule is looked at again, with the reviewer.
 
 **Acceptance:** the import cost of `--version` and of one read command measured before and after (CPU, best of several, in the PR); text and `--json` output byte-identical on every command; the UI parity tests green; `make ci` green; the suite's parallel pass timed before and after on CI. Reviewed by `code-reviewer`. User-facing: none but speed.
+
+---
+
+## [ ] M15-23 — `lab (windows)` is red again: a `--root` value compared as text
+**Size:** XS · **Depends on:** M15-20 · **Sources:** the review of #610 (2026-11-18); Windows run 44428717366 on `main` at a277cd7
+
+After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:219`, `test_every_view_argv_parses_against_the_click_tree[/install root/World of Warcraft]`, fails on Windows only: `assert '\\install ro...d of Warcraft' == '/install roo...d of Warcraft'`. typer 0.29 converts values through Pydantic, so `ctx.params["root"]` comes back as a `Path`, and `str()` of it uses backslashes on Windows. Compare paths as paths in that test. Also check whether any library code turns a parsed `--root` (or another path option) into text and compares or prints it where 0.28 gave the text the player typed: the UI builds its argv from strings, so it is probably the test alone, but that is not verified. The run at e2b320b, before #606, was green; the three runs between were cancelled.
+
+**Acceptance:** `gh workflow run windows.yml --ref <branch>` green, linked; what was checked in the library, said in the PR; the touched tests green on Linux. Reviewed by `code-reviewer`. User-facing: none unless the library check finds one.
 
 ---
 
