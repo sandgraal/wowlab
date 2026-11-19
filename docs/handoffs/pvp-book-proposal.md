@@ -184,6 +184,12 @@ every fact it rests on is unconfirmed.
 
 ## Decisions for the owner
 
+*Answered by the owner in session on 2026-11-19:* (1) yes, the two-store
+design; (2) option A, a generous list and a warning; (3) 20,000 players in
+the in-game list, login time measured at the in-game check; (4) yes,
+opponents from the scoreboard; (5) world PvP is left out for now; (6) the
+current wave (M19) finishes first. The questions as they were asked:
+
 1. Is the two-store design (a bounded list in game, everything in a
    database at the desk) what you want?
 2. The catch: option A (a generous list and a warning) or option B (wowlab
