@@ -3475,7 +3475,7 @@ On Windows, platformdirs ignores `HOME`, `APPDATA` and `LOCALAPPDATA`, so tests 
 
 The owner picked this wave on 2026-11-18, in session, as the one after M15 ("Crew book"). The spec is `docs/LAB_PLAN.md` §20 and the decision is ADR-0036 (accepted 2026-11-11), whose five terms every ticket below holds. The wave starts when M15-12 closes. L1–L8 apply to every ticket. No ticket changes `guard.py` or `luadata.py`; one that finds it must stops and reports. No fixture, test, probe, PR body or report holds a crew record or another player's name taken from a real install: tests use constructed records, labelled (ADR-0036 term 3). No agent runs `crew list`, `crew show`, `sv dump` of the account `WowLab.lua`, `snap diff` or an undo, restore or merge plan against the owner's install: every proof and probe uses a constructed `--root` (§20.5).
 
-## [ ] M19-01 — lab-addon static checks: what `Crew.lua` alone may do
+## [x] M19-01 — lab-addon static checks: what `Crew.lua` alone may do
 **Size:** M · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.1 ("Static checks"); ADR-0026; ADR-0036; the code review of #613 (2026-11-18)
 
 Tests only, in `tests/addon/test_lab_addon.py`, before any addon code. One per-file relaxation mechanism, for a file named `Crew.lua` only, of each rule §20.1 lists: `FORBIDDEN_APIS` (the name calls), `CLOCK` (`time`, `date`), `NAME_FIELDS`, `STD_PRIVACY` (the declarations in `wow_client.yml`), the unit-token rule (`party`, `raid`, `target` and a non-literal unit), the two concatenated-index rules, and `test_toc_saved_variables` (which then pins `WowLabDB` and `WowLabCrewDB`). `UnitGUID` stays refused everywhere. New refusals for the whole addon: `SendChatMessage`, `BNSendWhisper`, `ChatFrame_OpenChat`, `ChatEdit_InsertLink`. A rule that every relaxed name call in `Crew.lua` sits behind the `on` test and the combat test.
@@ -3493,7 +3493,7 @@ Tests only, in `tests/addon/test_lab_addon.py`, before any addon code. One per-f
 
 ---
 
-## [ ] M19-02 — `crewbook` and `wowlab crew list` / `crew show`
+## [x] M19-02 — `crewbook` and `wowlab crew list` / `crew show`
 **Size:** M · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.2, §20.5
 
 `wowlab_core.crewbook` reads `WowLabCrewDB` from the account's `WowLab.lua` into `CrewBook` and `CrewPlayer`, read-only, through `labaddon`'s root-anchored read, with the four stated outcomes (`on` absent or false; turned off with N kept; an unknown schema refused with its number; a malformed entry listed as unread, the rest read). `wowlab crew list` with `--rated`, `--noted`, `--search` and `--sort`, and `crew show NAME-REALM`, text and `--json` saying the same; `--flavor` and `--account` as `char` has them, the candidates listed and exit 2 when several books exist and none is named. Typed names match after NFC and case folding, ignoring spaces and the apostrophes U+0027 and U+2019, with the candidates listed when several keys match. `wowlab crew --help` carries the sentence of §20.5 term 2. The commands are read commands for `wowlab ui` (`/api/run`), the command reference and the L1 sweep; in the live sweep, a failure of a crew command, `sv dump` or `snap diff` prints the exit code only.
@@ -3511,7 +3511,7 @@ Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 
 
 ---
 
-## [ ] M19-04 — The capture tool keeps crew records out of the repository
+## [x] M19-04 — The capture tool keeps crew records out of the repository
 **Size:** S · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.5 term 3; ADR-0036 term 3; ADR-0019
 
 `scripts/lab_capture.py` refuses, by content and fail closed, any captured file holding `WowLabCrewDB` unless every occurrence is a top-level assignment matching the one strict empty shape of §20.5, as the client writes it; no emptying flag. The refusal names the file and the reason, never a key. A repository test scans every tracked file, `.gz` and zip members included, and fails on `WowLabCrewDB` anywhere but the addon and Lab sources, `docs/`, and a fixed list of labelled constructed test files, and on any key in those test files that is not from one fixed list of constructed names.
