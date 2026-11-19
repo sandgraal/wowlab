@@ -5197,8 +5197,9 @@ numbers are there and in `docs/LAB_FORMATS.md` §12 (amendment of
 array on a global sequence (loops of 688 to 1,079 s); its first key turns
 99° to 180°, no later key differs by over 1.5°, and 26/27 and 30/31 are
 mirror pairs. Point 29: no track (959310), identity (917116). The hand
-points' parents hold one translation key per animation, in the M2; on
-959310 array 0 is animation 5, not 0. *Inferred, **[verify]**:* the first
+points' parents hold one translation key in each array read (arrays 0
+and 2 on 959310, 0 on 917116), in the M2; that the rest hold one too is
+inferred. On 959310 array 0 is animation 5, not 0. *Inferred, **[verify]**:* the first
 key is a usable carry angle. Unverified: the decoding rule, composing it
 with the animated spine parent, an item's long axis, the axis signs, the
 `SheatheType` mapping, and whether animation 0 is the stand.

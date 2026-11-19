@@ -1242,8 +1242,10 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (x, y, z, w), each decoded as `(s < 0 ? s + 32768 : s − 32767) / 32767`;
   a translation is three floats. The sequences are at MD20 0x1C (64 bytes
   each, animation id u16 at 0, flags u32 at 12), the global sequence
-  durations at 0x14 (u32, ms). Observed: every track read is linear
-  (interpolation 1); every decoded rotation has a length within 5e-5 of 1,
+  durations at 0x14 (u32, ms). Observed: every track read that has a
+  key array is linear (interpolation 1); the hand points' own bones' empty
+  tracks (213, 214; 206 and 207's translation) are recorded with
+  interpolation 0 and no array; every decoded rotation has a length within 5e-5 of 1,
   which supports the decoding rule (still **[verify]** as a rule); a track
   on a global sequence has one array, and its keys are inside the M2; each
   per-sequence array read belongs to a sequence with flag 0x20 and its
