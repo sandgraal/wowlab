@@ -6033,6 +6033,27 @@ must come from the repository test's fixed list of constructed names.)
   short functions whose text the scans grade; the 200-byte measure is
   mirrored in Python, where M19-03 tests it (the character rule differs
   on purpose: the game removes, the desk refuses).
+  *Note (2026-11-19, M19-01, conductor decisions):* `Crew.lua` is not
+  section code, and `/wowlab skip` does not reach it; its switch is `on`.
+  The M11-37 scan accepts its client calls in functions behind the on and
+  combat tests, in the pinned helpers, a `type()` test of a name call
+  anywhere, and in `ns.CrewCommand` the typed text, `time` and `date`. It
+  may call `ns.On` there only for `GROUP_ROSTER_UPDATE`, `UNIT_NAME_UPDATE`
+  and `PLAYER_REGEN_ENABLED`, plus once per event at file level for events
+  Core.lua already registers at file level, so nothing new is registered
+  while off. Handlers are named local functions that never read the event
+  or its payload, except `crewLoaded`, which compares the addon name. A key of `players` or `current` is `name .. "-" .. realm`
+  from the name calls, or a key walked from those tables. Those handlers
+  are gated, except one pinned `crewLoaded` at
+  `ADDON_LOADED`, which raises `probe.loads` whenever a book exists, on or
+  off ("like §13.1's"), and creates nothing. `"NONE"` and `"none"` appear
+  only after `==` or `~=`. `pairs` may walk `players` and `current`.
+  Core.lua's slash handler is the one caller, as `ns.CrewCommand(message)`.
+  The M11-13 check is not relaxed. M19-10 inherits these rules and adds no
+  relaxation and no test entry. Rating the target and `crew who` do nothing
+  while off or in combat. Left to the M11-13 check and review: an entry's
+  own fields; a typed NAME-REALM is found by walking `players` and
+  comparing.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
@@ -6208,7 +6229,8 @@ nil line, or a table whose every key is a constructed name or a §20.1 field
 Not caught: `getfenv()[…]`, a bare Markdown table row, a `["Name"]` key with
 a `realm` field, a file not naming the book, `WowLabCrewDB = f` then a table
 on the next line, a table hand-written after an accepted empty book, a
-comment or line break between the name and a field path.
+comment or line break between the name and a field path, a field
+assignment written behind `_G.` (found at the last security check of #624).
 
 ### 20.6 What is not known
 
