@@ -23,3 +23,6 @@ condition is kept.
 
 | Merged | Ticket | What changed for the player | Wiki pages (from the PR) |
 |---|---|---|---|
+| 2026-11-19 | M15-11 (#611) | `wowlab char model` writes the character as a `.glb` file with its body, hair and eyes PNGs; the first run for a game version downloads the tables it needs | CLI-Reference (regenerate), Command-Reference, Lab-Addon-and-Characters, Safety-and-Guarantees (what leaves the machine), Home (roadmap: Wave 6 done) |
+| 2026-11-19 | M15-25 (#622) | `char model` files sit in a folder per realm; an empty `--root` is a usage error | CLI-Reference (regenerate), Lab-Addon-and-Characters (the path) |
+| 2026-11-19 | M15-22 (#621) | Commands start faster; nothing else changes | none |

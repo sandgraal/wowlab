@@ -1389,7 +1389,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-11 — `gltf` and `wowlab char model`
+## [x] M15-11 — `gltf` and `wowlab char model`
 **Size:** M · **Depends on:** M15-06, M15-08, M15-10, M15-13
 
 §17.6. `wowlab_core.gltf` writes glTF 2.0 binary with the stdlib (nodes, meshes, float32 attributes, uint32 indices, PNG materials, the Z-up to Y-up swap with its signs **[verify]**); `wowlab char model [--character] [--account] [--root] [--flavor] [--out] [--json]` runs plan → files → composite → GLB into `<data>/casc/<product>-<build>/characters/<account>/<realm>-<character>.glb` and its PNGs (the names from the install's own folder names, checked as safe names; `characters/` is re-made on request, §17.1's L5 exemption), `--out` confined like `casc cat`; `CharModelReport` (the plan summary, each file's state, sizes, timings, and the two as-of dates: the gear as of the record's last logout or `/reload`, the look as of the last barber visit; the text output says both, and that the render is the rest pose). A read of the install and a write of wowlab's own data: no `guard`, no `--yes`. **In the UI:** it appears in the Commands tab when this merges with `--out` refused there (§17.1); the parity test says so.
@@ -1398,7 +1398,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-12 — Wave 6 review
+## [x] M15-12 — Wave 6 review
 **Size:** S · **Depends on:** M15-02, M15-11
 
 The conductor writes `docs/handoffs/M15-review.md` per `docs/LAB_PLAN.md` §11: what shipped, what the install taught (streaming counts, encryption, timings against the targets), the state of every **[verify]** in §17.7 after the owner's live runs, and the owner's pick of 2026-11-18 for the next wave, the crew book (M19, §20), with the Wave 7 plan (§17.8) and ADR-0034 as what could follow it. User-facing: none.
@@ -1487,7 +1487,7 @@ Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main`
 
 ---
 
-## [ ] M15-22 — The CLI imports a command's module when that command runs
+## [x] M15-22 — The CLI imports a command's module when that command runs
 **Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18); the owner, 2026-11-18 in session (asked which optional extras to do, picked "M15-22: lazy CLI imports")
 
 `python -P -m wowlab_core --version` costs 0.66 s of CPU against 0.02 s for a bare interpreter; about 0.37 s of that is wowlab's own modules, imported whole by `import wowlab_core.cli` whatever the command (`addoncheck` and what it pulls in are the largest). The suite starts about 1,900 such children, 1,700 of them from the UI tests, and `wowlab ui` starts one per command a player runs. Import a command group's module when that command runs. `test_cli_package.py` (M16-111) requires every name of every `cli` module on the package, so the package re-exports lazily and that test's monkeypatch rule is looked at again, with the reviewer.
@@ -1505,7 +1505,7 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
-## [ ] M15-24 — Held items in `char model`: is there a place for weapons, shields and off-hand items
+## [x] M15-24 — Held items in `char model`: is there a place for weapons, shields and off-hand items
 **Size:** S · **Depends on:** M15-11 · **Sources:** the domain review of #611 (2026-11-18); `docs/LAB_PLAN.md` §17.6 note of 2026-11-18
 
 `char model` leaves out every item whose attachment point the body model stores at its origin: on both fixture body models at 70959 that is points 0, 1 and 2 (shield and hands), so no weapon is drawn. A probe only. Two ideas from the review, both hypotheses until a probe reads the files: (a) the sheath points (the community list gives 26 to 33) may hold real stored positions, so a weapon could be drawn sheathed, as a player sees it out of combat; that would need the item's sheathe type from the game tables and gives a position without the bone's rotation; (b) the pivot of the parent of the bone a hand point sits on (that bone's own pivot is (0, 0, 0), §17.6 note). With `scripts/charmodel_facts.py`, record the sheath points, their bones' pivots and the hand bones' parents' pivots for both body models, as derived fixture rows, and report what is there. No drawing code: §17.4's attachment mapping stays as it is, and reading bones and the stand animation is Wave 7's subject.
@@ -1514,7 +1514,7 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
-## [ ] M15-25 — Leftovers from the M15-11 and M15-23 reviews
+## [x] M15-25 — Leftovers from the M15-11 and M15-23 reviews
 **Size:** S · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
 
 - Two characters share one `char model` file stem when a realm folder and a character folder both carry a hyphen (realm `A-B` with character `C`, realm `A` with character `B-C`), and when two folders differ only by letter case or Unicode normalisation on a volume that folds them; one run then replaces and removes the other's files. A real install cannot produce the first (character names have no hyphen). Nest the files as `characters/<account>/<realm>/<character>.glb`, or refuse the hyphen in the character folder name; §17.1 gets the dated note either way.
