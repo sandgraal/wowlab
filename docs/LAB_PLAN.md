@@ -5258,6 +5258,16 @@ opaque black (wow.export's); and whether the 918 opaque black pixels of base
 skin 959287's mip 0 (colour, not a DXT1 index 3, which `blp` makes
 transparent; the compositor copies them as they are) ever show in game.
 
+*Note, 2026-11-19 (the owner's first look at a `.glb`, in a glTF viewer; a
+character no fixture covers, an undead in a robe at 1.60.1.70959, front
+view, stand-in look):* Y-up is right (the character stands upright, head
+up); two shoulder items placed at their stored points sit on the shoulders,
+one each side, the first attached models drawn; the body texture lands on
+the face, robe, belt, sleeves and gloves, and the robe's skirt is drawn; the
+rest pose is arms out and down, hands open. Still **[verify]**: mirroring and which way the
+character faces (one front view settles neither), head and back items,
+and the real look, which needs a barber-shop record.
+
 ### 17.8 Wave 7, sketched (the viewer; not M15 tickets)
 
 ADR-0034: a pinned three.js (r185, the last release with official
