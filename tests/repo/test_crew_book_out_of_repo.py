@@ -61,13 +61,24 @@ NAME_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"wowlabcrewdb"), r
 # An assignment to the name, anywhere on a line and whatever precedes it
 # (`_G.WowLabCrewDB = {`, `> WowLabCrewDB = {`, an indented block), in any casing.
 ASSIGNMENT_RE = re.compile(rb"wowlabcrewdb\s*=(?!=)", re.IGNORECASE)
-# Every place the name may be assigned: `= value`, or followed by `.`, `[` or
-# `:` (a field or index assignment, `WowLabCrewDB.players = {…}`).
-SITE_RE = re.compile(rb"(?P<name>wowlabcrewdb)\s*(?:(?P<assign>=)(?!=)|[.\[:])", re.IGNORECASE)
-# An index path straight to `=`: `.field`, `:field` and `[…]` parts only.
+# Every place the name may be assigned: `= value` (whatever precedes the
+# name, so `_G.WowLabCrewDB = {` counts), or, where the name starts a chain
+# (not after a word character, `.` or `:`), followed by `.`, `[` or `:` on
+# the same line (a field or index assignment, `WowLabCrewDB.players = {…}`).
+SITE_RE = re.compile(
+    rb"(?P<name>wowlabcrewdb)\s*(?P<assign>=)(?!=)"
+    rb"|(?<![\w.:])(?P<iname>wowlabcrewdb)[ \t]*[.\[:]",
+    re.IGNORECASE,
+)
+# An index path straight to `=`: `.field`, `:field` and `[…]` parts only. It
+# is matched only up to the next site and at most MAX_INDEX_PATH bytes.
 INDEX_PATH_RE = re.compile(
     rb"(?P<path>(?:[ \t]*(?:[.:][ \t]*[A-Za-z_]\w*|\[[^\]\r\n]*\]))+)[ \t]*=(?!=)"
 )
+# What a path looks like while it is still being written: used to tell a path
+# cut off by the cap (fail closed) from prose (a mention).
+INDEX_PATH_PREFIX_RE = re.compile(rb"(?:[ \t]*(?:[.:][ \t]*[A-Za-z_]\w*|\[[^\]\r\n]*\]?))*[ \t]*")
+MAX_INDEX_PATH = 256
 INDEX_PART_RE = re.compile(rb"[.:][ \t]*(?P<field>[A-Za-z_]\w*)|(?P<bracket>\[[^\]\r\n]*\])")
 # After the assignment's `=`: a comment, a long string, a line break, or any
 # other non-blank byte (`_value_end` walks the value with these).
@@ -281,8 +292,8 @@ def _value_end(data: bytes, start: int, limit: int) -> int | None:
         elif first == b"[" and len(text) > 1:
             at = lab_capture._skip_long(data, token.start())
         elif first in (b'"', b"'"):
-            string = QUOTED_STRING_RE[first].match(data, token.start())
-            at = string.end() if string else _end_of_line(data, token.start())
+            string = QUOTED_STRING_RE[first].match(data, token.start(), limit)
+            at = string.end() if string else _end_of_line(data, token.start(), limit)
         elif first in b"{(":
             depth += 1
         elif first in b"})":
@@ -295,9 +306,11 @@ def _value_end(data: bytes, start: int, limit: int) -> int | None:
 _LINE_BREAK_RE = re.compile(rb"[\r\n]")
 
 
-def _end_of_line(data: bytes, at: int) -> int:
-    found = _LINE_BREAK_RE.search(data, at)
-    return len(data) if found is None else found.start()
+def _end_of_line(data: bytes, at: int, limit: int) -> int:
+    """The next line break at or after `at`; past `limit` (limit + 1) when
+    there is none before it, so a caller bounded by `limit` stops."""
+    found = _LINE_BREAK_RE.search(data, at, limit)
+    return limit + 1 if found is None else found.start()
 
 
 def _index_path_problems(path_bytes: bytes) -> int:
@@ -340,10 +353,10 @@ def _book_key_problems(data: bytes, start: int, end: int) -> int:
         elif first == b"[" and len(text) > 1:
             at = lab_capture._skip_long(data, token.start())
         elif first == b"[":
-            key = KEY_RE.match(data, token.start())
+            key = KEY_RE.match(data, token.start(), end)
             if key is None:
                 bad += 1  # a computed, long-string or unterminated key
-                at = _end_of_line(data, token.start())
+                at = _end_of_line(data, token.start(), end)
                 continue
             if key.group("number") is None:
                 quoted = (
@@ -353,8 +366,8 @@ def _book_key_problems(data: bytes, start: int, end: int) -> int:
                     bad += 1
             at = key.end()
         elif first in (b'"', b"'"):
-            string = QUOTED_STRING_RE[first].match(data, token.start())
-            at = string.end() if string else _end_of_line(data, token.start())
+            string = QUOTED_STRING_RE[first].match(data, token.start(), end)
+            at = string.end() if string else _end_of_line(data, token.start(), end)
         if at < 0:
             break
     return bad
@@ -368,17 +381,29 @@ def _assignment_problems(path: str, data: bytes) -> list[str]:
     problems: list[str] = []
     is_toc = path.casefold().endswith(".toc")
     sites: list[tuple[int, int, bytes]] = []  # (name start, value start, index path)
-    for match in SITE_RE.finditer(data):
+    candidates = list(SITE_RE.finditer(data))
+    for number, match in enumerate(candidates):
         if match.group("assign") is not None:
             sites.append((match.start(), match.end(), b""))
             continue
         # The name then `.`, `[` or `:`: a statement only when an index path
         # of fields and bracketed keys runs straight to `=` on the same line.
         # Anything else after the name (prose, a call, a comparison) is a
-        # mention, not an assignment site.
-        chain = INDEX_PATH_RE.match(data, match.end("name"))
+        # mention, not an assignment site. The match never runs past the next
+        # candidate or MAX_INDEX_PATH bytes, so no byte is read twice.
+        after = match.end("iname")
+        following = candidates[number + 1].start() if number + 1 < len(candidates) else len(data)
+        bound = min(following, after + MAX_INDEX_PATH)
+        chain = INDEX_PATH_RE.match(data, after, bound)
         if chain is not None:
             sites.append((match.start(), chain.end(), chain.group("path")))
+            continue
+        cut = bound == after + MAX_INDEX_PATH and bound < following
+        prefix = INDEX_PATH_PREFIX_RE.match(data, after, bound)
+        if cut and prefix is not None and prefix.end() == bound:
+            line = data.count(b"\n", 0, match.start()) + 1
+            problems.append(f"{path}:{line}: a crew-book index path over {MAX_INDEX_PATH} bytes")
+            return problems  # fail closed, and stop
     line, counted = 1, 0
     for number, (start, value, index_path) in enumerate(sites):
         line += data.count(b"\n", counted, start)
@@ -711,6 +736,19 @@ def test_constructed_prose_and_fixed_field_assignments_pass() -> None:
         assert scan([(path, planted)], NO_INDEX) == [], path
 
 
+def test_constructed_an_index_path_over_the_cap_fails_closed() -> None:
+    long_path = ".players" * (MAX_INDEX_PATH // 8 + 1)
+    planted = f"prose\n{NAME}{long_path} = 1\n".encode()
+    assert scan([("docs/x.md", planted)], NO_INDEX) == [
+        "docs/x.md:2: a crew-book index path over " + f"{MAX_INDEX_PATH} bytes"
+    ]
+    # Control: a long sentence after a mention is prose, not a path.
+    mention = f"prose\n`{NAME}.players` is {'very ' * 100}long prose = fine\n".encode()
+    assert scan([("docs/x.md", mention)], NO_INDEX) == []
+    # The name inside a dotted chain is not where a chain starts.
+    assert scan([("docs/x.md", f"x.{NAME}.{NAME}.players\n".encode())], NO_INDEX) == []
+
+
 def test_constructed_a_value_that_never_closes_fails_once_and_stops() -> None:
     planted = f"{NAME} = {{\n".encode() * 50
     assert scan([("docs/h.md", planted)], NO_INDEX) == [
@@ -738,6 +776,12 @@ def test_constructed_the_scan_is_linear_in_the_input() -> None:
         (f"{NAME} = {{\n".encode() * 20_000, f"{NAME} = {{\n".encode() * 40_000),
         (f"{NAME} = nil\n".encode() * 20_000, f"{NAME} = nil\n".encode() * 40_000),
         (_balanced_book(10_000), _balanced_book(20_000)),
+        # The name inside a dotted chain, and an index chain that never
+        # closes (security check, round 5): 26 KB took 1.74 s before.
+        (b"x" + f".{NAME}".encode() * 20_000 + b"\n", b"x" + f".{NAME}".encode() * 40_000 + b"\n"),
+        (f"{NAME}[".encode() * 20_000, f"{NAME}[".encode() * 40_000),
+        (f"{NAME}.".encode() * 20_000, f"{NAME}.".encode() * 40_000),
+        (f'{NAME} = "'.encode() * 20_000, f'{NAME} = "'.encode() * 40_000),
     ):
         best: list[float] = []
         for data in (small, large):
@@ -748,7 +792,9 @@ def test_constructed_the_scan_is_linear_in_the_input() -> None:
                 runs.append(time.process_time() - started)
             best.append(min(runs))
         first, second = best
-        assert second <= max(3 * first, 0.05), (first, second)
+        # The floor keeps scheduler noise on a few-millisecond scan from
+        # failing it; a quadratic scan of the larger inputs takes minutes.
+        assert second <= max(3 * first, 0.25), (first, second)
 
 
 def test_constructed_a_book_of_fixed_names_passes() -> None:

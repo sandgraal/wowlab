@@ -6101,7 +6101,8 @@ nil line, or a table whose every key is a constructed name or a §20.1 field
 (never in a `.toc`). Elsewhere only an indexed fixture the tool accepts may.
 Not caught: `getfenv()[…]`, a bare Markdown table row, a `["Name"]` key with
 a `realm` field, a file not naming the book, `WowLabCrewDB = f` then a table
-on the next line, a table hand-written after an accepted empty book.
+on the next line, a table hand-written after an accepted empty book, a
+comment or line break between the name and a field path.
 
 ### 20.6 What is not known
 
