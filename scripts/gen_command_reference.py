@@ -200,7 +200,13 @@ def _typer_kind(desc: Any) -> str:
         return _render_range(desc.parameter_info, "integer")
     if annotation is float:
         return _render_range(desc.parameter_info, "number")
-    if desc.is_path or desc.is_file:
+    # `is_path` is False for an option with its own `parser` (`--root`, which
+    # keeps an empty value apart, M15-25), so a `Path` annotation counts too.
+    if (
+        desc.is_path
+        or desc.is_file
+        or (isinstance(annotation, type) and issubclass(annotation, Path))
+    ):
         return "path"
     if annotation is bool:
         return "boolean"
