@@ -188,7 +188,9 @@ every fact it rests on is unconfirmed.
 design; (2) option A, a generous list and a warning; (3) 20,000 players in
 the in-game list, login time measured at the in-game check; (4) yes,
 opponents from the scoreboard; (5) world PvP is left out for now; (6) the
-current wave (M19) finishes first. The questions as they were asked:
+current wave (M19) finishes first. Later the same day: both ADR texts
+accepted; M20-01 may start once the addon and the Crew tab have merged;
+no full-size test of the 20,000 limit. The questions as they were asked:
 
 1. Is the two-store design (a bounded list in game, everything in a
    database at the desk) what you want?

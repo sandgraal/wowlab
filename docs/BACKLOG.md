@@ -1526,6 +1526,15 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
+## [ ] M15-26 — Held items in `char model`: the sheath bones' rotation
+**Size:** S · **Depends on:** M15-24 · **Sources:** `docs/LAB_PLAN.md` §17.6, the M15-24 note; `docs/handoffs/M15-review.md` ("Not done"); owner decision, 2026-11-19 ("probe the rotation first")
+
+A probe only, as M15-24 was. M15-24 found points 26 to 33 of both fixture body models stored away from the origin, on bones with a stored rotation. With `scripts/charmodel_facts.py`, record for each of those bones its first rotation key (and how many it has), and the one stored position of the hand points' bones, as derived fixture rows, and report whether the rotation would give a carry angle. No drawing code. If it does, the conductor asks the owner whether to draw held items sheathed, and the drawing is its own ticket.
+
+**Acceptance:** the rows in the derived fixture with a provenance row; a dated note in §17.6 saying what is there and what stays **[verify]**; the `@live` test of the fixture on the owner's list. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: none.
+
+---
+
 ## [x] M15-17 — Leftovers from the M15-06 to M15-09 reviews
 **Size:** XS · **Depends on:** M15-07, M15-08 · **Sources:** the reviews of #595, #597 and #598 (2026-11-18)
 
@@ -3557,9 +3566,9 @@ Install the addon from `main`, then, with the conductor's runbook beside you (wr
 ---
 
 ## [ ] M19-09 — `wowlab snap rm`
-**Size:** M · **Depends on:** M15-12 · **owner** (says yes or no to §20.8 decision 9, and whether `wowlab ui` offers the command) · **Sources:** `docs/LAB_PLAN.md` §20.3, §20.8 decision 9; ADR-0036 term 5; ADR-0037; the security and code reviews of #613 (2026-11-18)
+**Size:** M · **Depends on:** M19-11 · **Sources:** `docs/LAB_PLAN.md` §20.3, §20.8 decision 9; ADR-0036 term 5; ADR-0037; the security and code reviews of #613 (2026-11-18)
 
-Not dispatched until the owner answers. ADR-0036's term 5 has the player remove snapshots to drop the copies they hold, and wowlab has no command that removes one. `wowlab snap rm ID [ID…]` removes a snapshot's manifest under the store lock, with a plan first and a confirmation; `snap gc` then drops the objects nothing references. It refuses a snapshot a journal record needs unless `--break-undo` is given; the plan then says that `undo` of that change and of every earlier one becomes impossible. `undo` of such a record refuses and changes nothing, with the message it gives on `main` for an unreadable snapshot: no new recovery wording (ADR-0037). It never touches the install. §6's snapshot section gains the command with a dated note.
+*Owner decision, 2026-11-19:* build it, on the command line only; `wowlab ui` does not offer it. ADR-0036's term 5 has the player remove snapshots to drop the copies they hold, and wowlab has no command that removes one. `wowlab snap rm ID [ID…]` removes a snapshot's manifest under the store lock, with a plan first and a confirmation; `snap gc` then drops the objects nothing references. It refuses a snapshot a journal record needs unless `--break-undo` is given; the plan then says that `undo` of that change and of every earlier one becomes impossible. `undo` of such a record refuses and changes nothing, with the message it gives on `main` for an unreadable snapshot: no new recovery wording (ADR-0037). It never touches the install. §6's snapshot section gains the command with a dated note.
 
 **Acceptance:** tests on a constructed store: plan, confirm, the manifest gone and `snap verify` clean on the rest; `snap gc` afterwards drops the unreferenced objects and nothing else; refusal on an unknown id, on a snapshot a journal record needs, on a store locked by another process; with `--break-undo`, `undo` refuses with the existing message and changes nothing; the full suite green on the PR. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; release notes and the wiki.
 
@@ -3576,10 +3585,10 @@ Not dispatched until the owner answers. ADR-0036's term 5 has the player remove 
 
 # Milestone M20 — the PvP book
 
-Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Nothing here is dispatched before M19-08 merges.
+Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Owner decision of the same day: M20-01 may start once M19-10 and M19-06 have merged; nothing else here is dispatched before M19-08 merges.
 
 ## [ ] M20-01 — `crewdb`: the database and the sync
-**Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
+**Size:** M · **Depends on:** M19-10, M19-06 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
 
 `wowlab_core.crewdb`: the SQLite file of §21.3 (path, `STRICT` tables, indexes, the fixed `application_id`, `meta`, `secure_delete`, no write-ahead log), and the sync from a schema 1 book by rules 1 to 6, counters added by rule 2. `wowlab crew sync`, and `--adopt` for a database from a renamed flavor folder or another install root; `crew list` and `crew show` sync first and answer from the database, marking a player the game no longer lists; `--json` gains fields and renames none. The three daily copies. A database newer than this wowlab is refused. The two guards of §21.3 "What a sync will not take": the book checked whole before the transaction, and a book of another identity, or one that `guard`'s journal shows was put back by a restore, undo, merge or import since the last sync, synced only by `crew sync` run by hand, after a plan and a yes, never lowering a counter, replacing a rating or note only where the database's row has not changed since (a changed-at time per row), and recording the new identity and journal record when confirmed. Files 0600 in a 0700 folder; the path checked to resolve under wowlab's `crew/` folder; every SQL statement a constant with bound parameters, with a static test. The L1 sweep allows the crew database, and nothing else under the data directory, to change during `crew` reads. §20.5's term-2 sentence, `crew --help` and their test name wowlab's own database. No network import; nothing written into the install.
 
@@ -3599,7 +3608,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-03 — The desk reads and writes schema 2 of the saved file
 **Size:** M · **Depends on:** M20-01, M20-02 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
 
-`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, `warned`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block: only whole numbers, true or false, and Lua's fixed type names, anything else as `?` (a test plants a name in the block and searches `doctor --redact` for it). The capture tool refuses a schema 2 book whose `matches` is not empty. `guard.py` and `luadata.py` are not changed.
+`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `matched`, `probe.pvp`, `warned`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block: only whole numbers, true or false, and Lua's fixed type names, anything else as `?` (a test plants a name in the block and searches `doctor --redact` for it). The capture tool refuses a schema 2 book whose `matches` is not empty. `guard.py` and `luadata.py` are not changed.
 
 **Acceptance:** every M19 test of these modules passes on a schema 1 and a schema 2 constructed book; a schema 3 book is still refused with its number; the capture tool still refuses any book that is not empty; `docs/LAB_FORMATS.md` describes schema 2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
@@ -3626,7 +3635,7 @@ Tests only, before any addon code, by a session that does not write M20-05: the 
 ## [ ] M20-06 — Owner: one battleground, and a login timing
 **Size:** S · **Depends on:** M20-05 · **owner** (a short in-game check)
 
-With the conductor's runbook: install the addon from `main`, play one battleground to its end; after the end stay on the scoreboard, out of combat, for about 30 seconds before leaving or being moved out, so the second probe runs; log out, and let `wowlab crew sync` read `probe.pvp`. Note how long a login takes as the book stands, which will be small: the 20,000 limit is not tested at full size here (§21.7, decision 18).
+With the conductor's runbook: install the addon from `main`, play one battleground to its end; after the end stay on the scoreboard, out of combat, for about 30 seconds before leaving or being moved out, so the second probe runs; log out, and read the probe block that `wowlab doctor` prints. Note how long a login takes as the book stands, which will be small: the 20,000 limit is not tested at full size here (§21.7, decision 18).
 
 **Acceptance:** every [verify] of §21.2 and §21.5 resolved or kept with what was seen, dated; the conductor then writes M20-07 and M20-08's exact calls into §21.2.
 
@@ -3635,7 +3644,7 @@ With the conductor's runbook: install the addon from `main`, play one battlegrou
 ## [ ] M20-07 — Static checks for reading the scoreboard
 **Size:** M · **Depends on:** M20-06 · **Sources:** `docs/LAB_PLAN.md` §21.2 as amended after M20-06
 
-Tests only, by a session that does not write M20-08: the scoreboard calls M20-06 confirmed, gated as the roster calls are, read only after the match has ended and out of combat, each value through the secret-value test; keys built only from a row's name and realm; `matches` entries of the fixed shape; nothing from a scoreboard row read, stored, printed or compared but name, realm, class and side: a read of any other field of a row fails, stored or not (ADR-0036's amendment).
+Tests only, by a session that does not write M20-08: the scoreboard calls M20-06 confirmed, gated as the roster calls are, read only after the match has ended and out of combat, each value through the secret-value test; keys built only from a row's name and realm; `matches` entries of the fixed shape; the `matched` marker written before the counters are raised, so a repeated event or a `/reload` counts a match once; nothing from a scoreboard row read, stored, printed or compared but name, realm, class and side: a read of any other field of a row fails, stored or not (ADR-0036's amendment).
 
 **Acceptance:** as M20-04's, on a constructed source doing all of §21.2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
