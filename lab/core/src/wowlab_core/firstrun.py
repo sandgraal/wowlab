@@ -360,6 +360,10 @@ def _sync_lines(scan: FlavorScan, wtf_is_link: bool) -> list[str]:
     return lines
 
 
+# Printed in place of a link's target text when it cannot be read: by the
+# survey here, and by `snap show` and the profile listing (M13-66).
+UNREADABLE_TARGET = "(target unreadable)"
+
 # Said on Windows, for a link whose target cannot be read (a WCI link or a
 # WSL symlink: `os.readlink` reads neither), where the player may find it.
 # Hedged: `dir /AL` shows a target only for a junction or a symbolic link.
@@ -480,7 +484,7 @@ def scan_lines(scan: FlavorScan, number: int, count: int) -> list[str]:
             "records each link and the text of its target, not the files behind it:"
         )
         for link in scan.links:
-            target = link.target if link.target is not None else "(target unreadable)"
+            target = link.target if link.target is not None else UNREADABLE_TARGET
             lines.append(f"    {link.path} -> {target} ({link.kind})")
             if link.path.casefold() == _WTF.casefold():
                 lines.append(

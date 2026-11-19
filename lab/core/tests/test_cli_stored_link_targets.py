@@ -221,6 +221,98 @@ def test_profile_save_and_show_print_a_stored_target_plain_on_windows_constructe
     assert again == report, "--json keeps the raw string, on Windows too"
 
 
+# ─── a target that cannot be read (M13-66) ───────────────────────────────────
+#
+# On Windows a WCI link or a WSL symlink is a link-like folder whose target
+# `readlink` cannot read, and the manifest stores its target as None. Stood in
+# here on every host (constructed, L8: a boundary case): one plain folder is
+# declared link-like and `readlink` refuses it, as Windows would.
+
+UNREADABLE = "Interface/AddOns/Unreadable-constructed"
+UNREADABLE_WORDS = "(target unreadable)"
+
+
+def _unreadable(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = root / FLAVOR / UNREADABLE
+    folder.mkdir()
+    is_link_like = snapshot._is_link_like_dir
+    readlink: Callable[[str | os.PathLike[str]], Path] = longpath.readlink
+
+    def _ours(path: str | os.PathLike[str]) -> bool:
+        return os.path.normcase(os.fspath(path)) == os.path.normcase(os.fspath(folder))
+
+    def link_like(path: Path | os.DirEntry[str]) -> bool:
+        return _ours(path) or is_link_like(path)
+
+    def refuse(path: str | os.PathLike[str]) -> Path:
+        if _ours(path):
+            raise OSError(22, "The file cannot be accessed by the system", os.fspath(path))
+        return readlink(path)
+
+    monkeypatch.setattr(snapshot, "_is_link_like_dir", link_like)
+    monkeypatch.setattr(longpath, "readlink", refuse)
+
+
+@pytest.mark.parametrize("on_windows", [True, False], ids=["windows", "elsewhere"])
+def test_snap_show_prints_the_survey_words_for_an_unreadable_target_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_windows: bool
+) -> None:
+    """`snap show` prints what the first-run survey prints for a link whose
+    target cannot be read, never `None`; a link that reads stays as it was.
+    `--json` keeps the manifest's `null`."""
+    _unreadable(root, monkeypatch)
+    manifest = _snapshot(root, tmp_path, monkeypatch)
+    entry = manifest.entry(f"{FLAVOR}/{UNREADABLE}")
+    assert entry is not None and entry.kind == "symlink" and entry.target is None
+    _windows(monkeypatch, on_windows)
+    lines = ok("snap", "show", manifest.id).stdout.splitlines()
+    assert _link_line(UNREADABLE, UNREADABLE_WORDS) in lines, lines
+    assert not any("-> None" in line for line in lines), lines
+    readable = (
+        _link_line("WTF/drive-constructed", DRIVE_SHOWN if on_windows else DRIVE_RAW),
+        _link_line("WTF/relative-constructed", RELATIVE),
+    )
+    assert all(line in lines for line in readable), "a link that reads is shown as before"
+    shown = ok("snap", "show", manifest.id, "--json").stdout
+    assert shown.encode("ascii") == snapshot.manifest_bytes(manifest)
+    stored = Manifest.model_validate_json(shown).entry(f"{FLAVOR}/{UNREADABLE}")
+    assert stored is not None and stored.target is None, "--json: null, as stored"
+
+
+def test_profile_listing_prints_the_survey_words_for_an_unreadable_target_constructed(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`profile save` and `profile show` print the same words; `--json`
+    keeps `target: null`; a saved link that reads stays as it was."""
+    _linked(root, tmp_path, monkeypatch)
+    _unreadable(root, monkeypatch)
+    saved = ok(
+        "profile", "save", "unreadable", "--subtree", UNREADABLE, "--subtree", ADDON_LINK
+    ).stdout.splitlines()
+    on_this_host = DRIVE_SHOWN if longpath.ON_WINDOWS else DRIVE_RAW
+    assert _link_line(UNREADABLE, UNREADABLE_WORDS) in saved, saved
+    assert _link_line(ADDON_LINK, on_this_host) in saved, "a link that reads: as before"
+    for on in (True, False):
+        _windows(monkeypatch, on)
+        shown = ok("profile", "show", "unreadable").stdout.splitlines()
+        assert _link_line(UNREADABLE, UNREADABLE_WORDS) in shown, shown
+        assert _link_line(ADDON_LINK, DRIVE_SHOWN if on else DRIVE_RAW) in shown
+        assert not any("-> None" in line for line in shown), shown
+    report = cli.ProfileReport.model_validate_json(
+        ok("profile", "show", "unreadable", "--json").stdout
+    )
+    targets = {e.path: e.target for e in report.entries if e.kind == "symlink"}
+    assert targets == {f"{FLAVOR}/{UNREADABLE}": None, f"{FLAVOR}/{ADDON_LINK}": DRIVE_RAW}
+
+
+def test_the_cli_and_the_survey_print_one_spelling() -> None:
+    """One string, in one place: the survey's words are the CLI's."""
+    from wowlab_core import firstrun
+
+    assert firstrun.UNREADABLE_TARGET == UNREADABLE_WORDS
+    assert cli._stored_target(None) == UNREADABLE_WORDS
+
+
 # ─── a real junction on Windows ──────────────────────────────────────────────
 
 
