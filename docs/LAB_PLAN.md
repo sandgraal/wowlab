@@ -4879,7 +4879,8 @@ bonus ids from `char gear`.
   1, off hand → 2 or shield 0; the ranged slot (18: bow, gun, crossbow,
   wand, thrown; a relic has no model), which Classic-era characters carry,
   is listed as unsupported in this wave and shown in the report; in the bind pose an attached model sits at
-  the attachment's position **[verify]**. "Collection" armour models (the
+  the attachment's position **[verify]** (*note, 2026-11-18, M15-11:* not for
+  the hand points of the fixture body models at 70959; §17.6 note). "Collection" armour models (the
   modern chest, legs, boots and gloves) are skinned to the body and sit at
   the origin in the bind pose **[verify]**.
 - **The report** lists every file by id in one of §17.1's four states, so
@@ -5035,6 +5036,44 @@ the rest pose. It is a read of the install and a write of wowlab's own data
 with `--out` refused there (§17.1, "In the UI"), and the Wave 7 viewer runs
 it the same way.
 
+*Note, 2026-11-18 (M15-11, `wowlab_core.gltf`, `charmodel`, `char model`; as
+built):* the `.glb` is self-contained (its images are PNGs in the binary
+chunk) and the body, hair and eyes textures are also written beside it as
+`<realm>-<character>.<body|hair|eyes>.png`. Each folder name is checked as a
+safe file name (no dot, no control character, none of `<>:"/\|?*`, no space
+at either end, not a Windows device name, at most 100 characters; an account
+folder's `#` is admitted). A re-run writes each file to a new temp file
+beside the old one and moves it over the name (`os.replace`), removes this
+character's PNGs of those names that it no longer makes, and touches nothing
+else; `files/` and every `--out` keep never-overwrite (`--out` names a
+`.glb` inside the build folder outside `files/` and `characters/`, its PNGs
+beside it, and a file there with other bytes is refused). The first run for
+a build says on stderr how many tables it will download before it does. The
+body texture's budget for a command is 16 canvases of area (the
+compositor's own ceiling is 64); past it the body is drawn grey and the
+report says why. Only the view skin is read. A section is drawn with its
+first batch's texture; type 1 the body texture (opaque), 6 and 19 the
+separate hair and eye textures (the first layer by `Layer` when a type has
+several, the rest listed), 2 the back item's cape texture, 0 the `TXID`
+file, any other type grey; both readings of the M2 material (blending
+mode, flag `0x4` for two faces) are wow.export's, **[verify]**.
+**Attachments, against the reading above.** Observed
+(`macos-70959/derived/charmodel.json`, points 0, 1, 2, 5, 6, 11 and 12 of
+both fixture body models at 1.60.1.70959, 959310 and 917116, each with its
+bone's pivot): the points for held items (0 shield, 1 main hand, 2 off
+hand) are stored at (0, 0, 0), on bones whose pivot is (0, 0, 0) too; the
+shoulder (5, 6), head (11) and back (12) points are stored away from the
+origin; every point read sits at its bone's pivot, and the held-item
+points' bones rest at the origin. Inferred: the hand points are
+presumably placed by animation (**[verify]**), so in the rest pose they sit
+at the model's feet. `char model` does not place an item at a point stored
+at the origin and lists it (both fixture characters' weapons: each `.glb`
+holds the body alone). Head, shoulder and back points are used as stored
+(**[verify]**: no fixture character wears a model there, so none has been
+drawn). Placing weapons needs the bones and the stand animation, the Wave 7
+option (§17.8). The axis signs stay **[verify]** until the owner opens a
+`.glb` in a viewer.
+
 ### 17.7 What is known, and what is [verify]
 
 Measured on the owner's install at 70450: the layout of `Data/`; root
@@ -5055,7 +5094,10 @@ ever appears; whether any player gear is encrypted; the bonus-id
 semantics (TrinityCore; *note, 2026-11-18, M15-13:* `ItemBonus` at 70959
 has no type-7 row, so nothing on Forever exercises them yet); the `+1` in
 the item geoset value; attachment
-positions being model-space in the bind pose; collection models at the
+positions being model-space in the bind pose (*note, 2026-11-18, M15-11:*
+not so for the held-item points (0, 1, 2) of the two fixture body models at
+70959, stored at the origin and presumably placed by animation, **[verify]**;
+§17.6's note); collection models at the
 origin; the blend-mode enum; the 4-bit palette alpha; the M2 vertex count
 against the skin's (226,301 against 37,813: LOD skins, probably; *note,
 2026-11-17, M15-08:* settled for `humanmale_hd` and `humanfemale_hd` at

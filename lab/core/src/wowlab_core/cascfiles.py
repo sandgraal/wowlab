@@ -35,6 +35,20 @@ and elsewhere follows a last check that the name is free. The final name is
 never written to directly, so a run killed midway leaves at most a temp
 file (`.<name>.<32 hex digits>.tmp`), and each write first removes such
 files older than a day from the folder it writes into.
+
+**`characters/`** (§17.1's one exemption from never-overwrite, M15-11) holds
+`char model`'s output: `characters/<account>/<realm>-<character>.glb` and
+PNGs beside it named `<realm>-<character>.<part>.png`, each folder name read
+from the install and checked by `safe_name` (no dot, no control character,
+none of `<>:"/\\|?*`, no space at either end, not a device name). Only
+`replace_derived` and `remove_derived` write there, and only after
+`check_character` (inside `characters/` as written and resolved, no link or
+file on the way down from `casc/`, not in an install, a regular file or
+nothing): a re-run writes a new temp file beside the old file and moves it
+over the name with `os.replace`, so the name holds the old file or the new,
+and removes a PNG of the same character that this run no longer makes.
+`write_new` never replaces and `check_out` refuses `characters/`, so
+`files/` and every `--out` keep never-overwrite.
 """
 
 from __future__ import annotations
@@ -60,9 +74,16 @@ __all__ = [
     "already_there",
     "build_dir",
     "casc_dir",
+    "character_path",
+    "character_stem",
+    "characters_dir",
+    "check_character",
     "check_out",
     "default_name",
     "default_path",
+    "remove_derived",
+    "replace_derived",
+    "safe_name",
     "same_file",
     "write_new",
 ]
@@ -301,6 +322,123 @@ def write_new(
                 return _raced(target, size, content_key)
     finally:
         tmp.unlink(missing_ok=True)
+    return True
+
+
+# ─── characters/: `char model`'s own output, re-made on request (§17.6) ──────
+
+# A Windows device name, which names a device whatever follows its dot.
+_DEVICE = re.compile(r"(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)", re.IGNORECASE)
+_NOT_IN_NAME = frozenset('<>:"/\\|?*.')
+_NAME_LIMIT = 100
+
+
+def safe_name(text: str, what: str) -> str:
+    """`text`, a folder name read from an install (an account, a realm or
+    a character folder), when it is safe as part of a name under
+    `characters/`: 1 to 100 characters, none of them a control character,
+    one of `<>:"/\\|?*` or a dot (so `.` and `..` are out, and the
+    character's file name splits one way only), not starting or ending with
+    a space, and not a Windows device name. Else `CascOutError`."""
+    bad = (
+        not 1 <= len(text) <= _NAME_LIMIT
+        or any(c in _NOT_IN_NAME or ord(c) < 0x20 or ord(c) == 0x7F for c in text)
+        or text != text.strip(" ")
+        or _DEVICE.fullmatch(text) is not None
+    )
+    if bad:
+        raise CascOutError(
+            f"the {what} {text!r} is not a safe file name (no dots, no control characters, "
+            'none of <>:"/\\|?*, no space at either end, at most 100 characters, not a device '
+            "name), so wowlab will not make a file for it"
+        )
+    return text
+
+
+def characters_dir(product: str, version: str) -> Path:
+    """`casc/<product>-<version>/characters/`: `char model`'s folder."""
+    return build_dir(product, version) / CHARACTERS_DIR
+
+
+def character_stem(realm: str, character: str) -> str:
+    """`<realm>-<character>`, each part checked by `safe_name`: the name of
+    a character's `.glb` without its suffix, and the start of its PNGs'."""
+    return f"{safe_name(realm, 'realm folder')}-{safe_name(character, 'character folder')}"
+
+
+def character_path(product: str, version: str, account: str, realm: str, character: str) -> Path:
+    """`characters/<account>/<realm>-<character>.glb` in the build folder."""
+    return (
+        characters_dir(product, version)
+        / safe_name(account, "account folder")
+        / f"{character_stem(realm, character)}.glb"
+    )
+
+
+def check_character(target: Path, folder: Path) -> Path:
+    """`target` when it is a file `char model` may replace: inside the build
+    folder `folder`'s `characters/`, as written and with links resolved; no
+    link or file on the way from the user data directory's `casc/` folder
+    down (and `target` not a link); not in an install; not a folder or
+    anything else that is not a regular file. Reads only."""
+    target = Path(os.path.normpath(target.absolute()))
+    home = Path(os.path.normpath(folder.absolute())) / CHARACTERS_DIR
+    if not _within(target, home) or target == home:
+        raise _refuse(target, f"is not a file inside {home}")
+    try:
+        refuse_install(target, _WHAT)
+    except LookLocationError as exc:
+        raise CascOutError(f"refused: {exc}; nothing was written") from exc
+    top = casc_dir().absolute()
+    for step in (target, *target.parents):
+        if not _within(step, top):
+            break
+        why = _link_reason(step)
+        if why is not None:
+            raise _refuse(target, why)
+    try:
+        final, resolved = target.resolve(), home.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise _refuse(target, f"cannot be resolved ({exc})") from exc
+    if not _within(final, resolved) or final == resolved:
+        raise _refuse(target, f"resolves to {final}, outside {resolved}")
+    if os.path.lexists(target) and not target.is_file():
+        raise _refuse(target, "exists and is not a regular file")
+    return target
+
+
+def replace_derived(data: Buffer, target: Path, folder: Path) -> None:
+    """Write `data` to `target` under the build folder `folder`'s
+    `characters/` (`check_character`), replacing a file there: the one
+    subfolder exempt from never-overwrite (§17.1), whose files are wowlab's
+    own output, re-made on request. The folder is made 0700, the target
+    checked again once it exists, old temp files swept, and the bytes
+    written to a new temp file beside it, then moved over the name in one
+    step (`os.replace`, which replaces a link there rather than writing
+    through it), so the name holds the old file or the new, never a part."""
+    view = memoryview(data).cast("B")
+    target = check_character(target, folder)
+    parent = target.parent
+    make_private_dirs(parent)  # 0700 under the user data directory (M16-78)
+    target = check_character(target, folder)  # again, now the folders exist
+    _sweep(parent)
+    tmp = parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        with tmp.open("xb") as handle:
+            handle.write(view)
+        tmp.replace(target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def remove_derived(target: Path, folder: Path) -> bool:
+    """Remove the regular file `target` under `folder`'s `characters/`
+    (`check_character`): one `char model` wrote before and this run does
+    not. False when nothing is there."""
+    target = check_character(target, folder)
+    if not os.path.lexists(target):
+        return False
+    target.unlink()
     return True
 
 

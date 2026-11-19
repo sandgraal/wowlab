@@ -280,6 +280,14 @@ _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("casc", "cat"): {
         "out": (False, "from the UI a file goes only to its default place in wowlab's data folder")
     },
+    # M15-11 (§17.1 "In the UI", §17.6): from the UI a character's model goes
+    # only to its default place, characters/ in the build's folder.
+    ("char", "model"): {
+        "out": (
+            False,
+            "from the UI the model goes only to its default place in wowlab's data folder",
+        )
+    },
 }
 # Flags the server gives a leaf on every run, as it gives `--json`, and never
 # the page, by leaf path (M16-42). `sv dump` reads any file it is named, so

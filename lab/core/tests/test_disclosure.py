@@ -10,12 +10,17 @@ written but into `tmp_path`.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import inspect
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+import typer
 
-from wowlab_core import disclosure, firstrun
+from wowlab_core import cli, disclosure, firstrun
 
 REPO = Path(__file__).resolve().parents[3]
 DOCS = (REPO / "README.md", REPO / "docs" / "INSTALL.md")
@@ -57,6 +62,61 @@ def test_the_old_network_sentences_are_gone() -> None:
         assert "`--offline` skips" not in text, doc.name
     intro = "\n".join(firstrun.intro_lines(store_path=Path("store")))
     assert "--offline" not in intro
+
+
+def _downloaders(source: str) -> set[str]:
+    """The top-level functions of a module's source that call
+    `_open_gamedata`, directly or through another function of the module."""
+    tree = ast.parse(source)
+    calls: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            calls[node.name] = {
+                n.func.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            }
+    found = {name for name, called in calls.items() if "_open_gamedata" in called}
+    while True:
+        more = {name for name, called in calls.items() if called & found} - found
+        if not more:
+            return found
+        found |= more
+
+
+def _leaves(cmd: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
+    subs = getattr(cmd, "commands", None)
+    if subs:
+        for name, sub in subs.items():
+            yield from _leaves(sub, (*path, name))
+    else:
+        yield path, cmd.callback
+
+
+def test_every_command_that_downloads_is_named_in_the_block() -> None:
+    """M15-11 (security review): every command whose function reaches the
+    game-data client (`_open_gamedata`, the only network client, directly or
+    through a helper of its own module) is named in one of the rows, by
+    itself or by its group (`wowlab db2`, `wowlab looks`). Graded first on
+    the commands known to download, so an empty walk fails."""
+    text = "\n".join(disclosure.ROWS)
+    package = Path(cli.__file__).parent
+    by_module = {
+        f"wowlab_core.cli.{p.stem}": _downloaders(p.read_text(encoding="utf-8"))
+        for p in package.glob("_*.py")
+    }
+    named: list[str] = []
+    for path, callback in _leaves(typer.main.get_command(cli.app)):
+        inner = inspect.unwrap(callback)
+        if inner.__name__ not in by_module.get(inner.__module__, set()):
+            continue
+        words = " ".join(path)
+        named.append(words)
+        assert any(f"`wowlab {' '.join(path[:k])}" in text for k in range(1, len(path) + 1)), (
+            f"wowlab {words} downloads game data but the network block does not name it"
+        )
+    for known in ("char model", "names fetch", "db2 fetch", "doctor"):
+        assert known in named, known
 
 
 def _gen() -> object:

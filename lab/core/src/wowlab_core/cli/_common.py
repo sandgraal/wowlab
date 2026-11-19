@@ -386,11 +386,14 @@ app.add_typer(
     looks_app, name="looks", short_help="Character customization: races, options and saved looks."
 )
 char_app = typer.Typer(
-    help="Characters as the lab-addon recorded them in WowLab.lua (read only).",
+    help="Characters as the lab-addon recorded them in WowLab.lua, and a 3D model of one. "
+    "Nothing in the game folder changes: a model goes into wowlab's own data folder.",
     no_args_is_help=True,
 )
 app.add_typer(
-    char_app, name="char", short_help="Characters as the lab-addon recorded them (read only)."
+    char_app,
+    name="char",
+    short_help="Characters as the lab-addon recorded them, and a 3D model of one.",
 )
 casc_app = typer.Typer(
     help="The game's own files, read from the install's game-data archives by file data id. "

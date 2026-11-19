@@ -20,8 +20,9 @@ the required `quality` job, with the rest of `lab/core/tests`.
   excluded with `NO_CONFIRM_SHAPE`, and one the server is made to run
   without the step fails this check.
 - `ui` itself is excluded.
-- `looks page --out`, `casc cat --out` (a path, or `-` for the output) and
-  `log tail --follow` are refused; `casc cat` without `--out` runs.
+- `looks page --out`, `casc cat --out` (a path, or `-` for the output),
+  `char model --out` and `log tail --follow` are refused; `casc cat` and
+  `char model` without `--out` run.
 - A dummy command added to the tree in the test appears in the UI, runs, and
   needs no UI code. Dummies the form cannot honestly offer fail parity, so
   each check above is shown to be able to fail.
@@ -97,6 +98,10 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     # both this one parameter, refused whatever its value.
     ("casc", "cat"): {
         "out": "from the UI a file goes only to its default place in wowlab's data folder"
+    },
+    # M15-11 (§17.6): `char model` writes only to characters/ from the UI.
+    ("char", "model"): {
+        "out": "from the UI the model goes only to its default place in wowlab's data folder"
     },
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""
@@ -738,6 +743,10 @@ def test_ui_itself_is_excluded(real: _Served) -> None:
         (("casc", "cat"), {"out": "-"}),
         (("casc", "cat"), {"out": ""}),
         (("casc", "cat"), {"out": "../../../x.bin"}),
+        (("char", "model"), {"out": "mine.glb"}),
+        (("char", "model"), {"out": "-"}),
+        (("char", "model"), {"out": ""}),
+        (("char", "model"), {"out": "../../../x.glb"}),
     ],
     ids=[
         "looks page --out",
@@ -747,6 +756,10 @@ def test_ui_itself_is_excluded(real: _Served) -> None:
         "casc cat -",
         "casc cat --out empty",
         "casc cat --out traversal",
+        "char model --out",
+        "char model -",
+        "char model --out empty",
+        "char model --out traversal",
     ],
 )
 def test_looks_page_out_and_log_tail_follow_are_refused(
@@ -771,6 +784,18 @@ def test_casc_cat_without_out_runs_to_its_default_place(real: _Served) -> None:
     stat = real.commands()[("casc", "stat")]
     assert stat["excluded"] is None and stat["confirm"] is None
     assert all(p["refused"] is None for p in stat["params"])
+
+
+def test_char_model_without_out_runs_to_its_default_place(real: _Served) -> None:
+    """M15-11: from the UI `char model` runs without `--out`, so the model
+    goes only to characters/ in the build's folder."""
+    status, payload = real.run(("char", "model"), {"character": "Sangraal-Sett"})
+    assert status == 200, payload
+    argv = json.loads(payload["stdout"])
+    assert argv[:2] == ["char", "model"]
+    assert not any(a == "-" or a.startswith("--out") for a in argv), argv
+    item = real.commands()[("char", "model")]
+    assert item["excluded"] is None and item["confirm"] is None
 
 
 def test_log_tail_without_follow_still_runs(real: _Served) -> None:

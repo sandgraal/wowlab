@@ -715,10 +715,12 @@ class LookAsOf(_Frozen):
     `/reload`), when the caller gives it. It is a latest-possible date for
     the record, not the date of the barber visit; with `carried` true the
     record is older. `source` "defaults": no record was used, `why` says
-    why."""
+    why and `stand_in` says it in short: "no record", or "other body" (a
+    record for another race or body type)."""
 
     source: Literal["record", "defaults"]
     why: str | None = None
+    stand_in: Literal["no record", "other body"] | None = None
     as_of: str | None = None
     recorded_at: Literal["open", "applied"] | None = None
     carried: bool | None = None
@@ -1954,17 +1956,20 @@ def build_plan(
 
     use_record = customization is not None
     why: str | None = None
+    stand_in: Literal["no record", "other body"] | None = None
     if customization is not None and (customization.race_id, customization.body_type) != (
         race_id,
         sex,
     ):
         use_record = False
+        stand_in = "other body"
         why = (
             f"the customization record is for race {customization.race_id}, body type "
             f"{customization.body_type}, not the character's race {race_id}, body type {sex} "
             f"(the race or body type changed after the record was taken); {_STAND_IN}"
         )
     elif customization is None:
+        stand_in = "no record"
         why = (
             "no customization record"
             + (f" ({no_customization_reason})" if no_customization_reason else "")
@@ -1999,7 +2004,7 @@ def build_plan(
         )
     else:
         chosen, not_chosen = _default_choices(tables, body.chr_model_id)
-        look = LookAsOf(source="defaults", why=why, saved_at=saved_at)
+        look = LookAsOf(source="defaults", why=why, stand_in=stand_in, saved_at=saved_at)
         assert why is not None
         notes.append(why)
 

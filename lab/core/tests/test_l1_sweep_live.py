@@ -124,6 +124,7 @@ EXCLUDED: dict[str, str] = {
     "looks import-char": "writes into wowlab's user data directory",
     "looks page": "writes a page into wowlab's user data directory",
     "casc cat": "writes an extracted file into wowlab's user data directory",
+    "char model": "writes a model into wowlab's user data directory and downloads tables",
     "snap export": "writes a file outside the install",
     "db2 fetch": "downloads a table into wowlab's cache",
     "db2 builds": "asks wago.tools for its list of versions",

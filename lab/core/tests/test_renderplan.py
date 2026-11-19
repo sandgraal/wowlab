@@ -346,6 +346,7 @@ def test_the_look_carries_what_the_record_rests_on(sangraal: tuple[RenderPlan, _
     assert plan.look.model_dump() == {
         "source": "record",
         "why": None,
+        "stand_in": None,  # M15-11: why the look is a stand-in, None for the record's
         "as_of": "last barber-shop visit with the addon enabled",
         "recorded_at": "open",
         "carried": True,

@@ -1232,6 +1232,20 @@ def test_casc_cat_out_is_refused(real: Any, recorder: Recorder, out: str) -> Non
     assert len(recorder.calls()) == 1
 
 
+@pytest.mark.parametrize("out", ["mine.glb", "-", "../../x.glb", "/tmp/x.glb", ""])
+def test_char_model_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
+    """M15-11 (§17.1 "In the UI", §17.6): `char model --out` names another
+    file; from the UI the model goes only to its default place, so `--out`
+    is refused whatever its value, and `char model` without it runs."""
+    reply = _run(real, ["char", "model"], {"out": out, "character": "Sangraal-Sett"})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    assert recorder.calls() == []
+    argv = _argv_of(_run(real, ["char", "model"], {"character": "Sangraal-Sett"}))
+    parsed = _parsed(_real_tree(), ["char", "model"], argv)
+    assert (parsed["out"], parsed["character"]) == (None, "Sangraal-Sett"), argv
+    assert len(recorder.calls()) == 1
+
+
 def test_no_shell_is_involved(
     planted: Any, recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
