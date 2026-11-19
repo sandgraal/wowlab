@@ -99,6 +99,11 @@ def _triangles(geosets: Iterable[int]) -> tuple[list[mb.Vertex], list[mb.Section
 ORIGIN_HANDS = tuple((a, b, (0.0, 0.0, 0.0) if a in (0, 1, 2) else p) for a, b, p in ATTACHMENTS)
 
 
+def at_origin(points: tuple[int, ...]) -> tuple[Point, ...]:
+    """`ATTACHMENTS` with `points` stored at the origin."""
+    return tuple((a, b, (0.0, 0.0, 0.0) if a in points else p) for a, b, p in ATTACHMENTS)
+
+
 def body_files(fdid: int, attachments: tuple[Point, ...] = ATTACHMENTS) -> dict[int, bytes]:
     vertices, sections = _triangles(BODY_GEOSETS)
     textures = tuple((kind, 0) for kind, _ in BODY_TEXTURES)

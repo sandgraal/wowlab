@@ -89,15 +89,17 @@ class _Tables:
         return f"fixture:{table}.{build}.csv"
 
 
-def _plan_files(label: str, origin_hands: bool = False) -> dict[int, bytes]:
+def _plan_files(label: str, origin_hands: bool | tuple[int, ...] = False) -> dict[int, bytes]:
     bare = renderplan.plan_for_record(cb.tables(), cb.record(label))
+    if isinstance(origin_hands, tuple):
+        return cb.files_for(bare, cb.at_origin(origin_hands))
     return cb.files_for(bare, cb.ORIGIN_HANDS if origin_hands else cb.ATTACHMENTS)
 
 
 def _install(
     tmp: Path,
     drop: set[int] = frozenset(),  # type: ignore[assignment]
-    origin_hands: bool = False,
+    origin_hands: bool | tuple[int, ...] = False,
 ) -> Path:
     rng = random.Random(1511)
     files: dict[int, bytes] = {}
@@ -148,7 +150,7 @@ def _env(
     drop: set[int],
     copy_as: str | None = None,
     *,
-    origin_hands: bool = False,
+    origin_hands: bool | tuple[int, ...] = False,
 ) -> Iterator[Env]:
     monkeypatch.delenv("WOWLAB_WOW_ROOT", raising=False)
     monkeypatch.delenv("WOWLAB_FLAVOR", raising=False)
@@ -224,6 +226,30 @@ def test_the_text_is_player_copy(env: Env, label: str) -> None:
         result = env.run("--character", label, *extra)
         assert result.exit_code == 0, result.output
         assert hits(result.stdout) == [] and hits(result.stderr) == []
+
+
+def test_an_item_at_the_origin_that_is_not_held_gets_the_general_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1: a constructed body whose off-hand point (2) and shoulder point
+    (6) both sit at its origin, the off-hand item read as a shoulder's: the
+    text does not call them held items or weapons."""
+    real = renderplan.plan_for_record
+
+    def as_shoulder(*a: Any, **k: Any) -> renderplan.RenderPlan:
+        plan = real(*a, **k)
+        models = list(plan.item_models)
+        if len(models) > 1:
+            models[1] = models[1].model_copy(update={"slot": 3, "attachment_id": 6})
+        return plan.model_copy(update={"item_models": tuple(models)})
+
+    monkeypatch.setattr(renderplan, "plan_for_record", as_shoulder)
+    for env in _env(tmp_path, monkeypatch, set(), origin_hands=(0, 1, 2, 5, 6)):
+        result = env.run("--character", "Sangraal-Sett")
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.stdout.split())
+        assert "Not drawn (2): main hand, item 2632; shoulder, item 15969" in text
+        assert cli._ORIGIN_ITEMS in text and cli._HELD_ITEMS not in text
 
 
 def test_held_items_at_the_origin_are_listed_once_with_one_reason(

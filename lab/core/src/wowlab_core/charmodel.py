@@ -64,7 +64,9 @@ texture of its own, and sections are capped only at `m2.MAX_ENTRIES`, so
 the scene keeps running totals and checks them before each texture is
 read and decoded: at most `MAX_IMAGES` (64) distinct pictures, at most
 `MAX_DECODED_PIXELS` texture pixels decoded (summed from each header), and
-at most `MAX_SCENE_BYTES` (256 MiB) of PNG, vertex and index bytes. A
+at most `MAX_SCENE_BYTES` (256 MiB) of PNG, vertex and index bytes, and
+at most `MAX_TEXTURE_READS` (128) texture reads attempted, failures
+included. A
 texture past a cap is left out (grey) with the reason in the report; an
 item model whose shape would pass the byte cap is not placed; a body that
 would is `BodyNotDrawnError`. `gltf.encode_glb`'s own cap is never the
@@ -92,6 +94,7 @@ __all__ = [
     "MAX_DECODED_PIXELS",
     "MAX_IMAGES",
     "MAX_SCENE_BYTES",
+    "MAX_TEXTURE_READS",
     "REST_POSE",
     "STAND_IN",
     "WORK_CANVASES",
@@ -118,6 +121,11 @@ MAX_DECODED_PIXELS = 64 * 1024 * 1024
 """The most texture pixels one model decodes, summed (four 4096 x 4096
 textures; the fixture characters decode under a million). Checked from each
 texture's header before it is decoded."""
+MAX_TEXTURE_READS = 2 * MAX_IMAGES
+"""The most texture files one model reads, counting every attempt (a file
+that is not local, not a texture wowlab reads, or past another cap
+included), so a model naming many bad or oversized textures cannot keep a
+run reading: each read may inflate up to `casc.DECODE_LIMIT`."""
 MAX_SCENE_BYTES = 256 * 1024 * 1024
 """The most bytes one model's pictures (PNG) and shapes (vertices and
 indices) take, summed (the fixture characters: about 1 MB). A texture is not
@@ -133,6 +141,10 @@ _TOO_MANY_PICTURES = (
 _TOO_MANY_PIXELS = (
     "left out: the model's pictures are larger in total than wowlab decodes for one model, "
     "so its parts are grey"
+)
+_TOO_MANY_READS = (
+    "left out: the model names more pictures than wowlab reads for one model "
+    f"(at most {MAX_TEXTURE_READS}), so its parts are grey"
 )
 _TOO_MANY_BYTES = (
     "left out: the model's pictures and shapes already fill what wowlab writes in one file, "
@@ -438,6 +450,7 @@ class _Scene:
         self.notes: list[str] = []
         self.bytes = 0  # PNG, vertex and index bytes held so far
         self.pixels = 0  # texture pixels decoded so far
+        self.reads = 0  # texture reads attempted so far, failures included
 
     def take(self, count: int) -> bool:
         """Add `count` bytes to the running total, or False (nothing
@@ -465,6 +478,13 @@ class _Scene:
         if self.bytes >= MAX_SCENE_BYTES:
             self.files.leave_out(fdid, what, _TOO_MANY_BYTES)
             return None
+        if self.pixels >= MAX_DECODED_PIXELS:
+            self.files.leave_out(fdid, what, _TOO_MANY_PIXELS)
+            return None
+        if self.reads >= MAX_TEXTURE_READS:
+            self.files.leave_out(fdid, what, _TOO_MANY_READS)
+            return None
+        self.reads += 1
         data = self.files.read(fdid, what)
         if data is None:
             return None
@@ -533,8 +553,8 @@ def _mesh(
         else:
             first[each.section_index] = each
     extra = 0
-    parts: dict[int, list[array[int]]] = {}
     drawn = 0
+    shown: list[tuple[m2.SkinBatch, array[int]]] = []
     for section in skin.sections:
         if visible is not None and section.geoset_id not in visible:
             continue
@@ -543,6 +563,17 @@ def _mesh(
             continue
         drawn += 1
         extra += more.get(section.index, 0)
+        shown.append((batch, skin.triangles(section)))
+    if not shown:
+        return None, drawn, extra, 0, 0
+    # The shape is measured before any texture is read, so a model past the
+    # byte cap costs no decode.
+    used = sorted(set().union(*(set(tris) for _, tris in shown)))
+    count = sum(len(tris) for _, tris in shown)
+    if not scene.take(len(used) * _VERTEX_BYTES + count * _INDEX_BYTES):
+        raise _SceneFullError(name)
+    parts: dict[int, list[array[int]]] = {}
+    for batch, tris in shown:
         image: int | None = None
         opaque = False
         if batch.texture_combo_index < len(model.texture_combos):
@@ -554,13 +585,7 @@ def _mesh(
             blending, flags = mat.blending_mode, mat.flags
         label = f"{name} texture" if image is not None else f"{name}, no texture"
         material = scene.material(image, label, blending, flags, opaque)
-        parts.setdefault(material, []).append(skin.triangles(section))
-    if not parts:
-        return None, drawn, extra, 0, 0
-    used = sorted(set().union(*(set(tris) for lists in parts.values() for tris in lists)))
-    count = sum(len(t) for lists in parts.values() for t in lists)
-    if not scene.take(len(used) * _VERTEX_BYTES + count * _INDEX_BYTES):
-        raise _SceneFullError(name)
+        parts.setdefault(material, []).append(tris)
     remap: dict[int, int] = {v: i for i, v in enumerate(used)}
     verts = model.vertices
     pos, nrm, uv = verts.positions, verts.normals, verts.uv

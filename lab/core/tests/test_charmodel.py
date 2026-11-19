@@ -366,15 +366,19 @@ def test_an_item_past_the_byte_cap_is_not_placed_and_not_decoded_constructed(
 ) -> None:
     plan, source = _one_item(10, 9_300_000)
     bare = charmodel.build(plan.model_copy(update={"item_models": ()}), source, work_canvases=0)
-    # Room for the body and a few of the item's pictures, not for its shape.
+    # Room for the body and some of the item's pictures, not for its shape.
     monkeypatch.setattr(charmodel, "MAX_SCENE_BYTES", bare.held_bytes + 300)
     calls = _counting_decode(monkeypatch)
+    source.reads.clear()
     built = charmodel.build(plan, source, work_canvases=0)
     assert built.facts.nodes == 1 and not built.models[1].placed
     assert "already fill" in (built.models[1].reason or "")
     assert built.held_bytes <= charmodel.MAX_SCENE_BYTES
-    assert len(calls) < bare.facts.images + 10  # not every one of the item's ten
-    assert any("already fill what wowlab writes" in f.reason for f in built.left_out)
+    # T2: the shape is measured first, so none of the item's ten textures is
+    # read or decoded, and the file holds only the body's pictures.
+    assert len(calls) == bare.facts.images
+    assert not [r for r in source.reads if 9_300_000 <= r < 9_300_010]
+    assert built.facts.images == bare.facts.images
 
 
 def test_decoded_pixels_past_the_cap_are_not_decoded_constructed(
@@ -386,3 +390,31 @@ def test_decoded_pixels_past_the_cap_are_not_decoded_constructed(
     built = charmodel.build(plan, source, work_canvases=0)
     assert len(calls) == 5
     assert any("larger in total than wowlab decodes" in f.reason for f in built.left_out)
+
+
+def test_once_the_pixel_cap_is_reached_no_texture_is_read_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S5: past the pixel cap the model stops reading, not only decoding."""
+    plan, source = _one_item(300, 9_400_000)
+    monkeypatch.setattr(charmodel, "MAX_DECODED_PIXELS", 16 * 5)  # five 4 x 4 textures
+    built = charmodel.build(plan, source, work_canvases=0)
+    texture_reads = [r for r in source.reads if r >= 9_400_000]
+    # The five that fit, then the one whose header passes the cap; no more.
+    assert len(texture_reads) <= 6
+    assert any("larger in total than wowlab decodes" in f.reason for f in built.left_out)
+
+
+def test_bad_textures_count_against_the_read_cap_constructed() -> None:
+    """S5: 300 files that are not textures wowlab reads: each read attempt
+    counts, and reading stops at `MAX_TEXTURE_READS`."""
+    plan, source = _one_item(300, 9_500_000)
+    for fdid in range(9_500_000, 9_500_300):
+        source.files[fdid] = b"not a texture"
+    built = charmodel.build(plan, source, work_canvases=0)
+    texture_reads = [r for r in source.reads if r >= 9_500_000]
+    other_reads = [r for r in source.reads if r < 9_500_000]
+    assert len(texture_reads) + len(other_reads) >= charmodel.MAX_TEXTURE_READS
+    assert len(texture_reads) <= charmodel.MAX_TEXTURE_READS
+    assert any("names more pictures than wowlab reads" in f.reason for f in built.left_out)
+    assert built.models[1].placed  # drawn grey
