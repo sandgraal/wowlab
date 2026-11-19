@@ -682,16 +682,16 @@ def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
 
 
 def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
-    """What a forget does not reach (§20.3), in its plan and its result.
-    wowlab has no command that removes a snapshot yet, and the sentence says
-    so."""
+    """What a forget does not reach (§20.3), in its plan and its result:
+    the snapshots, until the player removes them with `snap rm` and runs
+    `snap gc` (M19-09), and exported archives."""
     them = "this player" if n == 1 else "these players"
     saves = "saved" if done else "saves"
     return (
         f"This command first {saves} a copy that still holds {them}, so `wowlab undo` can "
         f"bring them back. That copy and every earlier snapshot stay in wowlab's snapshot "
-        f"folder ({store.path}): wowlab cannot remove a snapshot yet. Archives you made "
-        "with `snap export` keep theirs."
+        f"folder ({store.path}) until you remove them with `wowlab snap rm` and run "
+        "`wowlab snap gc`. Archives you made with `snap export` keep theirs."
     ) + (
         " The character's name alone, without the realm, may still be in your notes about "
         "other players: forget looks for the whole name."
@@ -880,8 +880,9 @@ def crew_forget(
 
     Shows the plan and asks first, then writes through the write gate: the
     game must be closed, a snapshot is taken first, and `wowlab undo` brings
-    the player back. That snapshot, the earlier ones, and archives made with
-    snap export still hold the player.
+    the player back. That snapshot and the earlier ones still hold the player
+    until you remove them with snap rm and run snap gc; archives made with
+    snap export keep theirs.
 
     \f
     JSON: CrewEditReport."""

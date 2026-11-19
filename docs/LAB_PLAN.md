@@ -1255,6 +1255,32 @@ that kind, and `create` never writes it.
 
 (c) A stored manifest's `created_at` must be the moment its id carries. `create` has always written both from one moment. A manifest that fails this is damaged, as any manifest that does not load is: `snap list` names it and exits 1, `latest`, `~N` and `latest-user` refuse, and `snap gc` will not run. An import is held to the same rule, and to its own check against future dates.
 
+*Amended 2026-11-19 (M19-09; owner decision of 2026-11-19, §20.8 decision 9):*
+a snapshot can be removed. "Snapshots are immutable" above still holds of
+a snapshot that exists; removing one takes it out whole.
+`SnapshotStore.remove(id)` removes exactly one manifest, by full id, and
+the empty `imported/<id>` record of an imported one; no object is deleted.
+The manifest must load (a damaged one is not removed this way);
+`manifests/` is opened as `create` opens it, never through a link; the
+file removed is the regular file that was read, checked again by `lstat`
+just before the delete; and a store inside any install is refused first,
+by `create`'s rule (L1). `wowlab snap rm ID [ID…]` (ids as the other
+`snap` commands take them) holds the store lock for the whole run. Under
+it, it resolves every ID (one that names no snapshot refuses the run,
+nothing removed; an ID given twice counts once), reads the journal, and
+refuses a snapshot any journal record names as its pre-write snapshot,
+unless `--break-undo` is given; the plan then says, for each such
+snapshot, that `wowlab undo` of that change and of every earlier one
+becomes impossible. It shows the plan and asks (`--yes`, `--dry-run`,
+`--json`: `SnapRmReport`, whose `plan_lines` are the text plan). The
+objects stay until `snap gc` drops the ones nothing refers to. The command
+never opens the install and does not go through `guard`'s transaction: it
+writes only wowlab's own store, as `snap gc` does. `undo` of a record
+whose snapshot was removed refuses and changes nothing, with the message it
+gives for any snapshot it cannot read (no new recovery wording, ADR-0037).
+`wowlab ui` does not offer `snap rm` (owner, 2026-11-19): the server
+excludes it with its own reason, though it declares `--yes`.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -6179,7 +6205,9 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   keep theirs." `snap rm` did not exist on 2026-11-18; M19-09 would
   build it, if the owner agrees (the owner agreed on
   2026-11-19: command line only) (§20.8, decision 9), and until it exists
-  the sentence says "wowlab cannot remove a snapshot yet". Removing a
+  the sentence says "wowlab cannot remove a snapshot yet". *2026-11-19
+  (M19-09):* `snap rm` exists (§6.9), and the sentence is the one quoted
+  above. Removing a
   forget's own snapshot ends `undo` for that change and every earlier
   one, which `snap rm`'s plan must say.
 - **The backup's cases.** `WowLab.lua.bak` absent: left absent. It does

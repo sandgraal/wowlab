@@ -178,7 +178,11 @@ def test_forget_plan_writes_nothing_and_says_what_it_does_not_reach_constructed(
     assert (
         "This command first saves a copy that still holds this player, so `wowlab undo` can" in out
     )
-    assert "wowlab cannot remove a snapshot yet" in out
+    assert (
+        f"stay in wowlab's snapshot folder ({snapshot.default_store_path()}) until you remove "
+        "them with `wowlab snap rm` and run `wowlab snap gc`." in out
+    )
+    assert "cannot remove a snapshot" not in out
     assert "Archives you made with `snap export` keep theirs." in out
     assert str(snapshot.default_store_path()) in out
     assert env.live() == data and env.bak().read_bytes() == data

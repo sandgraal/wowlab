@@ -2743,6 +2743,73 @@ class SnapshotStore:
             self._write_manifest(manifests, path.name, data)
         return updated
 
+    # -- removing a snapshot (M19-09) ------------------------------------------
+
+    def remove(self, snapshot_id: str) -> Manifest:
+        """Remove exactly this snapshot's manifest, and return it.
+
+        Only the manifest goes, and with it the empty `imported/<id>` record
+        an imported snapshot has; no object is deleted (`gc` then drops the
+        ones nothing refers to any more). The full id is required (no prefix
+        or reference), and the manifest must load, as `show` loads it: a
+        damaged one is not removed here. Nothing is followed: `manifests/`
+        is opened as `create` opens it, never through a link, and the file
+        removed is the regular file that was read, checked again by
+        `lstat` just before the delete (`SnapshotError` if it changed).
+
+        A store inside any install is refused (`StoreLocationError`) before
+        anything is read, by `create`'s rule (L1). This is a write of the
+        store, so a caller holds the store lock (`guard.store_lock`), as the
+        CLI's `snap rm` does; whether a journal record needs the snapshot is
+        the caller's to decide (the journal is `guard`'s)."""
+        if not isinstance(snapshot_id, str) or not _ID_RE.match(snapshot_id):
+            raise SnapshotError(f"not a snapshot id: {snapshot_id!r}")
+        self._refuse_inside_any_install()
+        name = snapshot_id + _MANIFEST_SUFFIX
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
+            try:
+                st = os.stat(manifests.at(name), dir_fd=manifests.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}") from None
+            except OSError as exc:
+                raise SnapshotError(f"cannot inspect manifest {name}: {exc}") from exc
+            if _is_link_stat(st) or not stat.S_ISREG(st.st_mode):
+                raise ManifestIntegrityError(
+                    f"manifest {name} is a link or not a regular file; it is not removed"
+                )
+            try:
+                data = read_regular_file(manifests.at(name), expect=st, dir_fd=manifests.fd)
+            except OSError as exc:
+                raise ManifestIntegrityError(f"manifest {name} does not load: {exc}") from exc
+            manifest = self._parse(snapshot_id, data)
+            if not self._entry_is(manifests, name, st):
+                raise SnapshotError(
+                    f"manifest {name} changed while it was read; nothing was removed"
+                )
+            try:
+                os.unlink(manifests.at(name), dir_fd=manifests.fd)
+            except OSError as exc:
+                raise SnapshotError(f"cannot remove manifest {name}: {exc}") from exc
+        self._forget_imported(snapshot_id)
+        return manifest
+
+    def _forget_imported(self, snapshot_id: str) -> None:
+        """Remove the empty `imported/<id>` record of a removed snapshot, if
+        there is one and it is a regular file; best effort, since an orphan
+        record names no manifest and is harmless (`imported_ids` is asked
+        only about manifests that exist)."""
+        with (
+            contextlib.suppress(OSError, SnapshotError),
+            self._store_dir((_IMPORTED_DIR,), create=False) as imported,
+        ):
+            if imported is None:
+                return
+            st = os.stat(imported.at(snapshot_id), dir_fd=imported.fd, follow_symlinks=False)
+            if stat.S_ISREG(st.st_mode) and self._entry_is(imported, snapshot_id, st):
+                os.unlink(imported.at(snapshot_id), dir_fd=imported.fd)
+
     # -- adding a snapshot from elsewhere (M16-04) ----------------------------
 
     def add_snapshot(

@@ -61,8 +61,9 @@ three shapes below (none on 2026-10-19), `ui` itself, `log tail` with
 `follow` (a run must end), `looks page` with `out` (it can create a file
 anywhere outside an install), `casc cat` with `out` in either form, a path
 or `-` for its output (from the UI an extracted file goes only to its
-default place under the user data directory; §17.1, M15-06) and `snap
-export` (it creates one). `sv dump` always runs with `--install-only`
+default place under the user data directory; §17.1, M15-06), `snap
+export` (it creates one) and `snap rm` (the owner's ruling of 2026-11-19
+offers it on the command line only, §20.8 decision 9; M19-09). `sv dump` always runs with `--install-only`
 (`_FORCED_FLAGS`), which refuses a file whose real path is not in the
 install wowlab finds by itself, and a `root` naming another install, before
 reading it, so a refusal quotes no byte of it (M16-42).
@@ -236,6 +237,10 @@ _EXCLUDED_UI = "the UI itself"
 _EXCLUDED_LEAVES: dict[tuple[str, ...], str] = {
     ("ui",): _EXCLUDED_UI,
     ("snap", "export"): "it creates a file anywhere outside an install",
+    # M19-09: the owner's ruling of 2026-11-19 (§20.8 decision 9) offers
+    # `snap rm` on the command line only. It declares `--yes`, so this entry
+    # takes it out of the confirm step too.
+    ("snap", "rm"): "removing a snapshot is offered on the command line only",
 }
 
 _JSON = "--json"

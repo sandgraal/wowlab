@@ -534,8 +534,10 @@ In the platform's user data folder, never in your install:
 
 Snapshots, and the journal of every change made through the write gate,
 are under `store/` in that folder; `wowlab doctor` prints the exact path.
-wowlab has no command that deletes a snapshot. `wowlab snap gc` removes
-stored files that no snapshot needs, after asking.
+`wowlab snap rm <id>` removes a snapshot, after showing the plan and
+asking; it refuses one that `wowlab undo` still needs unless you add
+`--break-undo`. `wowlab snap gc` then removes the stored files that no
+snapshot needs, after asking.
 
 ## Undo, in one place
 
