@@ -28,7 +28,7 @@ TEMPLATES = Path(ui.__file__).parent / "templates"
 INSTALL = ROOT / "docs" / "INSTALL.md"
 
 SENTENCE = (
-    "Reading never changes anything. Seven commands can change game files; each shows "
+    "Reading never changes anything. Ten commands can change game files; each shows "
     "a plan and runs only when you confirm, after a snapshot."
 )
 
@@ -42,6 +42,10 @@ SIX = {
     ("macros", "fix"),
     ("addon", "install"),
     ("addon", "remove"),
+    # M19-03: the crew book's write commands.
+    ("crew", "forget"),
+    ("crew", "rate"),
+    ("crew", "note"),
 }
 
 # What the places said before, each contradicting the sentence.

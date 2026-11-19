@@ -1044,7 +1044,7 @@ def crew_rate(
     name: CrewNameArg,
     rating: Annotated[
         str,
-        typer.Argument(metavar="good|bad|none", help="none takes the rating away."),
+        typer.Argument(metavar="RATING", help="good, bad, or none to take the rating away."),
     ],
     expect: CrewExpectOneOpt = None,
     account: AccountOpt = None,

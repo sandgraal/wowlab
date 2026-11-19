@@ -244,7 +244,7 @@ uv run wowlab --help        # every command
 Every `wowlab …` command on this page and on the wiki works the same from a checkout: put `uv run` in front of it. Set `WOWLAB_WOW_ROOT` if your install is not in a default location ([the install guide](docs/INSTALL.md)). To work on wowlab itself (the tests, the developer commands, machine setup), see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 > [!TIP]
-> Exit codes: `0` ok, `1` error (and `explain` of a path that matches nothing), `2` usage, `3` refused by the write gate. Only these seven commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge`, `macros fix` and `addon install` / `addon remove`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
+> Exit codes: `0` ok, `1` error (and `explain` of a path that matches nothing), `2` usage, `3` refused by the write gate. Only these ten commands change your install: `snap restore`, `undo`, `profile apply`, `sv merge`, `macros fix`, `addon install` / `addon remove` and `crew forget` / `crew rate` / `crew note`. Every one goes through the write gate and shows the plan and asks first unless you pass `--yes`; most of them also take `--dry-run`.
 
 ## ⚙️ How it works
 

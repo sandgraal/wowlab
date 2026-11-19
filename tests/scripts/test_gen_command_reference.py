@@ -37,6 +37,10 @@ ASKS_FIRST = {
     "wowlab addon remove",
     "wowlab sv merge",
     "wowlab macros fix",
+    # M19-03: the crew book's write commands.
+    "wowlab crew forget",
+    "wowlab crew rate",
+    "wowlab crew note",
     "wowlab snap gc",
     # On a first run it offers a first snapshot into the Lab's store (M13-04).
     "wowlab doctor",

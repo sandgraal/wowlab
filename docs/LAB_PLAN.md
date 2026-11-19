@@ -5346,6 +5346,8 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    "Reading never changes anything. Six commands can change game files;
    each shows a plan and runs only when you confirm, after a snapshot."
    *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
+   *Amended 2026-11-19 (M19-03):* ten commands, with `crew forget`, `crew
+   rate` and `crew note` added.
    A test pins it. The network promise is one generated block in the same
    way.
    - `doctor` is **offline by default**.

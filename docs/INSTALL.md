@@ -13,9 +13,9 @@ The first run prints this too, before it does anything else (ADR-0031):
   or lock file. One side effect to know about: if a sync service (OneDrive,
   Dropbox, iCloud Drive) keeps some of your files online-only, reading one
   makes the service download it.
-- **Only seven commands change files in your install:** `snap restore`,
-  `undo`, `profile apply`, `sv merge`, `macros fix`, `addon install` and
-  `addon remove`.
+- **Only ten commands change files in your install:** `snap restore`,
+  `undo`, `profile apply`, `sv merge`, `macros fix`, `addon install`,
+  `addon remove`, `crew forget`, `crew rate` and `crew note`.
   Each one shows what it will change and asks first (unless you pass
   `--yes`), refuses while the game is running, and takes a snapshot before
   it writes, so `wowlab undo` can put things back.
@@ -477,7 +477,7 @@ log in to, they can see the link in their process list while your browser
 starts, and can open it too, until you stop `wowlab ui`. From the page,
 `sv dump` reads only files inside your install.
 
-Reading never changes anything. Seven commands can change game files; each
+Reading never changes anything. Ten commands can change game files; each
 shows a plan and runs only when you confirm, after a snapshot.
 
 The page reads the install exactly as the other commands do and writes

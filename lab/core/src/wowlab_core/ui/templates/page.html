@@ -207,7 +207,7 @@
 </aside>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Seven commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.</p>
+<p class="intro">What every file in your game folder is, who writes it, and whether wowlab may change it. Reading never changes anything. Ten commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.</p>
 </details>
 </section>
 <section id="gaps-view" role="tabpanel" aria-labelledby="tab-gaps" hidden>
@@ -243,7 +243,7 @@
 </section>
 </div>
 <details class="about"><summary>About this data</summary>
-<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Seven commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>macros fix</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Three of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code> and <code>macros fix</code>, when the file they change changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages, extracted game files), run directly.</p>
+<p class="intro">Runs the commands of the <code>wowlab</code> you started, on this machine only. Reading never changes anything. Ten commands can change game files; each shows a plan and runs only when you confirm, after a snapshot. They are <code>snap restore</code>, <code>undo</code>, <code>profile apply</code>, <code>sv merge</code>, <code>macros fix</code>, <code>addon install</code> and <code>addon remove</code>, and <code>wowlab undo</code> reverses each of them. Three of them refuse to run when something changed after the plan: <code>undo</code>, when a newer change has been journaled, and <code>sv merge</code> and <code>macros fix</code>, when the file they change changed. The others apply what is there when you confirm, after the snapshot that <code>wowlab undo</code> restores from. The plan changes nothing; press Confirm under it to run the command for real. <code>snap gc</code> and <code>doctor</code> also ask first (<code>--yes</code>) and change only wowlab's own store. The commands that only read, or save only to wowlab's own data (snapshots, profiles, saved looks, the db2 cache, pages, extracted game files), run directly.</p>
 </details>
 </section>
 <section id="looks-view" role="tabpanel" aria-labelledby="tab-looks" hidden>
