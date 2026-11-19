@@ -343,6 +343,15 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     # like any text; the command holds the caller's --root, a path.
     "flavors.names_missing": REDACT,
     "flavors.names_command": REDACT,
+    # A game account's crew book (M19-05, ADR-0036 term 4): the account
+    # folder and the file's path name the account; the state is a closed
+    # literal; the reason is wowlab's own words and quotes nothing from the
+    # file, redacted like any text. No record, key, name, guild or note is
+    # in the model at all.
+    "flavors.crew_books.account": REDACT,
+    "flavors.crew_books.file": REDACT,
+    "flavors.crew_books.state": AS_IS,
+    "flavors.crew_books.reason": REDACT,
     "other_dirs": REDACT,
     "not_taken.name": REDACT,
     "not_taken.reason": AS_IS,
