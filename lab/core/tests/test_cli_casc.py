@@ -40,6 +40,7 @@ from _casc_build import (
     ckey_of,
     e_block,
     key_in,
+    make_install,
     make_source_install,
     n_block,
     tree_state,
@@ -202,6 +203,44 @@ def test_stat_without_archives_is_one_error_line_constructed(env: Env) -> None:
     assert result.exit_code == 1
     assert result.stderr.startswith("wowlab: cannot read the game-data archives of ")
     assert len(result.stderr.splitlines()) == 1
+
+
+_LEFTOVER = (
+    f"cannot read the game-data archives of {FLAVOR}: the folder '{FLAVOR}' is left over "
+    "from a game version no longer installed: this install's .build.info has no row for "
+    f"its product '{PRODUCT}' (`wowlab install show` lists the versions that are)."
+)
+
+
+@pytest.mark.parametrize("command", ["stat", "cat"])
+def test_a_flavor_whose_product_has_no_row_is_a_leftover_folder_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """M15-15: a flavor folder whose product `.build.info` no longer lists
+    (the beta's folder after launch) is one refusal line naming it as left
+    over, in text and in `--json`, and nothing is written anywhere."""
+    monkeypatch.delenv("WOWLAB_WOW_ROOT", raising=False)
+    monkeypatch.delenv("WOWLAB_FLAVOR", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    redirect_user_dirs(monkeypatch, home)
+    root, _ = make_install(tmp_path, rows=[("1", "wow_other_product")])
+    before, home_before = tree_state(root), tree_state(home)
+    leftover = Env(root, home)
+
+    text = leftover.run("casc", command, "--fdid", "10")
+    assert text.exit_code == 1
+    assert text.stdout == ""
+    assert text.stderr == f"wowlab: {_LEFTOVER}\n"
+
+    as_json = leftover.run("casc", command, "--fdid", "10", "--json")
+    assert as_json.exit_code == 1
+    assert as_json.stderr == f"wowlab: {_LEFTOVER}\n"
+    report = cli.ErrorReport.model_validate_json(as_json.stdout)
+    assert (report.kind, report.message, report.exit_code) == ("CliError", _LEFTOVER, 1)
+
+    assert tree_state(root) == before, "the constructed install changed"
+    assert tree_state(home) == home_before, "something was written to the user data folder"
 
 
 # ─── cat: the default place, and a repeat ────────────────────────────────────

@@ -860,7 +860,10 @@ def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, Bu
     """The flavor (a `Flavor` of `install`, or its folder name) and its
     product's one `Active` row of `.build.info`. Refused with
     `BuildRowError` when the flavor is not in the install, names no
-    product, or its product has no `Active` row or more than one."""
+    product, or its product has no `Active` row or more than one. A
+    product with no row while others have one is named as a folder left
+    over from a version no longer installed (`count` 0); a `.build.info`
+    that lists no product at all is said to list nothing wowlab can read."""
     if isinstance(flavor, str):
         found = next((f for f in install.flavors if f.folder == flavor), None)
         if found is None:
@@ -878,18 +881,32 @@ def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, Bu
         )
     mine = [r for r in install.products if (r.product or "").strip() == product]
     rows = [r for r in mine if r.is_active]
-    if len(rows) != 1:
-        if not mine:
-            saw = f".build.info has no row for the product {product!r}"
-        else:
-            branches = ", ".join((r.branch or "").strip() or "(empty)" for r in mine)
-            cells = ", ".join(repr(r.active or "") for r in mine)
-            active = "none is" if not rows else f"{len(rows)} are"
-            plural = "s" if len(mine) != 1 else ""
-            saw = (
-                f".build.info has {len(mine)} row{plural} for the product {product!r} "
-                f"(branches {branches}; Active cells {cells}), and {active} Active"
+    if not mine:
+        # Other products are listed and this one is not: the folder is what
+        # an uninstalled version left behind (M15-15). No product listed at
+        # all (an empty file, no Product column) says nothing about the
+        # folder, only that the file cannot be read this way.
+        if any((r.product or "").strip() for r in install.products):
+            message = (
+                f"the folder {flavor.folder!r} is left over from a game version no longer "
+                f"installed: this install's .build.info has no row for its product "
+                f"{product!r} (`wowlab install show` lists the versions that are)."
             )
+        else:
+            message = (
+                ".build.info lists no game version wowlab can read "
+                "(`wowlab install show` shows what it holds)."
+            )
+        raise BuildRowError(message, product, 0, install.root / ".build.info")
+    if len(rows) != 1:
+        branches = ", ".join((r.branch or "").strip() or "(empty)" for r in mine)
+        cells = ", ".join(repr(r.active or "") for r in mine)
+        active = "none is" if not rows else f"{len(rows)} are"
+        plural = "s" if len(mine) != 1 else ""
+        saw = (
+            f".build.info has {len(mine)} row{plural} for the product {product!r} "
+            f"(branches {branches}; Active cells {cells}), and {active} Active"
+        )
         raise BuildRowError(
             f"{saw}. wowlab reads the build of the one Active row and does not pick "
             "between rows (`wowlab install show` lists them).",

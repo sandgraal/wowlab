@@ -35,7 +35,7 @@ import pytest
 
 from wowlab_core import casc
 from wowlab_core.gamedata import GameDataError
-from wowlab_core.install import ENV_ROOT, discover
+from wowlab_core.install import ENV_ROOT, Install, discover
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "macos-70450" / "derived"
 FACTS: dict[str, Any] = json.loads((FIXTURE / "casc-files.json").read_text(encoding="utf-8"))
@@ -48,6 +48,20 @@ def _root() -> Path:
     if not value.strip():
         pytest.skip(f"set {ENV_ROOT} to the install to run the live casc tests")
     return Path(value)
+
+
+def _install() -> Install:
+    """The install, or a skip when its `.build.info` has no row for the
+    fixture's product (M15-15): the fixture's flavor folder is then left
+    over from a version no longer installed, so there is no build to
+    compare."""
+    found = discover(_root())
+    if not any((r.product or "").strip() == FACTS["product"] for r in found.products):
+        pytest.skip(
+            f".build.info has no row for the fixture's product {FACTS['product']!r}: "
+            f"the folder {FACTS['flavor']} is left over from a version no longer installed"
+        )
+    return found
 
 
 def _state(folder: Path) -> dict[str, tuple[int, int]]:
@@ -79,7 +93,7 @@ sys.addaudithook(_audit)
 
 @pytest.fixture(scope="module")
 def source() -> casc.CascSource:
-    opened = casc.open_source(discover(_root()), FACTS["flavor"])
+    opened = casc.open_source(_install(), FACTS["flavor"])
     if opened.report.index.version != FACTS["version"]:
         pytest.skip(
             f"the install is at {opened.report.index.version}; the fixture at {FACTS['version']}"
@@ -129,7 +143,7 @@ def test_live_open_matches_the_derived_fixture_and_its_target() -> None:
     data_dir = _root() / "Data" / "data"
     before = _state(data_dir)
     started = time.perf_counter()
-    opened = casc.open_source(discover(_root()), FACTS["flavor"])
+    opened = casc.open_source(_install(), FACTS["flavor"])
     seconds = time.perf_counter() - started
     r = opened.report
     if r.index.version != FACTS["version"]:
