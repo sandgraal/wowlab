@@ -405,6 +405,11 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["casc", "cat", "--fdid", "1"],
         # M15-11: likewise; its full text is linted by test_cli_char_model.py.
         ["char", "model"],
+        # M19-02: the captures hold no crew book, so both say it is not
+        # turned on; test_cli_crew.py runs them on constructed books.
+        ["crew", "list"],
+        ["crew", "list", "--notes"],
+        ["crew", "show", "Inventeda-Fakerealm"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
