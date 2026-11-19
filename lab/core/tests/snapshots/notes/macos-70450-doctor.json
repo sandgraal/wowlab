@@ -76,7 +76,8 @@
         "ChrSpecialization",
         "SkillLine"
       ],
-      "names_command": "wowlab names fetch"
+      "names_command": "wowlab names fetch",
+      "crew_books": []
     }
   ],
   "other_dirs": [],

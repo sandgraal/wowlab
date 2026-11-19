@@ -1172,6 +1172,9 @@ if TYPE_CHECKING:
         ClientReport as ClientReport,
     )
     from wowlab_core.cli._cmd_doctor import (
+        CrewBookSummary as CrewBookSummary,
+    )
+    from wowlab_core.cli._cmd_doctor import (
         DoctorFlavor as DoctorFlavor,
     )
     from wowlab_core.cli._cmd_doctor import (
@@ -1257,6 +1260,15 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_doctor import (
         _could_be_an_install as _could_be_an_install,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _crew_book_line as _crew_book_line,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _crew_books as _crew_books,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _crew_unreadable_reason as _crew_unreadable_reason,
     )
     from wowlab_core.cli._cmd_doctor import (
         _doctor as _doctor,
