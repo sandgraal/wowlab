@@ -736,6 +736,7 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
     assert set(panels) == {
         "account-view",
         "character-view",
+        "crew-view",
         "backups-view",
         "addons-view",
         "explorer-view",

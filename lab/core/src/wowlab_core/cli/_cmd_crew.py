@@ -26,6 +26,7 @@ import typer
 
 from wowlab_core import crewbook, crewedit, guard, install, labaddon, layout, luadata, snapshot
 from wowlab_core.cli._common import (
+    CREW_BOOK_SENTENCE,
     EXIT_REFUSED,
     EXIT_USAGE,
     AccountOpt,
@@ -89,7 +90,10 @@ class CrewReport(_Out):
     the order the text lists them; `total` counts every player the book
     holds; `unread` lists each entry that could not be read, with its key
     and why. With no book in any account looked in, `flavor_folder`,
-    `account` and `file` are None and `places` lists where wowlab looked."""
+    `account` and `file` are None and `places` lists where wowlab looked.
+    `words` is the sentence the text output opens with (the book's state,
+    or that it was never turned on and how to turn it on in game); `keeps`
+    is what the crew book keeps and where, as `crew --help` says it."""
 
     flavor_folder: str | None
     account: str | None
@@ -108,13 +112,17 @@ class CrewReport(_Out):
     players: list[crewbook.CrewPlayer]
     unread: list[crewbook.UnreadEntry]
     places: list[CrewPlace]
+    words: str
+    keeps: str
     notes: list[str]
 
 
 class CrewShowReport(_Out):
     """`wowlab crew show --json`: everything the book keeps about one
     player (`player`, None when the book was never turned on), and the key
-    as typed (`typed`)."""
+    as typed (`typed`). `lines` are the lines the text output prints:
+    the player and every field kept, or the one sentence of a book never
+    turned on."""
 
     flavor_folder: str | None
     account: str | None
@@ -123,6 +131,7 @@ class CrewShowReport(_Out):
     typed: str
     player: crewbook.CrewPlayer | None
     places: list[CrewPlace]
+    lines: list[str]
     notes: list[str]
 
 
@@ -358,6 +367,10 @@ def crew_list(
         crewbook.select(book.players, rated=rated, noted=noted, search=search), sort
     )
     place = opened.place
+    if book.state == "not_turned_on":
+        words = _never_on(opened.places if place is None else [place])
+    else:
+        words = _header(opened)
     report = CrewReport(
         flavor_folder=place.flavor_folder if place else None,
         account=place.account if place else None,
@@ -376,15 +389,16 @@ def crew_list(
         players=shown,
         unread=book.unread,
         places=opened.places,
+        words=words,
+        keeps=CREW_BOOK_SENTENCE,
         notes=_CREW_NOTES,
     )
     if json_out:
         _emit(report)
         return
+    _say(words)
     if book.state == "not_turned_on":
-        _say(_never_on(opened.places if place is None else [place]))
         return
-    _say(_header(opened))
     filtered = rated is not None or noted or bool(search)
     if filtered:
         _say(f"{len(shown)} of {_plural(len(book.players), 'player')} match.")
@@ -460,6 +474,14 @@ def crew_show(
                 EXIT_USAGE,
             )
         player = found[0]
+    if player is None:
+        lines = [_never_on(opened.places if place is None else [place])]
+    else:
+        assert place is not None
+        lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
+        lines += _field_lines(player)
+        if book.state == "off":
+            lines.append("The crew book is turned off: it is not recording.")
     report = CrewShowReport(
         flavor_folder=place.flavor_folder if place else None,
         account=place.account if place else None,
@@ -468,21 +490,16 @@ def crew_show(
         typed=name,
         player=player,
         places=opened.places,
+        lines=lines,
         notes=_CREW_NOTES,
     )
     if json_out:
         _emit(report)
         return
-    if player is None:
-        _say(_never_on(opened.places if place is None else [place]))
-        return
-    assert place is not None
-    _say(f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:")
-    for line in _field_lines(player):
+    for line in lines:
         _say(line)
-    if book.state == "off":
-        _say("The crew book is turned off: it is not recording.")
-    _say_notes(_CREW_NOTES, notes)
+    if player is not None:
+        _say_notes(_CREW_NOTES, notes)
 
 
 # ─── forget, rate, note (§20.3, M19-03) ──────────────────────────────────────

@@ -3493,7 +3493,7 @@ Tests only, in `tests/addon/test_lab_addon.py`, before any addon code. One per-f
 
 ---
 
-## [ ] M19-10 — lab-addon: the crew book
+## [x] M19-10 — lab-addon: the crew book
 **Size:** M · **Depends on:** M19-01 · **Sources:** `docs/LAB_PLAN.md` §20.1, §20.5; ADR-0036; ADR-0026
 
 `lab/addon/WowLab/Crew.lua`, the account-wide `WowLabCrewDB` (its own `schema = 1`; the per-character schema does not change), `/wowlab crew` with `on`, `off`, `good`, `bad`, `clear`, `note` and `who`, the turn-on notice, the login line while the book is on, the one-line warning in the player's own chat frame with `|` doubled and line breaks removed in every field at the moment it is printed, the combat block and the secret-value test on every value read with the `skipped` count, the file's own `probe` and `started`, the saved `current` set, the instance's name and id, the 5,000-player limit and the note rules, all as §20.1 says. Every client call is tested for before use and has an `absent` reason. The TOC's `## SavedVariables:` line and its Notes sentence change; `lab/addon/README.md` says what the crew book keeps and how to turn it on and off; `docs/LAB_FORMATS.md` and the `WowLab.lua` row of `docs/LAB_FILE_MAP.md` gain the account file's new table. If the parked `m16/45-addon-schema5` branch has landed first, rebase on it.
@@ -3547,7 +3547,7 @@ Three write commands, each a targeted `luadata` edit through `guard`, as §20.3 
 
 ---
 
-## [ ] M19-06 — The Crew tab
+## [x] M19-06 — The Crew tab
 **Size:** M · **Depends on:** M19-02, M19-03 · **Sources:** `docs/LAB_PLAN.md` §20.4; ADR-0029
 
 A Crew tab in `wowlab ui` after "All characters" and "Character": the list with search, the rating filter and the sort, from `crew list --json`; a row opens `crew show`; forget, rate and note through the confirm flow with their pins (the pin-check sentence added). Names, guilds and notes reach the page as text nodes only, through `visible()`; no link or URL is built from crew data; the write commands are sent with the exact stored key from `crew list --json`.
@@ -3559,7 +3559,7 @@ A Crew tab in `wowlab ui` after "All characters" and "Character": the list with 
 ## [ ] M19-07 — Owner: the crew book in game
 **Size:** S · **Depends on:** M19-10, M19-02 · **owner** (a short in-game check)
 
-Install the addon from `main`, then, with the conductor's runbook beside you (written from §20.6 when M19-10 merges): `/wowlab crew on` and log out once (does the account `WowLab.lua` gain the book and its probe); join a group in the open world with a same-realm and, if one is to hand, a cross-realm player; rate one and note another; `/reload` while grouped (does `met` stay); have the roster change during a fight if it happens; enter an instance; leave and rejoin to see the warning; turn `/chatlog` on for one warning; log out; then `wowlab crew list` and the `@live` test of M19-02. What to report, without any name or key (give the shape, as in `<Name>-<Realm with spaces>`): the realm part of the keys, what roles came back, `where` in the open world and in the instance, `skipped` before and after, whether `WowLab.lua.bak` holds the records, whether the warning reached `WoWChatLog.txt`, and whether anything was missing or `absent`. No capture is committed: the conductor records the answers as dated notes in §20.1 and §20.6.
+Install the addon from `main`, then, with the conductor's runbook beside you (`docs/handoffs/M19-07-runbook.md`, written from §20.6 on 2026-11-19): `/wowlab crew on` and log out once (does the account `WowLab.lua` gain the book and its probe); join a group in the open world with a same-realm and, if one is to hand, a cross-realm player; rate one and note another; `/reload` while grouped (does `met` stay); have the roster change during a fight if it happens; enter an instance; leave and rejoin to see the warning; turn `/chatlog` on for one warning; log out; then `wowlab crew list` and the `@live` test of M19-02. What to report, without any name or key (give the shape, as in `<Name>-<Realm with spaces>`): the realm part of the keys, what roles came back, `where` in the open world and in the instance, `skipped` before and after, whether `WowLab.lua.bak` holds the records, whether the warning reached `WoWChatLog.txt`, and whether anything was missing or `absent`. No capture is committed: the conductor records the answers as dated notes in §20.1 and §20.6.
 
 **Acceptance:** every [verify] in §20.1 and §20.6 resolved or kept with what was seen, dated.
 
