@@ -74,6 +74,10 @@ on *derived* fixtures (what was read from a real file, never its bytes,
 with a provenance row) and on `@live` tests against the owner's install
 that CI never runs, all three together. No asset byte enters the
 repository.
+A second, from ADR-0036 (accepted 2026-11-11; named here 2026-11-18): the
+reader of a crew-book record is graded on constructed records, labelled,
+and an owner-run `@live` test, because term 3 of that ADR keeps every
+real crew record out of the repository.
 
 ## Where truth lives
 
