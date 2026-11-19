@@ -267,9 +267,8 @@ class _WowlabGroup(TyperGroup):
 
     A command's module is imported when the command is looked up, not when
     the package is (M15-22): `get_command` imports the modules
-    `_COMMAND_MODULES` names for that root command or group, `list_commands`
-    those of the root commands, and `commands`, an unknown name, or a
-    name nothing maps, every module. A lookup that registered something new
+    `_COMMAND_MODULES` names for that root command or group; `list_commands`,
+    `commands`, and an unknown name import every module. A lookup that registered something new
     rebuilds the tree from the app, with every group's commands in the order
     the modules were registered in when they were all imported at once
     (`_PART_NAMES`), so help, the command reference and `wowlab ui` see the
@@ -309,7 +308,10 @@ class _WowlabGroup(TyperGroup):
 
     @override
     def list_commands(self, ctx: Context) -> list[str]:
-        self._load(_ROOT_COMMANDS)
+        # A listing (help, the command reference, `wowlab ui`'s tree) goes on
+        # to look up every command it lists: one import of everything and one
+        # rebuild, rather than one of each per group.
+        self._load(None)
         return list(self._commands)
 
     def _load(self, key: str | None) -> None:
@@ -485,14 +487,10 @@ _PART_NAMES = (
     "_cmd_charmodel",
     "_cmd_ui",
 )
-# The key of the modules that register commands on the root itself.
-_ROOT_COMMANDS = ""
-# The modules to import before a root command or group is looked up (M15-22),
-# and under `_ROOT_COMMANDS` those of every root command, for a listing; a
-# group itself is registered above and needs none to be listed.
-# `test_cli_package` checks every registration against this table.
+# The modules to import before a root command or group is looked up (M15-22):
+# every module that registers that command, or a command of that group.
+# `test_cli_lazy_imports` checks every registration against this table.
 _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
-    _ROOT_COMMANDS: ("_cmd_doctor", "_cmd_filemap", "_cmd_restore", "_cmd_ui"),
     "doctor": ("_cmd_doctor",),
     "tree": ("_cmd_filemap",),
     "explain": ("_cmd_filemap",),

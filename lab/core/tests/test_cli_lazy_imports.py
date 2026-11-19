@@ -93,13 +93,11 @@ def test_every_registration_is_under_its_key_in_the_table() -> None:
     assert isinstance(root, typer.core.TyperGroup)
     assert len(root.commands) > 10
     groups = {g.name: g.typer_instance for g in _common.app.registered_groups}
-    found: dict[str, set[str]] = {_common._ROOT_COMMANDS: set()}
+    found: dict[str, set[str]] = {}
     for info in _common.app.registered_commands:
         assert info.callback is not None
         name = info.name or typer.main.get_command_name(info.callback.__name__)
-        part = _part(info.callback)
-        found.setdefault(name, set()).add(part)
-        found[_common._ROOT_COMMANDS].add(part)
+        found.setdefault(name, set()).add(_part(info.callback))
     for name, sub in groups.items():
         assert name is not None and sub is not None
         found[name] = {_part(i.callback) for i in sub.registered_commands}
