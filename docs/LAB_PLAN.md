@@ -6355,8 +6355,9 @@ party or raid, including your own side in a battleground or arena (never
 your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
 which instance, and your own rating and note. It keeps them in WowLab.lua
 (and probably the game's backup of it, WowLab.lua.bak) in this game
-account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
-is sent anywhere. The book knows names, not people: a player who renames or
+account's SavedVariables folder, in wowlab's snapshots of it, and in
+wowlab's own crew database on this computer, which keeps them after the
+game's list drops them. Nothing is sent anywhere. The book knows names, not people: a player who renames or
 moves realm appears as a new entry, and someone else may later take a name
 you rated."
 
@@ -6364,6 +6365,11 @@ you rated."
 arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
 is **[verify]** (§20.6), hence "probably". The in-game notice and
 `wowlab crew --help` carry this wording, M19-10.)
+
+(Changed 2026-11-19, M20-01, by §21.4 term 2: the sentence names wowlab's
+own crew database as a place records are kept. A test keeps the four
+copies, `crew --help`, `Crew.lua`'s notice, this quote and the addon
+README's, identical.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is
@@ -6757,10 +6763,46 @@ what a sync takes in stays. Two guards, both before the transaction:
   confirmed by hand records the book's identity and the journal's newest
   record, so the next sync runs by itself.
 
+  *Ruled 2026-11-19 (M20-01, conductor; §20.2's fourth outcome stands):*
+  a violation inside one player's entry (a key of the wrong shape or over
+  its bound, a field of the wrong type or out of range) makes that entry
+  unread, as the reader lists it: it is not synced, it is counted and said,
+  and every other entry syncs. A violation of the book itself (unknown
+  schema, unreadable, more than 20,000 players, a top-level field of the
+  wrong type or out of range) syncs nothing. Either way no invalid value
+  enters the database.
+
   Not caught: a saved file replaced by hand, outside wowlab, and a
   restore made through a snapshot store kept somewhere other than the
   user data directory, whose journal the sync does not read. Such a book
   syncs like any other.
+
+*As built (2026-11-19, M20-01).* Bounds: a key holds a `-`, not last, in
+256 bytes; class, role, guild, instance 256 bytes and a note 200, valid
+UTF-8; `met`, `skipped`, loads 0 to 10,000,000; level 1 to 1,000; times
+from 2004 to 30 days past this computer's clock (one day would leave out
+today's constructed test books, dated up to six days ahead; fix round 1).
+Lock wait 5 s. A player not in the
+saved file keeps 0 as the value it last showed, so a return adds the whole
+new count. Confirmed by hand, another book adds by rule 2; a put-back one
+takes the larger of each count, never counting twice. Class, level, role,
+guild and instance come from the saved file only when its `last` is not
+older. A journal record that changed the account's `WowLab.lua`, not
+rolled back, holds, unless labelled `crew forget`, `rate` or `note` and
+undoing nothing. Another flavor folder's database is offered to `--adopt`
+only when the install folder it was filled from is gone. Copies:
+`<account>.sqlite.daily-<date>`, `.before-schema-<n>`. Brought forward
+from M20-02 (conductor, 2026-11-19): `crew forget` removes the player from
+the database and every copy (a copy it cannot open is deleted), `--all`
+deletes them, and a player only in the database is forgotten from it alone,
+after a plan and a yes; the plan and result carry the sentences of
+"Writing". `crew rate` and `crew note` reach the database at the next sync.
+Fix round 1: a forget takes the database's write lock before it writes the
+saved file and holds it through the database step; a sync re-reads the
+saved file under its lock and is skipped when it changed since it was read;
+temporary copies a killed run leaves are deleted when the database is next
+opened and by every forget; any held book keeps a rating or note the
+database changed.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

@@ -448,6 +448,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "list"],
         ["crew", "list", "--notes"],
         ["crew", "show", "Inventeda-Fakerealm"],
+        # M20-01: likewise; test_crewdb.py runs it on constructed books.
+        ["crew", "sync"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
