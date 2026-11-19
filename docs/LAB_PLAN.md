@@ -1269,9 +1269,18 @@ by `create`'s rule (L1). `wowlab snap rm ID [ID…]` (ids as the other
 it, it resolves every ID (one that names no snapshot refuses the run,
 nothing removed; an ID given twice counts once), reads the journal, and
 refuses a snapshot any journal record names as its pre-write snapshot,
-unless `--break-undo` is given; the plan then says, for each such
-snapshot, that `wowlab undo` of that change and of every earlier one
-becomes impossible. It shows the plan and asks (`--yes`, `--dry-run`,
+unless `--break-undo` is given. *Corrected 2026-11-19 (M19-09 review):*
+the plan then says, for each such snapshot, what is lost, decided from the
+journal: for the snapshot of the change `wowlab undo` reverses now (the
+undo target, the most recent change), that `undo` will no longer be able
+to reverse it; for an older change's snapshot, that `undo` only ever
+reverses the most recent change, so it is not affected, and that `snap
+restore` from that snapshot will no longer be possible. (This branch first
+said "`undo` of that change and of every earlier one becomes impossible",
+which is untrue for an older change: undo never reached it.) The refusal
+without the flag names the change by its journal label and says the files
+can no longer be put back as they were before it. A damaged manifest is
+refused in the player's words, pointing at `snap verify`. It shows the plan and asks (`--yes`, `--dry-run`,
 `--json`: `SnapRmReport`, whose `plan_lines` are the text plan). The
 objects stay until `snap gc` drops the ones nothing refers to. The command
 never opens the install and does not go through `guard`'s transaction: it
@@ -6209,7 +6218,11 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   (M19-09):* `snap rm` exists (§6.9), and the sentence is the one quoted
   above. Removing a
   forget's own snapshot ends `undo` for that change and every earlier
-  one, which `snap rm`'s plan must say.
+  one, which `snap rm`'s plan must say. *Corrected 2026-11-19 (M19-09
+  review):* removing it ends `undo` of that change while it is the most
+  recent one; `undo` only ever reverses the most recent change, so it
+  never reached an earlier one. `snap rm`'s plan says which case applies
+  (§6.9).
 - **The backup's cases.** `WowLab.lua.bak` absent: left absent. It does
   not hold the player: left alone. It cannot be read, or holds a schema
   wowlab does not know: the forget refuses, naming the file, and changes

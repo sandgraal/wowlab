@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 from test_cli import (
     FLAVOR,
+    SYNDICATOR,
     _create,
     _edit_syndicator,
     _json,
@@ -189,17 +190,22 @@ def test_a_snapshot_a_journal_record_needs_is_refused_without_break_undo(
         result = run("snap", "rm", pre, *extra, "--yes")
         assert result.exit_code == 1, extra
         text = " ".join(result.stderr.split())
-        assert f"`wowlab undo` needs {pre}" in text
-        assert "nothing was removed" in text
-        assert "--break-undo" in text
+        assert (
+            f'{pre} is the copy wowlab took just before your change "{record.label}" '
+            f"({record.created_at}). Removing it means the files can no longer be put back "
+            "as they were before that change, so nothing was removed. Add --break-undo to "
+            "remove it anyway." in text
+        )
+        assert "undo of that change and of every earlier one" not in text
         assert _manifest_file(user_data, pre).is_file()
+        assert _player_copy_problems(root, result.stderr) == []
     # Refused as a whole when the needed one is named among others.
     result = run("snap", "rm", a.id, pre, "--yes")
     assert result.exit_code == 1
     assert _manifest_file(user_data, a.id).is_file()
 
 
-def test_break_undo_says_so_and_undo_then_refuses_with_its_existing_message(
+def test_break_undo_on_the_most_recent_change_says_undo_ends_and_undo_refuses_with_its_message(
     root: Path, flavor: Path, user_data: Path
 ) -> None:
     a, _, _ = _three(flavor)
@@ -208,15 +214,17 @@ def test_break_undo_says_so_and_undo_then_refuses_with_its_existing_message(
     dry = ok("snap", "rm", pre, "--break-undo", "--dry-run").stdout
     plan = " ".join(dry.split())
     assert (
-        f"It is the copy wowlab took just before the change {record.id} "
-        f'("{record.label}", {record.created_at}): `wowlab undo` of that change and of every '
-        "earlier one becomes impossible." in plan
+        "It is the copy wowlab took just before your most recent change "
+        f'{record.id} ("{record.label}", {record.created_at}): `wowlab undo` will no longer '
+        "be able to reverse it." in plan
     )
+    assert "not affected" not in plan
     assert "Dry run: nothing was removed." in plan
+    assert _player_copy_problems(root, dry) == []
     report = _json(cli.SnapRmReport, "snap", "rm", pre, "--break-undo", "--yes")
-    assert report.breaks_undo and report.removed == [pre]
+    assert report.breaks_undo and report.journal_named and report.removed == [pre]
     (item,) = report.snapshots
-    assert item.needed_by == [record.id] and item.kind == "pre-write"
+    assert item.needed_by == [record.id] and item.kind == "pre-write" and item.undo_reverses
     assert not _manifest_file(user_data, pre).exists()
 
     install_before = _state(root)
@@ -384,3 +392,58 @@ def test_an_imported_snapshot_loses_its_import_record(root: Path, tmp_path: Path
     assert store.imported_ids() == {m.id}
     store.remove(m.id)
     assert not marker.exists() and store.imported_ids() == frozenset()
+
+
+def test_break_undo_on_an_older_change_leaves_undo_working(
+    root: Path, flavor: Path, user_data: Path
+) -> None:
+    """The review's probe (M19-09, round 1): `wowlab undo` only ever reverses
+    the most recent change, so removing an older change's snapshot leaves it
+    working; the plan says so, and that `snap restore` from it ends."""
+    a, b, _ = _three(flavor)
+    ok("snap", "restore", a.id, "--yes")  # the captured file back
+    ok("snap", "restore", b.id, "--yes")  # the edited one again
+    older, newest = guard.history()
+    assert older.snapshot_id and newest.snapshot_id and older.snapshot_id != newest.snapshot_id
+    refused = run("snap", "rm", older.snapshot_id, "--yes")
+    assert refused.exit_code == 1 and "Add --break-undo" in refused.stderr
+    dry = ok("snap", "rm", older.snapshot_id, "--break-undo", "--dry-run").stdout
+    plan = " ".join(dry.split())
+    assert (
+        f"It is the copy wowlab took just before your change {older.id} "
+        f'("{older.label}", {older.created_at}). `wowlab undo` only ever reverses your most '
+        "recent change, so it is not affected; `wowlab snap restore` from this snapshot will "
+        "no longer be possible." in plan
+    )
+    assert "will no longer be able to reverse it" not in plan
+    assert _player_copy_problems(root, dry) == []
+    report = _json(cli.SnapRmReport, "snap", "rm", older.snapshot_id, "--break-undo", "--yes")
+    assert report.journal_named and not report.breaks_undo
+    (item,) = report.snapshots
+    assert item.needed_by == [older.id] and not item.undo_reverses
+    assert not _manifest_file(user_data, older.snapshot_id).exists()
+
+    edited = (flavor / SYNDICATOR).read_bytes()
+    ok("undo", "--yes")  # still reverses the most recent change
+    assert (flavor / SYNDICATOR).read_bytes() != edited
+    assert guard.history()[-1].undoes == newest.id
+
+
+def test_a_damaged_snapshot_is_refused_in_player_words_constructed(
+    root: Path, flavor: Path, user_data: Path
+) -> None:
+    a, b, _ = _three(flavor)
+    path = _manifest_file(user_data, a.id)
+    good = path.read_bytes()
+    path.write_bytes(good[: len(good) // 2])  # constructed: cut short
+    for ref in (a.id, "latest"):
+        result = run("snap", "rm", ref, "--yes")
+        assert result.exit_code == 1, ref
+        text = " ".join(result.stderr.split())
+        assert "is damaged" in text and "nothing was removed" in text
+        assert "`wowlab snap verify` names it." in text
+        for raw in ("validation", "pydantic", "Manifest", "json_invalid", "line 1"):
+            assert raw not in text, (raw, text)
+        assert _player_copy_problems(root, result.stderr) == []
+    assert path.read_bytes() == good[: len(good) // 2]
+    assert _manifest_file(user_data, b.id).is_file()

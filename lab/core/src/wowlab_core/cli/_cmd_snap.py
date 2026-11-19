@@ -623,9 +623,14 @@ class SnapRmItem(_Out):
     kind: snapshot.SnapshotKind
     files: int
     needed_by: list[str]
-    """The journal records whose pre-write snapshot this is (`wowlab undo`
-    of that change puts the files back from it), oldest first; empty when
-    no record names it."""
+    """The journal records whose pre-write snapshot this is (the files as
+    they were just before that change), oldest first; empty when no record
+    names it. Removing such a snapshot needs `--break-undo`."""
+    undo_reverses: bool
+    """True when this is the pre-write snapshot of the change `wowlab undo`
+    reverses now (the most recent one), so removing it ends that undo. Undo
+    only ever reverses the most recent change, so for an older change's
+    snapshot this is False and undo is not affected."""
 
 
 class SnapRmReport(_Out):
@@ -636,8 +641,12 @@ class SnapRmReport(_Out):
     store: str
     snapshots: list[SnapRmItem]
     breaks_undo: bool
-    """True when a snapshot in the plan is one a journal record needs; the
-    run then went ahead only with `--break-undo`."""
+    """True when a snapshot in the plan is the one `wowlab undo` reverses
+    the most recent change from (an item with `undo_reverses`)."""
+    journal_named: bool
+    """True when a snapshot in the plan is one a journal record names (an
+    item with `needed_by`); the run then went ahead only with
+    `--break-undo`."""
     dry_run: bool
     applied: bool
     removed: list[str]
@@ -662,10 +671,18 @@ def _rm_plan_lines(
         for rec_id in item.needed_by:
             rec = records.get(rec_id)
             what = f' ("{rec.label}", {rec.created_at})' if rec is not None else ""
-            lines.append(
-                f"    It is the copy wowlab took just before the change {rec_id}{what}: "
-                "`wowlab undo` of that change and of every earlier one becomes impossible."
-            )
+            if item.undo_reverses and rec_id == item.needed_by[-1]:
+                lines.append(
+                    "    It is the copy wowlab took just before your most recent change "
+                    f"{rec_id}{what}: `wowlab undo` will no longer be able to reverse it."
+                )
+            else:
+                lines.append(
+                    f"    It is the copy wowlab took just before your change {rec_id}{what}. "
+                    "`wowlab undo` only ever reverses your most recent change, so it is not "
+                    "affected; `wowlab snap restore` from this snapshot will no longer be "
+                    "possible."
+                )
     lines.append(
         "Only the snapshots' records go now. The stored files stay until `wowlab snap gc` "
         "removes the ones no other snapshot needs."
@@ -688,9 +705,9 @@ def snap_rm(
         bool,
         typer.Option(
             "--break-undo",
-            help="Remove a snapshot even when it is the copy taken just before a change "
-            "`wowlab undo` can still undo. undo of that change and of every earlier one then "
-            "becomes impossible.",
+            help="Remove a snapshot even when it is the copy wowlab took just before one of "
+            "your changes. The files can then no longer be put back as they were before that "
+            "change; for your most recent change, `wowlab undo` can no longer reverse it.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -701,9 +718,11 @@ def snap_rm(
 ) -> None:
     """Remove snapshots from wowlab's snapshot folder. Shows the plan and
     asks first. Every ID must name a snapshot, or nothing is removed.
-    Nothing in your game folder is touched. A snapshot taken just before a
-    change that `wowlab undo` can still undo is refused unless you add
-    --break-undo. The files a snapshot holds stay in the store until
+    Nothing in your game folder is touched. A snapshot wowlab took just
+    before one of your changes is refused unless you add --break-undo: the
+    files can then no longer be put back as they were before that change,
+    and for your most recent change `wowlab undo` can no longer reverse it.
+    The files a snapshot holds stay in the store until
     `wowlab snap gc` removes the ones no other snapshot needs. Holds the
     store lock for the whole run.
 
@@ -715,36 +734,49 @@ def snap_rm(
     with guard.store_lock(store.path):
         # Everything below is read under the store lock, so no transaction,
         # `snap create` or `snap gc` runs between the plan and the removal.
-        ids: list[str] = []
-        for given in snapshot_ids:
-            full = _resolve_ref(store, given)  # an unknown id refuses the whole run
-            if full not in ids:
-                ids.append(full)  # an id given twice is removed once
         records = guard.history(store=store.path)
+        target = guard._undo_target(records)
         pre_write = frozenset(r.snapshot_id for r in records if r.snapshot_id)
         imported = store.imported_ids()
         items: list[SnapRmItem] = []
-        for full in ids:
-            m = store.show(full)
-            items.append(
-                SnapRmItem(
-                    id=m.id,
-                    created_at=m.created_at,
-                    label=m.label,
-                    kind=snapshot.kind_of(m, pre_write, imported),
-                    files=sum(1 for e in m.entries if e.kind == "file"),
-                    needed_by=[r.id for r in records if r.snapshot_id == m.id],
+        try:
+            for given in snapshot_ids:
+                full = _resolve_ref(store, given)  # an unknown id refuses the whole run
+                if any(item.id == full for item in items):
+                    continue  # an id given twice is removed once
+                m = store.show(full)
+                items.append(
+                    SnapRmItem(
+                        id=m.id,
+                        created_at=m.created_at,
+                        label=m.label,
+                        kind=snapshot.kind_of(m, pre_write, imported),
+                        files=sum(1 for e in m.entries if e.kind == "file"),
+                        needed_by=[r.id for r in records if r.snapshot_id == m.id],
+                        undo_reverses=target is not None and target.snapshot_id == m.id,
+                    )
                 )
-            )
+        except snapshot.ManifestIntegrityError:
+            # The loader's own words name a model and its validators; the
+            # player gets the fact, and `snap verify` for the detail.
+            raise CliError(
+                "a snapshot you named, or one wowlab had to read to find it, is damaged: "
+                "its record in the snapshot folder cannot be read. snap rm leaves a damaged "
+                "snapshot alone, and nothing was removed. `wowlab snap verify` names it."
+            ) from None
         needed = [item for item in items if item.needed_by]
         if needed and not break_undo:
-            names = ", ".join(item.id for item in needed)
+            by_id = {r.id: r for r in records}
+            said = "; ".join(
+                f"{item.id} is the copy wowlab took just before your change "
+                f'"{by_id[item.needed_by[-1]].label}" ({by_id[item.needed_by[-1]].created_at})'
+                for item in needed
+            )
             them = "it" if len(needed) == 1 else "them"
             raise CliError(
-                f"`wowlab undo` needs {names}: each is the copy wowlab took just before a "
-                "change it can undo, and nothing was removed. Add --break-undo to remove "
-                f"{them} anyway; `wowlab undo` of that change and of every earlier one then "
-                "becomes impossible."
+                f"{said}. Removing {them} means the files can no longer be put back as they "
+                "were before that change, so nothing was removed. Add --break-undo to remove "
+                f"{them} anyway."
             )
         plan_lines = _rm_plan_lines(store, items, records)
 
@@ -752,7 +784,8 @@ def snap_rm(
             return SnapRmReport(
                 store=str(store.path),
                 snapshots=items,
-                breaks_undo=bool(needed),
+                breaks_undo=any(item.undo_reverses for item in items),
+                journal_named=bool(needed),
                 dry_run=dry_run,
                 applied=applied,
                 removed=removed,
