@@ -762,6 +762,7 @@ function ns.CrewCommand(word)
         return
     end
     if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then
+        print("|cff33ff99WowLab|r: this crew book was written by another version of WowLab, so it has been left alone.")
         return
     end
     local rest = string.match(word, "^%s*%S+%s*(.-)%s*$") or ""

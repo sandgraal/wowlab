@@ -254,7 +254,10 @@ def test_crew_book_source_scan_every_printed_field_is_flattened() -> None:
     ], body
     t = flow.tokens
     prints = [k for k, x in enumerate(t) if x.text == "print" and not g._is_field(t, k)]
-    assert len(prints) == 1 and flow.label_at(prints[0]) == "say"
+    # `say`'s, and the pinned one at the head of the slash handler (one literal).
+    assert [flow.label_at(k) for k in prints] == ["say", g.CREW_COMMAND]
+    k = prints[1]
+    assert t[k + 2].kind == "string" and t[k + 3].text == ")"
     bad = []
     for k, x in enumerate(t):
         if (
