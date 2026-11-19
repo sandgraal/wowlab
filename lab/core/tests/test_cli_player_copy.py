@@ -485,6 +485,10 @@ NOT_RUN = {
     ("snap", "gc"): "removes from the store",
     ("sv", "merge"): "writes into the install",
     ("macros", "fix"): "writes into the install",
+    # M19-03: test_cli_crew_write.py runs them on constructed books.
+    ("crew", "forget"): "writes into the install",
+    ("crew", "rate"): "writes into the install",
+    ("crew", "note"): "writes into the install",
     ("undo",): "writes into the install",
     ("ui",): "runs a local server",
 }
