@@ -311,8 +311,18 @@ def _from_database(
         return None, []
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
-        outcome = crewdb.sync(target, opened.data, opened.book)
+        outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
     return outcome, crewdb.read(target.flavor_folder, target.account, opened.book)
+
+
+def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
+    """Read the chosen book's WowLab.lua again, as it was first read."""
+    place = opened.place
+    if place is None or place.file is None or opened.where is None:
+        return None
+    _, lay = opened.where
+    rel = place.file
+    return lambda: _listed(labaddon.read_file_bytes, lay, rel)
 
 
 def _sync_caveat(outcome: crewdb.SyncOutcome | None) -> str | None:
@@ -620,13 +630,16 @@ class CrewSyncReport(_Out):
 
 
 def _sync_plan_line(plan: crewdb.SyncPlan) -> str:
+    matches = f"{plan.matches_added} {'match' if plan.matches_added == 1 else 'matches'}"
+    ratings = plan.ratings_changed - plan.ratings_removed
+    notes = plan.notes_changed - plan.notes_removed
     return (
-        f"A sync would add {_plural(plan.players_added, 'player')} and "
-        f"{plan.matches_added} {'match' if plan.matches_added == 1 else 'matches'}, update {_plural(plan.players_updated, 'player')} "
-        f"(changing {_plural(plan.ratings_changed, 'rating')} and "
-        f"{_plural(plan.notes_changed, 'note')}), and mark "
-        f"{_plural(plan.left_game_list, 'player')} as no longer in the game's list. It never "
-        "lowers a count the database keeps."
+        f"A sync would add {_plural(plan.players_added, 'player')} and {matches}, update "
+        f"{_plural(plan.players_updated, 'player')} (changing {_plural(ratings, 'rating')} "
+        f"and {_plural(notes, 'note')}, and removing "
+        f"{_plural(plan.ratings_removed, 'rating')} and {_plural(plan.notes_removed, 'note')}), "
+        f"and mark {_plural(plan.left_game_list, 'player')} as no longer in the game's list. "
+        "It never lowers a count the database keeps."
     )
 
 
@@ -698,7 +711,7 @@ def crew_sync(
         return True
 
     data = opened.data
-    outcome = crewdb.sync(target, data, book, by_hand=True, confirm=ask)
+    outcome = crewdb.sync(target, data, book, by_hand=True, confirm=ask, reread=_rereader(opened))
     total = len(crewdb.read(target.flavor_folder, target.account))
     words = f"{outcome.words} ({_place_words(place)}, {_AS_OF})" if place else outcome.words
     report = CrewSyncReport(
@@ -1055,11 +1068,11 @@ def _apply(
     store: snapshot.SnapshotStore,
     yes: bool,
     json_out: bool,
-    after: Callable[[], object] | None = None,
+    database: crewdb.Forgetting | None = None,
 ) -> None:
-    """Show the plan, ask, write through the gate, run `after` (a forget's
-    step in wowlab's crew database) once the write is done, say what was
-    done."""
+    """Show the plan, ask, write through the gate, say what was done. With
+    `database` (a forget), wowlab's crew database is locked before the write
+    and the players are removed from it after, under the same lock."""
     _check_pin(pin, got, edit.rel)
     show = _say if not json_out else _say_err
     if not yes:
@@ -1070,9 +1083,23 @@ def _apply(
         if json_out:
             _emit(report(written=False))
         raise
-    record = _write(edit, new=new, new_backup=new_backup, pin=pin, label=label, store=store)
-    if after is not None:
-        after()
+    if database is not None:
+        database.hold()  # before the write: no sync commits what it read before it
+    try:
+        record = _write(edit, new=new, new_backup=new_backup, pin=pin, label=label, store=store)
+        if database is not None:
+            try:
+                database.finish()
+            except WowlabError as exc:
+                if json_out:
+                    _emit(report(written=True, transaction=record, forgotten=False))
+                raise CliError(
+                    f"{edit.rel} was changed and journaled as {record}, but wowlab's crew "
+                    f"database still holds them: {exc} Run the forget again to finish it."
+                ) from None
+    finally:
+        if database is not None:
+            database.release()
     finished = report(written=True, transaction=record)
     if json_out:
         _emit(finished)
@@ -1180,23 +1207,20 @@ def crew_forget(
     backup_after = _sha(new_backup) if new_backup is not None and backup_changed else backup_sha
     written_sha = _sha(new) if changed else None
     count = max(len(keys), 1)
-    if name is None:
-        db_has = (
-            bool(in_db)
-            or bool(crewdb.copies(edit.place.flavor_folder, edit.place.account))
-            or crewdb.database_path(edit.place.flavor_folder, edit.place.account).exists()
-        )
-    else:
-        db_has = keys[0] in in_db or bool(
-            crewdb.copies(edit.place.flavor_folder, edit.place.account)
-        )
+    # Whenever wowlab keeps a crew database for this book, a forget goes
+    # through it (and takes its lock), whether or not it holds the player.
+    db_has = crewdb.database_path(edit.place.flavor_folder, edit.place.account).exists() or bool(
+        crewdb.copies(edit.place.flavor_folder, edit.place.account)
+    )
 
     def forget_db() -> int:
         return crewdb.forget(
             edit.place.flavor_folder, edit.place.account, None if name is None else keys
         )
 
-    def report(*, written: bool = False, transaction: str | None = None) -> CrewEditReport:
+    def report(
+        *, written: bool = False, transaction: str | None = None, forgotten: bool | None = None
+    ) -> CrewEditReport:
         return CrewEditReport(
             command="forget",
             flavor_folder=edit.flavor.folder,
@@ -1219,10 +1243,10 @@ def crew_forget(
             if changed
             else None,
             notes=[],
-            database_forgotten=written and db_has,
+            database_forgotten=(written and db_has) if forgotten is None else forgotten,
         )
 
-    if not changed and db_has:
+    if not changed and db_has and (name is None or keys[0] in in_db):
         # Only wowlab's crew database (and its copies) hold them: no file of
         # the game is written, and nothing of this can be undone.
         _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
@@ -1300,7 +1324,11 @@ def crew_forget(
         store=store,
         yes=yes,
         json_out=json_out,
-        after=forget_db if db_has else None,
+        database=crewdb.Forgetting(
+            edit.place.flavor_folder, edit.place.account, None if name is None else keys
+        )
+        if db_has
+        else None,
     )
 
 

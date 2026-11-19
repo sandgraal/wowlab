@@ -112,6 +112,7 @@ class Env:
         )
 
     def sync(self, **kw: Any) -> crewdb.SyncOutcome:
+        kw.setdefault("reread", self.data)  # as the CLI's sync does
         return crewdb.sync(self.target(), self.data(), self.book(), **kw)
 
     def rows(self) -> dict[str, crewdb.CrewRow]:
@@ -1333,3 +1334,195 @@ def test_a_database_file_with_a_second_hard_link_is_refused_constructed(
     with pytest.raises(crewdb.CrewDbError, match="is not a crew database wowlab made"):
         env.sync()
     assert other.read_bytes() == before
+
+
+# ─── fix round 1 (2026-11-19): the reviews of ad41b26 ───────────────────────
+
+_KILLED_COPY = """
+import os, sys
+from pathlib import Path
+from wowlab_core import crewbook, crewdb
+target = crewdb.Target.model_validate_json(sys.argv[1])
+data = Path(sys.argv[2]).read_bytes()
+def killed(self, other):
+    os._exit(9)  # killed while the daily copy is put in place
+Path.replace = killed
+crewdb.sync(target, data, crewbook.parse_book(data))
+"""
+
+
+def _kill_during_a_daily_copy(env: Env) -> None:
+    import subprocess
+
+    env.save(_three(met_a=5))
+    done = subprocess.run(
+        [sys.executable, "-c", _KILLED_COPY, env.target().model_dump_json(), str(env.file)],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 9, done.stderr
+
+
+def _leftovers(env: Env) -> list[Path]:
+    return [f for f in env.db().parent.iterdir() if f.name.endswith((".tmp", ".tmp-journal"))]
+
+
+def test_a_copy_left_by_a_killed_run_does_not_survive_a_forget_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    env.sync()
+    _kill_during_a_daily_copy(env)
+    (leftover,) = _leftovers(env)
+    assert KEY_A.encode() in leftover.read_bytes()  # a whole copy, as the review found
+    assert env.run("crew", "forget", KEY_A, "--yes").exit_code == 0
+    assert _leftovers(env) == []
+    for f in env.db().parent.iterdir():
+        assert KEY_A.encode() not in f.read_bytes(), f.name
+
+
+def test_a_copy_left_by_a_killed_run_does_not_survive_forget_all_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    env.sync()
+    _kill_during_a_daily_copy(env)
+    assert env.run("crew", "forget", "--all", "--yes").exit_code == 0
+    assert list(env.db().parent.iterdir()) == []
+
+
+def test_a_copy_left_by_a_killed_run_is_cleared_at_the_next_sync_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    env.sync()
+    _kill_during_a_daily_copy(env)
+    assert _leftovers(env)
+    assert env.sync().state == "synced"
+    assert _leftovers(env) == [] and len(crewdb.copies(FLAVOR, ACCOUNT)) == 1
+
+
+def test_a_sync_that_read_the_book_before_a_forget_does_not_bring_the_player_back_constructed(
+    make: Any,
+) -> None:
+    """The reviewer's interleaving: `crew list` reads the saved file, a
+    forget writes it and the database, then the list's sync gets the lock
+    with the bytes it read before. It is skipped, and the player stays
+    forgotten."""
+    env = make(_three())
+    env.sync()
+    env.save(_three(met_a=5))  # a session played since the last sync
+    stale_data, stale_book, target = env.data(), env.book(), env.target()
+    assert env.run("crew", "forget", KEY_A, "--yes").exit_code == 0
+    outcome = crewdb.sync(target, stale_data, stale_book, reread=env.data)
+    assert outcome.state == "skipped" and "changed while wowlab was syncing" in outcome.words
+    assert KEY_A not in env.rows()
+    assert KEY_A.encode() not in env.db().read_bytes()
+
+
+def test_a_forget_waits_for_the_database_lock_before_it_writes_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+    before, records = env.data(), guard.history()
+    monkeypatch.setattr(crewdb, "LOCK_WAIT_SECONDS", 0.2)
+    other = sqlite3.connect(env.db(), isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")  # a sync holding the write lock
+    try:
+        result = env.run("crew", "forget", KEY_A, "--yes")
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+    assert result.exit_code == 1 and "Another wowlab is using the crew database" in result.stderr
+    assert env.data() == before and guard.history() == records  # nothing written
+    assert KEY_A in env.rows()
+
+
+def test_a_forget_that_fails_in_the_database_says_so_honestly_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+
+    def broken(self: crewdb.Forgetting) -> int:
+        raise crewdb.CrewDbError("The crew database is broken (constructed).")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(crewdb.Forgetting, "finish", broken)
+        result = env.run("crew", "forget", KEY_A, "--yes", "--json")
+    assert result.exit_code == 1
+    flat = " ".join(result.stderr.split())
+    assert "was changed and journaled as" in flat and "still holds them" in flat
+    assert "Run the forget again to finish it." in flat
+    first, _ = json.JSONDecoder().raw_decode(result.stdout)
+    report = cli.CrewEditReport.model_validate(first)
+    assert report.written is True and report.database_forgotten is False
+    again = env.run("crew", "forget", KEY_A, input="y\n")  # only the database holds them now
+    assert again.exit_code == 0, again.output
+    assert KEY_A not in env.rows()
+
+
+def test_a_forget_cleans_the_copy_a_schema_change_makes_on_its_open_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    env.sync()
+    monkeypatch.setattr(crewdb, "SCHEMA", 2)
+    monkeypatch.setitem(crewdb._MIGRATIONS, 1, ("CREATE TABLE later (x INTEGER) STRICT",))
+    monkeypatch.setitem(crewdb._SQL_SET_VERSION, 2, "PRAGMA user_version = 2")
+    monkeypatch.setattr(crewdb, "read", lambda *a, **k: [])  # the forget's first open migrates
+    monkeypatch.setattr(crewdb, "holds", lambda *a, **k: [KEY_A, KEY_B, KEY_C])
+    assert env.run("crew", "forget", KEY_C, "--yes").exit_code == 0
+    pre = env.db().with_name(env.db().name + ".before-schema-1")
+    assert pre.exists() and KEY_C.encode() not in pre.read_bytes()
+
+
+def test_adopt_leaves_nothing_in_the_old_folder_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    old = env.db()
+    old.with_name(old.name + "-journal").write_bytes(b"")  # a journal left beside it
+    old.with_name(f".{old.name}.daily-2026-01-01.4242.tmp").write_bytes(old.read_bytes())
+    _rename_flavor(env, "_renamed_")
+    crewdb.adopt(env.target("_renamed_"))
+    assert list(old.parent.iterdir()) == []
+    assert crewdb.database_path("_renamed_", ACCOUNT).exists()
+
+
+def test_a_time_far_past_the_clock_leaves_its_entry_out_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    far = int(time.time()) + crewdb.TIME_AHEAD + 86_400
+    env.save(book({KEY_A: player(last=far, met=3), KEY_B: player(met=9, last=T0 + 10)}))
+    outcome = env.sync()
+    assert outcome.state == "synced" and outcome.left_out == 1
+    assert env.rows()[KEY_A].last == T1  # not pinned to the far time
+
+
+def test_a_held_sync_plan_says_what_it_removes_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    env.save(book({KEY_A: player(met=3, last=T1)}, started=T1))  # rating and note gone
+    declined = env.run("crew", "sync", input="")
+    assert declined.exit_code == 1
+    flat = " ".join(declined.stdout.split())
+    assert "removing 1 rating and 1 note" in flat, flat
+
+
+def test_another_book_keeps_a_note_the_database_changed_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    conn = sqlite3.connect(env.db())
+    conn.execute(
+        "UPDATE players SET note = 'invented: desk', marks_changed = marks_agreed + 1 "
+        "WHERE player_key = ?",
+        (KEY_A,),
+    )
+    conn.commit()
+    conn.close()
+    env.save(book({KEY_A: player(met=1, note="invented: game")}, started=T1))
+    assert env.sync().held == ["other_book"]
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
+    assert env.rows()[KEY_A].note == "invented: desk"

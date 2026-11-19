@@ -85,6 +85,9 @@ COUNTER_MAX = 10_000_000
 LEVEL_MAX = 1_000
 TIME_MIN = 1_072_915_200  # 2004-01-01 00:00 UTC
 TIME_MAX = 4_102_444_800  # 2100-01-01 00:00 UTC
+TIME_AHEAD = 30 * 86_400
+"""How far past this computer's clock a time in a book may be: a later one
+would pin a row's `last` for good, so its entry is left out."""
 
 _PRIVATE_MODES = os.name == "posix"
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -235,8 +238,9 @@ HoldReason = Literal["other_book", "put_back", "journal_unreadable", "journal_re
 
 class SyncPlan(_Model):
     """What a sync would change: players added and updated, ratings and
-    notes changed on players the database already keeps, players the game's
-    list no longer holds, and matches added (none from a schema 1 book)."""
+    notes changed on players the database already keeps (of those, the ones
+    removed: `ratings_removed`, `notes_removed`), players the game's list no
+    longer holds, and matches added (none from a schema 1 book)."""
 
     players_added: int
     players_updated: int
@@ -244,6 +248,8 @@ class SyncPlan(_Model):
     notes_changed: int
     left_game_list: int
     matches_added: int = 0
+    ratings_removed: int = 0
+    notes_removed: int = 0
 
 
 class SyncOutcome(_Model):
@@ -439,6 +445,11 @@ def _copy(conn: sqlite3.Connection, dest: Path) -> None:
         if _PRIVATE_MODES:
             tmp.chmod(0o600)
         tmp.replace(dest)
+    except FileNotFoundError:
+        # Another run cleared it as a leftover: no copy this time, made at
+        # the next sync instead.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -486,6 +497,7 @@ def _open(path: Path, *, create: bool) -> sqlite3.Connection | None:
         # Made private, or set back to private when something widened it.
         _private_folder(path.parent)
         _private_file(path)
+        _clear_temps(path)
     conn = _connect(path)
     try:
         version = _check(conn, path)
@@ -641,12 +653,20 @@ def check_book(book: crewbook.CrewBook) -> str | None:
     unread, `entry_problems`)."""
     if len(book.players) + len(book.unread) > MAX_PLAYERS:
         return _refused("the number of players", f"at most {MAX_PLAYERS:,}")
-    if book.started is not None and not TIME_MIN <= book.started <= TIME_MAX:
-        return _refused("the book's start time", "a date from 2004 to 2099")
+    if book.started is not None and not TIME_MIN <= book.started <= _latest():
+        return _refused(
+            "the book's start time",
+            f"a date from 2004 to {TIME_AHEAD // 86_400} days after this computer's clock",
+        )
     for name, value in (("count of skipped reads", book.skipped), ("load count", book.probe_loads)):
         if value is not None and not 0 <= value <= COUNTER_MAX:
             return _refused(f"the book's {name}", f"a whole number from 0 to {COUNTER_MAX:,}")
     return None
+
+
+def _latest() -> int:
+    """The latest time a sync takes: this computer's clock plus `TIME_AHEAD`."""
+    return min(int(time.time()) + TIME_AHEAD, TIME_MAX)
 
 
 def _entry_problem(p: crewbook.CrewPlayer) -> str | None:
@@ -669,8 +689,11 @@ def _entry_problem(p: crewbook.CrewPlayer) -> str | None:
         return f"the level is over {LEVEL_MAX:,}, so it is not synced"
     for field, kind in _TIMES:
         value = getattr(p, field)
-        if value is not None and not TIME_MIN <= value <= TIME_MAX:
-            return f"the {kind} is not a date from 2004 to 2099, so it is not synced"
+        if value is not None and not TIME_MIN <= value <= _latest():
+            return (
+                f"the {kind} is before 2004 or more than {TIME_AHEAD // 86_400} days after "
+                "this computer's clock, so it is not synced"
+            )
     return None
 
 
@@ -821,7 +844,9 @@ def _merged(row: _Row | None, p: crewbook.CrewPlayer, mode: Mode, now: int) -> _
             if value is not None:
                 setattr(new, field, value)
     marks = (p.rating, p.note)
-    kept = mode == "restored" and row.marks_changed > row.marks_agreed
+    # From any held book (§21.3): a rating or note the database changed
+    # since it last agreed with the saved file is kept.
+    kept = mode != "normal" and row.marks_changed > row.marks_agreed
     if not kept and marks != (row.rating, row.note):
         new.rating, new.note = marks
         new.marks_changed = now
@@ -841,7 +866,7 @@ def _changes(
     """(rows to insert, rows to update, the plan)."""
     added: list[_Row] = []
     updated: list[_Row] = []
-    ratings = notes = left = 0
+    ratings = notes = left = ratings_gone = notes_gone = 0
     keys = set()
     for p in book.players:
         keys.add(p.key)
@@ -855,6 +880,8 @@ def _changes(
         updated.append(new)
         ratings += old.rating != new.rating
         notes += old.note != new.note
+        ratings_gone += old.rating is not None and new.rating is None
+        notes_gone += old.note is not None and new.note is None
     for key, row in rows.items():
         if key not in keys and (row.in_book or row.met_seen):
             updated.append(_left(row))
@@ -864,6 +891,8 @@ def _changes(
         players_updated=sum(1 for r in updated if r.in_book),
         ratings_changed=ratings,
         notes_changed=notes,
+        ratings_removed=ratings_gone,
+        notes_removed=notes_gone,
         left_game_list=left,
     )
     return added, updated, plan
@@ -959,12 +988,16 @@ def sync(
     *,
     by_hand: bool = False,
     confirm: Callable[[SyncPlan, str], bool] | None = None,
+    reread: Callable[[], bytes] | None = None,
 ) -> SyncOutcome:
     """Sync the crew book (`book`, parsed from the saved file's `data`)
     into wowlab's crew database (§21.3). Never raises for a held, refused,
     skipped or misplaced sync: the outcome says why. `by_hand` is
     `wowlab crew sync`: a held book is then shown as a plan to `confirm`
-    (with the hold's sentence) and synced only on a yes."""
+    (with the hold's sentence) and synced only on a yes. `reread` reads the
+    saved file again: under the database's write lock, a sync whose saved
+    file changed since `data` was read, or that the journal shows was
+    written since, is skipped (a forget may have written it meanwhile)."""
     path = database_path(target.flavor_folder, target.account)
     if book.state == "not_turned_on":
         return SyncOutcome(
@@ -990,7 +1023,9 @@ def sync(
         raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
     assert conn is not None
     try:
-        outcome = _sync_open(conn, path, target, data, book, by_hand=by_hand, confirm=confirm)
+        outcome = _sync_open(
+            conn, path, target, data, book, by_hand=by_hand, confirm=confirm, reread=reread
+        )
         if not left_out or outcome.state not in ("synced", "unchanged"):
             return outcome
         entries = "1 entry" if left_out == 1 else f"{left_out} entries"
@@ -1002,6 +1037,15 @@ def sync(
                 f"{verb} not synced.",
             }
         )
+    except _StaleBook:
+        return SyncOutcome(
+            state="skipped",
+            words=(
+                "The crew book changed while wowlab was syncing it (another wowlab command "
+                "wrote it), so this sync was skipped and answers from the database as it is."
+            ),
+            database=str(path),
+        )
     except sqlite3.OperationalError as exc:
         if _locked(exc):
             return _skipped(path)
@@ -1010,6 +1054,39 @@ def sync(
         raise CrewDbError(f"The crew database {path} could not be synced ({exc}).") from exc
     finally:
         conn.close()
+
+
+class _StaleBook(Exception):  # noqa: N818 - a signal, not an error
+    """The saved file was written after this sync read it."""
+
+
+def _written_since(
+    target: Target, data: bytes, newest: str | None, reread: Callable[[], bytes] | None
+) -> bool:
+    """Whether the saved file changed since `data` was read, or the journal
+    holds a record after `newest` that wrote it (read under the lock)."""
+    if reread is not None:
+        try:
+            if reread() != data:
+                return True
+        except (OSError, WowlabError):
+            return True
+    try:
+        records = guard.history()
+    except (guard.GuardError, OSError, ValueError):
+        # Held already, and confirmed by hand: the bytes decide.
+        return False
+    ids = [r.id for r in records]
+    later = records[ids.index(newest) + 1 :] if newest in ids else records
+    if newest is not None and newest not in ids:
+        return True
+    want = target.file.replace("\\", "/").casefold()
+    return any(
+        not r.rolled_back
+        and _same_folder(r.flavor_path, target.flavor_path)
+        and any(c.path.replace("\\", "/").casefold() == want for c in r.paths)
+        for r in later
+    )
 
 
 def _sync_open(
@@ -1021,6 +1098,7 @@ def _sync_open(
     *,
     by_hand: bool,
     confirm: Callable[[SyncPlan, str], bool] | None,
+    reread: Callable[[], bytes] | None = None,
 ) -> SyncOutcome:
     meta = _meta(conn)
     synced_before = "install_root" in meta
@@ -1059,6 +1137,8 @@ def _sync_open(
     if synced_before:
         _daily_copy(conn, path)
     with _transaction(conn):
+        if _written_since(target, data, newest, reread):
+            raise _StaleBook
         rows = _rows(conn)
         added, updated, plan = _changes(rows, book, mode, now)
         _write(conn, added, updated, _meta_rows(target, book, data, newest))
@@ -1130,11 +1210,13 @@ def _move_with_copies(source: Path, dest: Path) -> None:
     """Move a database and every copy wowlab keeps of it; nothing is left
     behind and nothing at `dest` is replaced."""
     _private_folder(dest.parent)
+    _clear_temps(source)
     moves = [(source, dest)]
-    for f in source.parent.iterdir():
-        rest = f.name[len(source.name) :]
-        if f.name.startswith(source.name) and (_DAILY.search(rest) or _BEFORE_SCHEMA.search(rest)):
-            moves.append((f, dest.with_name(dest.name + rest)))
+    journal = source.with_name(source.name + "-journal")
+    if os.path.lexists(journal):  # a hot journal travels with its database
+        moves.append((journal, dest.with_name(dest.name + "-journal")))
+    for f in _copies_of(source):
+        moves.append((f, dest.with_name(dest.name + f.name[len(source.name) :])))
     for _, to in moves:
         if os.path.lexists(to):
             raise CrewDbError(f"{to} is already there, so nothing was moved.")
@@ -1200,10 +1282,9 @@ def adopt(target: Target) -> AdoptOutcome:
     )
 
 
-def copies(flavor_folder: str, account: str) -> list[Path]:
-    """The copies wowlab keeps beside the database: daily ones and the one
-    kept before a schema change."""
-    path = database_path(flavor_folder, account)
+def _copies_of(path: Path) -> list[Path]:
+    """The copies wowlab keeps beside the database at `path`: daily ones
+    and the one kept before a schema change."""
     try:
         entries = list(path.parent.iterdir())
     except OSError:
@@ -1219,29 +1300,40 @@ def copies(flavor_folder: str, account: str) -> list[Path]:
     )
 
 
+def _temps_of(path: Path) -> list[Path]:
+    """Temporary files a copy of the database at `path` is made in
+    (`.<name>….tmp`, and SQLite's `-journal` of one): a run killed while it
+    made a copy leaves a whole copy of the database there."""
+    try:
+        entries = list(path.parent.iterdir())
+    except OSError:
+        return []
+    return sorted(
+        f
+        for f in entries
+        if f.name.startswith("." + path.name)
+        and (f.name.endswith(".tmp") or f.name.endswith(".tmp-journal"))
+    )
+
+
+def _clear_temps(path: Path) -> None:
+    """Delete every temporary copy left beside the database (a run in
+    progress that loses its own is told by `_copy`, and makes none)."""
+    for f in _temps_of(path):
+        with contextlib.suppress(FileNotFoundError):
+            f.unlink()
+
+
+def copies(flavor_folder: str, account: str) -> list[Path]:
+    """The copies wowlab keeps beside the database: daily ones and the one
+    kept before a schema change."""
+    return _copies_of(database_path(flavor_folder, account))
+
+
 # ─── forget (§21.3, "Writing"; brought forward from M20-02 on 2026-11-19) ───
 
 _SQL_FORGET_PLAYER = "DELETE FROM players WHERE player_key = ?"
 _SQL_FORGET_IN_MATCHES = "DELETE FROM match_players WHERE player_key = ?"
-
-
-def _files(path: Path) -> list[Path]:
-    """The database and every copy wowlab keeps of it."""
-    out = [path] if os.path.lexists(path) else []
-    try:
-        entries = list(path.parent.iterdir())
-    except OSError:
-        return out
-    rest = [
-        f
-        for f in entries
-        if f.name.startswith(path.name)
-        and (
-            _DAILY.search(f.name[len(path.name) :])
-            or _BEFORE_SCHEMA.search(f.name[len(path.name) :])
-        )
-    ]
-    return out + sorted(rest)
 
 
 def _gone(path: Path) -> None:
@@ -1251,9 +1343,15 @@ def _gone(path: Path) -> None:
             f.unlink()
 
 
+def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
+    for key in keys:
+        conn.execute(_SQL_FORGET_PLAYER, (key,))
+        conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+
+
 def _forget_in(path: Path, keys: Sequence[str]) -> None:
-    """Delete the players `keys` from one database file, with
-    `secure_delete` on, in one transaction, and leave no rollback journal."""
+    """Delete the players `keys` from one copy, with `secure_delete` on, in
+    one transaction, and leave no rollback journal."""
     st = os.lstat(path)
     if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
         raise _not_ours(path)
@@ -1263,9 +1361,7 @@ def _forget_in(path: Path, keys: Sequence[str]) -> None:
             raise _not_ours(path)
         _settings(conn)
         with _transaction(conn):
-            for key in keys:
-                conn.execute(_SQL_FORGET_PLAYER, (key,))
-                conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+            _forget_rows(conn, keys)
     finally:
         conn.close()
 
@@ -1275,34 +1371,95 @@ def holds(flavor_folder: str, account: str) -> list[str]:
     return [r.key for r in read(flavor_folder, account)]
 
 
-def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
-    """Remove players from wowlab's crew database and from every copy it
-    keeps (`keys`), or, with None, delete the database and its copies. A
-    copy that cannot be opened is deleted; the database itself is refused
-    then, as everywhere. Returns how many files were rewritten or deleted.
-    Not undoable: snapshots do not cover the database."""
-    path = database_path(flavor_folder, account)
-    files = _files(path)
-    if keys is None:
-        for f in files:
-            _gone(f)
-        return len(files)
-    for f in files:
+class Forgetting:
+    """A forget of players (`keys`; None: every one) from wowlab's crew
+    database and every copy it keeps. `hold()` takes the database's write
+    lock before the saved file is written, so no sync can commit what it
+    read before that write; `finish()` removes the players under that lock
+    (or, for every player, deletes the database and its copies) and then
+    rewrites each copy, listed only now, after the database was opened (and
+    so after any copy a schema change made); `release()` lets go. Not
+    undoable: snapshots do not cover the database."""
+
+    def __init__(self, flavor_folder: str, account: str, keys: Sequence[str] | None) -> None:
+        self.path = database_path(flavor_folder, account)
+        self.keys = None if keys is None else list(keys)
+        self._conn: sqlite3.Connection | None = None
+
+    def hold(self) -> None:
+        """Open the database and take its write lock; a lock another wowlab
+        holds past `LOCK_WAIT_SECONDS` is refused before anything is written."""
         try:
-            if f == path:
-                conn = _open(f, create=False)  # checked: a newer database is refused
-                if conn is not None:
-                    conn.close()
-            _forget_in(f, keys)
-        except (sqlite3.DatabaseError, CrewDbError, OSError) as exc:
-            if f == path:
-                if isinstance(exc, CrewDbError):
-                    raise
+            conn = _open(self.path, create=False)
+        except sqlite3.OperationalError as exc:
+            raise self._busy(exc) from exc
+        if conn is None:
+            return
+        try:
+            conn.execute(_SQL_BEGIN)
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            raise self._busy(exc) from exc
+        self._conn = conn
+
+    def _busy(self, exc: Exception) -> CrewDbError:
+        return CrewDbError(
+            f"Another wowlab is using the crew database {self.path} ({exc}), so the forget did "
+            "not start. Nothing was changed; run it again."
+        )
+
+    def finish(self) -> int:
+        """Remove the players (or everything) and return how many files
+        were rewritten or deleted."""
+        conn, self._conn = self._conn, None
+        if self.keys is None:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.execute(_SQL_ROLLBACK)
+                conn.close()
+            files = [self.path, *_copies_of(self.path), *_temps_of(self.path)]
+            for f in files:
+                _gone(f)
+            return len(files)
+        done = 0
+        if conn is not None:
+            try:
+                _forget_rows(conn, self.keys)
+                conn.execute(_SQL_COMMIT)
+            except sqlite3.Error as exc:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.execute(_SQL_ROLLBACK)
                 raise CrewDbError(
-                    f"The crew database {path} could not be changed ({exc}); run the forget again."
+                    f"The crew database {self.path} was not changed ({exc})."
                 ) from exc
-            _gone(f)  # a copy wowlab cannot open still may hold them: deleted
-    return len(files)
+            finally:
+                conn.close()
+            done += 1
+        _clear_temps(self.path)
+        for f in _copies_of(self.path):
+            try:
+                _forget_in(f, self.keys)
+            except (sqlite3.DatabaseError, CrewDbError, OSError):
+                _gone(f)  # a copy wowlab cannot open still may hold them: deleted
+            done += 1
+        return done
+
+    def release(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(_SQL_ROLLBACK)
+            conn.close()
+
+
+def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
+    """`Forgetting` in one step, for a forget that writes no game file."""
+    forgetting = Forgetting(flavor_folder, account, keys)
+    forgetting.hold()
+    try:
+        return forgetting.finish()
+    finally:
+        forgetting.release()
 
 
 __all__ = [
@@ -1315,6 +1472,7 @@ __all__ = [
     "AdoptOutcome",
     "CrewDbError",
     "CrewRow",
+    "Forgetting",
     "SyncOutcome",
     "SyncPlan",
     "Target",

@@ -6704,7 +6704,9 @@ what a sync takes in stays. Two guards, both before the transaction:
 *As built (2026-11-19, M20-01).* Bounds: a key holds a `-`, not last, in
 256 bytes; class, role, guild, instance 256 bytes and a note 200, valid
 UTF-8; `met`, `skipped`, loads 0 to 10,000,000; level 1 to 1,000; times
-2004 to 2099 (fixed, no clock read). Lock wait 5 s. A player not in the
+from 2004 to 30 days past this computer's clock (one day would leave out
+today's constructed test books, dated up to six days ahead; fix round 1).
+Lock wait 5 s. A player not in the
 saved file keeps 0 as the value it last showed, so a return adds the whole
 new count. Confirmed by hand, another book adds by rule 2; a put-back one
 takes the larger of each count, never counting twice. Class, level, role,
@@ -6719,6 +6721,12 @@ the database and every copy (a copy it cannot open is deleted), `--all`
 deletes them, and a player only in the database is forgotten from it alone,
 after a plan and a yes; the plan and result carry the sentences of
 "Writing". `crew rate` and `crew note` reach the database at the next sync.
+Fix round 1: a forget takes the database's write lock before it writes the
+saved file and holds it through the database step; a sync re-reads the
+saved file under its lock and is skipped when it changed since it was read;
+temporary copies a killed run leaves are deleted when the database is next
+opened and by every forget; any held book keeps a rating or note the
+database changed.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

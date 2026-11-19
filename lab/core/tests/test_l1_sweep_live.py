@@ -76,6 +76,7 @@ import http.client
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -141,44 +142,62 @@ EXCLUDED: dict[str, str] = {
 }
 
 
-# The parts of wowlab's user data directory a read may change, with why: the
-# one named exemption of the data directory check (M20-01, docs/LAB_PLAN.md
-# §21.3). `crew list` and `crew show` sync the crew book into wowlab's crew
-# database before they answer. Everything else under the data directory must
-# stay as it was; a folder on the way to `crew/` may be made, and its time
-# and size (a folder's size counts its entries on some systems) may move, and
-# nothing else about it.
-DATA_EXEMPT: dict[str, str] = {
-    "crew": "crew list and crew show sync the crew book into wowlab's crew database first",
-}
+# The one named exemption of the data directory check (M20-01, docs/LAB_PLAN.md
+# §21.3): `crew list` and `crew show` (and the UI's `crew list`) sync the crew
+# book into wowlab's crew database before they answer. Under `crew/` only the
+# files the database is made of may change: a database, its `-journal`, and
+# its daily and pre-schema-change copies, one flavor folder down; the `crew/`
+# folder, a flavor folder in it and the folders on the way may be made and
+# their time and size (a folder's size counts its entries on some systems)
+# may move. Anything else under `crew/`, or anywhere else under the data
+# directory, fails; and every command that is not a crew read is checked on
+# its own to leave `crew/` as it was (`Sweep.cli`, `_ui_run`).
+CREW_FOLDER = "crew"
+CREW_FILE_RE = re.compile(
+    r"[^/]+\.sqlite(-journal|\.daily-[0-9]{4}-[0-9]{2}-[0-9]{2}|\.before-schema-[0-9]+)?\Z"
+)
 
 
-def _exempt_keys(data_dir: Path) -> list[str]:
-    """`DATA_EXEMPT`'s folders as fingerprint keys relative to `data_dir`."""
+def _crew_key(data_dir: Path) -> str | None:
+    """The `crew/` folder as a fingerprint key relative to `data_dir`."""
     base = Path(os.path.realpath(data_dir))
-    keys = []
-    for name in DATA_EXEMPT:
-        folder = Path(os.path.realpath(snapshot.user_data_dir() / name))
-        with contextlib.suppress(ValueError):
-            keys.append(folder.relative_to(base).as_posix())
-    return keys
+    folder = Path(os.path.realpath(snapshot.user_data_dir() / CREW_FOLDER))
+    try:
+        return folder.relative_to(base).as_posix()
+    except ValueError:
+        return None
+
+
+def _crew_state() -> dict[str, Entry]:
+    """`crew/` as `store_fingerprint` sees it, to check a command left it as it was."""
+    return store_fingerprint(snapshot.user_data_dir() / CREW_FOLDER)
 
 
 def data_differences(
     before: dict[str, Entry], after: dict[str, Entry], data_dir: Path
 ) -> list[str]:
-    """`differences` of the user data directory, but for `DATA_EXEMPT`."""
-    exempt = _exempt_keys(data_dir)
-    on_the_way = {"."} | {
-        "/".join(e.split("/")[:i]) for e in exempt for i in range(1, e.count("/") + 1)
-    }
+    """`differences` of the user data directory, but for the crew database's
+    own files (see `CREW_FILE_RE`) and the folders that hold them."""
+    crew = _crew_key(data_dir)
+    if crew is None:
+        return differences(before, after)
+    on_the_way = {"."} | {"/".join(crew.split("/")[:i]) for i in range(1, crew.count("/") + 2)}
 
-    def kept(key: str) -> bool:
-        return not any(key == e or key.startswith(e + "/") for e in exempt)
+    def database_file(key: str) -> bool:
+        if not key.startswith(crew + "/"):
+            return False
+        rest = key[len(crew) + 1 :].split("/")
+        return len(rest) == 2 and bool(CREW_FILE_RE.fullmatch(rest[1]))
 
-    old = {k: v for k, v in before.items() if kept(k)}
-    new = {k: v for k, v in after.items() if kept(k)}
-    for key in on_the_way:
+    def a_folder_of_crew(key: str) -> bool:
+        rest = key[len(crew) + 1 :].split("/") if key.startswith(crew + "/") else []
+        return key in on_the_way or len(rest) == 1
+
+    old = {k: v for k, v in before.items() if not database_file(k)}
+    new = {k: v for k, v in after.items() if not database_file(k)}
+    for key in sorted(set(old) | set(new)):
+        if not a_folder_of_crew(key):
+            continue
         a, b = old.get(key), new.get(key)
         if (
             b is not None
@@ -476,7 +495,11 @@ class Sweep:
     summary: list[str] = field(default_factory=list)
 
     def cli(self, *args: str) -> Ran:
+        crew_read = args[:1] == ("crew",)
+        before = None if crew_read else _crew_state()
         ran = _cli(*args)
+        if before is not None and _crew_state() != before and ran.problem is None:
+            ran.problem = "changed wowlab's crew database (only the crew commands may)"
         self.ran.append(ran)
         return ran
 
@@ -796,7 +819,11 @@ def _ui_get(sweep: Sweep, what: str, status: int, ok: bool) -> None:
 
 def _ui_run(client: _Ui, sweep: Sweep, command: list[str], params: dict[str, Any]) -> None:
     what = "ui POST /api/run " + " ".join(command) + (f" {params}" if params else "")
+    crew_before = None if command[:1] == ["crew"] else _crew_state()
     status, body = client.request("POST", "/api/run", {"command": command, "params": params})
+    if crew_before is not None and _crew_state() != crew_before:
+        sweep.ran.append(Ran(what, -1, json_out=False, problem="changed wowlab's crew database"))
+        return
     if status != 200:
         sweep.ran.append(Ran(what, -1, json_out=False, problem=f"HTTP {status}: {body[:200]!r}"))
         return
@@ -1641,3 +1668,35 @@ def test_only_the_crew_database_may_change_under_the_data_directory_constructed(
     found = data_differences(before, store_fingerprint(data), data)
     assert any("store/added" in line for line in found)
     assert not [line for line in found if "crew" in line]
+    # The database's copies and journal pass; a stray file under crew/ fails.
+    (crew / "ACCOUNT.sqlite.daily-2026-11-19").write_bytes(b"copy")
+    (crew / "ACCOUNT.sqlite-journal").write_bytes(b"")
+    found = data_differences(before, store_fingerprint(data), data)
+    assert found and all("crew" not in line for line in found)  # only store/ is found
+    (crew / "stray.txt").write_bytes(b"z")
+    (data / "wowlab" / "crew" / "stray.sqlite").write_bytes(b"z")
+    found = data_differences(before, store_fingerprint(data), data)
+    assert any("stray.txt" in line for line in found)
+    assert any("crew/stray.sqlite" in line for line in found)
+
+
+def test_a_command_other_than_a_crew_read_may_not_touch_the_crew_database_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside the crew reads, `crew/` must stay as it was: the sweep flags
+    a command that changes it (a stand-in command, constructed)."""
+    data = tmp_path / "data"
+    monkeypatch.setattr(snapshot, "user_data_dir", lambda: data / "wowlab")
+    crew = data / "wowlab" / "crew" / "_flavor_"
+    crew.mkdir(parents=True)
+
+    def touching(*args: str) -> Ran:
+        (crew / "ACCOUNT.sqlite").write_bytes(b"changed by " + " ".join(args).encode())
+        return Ran("wowlab " + " ".join(args), 0)
+
+    monkeypatch.setattr(sys.modules[__name__], "_cli", touching)
+    sweep = Sweep()
+    assert sweep.cli("char", "list").problem == (
+        "changed wowlab's crew database (only the crew commands may)"
+    )
+    assert sweep.cli("crew", "list").problem is None
