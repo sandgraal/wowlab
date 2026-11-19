@@ -557,8 +557,9 @@ read other players' names and realms, and only while the book is on.
   one and says so; either way it prints what the book keeps: "The crew book
   keeps, for each player you group with, their name, realm, guild, class,
   level and role, when you first and last grouped, how many times and in
-  which instance, and your own rating and note. It keeps them in WowLab.lua
-  (and the game's backup, WowLab.lua.bak) in this game account's
+  which instance, and your own rating and note. Battleground and arena teams
+  count as groups. It keeps them in WowLab.lua (and probably the game's
+  backup of it, WowLab.lua.bak) in this game account's
   SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent
   anywhere. The book knows names, not people: a player who renames or moves
   realm appears as a new entry, and someone else may later take a name you
@@ -568,16 +569,19 @@ read other players' names and realms, and only while the book is on.
   started, and what this client cannot give it.
 - `/wowlab crew good`, `bad`, `clear` (drops the rating) and `note <text>`
   (empty text drops the note) take a `name-realm` as their first word (a
-  word holding `-`), or else use your target when it is another player. A
-  name not in the book and not in your group is refused. `/wowlab crew who`
+  word holding `-`), or else use your target when it is another player.
+  `good`, `bad` and `clear` with a word that has no `-` are refused, so a
+  mistyped name never lands on your target; a note given to your target
+  names it in the reply. A name not in the book and not in your group is
+  refused. `/wowlab crew who`
   prints the warning line for everyone in your group the book knows. Every
   change is kept at the next `/reload` or logout; a crash loses it.
 - While it is on, the addon prints "Crew book on: N players. /wowlab crew
   off to stop." after the first pass of each login or `/reload`, so a book
   brought back by a snapshot restore, an undo or an `sv merge` is seen.
 - When a player you rated or noted is first counted in a group, one line in
-  your own chat frame says who (the name as the book keeps it, with their
-  guild), your rating, how many groups and the date of the last, and your
+  your own chat frame says who (the name as the book keeps it, and the guild
+  they were last seen in), your rating, how many groups and the date of the last, and your
   note. `|` is doubled and line breaks are removed in every field as it is
   printed. Nothing is ever sent: no chat message, whisper or addon message.
 
@@ -608,6 +612,19 @@ through `issecretvalue` where the client has it: a secret name or realm
 skips the member, any other secret value leaves its field as it was, and
 each adds one to `skipped`; each member is read inside its own `pcall`. No
 GUID is read. `/wowlab skip` does not reach this file: its switch is `on`.
+Battleground and arena teams count as groups. If you are in combat when the
+world loads, the book waits, silently, for the next loading screen or the
+next `/wowlab crew` command; `/wowlab crew` then says it was waiting.
+
+Known limits. The group count is kept for the account, but a group belongs
+to one character: logging out to an alt and back while still in a group
+counts that group again. One player may get two entries: a same-realm
+player's realm comes from `GetNormalizedRealmName` (believed to have no
+spaces) and a cross-realm player's from `UnitName` (believed to keep them),
+and a realm with a space cannot be typed after `/wowlab crew good`
+(**[verify]**). A book written by another version of WowLab (another
+`schema`) is left wholly alone: nothing is recorded into it and
+`/wowlab crew` does nothing with it.
 
 Limits, held in named constants and short functions of `Crew.lua` that
 `tests/addon/test_crew_book.py` reads: at most `MAX_PLAYERS` (5,000)

@@ -49,8 +49,22 @@ def _command_on_block(flow: g._Flow) -> tuple[int, int]:
     head, end = _function(flow, g.CREW_COMMAND)
     t = flow.tokens
     starts = [k for k in range(head, end) if g._render(t[k : k + 5]) == 'if verb == "on" then']
-    assert len(starts) == 1, starts
+    assert len(starts) == 2, starts  # the branch, then `if verb == "on" then return end`
     return starts[0], flow.block_end(starts[0])
+
+
+def _block_starting(flow: g._Flow, k: int, condition: str) -> bool:
+    """Is token k inside an `if` block whose header renders as `condition`?"""
+    t = flow.tokens
+    n = len(condition.split(" "))
+    for b in flow.blocks:
+        if (
+            b.kind == "if"
+            and b.start <= k < b.stop
+            and g._render(t[b.head : b.head + n]) == condition
+        ):
+            return True
+    return False
 
 
 def test_crew_lua_exists_and_is_listed_in_the_toc() -> None:
@@ -69,10 +83,10 @@ def test_crew_book_source_scan_nothing_registers_while_off() -> None:
     exist, for events Core.lua already registers (ADDON_LOADED for the
     pinned probe handler, PLAYER_ENTERING_WORLD for a gated handler); every
     other `ns.On` sits in a function behind the on and combat tests, or in
-    the `on` branch of the slash handler, after the book is on."""
+    the slash handler inside `if <book>.on == true and not armed then`."""
     flow = _flow()
     t = flow.tokens
-    on_start, on_end = _command_on_block(flow)
+    arm = f"if {BOOK} . on == true and not armed then"
     file_level = []
     for k in range(len(t) - 4):
         if g._render(t[k : k + 4]) != "ns . On (" or g._is_field(t, k):
@@ -81,13 +95,8 @@ def test_crew_book_source_scan_nothing_registers_while_off() -> None:
         if fn is None:
             file_level.append((t[k + 4].text, t[k + 6].text))
         elif flow.labels.get(fn.head) == g.CREW_COMMAND:
-            sets_on = [
-                j
-                for j in range(on_start, k)
-                if g._render(t[j : j + 5]) in {f"{BOOK} . on = true", f"{BOOK} = {{ schema"}
-            ]
-            assert on_start < k < on_end and sets_on, (
-                f"line {t[k].line}: ns.On outside the on branch"
+            assert _block_starting(flow, k, arm), (
+                f"line {t[k].line}: ns.On while the book may be off"
             )
         else:
             assert g._crew_gated(flow, fn.head), f"line {t[k].line}: ns.On in an ungated function"
@@ -227,28 +236,159 @@ def test_crew_book_source_scan_the_drop_order_is_named() -> None:
 
 
 def test_crew_book_source_scan_every_printed_field_is_flattened() -> None:
-    """Labelled source scan: `shown` removes line breaks and doubles `|`, and
-    every name, guild, note or typed text the file concatenates into a chat
-    line is wrapped in it at that moment (a record can come from a desk edit,
-    a snapshot or a merge)."""
+    """Labelled source scan: `shown` removes the bidirectional embeddings and
+    isolates (U+202A to U+202E, U+2066 to U+2069), removes line breaks and
+    doubles `|`; and every chat line is built only from literals, numbers and
+    `shown(...)` (a record can come from a desk edit, a snapshot or a merge,
+    so nothing the book or the player holds is printed any other way)."""
     flow = _flow()
-    assert _text(flow, "shown") == (
-        'function shown ( text ) if type ( text ) ~= "string" then return "" end '
-        'local flat = string . gsub ( text , "[\r\n]" , "" ) '
-        'local safe = string . gsub ( flat , "|" , "||" ) return safe end'
-    )
+    text = CREW.read_text(encoding="utf-8")
+    body = text[text.index("local function shown(text)") :]
+    body = body[: body.index("\nend\n")]
+    assert body.split("\n")[4:] == [
+        '    local embeds = string.gsub(text, "\\226\\128[\\170-\\174]", "")',
+        '    local isolates = string.gsub(embeds, "\\226\\129[\\166-\\169]", "")',
+        '    local flat = string.gsub(isolates, "[\\r\\n]", "")',
+        '    local safe = string.gsub(flat, "|", "||")',
+        "    return safe",
+    ], body
     t = flow.tokens
+    prints = [k for k, x in enumerate(t) if x.text == "print" and not g._is_field(t, k)]
+    assert len(prints) == 1 and flow.label_at(prints[0]) == "say"
     bad = []
     for k, x in enumerate(t):
-        field = x.text in {"guild", "note"} and g._is_field(t, k) and t[k - 2].text == "entry"
-        local = x.text in {"label", "wanted", "found"} and not g._is_field(t, k)
-        if not (field or local):
-            continue
-        start = k - 2 if field else k
-        concatenated = t[start - 1].text == ".." or t[k + 1].text == ".."
-        printed = t[start - 1].text == "(" and t[start - 2].text in {"say", "print"}
-        if (concatenated or printed) and not (
-            t[start - 1].text == "(" and t[start - 2].text == "shown"
+        if (
+            x.text != "say"
+            or g._is_field(t, k)
+            or t[k + 1].text != "("
+            or t[k - 1].text == "function"
         ):
-            bad.append(f"line {x.line}: {x.text}")
+            continue
+        if not _printable(flow, k + 2, flow.pair[k + 1], set()):
+            bad.append(f"line {x.line}: say(...) with a part not built from literals and shown()")
+    for label in _PRINTED_HELPERS:
+        head, _ = _function(flow, label)
+        for s_, e_ in flow.returns(head):
+            if not _printable(flow, s_, e_, set()):
+                bad.append(
+                    f"line {t[s_].line}: {label} returns a part not built from literals and shown()"
+                )
+    for k, x in enumerate(t):
+        if x.text == "plural" and t[k + 1].text == "(" and t[k - 1].text != "function":
+            close = flow.pair[k + 1]
+            args = t[k + 2 : close]
+            if not (args[-1].kind == "string" and args[-3].kind == "string"):
+                bad.append(f"line {x.line}: plural's words are not literals")
     assert not bad, bad
+
+
+# Functions whose result may be printed: each of their returns is held to the
+# same rule (plural's words are literals at every call; date prints a date).
+_PRINTED_HELPERS = ("lineFor", "featureMissing", "fieldsMissing")
+_PRINTED_CALLS = frozenset({"shown", "plural", "date", *_PRINTED_HELPERS})
+_PRINTED_CONSTANTS = frozenset({"KEPT", "TERMS", "NOTE_MAX_BYTES", "MAX_PLAYERS", "nil"})
+
+
+def _printable(flow: g._Flow, s: int, e: int, seen: set[int]) -> bool:
+    """Is t[s:e] built only from literals, numbers (`#x`), the listed calls
+    and constants, and locals every assignment of which is built the same way?"""
+    t = flow.tokens
+    k = s
+    while k < e:
+        x = t[k]
+        if x.kind in {"string", "number"} or x.text in {"..", "(", ")"}:
+            k += 1
+            continue
+        if x.text == "#" and t[k + 1].kind == "name":
+            k += 2
+            continue
+        if x.kind == "name" and g._is_field(t, k):
+            return False
+        if x.kind == "name" and k + 1 < e and t[k + 1].text == "(":
+            if x.text not in _PRINTED_CALLS:
+                return False
+            k = flow.pair[k + 1] + 1
+            continue
+        if x.kind == "name" and x.text in _PRINTED_CONSTANTS:
+            k += 1
+            continue
+        if x.kind != "name" or (k + 1 < e and t[k + 1].text in {".", "[", ":"}):
+            return False
+        decl = flow.resolve(x.text, k)
+        if decl is None or not _local_printable(flow, x.text, decl, seen):
+            return False
+        k += 1
+    return True
+
+
+def _line_end(t: list[g.Token], k: int) -> int:
+    line = t[k].line
+    while k < len(t) and t[k].line == line:
+        k += 1
+    return k
+
+
+def _local_printable(flow: g._Flow, name: str, decl: g._Decl, seen: set[int]) -> bool:
+    if id(decl) in seen:
+        return True
+    seen.add(id(decl))
+    t = flow.tokens
+    values = []
+    declared = False
+    for p in range(len(t) - 3):
+        if t[p].text == "local" and t[p + 1].text == name:
+            end = _line_end(t, p)
+            if end >= len(t) or flow.resolve(name, end) is not decl:
+                continue
+            declared = True
+            if t[p + 2].text == ",":
+                return False  # one of several values
+            if t[p + 2].text == "=":
+                values.append(p + 3)
+    if not declared:
+        return False  # a parameter or a loop variable: not built here
+    for root, ts in flow.rebound:
+        if root == name and flow.resolve(name, ts) is decl:
+            if t[ts + 1].text != "=" or t[ts - 1].text == ",":
+                return False
+            values.append(ts + 2)
+    return all(_printable(flow, v, _line_end(t, v), seen) for v in values)
+
+
+# --- What is read (§20.1 "Secret values", "Where") ------------------------------
+
+
+def test_crew_book_source_scan_the_instance_is_secret_tested_first() -> None:
+    """Labelled source scan: the statement right after the one
+    GetInstanceInfo call skips (and counts) when its name, type or id is
+    secret, so nothing from it is compared or kept before the test."""
+    flow = _flow()
+    t = flow.tokens
+    calls = [k for k, x in enumerate(t) if x.text == "GetInstanceInfo" and t[k + 1].text == "("]
+    assert len(calls) == 1
+    k = calls[0]
+    assert g._render(t[k - 17 : k + 3]) == (
+        "local where , kind , _ , _ , _ , _ , _ , whereId = GetInstanceInfo ( )"
+    )
+    test = "if secret ( where ) or secret ( kind ) or secret ( whereId ) then addSkipped ( ) return end"
+    assert g._render(t[k + 3 : k + 3 + len(test.split(" "))]) == test
+
+
+# --- Ratings land on the player named (§20.1 "Rating and note in game") --------
+
+
+def test_crew_book_source_scan_a_word_without_a_dash_is_refused_not_the_target() -> None:
+    """Labelled source scan: `good`, `bad` and `clear` given a first word
+    with no `-` are refused before the target is read (so `/wowlab crew bad
+    Bob` never rates whoever is targeted); a note given to the target names
+    the target in its reply."""
+    flow = _flow()
+    command = _text(flow, g.CREW_COMMAND)
+    refusal = 'if not typed and verb ~= "note" and tail ~= "" then'
+    assert command.count(refusal) == 1
+    after = command[command.index(refusal) :]
+    assert (
+        after.index("Nothing was changed.") < after.index("return end") < after.index("targetKey")
+    )
+    assert 'whom = "your target, " .. shown ( found )' in command
+    assert 'say ( whom .. ": note kept. " .. KEPT )' in command

@@ -5932,6 +5932,12 @@ must come from the repository test's fixed list of constructed names.)
   a `/reload` or relog inside the same group does not count or warn again,
   and is emptied when a pass finds the player in no group. A crash loses
   what was not saved, like everything else here.
+  *Limit (2026-11-19, owner decision on M19-10's domain review):* `current`
+  is account-wide but a group belongs to one character, so logging out to
+  an alt and back while still in a group counts that group again (and
+  warns again). The saved shape does not change for it; the README says so.
+  Battleground and arena teams count as groups (owner decision, same date):
+  the owner wants PvP teammates recorded.
 - **The key** is `Name-Realm`. A realm that comes back nil or empty means
   the player's own realm, filled from `GetNormalizedRealmName()`; if that
   is nil too the member is skipped, and a key ending in `-` is never
@@ -6081,7 +6087,27 @@ must come from the repository test's fixed list of constructed names.)
   matched exactly, or case-blind when exactly one key matches; ratings and
   notes are refused while the book is off. The roster events are
   registered once per session, at the first `PLAYER_ENTERING_WORLD` the
-  book is on and out of combat, or by `/wowlab crew on`.
+  book is on and out of combat, or by any `/wowlab crew` command while it
+  is on (`/wowlab crew` says when it was waiting). Lines are printed with
+  `print`, which writes to the default chat frame, not with
+  `DEFAULT_CHAT_FRAME:AddMessage`.
+  *Fix round 1 (2026-11-19, M19-10 reviews):* the file's schema is the
+  pinned `local CREW_SCHEMA = 1`; a book of any other schema is left wholly
+  alone (`crewOn`, `crewLoaded` and the slash handler's first lines test
+  it, and every store sits behind the gate, in the slash handler or in the
+  pinned probe handler). `good`, `bad` and `clear` given a word without a
+  `-` are refused rather than applied to the target; a note given to the
+  target names the target in its reply. Printed fields also lose the
+  bidirectional embeddings and isolates (U+202A to U+202E, U+2066 to
+  U+2069). The warning says "last seen in <guild>", since a guild is never
+  cleared. The term-2 notice printed in game says "and probably the game's
+  backup of it" (the backup is [verify]) and that battleground and arena
+  teams count; the sentence of §20.5 itself is unchanged here.
+  *Not done (2026-11-19):* stripping spaces from a cross-realm member's
+  realm (domain review): the key rule of M19-01 accepts only
+  `<name> .. "-" .. <realm>` built straight from the name calls' locals, so a
+  `string.gsub` of the realm cannot be a key part. One player can therefore
+  have two keys (§20.6).
 
 ### 20.2 What the Lab reads
 
@@ -6273,7 +6299,14 @@ ones that could change the record or the wording:
   reaches `WoWChatLog.txt`;
 - whether the account file's probe survives a logout (the §13.4 loader
   bug would wipe a book; a snapshot is the way back);
-- the 5,000 drop order, which no in-game check can reach.
+- the 5,000 drop order, which no in-game check can reach;
+- whether one player gets two keys: a same-realm key takes its realm from
+  `GetNormalizedRealmName()` (believed to have its spaces removed), a
+  cross-realm key from `UnitName`'s realm (believed to keep them, "Argent
+  Dawn"), and a realm with a space cannot be typed as one word after
+  `/wowlab crew good` (2026-11-19, M19-10 domain review);
+- whether `IsInGroup()` and `IsInRaid()` are true in a battleground and an
+  arena, where the team counts as a group (owner decision, 2026-11-19).
 
 The reader and the CLI take the key as an opaque string whatever the
 answers are.

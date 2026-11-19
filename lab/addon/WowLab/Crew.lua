@@ -32,8 +32,10 @@
 
 local _, ns = ...
 
--- The book's own version number (§20.1).
-local SCHEMA = 1
+-- The book's own version number (§20.1). A book of any other schema (a newer
+-- WowLab, a restored snapshot) is left wholly alone: crewOn, crewLoaded and
+-- the slash handler's first lines test it.
+local CREW_SCHEMA = 1
 -- The drop order (§20.1 "Limits"): at most MAX_PLAYERS players. When the book
 -- is full, the unrated, un-noted player with the oldest `last` is dropped
 -- first (makeRoom); a rated or noted player is never dropped, and when every
@@ -53,9 +55,12 @@ local MAX_RAID = 40
 local MAX_PARTY = 4
 
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
+-- Changed for M19-10's domain review: battleground and arena teams count
+-- (owner decision, 2026-11-19), and the backup "probably" holds it ([verify]).
 local TERMS = "The crew book keeps, for each player you group with, their name, realm, guild, class, level and role, "
     .. "when you first and last grouped, how many times and in which instance, and your own rating and note. "
-    .. "It keeps them in WowLab.lua (and the game's backup, WowLab.lua.bak) in this game account's "
+    .. "Battleground and arena teams count as groups. "
+    .. "It keeps them in WowLab.lua (and probably the game's backup of it, WowLab.lua.bak) in this game account's "
     .. "SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent anywhere. "
     .. "The book knows names, not people: a player who renames or moves realm appears as a new entry, "
     .. "and someone else may later take a name you rated."
@@ -76,7 +81,8 @@ local passWhere = nil
 local passWhereId = nil
 
 local function crewOn()
-    return type(WowLabCrewDB) == "table" and WowLabCrewDB.on == true
+    return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA
+        and WowLabCrewDB.on == true
 end
 
 local function crewBlocked()
@@ -102,14 +108,18 @@ local function say(text)
     print("|cff33ff99WowLab|r: " .. text)
 end
 
--- A field as it is printed: line breaks removed and | doubled, at the moment
--- it is printed, whatever was done when it was stored (a record can also come
--- from a desk edit, a restored snapshot or a merge).
+-- A field as it is printed: the bidirectional embeddings and isolates
+-- (U+202A to U+202E, U+2066 to U+2069, as UTF-8 bytes) and line breaks
+-- removed, and | doubled, at the moment it is printed, whatever was done when
+-- it was stored (a record can also come from a desk edit, a restored snapshot
+-- or a merge). So a stored note cannot reorder or split the line.
 local function shown(text)
     if type(text) ~= "string" then
         return ""
     end
-    local flat = string.gsub(text, "[\r\n]", "")
+    local embeds = string.gsub(text, "\226\128[\170-\174]", "")
+    local isolates = string.gsub(embeds, "\226\129[\166-\169]", "")
+    local flat = string.gsub(isolates, "[\r\n]", "")
     local safe = string.gsub(flat, "|", "||")
     return safe
 end
@@ -171,6 +181,12 @@ local function bookIntact()
 end
 
 local function addSkipped()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
     WowLabCrewDB.skipped = (ns.Number(WowLabCrewDB.skipped) or 0) + 1
 end
 
@@ -300,7 +316,7 @@ local function lineFor(label)
     end
     local text = "a player named " .. shown(label)
     if type(entry.guild) == "string" and entry.guild ~= "" then
-        text = text .. " <" .. shown(entry.guild) .. ">"
+        text = text .. " (last seen in <" .. shown(entry.guild) .. ">)"
     end
     if entry.rating == "good" then
         text = text .. ", whom you rated good"
@@ -613,7 +629,7 @@ local function onWorld()
 end
 
 local function crewLoaded(_, name)
-    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then
+    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= CREW_SCHEMA then
         return
     end
     local probe = { loads = 1 }
@@ -627,8 +643,8 @@ local function crewLoaded(_, name)
 end
 
 -- Rating the target: when it is another player, its key, after adding it
--- to the book (with no group counted) if `create` and there is room; or nil
--- and the reason.
+-- to the book (with no group counted) if `create` and there is room; or false,
+-- after saying why. Nothing (nil) while the book is off or in combat.
 local function targetKey(create)
     if not crewOn() then
         return
@@ -637,7 +653,8 @@ local function targetKey(create)
         return
     end
     if type(UnitIsPlayer) ~= "function" or type(UnitIsUnit) ~= "function" or type(UnitName) ~= "function" then
-        return nil, "this client cannot say who your target is."
+        say("this client cannot say who your target is.")
+        return false
     end
     local unit = "target"
     local isPlayer = UnitIsPlayer(unit)
@@ -645,7 +662,8 @@ local function targetKey(create)
     local name, realm = UnitName(unit)
     if secret(isPlayer) or secret(me) or secret(name) or secret(realm) then
         addSkipped()
-        return nil, "the client did not say who your target is."
+        say("the client did not say who your target is.")
+        return false
     end
     if
         not secret(isPlayer)
@@ -676,7 +694,8 @@ local function targetKey(create)
             end
         end
     end
-    return nil, "target another player, or type their name-realm."
+    say("target another player, or type their name-realm.")
+    return false
 end
 
 -- `/wowlab crew who`: the warning line for every kept member of the group.
@@ -687,8 +706,19 @@ local function whoLines()
     if crewBlocked() then
         return
     end
+    if not pcall(bookIntact) then
+        say("the crew book cannot be read; nothing was shown.")
+        return true
+    end
     firstDone = true
     pcall(pass)
+    if type(IsInGroup) == "function" then
+        local inGroup = IsInGroup()
+        if not secret(inGroup) and not inGroup then
+            say("you are not in a group.")
+            return true
+        end
+    end
     local any = false
     for key in pairs(WowLabCrewDB.current) do
         if WowLabCrewDB.players[key] ~= nil then
@@ -725,9 +755,13 @@ ns.On("PLAYER_ENTERING_WORLD", onWorld)
 
 -- `/wowlab crew ...`, called by Core.lua's slash handler with the whole typed
 -- text. The name and the note are not lowercased; the typed text is only
--- compared, measured and, for a note, stored after cleanNote.
+-- compared, measured and, for a note, stored after cleanNote. A book of
+-- another schema is left wholly alone (the pinned second test).
 function ns.CrewCommand(word)
     if type(word) ~= "string" then
+        return
+    end
+    if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then
         return
     end
     local rest = string.match(word, "^%s*%S+%s*(.-)%s*$") or ""
@@ -737,7 +771,7 @@ function ns.CrewCommand(word)
     if verb == "on" then
         if type(WowLabCrewDB) ~= "table" then
             WowLabCrewDB = {
-                schema = SCHEMA,
+                schema = CREW_SCHEMA,
                 on = true,
                 started = ns.Number(time()),
                 probe = { loads = 1 },
@@ -746,9 +780,6 @@ function ns.CrewCommand(word)
                 current = {},
             }
             say("a new, empty crew book was started.")
-        elseif WowLabCrewDB.schema ~= SCHEMA then
-            say("this crew book was written by another version of WowLab; it is left as it is and stays off.")
-            return
         elseif not pcall(bookIntact) then
             say("this crew book cannot be read; it is left as it is and stays off.")
             return
@@ -759,19 +790,24 @@ function ns.CrewCommand(word)
         greeted = true
         say("Crew book on. " .. TERMS)
         say("Recording starts out of combat. /wowlab crew off stops it and keeps what is stored. " .. KEPT)
-        if not armed then
-            armed = true
-            if not ns.On("GROUP_ROSTER_UPDATE", onRoster) then
-                rosterAbsent = "the client does not know the GROUP_ROSTER_UPDATE event, so no one is recorded"
-            end
-            ns.On("UNIT_NAME_UPDATE", onRoster)
-            ns.On("PLAYER_REGEN_ENABLED", onRegen)
-        end
-        onWorld()
-        return
     end
     if type(WowLabCrewDB) ~= "table" then
         say("the crew book is off and holds no one. /wowlab crew on starts it.")
+        return
+    end
+    -- The roster events are registered once per session, only while the
+    -- book is on: here, or at a loading screen out of combat (onWorld).
+    local waiting = WowLabCrewDB.on == true and not armed and verb ~= "on"
+    if WowLabCrewDB.on == true and not armed then
+        armed = true
+        if not ns.On("GROUP_ROSTER_UPDATE", onRoster) then
+            rosterAbsent = "the client does not know the GROUP_ROSTER_UPDATE event, so no one is recorded"
+        end
+        ns.On("UNIT_NAME_UPDATE", onRoster)
+        ns.On("PLAYER_REGEN_ENABLED", onRegen)
+        onWorld()
+    end
+    if verb == "on" then
         return
     end
     if verb == "off" then
@@ -805,6 +841,12 @@ function ns.CrewCommand(word)
         else
             say("Crew book off: " .. count .. " kept" .. since .. ".")
         end
+        if waiting then
+            say(
+                "it was waiting for the next loading screen or a /wowlab crew command: you were in combat "
+                    .. "when the world loaded. It records from now on, out of combat."
+            )
+        end
         reasons()
         say("/wowlab crew on | off | who | good | bad | clear | note  (a name-realm, or your target)")
         return
@@ -824,8 +866,17 @@ function ns.CrewCommand(word)
         return
     end
     -- A first word is a name only if it holds a "-"; otherwise the target.
+    -- good, bad and clear take nothing else: a word without "-" is refused,
+    -- so a mistyped name never lands on the target.
     local first, after = string.match(tail, "^(%S*)%s*(.-)$")
     local typed = type(first) == "string" and string.find(first, "-", 1, true) ~= nil
+    if not typed and verb ~= "note" and tail ~= "" then
+        say(
+            "type the player's name-realm (with the -), or target the player and type the command "
+                .. "with nothing after it. Nothing was changed."
+        )
+        return
+    end
     local text = tail
     if typed then
         text = after or ""
@@ -842,8 +893,11 @@ function ns.CrewCommand(word)
         )
         return
     end
+    if not pcall(bookIntact) then
+        say("the crew book cannot be read. Nothing was changed.")
+        return
+    end
     local wanted = nil
-    local why = nil
     if typed then
         wanted = first
         -- A member of the group not yet in the book is added first.
@@ -851,20 +905,19 @@ function ns.CrewCommand(word)
         pcall(pass)
     else
         local create = verb == "good" or verb == "bad" or (verb == "note" and tidy ~= "")
-        local ok, key, reason = pcall(targetKey, create)
-        if ok then
-            wanted = key
-            why = reason
-        else
-            why = "your target could not be read."
+        local ok, key = pcall(targetKey, create)
+        if not ok then
+            say("your target could not be read. Nothing was changed.")
+            return
         end
-        if wanted == nil and why == nil then
-            why = "nothing is read while you are in combat."
+        if key == false then
+            return
         end
-    end
-    if wanted == nil then
-        say(why)
-        return
+        if key == nil then
+            say("nothing is read while you are in combat. Nothing was changed.")
+            return
+        end
+        wanted = key
     end
     -- Find the kept key: the exact one, or the only one that differs in case.
     local found
@@ -900,20 +953,24 @@ function ns.CrewCommand(word)
         say(shown(found) .. " cannot be read in the crew book. Nothing was changed.")
         return
     end
+    local whom = shown(found)
+    if not typed then
+        whom = "your target, " .. shown(found)
+    end
     if verb == "good" then
         entry.rating = "good"
-        say(shown(found) .. " rated good. " .. KEPT)
+        say(whom .. ": rated good. " .. KEPT)
     elseif verb == "bad" then
         entry.rating = "bad"
-        say(shown(found) .. " rated bad. " .. KEPT)
+        say(whom .. ": rated bad. " .. KEPT)
     elseif verb == "clear" then
         entry.rating = nil
-        say(shown(found) .. ": rating removed. " .. KEPT)
+        say(whom .. ": rating removed. " .. KEPT)
     elseif tidy == "" then
         entry.note = nil
-        say(shown(found) .. ": note removed. " .. KEPT)
+        say(whom .. ": note removed. " .. KEPT)
     else
         entry.note = ns.String(tidy)
-        say(shown(found) .. ": note kept. " .. KEPT)
+        say(whom .. ": note kept. " .. KEPT)
     end
 end
