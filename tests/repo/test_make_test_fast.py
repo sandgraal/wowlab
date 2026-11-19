@@ -31,12 +31,19 @@ SERIAL = "serial and not live"
 # ci.yml's parallel pass when the `changes` job's `addon_probes` filter did
 # not match (M15-21).
 WITHOUT_PROBES = "not live and not serial and not addon_mutation"
-# The serial test ci.yml keeps on every pull request (M15-21): serial because
-# it calls os.fork, not because it measures; it guards the write gate (L2).
+# The serial tests ci.yml keeps on every pull request (M15-21): serial for
+# what they do to the machine, not because they measure, and both guard the
+# write gate: one calls os.fork (the gate's lock, L2), the other starts a
+# process named like the game client (the gate's client check, M15-18).
 FORK_TEST = (
     "lab/core/tests/test_guard_pins_m10_16.py"
     "::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits"
 )
+CLIENT_TEST = (
+    "tests/scripts/test_perf_budget.py"
+    "::test_constructed_without_the_stub_the_gate_refuses_the_same_children"
+)
+GATE_SERIAL_TESTS = (FORK_TEST, CLIENT_TEST)
 # Options that would leave tests out of a run.
 HIDING = ("--ignore", "--ignore-glob", "--deselect", "-k", "--lf", "--last-failed", "-x")
 
@@ -129,13 +136,13 @@ def test_make_ci_runs_every_stage() -> None:
 # `tests/harness` for the hook tests on 3.9 and 3.12.
 # `quality` (M15-21): the parallel pass with or without the mutation probes
 # (exactly one of the two steps runs; test_ci_runs_the_probes_when_the_filter_says),
-# then the os.fork test alone; the last entry is the bidi scan alone, which
+# then the write gate's two serial tests alone; the last entry is the bidi scan alone, which
 # runs only on a docs-only PR, when the passes are skipped (M16-89).
 CI_PYTEST = {
     "quality": [
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", PARALLEL],
         ["-q", "-n", "auto", "--dist", "worksteal", "-m", WITHOUT_PROBES],
-        ["-q", FORK_TEST],
+        ["-q", *GATE_SERIAL_TESTS],
         ["-q", "tests/repo/test_bidi_controls.py"],
     ],
     "harness": [["-q", "tests/harness"]],
@@ -204,12 +211,14 @@ def test_ci_runs_the_probes_when_the_filter_says() -> None:
     )
 
 
-def test_the_one_serial_test_ci_keeps_is_the_fork_test() -> None:
-    assert FORK_TEST in _root_conftest().SERIAL_TESTS
-    file, _, test = FORK_TEST.partition("::")
-    tree = ast.parse((ROOT / file).read_bytes())
-    assert test in {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    step = _quality_steps()["pytest (the write gate's os.fork test)"]
+def test_the_serial_tests_ci_keeps_are_the_write_gates() -> None:
+    serial = _root_conftest().SERIAL_TESTS
+    for nodeid in GATE_SERIAL_TESTS:
+        assert nodeid in serial, nodeid
+        file, _, test = nodeid.partition("::")
+        tree = ast.parse((ROOT / file).read_bytes())
+        assert test in {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    step = _quality_steps()["pytest (the write gate's serial tests)"]
     assert step["if"] == (
         "needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'"
     )

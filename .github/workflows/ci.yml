@@ -37,9 +37,11 @@ permissions:
 
 # A newer push cancels the run in progress, on a pull request and on main
 # alike (M15-21, 2026-11-18; until then only pull requests). The newest commit
-# on main contains every older one, so grading it is enough: a break in an
-# older commit is still red on the newer run, and each change's own pull
-# request run graded it before it merged.
+# on main contains every older one, so grading it is enough, provided the run
+# on it is a full one: a push to main is never docs-only and always runs the
+# mutation probes (the `changes` job's outputs below), so a break in an older
+# commit is still red on the newer run, whatever the newer commit touched.
+# Each change's own pull request run graded it before it merged as well.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -71,13 +73,20 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      docs_only: ${{ steps.filter.outputs.non_docs == 'false' && steps.filter.outputs.doc_tests == 'false' }}
+      # Both outputs narrow a pull request only. A push to main always takes
+      # the full path, probes included (M15-21 review): with superseded runs
+      # cancelled, a push's filter sees only the diff from the commit before
+      # it, so a docs-only merge landing seconds after a code merge would
+      # otherwise cancel the code merge's run and skip the suite on that tree.
+      docs_only: ${{ github.event_name == 'pull_request' && steps.filter.outputs.non_docs == 'false' && steps.filter.outputs.doc_tests == 'false' }}
       # Whether the lab-addon grader mutation probes run (M15-21; owner
-      # decision, 2026-11-18): only when one of these paths changes. They read
-      # nothing else that can turn them red (conftest.py, ADDON_MUTATION_FILES).
-      # Every night nightly.yml runs them. tests/repo/test_addon_mutation_marking.py
-      # holds this list to the conftest's.
-      addon_probes: ${{ steps.filter.outputs.addon_probes }}
+      # decision, 2026-11-18): on a pull request only when one of these paths
+      # changes. They read nothing else that can turn them red (conftest.py,
+      # ADDON_MUTATION_FILES). Every night nightly.yml runs them.
+      # tests/repo/test_addon_mutation_marking.py holds this list to the
+      # conftest's, and tests/repo/test_push_runs_everything.py pins both
+      # outputs.
+      addon_probes: ${{ github.event_name != 'pull_request' || steps.filter.outputs.addon_probes == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,18 +182,26 @@ jobs:
       #   matched, or when that job failed: exactly one of the next two steps
       #   runs;
       # - the serial pass (the RSS and CPU-time budget tests) runs nightly
-      #   only, except its one test that is serial because it calls os.fork,
-      #   not because it measures: it guards the write gate's lock (L2), so
-      #   it stays here, alone, after the parallel pass.
+      #   only, except two tests that are serial for what they do to the
+      #   machine, not because they measure, and that guard the write gate,
+      #   so they stay here, alone, after the parallel pass: the one that
+      #   calls os.fork guards the gate's lock (L2), and the perf-budget test
+      #   that starts a process named like the game client (M15-18) shows
+      #   that the gate's client check refuses it, so no helper in
+      #   scripts/perf_budget.py skips that check. Its sibling, the pipeline
+      #   run on a small tree, stays nightly.
       - name: pytest (parallel)
         if: needs.changes.result != 'success' || (needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.addon_probes == 'true')
         run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial"
       - name: pytest (parallel, lab-addon mutation probes skipped)
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.addon_probes != 'true'
         run: uv run --frozen pytest -q -n auto --dist worksteal -m "not live and not serial and not addon_mutation"
-      - name: pytest (the write gate's os.fork test)
+      - name: pytest (the write gate's serial tests)
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
-        run: uv run --frozen pytest -q "lab/core/tests/test_guard_pins_m10_16.py::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits"
+        run: >-
+          uv run --frozen pytest -q
+          "lab/core/tests/test_guard_pins_m10_16.py::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits"
+          "tests/scripts/test_perf_budget.py::test_constructed_without_the_stub_the_gate_refuses_the_same_children"
       - name: wowlab --version
         if: needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'
         run: uv run --frozen wowlab --version

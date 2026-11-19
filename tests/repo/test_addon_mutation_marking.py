@@ -70,7 +70,11 @@ def test_ci_filters_on_each_probe_and_the_addon_paths() -> None:
     expected = list(FILTER_PATHS) + sorted(_root_conftest().ADDON_MUTATION_FILES)
     assert filters["addon_probes"] == expected
     outputs = workflow["jobs"]["changes"]["outputs"]
-    assert outputs["addon_probes"] == "${{ steps.filter.outputs.addon_probes }}"
+    # On a pull request the filter decides; a push always runs the probes
+    # (tests/repo/test_push_runs_everything.py evaluates it).
+    assert outputs["addon_probes"] == (
+        "${{ github.event_name != 'pull_request' || steps.filter.outputs.addon_probes == 'true' }}"
+    )
 
 
 def test_is_addon_mutation_matches_files_and_parametrizations() -> None:
