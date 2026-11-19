@@ -433,6 +433,7 @@ RootOpt = Annotated[
     typer.Option(
         "--root",
         parser=_RootArg.parse,
+        metavar="<path>",
         help="The install folder, the one that holds .build.info. Default: "
         "$WOWLAB_WOW_ROOT, then the usual install locations.",
     ),

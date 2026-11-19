@@ -522,19 +522,34 @@ def test_constructed_a_realm_word_after_the_own_link_is_a_speaker() -> None:
 
 
 def test_constructed_many_own_link_lines_scrub_in_linear_time() -> None:
-    """Twenty thousand own-link lines scrub within 5 s of CPU time (M11-19's
-    `cpu_clock`; it was wall clock, which failed once under a loaded run,
-    M15-25). Measured idle on the owner's M1 on 2026-11-19: 0.49 to 0.52 s
-    of CPU for 20,000 lines, 0.05 s for 2,000 and 1.0 s for 40,000, so the
-    scrub is linear and the budget is ten times the linear cost; a scan
-    that rescans earlier lines for each new one would take minutes."""
+    """Ten times the own-link lines cost well under twenty-five times the
+    CPU time (M11-19's `cpu_clock`; it was wall clock, which failed once
+    under a loaded run, M15-25): a linear scrub grows about tenfold, one
+    that rescans earlier lines for each new one about a hundredfold, so the
+    factor 25 sits well clear of both. Measured idle on the owner's M1 on
+    2026-11-19, three runs: 0.09 to 0.10 s of CPU for 4,000 lines and 0.89
+    to 1.04 s for 40,000, a factor of 9.8 to 10.6. Each size takes the
+    least of three scrubs, and the smaller is floored at 0.02 s so a
+    too-quick denominator cannot fail the test. A loose absolute bound stays
+    as a second check: 40,000 lines within 10 s of CPU."""
     identity = Identity(own_characters=[("Thrallmar", "Area 52")])
-    data = (b'\t"' + OWN_LINK + b' has come online.",\n') * 20_000
+    line = b'\t"' + OWN_LINK + b' has come online.",\n'
     clock, name = cpu_clock()
-    started = clock()
-    identity.scrub(data)
-    spent = clock() - started
-    assert spent < 5.0, f"{spent:.2f} s of {name} time for 20,000 lines"
+
+    def spent(lines: int) -> float:
+        data = line * lines
+        best = float("inf")
+        for _ in range(3):  # the least of three: noise only ever adds time
+            started = clock()
+            identity.scrub(data)
+            best = min(best, clock() - started)
+        return best
+
+    small, large = spent(4_000), spent(40_000)
+    assert large < 25 * max(small, 0.02), (
+        f"{name} time grew from {small:.3f} s for 4,000 lines to {large:.3f} s for 40,000"
+    )
+    assert large < 10.0, f"{large:.2f} s of {name} time for 40,000 lines"
 
 
 @pytest.mark.parametrize(

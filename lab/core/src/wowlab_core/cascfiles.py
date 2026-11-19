@@ -376,28 +376,61 @@ def character_path(product: str, version: str, account: str, realm: str, charact
     )
 
 
-def _folded(name: str) -> str:
-    """`name` as a volume that folds letter case and Unicode normalisation
-    compares it (APFS and NTFS by default). `lower`, not `casefold`: no file
-    system folds `ß` into `ss`, so two characters named so are two files."""
-    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", name).lower())
+def _folded(name: str) -> tuple[str, str]:
+    """Two keys for `name`: two names that share either may be one name on
+    some volume. APFS folds both letter case (fully: sharp s and `ss`, final
+    and medial sigma, long s and `s` are one name there) and Unicode normalisation; NTFS and
+    exFAT fold letter case only, by a one-to-one uppercase table and with no
+    normalisation. The first key is the full case fold of the canonical
+    form; the second maps each character to its uppercase where that is one
+    character (dotless i and `i` both become `I`, so they share it, while
+    the full fold keeps them apart). Sharing either fails closed."""
+    full = unicodedata.normalize("NFC", unicodedata.normalize("NFD", name).casefold())
+    simple = "".join(u if len(u := c.upper()) == 1 else c for c in name)
+    return full, simple
+
+
+def _same_entry(folder: Path, part: str, name: str) -> bool:
+    """Whether the listed `name` is `part` as the volume stored it: the two
+    are the same text in canonical form and `part` opens the very entry
+    listed (a volume that keeps names decomposed, as HFS+ does, lists a
+    name it was given composed in its decomposed spelling)."""
+    if unicodedata.normalize("NFC", name) != unicodedata.normalize("NFC", part):
+        return False
+    try:
+        mine, listed = os.lstat(folder / part), os.lstat(folder / name)
+    except OSError:
+        return False
+    return (mine.st_dev, mine.st_ino) == (listed.st_dev, listed.st_ino)
 
 
 def _folded_twin(target: Path, home: Path) -> Path | None:
     """The first existing name on the way from `home` down to `target`
-    that is spelt otherwise than `target`'s part at that level but is the
-    same name once letter case and Unicode normalisation are folded: on a
-    volume that folds them it is the same folder or file, so a write there
-    would land in another character's place. None when there is none."""
+    that is spelt otherwise than `target`'s part at that level but may be
+    the same name on a volume that folds letter case or Unicode
+    normalisation (`_folded`), unless the volume itself stored that part
+    under the listed spelling (`_same_entry`): a write there would land in
+    another character's place. None when there is none, or when a level
+    does not exist yet; a level that exists but cannot be listed is
+    refused, since what it holds cannot be told."""
     folder = home
     for part in target.relative_to(home).parts:
         try:
             names = [e.name for e in os.scandir(folder)]
-        except OSError:
+        except FileNotFoundError:
             return None  # nothing there yet, so nothing to land in
-        key = _folded(part)
+        except OSError as exc:
+            raise _refuse(
+                target,
+                f"cannot be checked: the folder {folder} cannot be read ({exc.strerror or exc}), "
+                "so wowlab cannot tell whether another character's files are there",
+            ) from exc
+        keys = _folded(part)
         for name in sorted(names):
-            if name != part and _folded(name) == key:
+            if name == part:
+                continue
+            shared = any(k == m for k, m in zip(keys, _folded(name), strict=True))
+            if shared and not _same_entry(folder, part, name):
                 return folder / name
         folder = folder / part
     return None

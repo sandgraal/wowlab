@@ -407,16 +407,26 @@ def test_constructed_a_name_differing_only_by_letter_case_is_refused(env: Env) -
 @pytest.mark.parametrize(
     ("existing", "wanted"),
     [
-        (("Re\u0301alm", "x.glb"), ("R\u00e9alm", "x.glb")),  # NFD folder, NFC wanted
         (("R\u00c9ALM", "x.glb"), ("re\u0301alm", "x.glb")),  # case and composition
         (("Realm", "Bob.body.png"), ("Realm", "bob.body.png")),  # a twin's PNG
         (("Realm", "Bob.glb"), ("REALM", "Bob.glb")),  # the realm folder
+        (("Realm", "Wei\u00df.glb"), ("Realm", "Weiss.glb")),  # APFS folds ß into ss
+        (("Realm", "A\u03c2.glb"), ("Realm", "A\u03c3.glb")),  # final and medial sigma
+        (("Realm", "Sa\u017fa.glb"), ("Realm", "Sasa.glb")),  # long s
+        (("Realm", "A\u00b5.glb"), ("Realm", "A\u03bc.glb")),  # micro sign and mu
+        (("Realm", "A\ufb00.glb"), ("Realm", "Aff.glb")),  # the ff ligature
+        (("Realm", "\u0131x.glb"), ("Realm", "ix.glb")),  # dotless i: NTFS's uppercase key
     ],
     ids=[
-        "constructed-normalisation",
         "constructed-case-and-normalisation",
         "constructed-png",
         "constructed-folder",
+        "constructed-sharp-s",
+        "constructed-sigma",
+        "constructed-long-s",
+        "constructed-micro",
+        "constructed-ligature",
+        "constructed-dotless-i",
     ],
 )
 def test_check_character_refuses_a_folded_twin_on_the_way_down(
@@ -437,18 +447,75 @@ def test_check_character_refuses_a_folded_twin_on_the_way_down(
     assert (home / existing[0] / existing[1]).read_bytes() == b"theirs"
 
 
+def test_the_two_fold_keys() -> None:
+    """Constructed: dotless i and `i` differ under the full case fold and share
+    the per-character uppercase key (`I`), so they are refused (fail
+    closed: NTFS takes them for one name); `ß` and `ss` share the full fold
+    (APFS) and not the uppercase key (`ß` has no one-character uppercase)."""
+    dotless, plain = cascfiles._folded("\u0131x"), cascfiles._folded("ix")
+    assert dotless[0] != plain[0] and dotless[1] == plain[1] == "IX"
+    sharp, double = cascfiles._folded("Wei\u00df"), cascfiles._folded("Weiss")
+    assert sharp[0] == double[0] and sharp[1] != double[1]
+
+
 def test_check_character_takes_its_own_spelling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Constructed: the same spelling is the character's own file, and a
-    name that only looks alike (`ß` against `ss`) is another's."""
+    name that folds to no other name there is free."""
     redirect_user_dirs(monkeypatch, tmp_path / "home")
     folder = cascfiles.build_dir(PRODUCT, VERSION)
     home = folder / "characters" / "acct" / "Realm"
     home.mkdir(parents=True)
-    (home / "Straße.glb").write_bytes(b"one")
-    for name in ("Straße.glb", "Strasse.glb"):
+    (home / "Stra\u00dfe.glb").write_bytes(b"one")
+    for name in ("Stra\u00dfe.glb", "Strasze.glb"):
         assert cascfiles.check_character(home / name, folder) == home / name
+
+
+def test_a_name_in_another_normalisation_is_refused_unless_the_volume_maps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: a folder listed as `Re\u0301alm` (decomposed) when
+    `R\u00e9alm` (composed) is wanted. Where the composed name opens that
+    very folder (APFS, HFS+: the volume stores or maps one spelling onto
+    the other), it is taken for the volume's own spelling and passes; where
+    it does not (a volume that keeps the two apart), it is a twin and is
+    refused."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    home = folder / "characters" / "acct"
+    (home / "Re\u0301alm").mkdir(parents=True)
+    target = home / "R\u00e9alm" / "x.glb"
+    if (home / "R\u00e9alm").exists():
+        assert cascfiles.check_character(target, folder) == target
+    else:
+        with pytest.raises(cascfiles.CascOutError, match="only by letter case"):
+            cascfiles.check_character(target, folder)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot make a folder unlistable")
+def test_a_folder_that_cannot_be_listed_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: the realm folder exists but cannot be listed, so whether
+    another character's files are in it cannot be told; refused."""
+    redirect_user_dirs(monkeypatch, tmp_path / "home")
+    folder = cascfiles.build_dir(PRODUCT, VERSION)
+    realm = folder / "characters" / "acct" / "Realm"
+    realm.mkdir(parents=True)
+    realm.chmod(0o300)  # search but not read: the file can be named, not listed
+    try:
+        try:
+            next(realm.iterdir(), None)
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("this user can list a folder without read permission")
+        with pytest.raises(cascfiles.CascOutError, match="cannot be read") as caught:
+            cascfiles.check_character(realm / "Bob.glb", folder)
+        assert "nothing was written" in str(caught.value)
+    finally:
+        realm.chmod(0o700)
 
 
 def test_a_link_in_characters_is_refused_and_nothing_written(env: Env, tmp_path: Path) -> None:

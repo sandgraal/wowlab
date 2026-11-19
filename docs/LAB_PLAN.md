@@ -4768,11 +4768,18 @@ as `<character>.<part>.png`, replacing M15-11's joined
 character `C` and realm `A` with character `B-C` shared one name, and one
 run replaced and removed the other's files. Each part is still checked as a
 safe file name. A name on the way down that differs from the wanted one only
-by letter case or Unicode normalisation (a volume that folds them, as APFS
-and NTFS do by default, takes the two for one) is refused with nothing
-written, on every volume, rather than written into; `ß` and `ss` are not
-folded together. Files a run of M15-11's layout left at the old joined names
-are not moved or removed.
+by letter case or Unicode normalisation is refused with nothing written,
+rather than written into: APFS folds both case and normalisation (fully, so
+`ß` and `ss`, `ς` and `σ` are one name there); NTFS and exFAT fold letter
+case only, by a one-to-one uppercase table (so `ı` and `i` are one name
+there). Two keys are compared, the full case fold of the canonical form and
+the per-character uppercase, and sharing either refuses. On a case-sensitive
+volume two folders that differ only by case are refused too, by choice, so
+every machine gives the same answer. A listed name that is the wanted one in
+another normalisation and is the very entry the wanted name opens is the
+volume's own spelling of it (HFS+ keeps names decomposed) and is not a twin;
+a folder on the way that exists but cannot be listed is refused. Files a run
+of M15-11's layout left at the old joined names are not moved or removed.
 
 **In the UI.** `wowlab ui` offers every command the CLI tree has (§15.6),
 so `casc stat` appears in the Commands tab as a plain read when M15-06
