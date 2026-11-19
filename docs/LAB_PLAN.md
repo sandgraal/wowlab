@@ -6033,18 +6033,18 @@ must come from the repository test's fixed list of constructed names.)
   short functions whose text the scans grade; the 200-byte measure is
   mirrored in Python, where M19-03 tests it (the character rule differs
   on purpose: the game removes, the desk refuses).
-  *Note (2026-11-19, M19-01, conductor decisions):* (a) `Crew.lua` is not
-  section code: it runs from roster events and the slash command, and
-  `/wowlab skip` does not reach it; its own switch is `on`. The M11-37
-  section scan accepts its client calls only in a function behind the on
-  and combat tests, in the pinned helpers, and (the typed text only) in the
-  slash handler `ns.CrewCommand`, through the same `Crew.lua`-only
-  relaxation, so M19-10 adds none. (b) The M11-13 stored-value check is not
-  relaxed. (c) Each relaxed call's result is bound to a local and read only
-  under `not secret(x)`, a pinned helper. (d) Rating the target and `crew
-  who` do nothing while the book is off or in combat; a caller may print
-  why. `Crew.lua` names neither `WowLabDB` nor `WowLabCharDB`, exports only
-  `ns.CrewCommand`, and only that handler creates the book or sets `on`.
+  *Note (2026-11-19, M19-01, conductor decisions):* `Crew.lua` is not
+  section code, and `/wowlab skip` does not reach it; its switch is `on`.
+  The M11-37 scan accepts its client calls in functions behind the on and
+  combat tests, in the pinned helpers, a `type()` test of a name call
+  anywhere, and in `ns.CrewCommand` the typed text, `time` and `date`. It
+  may call `ns.On` there, plus once at file level, for an event Core.lua
+  already registers at file level, so nothing new is registered while off.
+  `pairs` may walk `players` and `current`. Core.lua's slash handler is the
+  one caller, as `ns.CrewCommand(message)`. The M11-13 check is not relaxed.
+  M19-10 inherits these rules and adds no relaxation and no test entry. Each
+  relaxed call's result is read only under `not secret(x)`. Rating the
+  target and `crew who` do nothing while off or in combat.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."

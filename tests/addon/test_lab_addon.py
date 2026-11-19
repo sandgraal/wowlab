@@ -219,7 +219,12 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", "WowLabCre
 #   helpers `crewBlocked` and `secret`, and, for the typed text only, inside
 #   the slash handler `ns.CrewCommand`. Crew.lua is not section code: it runs
 #   from roster events and the slash command, `/wowlab skip` does not reach it,
-#   and its own switch is `on` (conductor decision, 2026-11-19).
+#   and its own switch is `on` (conductor decision, 2026-11-19). Fix round 2:
+#   also `time` and `date` in `ns.CrewCommand`, a `type()` test of a name call
+#   anywhere, Crew.lua's `ns.On` calls (`_crew_on_call_ok`) among the pinned
+#   callers of `ns.On`, and Core.lua's one pinned call of `ns.CrewCommand`.
+# - PAIRS: `pairs` over `WowLabCrewDB.players` or `WowLabCrewDB.current`,
+#   written out or through a local bound once, directly, to one of them.
 #
 # In exchange, Crew.lua keeps rules of its own (`_crew_problems`):
 # - every relaxed call (a name call, or a unit call whose first argument is
@@ -235,13 +240,34 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", "WowLabCre
 #   `ns`, and exports only CREW_EXPORTS, as `function ns.X(...)`, each
 #   returning nothing or a literal;
 # - `WowLabCrewDB` is only indexed or `type()`-tested; the whole table and its
-#   `on` are assigned only inside `ns.CrewCommand` (loading creates nothing).
+#   `on` are assigned only inside `ns.CrewCommand` (loading creates nothing);
+# - `ns.CrewCommand` starts with CREW_COMMAND_HEAD, and only Core.lua's slash
+#   handler calls it, as CREW_COMMAND_CALL (`_crew_command_call_problems`);
+# - no function parameter is indexed, called, assigned, stored, returned or
+#   handed to `pcall`, `xpcall` or `ns.Call` (the pinned helpers excepted), and
+#   no function uses `...`;
+# - a unit local may also be the one parameter of a local function that uses
+#   it only as a unit argument, when every call of it hands a unit local or a
+#   unit literal;
+# - `ns.On` is called only in `ns.CrewCommand`, in a gated function, or once
+#   at file level for an event Core.lua registers itself at file level, with
+#   a gated local function as the handler (no new registration while off).
 CREW_FILE = "Crew.lua"
 CREW_NAME_CALLS = frozenset({"UnitName", "UnitFullName", "GetNormalizedRealmName", "GetGuildInfo"})
 CREW_DB = "WowLabCrewDB"
 NON_LITERAL_UNIT = "<a local name as the unit>"
 GATED = "<a function behind the on and combat tests>"
 CREW_COMMAND = "ns.CrewCommand"
+CREW_ON_CALLS = "<Crew.lua's ns.On calls, as _crew_on_call_ok allows them>"
+# The slash handler's first statement, pinned: the typed text is a string or
+# nothing happens, so the argument can carry no table or function in or out.
+CREW_COMMAND_HEAD = (
+    'function ns . CrewCommand ( word ) if type ( word ) ~= "string" then return end'
+)
+# Core.lua's one call of it: in its slash handler, a statement of its own,
+# handing on exactly the typed text.
+CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
+CREW_COMMAND_CALL = "ns . CrewCommand ( message )"
 CREW_RELAXED: dict[str, frozenset[str]] = {
     "FORBIDDEN_APIS": CREW_NAME_CALLS,
     "CLOCK": frozenset({"time", "date"}),
@@ -250,7 +276,8 @@ CREW_RELAXED: dict[str, frozenset[str]] = {
     "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT}),
     "CONCAT_INDEX": frozenset({"-"}),
     "SAVED_VARIABLES": frozenset({CREW_DB}),
-    "SECTION_SCAN": frozenset({GATED, "crewBlocked", "secret", CREW_COMMAND}),
+    "SECTION_SCAN": frozenset({GATED, "crewBlocked", "secret", CREW_COMMAND, CREW_ON_CALLS}),
+    "PAIRS": frozenset({f"{CREW_DB}.players", f"{CREW_DB}.current"}),
 }
 # What Crew.lua may hand to or take from the rest of the addon: the slash
 # handler Core.lua calls for `/wowlab crew ...`, and Core's helpers that keep
@@ -1102,8 +1129,56 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
     `type(Enum) == "table" and Enum.X or nil`), or the value of a
     `for _, v in pairs|ipairs(Y)` loop over a name that passes the same test.
     A name with no binding must be a std-declared client table. Function
-    parameters, multiple assignments and anything else fail (closed)."""
-    tokens = _tokens(path)
+    parameters, multiple assignments and anything else fail (closed). In
+    Crew.lua only (M19-01, PAIRS), `pairs` may also walk `WowLabCrewDB.players`
+    or `WowLabCrewDB.current`, written out or through a local bound once,
+    directly, to one of them."""
+    problems = _pairs_problems(path, _tokens(path))
+    assert not problems, problems
+
+
+def _crew_book_walk(path: Path, tokens: list[Token], i: int) -> bool:
+    """Crew.lua: is the `pairs` at i a walk of one of the book's two tables,
+    written out or through a local bound once and directly to one?"""
+    walks = _relaxed(path, "PAIRS")
+    if tokens[i].text != "pairs" or not walks or tokens[i + 1].text != "(":
+        return False
+    close = next((j for j in range(i + 2, len(tokens)) if tokens[j].text == ")"), len(tokens))
+    inside = "".join(x.text for x in tokens[i + 2 : close])
+    if inside in walks and all(x.kind != "string" for x in tokens[i + 2 : close]):
+        return True
+    if close != i + 3 or tokens[i + 2].kind != "name":
+        return False
+    braces: list[str] = []
+    in_constructor = set()
+    for k, x in enumerate(tokens):
+        if x.kind == "op" and x.text in {"{", "(", "["}:
+            braces.append(x.text)
+        elif x.kind == "op" and x.text in {"}", ")", "]"} and braces:
+            braces.pop()
+        elif braces and braces[-1] == "{":
+            in_constructor.add(k)
+    # A constructor key (`{ players = {} }`) binds nothing.
+    found = [
+        b
+        for b in _bindings(tokens, tokens[i + 2].text)
+        if not (
+            b[0] == "assign" and b[1] - 2 in in_constructor and tokens[b[1] - 3].text in {"{", ","}
+        )
+    ]
+    if len(found) != 1 or found[0][0] != "assign":
+        return False
+    j = found[0][1]
+    value = "".join(x.text for x in tokens[j : j + 3])
+    return (
+        value in walks
+        and tokens[j - 3].text == "local"
+        and all(x.kind == "name" or x.text == "." for x in tokens[j : j + 3])
+        and _ends_expression(tokens, j + 3)
+    )
+
+
+def _pairs_problems(path: Path, tokens: list[Token]) -> list[str]:
     std = _std_globals()
     params = _function_params(tokens)
     problems = []
@@ -1125,6 +1200,8 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
     for i, t in enumerate(tokens):
         if t.kind != "name" or t.text not in {"pairs", "next"} or _is_field(tokens, i):
             continue
+        if _crew_book_walk(path, tokens, i):
+            continue
         arg, close = tokens[i + 2], tokens[i + 3]
         if tokens[i + 1].text != "(" or arg.kind != "name" or close.text != ")":
             problems.append(f"{_where(path, t)} {t.text} over {_render(tokens[i + 1 : i + 6])!r}")
@@ -1132,7 +1209,7 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
             problems.append(
                 f"{_where(path, t)} {t.text}({arg.text}): a binding is not a built or client table"
             )
-    assert not problems, problems
+    return problems
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -4581,13 +4658,27 @@ class _SectionScan:
         """M19-01, SECTION_SCAN: Crew.lua's references outside every section,
         allowed only in a gated function, in the pinned helpers, and (the
         typed text only) in the slash handler."""
+        if ref.file == "Core.lua":
+            # The typed text handed on at Core's one pinned call, and only
+            # while a Crew.lua is among the sources.
+            return (
+                any(CREW_COMMAND in _relaxed(Path(n), "SECTION_SCAN") for n in self.flows)
+                and ref.function == CREW_COMMAND_CALLER
+                and ref.given
+                and ref.api == "message"
+                and _crew_command_call_lines(self.flows[ref.file]) == {ref.line}
+            )
         allowed = _relaxed(Path(ref.file), "SECTION_SCAN")
-        if not allowed or ref.head is None:
+        if not allowed:
             return False
-        if ref.function in allowed - {CREW_COMMAND, GATED}:
-            return not ref.given  # crewBlocked and secret, pinned whole
+        if ref.use == "test" and ref.api in CREW_NAME_CALLS and not ref.given:
+            return True  # a presence test, `type(UnitName)`: not a call of it
+        if ref.head is None:
+            return False
+        if ref.function in {"crewBlocked", "secret"} & allowed:
+            return not ref.given  # pinned whole
         if ref.function == CREW_COMMAND and CREW_COMMAND in allowed:
-            return ref.given
+            return ref.given or ref.api in {"time", "date"}
         return GATED in allowed and _crew_gated(self.flows[ref.file], ref.head)
 
     def _check_sectionless(self) -> None:
@@ -4649,6 +4740,10 @@ class _SectionScan:
             pinned_seen.add((file, label))
             callers: dict[tuple[str, str], int] = {}
             for f, s, e in refs:
+                if (file, label) == ("Core.lua", "ns.On") and _crew_on_call_ok(
+                    self.flows[f], s, _core_file_events(self.flows.get("Core.lua"))
+                ):
+                    continue  # M19-01: Crew.lua's ns.On calls, by their own rule
                 if not self.flows[f].call_start(e):
                     self.fail(
                         "callers",
@@ -6679,6 +6774,110 @@ def test_only_crew_lua_names_the_crew_book(path: Path) -> None:
     assert not bad, bad
 
 
+def _crew_command_call_lines(flow: _Flow | None) -> set[int]:
+    """The lines of Core.lua holding exactly CREW_COMMAND_CALL, alone on the
+    line, inside its slash handler, with `message` its parameter, never
+    assigned."""
+    if flow is None:
+        return set()
+    t = flow.tokens
+    n = len(CREW_COMMAND_CALL.split(" "))
+    lines = set()
+    for k in range(len(t) - n + 1):
+        if _render(t[k : k + n]) != CREW_COMMAND_CALL or _is_field(t, k):
+            continue
+        fn = flow.function_at(k)
+        caller = (
+            ".".join(x.text for x in t[fn.head - 4 : fn.head - 1] if x.text != ".") if fn else ""
+        )
+        if fn is None or caller != CREW_COMMAND_CALLER or t[fn.head - 1].text != "=":
+            continue
+        line = [x for x in t if x.line == t[k].line]
+        decl = flow.resolve("message", k + 4)
+        rebound = any(r.rstrip(".") == "message" for r, ts in flow.rebound if fn.head < ts)
+        if line == t[k : k + n] and decl is not None and not rebound:
+            lines.add(t[k].line)
+    return lines
+
+
+def _crew_command_call_problems(path: Path, tokens: list[Token]) -> list[str]:
+    """`CrewCommand` is named only by Crew.lua's definition and Core.lua's
+    one pinned call (CREW_COMMAND_CALL in its slash handler)."""
+    if path.name == CREW_FILE:
+        return []
+    named = [
+        k
+        for k, x in enumerate(tokens)
+        if (x.kind == "name" and x.text == "CrewCommand")
+        or (x.kind == "string" and "CrewCommand" in x.text)
+    ]
+    if not named:
+        return []
+    if path.name == "Core.lua":
+        lines = _crew_command_call_lines(_Flow(path, tokens))
+        if len(lines) == 1 and len(named) == 1 and tokens[named[0]].line in lines:
+            return []
+    return [
+        f"{_where(path, tokens[k])} CrewCommand named outside the one pinned call" for k in named
+    ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_only_core_calls_the_crew_command(path: Path) -> None:
+    bad = _crew_command_call_problems(path, _tokens(path))
+    assert not bad, bad
+
+
+def _core_file_events(flow: _Flow | None) -> set[str]:
+    """The events Core.lua registers at file level (`ns.On("X", ...)`)."""
+    if flow is None:
+        return set()
+    t = flow.tokens
+    return {
+        t[k + 4].text
+        for k in range(len(t) - 4)
+        if _render(t[k : k + 4]) == "ns . On ("
+        and t[k + 4].kind == "string"
+        and flow.function_at(k) is None
+    }
+
+
+def _core_events_on_disk() -> set[str]:
+    core = ADDON / "Core.lua"
+    return _core_file_events(_Flow(core, _tokens(core))) if core.is_file() else set()
+
+
+def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
+    """Crew.lua's `ns.On(` at token s (the `ns`, or the `On`): inside
+    `ns.CrewCommand` or a gated function; or the one file-level call, for an
+    event Core.lua already registers at file level (so no new registration is
+    made while the book is off), whose handler is a gated local function."""
+    if CREW_ON_CALLS not in _relaxed(flow.path, "SECTION_SCAN"):
+        return False
+    t = flow.tokens
+    k = s if t[s].text == "ns" else s - 2
+    if k < 0 or _render(t[k : k + 4]) != "ns . On (" or _is_field(t, k):
+        return False
+    fn = flow.function_at(k)
+    if fn is not None:
+        return flow.labels.get(fn.head) == CREW_COMMAND or _crew_gated(flow, fn.head)
+    top = [
+        j
+        for j in range(len(t) - 3)
+        if _render(t[j : j + 4]) == "ns . On (" and flow.function_at(j) is None
+    ]
+    if top != [k] or not (
+        t[k + 4].kind == "string"
+        and t[k + 4].text in core_events
+        and t[k + 5].text == ","
+        and t[k + 6].kind == "name"
+        and t[k + 7].text == ")"
+    ):
+        return False
+    decl = flow.resolve(t[k + 6].text, k)
+    return decl is not None and decl.function is not None and _crew_gated(flow, decl.function)
+
+
 def _pcall_literal(t: list[Token], head: int) -> bool:
     """Is the function literal at `head` the first argument of `pcall(`,
     so it runs at once, inside the function that holds it?"""
@@ -6806,26 +7005,100 @@ def _crew_secret_problems(flow: _Flow, k: int) -> list[str]:
 def _crew_unit_problems(flow: _Flow, u: str) -> list[str]:
     """A local used as a unit is bound only by `local u = "party" .. i`,
     `"raid" .. i` (i a number or a numeric for variable not assigned in its
-    loop) or one of the unit literals, and never assigned again."""
+    loop) or one of the unit literals, and never assigned again. Fix round 2:
+    or it is the one parameter of a unit helper (`_crew_unit_helper_problems`)."""
     t = flow.tokens
-    good = 0
+    good = _crew_unit_bindings(flow, u)
+    helpers = [
+        p + 2
+        for p in range(len(t) - 5)
+        if [t[p].text, t[p + 1].text, t[p + 3].text, t[p + 4].text, t[p + 5].text]
+        == ["local", "function", "(", u, ")"]
+        and t[p + 2].kind == "name"
+    ]
+    problems = []
+    if not flow.decls.get(u) or good + len(helpers) != len(flow.decls[u]):
+        problems.append(f"{u} is used as a unit but bound other than from a party or raid token")
+    if any(root.rstrip(".") == u for root, _ in flow.rebound):
+        problems.append(f"{u} is used as a unit and assigned again")
+    for h in helpers:
+        problems += _crew_unit_helper_problems(flow, h, u)
+    return problems
+
+
+def _crew_unit_decls(flow: _Flow, u: str) -> list[_Decl]:
+    """The declarations made by `local u = <party or raid token>` statements."""
+    t = flow.tokens
+    good: list[_Decl] = []
     for p in range(len(t) - 4):
         if [t[p].text, t[p + 1].text, t[p + 2].text] != ["local", u, "="]:
             continue
         v = t[p + 3]
+        ok = False
         if v.kind != "string":
             continue
         if v.text in {"party", "raid", "target"} and _ends_expression(t, p + 4):
-            good += 1
+            ok = True
         elif v.text in {"party", "raid"} and t[p + 4].text == ".." and _ends_expression(t, p + 6):
             n = t[p + 5]
-            if n.kind == "number" or (n.kind == "name" and _crew_for_variable(flow, n.text, p)):
-                good += 1
+            ok = n.kind == "number" or (n.kind == "name" and _crew_for_variable(flow, n.text, p))
+        if ok:
+            good += [d for d in flow.decls.get(u, []) if p < d.start <= p + 8]
+    return good
+
+
+def _crew_unit_bindings(flow: _Flow, u: str) -> int:
+    return len(_crew_unit_decls(flow, u))
+
+
+def _crew_unit_local_ok(flow: _Flow, v: str, k: int) -> bool:
+    """Is `v` at token k a party or raid token local, never assigned again?"""
+    decl = flow.resolve(v, k)
+    return (
+        decl is not None
+        and any(d is decl for d in _crew_unit_decls(flow, v))
+        and not any(
+            root.rstrip(".") == v and flow.resolve(v, ts) is decl for root, ts in flow.rebound
+        )
+    )
+
+
+def _crew_unit_helper_problems(flow: _Flow, h: int, u: str) -> list[str]:
+    """`local function H(u)` at token h (H's name): u is used in H only as
+    the first argument of a unit call; H is defined once and referred to only
+    as `H(<unit local>)` or `H("party" | "raid" | "target")`."""
+    t = flow.tokens
+    name = t[h].text
+    head = h - 1
+    fn = flow.functions[head]
+    decl = flow.resolve(u, fn.start)
     problems = []
-    if good == 0 or good != len(flow.decls.get(u, [])):
-        problems.append(f"{u} is used as a unit but bound other than from a party or raid token")
-    if any(root.rstrip(".") == u for root, _ in flow.rebound):
-        problems.append(f"{u} is used as a unit and assigned again")
+    for k in range(fn.start, fn.stop):
+        if t[k].text != u or t[k].kind != "name" or _is_field(t, k):
+            continue
+        if flow.resolve(u, k) is not decl:
+            continue
+        if not (
+            t[k - 1].text == "(" and _is_unit_api(t[k - 2].text) and t[k + 1].text in {",", ")"}
+        ):
+            problems.append(f"line {t[k].line}: {name}'s {u} is used other than as a unit")
+    if len(flow.decls.get(name, [])) != 1:
+        problems.append(f"{name} is bound more than once")
+    for k, x in enumerate(t):
+        if x.kind != "name" or x.text != name or _is_field(t, k) or k == h:
+            continue
+        arg = t[k + 2] if k + 3 < len(t) else None
+        ok = (
+            arg is not None
+            and t[k + 1].text == "("
+            and t[k + 3].text == ")"
+            and (
+                (arg.kind == "string" and arg.text in {"party", "raid", "target"})
+                or (arg.kind == "name" and _crew_unit_local_ok(flow, arg.text, k + 2))
+            )
+        )
+        if not ok:
+            problems.append(f"line {x.line}: {name} is called with other than a unit")
     return problems
 
 
@@ -6970,7 +7243,92 @@ def _crew_problems(path: Path, text: str) -> list[str]:
             key, after = inner[0].text, close + 1
         if key == "on" and t[after].text in {"=", ","} and not in_command(ts):
             problems.append(f"line {t[ts].line}: {CREW_DB}.on set outside the slash handler")
+    problems += _crew_parameter_problems(flow)
+    # The slash handler's first statement, pinned (fix round 2, item 1).
+    n_head = len(CREW_COMMAND_HEAD.split(" "))
+    for head, label in flow.labels.items():
+        if label == CREW_COMMAND and _render(t[head : head + n_head]) != CREW_COMMAND_HEAD:
+            problems.append(f"{CREW_COMMAND} does not start with the pinned string test")
+    # ns.On, only where _crew_on_call_ok allows it (item 4).
+    events = _core_events_on_disk()
+    for k in range(len(t) - 3):
+        on_call = _render(t[k : k + 4]) == "ns . On (" and not _is_field(t, k)
+        if on_call and not _crew_on_call_ok(flow, k, events):
+            problems.append(f"line {t[k].line}: ns.On called where Crew.lua may not register")
     return problems
+
+
+def _crew_parameter_problems(flow: _Flow) -> list[str]:
+    """No function parameter in Crew.lua is indexed, called, assigned,
+    stored in a table or a local, returned, or handed to `pcall`, `xpcall` or
+    `ns.Call`: a table or function from another file (or the client) can
+    carry nothing out. The pinned helpers are exempt (their text is fixed).
+    No function uses `...` (fix round 2, item 1)."""
+    t = flow.tokens
+    problems: list[str] = []
+    for head, fn in flow.functions.items():
+        if flow.labels.get(head) in CREW_PINNED:
+            continue
+        opening = next(p for p in range(head, len(t)) if t[p].text == "(")
+        params = [
+            x.text
+            for x in t[opening + 1 : flow.pair[opening]]
+            if x.kind == "name" or x.text == "..."
+        ]
+        for name in params:
+            if name == "...":
+                problems.append(f"line {t[head].line}: a function takes `...`")
+                continue
+            decl = flow.resolve(name, fn.start)
+            for root, ts in flow.rebound:
+                if root.rstrip(".") == name and flow.resolve(name, ts) is decl:
+                    problems.append(f"line {t[ts].line}: parameter {name} is assigned")
+            for k in range(fn.start, fn.stop):
+                x = t[k]
+                if x.kind != "name" or x.text != name or _is_field(t, k):
+                    continue
+                if flow.resolve(name, k) is not decl:
+                    continue
+                problems += _crew_parameter_use(flow, k, name)
+    return problems
+
+
+def _crew_parameter_use(flow: _Flow, k: int, name: str) -> list[str]:
+    t = flow.tokens
+    where = f"line {t[k].line}: parameter {name}"
+    nxt = t[k + 1].text if k + 1 < len(t) else ""
+    prev = t[k - 1].text
+    o = flow.opener[k]
+    opener = t[o].text if o is not None else ""
+    in_condition = any(
+        b.cond is not None and b.cond[0] <= k < b.cond[1] for b in flow.blocks
+    ) or _crew_in_loop_header(flow, k)
+    if _crew_in_loop_header(flow, k) and prev == "in":
+        return [f"{where} is iterated (called) by a for loop"]
+    if (
+        _crew_in_loop_header(flow, k)
+        and opener not in {"(", "{"}
+        and nxt not in {".", "[", ":", "("}
+    ):
+        return []  # a loop bound (`for i = 1, count do`, `while n > 0 do`)
+    if nxt in {".", "[", ":", "("}:
+        return [f"{where} is indexed or called"]
+    if opener == "{":
+        return [f"{where} is stored in a table"]
+    if prev in {"=", "return", ","} and opener != "(" and _ends_expression(t, k + 1):
+        return [f"{where} is assigned, returned or stored whole"]
+    if (prev in {"and", "or"} or nxt in {"and", "or"}) and not in_condition:
+        return [f"{where} may be the value of an and/or expression"]
+    if opener == "(":
+        callee = _render(t[max(0, o - 3) : o])
+        if callee.split(" ")[-1] in {"pcall", "xpcall"} or callee == "ns . Call":
+            return [f"{where} is handed to {callee.split(' ')[-1]}"]
+    return []
+
+
+def _crew_in_loop_header(flow: _Flow, k: int) -> bool:
+    """Is token k in a `for ... do` or `while ... do` header?"""
+    return any(b.kind == "loop" and b.head < k < (b.start or k) for b in flow.blocks)
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -7033,6 +7391,19 @@ local function nameAbsent()
     return nil
 end
 
+local function levelOf(member)
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local level = UnitLevel(member)
+    if not secret(level) then
+        WowLabCrewDB.lastLevel = level
+    end
+end
+
 """
     + _CREW_READ
     + """    local home = GetNormalizedRealmName()
@@ -7040,7 +7411,8 @@ end
     for i = 1, count do
 """
     + _CREW_MEMBER
-    + """        local me = UnitIsUnit(unit, "player")
+    + """        levelOf(unit)
+        local me = UnitIsUnit(unit, "player")
         local name, realm = UnitFullName(unit)
         if not secret(me) and not me and not secret(name) and not secret(realm) then
             local key = name .. "-" .. realm
@@ -7077,20 +7449,66 @@ end
     if not secret(level) and not secret(targetName) then
         WowLabCrewDB.level = level
     end
+    levelOf("target")
+    levelOf(first)
 end
 
-ns.On("GROUP_ROSTER_UPDATE", function()
+local function countBook()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local players = WowLabCrewDB.players
+    local kept = 0
+    for _ in pairs(players) do
+        kept = kept + 1
+    end
+    for key in pairs(WowLabCrewDB.current) do
+        kept = kept + #key
+    end
+    return kept
+end
+
+local function onRoster()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
     readGroup(4)
-end)
+    print(countBook())
+end
+
+local function onWorld()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    ns.On("GROUP_ROSTER_UPDATE", onRoster)
+end
+
+ns.On("PLAYER_ENTERING_WORLD", onWorld)
 
 """
     + _CREW_COMMAND_HEAD
-    + """    if word == "on" then
+    + """    if type(word) ~= "string" then
+        return
+    end
+    if type(UnitFullName) ~= "function" then
+        print("the client has no UnitFullName function")
+    end
+    if word == "on" then
         if type(WowLabCrewDB) ~= "table" then
-            WowLabCrewDB = { schema = 1, players = {}, current = {} }
+            WowLabCrewDB = { schema = 1, players = {}, current = {}, started = time() }
         end
         WowLabCrewDB.on = true
-        print("Crew book on.")
+        print(date("%Y-%m-%d", WowLabCrewDB.started))
+        ns.On("GROUP_ROSTER_UPDATE", onRoster)
         return
     end
     if word == "off" and type(WowLabCrewDB) == "table" then
@@ -7120,6 +7538,7 @@ def _crew_rules(path: Path, text: str) -> dict[str, list[str]]:
             set(CREW_NAME_CALLS), {path: _fn_lookups(tokens) | _dotted_references(tokens)}
         ),
         "SECTION_SCAN": _crew_section_failures(path, text),
+        "PAIRS": _pairs_problems(path, tokens),
     }
 
 
@@ -7145,6 +7564,7 @@ def test_m19_01_the_relaxation_is_one_table_keyed_on_crew_lua() -> None:
         "CONCAT_INDEX",
         "SAVED_VARIABLES",
         "SECTION_SCAN",
+        "PAIRS",
     }
     assert set(_crew_rules(_CREW_PATH, _CREW_SOURCE)) == set(CREW_RELAXED)
     assert set().union(*CREW_RELAXED.values()) & NEVER_RELAXED == set()
@@ -7429,13 +7849,141 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     "a unit numbered by a parameter": [(_CREW_MEMBER, '        local unit = "party" .. count\n')],
     "a unit assigned again": [(_CREW_MEMBER, _CREW_MEMBER + '        unit = "focus"\n')],
     "the loop variable assigned": [(_CREW_MEMBER, "        i = 2\n" + _CREW_MEMBER)],
-    "a unit given as a parameter": [
+    # Fix round 2, item 6: a unit helper is held to what it is handed.
+    "a unit helper handed another unit": [
+        (_CREW_TAIL, _CREW_TAIL + 'local other = "mouse" .. "over"\nlevelOf(other)\n')
+    ],
+    "a unit helper handed the typed text": [
+        (
+            "        WowLabCrewDB.on = true\n",
+            "        WowLabCrewDB.on = true\n        levelOf(word)\n",
+        )
+    ],
+    "a unit helper handed a focus literal": [(_CREW_TAIL, _CREW_TAIL + 'levelOf("focus")\n')],
+    "a unit helper using its parameter otherwise": [
+        (
+            "    local level = UnitLevel(member)\n",
+            "    local level = UnitLevel(member)\n    print(member)\n",
+        )
+    ],
+    "a unit helper with two parameters": [
+        ("local function levelOf(member)\n", "local function levelOf(member, spare)\n")
+    ],
+    "a unit helper aliased": [(_CREW_TAIL, _CREW_TAIL + "local alias = levelOf\n")],
+    "a unit in a function literal's parameter": [
         (
             _CREW_TAIL,
-            _CREW_TAIL + "local function peekUnit(unit)\n    if not crewOn() then\n        return\n"
+            _CREW_TAIL + "local peek = function(member)\n    if not crewOn() then\n        return\n"
             "    end\n    if crewBlocked() then\n        return\n    end\n"
-            "    local n = UnitLevel(unit)\n    if not secret(n) then\n"
+            "    local n = UnitLevel(member)\n    if not secret(n) then\n"
             "        WowLabCrewDB.peek = n\n    end\nend\n",
+        )
+    ],
+    # Fix round 2, item 1: the typed text and other parameters carry nothing.
+    "the slash handler's string test removed": [
+        (
+            '    if type(word) ~= "string" then\n        return\n    end\n    if type(UnitFullName)',
+            "    if type(UnitFullName)",
+        )
+    ],
+    "a parameter used as a box": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    box.n = WowLabCrewDB.players\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter called": [
+        (
+            "local function countBook()\n",
+            "local function leak(cb)\n    cb(WowLabCrewDB.players)\nend\n\nlocal function countBook()\n",
+        )
+    ],
+    "a parameter handed to ns.Call": [
+        (
+            "local function countBook()\n",
+            "local function leak(cb)\n    ns.Call(cb, WowLabCrewDB.players)\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter handed to pcall": [
+        (
+            "local function countBook()\n",
+            "local function leak(cb)\n    pcall(cb, WowLabCrewDB.players)\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter kept in a local": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    local kept = box\n    return kept\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter kept in a table": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    local kept = { box }\n    return #kept\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter through and/or": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    local kept = box and box or nil\n    return 1\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter iterated": [
+        (
+            "local function countBook()\n",
+            "local function leak(walk)\n    for v in walk do\n        print(v)\n    end\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a parameter assigned": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    box = WowLabCrewDB.players\n    return 1\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a function taking ...": [
+        (
+            "local function countBook()\n",
+            "local function leak(...)\n    print(...)\nend\n\nlocal function countBook()\n",
+        )
+    ],
+    # Item 4: where Crew.lua may register an event.
+    "a roster event registered at load": [
+        ('ns.On("PLAYER_ENTERING_WORLD", onWorld)\n', 'ns.On("GROUP_ROSTER_UPDATE", onRoster)\n')
+    ],
+    "a second file-level registration": [
+        (
+            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\n',
+            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\nns.On("PLAYER_LOGOUT", onWorld)\n',
+        )
+    ],
+    "a file-level handler without the gate": [
+        (
+            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\n',
+            'ns.On("PLAYER_ENTERING_WORLD", nameAbsentLater)\n',
+        ),
+        (
+            "local function onWorld()\n",
+            "local function nameAbsentLater()\n    print(1)\nend\n\nlocal function onWorld()\n",
+        ),
+    ],
+    "a file-level handler as a literal": [
+        (
+            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\n',
+            'ns.On("PLAYER_ENTERING_WORLD", function()\n    onWorld()\nend)\n',
+        )
+    ],
+    "a registration in an ungated function": [
+        (
+            "local function onWorld()\n",
+            'local function early()\n    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n\nlocal function onWorld()\n',
         )
     ],
     # Item 4: only the slash handler turns the book on or creates it.
@@ -7539,6 +8087,105 @@ def test_m19_01_constructed_section_scan_edits_fail() -> None:
     assert not missed, missed
 
 
+_CORE_SLASH = "SlashCmdList.WOWLAB = function(message)\n"
+_CORE_CREW_CALL = _CORE_SLASH + "    ns.CrewCommand(message)\n"
+
+
+def _core_edited(replacement: str, found: str = _CORE_SLASH) -> str:
+    text = (ADDON / "Core.lua").read_text(encoding="utf-8")
+    assert found in text, found
+    return text.replace(found, replacement, 1)
+
+
+def test_m19_01_only_core_s_slash_handler_calls_the_crew_command() -> None:
+    """Fix round 2, item 2. Constructed: Core.lua with the one pinned call
+    passes; the call anywhere else, in another shape, or twice, fails."""
+    core = Path("Core.lua")
+    assert _crew_command_call_problems(core, tokenize(_core_edited(_CORE_CREW_CALL))) == []
+    refused = {
+        "from Gear.lua": (Path("Gear.lua"), 'ns.CrewCommand("on")\n'),
+        "from Identity.lua, as a string": (
+            Path("Identity.lua"),
+            'local f = ns.Fn(ns, "CrewCommand")\n',
+        ),
+        "with a literal": (core, _core_edited(_CORE_SLASH + '    ns.CrewCommand("on")\n')),
+        "with another value": (core, _core_edited(_CORE_SLASH + "    ns.CrewCommand(ns)\n")),
+        "twice": (core, _core_edited(_CORE_CREW_CALL + "    ns.CrewCommand(message)\n")),
+        "sharing its line": (
+            core,
+            _core_edited(_CORE_SLASH + "    ns.CrewCommand(message) say(1)\n"),
+        ),
+        "outside the slash handler": (
+            core,
+            _core_edited(
+                "local function early(message)\n    ns.CrewCommand(message)\nend\n\n" + _CORE_SLASH
+            ),
+        ),
+        "aliased": (core, _core_edited(_CORE_SLASH + "    local f = ns.CrewCommand\n")),
+    }
+    missed = [
+        tag
+        for tag, (path, text) in refused.items()
+        if not _crew_command_call_problems(path, tokenize(text))
+    ]
+    assert not missed, missed
+
+
+def _crew_full_scan(crew: str, core: str | None = None) -> list[str]:
+    """The whole M11-37 scan on the real addon plus a constructed Crew.lua
+    (and, if given, a constructed Core.lua), in a temporary folder."""
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        files = []
+        for source in SOURCES:
+            path = Path(tmp) / source.name
+            text = (
+                core
+                if core is not None and source.name == "Core.lua"
+                else source.read_text("utf-8")
+            )
+            path.write_text(text, encoding="utf-8")
+            files.append(path)
+        path = Path(tmp) / CREW_FILE
+        path.write_text(crew, encoding="utf-8")
+        scan = _SectionScan([*files, path])
+    return [f"{rule}: {message}" for rule, message in scan.failures]
+
+
+def test_m19_01_the_whole_section_scan_takes_a_constructed_crew_lua() -> None:
+    """Control (fix round 2, items 2 and 4): the real addon, Core.lua with the
+    pinned call, and the constructed Crew.lua with its three ns.On calls
+    pass the M11-37 scan, pinned callers included, with no table edited."""
+    assert _crew_full_scan(_CREW_SOURCE, _core_edited(_CORE_CREW_CALL)) == []
+
+
+def test_m19_01_the_whole_section_scan_refuses_crew_lua_edits() -> None:
+    """Constructed: an ungated registration, a roster event at load, and the
+    typed text used twice in Core.lua each fail the scan."""
+    core = _core_edited(_CORE_CREW_CALL)
+    cases = {
+        "a registration in an ungated function": (
+            _crew_edited(_CREW_GATE_CASES["a registration in an ungated function"]),
+            core,
+        ),
+        "a roster event registered at load": (
+            _crew_edited(_CREW_GATE_CASES["a roster event registered at load"]),
+            core,
+        ),
+        "the typed text used again in Core.lua": (
+            _CREW_SOURCE,
+            _core_edited(_CORE_CREW_CALL + "    ns.CrewCommand(message)\n"),
+        ),
+        "the typed text handed on with no Crew.lua rule": (
+            _CREW_SOURCE,
+            _core_edited(_CORE_SLASH + "    local spare = message\n    ns.CrewCommand(spare)\n"),
+        ),
+    }
+    missed = [
+        tag for tag, (crew, core_text) in cases.items() if not _crew_full_scan(crew, core_text)
+    ]
+    assert not missed, missed
+
+
 def test_m19_01_constructed_calls_behind_the_gate_pass() -> None:
     """Controls: a raid member's level read inside the gate and tested, and
     the base source's pcall literal, slash handler and book stores, are
@@ -7598,7 +8245,17 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
             _concat_index_problems(_CREW_PATH, tokenize(text))
             + _concat_value_problems(_CREW_PATH, text)
         ),
+        "PAIRS": lambda text: _pairs_problems(_CREW_PATH, tokenize(text)),
     }
+    # Fix round 2, item 3: only the book's two tables, and nothing around them.
+    cases["PAIRS"] = [
+        "    for k in pairs(WowLabCrewDB.players.extra) do\n    end\n",
+        '    for k in pairs(WowLabCrewDB["players"]) do\n    end\n',
+        "    for k in next, WowLabCrewDB.players do\n    end\n    local n = next(WowLabCrewDB.players)\n",
+        "    local walk = WowLabCrewDB.players or {}\n    for k in pairs(walk) do\n    end\n",
+        "    local walk = WowLabCrewDB.players\n    walk = ns\n    for k in pairs(walk) do\n    end\n",
+        "    for k in pairs(ns) do\n    end\n",
+    ]
     missed = []
     for rule, lines in cases.items():
         for line in lines:
