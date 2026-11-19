@@ -843,7 +843,7 @@ def _summary_names(
     """Each flavor with a recorded character whose name tables are not all
     cached for its version (M18-02): the cache is read, nothing is fetched."""
     recorded = {r.flavor for r in rows if r.state == "recorded"}
-    given = str(root) if root is not None and str(root) != "" else None
+    given = str(root) if root is not None else None
     out: list[CharSummaryNames] = []
     for f in flavors:
         if f.folder not in recorded or f.version is None:

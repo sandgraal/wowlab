@@ -1764,7 +1764,7 @@ def _detail(
         return None, None, [], None, []
     under = [judged.flavor_folder] if judged.base == "flavor" and judged.flavor_folder else []
     target = Path(inst.root).joinpath(*under, *parts)
-    given_root = str(inst.root) if root is not None and str(root) != "" else None
+    given_root = str(inst.root) if root is not None else None
     stat_ = pathfacts.path_stat(target)
     facts: pathfacts.SnapshotFacts | None = None
     if lay is not None and judged.flavor_folder and parts and not folder:
