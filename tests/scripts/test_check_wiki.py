@@ -360,6 +360,35 @@ def test_constructed_a_name_realm_pair_is_not_personal_data(tmp_path: Path, line
 
 
 @pytest.mark.parametrize(
+    "line",
+    [
+        "The player GUID Player-1234-0ABCDEF0 in prose.",
+        "In code: `Player-9999-00000001`, and in a log line `Player-9998-00000001`.",
+    ],
+    ids=["prose", "code"],
+)
+def test_constructed_a_player_guid_is_not_matched(tmp_path: Path, line: str) -> None:
+    """constructed: the gate has no `Player-<n>-<hex>` matcher (M13-64, owner decision 2026-11-18).
+
+    The GUIDs are invented placeholders. Pins the current behaviour: a GUID is
+    not personal data to the gate, so it passes and exits 0.
+    """
+    assert cw.personal_kinds(line) == []
+    root = _build(tmp_path / "wiki", Extra=f"# Extra\n\n{line}\n")
+    assert _failures(root) == []
+    assert cw.main([str(root)]) == cw.EXIT_OK
+
+
+def test_constructed_a_link_to_a_player_guid_fails_only_as_a_broken_link(tmp_path: Path) -> None:
+    """constructed: `[x](Player-…)` is a link to no page (exit 1), not personal data (M13-64)."""
+    root = _build(tmp_path / "wiki", Extra="# Extra\n\n[x](Player-1234-0ABCDEF0)\n")
+    assert _failures(root) == [
+        "Extra.md:3: link to a page that does not exist: Player-1234-0ABCDEF0"
+    ]
+    assert cw.main([str(root)]) == cw.EXIT_FAILURES
+
+
+@pytest.mark.parametrize(
     ("line", "kind"),
     [
         ("Mine is in `/Users/someone/Games`.", "an absolute home path"),
