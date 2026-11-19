@@ -6055,8 +6055,9 @@ must come from the repository test's fixed list of constructed names.)
   own fields; a typed NAME-REALM is found by walking `players` and
   comparing. *Added 2026-11-19 (M19-10 security review):* a book whose
   `schema` is not the file's pinned `local CREW_SCHEMA = 1` is left alone:
-  `crewOn`, `crewLoaded` and the head of `ns.CrewCommand` test it, and no
-  other function writes into any table it did not build.
+  `crewOn`, `crewLoaded` and the head of `ns.CrewCommand` test it (the
+  handler then prints one fixed line of the addon's wording and returns),
+  and no other function writes into any table it did not build.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
