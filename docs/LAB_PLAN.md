@@ -6051,7 +6051,9 @@ must come from the repository test's fixed list of constructed names.)
   Core.lua's slash handler is the one caller, as `ns.CrewCommand(message)`.
   The M11-13 check is not relaxed. M19-10 inherits these rules and adds no
   relaxation and no test entry. Rating the target and `crew who` do nothing
-  while off or in combat.
+  while off or in combat. Left to the M11-13 check and review: an entry's
+  own fields; a typed NAME-REALM is found by walking `players` and
+  comparing.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
