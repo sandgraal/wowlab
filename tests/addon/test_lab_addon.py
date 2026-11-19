@@ -259,6 +259,24 @@ NON_LITERAL_UNIT = "<a local name as the unit>"
 GATED = "<a function behind the on and combat tests>"
 CREW_COMMAND = "ns.CrewCommand"
 CREW_ON_CALLS = "<Crew.lua's ns.On calls, as _crew_on_call_ok allows them>"
+# Fix round 3: "NONE" (UnitGroupRolesAssigned's no-role answer) and "none"
+# (GetInstanceInfo's open-world type) look like unit tokens; in Crew.lua they
+# may be compared with `==` / `~=`, nothing else.
+CREW_COMPARANDS = frozenset({"NONE", "none"})
+# The one handler that needs no gate: at ADDON_LOADED for this addon it
+# raises the book's probe, only when a book already exists (whether or not it
+# is on: §20.1 "A failed load" raises it "like §13.1's", at every load), and
+# it creates nothing. Pinned whole, registered only at file level for
+# ADDON_LOADED.
+CREW_PROBE_EVENT = "ADDON_LOADED"
+CREW_PROBE = (
+    "local function crewLoaded ( _ , name ) "
+    'if name ~= "WowLab" or type ( WowLabCrewDB ) ~= "table" then return end '
+    "local prior = WowLabCrewDB . probe "
+    'if type ( prior ) == "table" and type ( prior . loads ) == "number" then '
+    "WowLabCrewDB . probe = { loads = prior . loads + 1 } "
+    "else WowLabCrewDB . probe = { loads = 1 , lost = true } end end"
+)
 # The slash handler's first statement, pinned: the typed text is a string or
 # nothing happens, so the argument can carry no table or function in or out.
 CREW_COMMAND_HEAD = (
@@ -273,10 +291,12 @@ CREW_RELAXED: dict[str, frozenset[str]] = {
     "CLOCK": frozenset({"time", "date"}),
     "NAME_FIELDS": frozenset({"name", "realm"}),
     "STD_PRIVACY": CREW_NAME_CALLS,
-    "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT}),
+    "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS}),
     "CONCAT_INDEX": frozenset({"-"}),
     "SAVED_VARIABLES": frozenset({CREW_DB}),
-    "SECTION_SCAN": frozenset({GATED, "crewBlocked", "secret", CREW_COMMAND, CREW_ON_CALLS}),
+    "SECTION_SCAN": frozenset(
+        {GATED, "crewBlocked", "secret", "crewLoaded", CREW_COMMAND, CREW_ON_CALLS}
+    ),
     "PAIRS": frozenset({f"{CREW_DB}.players", f"{CREW_DB}.current"}),
 }
 # What Crew.lua may hand to or take from the rest of the addon: the slash
@@ -693,7 +713,7 @@ def _unit_argument_ok(path: Path, args: list[Token]) -> bool:
     Crew.lua one of its literals or a plain local name?"""
     if len(args) != 2 or args[1].text not in {",", ")"}:
         return False
-    relaxed = _relaxed(path, "UNIT_ARGUMENT")
+    relaxed = _relaxed(path, "UNIT_ARGUMENT") - CREW_COMPARANDS
     if args[0].kind == "string":
         return args[0].text == "player" or args[0].text in relaxed
     return (
@@ -714,10 +734,21 @@ def _unit_argument_problems(path: Path, tokens: list[Token]) -> list[str]:
     literals = _relaxed(path, "UNIT_ARGUMENT")
     bad = []
     for i, t in enumerate(tokens):
+        # Crew.lua: "NONE" (a role) and "none" (an instance type) only as a
+        # comparand of == or ~=, never anywhere a unit could be read from.
+        comparand = (
+            t.kind == "string"
+            and t.text in literals & CREW_COMPARANDS
+            and (
+                tokens[i - 1].text in {"==", "~="}
+                or (i + 1 < len(tokens) and tokens[i + 1].text in {"==", "~="})
+            )
+        )
         if (
             t.kind == "string"
             and t.text != "player"
-            and t.text not in literals
+            and (t.text not in literals or t.text in CREW_COMPARANDS)
+            and not comparand
             and UNIT_TOKEN.match(t.text)
         ):
             bad.append(f"{_where(path, t)} unit-token literal {t.text!r}")
@@ -4677,6 +4708,11 @@ class _SectionScan:
             return False
         if ref.function in {"crewBlocked", "secret"} & allowed:
             return not ref.given  # pinned whole
+        if ref.function == "crewLoaded" and "crewLoaded" in allowed:
+            # The pinned probe handler: its `name` is the loaded addon's.
+            flow = self.flows[ref.file]
+            head = ref.head
+            return _render(flow.tokens[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
         if ref.function == CREW_COMMAND and CREW_COMMAND in allowed:
             return ref.given or ref.api in {"time", "date"}
         return GATED in allowed and _crew_gated(self.flows[ref.file], ref.head)
@@ -6861,12 +6897,16 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
     fn = flow.function_at(k)
     if fn is not None:
         return flow.labels.get(fn.head) == CREW_COMMAND or _crew_gated(flow, fn.head)
-    top = [
+    # Fix round 3: at most one file-level call per event, each for an event
+    # Core.lua registers at file level.
+    same_event = [
         j
-        for j in range(len(t) - 3)
-        if _render(t[j : j + 4]) == "ns . On (" and flow.function_at(j) is None
+        for j in range(len(t) - 4)
+        if _render(t[j : j + 4]) == "ns . On ("
+        and flow.function_at(j) is None
+        and t[j + 4].text == t[k + 4].text
     ]
-    if top != [k] or not (
+    if same_event != [k] or not (
         t[k + 4].kind == "string"
         and t[k + 4].text in core_events
         and t[k + 5].text == ","
@@ -6875,7 +6915,22 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
     ):
         return False
     decl = flow.resolve(t[k + 6].text, k)
-    return decl is not None and decl.function is not None and _crew_gated(flow, decl.function)
+    if decl is None or decl.function is None:
+        return False
+    if any(
+        r.rstrip(".") == t[k + 6].text and flow.resolve(r.rstrip("."), ts) is decl
+        for r, ts in flow.rebound
+    ):
+        return False  # the handler's local assigned another function
+    if _crew_gated(flow, decl.function):
+        return True
+    # The ungated one: the pinned probe handler, for ADDON_LOADED only.
+    head = decl.function
+    return (
+        t[k + 4].text == CREW_PROBE_EVENT
+        and t[k + 6].text == "crewLoaded"
+        and _render(t[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
+    )
 
 
 def _pcall_literal(t: list[Token], head: int) -> bool:
@@ -7423,6 +7478,14 @@ end
             if not secret(classFile) then
                 entry.class = classFile
             end
+            local role = UnitGroupRolesAssigned(unit)
+            if not secret(role) and role ~= "NONE" then
+                entry.role = role
+            end
+            local _, kind = GetInstanceInfo()
+            if kind ~= "none" then
+                entry.where_kind = kind
+            end
             local other = UnitName(unit)
             if not secret(other) and other ~= nil then
                 entry.alias = other
@@ -7492,6 +7555,19 @@ local function onWorld()
     ns.On("GROUP_ROSTER_UPDATE", onRoster)
 end
 
+local function crewLoaded(_, name)
+    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then
+        return
+    end
+    local prior = WowLabCrewDB.probe
+    if type(prior) == "table" and type(prior.loads) == "number" then
+        WowLabCrewDB.probe = { loads = prior.loads + 1 }
+    else
+        WowLabCrewDB.probe = { loads = 1, lost = true }
+    end
+end
+
+ns.On("ADDON_LOADED", crewLoaded)
 ns.On("PLAYER_ENTERING_WORLD", onWorld)
 
 """
@@ -7954,14 +8030,52 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
             "local function leak(...)\n    print(...)\nend\n\nlocal function countBook()\n",
         )
     ],
+    # Fix round 3, item 3: the ungated probe handler, pinned.
+    "the probe handler creating the book": [
+        (
+            '    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then\n        return\n    end\n',
+            '    if name ~= "WowLab" then\n        return\n    end\n'
+            '    if type(WowLabCrewDB) ~= "table" then\n        WowLabCrewDB = {}\n    end\n',
+        )
+    ],
+    "the probe handler counting other addons": [('    if name ~= "WowLab" or type', "    if type")],
+    "the probe handler turning the book on": [
+        (
+            "        WowLabCrewDB.probe = { loads = 1, lost = true }\n",
+            "        WowLabCrewDB.on = true\n",
+        )
+    ],
+    "the probe handler for another event": [
+        ('ns.On("ADDON_LOADED", crewLoaded)\n', 'ns.On("PLAYER_LOGOUT", crewLoaded)\n')
+    ],
+    "a second ADDON_LOADED registration": [
+        (
+            'ns.On("ADDON_LOADED", crewLoaded)\n',
+            'ns.On("ADDON_LOADED", crewLoaded)\nns.On("ADDON_LOADED", onWorld)\n',
+        )
+    ],
+    "the probe handler's local assigned again": [
+        (
+            'ns.On("ADDON_LOADED", crewLoaded)\n',
+            'crewLoaded = onWorld\nns.On("ADDON_LOADED", crewLoaded)\n',
+        )
+    ],
+    "an ungated handler that is not the probe": [
+        (
+            'ns.On("ADDON_LOADED", crewLoaded)\n',
+            "local function counter()\n    WowLabCrewDB.probe = 1\nend\n\n"
+            'ns.On("ADDON_LOADED", counter)\n',
+        )
+    ],
     # Item 4: where Crew.lua may register an event.
     "a roster event registered at load": [
         ('ns.On("PLAYER_ENTERING_WORLD", onWorld)\n', 'ns.On("GROUP_ROSTER_UPDATE", onRoster)\n')
     ],
-    "a second file-level registration": [
+    # Fix round 3: one file-level registration per event, not one in all.
+    "a second file-level registration of one event": [
         (
             'ns.On("PLAYER_ENTERING_WORLD", onWorld)\n',
-            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\nns.On("PLAYER_LOGOUT", onWorld)\n',
+            'ns.On("PLAYER_ENTERING_WORLD", onWorld)\nns.On("PLAYER_ENTERING_WORLD", onRoster)\n',
         )
     ],
     "a file-level handler without the gate": [
@@ -8097,11 +8211,67 @@ def _core_edited(replacement: str, found: str = _CORE_SLASH) -> str:
     return text.replace(found, replacement, 1)
 
 
+def _real_core_calls() -> int:
+    """How many lines of the real Core.lua name CrewCommand."""
+    core = ADDON / "Core.lua"
+    tokens = _tokens(core)
+    return len({x.line for x in tokens if "CrewCommand" in x.text})
+
+
+def _core_with_call() -> str:
+    """Core.lua holding the one pinned call: the real file once it has it
+    (M19-10 adds it), otherwise the real file with it inserted. Fix round 3:
+    correct before and after M19-10."""
+    if _real_core_calls():
+        return (ADDON / "Core.lua").read_text(encoding="utf-8")
+    return _core_edited(_CORE_CREW_CALL)
+
+
+def test_m19_01_the_real_core_lua_calls_the_crew_command_at_most_once() -> None:
+    """Fix round 3: none before M19-10, then exactly the one pinned call."""
+    core = ADDON / "Core.lua"
+    calls = _real_core_calls()
+    assert calls <= 1, f"Core.lua names CrewCommand on {calls} lines"
+    if calls:
+        assert len(_crew_command_call_lines(_Flow(core, _tokens(core)))) == 1
+
+
+def test_m19_01_the_core_call_tests_hold_once_core_lua_has_the_call() -> None:
+    """Fix round 3: the state after M19-10, on a constructed copy of the
+    addon whose Core.lua already holds the pinned call. The tests that use
+    Core.lua pass on it unchanged, and a second call fails."""
+    global ADDON
+    real = ADDON
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        copy = Path(tmp) / "WowLab"
+        copy.mkdir()
+        for source in real.iterdir():
+            if source.is_file():
+                (copy / source.name).write_bytes(source.read_bytes())
+        core = copy / "Core.lua"
+        core.write_text(
+            core.read_text("utf-8").replace(_CORE_SLASH, _CORE_CREW_CALL, 1), encoding="utf-8"
+        )
+        ADDON = copy
+        try:
+            assert _real_core_calls() == 1
+            test_m19_01_the_real_core_lua_calls_the_crew_command_at_most_once()
+            test_m19_01_only_core_s_slash_handler_calls_the_crew_command()
+            test_m19_01_the_whole_section_scan_takes_a_constructed_crew_lua()
+            core.write_text(_core_edited(_CORE_CREW_CALL), encoding="utf-8")
+            with pytest.raises(AssertionError):
+                test_m19_01_the_real_core_lua_calls_the_crew_command_at_most_once()
+        finally:
+            ADDON = real
+
+
 def test_m19_01_only_core_s_slash_handler_calls_the_crew_command() -> None:
     """Fix round 2, item 2. Constructed: Core.lua with the one pinned call
-    passes; the call anywhere else, in another shape, or twice, fails."""
+    passes; the call anywhere else, in another shape, or twice, fails (each
+    refused case adds a call, so it is refused whether or not the real file
+    already holds one)."""
     core = Path("Core.lua")
-    assert _crew_command_call_problems(core, tokenize(_core_edited(_CORE_CREW_CALL))) == []
+    assert _crew_command_call_problems(core, tokenize(_core_with_call())) == []
     refused = {
         "from Gear.lua": (Path("Gear.lua"), 'ns.CrewCommand("on")\n'),
         "from Identity.lua, as a string": (
@@ -8155,13 +8325,13 @@ def test_m19_01_the_whole_section_scan_takes_a_constructed_crew_lua() -> None:
     """Control (fix round 2, items 2 and 4): the real addon, Core.lua with the
     pinned call, and the constructed Crew.lua with its three ns.On calls
     pass the M11-37 scan, pinned callers included, with no table edited."""
-    assert _crew_full_scan(_CREW_SOURCE, _core_edited(_CORE_CREW_CALL)) == []
+    assert _crew_full_scan(_CREW_SOURCE, _core_with_call()) == []
 
 
 def test_m19_01_the_whole_section_scan_refuses_crew_lua_edits() -> None:
     """Constructed: an ungated registration, a roster event at load, and the
     typed text used twice in Core.lua each fail the scan."""
-    core = _core_edited(_CORE_CREW_CALL)
+    core = _core_with_call()
     cases = {
         "a registration in an ungated function": (
             _crew_edited(_CREW_GATE_CASES["a registration in an ungated function"]),
@@ -8200,6 +8370,23 @@ def test_m19_01_constructed_calls_behind_the_gate_pass() -> None:
     assert _crew_rules(_CREW_PATH, text)["UNIT_ARGUMENT"] == []
 
 
+def test_m19_01_one_file_level_registration_per_core_event_passes() -> None:
+    """Control (fix round 3, item 3): the base source registers the probe
+    at ADDON_LOADED and the gated pickup at PLAYER_ENTERING_WORLD; a third,
+    gated, at PLAYER_LOGOUT is accepted too, by Crew.lua's rules and the whole
+    M11-37 scan."""
+    text = _crew_edited(
+        [
+            (
+                'ns.On("PLAYER_ENTERING_WORLD", onWorld)\n',
+                'ns.On("PLAYER_ENTERING_WORLD", onWorld)\nns.On("PLAYER_LOGOUT", onRoster)\n',
+            )
+        ]
+    )
+    assert _crew_problems(_CREW_PATH, text) == []
+    assert _crew_full_scan(text, _core_with_call()) == []
+
+
 def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
     """Constructed: what each relaxation does not let through, in Crew.lua."""
     cases = {
@@ -8219,6 +8406,17 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
             "    local x = UnitClass(nil)\n",
             '    local x = "mouseover"\n',
             '    local x = ns.Fn(ns, "UnitClass")\n',
+            # Fix round 3, item 2: "NONE" and "none" only as comparands.
+            '    local x = UnitName("NONE")\n',
+            '    local x = UnitLevel("none")\n',
+            '    local x = "none"\n',
+            '    WowLabCrewDB.role = "NONE"\n',
+            '    local x = f("none", 1)\n',
+            '    local x = { "NONE" }\n',
+        ],
+        "UNIT_ARGUMENT_CONTROL": [
+            '    local x = role == "NONE"\n',
+            '    local x = "none" ~= kind\n',
         ],
         "CONCAT_INDEX": [
             '    local x = book["Unit" .. "Name"]\n',
@@ -8258,8 +8456,9 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
     ]
     missed = []
     for rule, lines in cases.items():
+        control = rule.endswith("_CONTROL")  # each of these must pass
         for line in lines:
             text = _CREW_SOURCE.replace(_CREW_READ, _CREW_READ + line)
-            if not rules[rule](text):
+            if bool(rules[rule.removesuffix("_CONTROL")](text)) == control:
                 missed.append((rule, line.strip()))
     assert not missed, missed
