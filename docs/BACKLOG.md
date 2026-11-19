@@ -1378,7 +1378,7 @@ The Character tab renders the field under the gear table as one button, **See it
 
 ---
 
-## [ ] M15-10 — `compositor`: the body texture
+## [x] M15-10 — `compositor`: the body texture
 **Size:** M · **Depends on:** M15-07, M15-09, M15-13
 
 §17.5. `wowlab_core.compositor` composes the body texture from the plan's layers into the layout's canvas: section rectangles, layer order, the blend modes (alpha-over, multiply, overlay, screen; others refused with the mode named, **[verify]**), rows as byte slices; hair and eyes left as separate textures. Target: a 2048×1024 composite in ≤ 3 s on the owner's machine.
@@ -1443,7 +1443,7 @@ The owner's install is the launch client now (`_forever_`, product `wowf`). The 
 
 ---
 
-## [ ] M15-18 — `test_perf_budget` fails while the game client runs
+## [x] M15-18 — `test_perf_budget` fails while the game client runs
 **Size:** XS · **Depends on:** nothing · **Sources:** the reviews of #600 and #601 (2026-11-18)
 
 `tests/scripts/test_perf_budget.py::test_constructed_the_pipeline_runs_on_a_small_tree` runs `scripts/perf_budget.py`, whose child processes (`wowlab snap restore … --dry-run` and the gate driver) ask the real process list: the sandbox redirects the home, the user data folders and the install, not the process probe. With the owner's client open the gate refuses ("the game client is running") and the test fails, on `main` too. No test may depend on the real machine (`docs/LAB_PLAN.md` §6.7).
@@ -1454,7 +1454,7 @@ The stub reaches the children from test code only: the test prepends a temporary
 
 ---
 
-## [ ] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
+## [x] M15-19 — `lab (windows)` is red on `main`: the L1 sweep sees folder times move
 **Size:** S · **Depends on:** nothing · **Sources:** the owner's cleanup, 2026-11-18; Windows runs on `main` since 2026-11-17 02:46Z
 
 `lab (windows)` has been red on `main` since 2026-11-17 02:46Z (last green: run 44003764232 at 8cf5592). It first failed on another test (`test_positive_control_keybinds_after_the_open_leaves_the_kept_page`, through 577bc24); the L1-sweep failures began at run 44156145657 (e1a2e45), the first completed run after #581 (M16-38) added the sweep, which has never been green on Windows. Run 44381681237 at cbd5799: 12 failed, 11,405 passed, 43 min 49 s, all twelve in `lab/core/tests/test_l1_sweep_live.py`, the sweep's own detection tests among them (added and removed paths, a directory time change, a same-size same-time content change), which fail because extra folder-time lines appear in their expected lists: on the constructed install the sweep reports "the install changed (L1)" because folder modification times (`_forever_`, `Data`, `World of Warcraft.app/…`) moved by a millisecond or two between its two looks, so tests that expect a named failure ("did not end as a read may: … exit 2") get the L1 one first. Find why the folder times move on Windows (the tree still settling when the first look is taken, a reader that opens a folder in a way NTFS records, or the sweep's own bookkeeping) and fix the cause; a comparison that ignores folder times is acceptable only if the cause is shown to be the file system's and the sweep still catches a file created, removed or rewritten inside the install.
@@ -1463,7 +1463,7 @@ The stub reaches the children from test code only: the test prepends a temporary
 
 ---
 
-## [ ] M15-20 — typer 0.29: the command reference generator breaks, and one CLI message changes
+## [x] M15-20 — typer 0.29: the command reference generator breaks, and one CLI message changes
 **Size:** S · **Depends on:** nothing · **Sources:** dependabot #568 (2026-11-16), red on "Lint, typecheck, tests"
 
 With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and 13 errors on ubuntu, `lab (macos)` red too). Nearly all are one error, `AttributeError: 'TyperOption' object has no attribute 'type'`, through `scripts/gen_command_reference.py`, reached from the `check_wiki*`, `gen_command_reference`, `change_sentence` and five review-probe tests. One CLI test differs for another reason: `lab/core/tests/test_cli_uncaught.py::test_a_usage_error_with_nothing_to_escape_prints_as_click_does[bad-value]`, where typer now prints "Input should be a valid integer, unable to parse string as an integer" for the old "… int range." message. Make `scripts/gen_command_reference.py`, the UI's command-tree reader if it reads the same attributes, and the CLI's usage-error path work on 0.29.1, then take the bump (`pyproject.toml`, `uv.lock`) in the same PR and close #568. Text and `--json` output stay byte-identical on every command; the generated command reference does not change except where typer's own help text did, each such line named in the PR.
