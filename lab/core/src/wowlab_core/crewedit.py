@@ -50,7 +50,8 @@ def check_note(text: str) -> str | None:
     from both ends, None when nothing is left (the note is dropped). Refused
     (`CrewEditError`): text that is not valid UTF-8, holds a control
     character (C0, DEL or C1), an invisible formatting character (Unicode
-    category Cf: bidi controls, zero-width characters; the addon prints a
+    categories Cf, Zl and Zp: bidi controls, zero-width characters, the line
+    and paragraph separators U+2028 and U+2029; the addon prints a
     note as it is, so one would reorder or hide part of that line) or `|`
     (the game's escape character), or is
     over `NOTE_MAX_BYTES` bytes after trimming (never cut: a cut can split a
@@ -66,11 +67,11 @@ def check_note(text: str) -> str | None:
             "The note holds a control character (a tab or a line break, say), which a note "
             "cannot hold; nothing was changed."
         )
-    if any(unicodedata.category(c) == "Cf" for c in trimmed):
+    if any(unicodedata.category(c) in ("Cf", "Zl", "Zp") for c in trimmed):
         raise CrewEditError(
             "The note holds an invisible formatting character (one that reverses the "
-            "direction of text, or a zero-width one), which would change how the game shows "
-            "the line it prints; nothing was changed."
+            "direction of text, a zero-width one, or a line or paragraph separator), which "
+            "would change how the game shows the line it prints; nothing was changed."
         )
     if "|" in trimmed:
         raise CrewEditError(
@@ -429,24 +430,93 @@ class NameSpot:
         self.field = field
 
 
+# What §20.2's matching rule leaves out of a typed name (as `crewbook.fold`).
+_IGNORED = frozenset(" '" + chr(0x2019))
+
+
+def _word_char(c: str) -> bool:
+    """A letter or a digit, in any script (Unicode categories L and N)."""
+    return unicodedata.category(c)[0] in ("L", "N")
+
+
+def _folded(text: str, fold: bool) -> tuple[str, list[int]]:
+    """`text` (NFC) folded char by char as `crewbook.fold` folds it (case
+    folding, spaces and the two apostrophes left out), with the index in
+    the NFC text each folded character came from. Without `fold`, the text
+    as it is."""
+    t = unicodedata.normalize("NFC", text)
+    if not fold:
+        return t, list(range(len(t)))
+    chars: list[str] = []
+    owner: list[int] = []
+    for i, c in enumerate(t):
+        if c in _IGNORED:
+            continue
+        for f in c.casefold():
+            chars.append(f)
+            owner.append(i)
+    return "".join(chars), owner
+
+
+def _bounded_in(text: str, name: str, *, fold: bool = True) -> bool:
+    """Whether `name` occurs in `text` (under §20.2's rule when `fold`) with
+    no letter or digit directly before or after it in `text`: "Bob-Realm"
+    is in "met Bob-Realm, twice" but not in "Jimbob-Realm" or "Bob-Realmx"."""
+    hay, owner = _folded(text, fold)
+    want, _ = _folded(name, fold)
+    if not want:
+        return False
+    t = unicodedata.normalize("NFC", text) if fold else hay
+    at = hay.find(want)
+    while at >= 0:
+        first, last = owner[at], owner[at + len(want) - 1]
+        before = t[first - 1] if first > 0 else ""
+        after = t[last + 1] if last + 1 < len(t) else ""
+        if not (before and _word_char(before)) and not (after and _word_char(after)):
+            return True
+        at = hay.find(want, at + 1)
+    return False
+
+
+def _book_key(path: tuple[object, ...]) -> bool:
+    """Whether a loaded string is a player key of the book (in `players` or
+    `current`)."""
+    return (
+        len(path) == 4
+        and path[0] == crewbook.CREW_VARIABLE
+        and path[1] in (_PLAYERS, _CURRENT)
+        and path[3] is None
+    )
+
+
 def names_left(data: bytes, keys: Collection[str]) -> list[NameSpot]:
-    """Where any of `keys` is still in `data`: its bytes anywhere, or, in
-    any string the file loads as (keys and values; an escaped spelling
-    included), the name under §20.2's matching rule (`crewbook.fold`: NFC,
-    case folding, spaces and the two apostrophes ignored). Empty when none
+    """Where any of `keys` is still in `data`, as the same name under §20.2's
+    matching rule (`crewbook.fold`: NFC, case folding, spaces and the two
+    apostrophes ignored): a player key of the book when its whole key folds
+    the same; any other string the file loads as (keys and values, an
+    escaped spelling included: a note, a guild or instance name, another
+    variable) when the name is in it with no letter or digit directly
+    before or after it; and the bytes of the file, so bounded, for what the
+    file does not load (a comment). A name inside a Lua comment in another
+    spelling, or split across two strings, is not found. Empty when none
     is left."""
-    raw = [k for k in keys if k.encode("utf-8", "surrogateescape") in data]
-    wanted = {crewbook.fold(k) for k in keys}
-    wanted.discard("")
+    wanted = [k for k in keys if crewbook.fold(k)]
+    folded = {crewbook.fold(k) for k in wanted}
     spots: list[NameSpot] = []
     loaded = luadata.parse(data).to_python()
     for path, text in _strings(loaded, ()):
-        folded = crewbook.fold(text)
-        if not any(w in folded for w in wanted):
-            continue
-        spots.append(_spot(path))
-    if raw and not spots:
-        spots.append(NameSpot(None, None))
+        if _book_key(path):
+            if crewbook.fold(text) in folded:
+                spots.append(_spot(path))
+        else:
+            # The cheap test first: most strings hold no form of the name.
+            plain = crewbook.fold(text)
+            if any(f in plain for f in folded) and any(_bounded_in(text, k) for k in wanted):
+                spots.append(_spot(path))
+    if not spots:
+        whole = data.decode("utf-8", "surrogateescape")
+        if any(k in whole and _bounded_in(whole, k, fold=False) for k in wanted):
+            spots.append(NameSpot(None, None))
     return spots
 
 

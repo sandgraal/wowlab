@@ -6147,7 +6147,13 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   is none), because the UI reads a pin from fixed report fields that must
   each hold a value. A backup that changed between plan and confirm is
   refused. `crew rate` and `crew note` pin two parts,
-  `target_sha256:written_sha256`.
+  `target_sha256:written_sha256`. A forget refuses while the name is still
+  in either file: as a player key that folds the same under §20.2's rule
+  (the whole key), or in any other loaded string (a note, a guild or
+  instance name, an escaped spelling) with no letter or digit directly
+  before or after it. Not found, and accepted: a name inside a Lua comment
+  in another spelling, or split across two notes; the client writes
+  neither.
 - **What these commands never do.** They never create `WowLabCrewDB`,
   never change `on`, and refuse a `schema` they do not know. Their guard
   label, which reaches the journal, the snapshot's message, `snap list`,

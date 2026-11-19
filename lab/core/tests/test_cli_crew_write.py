@@ -889,3 +889,72 @@ def test_the_commands_tab_names_all_ten_and_which_refuse_after_a_change() -> Non
     for command in ("crew forget", "crew rate", "crew note", "macros fix", "addon remove"):
         assert f"<code>{command}</code>" in intro, command
     assert "Six of them refuse to run when something changed after the plan" in intro
+
+
+# ─── fix round 2 (re-check of #630) ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param(lambda: "X" + KEY_A.lower(), id="a-letter-before"),
+        pytest.param(lambda: KEY_A + "x", id="a-letter-after"),
+        pytest.param(lambda: "Jim" + KEY_A, id="a-name-ending-the-same"),
+    ],
+)
+def test_a_different_key_holding_the_name_does_not_block_the_forget_constructed(
+    make: Any, other: Any
+) -> None:
+    key = other()  # assembled at run time from a key of the fixed list
+    env = make(account_file(book({KEY_A: player(), key: player()}, current=[key])))
+    rep = env.report("crew", "forget", KEY_A, "--yes")
+    assert rep.players == [KEY_A]
+    left = crewbook.parse_book(env.live())
+    assert [p.key for p in left.players] == [key] and left.current_count == 1
+
+
+def test_a_true_other_spelling_of_the_key_still_refuses_constructed(make: Any) -> None:
+    twin = KEY_A.upper().replace("-", " - ")
+    data = account_file(book({KEY_A: player(), twin: player()}))
+    env = make(data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1 and "another spelling" in result.stderr
+    assert env.live() == data
+
+
+@pytest.mark.parametrize(
+    ("note", "blocks"),
+    [
+        (lambda: f"met {KEY_A}, twice", True),
+        (lambda: f"({KEY_A.lower()})", True),
+        (lambda: f"met {KEY_A.replace('-', chr(0x2019) + '-')}", True),
+        (lambda: f"met Jim{KEY_A}", False),
+        (lambda: f"met {KEY_A}x", False),
+        (lambda: f"met {KEY_A}7", False),
+        (lambda: f"met {KEY_A}é", False),
+        (lambda: f"met 漢{KEY_A}", False),
+    ],
+)
+def test_a_name_in_a_note_blocks_only_when_bounded_constructed(
+    make: Any, note: Any, blocks: bool
+) -> None:
+    data = _noted_b(note().encode())
+    env = make(data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    if blocks:
+        assert result.exit_code == 1 and "your note about" in result.stderr
+        assert env.live() == data
+    else:
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert crewbook.parse_book(env.live()).players[0].key == KEY_B
+
+
+@pytest.mark.parametrize("char", [chr(0x2028), chr(0x2029)])
+def test_a_note_with_a_line_or_paragraph_separator_is_refused_constructed(
+    make: Any, char: str
+) -> None:
+    data = _three()
+    env = make(data)
+    result = env.run("crew", "note", KEY_A, f"one{char}two", "--yes")
+    assert result.exit_code == 2, (result.stdout, result.stderr)
+    assert env.live() == data and guard.history() == ()
