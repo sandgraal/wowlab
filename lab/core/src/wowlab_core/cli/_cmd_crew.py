@@ -34,6 +34,7 @@ from wowlab_core.cli._common import (
     _listed,
     _Out,
     _plural,
+    _Report,
     _say,
     _say_notes,
     _select_account,
@@ -50,7 +51,9 @@ _CREW_NOTES = [
     "The book knows names, not people: a player who renames or moves realm appears as a new "
     "entry, and someone else may later take a name you rated.",
     "Each game account has its own book, and so does each flavor folder.",
-    "The role is shown only if the group set one.",
+    "The role is the last one a group gave them; which roles this game version reports is "
+    "not yet confirmed.",
+    "The class is the game's internal name for it (MAGE, PRIEST, ...), as the game gave it.",
     "Dates are in this computer's time zone.",
 ]
 
@@ -207,6 +210,10 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
             )
         chosen = holding[0]
     place, book, error = chosen
+    if isinstance(error, crewbook.CrewBookError):
+        # The player's words; a `--json` run's message adds the field.
+        words = f"{error} ({error.detail})" if _Report.json else str(error)
+        raise CliError(words) from None
     if error is not None:
         raise error
     assert book is not None
@@ -261,7 +268,9 @@ def _row(p: crewbook.CrewPlayer) -> str:
     parts = [who or "class not recorded"]
     if p.met is not None:
         parts.append(f"grouped {p.met} {'time' if p.met == 1 else 'times'}")
-    parts.append(f"last {_date(p.last)}" + (f" in {p.where}" if p.where else ""))
+    parts.append(f"last {_date(p.last)}")
+    if p.where:
+        parts.append(f"last instance recorded: {p.where}")
     if p.rating:
         parts.append(f"rated {p.rating}")
     if p.note:
@@ -302,8 +311,8 @@ def crew_list(
         str | None,
         typer.Option(
             "--search",
-            help="Only players whose name, guild or note holds this text (case, spaces and "
-            "apostrophes ignored).",
+            help="Only players whose name, realm, guild or note holds this text (case, "
+            "spaces and apostrophes ignored).",
         ),
     ] = None,
     sort: SortOpt = "last",
@@ -318,6 +327,12 @@ def crew_list(
 
     \f
     JSON: CrewReport."""
+    if search is not None and not crewbook.fold(search):
+        raise CliError(
+            "--search holds only spaces and apostrophes, which a search ignores; "
+            "give some letters of a name, realm, guild or note",
+            EXIT_USAGE,
+        )
     opened = _open_book(root, flavor, account)
     book = opened.book
     shown = crewbook.ordered(
@@ -365,23 +380,24 @@ def _field_lines(p: crewbook.CrewPlayer) -> list[str]:
     def said(value: object) -> str:
         return "not recorded" if value is None or value == "" else str(value)
 
-    where = (
-        f"{p.where} (instance {said(p.where_id)})"
-        if p.where
-        else "not in an instance, or not recorded"
-    )
+    # `where` is left out in the open world and kept when a later read was
+    # refused (§20.1), so it can be from an earlier group than `last`.
+    where = f"{p.where} (instance id {said(p.where_id)})" if p.where else "no instance recorded"
+    # `current` holds every key counted since the group formed, so a player
+    # who left it before the save still counts.
+    counted = "yes" if p.in_current_group else "no"
     return [
-        f"  Class: {said(p.class_token)}",
-        f"  Level: {said(p.level)}",
-        f"  Role (if the group set one): {said(p.role)}",
-        f"  Guild: {said(p.guild)}",
+        f"  Class (the game's internal name): {said(p.class_token)}",
+        f"  Level when last grouped: {said(p.level)}",
+        f"  Last role a group gave them: {said(p.role)}",
+        f"  Guild last seen (kept if they left it): {said(p.guild)}",
         f"  Groups shared: {said(p.met)}",
         f"  First grouped: {_date(p.first)}",
         f"  Last grouped: {_date(p.last)}",
-        f"  Where you last grouped: {where}",
+        f"  Last instance recorded: {where}",
         f"  Your rating: {p.rating or 'none'}",
         f"  Your note: {p.note or 'none'}",
-        f"  In your group at the last save: {'yes' if p.in_current_group else 'no'}",
+        f"  Counted in the group you were in at the last save: {counted}",
     ]
 
 

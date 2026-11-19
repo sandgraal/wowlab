@@ -106,20 +106,27 @@ def test_constructed_an_empty_book_reads_with_no_player() -> None:
 @pytest.mark.parametrize("schema", [2, 0, 9999])
 def test_constructed_an_unknown_schema_is_refused_with_its_number(schema: int) -> None:
     data = account_file(book({KEY_A: player()}, schema=schema))
-    with pytest.raises(
-        crewbook.CrewBookError, match=rf"is schema {schema}, .* knows schema 1 only"
-    ):
+    with pytest.raises(crewbook.CrewBookError) as caught:
         crewbook.parse_book(data)
+    assert str(caught.value) == (
+        "This crew book was written by another version of the lab-addon (book version "
+        f"{schema}; this wowlab reads version 1). Nothing was read; updating wowlab may read it."
+    )
+    assert (
+        caught.value.detail == f"WowLabCrewDB is schema {schema}; this reader knows schema 1 only"
+    )
 
 
 @pytest.mark.parametrize(
-    ("schema", "words"),
-    [("1", "not a whole number"), (1.5, "not a whole number"), (10**6, "not a whole number")],
+    "schema",
+    ["1", 1.5, 10**6],
     ids=["text_constructed", "fraction_constructed", "huge_constructed"],
 )
-def test_constructed_a_schema_that_is_no_number_is_refused(schema: object, words: str) -> None:
-    with pytest.raises(crewbook.CrewBookError, match=words):
+def test_constructed_a_schema_that_is_no_number_is_refused(schema: object) -> None:
+    with pytest.raises(crewbook.CrewBookError) as caught:
         crewbook.parse_book(account_file(book({}, schema=schema)))
+    assert str(caught.value) == "This crew book's version number is not readable. Nothing was read."
+    assert "not a whole number" in caught.value.detail
 
 
 def test_constructed_malformed_entries_are_listed_as_unread_and_the_rest_read() -> None:
@@ -164,10 +171,14 @@ def test_constructed_unknown_fields_are_kept_by_name() -> None:
 
 
 def test_constructed_a_top_level_that_does_not_fit_is_refused() -> None:
-    with pytest.raises(crewbook.CrewBookError, match="players is not a table"):
+    with pytest.raises(crewbook.CrewBookError, match="player list is not readable") as caught:
         crewbook.parse_book(account_file(book(3)))
-    with pytest.raises(crewbook.CrewBookError, match="on is neither true nor false"):
+    assert caught.value.detail.endswith(".players is not a table")
+    with pytest.raises(crewbook.CrewBookError, match="on/off setting is not readable") as caught:
         crewbook.parse_book(account_file(book({}, on="yes")))  # type: ignore[arg-type]
+    assert caught.value.detail.endswith(".on is neither true nor false")
+    for error in (caught.value,):
+        assert "WowLabCrewDB" not in str(error)
 
 
 # ─── hostile text ────────────────────────────────────────────────────────────

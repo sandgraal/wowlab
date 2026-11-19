@@ -46,6 +46,7 @@ from _user_dirs import redirect_user_dirs
 runner = CliRunner()
 AS_OF = "as of your last logout or /reload"
 SECOND = "LABACCOUNTB"  # a constructed second account folder
+APOSTROPHE = chr(0x2019)
 
 
 class Env:
@@ -155,7 +156,15 @@ def test_an_unknown_schema_is_refused_with_its_number_constructed(make: Any) -> 
     env = make(book({KEY_A: player()}, schema=7))
     result = env.run("crew", "list")
     assert result.exit_code == 1
-    assert "is schema 7" in result.stderr and "knows schema 1 only" in result.stderr
+    assert result.stderr == (
+        "wowlab: This crew book was written by another version of the lab-addon (book version "
+        "7; this wowlab reads version 1). Nothing was read; updating wowlab may read it.\n"
+    )
+    # `--json` keeps the field it is about.
+    as_json = env.run("crew", "list", "--json")
+    assert as_json.exit_code == 1
+    message = cli.ErrorReport.model_validate_json(as_json.stdout).message
+    assert message.endswith("(WowLabCrewDB is schema 7; this reader knows schema 1 only)")
 
 
 def test_a_malformed_entry_is_listed_as_unread_constructed(make: Any) -> None:
@@ -217,20 +226,47 @@ def test_show_prints_every_field_constructed(make: Any) -> None:
     out = result.stdout
     assert out.splitlines()[0].startswith(f"{KEY_A}, from the crew book of game account")
     for words in (
-        "Class: MAGE",
-        "Level: 60",
-        "Role (if the group set one): HEALER",
+        "Class (the game's internal name): MAGE",
+        "Level when last grouped: 60",
+        "Last role a group gave them: HEALER",
+        "Guild last seen (kept if they left it): Invented Guild of Testing",
         "Groups shared: 3",
         "Your rating: bad",
         f"Your note: {NOTE}",
-        "In your group at the last save: yes",
-        "(instance 2291)",
+        "Counted in the group you were in at the last save: yes",
+        "Last instance recorded: Invented Test Dungeon (instance id 2291)",
     ):
         assert words in out, words
     report = cli.CrewShowReport.model_validate(env.json("crew", "show", KEY_A))
     assert report.player is not None and report.player.key == KEY_A and report.player.note == NOTE
     other = env.run("crew", "show", KEY_B).stdout
-    assert "Where you last grouped: not in an instance, or not recorded" in other
+    assert "Last instance recorded: no instance recorded" in other
+    assert "Counted in the group you were in at the last save: no" in other
+    row = env.run("crew", "list").stdout.splitlines()[1]
+    assert row.endswith("; last instance recorded: Invented Test Dungeon; rated bad; has a note")
+
+
+def test_notes_say_the_role_is_not_yet_confirmed_once_constructed(make: Any) -> None:
+    out = _crew(make).run("crew", "list", "--notes").stdout
+    assert out.count("not yet confirmed") == 1
+    assert "The role is the last one a group gave them" in _flat(out)
+
+
+@pytest.mark.parametrize("text", ["'", "  ", APOSTROPHE + " '", ""])
+def test_a_search_that_ignores_every_character_is_a_usage_error_constructed(
+    make: Any, text: str
+) -> None:
+    env = _crew(make)
+    result = env.run("crew", "list", "--search", text)
+    assert result.exit_code == 2 and "--search holds only spaces and apostrophes" in result.stderr
+
+
+def test_search_matches_the_realm_constructed(make: Any) -> None:
+    env = _crew(make)
+    realm = KEY_C.split("-")[1]
+    assert _keys_in_text(env.run("crew", "list", "--search", realm).stdout) == [KEY_C]
+    help_text = _flat(runner.invoke(cli.app, ["crew", "list", "--help"], terminal_width=200).stdout)
+    assert "name, realm, guild or note" in help_text
 
 
 def test_show_matches_a_typed_name_loosely_constructed(make: Any) -> None:

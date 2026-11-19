@@ -57,7 +57,33 @@ RatedFilter = Literal["good", "bad", "any"]
 
 class CrewBookError(WowlabError, ValueError):
     """The crew book cannot be read: an unknown schema, or a table whose top
-    level does not fit §20.1. The message never quotes text from the file."""
+    level does not fit §20.1. The message (`str`) is in the player's words;
+    `detail` names the field of the file, for `--json` and for code. Neither
+    quotes text from the file."""
+
+    def __init__(self, message: str, detail: str) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+_UNREADABLE = "Nothing was read."
+
+# What each top-level field is, in the player's words.
+_FIELD_WORDS = {
+    "started": "start date",
+    "skipped": "count of skipped reads",
+    "loads": "load count",
+    "players": "player list",
+    "current": "list of the players in your group",
+    "probe": "load record",
+    "on": "on/off setting",
+}
+
+
+def _unreadable(field: str, detail: str) -> CrewBookError:
+    return CrewBookError(
+        f"The crew book's {_FIELD_WORDS[field]} is not readable. {_UNREADABLE}", detail
+    )
 
 
 class _Model(BaseModel):
@@ -187,7 +213,7 @@ def _top_number(table: dict[Any, Any], name: str, high: int = _INT_MAX) -> int |
         return None
     number = _whole(table[name], 0, high)
     if number is None:
-        raise CrewBookError(f"{CREW_VARIABLE}.{name} is not a whole number of 0 or more")
+        raise _unreadable(name, f"{CREW_VARIABLE}.{name} is not a whole number of 0 or more")
     return number
 
 
@@ -196,18 +222,23 @@ def _schema(table: dict[Any, Any]) -> int:
     schema = table.get("schema")
     if schema is None:
         raise CrewBookError(
-            f"{CREW_VARIABLE} has no schema number; this reader knows schema {known}"
+            f"This crew book has no version number, so wowlab cannot tell how to read it. "
+            f"{_UNREADABLE}",
+            f"{CREW_VARIABLE} has no schema; this reader knows schema {known}",
         )
     number = _whole(schema, 0, 9999)
     if number is None:
         raise CrewBookError(
+            f"This crew book's version number is not readable. {_UNREADABLE}",
             f"{CREW_VARIABLE}.schema is not a whole number from 0 to 9999; "
-            f"this reader knows schema {known}"
+            f"this reader knows schema {known}",
         )
     if number not in KNOWN_SCHEMAS:
         raise CrewBookError(
-            f"{CREW_VARIABLE} is schema {number}, and this reader knows schema {known} only: "
-            "it was written by another version of the lab-addon; nothing was read"
+            "This crew book was written by another version of the lab-addon (book version "
+            f"{number}; this wowlab reads version {known}). Nothing was read; updating wowlab "
+            "may read it.",
+            f"{CREW_VARIABLE} is schema {number}; this reader knows schema {known} only",
         )
     return number
 
@@ -221,7 +252,7 @@ def _keyed(value: object, name: str) -> list[tuple[object, object]]:
         return list(value.items())
     if isinstance(value, list):
         return [(i + 1, v) for i, v in enumerate(value)]
-    raise CrewBookError(f"{CREW_VARIABLE}.{name} is not a table")
+    raise _unreadable(name, f"{CREW_VARIABLE}.{name} is not a table")
 
 
 def load_book(value: object) -> CrewBook:
@@ -230,16 +261,19 @@ def load_book(value: object) -> CrewBook:
     if value is None:
         return CrewBook(state="not_turned_on")
     if not isinstance(value, dict):
-        raise CrewBookError(f"{CREW_VARIABLE} is not a table")
+        raise CrewBookError(
+            f"The crew book in this file is not readable. {_UNREADABLE}",
+            f"{CREW_VARIABLE} is not a table",
+        )
     schema = _schema(value)
     on = value.get("on")
     if on is not None and not isinstance(on, bool):
-        raise CrewBookError(f"{CREW_VARIABLE}.on is neither true nor false")
+        raise _unreadable("on", f"{CREW_VARIABLE}.on is neither true nor false")
     probe = value.get("probe")
     loads: int | None = None
     if probe is not None:
         if not isinstance(probe, dict):
-            raise CrewBookError(f"{CREW_VARIABLE}.probe is not a table")
+            raise _unreadable("probe", f"{CREW_VARIABLE}.probe is not a table")
         loads = _top_number(probe, "loads")
     current = frozenset(k for k, v in _keyed(value.get("current"), "current") if isinstance(k, str))
     players: list[CrewPlayer] = []
