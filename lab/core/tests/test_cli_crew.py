@@ -398,7 +398,7 @@ def test_crew_help_carries_the_sentence_of_term_2() -> None:
     assert result.exit_code == 0
     assert _flat(cli.CREW_BOOK_SENTENCE) in _flat(result.stdout)
     assert _flat(cli.CREW_BOOK_SENTENCE).startswith(
-        "The crew book keeps, for each player you group with, their name, realm, guild, class,"
+        "The crew book keeps, for each player in your party, raid, battleground or arena team,"
     )
     assert _flat(cli.CREW_BOOK_SENTENCE).endswith(
         "and someone else may later take a name you rated."

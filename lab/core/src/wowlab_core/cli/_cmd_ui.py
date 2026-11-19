@@ -18,7 +18,7 @@ _BROWSER_WAIT_S = 1.0
 def ui_command() -> None:
     """Open the local UI in your browser and serve it until Ctrl-C.
 
-    Reading never changes anything. Seven commands can change game files;
+    Reading never changes anything. Ten commands can change game files;
     each shows a plan and runs only when you confirm, after a snapshot.
 
     The server listens on 127.0.0.1 only, at a port the system picks, and

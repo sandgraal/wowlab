@@ -154,9 +154,10 @@ _MAX_PYPROJECT_BYTES = 1 << 20
 
 SAVED_VARIABLES_NOTE = (
     "The addon's SavedVariables are left alone: WowLab.lua (and the client's WowLab.lua.bak) "
-    "in WTF/Account/<account>/SavedVariables/ (WowLabDB) and in each character's "
-    "SavedVariables/ folder (WowLabCharDB) hold its captures. `wowlab addon install` and "
-    "`remove` never touch them; delete them yourself if you no longer want them."
+    "in WTF/Account/<account>/SavedVariables/ (WowLabDB, and the crew book if you turned it "
+    "on) and in each character's SavedVariables/ folder (WowLabCharDB) hold its captures. "
+    "`wowlab addon install` and `remove` never touch them; delete them yourself if you no "
+    "longer want them. `wowlab crew forget --all` empties the crew book in both files."
 )
 FOLDER_STAYS_NOTE = (
     f"The folder {ADDON_FOLDER}/ stays: the write gate deletes files, not folders. With no "

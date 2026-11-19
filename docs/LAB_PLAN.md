@@ -5346,6 +5346,8 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    "Reading never changes anything. Six commands can change game files;
    each shows a plan and runs only when you confirm, after a snapshot."
    *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
+   *Amended 2026-11-19 (M19-03):* ten commands, with `crew forget`, `crew
+   rate` and `crew note` added.
    A test pins it. The network promise is one generated block in the same
    way.
    - `doctor` is **offline by default**.
@@ -6103,7 +6105,7 @@ must come from the repository test's fixed list of constructed names.)
   U+2069). The warning says "last seen in <guild>", since a guild is never
   cleared. The term-2 notice printed in game says "and probably the game's
   backup of it" (the backup is [verify]) and that battleground and arena
-  teams count; the sentence of §20.5 itself is unchanged here.
+  teams count, as the sentence of §20.5 now does (changed the same day).
   *Not done (2026-11-19):* stripping spaces from a cross-realm member's
   realm (domain review): the key rule of M19-01 accepts only
   `<name> .. "-" .. <realm>` built straight from the name calls' locals, so a
@@ -6190,6 +6192,20 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   M19-03 registers them in `cli.EXPECT_FIELDS`; M19-06 adds the UI's
   pin-check sentence. `wowlab ui` passes the exact key from
   `crew list --json`.
+  *Amended 2026-11-19 (M19-03, as built):* `crew forget`'s pin always has
+  four parts, `target_sha256:written_sha256:backup_sha256:backup_written_sha256`:
+  the backup pair is pinned even when `WowLab.lua.bak` is not written (its
+  SHA-256 as read, twice, when it is left alone; `absent:absent` when there
+  is none), because the UI reads a pin from fixed report fields that must
+  each hold a value. A backup that changed between plan and confirm is
+  refused. `crew rate` and `crew note` pin two parts,
+  `target_sha256:written_sha256`. A forget refuses while the name is still
+  in either file: as a player key that folds the same under §20.2's rule
+  (the whole key), or in any other loaded string (a note, a guild or
+  instance name, an escaped spelling) with no letter or digit directly
+  before or after it. Not found, and accepted: a name inside a Lua comment
+  in another spelling, or split across two notes; the client writes
+  neither.
 - **What these commands never do.** They never create `WowLabCrewDB`,
   never change `on`, and refuse a `schema` they do not know. Their guard
   label, which reaches the journal, the snapshot's message, `snap list`,
@@ -6232,14 +6248,20 @@ sequences, U+009B, U+202E).
 | 4. Shared output | `doctor --redact` never prints a crew record, from the live file or its `.bak`; it may say on or off and a count, never a key, and an unreadable `WowLab.lua` is reported without quoting the token that failed. `snap export` says, when any object in the archive holds a non-empty crew book (decided from content, not the file name), that it includes it. Profiles never carry `WowLab.lua` (`profile_presets.toml` excludes it), which a test pins. The `char advise --send` packet of ADR-0032, when built, never reads `WowLabCrewDB` | tests of each on constructed records |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew forget` (the live file and the game's backup), `snap rm` for the copies in snapshots (M19-09), and the sentence that says what a forget does not reach | §20.3's tests; M19-09's |
 
-The sentence of term 2: "The crew book keeps, for each player you group
-with, their name, realm, guild, class, level and role, when you first and
-last grouped, how many times and in which instance, and your own rating
-and note. It keeps them in WowLab.lua (and the game's backup,
-WowLab.lua.bak) in this game account's SavedVariables folder, and in
-wowlab's snapshots of it. Nothing is sent anywhere. The book knows names,
-not people: a player who renames or moves realm appears as a new entry,
-and someone else may later take a name you rated."
+The sentence of term 2: "The crew book keeps, for each player in your
+party, raid, battleground or arena team, their name, realm, guild, class,
+level and role, when you first and last grouped, how many times and in
+which instance, and your own rating and note. It keeps them in WowLab.lua
+(and probably the game's backup of it, WowLab.lua.bak) in this game
+account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
+is sent anywhere. The book knows names, not people: a player who renames or
+moves realm appears as a new entry, and someone else may later take a name
+you rated."
+
+(Changed 2026-11-19, owner decision: battleground and arena teams count,
+so the sentence names them; and whether the game's backup holds the book
+is **[verify]** (§20.6), hence "probably". The in-game notice and
+`wowlab crew --help` carry this wording, M19-10.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is

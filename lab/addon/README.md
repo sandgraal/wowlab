@@ -555,10 +555,10 @@ read other players' names and realms, and only while the book is on.
 
 - `/wowlab crew on` turns it on. With no book yet it starts a new, empty
   one and says so; either way it prints what the book keeps: "The crew book
-  keeps, for each player you group with, their name, realm, guild, class,
-  level and role, when you first and last grouped, how many times and in
-  which instance, and your own rating and note. Battleground and arena teams
-  count as groups. It keeps them in WowLab.lua (and probably the game's
+  keeps, for each player in your party, raid, battleground or arena team,
+  their name, realm, guild, class, level and role, when you first and last
+  grouped, how many times and in which instance, and your own rating and
+  note. It keeps them in WowLab.lua (and probably the game's
   backup of it, WowLab.lua.bak) in this game account's
   SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent
   anywhere. The book knows names, not people: a player who renames or moves

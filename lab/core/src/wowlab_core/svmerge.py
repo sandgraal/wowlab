@@ -93,6 +93,7 @@ from wowlab_core.luadata import (
     LuaTable,
     LuaValue,
 )
+from wowlab_core.luaquote import lua_quote
 
 __all__ = [
     "LAB_ADDON_CHARACTER_VARIABLE",
@@ -738,25 +739,6 @@ def _appended(table: LuaTable, entries: list[Entry], added: Sequence[Entry]) -> 
     return LuaTable(table.lead, tuple(entries) + tuple(added), close)
 
 
-def _lua_quote(data: bytes) -> bytes:
-    """A double-quoted Lua 5.1 literal that loads as `data`, for writing
-    into a file (other bytes stay raw, as the client writes them)."""
-    out = bytearray(b'"')
-    for byte in data:
-        if byte in (0x22, 0x5C):  # " and backslash
-            out += b"\\" + bytes([byte])
-        elif byte == 0x0A:
-            out += b"\\n"
-        elif byte == 0x0D:
-            out += b"\\r"
-        elif byte < 0x20 or byte == 0x7F:
-            out += b"\\%03d" % byte
-        else:
-            out.append(byte)
-    out += b'"'
-    return bytes(out)
-
-
 def _number_text(value: float, typed: str | None) -> str:
     """A number key to write: the shortest text for a finite number, else
     the text the path was typed with (`1e400`)."""
@@ -799,7 +781,7 @@ def _new_entry(
     elif kind == "n" and isinstance(raw_key, float):
         style, key = KeyStyle.NUMBER, LuaNumber(None, _number_text(raw_key, typed))
     elif kind == "s" and isinstance(raw_key, bytes):
-        style, key = KeyStyle.STRING, LuaString(None, _lua_quote(raw_key))
+        style, key = KeyStyle.STRING, LuaString(None, lua_quote(raw_key))
     elif kind == "b" and isinstance(raw_key, bool):
         style, key = KeyStyle.BOOLEAN, LuaBool(None, raw_key)
     else:  # pragma: no cover - every key id is one of the above

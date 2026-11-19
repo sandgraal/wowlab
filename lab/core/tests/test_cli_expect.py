@@ -86,6 +86,15 @@ def test_expect_fields_name_fields_of_the_reports() -> None:
         ("undo",): ("undone",),
         ("sv", "merge"): ("target_sha256", "merged_sha256"),
         ("macros", "fix"): ("target_sha256", "fixed_sha256"),
+        # M19-03: the crew book's write commands (test_cli_crew_write.py).
+        ("crew", "forget"): (
+            "target_sha256",
+            "written_sha256",
+            "backup_sha256",
+            "backup_written_sha256",
+        ),
+        ("crew", "rate"): ("target_sha256", "written_sha256"),
+        ("crew", "note"): ("target_sha256", "written_sha256"),
     }
     assert "undone" in cli.UndoReport.model_fields
     assert {"target_sha256", "merged_sha256"} <= set(cli.SvMergeReport.model_fields)
@@ -132,6 +141,7 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on
         "plan_lines",
         "written_paths",
         "unlisted_written",
+        "crew_book",  # M19-11: the crew book the undo brings back, counts only
     ]
     assert list(cli.SvMergeReport.model_fields) == [
         *merge_before,
@@ -139,6 +149,7 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on
         "merged_sha256",
         "removed",  # M16-12: every key the merge removes, and --replace
         "replace",
+        "crew_book",  # M19-11: the crew book the merge brings back, counts only
     ]
 
 

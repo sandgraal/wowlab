@@ -785,7 +785,7 @@
     box.appendChild(make("h3", "Commands to copy"));
     const note = make(
       "p",
-      "Run them yourself in a terminal. Reading never changes anything. Seven commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
+      "Run them yourself in a terminal. Reading never changes anything. Ten commands can change game files; each shows a plan and runs only when you confirm, after a snapshot.",
     );
     note.className = "hint-note";
     box.appendChild(note);

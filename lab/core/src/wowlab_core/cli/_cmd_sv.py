@@ -17,6 +17,7 @@ from pydantic import Field
 
 from wowlab_core import (
     addoncheck,
+    crewcount,
     guard,
     install,
     layout,
@@ -46,6 +47,7 @@ from wowlab_core.cli._common import (
     YesOpt,
     _bytes,
     _confirm,
+    _crew_plan_line,
     _discover,
     _emit,
     _handled,
@@ -1127,6 +1129,10 @@ class SvMergeReport(_Out):
     # (what is under it goes with it), with the target's value (M16-12).
     removed: list[svmerge.Removed]
     replace: bool  # --replace: each --key subtree copied whole
+    # The crew book the merge brings back into the target, decided from the
+    # bytes it writes: counts only, never a name (M19-11). None when it
+    # brings none back.
+    crew_book: crewcount.CrewBookCarried | None = None
 
 
 _MERGE_PROVEN = (
@@ -1893,6 +1899,11 @@ def sv_merge(
         )
     )
     merged = hashlib.sha256(data).hexdigest() if data is not None else None
+    # What the merge brings back of the crew book, compared with the
+    # target as read (M19-11): said in the plan, never a name.
+    crew = (
+        None if data is None else crewcount.brought_back([(target.path, data, lambda: ours_bytes)])
+    )
 
     def report(*, written: bool, transaction: str | None = None) -> SvMergeReport:
         return SvMergeReport(
@@ -1914,6 +1925,7 @@ def sv_merge(
             notes=[*notes, _MERGE_PROVEN] if written else notes,
             target_sha256=expected,
             merged_sha256=merged,
+            crew_book=crew,
         )
 
     # The notes printed with the plan, before the prompt (M16-12): not again
@@ -1958,6 +1970,9 @@ def sv_merge(
     if not yes:
         _print_merge(show, report(written=False))
         show(f"  replace  {target.path}  ({_bytes(len(data))})")
+        crew_line = _crew_plan_line(crew)
+        if crew_line is not None:
+            show(crew_line)
         # The loader check's notes and the others belong to the plan, so
         # they print before the prompt (M16-12).
         for n in notes:

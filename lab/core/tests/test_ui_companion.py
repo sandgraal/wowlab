@@ -338,7 +338,7 @@ def _text(html: str) -> str:
 # files seven (`macros fix`).
 _KEPT = (
     "What every file in your game folder is, who writes it, and whether wowlab may change it. "
-    "Reading never changes anything. Seven commands can change game files; each shows a plan and "
+    "Reading never changes anything. Ten commands can change game files; each shows a plan and "
     "runs only when you confirm, after a snapshot.",
     "Every character folder in your game folder, in every flavor, as the lab-addon last saved "
     "it: at logout or /reload , never the session in progress. This tab reads with wowlab char "

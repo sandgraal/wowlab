@@ -57,9 +57,9 @@ local MAX_PARTY = 4
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
 -- Changed for M19-10's domain review: battleground and arena teams count
 -- (owner decision, 2026-11-19), and the backup "probably" holds it ([verify]).
-local TERMS = "The crew book keeps, for each player you group with, their name, realm, guild, class, level and role, "
-    .. "when you first and last grouped, how many times and in which instance, and your own rating and note. "
-    .. "Battleground and arena teams count as groups. "
+local TERMS = "The crew book keeps, for each player in your party, raid, battleground or arena team, their name, "
+    .. "realm, guild, class, level and role, when you first and last grouped, how many times and in which instance, "
+    .. "and your own rating and note. "
     .. "It keeps them in WowLab.lua (and probably the game's backup of it, WowLab.lua.bak) in this game account's "
     .. "SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent anywhere. "
     .. "The book knows names, not people: a player who renames or moves realm appears as a new entry, "

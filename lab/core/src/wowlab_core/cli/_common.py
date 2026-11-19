@@ -39,6 +39,7 @@ from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    crewcount,
     guard,
     install,
     keymap,
@@ -463,10 +464,11 @@ app.add_typer(
 # book keeps, where, and that it knows names, not people. `crew --help` says
 # it whole; a test pins it.
 CREW_BOOK_SENTENCE = (
-    "The crew book keeps, for each player you group with, their name, realm, guild, class, "
-    "level and role, when you first and last grouped, how many times and in which instance, "
-    "and your own rating and note. It keeps them in WowLab.lua (and the game's backup, "
-    "WowLab.lua.bak) in this game account's SavedVariables folder, and in wowlab's snapshots "
+    "The crew book keeps, for each player in your party, raid, battleground or arena team, their "
+    "name, realm, guild, class, level and role, when you first and last grouped, how many times "
+    "and in which instance, and your own rating and note. It keeps them in WowLab.lua (and "
+    "probably the game's backup of it, WowLab.lua.bak) in this game account's SavedVariables "
+    "folder, and in wowlab's snapshots "
     "of it. Nothing is sent anywhere. The book knows names, not people: a player who renames "
     "or moves realm appears as a new entry, and someone else may later take a name you rated."
 )
@@ -1322,6 +1324,14 @@ EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("undo",): ("undone",),
     ("sv", "merge"): ("target_sha256", "merged_sha256"),
     ("macros", "fix"): ("target_sha256", "fixed_sha256"),
+    ("crew", "forget"): (
+        "target_sha256",
+        "written_sha256",
+        "backup_sha256",
+        "backup_written_sha256",
+    ),
+    ("crew", "rate"): ("target_sha256", "written_sha256"),
+    ("crew", "note"): ("target_sha256", "written_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed
@@ -2126,6 +2136,59 @@ _BLOCKED_PLACE = {
 
 def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+# ─── the crew book in exports and plans (§20.3, §20.5 term 4; M19-11) ───────
+
+
+def _crew_state_words(carried: crewcount.CrewBookCarried) -> str:
+    """ "on, 3 players" or "turned off, 3 players kept": counts only."""
+    if carried.on:
+        return f"on, {_plural(carried.players, 'player')}"
+    return f"turned off, {_plural(carried.players, 'player')} kept"
+
+
+def _crew_unread_words(carried: crewcount.CrewBookCarried) -> str:
+    return "a copy" if carried.unreadable == 1 else f"{carried.unreadable} copies"
+
+
+def _crew_export_line(carried: crewcount.CrewBookCarried | None) -> str | None:
+    """`snap export`'s one sentence on the crew book the archive holds:
+    None when it holds none, or only books that keep no player."""
+    if carried is None:
+        return None
+    readable = carried.readable > 0 and carried.players > 0
+    if readable and carried.unreadable:
+        return (
+            f"This archive includes the crew book ({_crew_state_words(carried)}) and "
+            f"{_crew_unread_words(carried)} of it wowlab cannot read."
+        )
+    if readable:
+        return f"This archive includes the crew book: {_crew_state_words(carried)}."
+    if carried.unreadable:
+        return (
+            "This archive includes a crew book wowlab cannot read, which may hold the players "
+            "you grouped with."
+        )
+    return None
+
+
+def _crew_plan_line(carried: crewcount.CrewBookCarried | None) -> str | None:
+    """A write plan's one sentence on the crew book it brings back: None
+    when it brings none back."""
+    if carried is None:
+        return None
+    if carried.readable and carried.unreadable:
+        return (
+            f"  This brings back the crew book ({_crew_state_words(carried)}) and "
+            f"{_crew_unread_words(carried)} of it wowlab cannot read."
+        )
+    if carried.readable:
+        return f"  This brings back the crew book: {_crew_state_words(carried)}."
+    return (
+        "  This brings back a crew book wowlab cannot read, so it cannot say whether it is on "
+        "or how many players it keeps."
+    )
 
 
 def _first_name_folder(e: labaddon.CharacterFile) -> bool:

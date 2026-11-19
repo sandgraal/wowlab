@@ -1,7 +1,11 @@
-"""`wowlab crew list` and `crew show` (docs/LAB_PLAN.md §20.2, M19-02).
+"""`wowlab crew list` and `crew show` (docs/LAB_PLAN.md §20.2, M19-02);
+`crew forget`, `crew rate` and `crew note` (§20.3, M19-03).
 
-Both read the crew book (`crewbook`) from a game account's `WowLab.lua` and
-write nothing anywhere. Each takes `--flavor` and `--account` as `char`
+`list` and `show` read the crew book (`crewbook`) from a game account's
+`WowLab.lua` and write nothing anywhere. `forget`, `rate` and `note` change
+it only through the write gate (`guard`): the bytes they write are a
+targeted edit of the parsed file (`crewedit`), shown as a plan, confirmed,
+and pinned with `--expect`. Each takes `--flavor` and `--account` as `char`
 does; with several books to choose from and none named, the candidates are
 listed and the command exits 2. Every name, realm, guild, instance name and
 note in the book is other people's text (or the player's own note): it is
@@ -10,15 +14,19 @@ through the player-copy rewriting wowlab's own sentences go through; `--json`
 is ASCII-escaped as everywhere.
 """
 
+import hashlib
+import os
+import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
-from wowlab_core import crewbook, install, layout, luadata
+from wowlab_core import crewbook, crewedit, guard, install, labaddon, layout, luadata, snapshot
 from wowlab_core.cli._common import (
+    EXIT_REFUSED,
     EXIT_USAGE,
     AccountOpt,
     CliError,
@@ -26,6 +34,9 @@ from wowlab_core.cli._common import (
     JsonOpt,
     NotesOpt,
     RootOpt,
+    YesOpt,
+    _bytes,
+    _confirm,
     _discover,
     _emit,
     _given_flavor,
@@ -36,6 +47,7 @@ from wowlab_core.cli._common import (
     _plural,
     _Report,
     _say,
+    _say_err,
     _say_notes,
     _select_account,
     _select_flavor,
@@ -122,10 +134,13 @@ class _Opened:
         place: CrewPlace | None,
         book: crewbook.CrewBook,
         places: list[CrewPlace],
+        where: tuple[install.Flavor, layout.Layout] | None = None,
     ) -> None:
         self.place = place
         self.book = book
         self.places = places
+        # The flavor and its layout the chosen book is in, for a write.
+        self.where = where
 
 
 _READ_ERRORS = (WowlabError, luadata.LuaDataError, OSError)
@@ -162,6 +177,7 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
     inst, _ = _discover(root)
     flavors = _flavors(inst, flavor)
     found: list[tuple[CrewPlace, crewbook.CrewBook | None, BaseException | None]] = []
+    where: dict[int, tuple[install.Flavor, layout.Layout]] = {}
     for f in flavors:
         lay = layout.Layout.for_flavor(f, inst.root)
         accounts = _accounts(lay, account, alone=len(flavors) == 1)
@@ -182,6 +198,7 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
             place = CrewPlace(
                 flavor_folder=f.folder, account=acct.folder, file=rel, holds_book=holds
             )
+            where[len(found)] = (f, lay)
             found.append((place, book, error))
     if not found and account is None:
         raise CliError(
@@ -195,6 +212,7 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
             EXIT_USAGE,
         )
     places = [p for p, _, _ in found]
+    at = 0
     if len(found) == 1:
         chosen = found[0]
     else:
@@ -209,6 +227,7 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
                 EXIT_USAGE,
             )
         chosen = holding[0]
+        at = found.index(chosen)
     place, book, error = chosen
     if isinstance(error, crewbook.CrewBookError):
         # The player's words; a `--json` run's message adds the field.
@@ -217,7 +236,7 @@ def _open_book(root: Path | None, flavor: str | None, account: str | None) -> _O
     if error is not None:
         raise error
     assert book is not None
-    return _Opened(place, book, places)
+    return _Opened(place, book, places, where[at])
 
 
 def _place_words(p: CrewPlace) -> str:
@@ -464,3 +483,709 @@ def crew_show(
     if book.state == "off":
         _say("The crew book is turned off: it is not recording.")
     _say_notes(_CREW_NOTES, notes)
+
+
+# ─── forget, rate, note (§20.3, M19-03) ──────────────────────────────────────
+
+_SHA256_TEXT = re.compile(r"[0-9a-f]{64}")
+# The pin part that stands for a backup file there is none of.
+ABSENT = "absent"
+_BACKUP_NAME = labaddon.LAB_FILE_NAME + ".bak"
+
+CrewCommand = Literal["forget", "rate", "note"]
+BackupOutcome = Literal["absent", "left_alone", "changed"]
+
+
+class CrewEditReport(_Out):
+    """`wowlab crew forget|rate|note --json`: the change to one game
+    account's crew book, and whether it was written.
+
+    `players` are the stored keys the change acts on. For `rate` and `note`,
+    `field` is `rating` or `note`, with its value as stored (`before`) and as
+    it would be (`after`; None: taken out). For `forget`, `backup` says what
+    happens to the game's backup `WowLab.lua.bak` (`absent`; `left_alone`:
+    it does not hold them; `changed`), and `not_reached` says what a forget
+    does not reach. `changed` is false when there is nothing to change.
+
+    The pin `--expect` takes: `target_sha256` (WowLab.lua as read) and
+    `written_sha256` (the bytes it would write; None with nothing to
+    change), and for `forget` also `backup_sha256` and
+    `backup_written_sha256` (the backup as read and as it would be: the same
+    when it is left alone, `absent` when there is none)."""
+
+    command: CrewCommand
+    flavor_folder: str
+    account: str
+    file: str
+    backup_file: str | None
+    players: list[str]
+    field: crewedit.Field | None
+    before: str | None
+    after: str | None
+    backup: BackupOutcome | None
+    changed: bool
+    written: bool
+    transaction: str | None
+    target_sha256: str
+    written_sha256: str | None
+    backup_sha256: str | None
+    backup_written_sha256: str | None
+    not_reached: str | None
+    notes: list[str]
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+_EXPECT_FIELDS_OF: dict[str, tuple[str, ...]] = {
+    "forget": ("target_sha256", "written_sha256", "backup_sha256", "backup_written_sha256"),
+    "rate": ("target_sha256", "written_sha256"),
+    "note": ("target_sha256", "written_sha256"),
+}
+
+
+def _pin(expect: str | None, command: str) -> list[str] | None:
+    """`--expect`, split into its parts; a usage error when it is not the
+    pin an earlier run's --json gives."""
+    if expect is None:
+        return None
+    fields = _EXPECT_FIELDS_OF[command]
+    got = expect.split(":")
+    ok = len(got) == len(fields) and all(
+        _SHA256_TEXT.fullmatch(p) or (i >= 2 and p == ABSENT) for i, p in enumerate(got)
+    )
+    if not ok:
+        raise CliError(
+            f"--expect {expect!r} is not {':'.join(fields)}, the values an earlier run's "
+            "--json gives",
+            EXIT_USAGE,
+        )
+    return got
+
+
+_EXPECT_HELP = (
+    "Write only if the files are still as an earlier run's --json read them and the change "
+    "would write the same bytes (its {fields}, joined by ':'): else refused, exit 3, nothing "
+    "written. For a plan shown by one run and confirmed by another."
+)
+
+
+class _Edit:
+    """A crew book a write command changes: where it is, its bytes as read,
+    and the game's backup beside it."""
+
+    def __init__(self, opened: _Opened, command: str) -> None:
+        place = opened.place
+        if opened.book.state == "not_turned_on" or place is None or place.file is None:
+            where = _place_words(place) if place is not None else "any game account wowlab read"
+            raise CliError(
+                f"The crew book is not turned on for {where} ({_AS_OF}), so there is nothing "
+                f"to {command}; wowlab never starts a crew book. Nothing was changed."
+            )
+        assert opened.where is not None
+        self.flavor, self.lay = opened.where
+        self.place = place
+        self.rel: str = place.file
+        # Read again: the bytes this run plans from are the bytes it writes from.
+        self.data = _listed(labaddon.read_file_bytes, self.lay, self.rel)
+        self.book = _parse_book(self.data)
+        if self.book.state == "not_turned_on":
+            raise CliError(
+                f"The crew book of {self.words()} is gone since wowlab looked; nothing was changed."
+            )
+        self.backup_error: str | None = None
+        self.backup_rel = self._backup()
+        self.backup_data: bytes | None = None
+        if self.backup_rel is not None and self.backup_error is None:
+            try:
+                self.backup_data = _listed(labaddon.read_file_bytes, self.lay, self.backup_rel)
+                crewbook.parse_book(self.backup_data)
+            except crewbook.CrewBookError as exc:
+                self.backup_error = str(exc)
+            except luadata.LuaDataError as exc:
+                self.backup_error = (
+                    f"it is not data wowlab can read (line {exc.line}, column {exc.column})"
+                )
+            except (WowlabError, OSError) as exc:
+                self.backup_error = f"it cannot be read ({exc})"
+
+    def _backup(self) -> str | None:
+        """The game's `WowLab.lua.bak` beside the file, as the listing found
+        it; None when there is none."""
+        mine = [
+            sv
+            for sv in self.lay.saved_variables("account")
+            if sv.backup
+            and sv.account == self.place.account
+            and sv.path.rsplit("/", 1)[-1].casefold() == _BACKUP_NAME.casefold()
+        ]
+        # The listing takes regular files only: anything else there under the
+        # backup's name (a link, a folder) could still lead to an old book,
+        # so it is refused rather than taken for no backup (looked at, never
+        # followed or opened).
+        folder = self.lay.flavor_path / self.rel.rsplit("/", 1)[0]
+        try:
+            with os.scandir(folder) as entries:
+                odd = [
+                    e.name
+                    for e in entries
+                    if e.name.casefold() == _BACKUP_NAME.casefold()
+                    and not e.is_file(follow_symlinks=False)
+                ]
+        except OSError:
+            odd = []
+        if odd:
+            # Only a forget needs the backup; it refuses on this.
+            self.backup_error = "it is a link or a folder, not a file"
+            return self.rel.rsplit("/", 1)[0] + "/" + odd[0]
+        exact = [sv for sv in mine if sv.path == self.rel + ".bak"]
+        if exact:
+            return exact[0].path
+        if len(mine) > 1:
+            raise CliError(
+                f"{len(mine)} files named like {_BACKUP_NAME} sit beside {self.rel}, so wowlab "
+                "cannot tell which one is the game's backup. Nothing was changed."
+            )
+        return mine[0].path if mine else None
+
+    def words(self) -> str:
+        return _place_words(self.place)
+
+
+def _parse_book(data: bytes) -> crewbook.CrewBook:
+    try:
+        return crewbook.parse_book(data)
+    except crewbook.CrewBookError as exc:
+        words = f"{exc} ({exc.detail})" if _Report.json else str(exc)
+        raise CliError(words) from None
+
+
+def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
+    """The stored key `typed` names: exact, else the only folded match
+    (§20.2's rule); more than one lists the stored keys, exit 2."""
+    if typed in keys:
+        return typed
+    want = crewbook.fold(typed)
+    found = [k for k in keys if crewbook.fold(k) == want]
+    if not found:
+        raise CliError(
+            f"no player {typed!r} in the crew book of {edit.words()}. Nothing was changed."
+        )
+    if len(found) > 1:
+        raise CliError(
+            f"{typed!r} matches {len(found)} players ({', '.join(found)}); type the name as "
+            "crew list shows it. Nothing was changed.",
+            EXIT_USAGE,
+        )
+    return found[0]
+
+
+def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
+    """What a forget does not reach (§20.3), in its plan and its result.
+    wowlab has no command that removes a snapshot yet, and the sentence says
+    so."""
+    them = "this player" if n == 1 else "these players"
+    saves = "saved" if done else "saves"
+    return (
+        f"This command first {saves} a copy that still holds {them}, so `wowlab undo` can "
+        f"bring them back. That copy and every earlier snapshot stay in wowlab's snapshot "
+        f"folder ({store.path}): wowlab cannot remove a snapshot yet. Archives you made "
+        "with `snap export` keep theirs."
+    ) + (
+        " The character's name alone, without the realm, may still be in your notes about "
+        "other players: forget looks for the whole name."
+        if one
+        else ""
+    )
+
+
+_FIELD_WORDS = {"note": "note", "guild": "guild name", "where": "instance name"}
+
+
+def _still_there(spot: crewedit.NameSpot, rel: str) -> str:
+    """Why a forget refuses when the name would still be in a file: where,
+    in the player's words (the text itself is never quoted), and what to do."""
+    then = "then run the forget again. Nothing was changed."
+    if spot.player is not None and spot.field == "note":
+        return (
+            f"The name is also in your note about {spot.player!r} in {rel}, so the forget "
+            "would not remove every copy of it. Change or clear that note with `wowlab crew "
+            f"note`, {then}"
+        )
+    if spot.player is not None and spot.field == "key":
+        return (
+            f"{spot.player!r} in {rel} is the same name in another spelling, so the forget "
+            f"would not remove every copy of it. Forget that entry too, {then}"
+        )
+    if spot.player is not None:
+        what = _FIELD_WORDS.get(spot.field or "", "record")
+        return (
+            f"The name is also in the {what} kept for {spot.player!r} in {rel}, which wowlab "
+            "does not change, so the forget would not remove every copy of it. Forget that "
+            f"player too, {then}"
+        )
+    return (
+        f"The name is also elsewhere in {rel}, outside the crew book's players, so the forget "
+        "would not remove every copy of it. Nothing was changed."
+    )
+
+
+def _check_pin(pin: list[str] | None, got: Sequence[str | None], rel: str) -> None:
+    """Refuse (exit 3) when this run's pin is not the plan's."""
+    if pin is None or list(pin) == list(got):
+        return
+    raise CliError(
+        f"{rel} or its backup is not as the plan read it, or the change would now write other "
+        "bytes: it changed after the plan was made, so nothing was written; run the command "
+        "again to see the new plan",
+        EXIT_REFUSED,
+    )
+
+
+def _write(
+    edit: _Edit,
+    *,
+    new: bytes,
+    new_backup: bytes | None,
+    pin: list[str] | None,
+    label: str,
+    store: snapshot.SnapshotStore,
+) -> str:
+    """Write the change through the write gate and return its journal
+    record. The pin, when given, is checked again under the gate's locks: a
+    file that changed since the plan rolls the whole change back."""
+    # (path, bytes as read, bytes to write, the pin's two parts for it):
+    # only a file whose bytes change is written.
+    writes: list[tuple[str, bytes, bytes, list[str]]] = []
+    if new != edit.data:
+        writes.append((edit.rel, edit.data, new, pin[0:2] if pin else []))
+    if new_backup is not None:
+        assert edit.backup_rel is not None and edit.backup_data is not None
+        writes.append((edit.backup_rel, edit.backup_data, new_backup, pin[2:4] if pin else []))
+    with guard.transaction(edit.flavor, label=label, store=store.path) as tx:
+        for rel, _, data, _ in writes:
+            tx.write(rel, data)
+        befores = [item.before for item in tx.plan]
+        afters = [item.after for item in tx.plan]
+        if pin is not None and [[b, a] for b, a in zip(befores, afters, strict=True)] != [
+            w[3] for w in writes
+        ]:
+            raise CliError(
+                f"{edit.rel} or its backup changed after the plan was made, so the change was "
+                "rolled back; run the command again to see the new plan",
+                EXIT_REFUSED,
+            )
+        if befores != [_sha(before) for _, before, _, _ in writes]:
+            raise CliError(
+                f"{edit.rel} or its backup changed after it was read, so the change was rolled "
+                "back; run the command again"
+            )
+    # The record this transaction journaled: the newest one with this label
+    # and exactly these paths and hashes (another process's write, journaled
+    # after it, is never taken for it).
+    mine = [(rel, _sha(before), _sha(data)) for rel, before, data, _ in writes]
+    for record in reversed(guard.history(store=store.path)):
+        if record.label == label and [(c.path, c.before, c.after) for c in record.paths] == mine:
+            return record.id
+    raise CliError(  # pragma: no cover - the gate journals every committed write
+        "the change was written but its journal record was not found; `wowlab undo` lists it"
+    )
+
+
+def _apply(
+    edit: _Edit,
+    report: Callable[..., CrewEditReport],
+    *,
+    new: bytes,
+    new_backup: bytes | None,
+    pin: list[str] | None,
+    got: Sequence[str | None],
+    label: str,
+    question: str,
+    plan: Callable[[Callable[[str], None]], None],
+    done: Callable[[CrewEditReport], None],
+    store: snapshot.SnapshotStore,
+    yes: bool,
+    json_out: bool,
+) -> None:
+    """Show the plan, ask, write through the gate, say what was done."""
+    _check_pin(pin, got, edit.rel)
+    show = _say if not json_out else _say_err
+    if not yes:
+        plan(show)
+    try:
+        _confirm(question, yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report(written=False))
+        raise
+    record = _write(edit, new=new, new_backup=new_backup, pin=pin, label=label, store=store)
+    finished = report(written=True, transaction=record)
+    if json_out:
+        _emit(finished)
+        return
+    if yes:
+        plan(_say)
+    done(finished)
+
+
+CrewExpectForgetOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--expect",
+        metavar="PIN",
+        help=_EXPECT_HELP.format(fields=", ".join(_EXPECT_FIELDS_OF["forget"])),
+    ),
+]
+CrewExpectOneOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--expect",
+        metavar="PIN",
+        help=_EXPECT_HELP.format(fields=", ".join(_EXPECT_FIELDS_OF["rate"])),
+    ),
+]
+_NAME_HELP = (
+    "The player as crew list shows them. Case, spaces and apostrophes are ignored when no "
+    "stored name matches exactly; with several matches nothing is changed."
+)
+CrewNameArg = Annotated[str, typer.Argument(metavar="NAME-REALM", help=_NAME_HELP)]
+
+
+@crew_app.command(
+    "forget", short_help="Remove one player, or every player, from the crew book (asks first)."
+)
+@_handled
+def crew_forget(
+    name: Annotated[
+        str | None,
+        typer.Argument(metavar="NAME-REALM", help=_NAME_HELP, show_default=False),
+    ] = None,
+    all_players: Annotated[
+        bool,
+        typer.Option("--all", help="Forget every player; the book stays on or off as it is."),
+    ] = False,
+    expect: CrewExpectForgetOpt = None,
+    account: AccountOpt = None,
+    yes: YesOpt = False,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Remove a player (or every player, with --all) from the crew book: from
+    WowLab.lua and from the game's backup of it, WowLab.lua.bak, so the name
+    is in neither file afterwards. Whether the book is on, and when it was
+    started, stay as they are.
+
+    Shows the plan and asks first, then writes through the write gate: the
+    game must be closed, a snapshot is taken first, and `wowlab undo` brings
+    the player back. That snapshot, the earlier ones, and archives made with
+    snap export still hold the player.
+
+    \f
+    JSON: CrewEditReport."""
+    if (name is None) != all_players:
+        raise CliError("name one player, or give --all (not both)", EXIT_USAGE)
+    pin = _pin(expect, "forget")
+    store = snapshot.SnapshotStore()
+    edit = _Edit(_open_book(root, flavor, account), "forget")
+    if edit.backup_error is not None:
+        raise CliError(
+            f"The game's backup of the crew book, {edit.backup_rel}, cannot be used: "
+            f"{edit.backup_error}. A forget must clear it too, so nothing was changed."
+        )
+    live_keys = crewedit.keys_held(edit.data)
+    backup_keys = crewedit.keys_held(edit.backup_data) if edit.backup_data is not None else []
+    known = list(dict.fromkeys([*live_keys, *backup_keys]))
+    try:
+        if name is None:
+            keys = known
+            new = crewedit.forget_all(edit.data)
+            new_backup = (
+                crewedit.forget_all(edit.backup_data) if edit.backup_data is not None else None
+            )
+        else:
+            keys = [_one_key(known, name, edit)]
+            new = crewedit.forget(edit.data, keys)
+            new_backup = (
+                crewedit.forget(edit.backup_data, keys) if edit.backup_data is not None else None
+            )
+    except crewedit.CrewEditError as exc:
+        raise CliError(str(exc)) from None
+    for rel, after in ((edit.rel, new), (edit.backup_rel, new_backup)):
+        left = crewedit.names_left(after, keys) if after is not None and rel else []
+        if left:
+            raise CliError(_still_there(left[0], rel or edit.rel))
+    backup_changed = new_backup is not None and new_backup != edit.backup_data
+    outcome: BackupOutcome = (
+        "absent" if edit.backup_data is None else "changed" if backup_changed else "left_alone"
+    )
+    changed = new != edit.data or backup_changed
+    target_sha = _sha(edit.data)
+    backup_sha = _sha(edit.backup_data) if edit.backup_data is not None else ABSENT
+    backup_after = _sha(new_backup) if new_backup is not None and backup_changed else backup_sha
+    written_sha = _sha(new) if changed else None
+    count = max(len(keys), 1)
+
+    def report(*, written: bool = False, transaction: str | None = None) -> CrewEditReport:
+        return CrewEditReport(
+            command="forget",
+            flavor_folder=edit.flavor.folder,
+            account=edit.place.account,
+            file=edit.rel,
+            backup_file=edit.backup_rel,
+            players=keys,
+            field=None,
+            before=None,
+            after=None,
+            backup=outcome,
+            changed=changed,
+            written=written,
+            transaction=transaction,
+            target_sha256=target_sha,
+            written_sha256=written_sha,
+            backup_sha256=backup_sha,
+            backup_written_sha256=backup_after if changed else None,
+            not_reached=_not_reached(store, count, done=written, one=name is not None)
+            if changed
+            else None,
+            notes=[],
+        )
+
+    if not changed:
+        _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
+        if json_out:
+            _emit(report())
+            return
+        _say(f"The crew book of {edit.words()} holds no player ({_AS_OF}): nothing to forget.")
+        return
+
+    def plan(show: Callable[[str], None]) -> None:
+        who = keys[0] if name is not None else f"every player ({len(keys)})"
+        them = "this player" if name is not None else "any player"
+        show(f"Forget {who} from the crew book of {edit.words()} ({_AS_OF}):")
+        if new != edit.data:
+            show(f"  replace  {edit.rel}  ({_bytes(len(new))})")
+        else:
+            show(f"  {edit.rel} does not hold {them}: left alone")
+        if outcome == "changed":
+            assert new_backup is not None
+            show(f"  replace  {edit.backup_rel}  ({_bytes(len(new_backup))}), the game's backup")
+        elif outcome == "left_alone":
+            show(f"  {edit.backup_rel}, the game's backup, does not hold {them}: left alone")
+        else:
+            show(f"  There is no {_BACKUP_NAME} beside it.")
+        show(_not_reached(store, count, done=False, one=name is not None))
+
+    def done(finished: CrewEditReport) -> None:
+        who = keys[0] if name is not None else _plural(len(keys), "player")
+        names = "the name" if name is not None else "their names"
+        _say(
+            f"Forgot {who}: neither {labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME} holds {names} now."
+        )
+        assert finished.not_reached is not None
+        _say(finished.not_reached)
+
+    _apply(
+        edit,
+        report,
+        new=new,
+        new_backup=new_backup if backup_changed else None,
+        pin=pin,
+        got=[target_sha, written_sha, backup_sha, backup_after],
+        label=f"crew forget ({_plural(len(keys), 'player')})",
+        question="Forget this player?" if name is not None else "Forget every player?",
+        plan=plan,
+        done=done,
+        store=store,
+        yes=yes,
+        json_out=json_out,
+    )
+
+
+def _set(
+    command: Literal["rate", "note"],
+    field: crewedit.Field,
+    name: str,
+    value: str | None,
+    *,
+    expect: str | None,
+    account: str | None,
+    yes: bool,
+    root: Path | None,
+    flavor: str | None,
+    json_out: bool,
+) -> None:
+    """`crew rate` and `crew note`: one field of one player's entry."""
+    pin = _pin(expect, command)
+    store = snapshot.SnapshotStore()
+    edit = _Edit(_open_book(root, flavor, account), command)
+    readable = [p.key for p in edit.book.players]
+    unread = [u.key for u in edit.book.unread]
+    key = _one_key(list(dict.fromkeys([*readable, *unread])), name, edit)
+    if key not in readable:
+        raise CliError(
+            f"the entry of {key!r} in the crew book of {edit.words()} could not be read, so "
+            "wowlab does not change it. Nothing was changed."
+        )
+    player = next(p for p in edit.book.players if p.key == key)
+    before = player.rating if field == "rating" else player.note
+    try:
+        new = crewedit.set_field(edit.data, key, field, value)
+    except crewedit.CrewEditError as exc:
+        raise CliError(str(exc)) from None
+    changed = new != edit.data
+    target_sha = _sha(edit.data)
+    written_sha = _sha(new) if changed else None
+
+    def report(*, written: bool = False, transaction: str | None = None) -> CrewEditReport:
+        return CrewEditReport(
+            command=command,
+            flavor_folder=edit.flavor.folder,
+            account=edit.place.account,
+            file=edit.rel,
+            backup_file=None,
+            players=[key],
+            field=field,
+            before=before,
+            after=value,
+            backup=None,
+            changed=changed,
+            written=written,
+            transaction=transaction,
+            target_sha256=target_sha,
+            written_sha256=written_sha,
+            backup_sha256=None,
+            backup_written_sha256=None,
+            not_reached=None,
+            notes=[],
+        )
+
+    def said(text: str | None) -> str:
+        if text is None:
+            return "none"
+        return f'"{text}"' if field == "note" else text
+
+    if not changed:
+        _check_pin(pin, [target_sha, None], edit.rel)
+        if json_out:
+            _emit(report())
+            return
+        _say(f"{key}'s {field} is already {said(value)}: nothing was changed.")
+        return
+
+    def plan(show: Callable[[str], None]) -> None:
+        show(
+            f"Change {key}'s {field} in the crew book of {edit.words()} ({_AS_OF}): "
+            f"{said(before)} -> {said(value)}"
+        )
+        show(f"  replace  {edit.rel}  ({_bytes(len(new))})")
+
+    def done(finished: CrewEditReport) -> None:
+        _say(f"Changed {key}'s {field} to {said(value)}. `wowlab undo` puts back what was there.")
+
+    _apply(
+        edit,
+        report,
+        new=new,
+        new_backup=None,
+        pin=pin,
+        got=[target_sha, written_sha],
+        label=f"crew {command} (1 player)",
+        question=f"Write the {field}?",
+        plan=plan,
+        done=done,
+        store=store,
+        yes=yes,
+        json_out=json_out,
+    )
+
+
+@crew_app.command("rate", short_help="Rate one player good or bad, or clear it (asks first).")
+@_handled
+def crew_rate(
+    name: CrewNameArg,
+    rating: Annotated[
+        str,
+        typer.Argument(metavar="RATING", help="good, bad, or none to take the rating away."),
+    ],
+    expect: CrewExpectOneOpt = None,
+    account: AccountOpt = None,
+    yes: YesOpt = False,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Rate a player in the crew book good or bad, or take the rating away
+    with none: the same change /wowlab crew good, bad and clear make in
+    game. Nothing else in the file changes.
+
+    Shows the plan and asks first, then writes through the write gate: the
+    game must be closed, a snapshot is taken first, and `wowlab undo` puts
+    the old rating back.
+
+    \f
+    JSON: CrewEditReport."""
+    if rating not in ("good", "bad", "none"):
+        raise CliError(f"the rating is good, bad or none, not {rating!r}", EXIT_USAGE)
+    _set(
+        "rate",
+        "rating",
+        name,
+        None if rating == "none" else rating,
+        expect=expect,
+        account=account,
+        yes=yes,
+        root=root,
+        flavor=flavor,
+        json_out=json_out,
+    )
+
+
+@crew_app.command("note", short_help="Write your note about one player (asks first).")
+@_handled
+def crew_note(
+    name: CrewNameArg,
+    text: Annotated[
+        str,
+        typer.Argument(
+            metavar="TEXT",
+            help=f"At most {crewedit.NOTE_MAX_BYTES} bytes after trimming spaces, with no "
+            "control character and no |. Empty text takes the note away.",
+        ),
+    ],
+    expect: CrewExpectOneOpt = None,
+    account: AccountOpt = None,
+    yes: YesOpt = False,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Write your note about a player in the crew book, or take it away with
+    empty text: the same change /wowlab crew note makes in game. A note over
+    200 bytes, or holding a control character or |, is refused rather than
+    cut. Nothing else in the file changes.
+
+    Shows the plan and asks first, then writes through the write gate: the
+    game must be closed, a snapshot is taken first, and `wowlab undo` puts
+    the old note back.
+
+    \f
+    JSON: CrewEditReport."""
+    try:
+        note = crewedit.check_note(text)
+    except crewedit.CrewEditError as exc:
+        raise CliError(str(exc), EXIT_USAGE) from None
+    _set(
+        "note",
+        "note",
+        name,
+        note,
+        expect=expect,
+        account=account,
+        yes=yes,
+        root=root,
+        flavor=flavor,
+        json_out=json_out,
+    )
