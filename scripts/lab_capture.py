@@ -75,6 +75,13 @@ words or more, or of FREE_TEXT_MIN_LETTERS non-ASCII letters or more, is
 flagged "free text, review by hand", with its place and never its text; the
 flag is a note, not a refusal.
 
+The crew book (M19-04, ADR-0036 term 3): any file, whatever its name or kind,
+`--sv` and `.lua.bak` included, whose bytes hold `WowLabCrewDB` in any casing
+is refused unless the name occurs once, as a top-level assignment of the one
+empty shape of `docs/LAB_PLAN.md` §20.5 (CREW_BOOK_NAME, crew_book_problems).
+There is no flag that empties a book or skips the check; the refusal gives the
+reason, never a key.
+
 `Identity` still accepts realms, characters and second names; since M13-49
 discovery passes none, and the inputs are kept for the unit tests that grade
 the scrub engine through them. The own-realm partner checks and the
@@ -2795,6 +2802,142 @@ def sv_stats(data: bytes) -> SvStats:
     )
 
 
+# The crew book (M19-04; docs/LAB_PLAN.md §20.5 term 3, ADR-0036 term 3). The
+# lab-addon's `WowLabCrewDB` holds other players' names, realms, guilds and
+# the player's notes about them, and never enters the repository. So any
+# file, whatever it is called and whatever kind it is, whose bytes hold the
+# name in any ASCII casing is refused, unless the name occurs exactly once,
+# in code (not inside a quoted string, a long-bracket string or a comment),
+# at brace depth 0, at the start of a line, spelled exactly, and as the start
+# of an assignment whose whole table matches the one empty shape below as
+# the client writes it (LAB_FORMATS §4.2 amended: no indentation, every entry
+# ends with `,`, an empty table is `{` and `}` on two lines). Leading blanks
+# are allowed on a line; nothing else is. Keys are bracketed strings, each at
+# most once, in any order, and only these: `schema`, `on`, `started`,
+# `probe`, `skipped`, `players`, `current`. `players` and `current` are
+# empty; `probe` holds at most `["loads"]`; every other value is a number or
+# a boolean, never a string. Nothing is parsed or rewritten: the scan only
+# skips strings and comments, and the shape is matched entry by entry on the
+# raw bytes. There is no flag that empties a book or skips this. A refusal
+# gives the reason only, never a key or an offset.
+CREW_BOOK_NAME = b"WowLabCrewDB"
+_CREW_BOOK_ANY_CASE_RE = re.compile(re.escape(CREW_BOOK_NAME), re.IGNORECASE)
+CREW_BOOK_IN_TEXT_LABEL = "crew book (WowLabCrewDB) named inside a string or comment"
+CREW_BOOK_TWICE_LABEL = "crew book (WowLabCrewDB) named more than once"
+CREW_BOOK_CASING_LABEL = "crew book (WowLabCrewDB) named in another casing"
+CREW_BOOK_NOT_TOP_LABEL = "crew book (WowLabCrewDB) named other than as a top-level assignment"
+CREW_BOOK_NOT_EMPTY_LABEL = "crew book (WowLabCrewDB) not in the one empty shape"
+_CREW_SCAN_RE = re.compile(rb"--|\[=*\[|[\"'{}]")
+_CREW_EOL = rb"\r?\n"
+_CREW_INDENT = rb"[ \t]*"
+_CREW_NUMBER = rb"-?[0-9]{1,20}(?:\.[0-9]{1,20})?"
+_CREW_EMPTY = rb"\{" + _CREW_EOL + _CREW_INDENT + rb"\}"
+_CREW_HEAD_RE = re.compile(re.escape(CREW_BOOK_NAME) + rb" = \{" + _CREW_EOL)
+_CREW_KEY_RE = re.compile(_CREW_INDENT + rb'\["([a-z]{1,8})"\] = ')
+_CREW_VALUE_RE = {
+    b"schema": re.compile(_CREW_NUMBER),
+    b"started": re.compile(_CREW_NUMBER),
+    b"skipped": re.compile(_CREW_NUMBER),
+    b"on": re.compile(rb"true|false"),
+    b"players": re.compile(_CREW_EMPTY),
+    b"current": re.compile(_CREW_EMPTY),
+    b"probe": re.compile(
+        rb"\{"
+        + _CREW_EOL
+        + rb"(?:"
+        + _CREW_INDENT
+        + rb'\["loads"\] = '
+        + _CREW_NUMBER
+        + rb","
+        + _CREW_EOL
+        + rb")?"
+        + _CREW_INDENT
+        + rb"\}"
+    ),
+}
+_CREW_ENTRY_END_RE = re.compile(rb"," + _CREW_EOL)
+_CREW_CLOSE_RE = re.compile(rb"\}(?:" + _CREW_EOL + rb"|\Z)")
+
+
+def _crew_depth_at(data: bytes, target: int) -> int | None:
+    """Brace depth at `target`, counted outside strings and comments; None when
+    `target` lies inside a string or a comment, or after one that never closes
+    (fail closed: the file is malformed there)."""
+    depth = at = 0
+    while True:
+        token = _CREW_SCAN_RE.search(data, at, target)
+        if token is None:
+            return depth
+        start = token.start()
+        first = token.group(0)[:1]
+        if first == b"{":
+            depth += 1
+            at = token.end()
+            continue
+        if first == b"}":
+            depth -= 1
+            at = token.end()
+            continue
+        if first == b"-":
+            end = _skip_comment(data, start)
+        elif first == b"[":
+            end = _skip_long(data, start)
+        else:
+            end = _skip_quoted(data, start)
+            if end <= start + 1 or data[end - 1] != data[start]:
+                return None  # a quoted string with no closing quote
+        if end < 0 or end > target:
+            return None
+        at = end
+
+
+def _crew_empty_shape(data: bytes, at: int) -> bool:
+    """Whether the assignment at `at` is the one empty crew-book shape."""
+    head = _CREW_HEAD_RE.match(data, at)
+    if head is None:
+        return False
+    at = head.end()
+    seen: set[bytes] = set()
+    while (key := _CREW_KEY_RE.match(data, at)) is not None:
+        name = key.group(1)
+        value_re = _CREW_VALUE_RE.get(name)
+        if value_re is None or name in seen:
+            return False
+        seen.add(name)
+        value = value_re.match(data, key.end())
+        if value is None:
+            return False
+        end = _CREW_ENTRY_END_RE.match(data, value.end())
+        if end is None:
+            return False
+        at = end.end()
+    return _CREW_CLOSE_RE.match(data, at) is not None
+
+
+def crew_book_problems(data: bytes) -> list[str]:
+    """Why `data` may not be captured because of the crew book; empty if it may.
+
+    Decided from content alone, never from a file name. Fail closed: anything
+    other than one top-level empty book refuses."""
+    found = _CREW_BOOK_ANY_CASE_RE.search(data)
+    if found is None:
+        return []
+    first = found.start()
+    if _CREW_BOOK_ANY_CASE_RE.search(data, found.end()) is not None:
+        return [CREW_BOOK_TWICE_LABEL]
+    if found.group(0) != CREW_BOOK_NAME:
+        return [CREW_BOOK_CASING_LABEL]
+    depth = _crew_depth_at(data, first)
+    if depth is None:
+        return [CREW_BOOK_IN_TEXT_LABEL]
+    at_line_start = first == 0 or data[first - 1 : first] in (b"\n", b"\r")
+    if depth != 0 or not at_line_start:
+        return [CREW_BOOK_NOT_TOP_LABEL]
+    if not _crew_empty_shape(data, first):
+        return [CREW_BOOK_NOT_EMPTY_LABEL]
+    return []
+
+
 @dataclass(frozen=True)
 class Verdict:
     """What a trial scrub of one candidate found. Holds no file content."""
@@ -3194,6 +3337,9 @@ def process(
         path_problems.append(LOG_NAME_UNSHIFTABLE_LABEL)
     else:
         dest = moved
+    if crew := crew_book_problems(original):
+        # By content, for every file kind and name: nothing below runs on a crew book.
+        return Outcome(item, dest, ScrubResult(b"", (), tuple(crew)), [*crew, *path_problems])
     if kind == "combatlog" and (binary := _log_content_refusals(original)):
         # Not a plain-text log: nothing below could scrub it, so nothing runs.
         problems = [*binary, *path_problems]
@@ -3280,7 +3426,9 @@ def process(
                 n for n in found if REVIEW_CVAR_RE.search(n) and n.casefold() not in blanked
             )
         )
-    problems = [*result.problems, *kept_whole, *path_problems]
+    # The bytes that would be written, checked again: the scrub only replaces
+    # identity, but the gate holds on what leaves, not on what came in.
+    problems = [*result.problems, *kept_whole, *crew_book_problems(result.data), *path_problems]
     other_players = len(units.guids) if units is not None else 0
     return Outcome(
         item, dest, result, problems, path_rewritten, review, other_players, stamped is not None
