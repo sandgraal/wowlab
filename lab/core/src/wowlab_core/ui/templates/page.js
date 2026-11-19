@@ -19,6 +19,8 @@
 // - the character (M14-08, M14-09): a picker from `char list --json`, and
 //   for the one picked its gear from `char gear --json`, its keys from
 //   `char binds --json` and its macros from `char macros --json`;
+// - the crew book (M19-06): `crew list --json` and `crew show --json`, and
+//   its rate, note and forget through the same confirm step;
 // - the looks page (M14-04): `looks page --json`, then the file it wrote,
 //   read from /api/looks-page and shown in a sandboxed frame, as its document.
 // It holds no game rules and no file-map logic (§14.5 D3): every fact, the
@@ -161,13 +163,10 @@
 
   // ─── running one command ───
 
-  // One run through /api/run: {data} with the parsed --json output, or
-  // {error} with what to tell the player. With `partial`, a run that ended
-  // with an error and still printed its JSON report gives both (`char list`
-  // lists the characters it could read and exits 1 for the others). With
-  // `everyFlavor`, the header's flavor is not added: the run reads every
-  // flavor folder (the Account tab's `char list --summary`, M17-01).
-  async function runJson(command, params, partial, everyFlavor) {
+  // One request to /api/run, its whole reply: {result}, or {error} with what
+  // to tell the player when the request failed or the server refused it.
+  // The shared reader below and the Crew tab's confirm step use it.
+  async function postRun(body) {
     let reply;
     let result;
     try {
@@ -176,13 +175,26 @@
         cache: "no-store",
         credentials: "omit",
         headers: keyed({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) }),
+        body: JSON.stringify(body),
       });
       result = await reply.json();
     } catch (error) {
       return { error: "The request failed: " + error };
     }
     if (!reply.ok) return { error: "The server refused this request: " + (result.error || reply.status) };
+    return { result: result };
+  }
+
+  // One run through /api/run: {data} with the parsed --json output, or
+  // {error} with what to tell the player. With `partial`, a run that ended
+  // with an error and still printed its JSON report gives both (`char list`
+  // lists the characters it could read and exits 1 for the others). With
+  // `everyFlavor`, the header's flavor is not added: the run reads every
+  // flavor folder (the Account tab's `char list --summary`, M17-01).
+  async function runJson(command, params, partial, everyFlavor) {
+    const posted = await postRun({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) });
+    if (posted.error) return { error: posted.error };
+    const result = posted.result;
     if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit." };
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
@@ -1483,6 +1495,11 @@
     clearCharacter();
     charSay("", false);
     if (tabShown === "character" || tabShown === "keybinds") loadCharacters();
+    // The crew book is the new flavor's: what was shown of the old one goes.
+    crew.report = null;
+    crew.listSeq += 1;
+    closeCrewPlayer();
+    if (tabShown === "crew") loadCrew();
     drawHomeStatus();
   }
 
@@ -3441,18 +3458,18 @@
   // Commands, Looks). A section with more than one view has its own row of
   // tabs. `showTab` shows one view and marks its section and its tab.
   const SECTIONS = {
-    characters: ["account", "character"],
+    characters: ["account", "character", "crew"],
     backups: ["backups"],
     addons: ["addons"],
     keybinds: ["keybinds"],
     advanced: ["explorer", "gaps", "commands", "looks"],
   };
   // The views with a tab, in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "explorer", "gaps", "commands", "looks"];
+  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
   // Every view's element. Keybinds shows the character page's own element
   // with its keys and macros panels alone, so the picker and the keys are
   // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "backups", "addons", "explorer", "gaps", "commands", "looks"];
+  const VIEWS = ["account", "character", "crew", "backups", "addons", "explorer", "gaps", "commands", "looks"];
   const CHARACTER_PANELS = ["char-page", "char-about"];
   const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
   // The view each section showed last, so going back to it lands there.
@@ -3496,6 +3513,7 @@
       loadHub();
     }
     if (name === "gaps") loadGaps();
+    if (name === "crew") loadCrew();
     if (name === "character" || keys) {
       const listed = loadCharacters();
       if (keys && character.kept) {
@@ -3514,6 +3532,390 @@
     showTab("account");
     byId("tab-account").focus();
   });
+
+  // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
+  // The players the lab-addon's crew book keeps, from `crew list --json`:
+  // its search, rating filter and order are the command's own options, so
+  // the matching and the order are Python's, and every change reads the
+  // list again. A row opens what `crew show` prints (its `lines`). Rating,
+  // note and forget go through the confirm step like every other write:
+  // the plan run first, Confirm only with the server's one-time token, sent
+  // back with the plan's own command and parameters; the server adds
+  // `--yes` and the `--expect` pin it read from the plan. Each is sent the
+  // player's stored key exactly as `crew list --json` gave it, as an
+  // argument, which the server puts after `--`. Every name, realm, guild,
+  // note and instance name is other people's text: it reaches the page
+  // only as text, through `visible()`, never in an attribute, a class or
+  // an id, and no link or address is built from it.
+
+  const crew = {
+    report: null, // the CrewReport the table was drawn from
+    listSeq: 0, // the latest list read; an earlier one draws nothing
+    showSeq: 0, // the latest player opened
+    actSeq: 0, // the latest plan or confirmed run
+    key: null, // the stored key of the player shown
+    pending: null, // the plan Confirm would run: { command, params, token }
+    searchTimer: null,
+  };
+  const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
+  const CREW_SORT = [["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"]];
+  const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
+  const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
+
+  function fillSelect(select, choices) {
+    select.replaceChildren();
+    for (const [value, text] of choices) {
+      const option = make("option", text);
+      option.value = value;
+      select.appendChild(option);
+    }
+    select.value = choices[0][0];
+  }
+  fillSelect(byId("crew-rated"), CREW_RATED);
+  fillSelect(byId("crew-sort"), CREW_SORT);
+  fillSelect(byId("crew-rate-value"), CREW_RATE);
+
+  function crewSay(text, isError) {
+    const node = byId("crew-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  function crewActSay(text, isError) {
+    const node = byId("crew-act-status");
+    announce(node, text, Boolean(isError));
+    node.classList.toggle("error", Boolean(isError));
+  }
+
+  // The book the list read: its game account and flavor folder, so a show or
+  // a change acts on that book and no other.
+  function crewParams(extra) {
+    const params = {};
+    const report = crew.report;
+    if (report && hubStr(report.account)) params.account = report.account;
+    if (report && hubStr(report.flavor_folder)) params.flavor = report.flavor_folder;
+    return Object.assign(params, extra);
+  }
+
+  function crewDay(seconds) {
+    return typeof seconds === "number" && Number.isFinite(seconds) ? playedDay(seconds * 1e9) : null;
+  }
+
+  // A class token as words: "MAGE" as "Mage", and the two-word classes as
+  // the class list names them.
+  function crewClass(token) {
+    const text = hubStr(token);
+    if (!text) return null;
+    if (Object.prototype.hasOwnProperty.call(TWO_WORD_CLASSES, text)) return TWO_WORD_CLASSES[text];
+    return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
+  }
+
+  function crewCells(p) {
+    const level = hubNum(p.level);
+    const klass = crewClass(p.class_token);
+    const who = [klass, level === null ? null : "level " + level].filter(Boolean).join(", ");
+    const met = hubNum(p.met);
+    return [
+      who || NOT_RECORDED,
+      met === null ? NOT_RECORDED : String(met),
+      crewDay(p.last) || NOT_RECORDED,
+      hubStr(p.where) ? visible(p.where) : "none",
+      hubStr(p.rating) ? visible(p.rating) : "none",
+      hubStr(p.note) ? visible(p.note) : "none",
+    ];
+  }
+
+  function crewRow(p) {
+    const tr = make("tr");
+    tr.className = "hub-row";
+    const name = make("td");
+    // The name is a button, so a keyboard reaches the row; a click anywhere
+    // on the row opens the player too.
+    const open = make("button", visible(p.key));
+    open.type = "button";
+    open.className = "hub-open";
+    open.title = "Show everything the crew book keeps about this player";
+    name.appendChild(open);
+    tr.appendChild(name);
+    for (const text of crewCells(p)) tr.appendChild(make("td", text));
+    tr.addEventListener("click", () => openCrewPlayer(p.key));
+    return tr;
+  }
+
+  function drawCrew() {
+    const report = crew.report;
+    const on = report.state !== "not_turned_on";
+    byId("crew-words").textContent = visible(hubStr(report.words) || "");
+    const keeps = visible(hubStr(report.keeps) || "");
+    byId("crew-keeps").textContent = keeps;
+    // Never turned on: what turning it on would keep, under how to.
+    byId("crew-offer").textContent = on ? "" : keeps;
+    byId("crew-offer").hidden = on || !keeps;
+    const notes = byId("crew-notes");
+    notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
+      .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
+    byId("crew-tools").hidden = !on;
+    const box = byId("crew-table");
+    const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
+    const unread = Array.isArray(report.unread) ? report.unread.filter((u) => u && typeof u.key === "string") : [];
+    const list = byId("crew-unread");
+    list.replaceChildren(...unread.map((u) =>
+      make("li", "Could not be read: " + visible(u.key) + ": " + visible(String(u.reason || "")))));
+    list.hidden = unread.length === 0;
+    if (!on || players.length === 0) {
+      box.replaceChildren();
+      box.hidden = true;
+      const total = hubNum(report.total) || 0;
+      crewSay(on && total > unread.length ? "No player matches." : "", false);
+      return;
+    }
+    box.hidden = false;
+    const table = make("table");
+    table.className = "char-table hub crew";
+    const caption = make("caption", "Players in the crew book");
+    caption.className = "unseen";
+    table.appendChild(caption);
+    const head = make("thead");
+    const tr = make("tr");
+    for (const label of CREW_COLUMNS) {
+      const th = make("th", label);
+      th.scope = "col";
+      tr.appendChild(th);
+    }
+    head.appendChild(tr);
+    table.appendChild(head);
+    const body = make("tbody");
+    for (const p of players) body.appendChild(crewRow(p));
+    table.appendChild(body);
+    box.replaceChildren(table);
+    const total = hubNum(report.total);
+    const n = players.length;
+    const all = total === null ? n : total - unread.length;
+    crewSay(n === all ? pluralWord(n, " player") + "." : "Showing " + n + " of " + pluralWord(all, " player") + ".", false);
+  }
+
+  function crewFilters() {
+    const params = {};
+    const search = byId("crew-search").value;
+    if (search.trim() !== "") params.search = search;
+    const rated = byId("crew-rated").value;
+    if (rated) params.rated = rated;
+    params.sort = byId("crew-sort").value || "last";
+    return params;
+  }
+
+  async function loadCrew() {
+    const seq = ++crew.listSeq;
+    crewSay("Reading the crew book…", false);
+    const reply = await runJson(["crew", "list"], crewFilters());
+    if (seq !== crew.listSeq) return;
+    const report = reply.data;
+    if (!report || typeof report !== "object" || typeof report.state !== "string") {
+      crew.report = null;
+      byId("crew-table").replaceChildren();
+      byId("crew-table").hidden = true;
+      byId("crew-tools").hidden = true;
+      byId("crew-words").textContent = "";
+      byId("crew-offer").hidden = true;
+      crewSay(reply.error ? shown(reply.error) : "The crew book's list came back in a shape this page does not know.", true);
+      return;
+    }
+    crew.report = report;
+    drawCrew();
+    // The player shown is gone from the list (forgotten, or filtered out):
+    // the panel goes too.
+    if (crew.key !== null && !(report.players || []).some((p) => p && p.key === crew.key)) closeCrewPlayer();
+  }
+
+  byId("crew-search").addEventListener("input", () => {
+    if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);
+    crew.searchTimer = setTimeout(() => {
+      crew.searchTimer = null;
+      loadCrew();
+    }, 300);
+  });
+  byId("crew-rated").addEventListener("change", () => loadCrew());
+  byId("crew-sort").addEventListener("change", () => loadCrew());
+
+  function clearCrewConfirm() {
+    crew.pending = null;
+    byId("crew-confirm-box").hidden = true;
+    byId("crew-plan-box").hidden = true;
+    byId("crew-plan-lines").textContent = "";
+    byId("crew-plan-lines").hidden = true;
+    byId("crew-confirm-note").textContent = "";
+    const button = byId("crew-confirm");
+    button.hidden = true;
+    button.disabled = true;
+    button.textContent = "Confirm";
+    byId("crew-act-said").textContent = "";
+    byId("crew-act-said").hidden = true;
+  }
+
+  function closeCrewPlayer() {
+    crew.key = null;
+    crew.showSeq += 1;
+    crew.actSeq += 1;
+    clearCrewConfirm();
+    crewActSay("", false);
+    byId("crew-player").hidden = true;
+    byId("crew-player-lines").replaceChildren();
+  }
+
+  // Opens one player: what `crew show` prints, line by line, then the three
+  // changes. `key` is the stored key from the list, sent as it is.
+  async function openCrewPlayer(key) {
+    const seq = ++crew.showSeq;
+    crew.actSeq += 1;
+    crew.key = key;
+    clearCrewConfirm();
+    crewActSay("", false);
+    byId("crew-player").hidden = false;
+    byId("crew-actions").hidden = true;
+    byId("crew-note-codes").hidden = true;
+    byId("crew-player-title").textContent = visible(key);
+    const lines = byId("crew-player-lines");
+    lines.replaceChildren(make("li", "Reading…"));
+    const reply = await runJson(["crew", "show"], crewParams({ name: key }));
+    if (seq !== crew.showSeq) return;
+    const report = reply.data;
+    const said = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!said) {
+      lines.replaceChildren();
+      crewActSay(reply.error ? shown(reply.error) : "This player's entry came back in a shape this page does not know.", true);
+      return;
+    }
+    lines.replaceChildren(...said.map((line) => make("li", visible(line.trim()))));
+    const player = report.player && typeof report.player === "object" ? report.player : null;
+    if (player) {
+      byId("crew-rate-value").value = hubStr(player.rating) || "none";
+      // The note as it is shown: a control character in it is shown as its
+      // code here too, and a plan of an edited note writes what is seen.
+      const stored = typeof player.note === "string" ? player.note : "";
+      byId("crew-note-text").value = visible(stored);
+      // Said before any edit: saving writes the codes as they are shown.
+      byId("crew-note-codes").hidden = visible(stored) === stored;
+      byId("crew-actions").hidden = false;
+    }
+    byId("crew-player-title").focus();
+  }
+
+  // The plan run of one change; Confirm is offered only when the server
+  // minted a token for it, with the server's plan lines, note and label.
+  async function crewPlan(command, extra) {
+    if (crew.key === null) return;
+    const seq = ++crew.actSeq;
+    clearCrewConfirm();
+    crewActSay("Working out what would change…", false);
+    const params = withFlavor(command, crewParams(Object.assign({ name: crew.key }, extra)));
+    const reply = await postRun({ command: command, params: params });
+    if (seq !== crew.actSeq) return;
+    if (reply.error) {
+      crewActSay(reply.error, true);
+      return;
+    }
+    const result = reply.result;
+    const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+    const offer = result.confirm && result.confirm.stage === "plan" ? result.confirm : null;
+    const token = offer && typeof offer.token === "string" && offer.token ? offer.token : null;
+    if (!token) {
+      let nothing = false;
+      try {
+        const report = JSON.parse(result.stdout);
+        nothing = result.exit_code === 0 && Boolean(report) && report.changed === false;
+      } catch (_) {
+        // no report: the command's own words say why
+      }
+      crewActSay(nothing ? "Nothing would change: it is already so." : outcome ? outcome.text : "", !nothing);
+      const text = String(result.stderr || "").trim();
+      const box = byId("crew-act-said");
+      box.textContent = shown(text);
+      box.hidden = !text;
+      return;
+    }
+    crew.pending = { command: command, params: params, token: token };
+    crewActSay(outcome ? outcome.text : "", false);
+    const lines = Array.isArray(offer.plan_lines) ? offer.plan_lines.filter((l) => typeof l === "string") : [];
+    const planLines = byId("crew-plan-lines");
+    planLines.textContent = lines.map(shown).join("\n");
+    planLines.hidden = lines.length === 0;
+    byId("crew-plan-box").hidden = false;
+    byId("crew-confirm-box").hidden = false;
+    byId("crew-confirm-note").textContent = typeof offer.note === "string" ? shown(offer.note) : "";
+    const button = byId("crew-confirm");
+    if (typeof offer.label === "string" && offer.label) button.textContent = offer.label;
+    button.hidden = false;
+    button.disabled = false;
+    byId("crew-plan-heading").focus();
+  }
+
+  // The confirmed run of the plan shown: its command and parameters as the
+  // plan ran them, and the server's token; one click, one run.
+  async function crewConfirm() {
+    const plan = crew.pending;
+    if (plan === null) return;
+    crew.pending = null;
+    const seq = ++crew.actSeq;
+    const button = byId("crew-confirm");
+    button.disabled = true;
+    button.hidden = true;
+    crewActSay("Writing…", false);
+    const reply = await postRun({ command: plan.command, params: plan.params, confirm: plan.token });
+    // The store and the install may have changed: the backup line reads again.
+    backup.stale = true;
+    if (seq !== crew.actSeq) return;
+    byId("crew-plan-box").hidden = true;
+    if (reply.error) {
+      crewActSay(reply.error, true);
+      byId("crew-act-status").focus();
+      return;
+    }
+    const result = reply.result;
+    const outcome = result.outcome && typeof result.outcome.text === "string" ? result.outcome : null;
+    const alert = Boolean(outcome && outcome.alert);
+    const status = outcome ? outcome.text : "";
+    const note = result.confirm && typeof result.confirm.note === "string" ? result.confirm.note : "";
+    const text = result.exit_code !== 0 ? String(result.stderr || "").trim() : "";
+    const tell = () => {
+      crewActSay(status, alert);
+      byId("crew-confirm-note").textContent = shown(note);
+      byId("crew-confirm-box").hidden = !note;
+      const box = byId("crew-act-said");
+      box.textContent = shown(text);
+      box.hidden = !text;
+    };
+    tell();
+    byId("crew-act-status").focus();
+    const key = crew.key;
+    let reached = "";
+    try {
+      const report = JSON.parse(result.stdout);
+      if (report && typeof report.not_reached === "string") reached = report.not_reached;
+    } catch (_) {
+      // no report: a refusal, said above
+    }
+    await loadCrew();
+    if (crew.key === null && result.exit_code === 0) {
+      // Forgotten: the player's panel went with them, so the list's own
+      // line says what was done, what a forget does not reach, and the
+      // journal record.
+      crewSay([status, shown(reached), shown(note)].filter(Boolean).join(" "), alert);
+      return;
+    }
+    if (seq !== crew.actSeq) return;
+    if (key !== null && crew.key === key && plan.command[1] !== "forget") {
+      // The entry as it is now, with what was just said kept under it.
+      await openCrewPlayer(key);
+      if (crew.key !== key) return;
+      tell();
+      byId("crew-act-status").focus();
+    }
+  }
+
+  byId("crew-rate").addEventListener("click", () => crewPlan(["crew", "rate"], { rating: byId("crew-rate-value").value || "none" }));
+  byId("crew-note").addEventListener("click", () => crewPlan(["crew", "note"], { text: byId("crew-note-text").value }));
+  byId("crew-forget").addEventListener("click", () => crewPlan(["crew", "forget"], {}));
+  byId("crew-confirm").addEventListener("click", () => crewConfirm());
 
   // ─── the Characters home (M18-04, docs/design/COMPANION.md) ───
   // Above the table of every character: two status cards, then one card per

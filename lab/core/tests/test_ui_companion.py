@@ -257,11 +257,11 @@ def test_each_section_with_several_views_has_its_own_tabs() -> None:
         r'<nav id="([a-z]+)-tabs" class="tabs" role="tablist"[^>]*>(.*?)</nav>', html, re.S
     )
     assert [(name, re.findall(r'id="tab-([a-z]+)"', body)) for name, body in rows] == [
-        ("characters", ["account", "character"]),
+        ("characters", ["account", "character", "crew"]),
         ("advanced", ["explorer", "gaps", "commands", "looks"]),
     ]
     script = _template("page.js")
-    assert 'characters: ["account", "character"],' in script
+    assert 'characters: ["account", "character", "crew"],' in script
     assert 'advanced: ["explorer", "gaps", "commands", "looks"],' in script
 
 
@@ -279,8 +279,10 @@ def _views(html: str) -> dict[str, str]:
 
 _ABOUT = re.compile(
     r'<details class="about"><summary>About this data</summary>\n<p class="(?:intro|patch-day-intro)">'
-    # The character page's own facts and saves follow its intro (M18-05).
-    r'(?:(?!</p>).)+</p>\n(?:<div id="char-about" class="char-about">\n.*</div>\n)?</details>\n</section>\n$',
+    # The character page's own facts and saves follow its intro (M18-05);
+    # the crew book's own sentences follow the Crew tab's (M19-06).
+    r'(?:(?!</p>).)+</p>\n(?:<div id="(?P<part>char|crew)-about" class="(?P=part)-about">\n.*</div>\n)?'
+    r"</details>\n</section>\n$",
     flags=re.DOTALL,
 )
 
@@ -291,6 +293,7 @@ def test_every_view_ends_with_one_closed_about_this_data() -> None:
     assert list(views) == [
         "account-view",
         "character-view",
+        "crew-view",
         "backups-view",
         "addons-view",
         "explorer-view",

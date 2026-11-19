@@ -1184,6 +1184,19 @@ _PIN_CHECKS: Mapping[tuple[str, ...], str] = {
         "if the target file has changed by then, or what it merges from has and it would "
         "write other bytes than this plan, it is refused (exit 3) and nothing is written"
     ),
+    # `crew rate` and `crew note` (§20.3, M19-06): the crew book's file as
+    # read, and the bytes the change would write.
+    ("target_sha256", "written_sha256"): (
+        "if the crew book's file has changed by then, or the change would write other bytes "
+        "than this plan, it is refused (exit 3) and nothing is written"
+    ),
+    # `crew forget`: the same for the file and for the game's backup of it,
+    # pinned even when the backup is left alone or there is none.
+    ("target_sha256", "written_sha256", "backup_sha256", "backup_written_sha256"): (
+        "if the crew book's file or the game's backup of it has changed by then, or the "
+        "forget would write other bytes than this plan, it is refused (exit 3) and nothing "
+        "is written"
+    ),
 }
 
 # The sentence beside a confirmed run that was killed (its time limit or its
