@@ -102,6 +102,10 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_constructed_unclosed_openers_do_not_rescan_the_file",
         "tests/scripts/test_lab_capture_followup6.py"
         "::test_constructed_long_separator_runs_scan_in_linear_time",
+        "tests/scripts/test_lab_capture_own_guids.py"
+        "::test_constructed_hostile_link_text_scrubs_in_linear_time",
+        "tests/scripts/test_lab_capture_own_guids.py"
+        "::test_constructed_many_own_link_lines_scrub_in_linear_time",
         "tests/scripts/test_lab_capture_round2.py"
         "::test_constructed_one_megabyte_run_scrubs_in_bounded_time",
         # CPU-time growth of guard's no-op whole restore from 1,000 to 8,000 files.
