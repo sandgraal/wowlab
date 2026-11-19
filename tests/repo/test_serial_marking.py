@@ -179,8 +179,12 @@ def test_the_scan_sees_a_measurement_that_is_not_listed() -> None:
     for name in conftest.SERIAL_FILES:
         assert f"{name}:" in found, f"the scan does not see {name}"
     for nodeid in conftest.SERIAL_TESTS:
-        if "test_layout.py" in nodeid or "test_guard_pins" in nodeid:
-            continue  # wall clock, and a fork: listed by hand, not found by the scan
+        if any(
+            hand in nodeid for hand in ("test_layout.py", "test_guard_pins", "test_perf_budget")
+        ):
+            # Wall clock, a fork, and a process named like the client (M15-18):
+            # listed by hand, not found by the scan.
+            continue
         assert nodeid.partition("::")[0] in found, f"the scan does not see {nodeid}"
 
 
