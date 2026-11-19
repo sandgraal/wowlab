@@ -28,6 +28,9 @@ both variables.
   holds a number.
 - No names, realms, GUIDs, guild or chat of anyone, no text the owner typed,
   no Battle.net identity, no wall-clock time. Every unit token is `"player"`.
+  The one exception is the crew book (`Crew.lua`, below): off until the
+  player turns it on, it keeps the names, realms and guilds of the players
+  they group with, the time, and their own ratings and notes; never a GUID.
   A crafted item's link can carry the crafter's player GUID
   (`Player-<id>-<hex>`); every such run is blanked before the link is stored
   and the slot records `crafter_removed = true`.
@@ -498,6 +501,8 @@ hold several sections:
 - `Actions.lua`: `spellbook`, `actionbars`, `bindings`
 - `Identity.lua`: `identity`
 - `Core.lua` holds no section: events, tables and the slash command.
+- `Crew.lua` holds no section: the crew book, switched by `/wowlab crew on`
+  and `off` ("The crew book" below).
 
 The list is saved as `WowLabCharDB.skip = { "<section key>", ... }` (section
 order, left out when empty) and read at `ADDON_LOADED`, before any section is
@@ -541,6 +546,91 @@ What the switch does not do:
   crash seen (M11-20) came about 4 s after entering the world on the old
   timing. If it cannot be typed in time, untick the addon at character
   select.
+
+### The crew book
+
+`Crew.lua` keeps a book of the players you group with, off until you turn
+it on (`docs/LAB_PLAN.md` §20.1, ADR-0036). It is the one file allowed to
+read other players' names and realms, and only while the book is on.
+
+- `/wowlab crew on` turns it on. With no book yet it starts a new, empty
+  one and says so; either way it prints what the book keeps: "The crew book
+  keeps, for each player you group with, their name, realm, guild, class,
+  level and role, when you first and last grouped, how many times and in
+  which instance, and your own rating and note. It keeps them in WowLab.lua
+  (and the game's backup, WowLab.lua.bak) in this game account's
+  SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent
+  anywhere. The book knows names, not people: a player who renames or moves
+  realm appears as a new entry, and someone else may later take a name you
+  rated."
+- `/wowlab crew off` stops recording and keeps what is stored. `/wowlab
+  crew` alone says whether it is on, how many players it keeps, when it was
+  started, and what this client cannot give it.
+- `/wowlab crew good`, `bad`, `clear` (drops the rating) and `note <text>`
+  (empty text drops the note) take a `name-realm` as their first word (a
+  word holding `-`), or else use your target when it is another player. A
+  name not in the book and not in your group is refused. `/wowlab crew who`
+  prints the warning line for everyone in your group the book knows. Every
+  change is kept at the next `/reload` or logout; a crash loses it.
+- While it is on, the addon prints "Crew book on: N players. /wowlab crew
+  off to stop." after the first pass of each login or `/reload`, so a book
+  brought back by a snapshot restore, an undo or an `sv merge` is seen.
+- When a player you rated or noted is first counted in a group, one line in
+  your own chat frame says who (the name as the book keeps it, with their
+  guild), your rating, how many groups and the date of the last, and your
+  note. `|` is doubled and line breaks are removed in every field as it is
+  printed. Nothing is ever sent: no chat message, whisper or addon message.
+
+What it keeps: the account-wide `WowLabCrewDB` in the account's
+`WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
+`schema = 1`; the per-character schema does not change. "Account-wide" is
+narrower than it sounds: one book per game account folder in one flavor
+folder, and a renamed flavor folder leaves the book where it was. The
+record's layout is in `docs/LAB_PLAN.md` §20.1 and `docs/LAB_FORMATS.md`
+(amendment of 2026-11-19). In short: `on`, `started`, `probe = { loads }`
+(raised at every load while a book exists, as `WowLabCharDB.probe` is),
+`skipped` (reads skipped as secret, or a member whose read failed),
+`current` (the keys counted in the group you are in now, saved so a
+`/reload` does not count or warn again) and `players`, keyed by
+`Name-Realm`, each with `class`, `level`, `role` (never replaced by `NONE`),
+`guild` (never cleared by a nil), `met`, `first`, `last` (`time()`),
+`where` and `where_id` (the instance's name and id; left out in the open
+world), `rating` (`good` or `bad`) and `note`.
+
+How it records: on `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`, debounced
+by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be
+typed first); never in combat or when that cannot be asked, and again at
+`PLAYER_REGEN_ENABLED`. `raid1` to `raid40` in a raid, `party1` to `party4`
+otherwise; you are skipped with `UnitIsUnit`. A realm that comes back nil
+or empty is your own (`GetNormalizedRealmName`). A name that is nil or the
+client's "unknown" text is tried again later. Every value read goes
+through `issecretvalue` where the client has it: a secret name or realm
+skips the member, any other secret value leaves its field as it was, and
+each adds one to `skipped`; each member is read inside its own `pcall`. No
+GUID is read. `/wowlab skip` does not reach this file: its switch is `on`.
+
+Limits, held in named constants and short functions of `Crew.lua` that
+`tests/addon/test_crew_book.py` reads: at most `MAX_PLAYERS` (5,000)
+players; when full, the unrated, un-noted player with the oldest `last` is
+dropped (`makeRoom`); rated and noted players never are, and when all are,
+new members and new ratings are refused, said once per session. A note has
+control characters and `|` removed byte by byte and spaces trimmed
+(`cleanNote`); over `NOTE_MAX_BYTES` (200) bytes after that it is refused,
+never cut (`noteFits`).
+
+What is confirmed and what is not. Only `UnitClass("player")`, `UnitLevel`
+on the player, `C_Timer.After`, `InCombatLockdown` out of combat and that
+`issecretvalue` can be probed have run on the client (earlier captures).
+Everything else the book uses is **[verify]** until the owner's in-game
+check (M19-07): the roster and name events; `IsInGroup`, `IsInRaid`;
+`UnitName`, `UnitIsUnit`, `UnitIsPlayer`, `UnitClass`, `UnitLevel`,
+`UnitGroupRolesAssigned` and `GetGuildInfo` on another unit;
+`GetNormalizedRealmName`; what `GetInstanceInfo` gives in the open world
+and in an instance; `UNKNOWNOBJECT`; `time` and `date`; the realm a same-realm
+and a cross-realm member come back with; whether anything read is secret in
+an instance; whether `WowLab.lua.bak` holds the book; whether a printed line
+reaches `WoWChatLog.txt` with `/chatlog` on (believed not); and the drop
+order, which no in-game check can reach.
 
 ## Lint
 

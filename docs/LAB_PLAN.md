@@ -6057,6 +6057,28 @@ must come from the repository test's fixed list of constructed names.)
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
+- *As built (2026-11-19, M19-10).* `lab/addon/WowLab/Crew.lua`, the TOC
+  lines above and `/wowlab crew` with `on`, `off`, `good`, `bad`, `clear`,
+  `note` and `who`. **Confirmed** on the client only by earlier captures:
+  `UnitClass("player")`, `UnitLevel("player")`, `C_Timer.After`,
+  `InCombatLockdown` out of combat and that `issecretvalue` can be probed.
+  Still **[verify]** until M19-07: every other call and event in the list
+  above, plus `UnitIsPlayer` (the target is used only when it is a player);
+  the realm parts; roles; `GetInstanceInfo` in the open world and in an
+  instance; secret values in instances; `WowLab.lua.bak`; the chat log; the
+  account probe across a logout; the drop order. Choices made in building
+  it: the name call is `UnitName` (not `UnitFullName`); the walk is
+  `raid1`..`raid40` or `party1`..`party4`, a unit that does not exist giving
+  a nil name; the first pass waits 15 s after entering the world, like
+  Core.lua's, so `/wowlab crew off` can be typed first, and a typed
+  `/wowlab crew` command runs a pass at once; `where` is set when a member
+  is first counted (left out when that group is in the open world) and
+  whenever a later pass finds the group in an instance; the warning gives
+  the groups and the date as they stood before this group; a typed name is
+  matched exactly, or case-blind when exactly one key matches; ratings and
+  notes are refused while the book is off. The roster events are
+  registered once per session, at the first `PLAYER_ENTERING_WORLD` the
+  book is on and out of combat, or by `/wowlab crew on`.
 
 ### 20.2 What the Lab reads
 

@@ -231,6 +231,24 @@ def test_install_writes_the_addon_with_the_discovered_interface(flavor: Path) ->
     assert record.label == "addon install lab (## Interface: 16001)"
 
 
+def test_install_writes_the_crew_book_file_and_its_toc_line(flavor: Path) -> None:
+    """M19-10: the crew book's `Crew.lua` is installed, listed in the
+    installed TOC after Core.lua, and the TOC's account line declares the
+    crew book beside `WowLabDB` (read from the source TOC, so this file
+    never spells the book's name); the per-character line is unchanged."""
+    ok("addon", "install", "lab", "--yes")
+    installed = flavor / LAB
+    assert (installed / "Crew.lua").read_bytes() == (SOURCE / "Crew.lua").read_bytes()
+    toc = parse_toc((installed / "WowLab.toc").read_bytes())
+    source = parse_toc((SOURCE / "WowLab.toc").read_bytes())
+    files = [line.path for line in toc.files]
+    assert "Crew.lua" in files and files.index("Crew.lua") > files.index("Core.lua")
+    assert toc.saved_variables == source.saved_variables
+    assert len(toc.saved_variables) == 2 and toc.saved_variables[0] == "WowLabDB"
+    assert toc.saved_variables[1].endswith("CrewDB")
+    assert toc.saved_variables_per_character == ("WowLabCharDB",)
+
+
 def test_the_interface_follows_build_info_constructed(root: Path, flavor: Path) -> None:
     info = root / ".build.info"
     info.write_bytes(info.read_bytes().replace(VERSION.encode(), b"1.61.2.70001"))
