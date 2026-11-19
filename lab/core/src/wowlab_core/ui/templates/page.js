@@ -163,13 +163,10 @@
 
   // ─── running one command ───
 
-  // One run through /api/run: {data} with the parsed --json output, or
-  // {error} with what to tell the player. With `partial`, a run that ended
-  // with an error and still printed its JSON report gives both (`char list`
-  // lists the characters it could read and exits 1 for the others). With
-  // `everyFlavor`, the header's flavor is not added: the run reads every
-  // flavor folder (the Account tab's `char list --summary`, M17-01).
-  async function runJson(command, params, partial, everyFlavor) {
+  // One request to /api/run, its whole reply: {result}, or {error} with what
+  // to tell the player when the request failed or the server refused it.
+  // The shared reader below and the Crew tab's confirm step use it.
+  async function postRun(body) {
     let reply;
     let result;
     try {
@@ -178,13 +175,26 @@
         cache: "no-store",
         credentials: "omit",
         headers: keyed({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) }),
+        body: JSON.stringify(body),
       });
       result = await reply.json();
     } catch (error) {
       return { error: "The request failed: " + error };
     }
     if (!reply.ok) return { error: "The server refused this request: " + (result.error || reply.status) };
+    return { result: result };
+  }
+
+  // One run through /api/run: {data} with the parsed --json output, or
+  // {error} with what to tell the player. With `partial`, a run that ended
+  // with an error and still printed its JSON report gives both (`char list`
+  // lists the characters it could read and exits 1 for the others). With
+  // `everyFlavor`, the header's flavor is not added: the run reads every
+  // flavor folder (the Account tab's `char list --summary`, M17-01).
+  async function runJson(command, params, partial, everyFlavor) {
+    const posted = await postRun({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) });
+    if (posted.error) return { error: posted.error };
+    const result = posted.result;
     if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit." };
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
@@ -3587,26 +3597,6 @@
     return Object.assign(params, extra);
   }
 
-  // One run through /api/run, its whole reply: {result} or {error}.
-  async function crewRun(body) {
-    let reply;
-    let result;
-    try {
-      reply = await fetch(api("/api/run"), {
-        method: "POST",
-        cache: "no-store",
-        credentials: "omit",
-        headers: keyed({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-      result = await reply.json();
-    } catch (error) {
-      return { error: "The request failed: " + error };
-    }
-    if (!reply.ok) return { error: "The server refused this request: " + (result.error || reply.status) };
-    return { result: result };
-  }
-
   function crewDay(seconds) {
     return typeof seconds === "number" && Number.isFinite(seconds) ? playedDay(seconds * 1e9) : null;
   }
@@ -3813,7 +3803,7 @@
     clearCrewConfirm();
     crewActSay("Working out what would change…", false);
     const params = withFlavor(command, crewParams(Object.assign({ name: crew.key }, extra)));
-    const reply = await crewRun({ command: command, params: params });
+    const reply = await postRun({ command: command, params: params });
     if (seq !== crew.actSeq) return;
     if (reply.error) {
       crewActSay(reply.error, true);
@@ -3865,7 +3855,7 @@
     button.disabled = true;
     button.hidden = true;
     crewActSay("Writing…", false);
-    const reply = await crewRun({ command: plan.command, params: plan.params, confirm: plan.token });
+    const reply = await postRun({ command: plan.command, params: plan.params, confirm: plan.token });
     // The store and the install may have changed: the backup line reads again.
     backup.stale = true;
     if (seq !== crew.actSeq) return;

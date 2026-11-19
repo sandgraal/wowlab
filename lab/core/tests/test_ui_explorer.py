@@ -540,6 +540,10 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # M18-06: a character kept only in a backup opens from the read
         # `char kept`; graded in test_ui_kept.py.
         ("char", "kept"),
+        # M19-06: the Crew tab reads with `crew list` and `crew show`; its
+        # writes go through the confirm step (graded in test_ui_crew.py).
+        ("crew", "list"),
+        ("crew", "show"),
     }, used
     for path in used:
         assert path in offered, path
