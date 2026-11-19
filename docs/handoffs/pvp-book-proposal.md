@@ -44,7 +44,7 @@ logout. Two costs grow with its size:
   client is not measured.
 - **At the desk:** wowlab parses the whole file on every read. Measured on
   constructed books: 5,000 players is about 1.4 MB and reads in 0.2 s;
-  50,000 players is about 13 MB and takes 2.5 s.
+  50,000 players is about 13 MB and takes 2.5 to 2.7 s.
 
 The limit was set to keep both small. The answer is not a bigger text file.
 It is two stores with two jobs:

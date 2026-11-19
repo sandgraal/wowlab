@@ -3581,25 +3581,25 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-01 — `crewdb`: the database and the sync
 **Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
 
-`wowlab_core.crewdb`: the SQLite file of §21.3 (path, `STRICT` tables, indexes, the fixed `application_id`, `meta`), and the sync from a schema 1 book by rules 1 to 6. `wowlab crew sync`; `crew list` and `crew show` sync first and answer from the database, marking a player the game no longer lists; `--json` gains fields and renames none. The three daily copies. No network import; nothing written into the install.
+`wowlab_core.crewdb`: the SQLite file of §21.3 (path, `STRICT` tables, indexes, the fixed `application_id`, `meta`, `secure_delete`, no write-ahead log), and the sync from a schema 1 book by rules 1 to 6, counters added by rule 2. `wowlab crew sync`, and `--adopt` for a database from a renamed flavor folder or another install root; `crew list` and `crew show` sync first and answer from the database, marking a player the game no longer lists; `--json` gains fields and renames none. The three daily copies. A database newer than this wowlab is refused. The L1 sweep allows the crew database, and nothing else under the data directory, to change during `crew` reads. §20.5's term-2 sentence, `crew --help` and their test name wowlab's own database. No network import; nothing written into the install.
 
-**Acceptance:** tests on constructed books and databases built at run time: each sync rule, a sync run twice changing nothing, an interrupted sync leaving the old state, an unreadable or unknown-schema book syncing nothing, a hostile name, guild and note stored and shown only through the escaping path, 50,000 players listed within a stated time; the L1 sweep and the no-network tests green; `crewdb` shares no code with `db2lake` that assumes a rebuildable cache. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `crew sync`, and `crew list` and `crew show` answering from the database.
+**Acceptance:** tests on constructed books and databases built at run time: each sync rule, a sync run twice changing nothing, a player dropped by the game and met again keeping the earlier total, an interrupted sync leaving the old state, two syncs at once, an unreadable or unknown-schema book syncing nothing, a newer database refused, a second install root refused until adopted, a hostile name, guild and note stored and shown only through the escaping path, 50,000 players listed within a stated time; the L1 sweep and the no-network tests green; `crewdb` shares no code with `db2lake` that assumes a rebuildable cache. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: `crew sync`, and `crew list` and `crew show` answering from the database.
 
 ---
 
 ## [ ] M20-02 — The write commands, `doctor` and the repository keep the terms for the database
 **Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.3 ("Writing"), §21.4; ADR-0036 terms 3 to 5
 
-`crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it; `crew forget` removes the player from the saved file, its backup, the database and its copies, and `--all` deletes the database and its copies. `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
+`crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it (asked first, pinned by `--expect` on the row's rating and note, joined to `cli.EXPECT_FIELDS`, and said not to be undoable); `crew forget` removes the player from the saved file, its backup, the database and its copies, and `--all` deletes the database and its copies. The forget plan and result say what `undo` brings back and what it cannot (§21.3). `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
 
-**Acceptance:** tests on constructed rows: after a forget the key's bytes are in no database file or copy; a write to the database alone touches nothing in the install; the repository test green and shown failing on a planted file; `doctor --redact` searched for every constructed name, guild and note. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed sentences of `crew forget`, `crew rate`, `crew note`, `doctor` and `snap export`.
+**Acceptance:** tests on constructed rows: after a forget the key's bytes are in no database file, free page or copy; a write to the database alone touches nothing in the install and is refused when the row changed between plan and confirm; the repository test green and shown failing on a planted file; `doctor --redact` searched for every constructed name, guild and note. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed sentences of `crew forget`, `crew rate`, `crew note`, `doctor` and `snap export`.
 
 ---
 
 ## [ ] M20-03 — The desk reads and writes schema 2 of the saved file
 **Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
 
-`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `guard.py` and `luadata.py` are not changed.
+`crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `probe.pvp`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block. `guard.py` and `luadata.py` are not changed.
 
 **Acceptance:** every M19 test of these modules passes on a schema 1 and a schema 2 constructed book; a schema 3 book is still refused with its number; the capture tool still refuses any book that is not empty; `docs/LAB_FORMATS.md` describes schema 2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
@@ -3608,7 +3608,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
 **Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
 
-Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`); the limit constants; the near-full line; and the probe, which may test each candidate scoreboard call with `type()` and record only a count and Lua type names. No scoreboard call's return value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
+Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends two of #631's pins and says so: `crewLoaded` may call it, and it is one more function allowed to store; the limit constants; the near-full line and its seven days; and the probe, gated and only in an instance of type `pvp` or `arena`, which may record for each candidate scoreboard call whether it exists, a count and Lua type names, and for the first row three yes-or-no answers (§21.2). No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
 
 **Acceptance:** a constructed `Crew.lua` doing all of §21.2 short of opponents passes when installed in a copy of the addon; each rule shown failing on a constructed edit; M19's checks unchanged for what they covered; `make lint-lua` green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
 
@@ -3642,7 +3642,7 @@ Tests only, by a session that does not write M20-08: the scoreboard calls M20-06
 ---
 
 ## [ ] M20-08 — The addon: matches and opponents
-**Size:** M · **Depends on:** M20-07 · **Sources:** `docs/LAB_PLAN.md` §21.2
+**Size:** M · **Depends on:** M20-07, M20-09 · **Sources:** `docs/LAB_PLAN.md` §21.2
 
 `Crew.lua` records each finished match and both teams, raises the counters, and adds "with you N times, against you M" to the warning.
 

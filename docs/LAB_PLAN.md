@@ -6337,7 +6337,8 @@ Each is the smallest thing that does the job; say so and it changes.
 and its six answers (recorded there): two stores, a generous in-game list
 with a warning, 20,000 players in game, opponents from the scoreboard,
 world PvP left out, and M19 finishes first. Nothing here is dispatched
-before M19-08 merges.*
+before M19-08 merges and the owner has accepted ADR-0036's amendment of
+2026-11-19 and ADR-0039.*
 
 **Aim.** The crew book (§20) remembers the players you group with, up to
 5,000. This wave removes the limit at the desk, and adds the players you
@@ -6366,9 +6367,15 @@ sees the game's last save, like every read (GLOSSARY, SavedVariables).
 **What can be lost (the owner chose option A).** The addon cannot see the
 database. When its list is full it drops the unrated, un-noted player with
 the oldest `last`, as §20.1 says, and the oldest match. A record dropped
-before any sync saw it is gone. The addon says once per session when
-either list is within 10% of full: "open wowlab so nothing is lost".
-Rated and noted players are never dropped.
+before any sync saw it is gone. Rated and noted players are never dropped.
+
+**The near-full line.** The owner's option A warns "when it is nearly full
+and you have not synced". The addon cannot know about a sync, so it says
+"open wowlab so nothing is lost" when either list holds 90% of its limit
+(every player counts toward the 20,000, rated or not), and not more than
+once in seven days, by a time kept in the book. A list that has reached
+its limit stays there, so without the seven days the line would print at
+every login for good (§21.7, decision 8).
 
 ### 21.2 The saved file, schema 2
 
@@ -6385,15 +6392,28 @@ The book's `schema` becomes 2. What changes from §20.1:
   finished match: `at` (`time()`), `map` and `map_id`, `kind` (`"bg"` or
   `"arena"`), `won` (true, false, or left out when the client gives no
   winner), and two lists of keys, `team` and `foes`. A sync copies each
-  entry into the database once, told apart by `at` and `map_id`.
-- **`probe.pvp`**, what M20-05's probe found: for each candidate call, only
-  whether it exists and the count and Lua types of what it returned. No
-  name and no value.
+  entry into the database once, told apart by `at` and `map_id`. A match
+  the player leaves before its end has no scoreboard read and no entry;
+  its teammates were counted by the roster pass as any group's are.
+- **`probe.pvp`**, what M20-05's probe found. It runs only while the book
+  is on, inside the roster pass (already gated and out of combat), when
+  `GetInstanceInfo` gives the instance type `pvp` or `arena`. For each
+  candidate call it stores whether the call exists and the count and Lua
+  type names of what it returned; and for the first scoreboard row only,
+  three yes-or-no answers: the name is a string, the name holds a `-`, the
+  name is a secret value. No name and no other value is stored. `doctor`
+  prints the block (M20-03), which is how the owner reads it at M20-06.
 - **Migration.** The addon of this wave turns a schema 1 book into schema 2
-  at `ADDON_LOADED`, in one pinned function that adds nothing but the new
-  number and an empty `matches`. A book of any other schema is left alone,
-  as now (#631). The desk reads schema 1 and 2 and writes back the schema
-  it read.
+  in one pinned function that adds nothing but the new number and an empty
+  `matches`. It runs only for a book that is on: at load when `on` is
+  true, and inside `/wowlab crew on` before the book is turned on. A book
+  that is off is not touched and stays at schema 1 (off means off, §20.1).
+  A book of any other schema is left alone, as now (#631). This amends
+  two of #631's pins, which M20-04 states: `crewLoaded` may call the
+  migration, and the migration is one more function allowed to store. The
+  desk reads schema 1 and 2 and writes back the schema it read. An addon
+  older than this wave that meets a schema 2 book leaves it alone, prints
+  its one fixed line and records nothing; the README says so.
 
 The key, the secret-value rule, the combat block, the gate, the note
 rules, the warning's flattening and "the book knows names, not people" are
@@ -6426,7 +6446,24 @@ One file per book: `<user data>/wowlab/crew/<flavor folder>/<account
 folder>.sqlite`, made on the first sync, never inside an install (L1) and
 never in the repository. The standard library's `sqlite3`, `STRICT`
 tables, as `db2lake` (ADR-0028); no new dependency. Its `application_id`
-is one fixed number, so a test can tell such a file from any other.
+is one fixed number, so a test can tell such a file from any other. L5's
+"never overwritten" is about game data and does not apply to it.
+
+The folder names come from discovery (L6) and are only a label. `meta`
+keeps the install root the database was first filled from. A sync from
+another root, or a flavor folder that has been renamed (GLOSSARY, flavor
+folder), does not write into or quietly start beside an existing
+database: it says which database exists and for where, and
+`wowlab crew sync --adopt` moves it to the new place. Until then nothing
+is synced.
+
+The file is opened with `secure_delete` on and without a write-ahead log,
+so a deleted row's bytes do not stay in free pages or a side file. A
+database written by a newer wowlab than the one reading it is refused,
+nothing is written, and the sentence says to update wowlab. Two syncs at
+once (the CLI and the Crew tab) are settled by SQLite's own lock: the
+second waits a short, stated time and then answers from the database as
+it is, saying the sync was skipped.
 
 | Table | One row per | Indexed by |
 |---|---|---|
@@ -6438,8 +6475,12 @@ is one fixed number, so a test can tell such a file from any other.
 **Sync rules.** (1) A player in the saved file is added or updated; a
 player only in the database stays. (2) Rating and note come from the saved
 file whenever the player is in it, since the player may have changed them
-in game; the counters and dates take the larger value. (3) A match is
-added once. (4) A sync is one transaction: all or nothing. (5) An
+in game. `first` takes the earlier date and `last` the later. Each counter
+(`met` and the four of §21.2) is added to, not replaced: the database
+keeps, beside its own total, the value the saved file showed at the last
+sync, and adds the difference; when the saved file's value is lower than
+that, the game dropped the player and started again, and the whole new
+value is added. (3) A match is added once. (4) A sync is one transaction: all or nothing. (5) An
 unreadable book, or one of an unknown schema, syncs nothing and says so,
 as `crew list` does now. (6) Before the database's own schema is changed
 by a newer wowlab, a copy is kept beside it.
@@ -6460,16 +6501,28 @@ through `guard` (§20.3), and then the database in the same command. For a
 player only in the database they change the database alone, with no
 install write, and say that the game will not warn about a player it no
 longer lists. `crew forget` removes the player from the saved file, the
-game's backup of it and the database, and from every match's lists;
-`crew forget --all` deletes the database and its copies. The sentence on
-what forget does not reach (older snapshots) is unchanged.
+game's backup of it and the database, and from every match's `team` and
+`foes` in all three (M19-03's forget refuses while the key remains in any
+loaded string, so the lists must be cleared with the entry);
+`crew forget --all` empties `matches` in the saved file and deletes the
+database and its copies.
+
+What `undo` can and cannot do changes, and the plans say so. Snapshots
+cover the saved file, not the database. Undoing a forget brings the
+player's saved-file record back and the next sync adds it again, but the
+history the database held (matches, totals from before the game's list
+dropped them) is gone for good. A rating or note on a player who is only
+in the database is not journaled by `guard` and cannot be undone; the
+command shows the old and new value and asks first, and its `--expect`
+pin is the row's rating and note as read, which the Crew tab checks
+before it writes. The sentence on older snapshots is unchanged.
 
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |
 |---|---|---|
 | 1. Local only | The database is under the user data directory; nothing reads it but `crewdb`; no network module is imported | the no-network tests; an import scan |
-| 2. Opt-in | Nothing is recorded or synced until the book is turned on in game; the turn-on notice and `crew --help` say that opponents are kept too | text tests |
+| 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and opponents from M20-08 | text tests |
 | 3. Out of the repository | A repository test refuses any tracked file carrying the database's `application_id`; tests build databases at run time from the constructed keys of M19-04 | the test, shown failing on a planted file |
 | 4. Shared output | `doctor --redact` gives the path with the account folder redacted, a size and row counts, never a row; `snap export` does not include the database and says so; no command exports it | tests on constructed rows |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew matches`; `crew forget` and `--all` reach the database and its copies | tests that a forgotten key's bytes are in no database file |
@@ -6486,9 +6539,9 @@ whether arenas exist on Forever at all.
 
 | Ticket | What | Reviewers |
 |---|---|---|
-| M20-01 | `crewdb`: the database, the sync, `crew sync`; `crew list` and `crew show` answer from it | code, security |
-| M20-02 | The write commands keep the database in step; `doctor`; the repository test (terms 3 to 5) | code, security |
-| M20-03 | The desk reads and writes schema 2 of the saved file: reader, writers, capture tool, scan | code, security |
+| M20-01 | `crewdb`: the database, the sync, `crew sync` and `--adopt`; `crew list` and `crew show` answer from it; the L1 sweep; the term-2 sentence | code, security |
+| M20-02 | The write commands keep the database in step, with their undo sentences and pins; `doctor`; the repository test (terms 3 to 5) | code, security |
+| M20-03 | The desk reads and writes schema 2 of the saved file: reader, writers (forget clears the match lists), capture tool, scan, `doctor`'s probe block | code, security |
 | M20-04 | Static checks for the schema 2 addon and the probe (tests only) | code, security |
 | M20-05 | The addon, schema 2: 20,000, the near-full line, the migration, the scoreboard probe | code, domain, security |
 | M20-06 | Owner: one battleground, and a login timing | owner |
@@ -6501,8 +6554,12 @@ M20-01 needs nothing from the game and starts first; M20-02 follows it.
 M20-03 lands before M20-05 ships, so no released wowlab meets a book it
 cannot read. M20-04 comes before M20-05 and M20-07 before M20-08, as
 M19-01 came before M19-10: the session that writes the addon does not
-write the checks that grade it. M20-07 and M20-08 are written only after
-M20-06, because every fact they rest on is unconfirmed until then.
+write the checks that grade it. M20-09 lands before M20-08, so the desk
+can forget a player from a match before the addon writes the first one.
+M20-07 and M20-08 are written only after M20-06, because every fact they
+rest on is unconfirmed until then: the conductor writes what the owner
+saw into §21.2, dated, in the same docs PR that ticks M20-06, and that
+text is what M20-07 is built from.
 
 ### 21.7 Decisions the conductor took, for the owner to overturn
 
@@ -6516,6 +6573,19 @@ M20-06, because every fact they rest on is unconfirmed until then.
 6. Group meetings keep their counter (`met`); only matches get a row per
    meeting.
 7. Level, role and guild are not filled from a scoreboard.
+8. The near-full line prints at 90% of either limit, at most once in seven
+   days, because the addon cannot know whether wowlab has synced.
+9. Counters add up across syncs (§21.3, rule 2); a player the game dropped
+   and met again keeps the earlier total.
+10. A book that is off is not migrated.
+11. A renamed flavor folder or a moved install does not start a second
+    database; `crew sync --adopt` moves the old one.
+12. `crew forget --all` deletes the database and its copies.
+13. The probe stores counts, type names and three yes-or-no answers, and
+    runs only while the book is on.
+14. `kind` is `bg` or `arena` only; `crew matches` and the new `crew list`
+    options are the conductor's choice of how to ask the database.
+15. The warning's added words: "with you N times, against you M".
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
