@@ -5346,6 +5346,8 @@ ADR-0032 of 2026-10-21, which the owner accepted the same day (M16-01).
    "Reading never changes anything. Six commands can change game files;
    each shows a plan and runs only when you confirm, after a snapshot."
    *Amended 2026-11-17 (M13-07):* seven commands, with `macros fix` added.
+   *Amended 2026-11-19 (M19-03):* ten commands, with `crew forget`, `crew
+   rate` and `crew note` added.
    A test pins it. The network promise is one generated block in the same
    way.
    - `doctor` is **offline by default**.
@@ -6142,6 +6144,20 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   M19-03 registers them in `cli.EXPECT_FIELDS`; M19-06 adds the UI's
   pin-check sentence. `wowlab ui` passes the exact key from
   `crew list --json`.
+  *Amended 2026-11-19 (M19-03, as built):* `crew forget`'s pin always has
+  four parts, `target_sha256:written_sha256:backup_sha256:backup_written_sha256`:
+  the backup pair is pinned even when `WowLab.lua.bak` is not written (its
+  SHA-256 as read, twice, when it is left alone; `absent:absent` when there
+  is none), because the UI reads a pin from fixed report fields that must
+  each hold a value. A backup that changed between plan and confirm is
+  refused. `crew rate` and `crew note` pin two parts,
+  `target_sha256:written_sha256`. A forget refuses while the name is still
+  in either file: as a player key that folds the same under §20.2's rule
+  (the whole key), or in any other loaded string (a note, a guild or
+  instance name, an escaped spelling) with no letter or digit directly
+  before or after it. Not found, and accepted: a name inside a Lua comment
+  in another spelling, or split across two notes; the client writes
+  neither.
 - **What these commands never do.** They never create `WowLabCrewDB`,
   never change `on`, and refuse a `schema` they do not know. Their guard
   label, which reaches the journal, the snapshot's message, `snap list`,

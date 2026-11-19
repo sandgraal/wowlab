@@ -1017,6 +1017,9 @@ if TYPE_CHECKING:
         char_model as char_model,
     )
     from wowlab_core.cli._cmd_crew import (
+        CrewEditReport as CrewEditReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
         CrewPlace as CrewPlace,
     )
     from wowlab_core.cli._cmd_crew import (
