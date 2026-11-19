@@ -6520,8 +6520,11 @@ what a sync takes in stays. Two guards, both before the transaction:
   imported from someone else, §20.3 "Other routes"; or the player's own
   new book after the old one was lost, §13.4), or when `guard`'s journal
   shows a `snap restore`, `undo`, `sv merge` or import that wrote the
-  account's `WowLab.lua` since the last sync (wowlab's own `crew` writes
-  do not count). The `crew` command still answers, from the database as
+  account's `WowLab.lua` since the last sync. A `crew` write does not
+  count; an `undo` counts whatever it undoes, a `crew` write included,
+  since undoing a forget brings a player back. A journal wowlab cannot
+  read, or that no longer holds `meta`'s record, holds the sync too: no
+  record found is not proof that nothing was put back. The `crew` command still answers, from the database as
   it is, and says why the sync was held. `wowlab crew sync` run by hand
   then shows a plan (how many players and matches it would add, how many
   ratings and notes it would change) and asks. From a held book it never
@@ -6531,8 +6534,10 @@ what a sync takes in stays. Two guards, both before the transaction:
   confirmed by hand records the book's identity and the journal's newest
   record, so the next sync runs by itself.
 
-  Not caught: a saved file replaced by hand, outside wowlab. The journal
-  knows nothing of it, and such a book syncs like any other. (4) A sync is one transaction: all or nothing. (5) An
+  Not caught: a saved file replaced by hand, outside wowlab, and a
+  restore made through a snapshot store kept somewhere other than the
+  user data directory, whose journal the sync does not read. Such a book
+  syncs like any other. (4) A sync is one transaction: all or nothing. (5) An
 unreadable book, or one of an unknown schema, syncs nothing and says so,
 as `crew list` does now. (6) Before the database's own schema is changed
 by a newer wowlab, a copy is kept beside it.
