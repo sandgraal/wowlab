@@ -6119,7 +6119,8 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   wowlab's snapshot folder (<path>) until you remove them with `wowlab
   snap rm` and run `wowlab snap gc`. Archives you made with `snap export`
   keep theirs." `snap rm` did not exist on 2026-11-18; M19-09 would
-  build it, if the owner agrees (§20.8, decision 9), and until it exists
+  build it, if the owner agrees (the owner agreed on
+  2026-11-19: command line only) (§20.8, decision 9), and until it exists
   the sentence says "wowlab cannot remove a snapshot yet". Removing a
   forget's own snapshot ends `undo` for that change and every earlier
   one, which `snap rm`'s plan must say.
@@ -6286,7 +6287,7 @@ answers are.
 | M19-11 | "Brings back the crew book": `snap export`, `snap restore`, `undo`, `sv merge` | code, security |
 | M19-06 | The Crew tab | code, security |
 | M19-07 | Owner: the in-game check | owner |
-| M19-09 | `wowlab snap rm`, only on the owner's yes | code, security |
+| M19-09 | `wowlab snap rm`, command line only (owner, 2026-11-19) | code, security |
 | M19-08 | Wave review | — |
 
 M19-01, M19-02 and M19-04 start together: the reader is graded on

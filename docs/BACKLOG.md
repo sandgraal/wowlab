@@ -3577,7 +3577,7 @@ Install the addon from `main`, then, with the conductor's runbook beside you (wr
 ## [ ] M19-08 — Crew book wave review
 **Size:** S · **Depends on:** M19-01, M19-02, M19-03, M19-04, M19-05, M19-06, M19-07, M19-10, M19-11
 
-`docs/handoffs/M19-review.md`: what shipped, each ADR-0036 term with its proof, what stayed [verify], the wiki rows, whether M19-09 was built or dropped, and what the owner might pick next.
+`docs/handoffs/M19-review.md`: what shipped, each ADR-0036 term with its proof, what stayed [verify], the wiki rows, that M19-09 was built, and what the owner might pick next.
 
 **Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
 
