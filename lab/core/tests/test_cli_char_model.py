@@ -89,16 +89,20 @@ class _Tables:
         return f"fixture:{table}.{build}.csv"
 
 
-def _plan_files(label: str) -> dict[int, bytes]:
+def _plan_files(label: str, origin_hands: bool = False) -> dict[int, bytes]:
     bare = renderplan.plan_for_record(cb.tables(), cb.record(label))
-    return cb.files_for(bare)
+    return cb.files_for(bare, cb.ORIGIN_HANDS if origin_hands else cb.ATTACHMENTS)
 
 
-def _install(tmp: Path, drop: set[int] = frozenset()) -> Path:  # type: ignore[assignment]
+def _install(
+    tmp: Path,
+    drop: set[int] = frozenset(),  # type: ignore[assignment]
+    origin_hands: bool = False,
+) -> Path:
     rng = random.Random(1511)
     files: dict[int, bytes] = {}
     for label in ("Sangraal-Sett", "Dangling-Participle"):
-        files.update(_plan_files(label))
+        files.update(_plan_files(label, origin_hands))
     stored = []
     rows: list[EncodingRow] = []
     ids, keys = [], []
@@ -139,7 +143,12 @@ class Env:
 
 
 def _env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drop: set[int], copy_as: str | None = None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drop: set[int],
+    copy_as: str | None = None,
+    *,
+    origin_hands: bool = False,
 ) -> Iterator[Env]:
     monkeypatch.delenv("WOWLAB_WOW_ROOT", raising=False)
     monkeypatch.delenv("WOWLAB_FLAVOR", raising=False)
@@ -153,7 +162,7 @@ def _env(
         yield GameData(served, cache_dir=home / "gamedata")
 
     monkeypatch.setattr(cli, "_open_gamedata", fake)
-    root = _install(tmp_path, drop)
+    root = _install(tmp_path, drop, origin_hands)
     if copy_as is not None:
         realm = root / FLAVOR / "WTF" / "Account" / cb.ACCOUNT / "1"
         shutil.copytree(realm / "Sangraal-Sett", realm / copy_as)
@@ -196,7 +205,8 @@ def test_the_text_says_the_dates_the_pose_and_what_it_is_not(env: Env) -> None:
     result = env.run("--character", "Sangraal-Sett")
     assert result.exit_code == 0, result.output
     text = " ".join(result.stdout.split())
-    assert "Gear as of your last logout or /reload" in text
+    assert "Gear as of this character's last logout or /reload (the file was last saved" in text
+    assert "attachment point" not in text
     assert "Look as of" in text and "barber shop" in text
     assert "rest pose" in text
     assert "not a picture of how the character looks in game" in text
@@ -214,6 +224,53 @@ def test_the_text_is_player_copy(env: Env, label: str) -> None:
         result = env.run("--character", label, *extra)
         assert result.exit_code == 0, result.output
         assert hits(result.stdout) == [] and hits(result.stderr) == []
+
+
+def test_held_items_at_the_origin_are_listed_once_with_one_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constructed: a body model whose hand points sit at its origin, as the
+    fixture body models at 70959 store them."""
+    for env in _env(tmp_path, monkeypatch, set(), origin_hands=True):
+        result = env.run("--character", "Sangraal-Sett")
+        assert result.exit_code == 0, result.output
+        text = " ".join(result.stdout.split())
+        assert (
+            "Not drawn (2): main hand, item 2632; off hand, item 15969. " + cli._HELD_ITEMS
+        ) in text
+        assert "attachment point" not in text and text.count(cli._HELD_ITEMS) == 1
+        report = json.loads(env.run("--character", "Sangraal-Sett", "--json").stdout)
+        held = [m for m in report["models"] if m["what"] == "item"]
+        assert all(m["at_origin"] and not m["placed"] for m in held)
+        assert held[0]["reason"] == (
+            "the body model stores attachment point 1 at its origin, so it has no place in the "
+            "rest pose; the item is not drawn"
+        )
+        assert report["glb"]["nodes"] == 1
+
+
+def test_a_write_that_fails_midway_says_what_is_new_and_what_is_old(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure after the first file is replaced (a viewer holding the old
+    .glb open on Windows, say) never says nothing was written."""
+    assert env.run("--character", "Sangraal-Sett").exit_code == 0
+    glb = env.glb()
+    glb.write_bytes(b"older model")
+    real = cascfiles.replace_derived
+
+    def busy(data: object, target: Path, folder: Path) -> None:
+        if target.suffix == ".glb":
+            raise PermissionError(13, "the file is in use", str(target))
+        real(data, target, folder)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cascfiles, "replace_derived", busy)
+    result = env.run("--character", "Sangraal-Sett")
+    assert result.exit_code == 1
+    err = " ".join(result.stderr.split())
+    assert "only partly written" in err and "nothing was written" not in err
+    assert "1-Sangraal-Sett.body.png (new)" in err and "1-Sangraal-Sett.glb (old)" in err
+    assert glb.read_bytes() == b"older model"
 
 
 def test_the_first_run_says_it_downloads_the_tables_then_never_again(env: Env) -> None:

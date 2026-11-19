@@ -8,7 +8,8 @@ Builds the plan of each character the derived fixture
 tables and the `macos-70450` lab-addon records, with each file's state from
 `casc.open_source`, draws it with `charmodel.build`, re-reads the `.glb`
 with the tests' stdlib reader, and checks its facts (counts and the MD5s
-of its chunks), each model's and each PNG's against the fixture. Skipped
+of its chunks), each model's and each PNG's, and the body model's
+attachment points with their bones' pivots, against the fixture. Skipped
 when the install has patched past the fixture's build. A read: nothing in
 the install is opened for writing, and nothing is written anywhere.
 """
@@ -16,15 +17,17 @@ the install is opened for writing, and nothing is written anywhere.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
 
-from wowlab_core import casc, charmodel, renderplan
+from wowlab_core import casc, charmodel, m2, renderplan
 from wowlab_core.install import ENV_ROOT, discover
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,6 +39,16 @@ HERE = Path(__file__).resolve().parent
 FACTS: dict[str, Any] = json.loads(
     (HERE / "fixtures" / "macos-70959" / "derived" / "charmodel.json").read_text(encoding="utf-8")
 )
+
+
+def _script() -> ModuleType:
+    path = HERE.parents[2] / "scripts" / "charmodel_facts.py"
+    spec = importlib.util.spec_from_file_location("charmodel_facts", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope="module")
@@ -71,3 +84,6 @@ def test_live_the_glb_is_the_recorded_one(source: casc.CascSource, char: dict[st
         (p["name"], p["file_data_id"], p["md5"]) for p in char["pngs"]
     ]
     assert [f.file_data_id for f in built.left_out] == [f["file_data_id"] for f in char["left_out"]]
+    data = source.read(plan.body.file_data_id)
+    body = m2.parse_m2(data)
+    assert _script().attachment_points(body, data) == char["attachment_points"]

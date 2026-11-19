@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from wowlab_core import charmodel, renderplan
+from wowlab_core import charmodel, labaddon, renderplan
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -153,7 +153,7 @@ def test_collection_and_unplaced_models_constructed() -> None:
     kinds = {m.kind: m for m in built.models}
     assert kinds["collection"].placed and kinds["collection"].position is None
     assert not kinds["no attachment known"].placed
-    assert "attachment point" in (kinds["no attachment known"].reason or "")
+    assert "where on the body" in (kinds["no attachment known"].reason or "")
     glb = read_glb(built.glb)
     assert len(glb.nodes) == 2 and "translation" not in glb.nodes[1]
 
@@ -226,12 +226,66 @@ def test_a_texture_that_is_not_a_blp_is_left_out_constructed() -> None:
     built = charmodel.build(plan, source)
     gone = {f.file_data_id: f for f in built.left_out}
     assert "not a texture wowlab reads" in gone[cb.TXID_FILE].reason
+    assert (gone[cb.TXID_FILE].state, gone[cb.TXID_FILE].words) == (
+        "unreadable",
+        "could not be read",
+    )
 
 
 def test_the_sentences_say_what_the_model_is_not() -> None:
     assert "not a picture of how the character looks in game" in charmodel.LIKENESS
     assert "rest pose" in charmodel.REST_POSE
-    assert "stand-in" in charmodel.STAND_IN
+    assert all("stand-in" in s for s in charmodel.STAND_IN.values())
+
+
+def test_a_record_for_another_body_says_so_not_no_record() -> None:
+    """W1: the stand-in's reason, from the plan's `stand_in`."""
+    record = cb.record("Sangraal-Sett")
+    tables = cb.tables()
+    look = labaddon.customization_import(record).model_copy(update={"body_type": 1})
+    plan = renderplan.build_plan(tables, labaddon.identity_of(record), look)
+    assert (plan.look.source, plan.look.stand_in) == ("defaults", "other body")
+    assert charmodel.stand_in_words(plan.look) == charmodel.STAND_IN["other body"]
+    assert charmodel.stand_in_words(plan.look).startswith("The barber-shop record is for another")
+    none = renderplan.plan_for_record(tables, cb.record("Dangling-Participle"))
+    assert none.look.stand_in == "no record"
+    assert charmodel.stand_in_words(none.look).startswith("No barber-shop record")
+    assert charmodel.stand_in_words(_plan("Sangraal-Sett").look) is None
+
+
+def test_extra_batches_of_a_drawn_section_are_counted_not_drawn_constructed() -> None:
+    plan, source, _ = _built("Sangraal-Sett")
+    _, sections = cb._triangles(cb.BODY_GEOSETS)
+    n = len(sections)
+    batches = [
+        (i, 1 if cb.BODY_TEXTURE_OF.get(g) == 1 else 0, cb.BODY_TEXTURE_OF.get(g, 2))
+        for i, g in enumerate(cb.BODY_GEOSETS)
+    ]
+    shown = cb.BODY_GEOSETS.index(0)
+    hidden = cb.BODY_GEOSETS.index(1701)
+    source.files[plan.body.file_data_id + cb.SKIN_OFFSET] = cb.mb.skin(
+        lookup=tuple(range(3 * n)),
+        indices=tuple(range(3 * n)),
+        sections=sections,
+        batches=(*batches, (shown, 0, 4), (shown, 0, 1), (hidden, 0, 4)),
+    )
+    built = charmodel.build(plan, source)
+    body = built.models[0]
+    assert body.extra_batches == 2  # the two of a drawn section; a hidden one is not counted
+    assert body.triangles == body.drawn
+
+
+def test_a_file_not_on_this_computer_says_so_as_casc_stat_does() -> None:
+    bare = renderplan.plan_for_record(cb.tables(), cb.record("Sangraal-Sett"))
+    files = cb.files_for(bare)
+    gone = bare.item_models[0].file_data_id
+    del files[gone]
+    source = cb.Source(files)
+    built = charmodel.build(_plan("Sangraal-Sett", source), source)
+    left = {f.file_data_id: f for f in built.left_out}[gone]
+    assert left.words == (
+        "not in your client's local files (part of this game version, but not on this computer)"
+    )
 
 
 def test_the_derived_fixture_is_consistent() -> None:
@@ -251,6 +305,10 @@ def test_the_derived_fixture_is_consistent() -> None:
         assert char["glb"]["nodes"] == len(placed)
         assert char["glb"]["vertices"] == sum(m["vertices"] for m in placed)
         assert char["glb"]["triangles"] == sum(m["triangles"] for m in placed)
-        for point in char["attachment_points"].values():
-            assert not any(point["position"])
+        points = char["attachment_points"]
+        assert sorted(points, key=int) == ["0", "1", "2", "5", "6", "11", "12"]
+        for held in ("0", "1", "2"):  # held items: at the origin, on bones pivoted there
+            assert not any(points[held]["position"]) and not any(points[held]["bone_pivot"])
+        for worn in ("5", "6", "11", "12"):  # shoulders, head, back: away from the origin
+            assert any(points[worn]["position"]) and points[worn]["position"][2] > 1.0
         assert all(not m["placed"] for m in char["models"] if m["what"] == "item")

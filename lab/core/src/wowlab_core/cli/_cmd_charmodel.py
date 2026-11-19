@@ -28,7 +28,7 @@ import typer
 from wowlab_core import cascfiles, charmodel, gamedata, gltf, labaddon, renderplan
 from wowlab_core.casc import CascError
 from wowlab_core.cli._cmd_casc import _casc_open
-from wowlab_core.cli._cmd_char import _CHAR_NOTES, _picked_words
+from wowlab_core.cli._cmd_char import _CHAR_NOTES, _picked_words, _slot_table
 from wowlab_core.cli._cmd_doctor import _open_gamedata
 from wowlab_core.cli._common import (
     EXIT_USAGE,
@@ -109,8 +109,9 @@ class CharModelReport(_Out):
     not drawn, the two dates (`gear_as_of`: the record's last save, at
     logout or /reload; `look_as_of`: the barber-shop record, whose
     `saved_at` is the latest it can be, older when `carried`),
-    `stand_in_look` (no barber-shop record: each option's first choice, not
-    the character's look), `rest_pose` and `likeness` (the sentences the
+    `stand_in_look` (no barber-shop record, or one for another race or body
+    type: each option's first choice, not the character's look) and
+    `stand_in` (the sentence the text says for it, by that reason), `rest_pose` and `likeness` (the sentences the
     text output says), the tables downloaded, timings in seconds, and the
     notes."""
 
@@ -131,6 +132,7 @@ class CharModelReport(_Out):
     gear_as_of: renderplan.GearAsOf
     look_as_of: renderplan.LookAsOf
     stand_in_look: bool
+    stand_in: str | None
     rest_pose: str
     likeness: str
     models: list[charmodel.ModelDrawn]
@@ -155,7 +157,28 @@ _CHAR_MODEL_NOTES = [
     "Only the game's files on this computer are read; wowlab never downloads a game file, so "
     "a file that is not on this computer leaves its part out and is listed.",
     "Open the .glb file in any glTF viewer; the PNG files beside it are the same textures.",
+    "The time shown is the file's modification time: the client's last save, unless something "
+    "wrote the file since (a wowlab snap restore, undo or sv merge, or a copy).",
 ]
+_HELD_ITEMS = (
+    "The game's model file keeps no place for a held item in this pose (its hand points sit at "
+    "the model's feet), so weapons, shields and off-hand items are left out for now."
+)
+
+
+def _slot_names() -> dict[int, str]:
+    """The slot names `char gear` uses, or none when its table cannot be read."""
+    try:
+        return dict(_slot_table().table.slots)
+    except CliError:
+        return {}
+
+
+def _slot_words(slot: int | None, names: dict[int, str]) -> str:
+    if slot is None:
+        return "no slot"
+    name = names.get(slot)
+    return name.lower() if name else f"slot {slot}"
 
 
 def _png_path(glb: Path, name: str) -> Path:
@@ -191,28 +214,55 @@ def _download_note(data: gamedata.GameData, version: str) -> list[str]:
     return missing
 
 
-def _write_default(
-    built: charmodel.CharModel, glb: Path, folder: Path
-) -> tuple[Literal["written", "replaced"], list[tuple[charmodel.PngOut, Path]], list[str]]:
-    pngs = [(p, _png_path(glb, p.name)) for p in built.pngs]
-    for path in (glb, *(path for _, path in pngs)):
-        cascfiles.check_character(path, folder)
-    existed = os.path.lexists(glb)
-    for p, path in pngs:
-        cascfiles.replace_derived(p.png, path, folder)
-    removed: list[str] = []
-    written = {path.name for _, path in pngs}
+def _stale_pngs(glb: Path, written: set[str]) -> list[Path]:
+    """This character's PNGs beside `glb` that this run does not make."""
     stale = re.compile(rf"{re.escape(glb.stem)}\.{_PNG_PARTS}\.png")
     try:
         names = sorted(e.name for e in os.scandir(glb.parent))
     except OSError:
         names = []
-    for name in names:
-        if stale.fullmatch(name) and name not in written:
-            path = glb.parent / name
-            if cascfiles.remove_derived(path, folder):
+    return [glb.parent / n for n in names if stale.fullmatch(n) and n not in written]
+
+
+def _write_default(
+    built: charmodel.CharModel, glb: Path, folder: Path
+) -> tuple[Literal["written", "replaced"], list[tuple[charmodel.PngOut, Path]], list[str]]:
+    """Write the PNGs, remove this character's older PNGs this run does not
+    make, then write the `.glb`. Every target and every older PNG is checked
+    first, so a refusal there writes nothing; a failure after the first
+    write says which files are new and which are not."""
+    pngs = [(p, _png_path(glb, p.name)) for p in built.pngs]
+    stale = _stale_pngs(glb, {path.name for _, path in pngs})
+    for path in (glb, *(path for _, path in pngs), *stale):
+        cascfiles.check_character(path, folder)
+    existed = os.path.lexists(glb)
+    done: list[str] = []
+    removed: list[str] = []
+    steps: list[tuple[str, Path, bytes | None]] = [
+        *(("write", path, p.png) for p, path in pngs),
+        *(("remove", path, None) for path in stale),
+        ("write", glb, built.glb),
+    ]
+    for i, (kind, path, data) in enumerate(steps):
+        try:
+            if kind == "write":
+                assert data is not None
+                cascfiles.replace_derived(data, path, folder)
+                done.append(f"{path.name} (new)")
+            elif cascfiles.remove_derived(path, folder):
                 removed.append(str(path))
-    cascfiles.replace_derived(built.glb, glb, folder)
+                done.append(f"{path.name} (removed)")
+        except (OSError, cascfiles.CascOutError) as exc:
+            if not done:
+                raise
+            why = str(exc).replace("; nothing was written", "")
+            left = [
+                f"{p.name} ({'not removed' if k == 'remove' else 'old'})" for k, p, _ in steps[i:]
+            ]
+            raise CliError(
+                f"the model was only partly written ({why}). Done: {', '.join(done)}. Not done: "
+                f"{', '.join(left)}. Run char model again once the file is free"
+            ) from exc
     return ("replaced" if existed else "written"), pngs, removed
 
 
@@ -253,8 +303,9 @@ def _plan_brief(plan: renderplan.RenderPlan) -> CharModelPlan:
 
 
 def _look_words(look: renderplan.LookAsOf, saved: str) -> str:
-    if look.source != "record":
-        return charmodel.STAND_IN
+    stand_in = charmodel.stand_in_words(look)
+    if stand_in is not None:
+        return stand_in
     when = _AS_OF_LOOK.get(look.recorded_at, _AS_OF_LOOK[None])
     carried = (
         "; the lab-addon carried it from an earlier session, so it is older than that"
@@ -265,17 +316,6 @@ def _look_words(look: renderplan.LookAsOf, saved: str) -> str:
         f"Look as of {when} with the lab-addon on, recorded no later than {saved} (the file's "
         f"last save){carried}."
     )
-
-
-def _model_words(m: charmodel.ModelDrawn) -> str:
-    where = (
-        f"at attachment point {m.attachment_id}"
-        if m.kind == "attached"
-        else "on the body"
-        if m.kind == "collection"
-        else "not placed"
-    )
-    return f"slot {m.slot}: item {m.item_id}, {where}"
 
 
 @char_app.command(
@@ -397,6 +437,7 @@ def char_model(
         gear_as_of=plan.gear,
         look_as_of=plan.look,
         stand_in_look=plan.look.source != "record",
+        stand_in=charmodel.stand_in_words(plan.look),
         rest_pose=charmodel.REST_POSE,
         likeness=charmodel.LIKENESS,
         models=list(built.models),
@@ -411,11 +452,22 @@ def char_model(
     if json_out:
         _emit(report)
         return
-    _say_char_model(report, acct_words=_account_words(acct), how_words=_picked_words(how, tie))
+    _say_char_model(
+        report,
+        acct_words=_account_words(acct),
+        how_words=_picked_words(how, tie),
+        slots=_slot_names(),
+    )
     _say_notes([*report.notes, *_CHAR_MODEL_NOTES, *_CHAR_NOTES], notes_out)
 
 
-def _say_char_model(report: CharModelReport, *, acct_words: list[str], how_words: str) -> None:
+def _say_char_model(
+    report: CharModelReport,
+    *,
+    acct_words: list[str],
+    how_words: str,
+    slots: dict[int, str],
+) -> None:
     shown = _home_words(report.path)
     keep = [*acct_words, shown]
     _say_prose(f"Character: {report.character} in account {report.account}{how_words}", keep=keep)
@@ -431,7 +483,9 @@ def _say_char_model(report: CharModelReport, *, acct_words: list[str], how_words
         _say(f"Textures beside it: {', '.join(p.name for p in report.pngs)} (PNG)")
     saved = _local_time(report.mtime_ns)
     if report.gear_as_of.source == "record":
-        _say(f"Gear as of your last logout or /reload: {saved}.")
+        _say_prose(
+            f"Gear as of this character's last logout or /reload (the file was last saved {saved})."
+        )
     else:
         _say_prose(f"No gear drawn: {report.gear_as_of.why}.")
     _say_prose(_look_words(report.look_as_of, saved))
@@ -449,15 +503,28 @@ def _say_char_model(report: CharModelReport, *, acct_words: list[str], how_words
         )
     else:
         _say_prose(f"Body texture: not made, so the body is drawn grey ({body.why}).")
-    if len(report.models) > 1 or report.items_not_drawn:
+    worn = [m for m in report.models if m.what == "item"]
+    if worn or report.items_not_drawn:
         _say("Gear:")
-    for m in report.models:
-        if m.what == "item":
-            line = _model_words(m)
-            _say_prose(line if m.placed else f"{line}: {m.reason}", indent="  ")
+    for m in worn:
+        if m.placed:
+            where = "drawn on the body" if m.kind == "collection" else "drawn"
+            _say_prose(f"{_slot_words(m.slot, slots)}: item {m.item_id}, {where}", indent="  ")
+    held = [m for m in worn if not m.placed and m.at_origin]
+    if held:
+        listed = "; ".join(f"{_slot_words(m.slot, slots)}, item {m.item_id}" for m in held)
+        _say_prose(f"Not drawn ({len(held)}): {listed}. {_HELD_ITEMS}", indent="  ")
+    for m in worn:
+        if not m.placed and not m.at_origin:
+            _say_prose(
+                f"{_slot_words(m.slot, slots)}: item {m.item_id}, not drawn: {m.reason}",
+                indent="  ",
+            )
     for item in report.items_not_drawn:
         what = f"item {item.item_id}" if item.item_id is not None else "no item id"
-        _say_prose(f"slot {item.slot}: {what}, not drawn: {item.reason}", indent="  ")
+        _say_prose(
+            f"{_slot_words(item.slot, slots)}: {what}, not drawn: {item.reason}", indent="  "
+        )
     if report.left_out:
         _say(f"Left out ({_plural(len(report.left_out), 'file')}):")
         for f in report.left_out:

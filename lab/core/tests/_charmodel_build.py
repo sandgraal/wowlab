@@ -43,7 +43,8 @@ BODY_TEXTURES = ((1, 0), (6, 0), (19, 0), (2, 0), (0, 7001))
 # Which texture each geoset's batch uses (the texture combo index is the
 # texture index here); every other geoset uses the eyes' (2).
 BODY_TEXTURE_OF = {0: 0, 2: 1, 5: 1, 1505: 3, 1506: 3, 3201: 4}
-ATTACHMENTS = (
+Point = tuple[int, int, tuple[float, float, float]]  # id, bone, position
+ATTACHMENTS: tuple[Point, ...] = (
     (11, 0, (0.0, 0.0, 2.0)),
     (6, 0, (0.0, 0.5, 1.6)),
     (5, 0, (0.0, -0.5, 1.6)),
@@ -93,7 +94,12 @@ def _triangles(geosets: Iterable[int]) -> tuple[list[mb.Vertex], list[mb.Section
     return vertices, sections
 
 
-def body_files(fdid: int) -> dict[int, bytes]:
+# The held-item points stored at the origin, as both fixture body models at
+# 70959 store them (macos-70959/derived/charmodel.json).
+ORIGIN_HANDS = tuple((a, b, (0.0, 0.0, 0.0) if a in (0, 1, 2) else p) for a, b, p in ATTACHMENTS)
+
+
+def body_files(fdid: int, attachments: tuple[Point, ...] = ATTACHMENTS) -> dict[int, bytes]:
     vertices, sections = _triangles(BODY_GEOSETS)
     textures = tuple((kind, 0) for kind, _ in BODY_TEXTURES)
     blob = mb.md20(
@@ -101,7 +107,7 @@ def body_files(fdid: int) -> dict[int, bytes]:
         textures=textures,
         materials=((0, 0), (0x4, 1)),
         combos=tuple(range(len(BODY_TEXTURES))),
-        attachments=ATTACHMENTS,
+        attachments=attachments,
         lookup=(),
     )
     skin_id = fdid + SKIN_OFFSET
@@ -131,9 +137,11 @@ def item_files(fdid: int, geoset: int = 0) -> dict[int, bytes]:
     }
 
 
-def files_for(plan: renderplan.RenderPlan) -> dict[int, bytes]:
+def files_for(
+    plan: renderplan.RenderPlan, attachments: tuple[Point, ...] = ATTACHMENTS
+) -> dict[int, bytes]:
     """A constructed file for every id the plan names."""
-    out = body_files(plan.body.file_data_id)
+    out = body_files(plan.body.file_data_id, attachments)
     for m in plan.item_models:
         out.update(item_files(m.file_data_id))
     for f in plan.files:

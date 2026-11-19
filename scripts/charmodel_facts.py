@@ -16,7 +16,10 @@ vertex and triangle counts; the MD5 of its JSON chunk and of its binary
 chunk), each node's name, each model's ids, kind, attachment, and its
 section, vertex and triangle counts, each PNG's name, source file, size and
 MD5, the body texture's painted count, the files left out, and the
-build's time. No geometry, no pixel, no byte of any file, no install path.
+build's time, and for each body model the attachment points 0, 1, 2, 5,
+6, 11 and 12 with their bone, stored position and that bone's pivot (read
+here from the bone array). No geometry, no pixel, no byte of any file, no
+install path.
 
 Refusals (exit 1), as `renderplan_facts.py`'s: `--out` that is a link, one
 inside a game install, one already there; a table missing from `--tables`;
@@ -30,8 +33,9 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import struct
 import sys
-from collections.abc import Sequence
+from collections.abc import Buffer, Sequence
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -97,6 +101,41 @@ def character_facts(built: charmodel.CharModel, plan: renderplan.RenderPlan) -> 
     }
 
 
+# The attachment points recorded per body model: held items (0 shield, 1 main
+# hand, 2 off hand), shoulders (5, 6), head (11) and back (12), the slots the
+# render plan places (SLOT_ATTACHMENTS, SHIELD_ATTACHMENT).
+POINTS = (0, 1, 2, 5, 6, 11, 12)
+_BONE = struct.Struct("<II")  # the MD20 header's bone array: count, offset
+_BONES_AT = 0x2C
+_BONE_SIZE = 88
+_PIVOT_AT = 76  # M2CompBone.pivot, three floats (wowdev.wiki, M2 since 264)
+_PIVOT = struct.Struct("<3f")
+
+
+def attachment_points(body: m2.M2Model, data: Buffer) -> dict[str, Any]:
+    """Each point of `POINTS` the body model has: its bone, its stored
+    position and that bone's pivot (game axes). The pivot is read here from
+    the bone array, which the library does not read (bones are counted
+    only, §17.3), as evidence for the §17.6 note of M15-11."""
+    md21 = next(c for c in body.chunks if c.tag == "MD21")
+    blob = memoryview(data).cast("B")[md21.offset : md21.offset + md21.size]
+    count, offset = _BONE.unpack_from(blob, _BONES_AT)
+    out: dict[str, Any] = {}
+    for point_id in POINTS:
+        point = body.attachment(point_id)
+        if point is None:
+            continue
+        if not 0 <= point.bone < count:
+            raise facts.FactsError(f"attachment {point_id} names bone {point.bone} of {count}")
+        pivot = _PIVOT.unpack_from(blob, offset + _BONE_SIZE * point.bone + _PIVOT_AT)
+        out[str(point_id)] = {
+            "bone": point.bone,
+            "position": list(point.position),
+            "bone_pivot": list(pivot),
+        }
+    return out
+
+
 def _running(inst: Install, flavor: str) -> bool | None:
     try:
         state = process.client_state([inst.root], flavor_folders=[flavor])
@@ -124,16 +163,9 @@ def model_facts(
     characters = []
     for label, path in chars:
         plan = renderplan.plan_for_record(tables, labaddon.read_char(path), statter=source)
-        body = m2.parse_m2(source.read(plan.body.file_data_id))
-        points = {}
-        for model in plan.item_models:
-            point = (
-                body.attachment(model.attachment_id) if model.attachment_id is not None else None
-            )
-            if point is not None:
-                # The point's stored position (game axes), as evidence for
-                # which points the rest pose places (§17.6 note of M15-11).
-                points[str(point.id)] = {"bone": point.bone, "position": list(point.position)}
+        data = source.read(plan.body.file_data_id)
+        body = m2.parse_m2(data)
+        points = attachment_points(body, data)
         characters.append(
             {
                 "label": label,

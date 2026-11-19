@@ -27,7 +27,8 @@ coordinates are written as stored (the game's and glTF's both start at the
 top left of an image, **[verify]** with the same look).
 
 **Bounds.** Checked before anything is built: each attribute a whole
-number of vertices, the three agreeing, every index below the vertex count,
+number of vertices, the three agreeing, every value a finite number, at
+least one node, every index below the vertex count,
 a whole number of triangles, a material index that names a material, an
 image index that names an image, and the whole file under 2**32 bytes
 (the header's length field). `MAX_FILE_BYTES` is the cap a caller may lower.
@@ -205,6 +206,8 @@ def _read_uints(data: bytes) -> array[int]:
 
 
 def _check(scene: GltfScene) -> None:
+    if not scene.nodes:
+        raise GltfError("a scene with no nodes")
     for n, node in enumerate(scene.nodes):
         mesh = node.mesh
         what = f"node {n} ({node.name!r})"
@@ -221,6 +224,10 @@ def _check(scene: GltfScene) -> None:
             )
         if not all(math.isfinite(v) for v in node.translation):
             raise GltfError(f"{what}: a translation that is not a finite number")
+        if not all(map(math.isfinite, _read_floats(mesh.normals))):
+            raise GltfError(f"{what}: a normal that is not a finite number")
+        if not all(map(math.isfinite, _read_floats(mesh.uvs))):
+            raise GltfError(f"{what}: a texture coordinate that is not a finite number")
         if not mesh.primitives:
             raise GltfError(f"{what}: no triangles")
         for p, prim in enumerate(mesh.primitives):
@@ -233,6 +240,8 @@ def _check(scene: GltfScene) -> None:
             if prim.material is not None and not 0 <= prim.material < len(scene.materials):
                 raise GltfError(f"{what}, part {p}: material {prim.material} does not exist")
     for m, material in enumerate(scene.materials):
+        if material.alpha_cutoff is not None and not math.isfinite(material.alpha_cutoff):
+            raise GltfError(f"material {m} ({material.name!r}): an alpha cutoff that is not finite")
         if material.image is not None and not 0 <= material.image < len(scene.images):
             raise GltfError(
                 f"material {m} ({material.name!r}): image {material.image} does not exist"

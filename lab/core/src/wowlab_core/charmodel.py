@@ -29,16 +29,20 @@ the bytes go (never an install, L1).
   layer (the eyes in layouts 105 and 111) is drawn from its first by
   `Layer`, then element id; the others are listed, not composed. The
   material's alpha follows the M2 material's blending mode: 0 opaque, 1
-  alpha-keyed at 224/255, any other blended (**[verify]**, wow.export's
-  reading); flag `0x4` draws both faces.
+  alpha-keyed at 224/255, any other blended; flag `0x4` draws both faces
+  (both **[verify]**, wow.export's reading).
 - **Items.** Each `plan.item_models` entry of kind "attached" is drawn at
   the body's attachment of that id, its position as stored (the bind pose;
   no rotation, **[verify]**). An attachment stored at (0, 0, 0), the
-  model's origin at its feet, is not placed and is listed: on both fixture
-  body models at 1.60.1.70959 the hand and shield points (1, 2 and 0) are
-  stored there, on bones whose pivots are (0, 0, 0) too, so the game moves
-  them with the character's animation, which this wave does not read (the
-  head, shoulder and back points hold real positions); kind "collection" at the origin, its
+  model's origin at its feet, is not placed and is listed (`at_origin`):
+  observed on both fixture body models at 1.60.1.70959, the points for
+  held items (0, 1 and 2) are stored there, on bones whose pivot is the
+  origin too (`macos-70959/derived/charmodel.json`); the game presumably
+  places them with the character's animation, which this wave does not
+  read (**[verify]**). The head, shoulder and back points recorded are
+  stored away from the origin and are used as stored (**[verify]**: no
+  fixture character wears a model there, so none has been drawn).
+  Kind "collection" at the origin, its
   sections filtered by the same visible geosets (**[verify]**); kind "no
   attachment known" is not placed and is listed. An item model's texture
   of type 2 is the item's texture of the same index; type 0 is its `TXID`.
@@ -86,6 +90,8 @@ __all__ = [
     "PngOut",
     "Source",
     "build",
+    "stand_in_words",
+    "state_words",
 ]
 
 WORK_CANVASES = 16
@@ -103,10 +109,25 @@ REST_POSE = (
     "character takes in game."
 )
 
-STAND_IN = (
-    "No barber-shop record: the look is a stand-in (each option's first choice), not the "
-    "character's look."
-)
+STAND_IN: dict[str, str] = {
+    "no record": (
+        "No barber-shop record: the look is a stand-in (each option's first choice), not the "
+        "character's look."
+    ),
+    "other body": (
+        "The barber-shop record is for another race or body type, so it is not used: the look "
+        "is a stand-in (each option's first choice), not the character's look."
+    ),
+}
+"""The sentence for a stand-in look, by `renderplan.LookAsOf.stand_in`."""
+
+
+def stand_in_words(look: renderplan.LookAsOf) -> str | None:
+    """The stand-in sentence for `look`, or None when it is the record's."""
+    if look.source == "record":
+        return None
+    return STAND_IN[look.stand_in or "no record"]
+
 
 _TYPE_BODY = compositor.BODY_TEXTURE_TYPE
 _TYPE_CAPE = 2
@@ -138,6 +159,15 @@ class Source(Protocol):
     def stat(self, fdid: int, *, in_table: bool | None = None) -> CascFileStat: ...
 
 
+def state_words(stat: CascFileStat) -> str:
+    """A file's state in words, as `casc stat` says it: a file not in the
+    client's local files carries "(part of this game version, but not on
+    this computer)"."""
+    if stat.state == "not_local":
+        return f"{stat.words} (part of this game version, but not on this computer)"
+    return stat.words
+
+
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -157,7 +187,8 @@ class ModelDrawn(_Frozen):
     """One model of the plan: the body or an item's. `placed` False: not in
     the scene, `reason` says why. `sections` the view skin's, `drawn` the
     ones shown; `extra_batches` the further batches of drawn sections, not
-    drawn."""
+    drawn. `at_origin`: not placed because the body model stores its
+    attachment point at the origin (the hand points read so far)."""
 
     what: Literal["body", "item"]
     slot: int | None = None
@@ -169,6 +200,7 @@ class ModelDrawn(_Frozen):
     position: tuple[float, float, float] | None = None
     placed: bool
     reason: str | None = None
+    at_origin: bool = False
     sections: int = 0
     drawn: int = 0
     extra_batches: int = 0
@@ -238,23 +270,24 @@ class _Files:
             self.stats[fdid] = got
         return got
 
-    def leave_out(self, fdid: int, what: str, reason: str) -> None:
+    def leave_out(self, fdid: int, what: str, reason: str, *, unreadable: bool = False) -> None:
+        """List `fdid` as not drawn. `unreadable`: a local file that could
+        not be read or decoded, listed as "unreadable", not "local"."""
         if fdid in self.left_out:
             return
         stat = self.stats.get(fdid)
+        state, words = "unreadable", "could not be read"
+        if stat is not None and not unreadable:
+            state, words = stat.state, state_words(stat)
         self.left_out[fdid] = FileLeftOut(
-            file_data_id=fdid,
-            what=what,
-            state=stat.state if stat is not None else "unreadable",
-            words=stat.words if stat is not None else "could not be read",
-            reason=reason,
+            file_data_id=fdid, what=what, state=state, words=words, reason=reason
         )
 
     def local(self, fdid: int, what: str) -> bool:
         stat = self.stat(fdid)
         if stat.state == "local":
             return True
-        self.leave_out(fdid, what, f"file {fdid} is {stat.words}")
+        self.leave_out(fdid, what, f"file {fdid} is {state_words(stat)}")
         return False
 
     def read(self, fdid: int, what: str) -> memoryview | None:
@@ -263,7 +296,7 @@ class _Files:
         try:
             return memoryview(self.source.read(fdid)).cast("B")
         except CascError as exc:
-            self.leave_out(fdid, what, f"file {fdid} could not be read: {exc}")
+            self.leave_out(fdid, what, f"file {fdid} could not be read: {exc}", unreadable=True)
             return None
 
 
@@ -271,7 +304,7 @@ def _body(files: _Files, plan: renderplan.RenderPlan) -> tuple[m2.M2Model, int, 
     fdid = plan.body.file_data_id
     stat = files.stat(fdid)
     if stat.state != "local":
-        raise BodyNotDrawnError(f"the body model, file {fdid}, is {stat.words}", fdid)
+        raise BodyNotDrawnError(f"the body model, file {fdid}, is {state_words(stat)}", fdid)
     try:
         model = m2.parse_m2(files.source.read(fdid))
     except (CascError, m2.M2Error) as exc:
@@ -283,7 +316,9 @@ def _body(files: _Files, plan: renderplan.RenderPlan) -> tuple[m2.M2Model, int, 
     skin_id = model.skin_file_data_ids[0]
     stat = files.stat(skin_id)
     if stat.state != "local":
-        raise BodyNotDrawnError(f"the body model's skin, file {skin_id}, is {stat.words}", skin_id)
+        raise BodyNotDrawnError(
+            f"the body model's skin, file {skin_id}, is {state_words(stat)}", skin_id
+        )
     try:
         skin = m2.parse_skin(files.source.read(skin_id), vertex_count=model.vertices.count)
     except (CascError, m2.M2Error) as exc:
@@ -371,7 +406,9 @@ class _Scene:
             image = blp.decode(data)
             encoded = png.encode(image.width, image.height, image.rgba)
         except (blp.BlpError, png.PngError) as exc:
-            self.files.leave_out(fdid, what, f"file {fdid} is not a texture wowlab reads: {exc}")
+            self.files.leave_out(
+                fdid, what, f"file {fdid} is not a texture wowlab reads: {exc}", unreadable=True
+            )
             return None
         return self.image_png(fdid, f"file {fdid}", encoded)
 
@@ -413,12 +450,13 @@ def _mesh(
     vertices, triangles). `texture_of`: an M2 texture index's image and
     whether it is drawn opaque, asked only for the textures drawn."""
     first: dict[int, m2.SkinBatch] = {}
-    extra = 0
+    more: dict[int, int] = {}
     for each in skin.batches:
         if each.section_index in first:
-            extra += 1
+            more[each.section_index] = more.get(each.section_index, 0) + 1
         else:
             first[each.section_index] = each
+    extra = 0
     parts: dict[int, list[array[int]]] = {}
     drawn = 0
     for section in skin.sections:
@@ -428,6 +466,7 @@ def _mesh(
         if batch is None or section.index_count == 0:
             continue
         drawn += 1
+        extra += more.get(section.index, 0)
         image: int | None = None
         opaque = False
         if batch.texture_combo_index < len(model.texture_combos):
@@ -582,23 +621,27 @@ def _item_node(
 ) -> tuple[ModelDrawn, gltf.GltfNode | None]:
     what = f"item {item.item_id}"
     if item.kind == "no attachment known":
-        reason = "the game's tables give no attachment point for this model, so it is not placed"
+        reason = (
+            "the game's tables do not say where on the body this model goes, so it is not placed"
+        )
         return _item_drawn(item, placed=False, reason=reason), None
     translation = (0.0, 0.0, 0.0)
     if item.kind == "attached":
         point = body.attachment(item.attachment_id) if item.attachment_id is not None else None
         if point is None:
-            reason = f"the body model has no attachment point {item.attachment_id}"
+            reason = (
+                f"the body model lacks the point this item is held at ({item.attachment_id}), "
+                "so it has no place for it"
+            )
             return _item_drawn(item, placed=False, reason=reason), None
         if not any(point.position):
             # The model's origin, at the feet: the game moves this point
             # with the character's animation, which is not read (§17.6 note).
             reason = (
-                f"attachment point {item.attachment_id} has no place in the rest pose (the game "
-                "moves it with the character's animation, which wowlab does not read), so the "
-                "item is not drawn"
+                f"the body model stores attachment point {item.attachment_id} at its origin, so it "
+                "has no place in the rest pose; the item is not drawn"
             )
-            return _item_drawn(item, placed=False, reason=reason), None
+            return _item_drawn(item, placed=False, at_origin=True, reason=reason), None
         translation = gltf.to_y_up(*point.position)
     data = files.read(item.file_data_id, f"the model of {what}")
     if data is None:
@@ -616,7 +659,7 @@ def _item_node(
         skin = m2.parse_skin(skin_data, vertex_count=model.vertices.count)
     except m2.M2Error as exc:
         reason = f"not a model wowlab reads: {exc}"
-        files.leave_out(item.file_data_id, f"the model of {what}", reason)
+        files.leave_out(item.file_data_id, f"the model of {what}", reason, unreadable=True)
         return _item_drawn(item, placed=False, reason=reason), None
     textures = _texture_map(
         model,

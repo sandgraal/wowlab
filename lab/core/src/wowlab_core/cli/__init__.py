@@ -948,6 +948,9 @@ from wowlab_core.cli._cmd_charmodel import (
     _GLB as _GLB,
 )
 from wowlab_core.cli._cmd_charmodel import (
+    _HELD_ITEMS as _HELD_ITEMS,
+)
+from wowlab_core.cli._cmd_charmodel import (
     _PNG_PARTS as _PNG_PARTS,
 )
 from wowlab_core.cli._cmd_charmodel import (
@@ -969,9 +972,6 @@ from wowlab_core.cli._cmd_charmodel import (
     _look_words as _look_words,
 )
 from wowlab_core.cli._cmd_charmodel import (
-    _model_words as _model_words,
-)
-from wowlab_core.cli._cmd_charmodel import (
     _plan_brief as _plan_brief,
 )
 from wowlab_core.cli._cmd_charmodel import (
@@ -979,6 +979,15 @@ from wowlab_core.cli._cmd_charmodel import (
 )
 from wowlab_core.cli._cmd_charmodel import (
     _say_char_model as _say_char_model,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _slot_names as _slot_names,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _slot_words as _slot_words,
+)
+from wowlab_core.cli._cmd_charmodel import (
+    _stale_pngs as _stale_pngs,
 )
 from wowlab_core.cli._cmd_charmodel import (
     _write_default as _write_default,

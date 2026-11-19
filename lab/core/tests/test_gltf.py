@@ -119,9 +119,22 @@ def test_chunks_are_padded_to_four_bytes_constructed() -> None:
             {"primitives": (gltf.GltfPrimitive(indices=gltf.uints([0, 1, 2]), material=5),)},
             "material 5",
         ),
-        ({"positions": gltf.floats([float("nan")] * 12)}, "finite"),
+        ({"positions": gltf.floats([float("nan")] * 12)}, "position"),
+        ({"normals": gltf.floats([float("inf")] * 12)}, "a normal that is not a finite"),
+        ({"uvs": gltf.floats([0.0] * 7 + [float("nan")])}, "texture coordinate that is not"),
     ],
-    ids=["ragged", "normals", "uvs", "empty", "half", "past", "material", "nan"],
+    ids=[
+        "ragged",
+        "normals",
+        "uvs",
+        "empty",
+        "half",
+        "past",
+        "material",
+        "nan",
+        "inf normal",
+        "nan uv",
+    ],
 )
 def test_a_scene_that_does_not_fit_is_refused_constructed(
     change: dict[str, object], words: str
@@ -130,6 +143,18 @@ def test_a_scene_that_does_not_fit_is_refused_constructed(
     scene = _scene().model_copy(update={"nodes": (gltf.GltfNode(name="bad", mesh=mesh),)})
     with pytest.raises(gltf.GltfError, match=words):
         gltf.encode_glb(scene)
+
+
+def test_a_non_finite_alpha_cutoff_is_refused_constructed() -> None:
+    bad = gltf.GltfMaterial(name="m", image=None, alpha_mode="MASK", alpha_cutoff=float("nan"))
+    scene = _scene().model_copy(update={"materials": (bad, bad)})
+    with pytest.raises(gltf.GltfError, match="alpha cutoff"):
+        gltf.encode_glb(scene)
+
+
+def test_a_scene_with_no_nodes_is_refused_constructed() -> None:
+    with pytest.raises(gltf.GltfError, match="no nodes"):
+        gltf.encode_glb(_scene().model_copy(update={"nodes": ()}))
 
 
 def test_an_image_that_does_not_exist_is_refused_constructed() -> None:
