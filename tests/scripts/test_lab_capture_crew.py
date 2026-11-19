@@ -87,6 +87,30 @@ ONE_LINE_PLAYERS = EMPTY.replace(b'["players"] = {\r\n},', b'["players"] = {},')
 PROBE_EXTRA = _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["Inventeda-Fakerealm"] = 1,',)))
 POSITIONAL = _lua(*_with(EMPTY_LINES, '["players"] = {', (f'"{KEY_A}",',)))
 NIL_BOOK = _lua("WowLabCrewDB = nil")
+PROBE_LOST_TWICE = _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["lost"] = true,',) * 2))
+PROBE_LOST_STRING = _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["lost"] = "yes",',)))
+LOST_AT_TOP = _lua(*_with(EMPTY_LINES, '["skipped"] = 0,', ('["lost"] = true,',)))
+# The name escaped or split: each still holds `CrewDB`.
+# (`"_G[" + ...` keeps the repository scan from reading a bracketed key here.)
+ESCAPED_DECIMAL = _lua("_G[" + '"\\87owLabCrewDB"] = {', '["players"] = {', *PLAYER, "},", "}")
+ESCAPED_HEX = _lua("_G[" + '"\\x57owLabCrewDB"] = {', "}")
+ESCAPED_UNICODE = _lua("_G[" + '"\\u{57}owLabCrewDB"] = {', "}")
+SPLIT = _lua('_G["WowLab".."CrewDB"] = {', "}")
+CREWDB_BESIDE = EMPTY + _lua('OtherAddonDB = "CrewDB"')
+# UTF-16, each byte order, with and without a BOM.
+UTF16 = {
+    "UTF-16 little-endian": WITH_PLAYERS.decode().encode("utf-16-le"),
+    "UTF-16 big-endian": WITH_PLAYERS.decode().encode("utf-16-be"),
+    "UTF-16 with a BOM": WITH_PLAYERS.decode().encode("utf-16"),
+    "UTF-16 empty shape, lower casing": EMPTY.lower().decode().encode("utf-16-be"),
+}
+NIL_TWICE = NIL_BOOK + NIL_BOOK
+NIL_INDENTED = _lua("  WowLabCrewDB = nil")
+NIL_OTHER_CASING = _lua("WOWLABCREWDB = nil")
+NIL_THEN_MORE = _lua("WowLabCrewDB = nil -- trailing")
+NIL_THEN_TABLE = _lua("WowLabCrewDB = nil, {}")
+# `"abc\"` then a line break: the quote is escaped, so the string never closes.
+ESCAPED_QUOTE_UNCLOSED = _lua('OtherAddonDB = "abc\\"', *EMPTY_LINES)
 UNCLOSED = _lua(*EMPTY_LINES[:-1])
 AFTER_UNCLOSED_STRING = _lua('OtherAddonDB = "open', *EMPTY_LINES)
 CONTINUED_STRING = _lua('OtherAddonDB = "line\\', *EMPTY_LINES, '"')
@@ -116,7 +140,21 @@ REFUSED = {
     "an empty table on one line": (ONE_LINE_PLAYERS, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
     "an extra key in probe": (PROBE_EXTRA, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
     "a positional entry": (POSITIONAL, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
-    "a nil book": (NIL_BOOK, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "lost twice in probe": (PROBE_LOST_TWICE, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "lost as a string": (PROBE_LOST_STRING, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "lost outside probe": (LOST_AT_TOP, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "escaped decimal": (ESCAPED_DECIMAL, lab_capture.CREW_BOOK_PART_LABEL),
+    "escaped hex": (ESCAPED_HEX, lab_capture.CREW_BOOK_PART_LABEL),
+    "escaped unicode": (ESCAPED_UNICODE, lab_capture.CREW_BOOK_PART_LABEL),
+    "concatenated": (SPLIT, lab_capture.CREW_BOOK_PART_LABEL),
+    "CrewDB beside an empty book": (CREWDB_BESIDE, lab_capture.CREW_BOOK_PART_LABEL),
+    **{case: (data, lab_capture.CREW_BOOK_UTF16_LABEL) for case, data in UTF16.items()},
+    "a nil line twice": (NIL_TWICE, lab_capture.CREW_BOOK_TWICE_LABEL),
+    "a nil line indented": (NIL_INDENTED, lab_capture.CREW_BOOK_NOT_TOP_LABEL),
+    "a nil line in another casing": (NIL_OTHER_CASING, lab_capture.CREW_BOOK_CASING_LABEL),
+    "a nil line with a comment": (NIL_THEN_MORE, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "a nil line with more": (NIL_THEN_TABLE, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "after an escaped quote": (ESCAPED_QUOTE_UNCLOSED, lab_capture.CREW_BOOK_IN_TEXT_LABEL),
     "an unclosed book": (UNCLOSED, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
     "after an unclosed string": (AFTER_UNCLOSED_STRING, lab_capture.CREW_BOOK_IN_TEXT_LABEL),
     "inside a continued string": (CONTINUED_STRING, lab_capture.CREW_BOOK_IN_TEXT_LABEL),
@@ -161,6 +199,12 @@ ACCEPTED = {
     "tab-indented": _lua(EMPTY_LINES[0], *("\t" + line for line in EMPTY_LINES[1:-1]), "}"),
     "beside another variable": _lua("OtherAddonDB = {", '["schema"] = 1,', "}", *EMPTY_LINES),
     "no trailing line break": EMPTY.rstrip(b"\r\n"),
+    "probe with lost": _lua(*_with(EMPTY_LINES, '["loads"] = 12,', ('["lost"] = true,',))),
+    "probe with lost first": _lua(*_with(EMPTY_LINES, '["probe"] = {', ('["lost"] = true,',))),
+    "a nil line": NIL_BOOK,
+    "a nil line with line feeds": _lua("WowLabCrewDB = nil", eol="\n"),
+    "a nil line at the end of the file": NIL_BOOK.rstrip(b"\r\n"),
+    "a nil line beside another variable": _lua("OtherAddonDB = nil", "WowLabCrewDB = nil"),
 }
 
 

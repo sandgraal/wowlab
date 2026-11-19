@@ -2815,8 +2815,10 @@ def sv_stats(data: bytes) -> SvStats:
 # are allowed on a line; nothing else is. Keys are bracketed strings, each at
 # most once, in any order, and only these: `schema`, `on`, `started`,
 # `probe`, `skipped`, `players`, `current`. `players` and `current` are
-# empty; `probe` holds at most `["loads"]`; every other value is a number or
-# a boolean, never a string. Nothing is parsed or rewritten: the scan only
+# empty; `probe` holds at most `["loads"]` and `["lost"]`; every other value
+# is a number or a boolean, never a string. One `WowLabCrewDB = nil` line is
+# accepted in place of the table. `CrewDB` anywhere else, in any casing, and
+# `CrewDB` in UTF-16 refuse. Nothing is parsed or rewritten: the scan only
 # skips strings and comments, and the shape is matched entry by entry on the
 # raw bytes. There is no flag that empties a book or skips this. A refusal
 # gives the reason only, never a key or an offset.
@@ -2841,22 +2843,29 @@ _CREW_VALUE_RE = {
     b"on": re.compile(rb"true|false"),
     b"players": re.compile(_CREW_EMPTY),
     b"current": re.compile(_CREW_EMPTY),
-    b"probe": re.compile(
-        rb"\{"
-        + _CREW_EOL
-        + rb"(?:"
-        + _CREW_INDENT
-        + rb'\["loads"\] = '
-        + _CREW_NUMBER
-        + rb","
-        + _CREW_EOL
-        + rb")?"
-        + _CREW_INDENT
-        + rb"\}"
-    ),
 }
+# `probe` is §13.1's probe: `loads`, a number, and `lost`, a boolean (the
+# addon sets it true for one load). Each at most once, in any order.
+_CREW_PROBE_VALUE_RE = {
+    b"loads": re.compile(_CREW_NUMBER),
+    b"lost": re.compile(rb"true|false"),
+}
+_CREW_OPEN_RE = re.compile(rb"\{" + _CREW_EOL)
 _CREW_ENTRY_END_RE = re.compile(rb"," + _CREW_EOL)
+_CREW_NESTED_CLOSE_RE = re.compile(_CREW_INDENT + rb"\}")
 _CREW_CLOSE_RE = re.compile(rb"\}(?:" + _CREW_EOL + rb"|\Z)")
+# A declared variable never set: the client writes `X = nil` (LAB_FORMATS
+# §4.2 amended). It holds no record, so one such line is accepted.
+_CREW_NIL_RE = re.compile(re.escape(CREW_BOOK_NAME) + rb" = nil(?:" + _CREW_EOL + rb"|\Z)")
+# `CrewDB` in any casing: a name escaped (`\87owLabCrewDB`) or concatenated
+# (`"WowLab".."CrewDB"`) still holds it, so any occurrence of it other than
+# the one accepted name refuses the file.
+_CREW_PART_RE = re.compile(rb"crewdb", re.IGNORECASE)
+# The same part in UTF-16, little- or big-endian, with or without a BOM: the
+# ASCII letters interleaved with NUL bytes.
+_CREW_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"crewdb"), re.IGNORECASE)
+CREW_BOOK_PART_LABEL = "crew book (CrewDB) named apart from one top-level assignment"
+CREW_BOOK_UTF16_LABEL = "crew book (CrewDB) named in UTF-16"
 
 
 def _crew_depth_at(data: bytes, target: int) -> int | None:
@@ -2883,48 +2892,76 @@ def _crew_depth_at(data: bytes, target: int) -> int | None:
         elif first == b"[":
             end = _skip_long(data, start)
         else:
-            end = _skip_quoted(data, start)
-            if end <= start + 1 or data[end - 1] != data[start]:
+            body = _QUOTED_BODY_RE[data[start]].match(data, start + 1)
+            assert body is not None  # the body pattern matches the empty string
+            stop = body.end()
+            if stop >= len(data) or data[stop] != data[start]:
                 return None  # a quoted string with no closing quote
+            end = stop + 1
         if end < 0 or end > target:
             return None
         at = end
 
 
-def _crew_empty_shape(data: bytes, at: int) -> bool:
-    """Whether the assignment at `at` is the one empty crew-book shape."""
-    head = _CREW_HEAD_RE.match(data, at)
-    if head is None:
-        return False
-    at = head.end()
+def _crew_entries(data: bytes, at: int, values: dict[bytes, re.Pattern[bytes]]) -> int | None:
+    """End of a run of `["key"] = value,` lines at `at`, every key from
+    `values` and none twice (`probe` takes its own nested table); None when a
+    line breaks the shape."""
     seen: set[bytes] = set()
     while (key := _CREW_KEY_RE.match(data, at)) is not None:
         name = key.group(1)
-        value_re = _CREW_VALUE_RE.get(name)
-        if value_re is None or name in seen:
-            return False
+        if name in seen:
+            return None
         seen.add(name)
-        value = value_re.match(data, key.end())
-        if value is None:
-            return False
-        end = _CREW_ENTRY_END_RE.match(data, value.end())
-        if end is None:
-            return False
+        if name == b"probe" and values is _CREW_VALUE_RE:
+            opened = _CREW_OPEN_RE.match(data, key.end())
+            inner = (
+                None if opened is None else _crew_entries(data, opened.end(), _CREW_PROBE_VALUE_RE)
+            )
+            value_end = None
+            if inner is not None and (closed := _CREW_NESTED_CLOSE_RE.match(data, inner)):
+                value_end = closed.end()
+        elif (value_re := values.get(name)) is not None and (
+            value := value_re.match(data, key.end())
+        ):
+            value_end = value.end()
+        else:
+            return None
+        if value_end is None or (end := _CREW_ENTRY_END_RE.match(data, value_end)) is None:
+            return None
         at = end.end()
-    return _CREW_CLOSE_RE.match(data, at) is not None
+    return at
+
+
+def crew_book_assignment_ok(data: bytes, at: int) -> bool:
+    """Whether the assignment starting at `at` is the one empty crew-book
+    shape, or the one `WowLabCrewDB = nil` line. Shape only: where it stands
+    is `crew_book_problems`' business."""
+    if _CREW_NIL_RE.match(data, at):
+        return True
+    head = _CREW_HEAD_RE.match(data, at)
+    if head is None:
+        return False
+    end = _crew_entries(data, head.end(), _CREW_VALUE_RE)
+    return end is not None and _CREW_CLOSE_RE.match(data, end) is not None
 
 
 def crew_book_problems(data: bytes) -> list[str]:
     """Why `data` may not be captured because of the crew book; empty if it may.
 
     Decided from content alone, never from a file name. Fail closed: anything
-    other than one top-level empty book refuses."""
+    other than one top-level empty book (or one `= nil` line) refuses."""
+    if _CREW_UTF16_RE.search(data):
+        return [CREW_BOOK_UTF16_LABEL]
     found = _CREW_BOOK_ANY_CASE_RE.search(data)
     if found is None:
-        return []
+        return [CREW_BOOK_PART_LABEL] if _CREW_PART_RE.search(data) else []
     first = found.start()
     if _CREW_BOOK_ANY_CASE_RE.search(data, found.end()) is not None:
         return [CREW_BOOK_TWICE_LABEL]
+    parts = _CREW_PART_RE.finditer(data)
+    if any(part.start() != found.end() - len(b"crewdb") for part in parts):
+        return [CREW_BOOK_PART_LABEL]
     if found.group(0) != CREW_BOOK_NAME:
         return [CREW_BOOK_CASING_LABEL]
     depth = _crew_depth_at(data, first)
@@ -2933,7 +2970,7 @@ def crew_book_problems(data: bytes) -> list[str]:
     at_line_start = first == 0 or data[first - 1 : first] in (b"\n", b"\r")
     if depth != 0 or not at_line_start:
         return [CREW_BOOK_NOT_TOP_LABEL]
-    if not _crew_empty_shape(data, first):
+    if not crew_book_assignment_ok(data, first):
         return [CREW_BOOK_NOT_EMPTY_LABEL]
     return []
 
