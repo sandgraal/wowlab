@@ -5094,16 +5094,19 @@ index).
   x −0.03 (959310) and 0.22 (917116), mirrored in y (±0.21 and ±0.32).
   Point 54 is at (−0.31, −0.17, 1.99) on 959310 and (−0.42, −0.29, 2.13)
   on 917116.
-- Each bone under points 26 to 33 has key bone id −1 and no translation
-  track; its rotation runs on a global sequence (0 on 959310; 2 for 26 to
-  31 and 0 for 32 and 33 on 917116). The parent of the bones under 26, 27,
-  28, 30 and 31 is bone 14 on both files (key bone id 53), at
-  (−0.15, 0, 1.54) and (−0.02, 0, 1.63). The bones under 32 and 33 hang
-  from bone 2 (key 51) on 959310 and bone 3 (key 4) on 917116. Point 29's
-  bone is a root (key 23, no parent).
+- Each bone under points 26 to 28 and 30 to 33 has key bone id −1 and no
+  translation track; its rotation runs on a global sequence (0 on 959310;
+  on 917116, 2 for 26 to 28, 30 and 31, and 0 for 32 and 33). Point 29's
+  bone is a root (key 23, no parent), with no track on 959310 (bone 157)
+  and a rotation on global sequence 0 on 917116 (bone 154). The parent of
+  the bones under 26, 27, 28, 30 and 31 is bone 14 on both files (key bone
+  id 53), at (−0.15, 0, 1.54) and (−0.02, 0, 1.63). The bones under 32 and
+  33 hang from bone 2 (key 51) on 959310 and bone 3 (key 4) on 917116.
 - For point 0 (the shield), points 1 and 2 (main and off hand): the bone
   under each (203, 213, 214 on 959310; 200, 206, 207 on 917116) has key
-  bone id −1 and no translation track. Its parent (bones 50, 121, 128;
+  bone id −1 and no translation track; 203 (959310) and 206, 207
+  (917116) carry a rotation on global sequence 0; 213, 214 and 200 carry
+  no track. Each one's parent (bones 50, 121, 128;
   49, 100, 107; key bone ids 63, 66, 67 on both) also has its pivot at
   (0, 0, 0). In sequence 0 these parents have one translation key and one
   rotation key each, except bone 49 (key 63) on 917116, which has 75
@@ -5119,7 +5122,10 @@ index).
   - On both files, the key-65 bone's parent is the key-62 bone.
   - Keys 62, 64 and 65 have 19 translation and 19 rotation keys in
     sequence 0 on 959310. On 917116, key 62 has 0 translation and 74
-    rotation keys, key 64 has 65 and 75, and key 65 has 63 and 72.
+    rotation keys, key 64 has 65 and 75, and key 65 has 63 and 72. A
+    track with one key is a constant within that sequence, not an absence
+    of animation; whether sequence 0 is the stand animation is not read
+    here (**[verify]**).
   - Every track with per-sequence keys holds 332 (959310) or 369
     (917116) sequences.
   - Every bone read has flags 0 or 0x200 (meaning **[verify]**).
@@ -5145,7 +5151,9 @@ index).
   needs the item's `SheatheType` mapped to a point (the mapping is
   **[verify]**). Bones store a pivot and no rest rotation, so a weapon
   placed there with no rotation would stand upright or lie level, not
-  across the back. "Drawn sheathed" would be an approximation.
+  across the back. "Drawn sheathed" would be an approximation. The sheath
+  bones do carry a rotation, on a global sequence. Whether its first key
+  holds the carried angle is **[verify]**; it was not read here.
 - The bones above the hand points' bones, keys 63, 66 and 67 (pivots at
   the origin), are put in place by the animation: their translation keys
   in sequence 0 presumably move them off the origin. Placing a held item would then mean reading
@@ -5154,8 +5162,9 @@ index).
 - Bones 44 and 47 (959310) and 43 and 46 (917116), keys 64 and 65, read as
   the wrists. The rest pose is not arms straight out: on 959310 the arms
   hang about 45° down, and on 917116 the upper arm hangs nearly straight
-  down. The key bone ids show that these are the same bones in both files.
-  They do not name them, and no name is settled here.
+  down. The key bone ids suggest that these bones play the same role in
+  both files (a key bone id is a role shared across models: from memory,
+  **[verify]**). They do not name them, and no name is settled here.
 
 Nothing here has been drawn or checked in a viewer, and nothing is decided.
 Whether held items are drawn at all, and where, is the owner's call (the
