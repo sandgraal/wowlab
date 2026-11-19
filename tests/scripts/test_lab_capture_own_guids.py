@@ -25,7 +25,15 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 
 import pytest
-from test_lab_capture import ACCOUNT, OWN_GUID, build_install, capture, lab_capture, outputs
+from test_lab_capture import (
+    ACCOUNT,
+    OWN_GUID,
+    build_install,
+    capture,
+    cpu_clock,
+    lab_capture,
+    outputs,
+)
 
 Identity = lab_capture.Identity
 
@@ -486,12 +494,12 @@ def test_constructed_a_channel_link_without_a_closer_refuses() -> None:
     ],
 )
 def test_constructed_hostile_link_text_scrubs_in_linear_time(line: bytes) -> None:
-    import time
-
     identity = Identity(own_characters=[("Thrallmar", "Area 52")])
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     identity.scrub(b'x = "' + line + b'"\n')
-    assert time.perf_counter() - started < 1.0
+    spent = clock() - started
+    assert spent < 1.0, f"{spent:.2f} s of {name} time"
 
 
 # ─── review round 2 ──────────────────────────────────────────────────────────
@@ -514,13 +522,19 @@ def test_constructed_a_realm_word_after_the_own_link_is_a_speaker() -> None:
 
 
 def test_constructed_many_own_link_lines_scrub_in_linear_time() -> None:
-    import time
-
+    """Twenty thousand own-link lines scrub within 5 s of CPU time (M11-19's
+    `cpu_clock`; it was wall clock, which failed once under a loaded run,
+    M15-25). Measured idle on the owner's M1 on 2026-11-19: 0.49 to 0.52 s
+    of CPU for 20,000 lines, 0.05 s for 2,000 and 1.0 s for 40,000, so the
+    scrub is linear and the budget is ten times the linear cost; a scan
+    that rescans earlier lines for each new one would take minutes."""
     identity = Identity(own_characters=[("Thrallmar", "Area 52")])
     data = (b'\t"' + OWN_LINK + b' has come online.",\n') * 20_000
-    started = time.perf_counter()
+    clock, name = cpu_clock()
+    started = clock()
     identity.scrub(data)
-    assert time.perf_counter() - started < 5.0
+    spent = clock() - started
+    assert spent < 5.0, f"{spent:.2f} s of {name} time for 20,000 lines"
 
 
 @pytest.mark.parametrize(
