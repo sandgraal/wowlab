@@ -3447,3 +3447,79 @@ On Windows, platformdirs ignores `HOME`, `APPDATA` and `LOCALAPPDATA`, so tests 
 - `lab/core/tests/review/test_pr435_linger_drains_without_acting.py::test_lingering_connections_do_not_stop_a_new_request` fails under full-suite load (connection refused) and passes alone. It is a reviewer's probe, so report a fix for the conductor rather than editing it.
 
 **Acceptance:** each item fixed or explained in the PR; the touched tests pass repeated parallel runs. Reviewed by `code-reviewer`. User-facing: none.
+
+---
+
+# M19 — the crew book
+
+The owner picked this wave on 2026-11-18, in session, as the one after M15 ("Crew book"). The spec is `docs/LAB_PLAN.md` §20 and the decision is ADR-0036 (accepted 2026-11-11), whose five terms every ticket below holds. The wave starts when M15-12 closes. L1–L8 apply to every ticket. No ticket changes `guard.py` or `luadata.py`; one that finds it must stops and reports. No fixture, test, probe, PR body or report holds a crew record or another player's name taken from a real install: tests use constructed records, labelled (ADR-0036 term 3).
+
+## [ ] M19-01 — lab-addon: the crew book
+**Size:** M · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.1, §20.5; ADR-0036; ADR-0026
+
+`lab/addon/WowLab/Crew.lua`, the account-wide `WowLabCrewDB` (its own `schema = 1`; the per-character schema does not change), `/wowlab crew` with `on`, `off`, `good`, `bad`, `clear`, `note` and `who`, the turn-on notice, the one-line warning in the player's own chat frame, the secret-value skip with its `dropped` count, the 5,000-player limit and the note rules, all as §20.1 says. The TOC's `## SavedVariables:` line and its Notes sentence change; `lab/addon/README.md` says what the crew book keeps and how to turn it on and off. The static checks allow the name-reading calls in `Crew.lua` only and behind the `on` test, keep `UnitGUID` refused everywhere, and refuse every chat-sending call in the whole addon.
+
+**Acceptance:** `make lint-lua` green; static tests (labelled source scans) for: nothing registered or called while `on` is absent, each name call behind the `on` test, no GUID call, no chat-sending call, the note's length and character rules, the limit's drop order; `wowlab addon install lab` on a constructed install installs the new file and TOC line; §20.1 and the README mark what is confirmed and what stays [verify]. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: a new in-game feature, off by default; the README and the wiki's addon page.
+
+---
+
+## [ ] M19-02 — `crewbook` and `wowlab crew list` / `crew show`
+**Size:** M · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.2, §20.5
+
+`wowlab_core.crewbook` reads `WowLabCrewDB` from the account's `WowLab.lua` into `CrewBook` and `CrewPlayer`, read-only, with the four stated outcomes (never turned on; turned off with N kept; an unknown schema refused with its number; a malformed entry listed as unread, the rest read). `wowlab crew list` with `--rated`, `--noted`, `--search` and `--sort`, and `crew show NAME-REALM`, text and `--json` saying the same. Instance names from tables already cached, otherwise the id. `wowlab crew --help` carries the sentence of §20.5 term 2. The commands are read commands for `wowlab ui` (`/api/run`), the command reference and the L1 sweep.
+
+**Acceptance:** tests on constructed `WowLab.lua` files (labelled), including a file with no crew table, a hostile name (control characters, `|`, markup, a 10,000-byte key), 5,000 players within the read budget of §6.4, and a malformed entry; the L1 sweep covers both commands; output follows `.claude/rules/player-copy.md` ("as of your last logout or /reload"); `make test-parser` green. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: two new commands; release notes and the wiki's command reference.
+
+---
+
+## [ ] M19-03 — `crew forget`, `crew rate`, `crew note`
+**Size:** M · **Depends on:** M19-02 · **Sources:** `docs/LAB_PLAN.md` §20.3; ADR-0036 term 5; ADR-0021
+
+Three write commands, each a targeted `luadata` edit of `WowLab.lua` through `guard`: refused while the client runs, snapshot first, journaled, undoable, every other byte kept. `crew forget NAME-REALM`, `crew forget --all` (keeps `schema` and `on`), `crew rate NAME-REALM good|bad|none`, `crew note NAME-REALM TEXT` with the addon's 200-byte and character rules. The plan and the result of `forget` carry the snapshot sentence of §20.3. `guard.py` and `luadata.py` are not changed.
+
+**Acceptance:** tests on constructed files: each command's plan, apply and `wowlab undo`; the untouched bytes compared; refusal while the client runs; a name not in the book; a note over the limit or with a refused character; `test_write_sites.py` shows no new write site outside `guard`; the full suite green on the PR. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: three new commands; release notes and the wiki.
+
+---
+
+## [ ] M19-04 — The capture tool keeps crew records out of the repository
+**Size:** S · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.5 term 3; ADR-0036 term 3; ADR-0019
+
+`scripts/lab_capture.py` refuses a `WowLab.lua` whose `WowLabCrewDB.players` holds anything, naming the reason and the flag; `--empty-crew` blanks that table's body with a byte-level replacement (no parse and re-serialize) and the provenance row says so. A repository test fails if any file under `lab/core/tests/fixtures/` holds a non-empty `WowLabCrewDB.players`.
+
+**Acceptance:** capture-tool tests on constructed files, both ways, including a `players` table split across lines, a nested brace in a note, and a second `WowLabCrewDB` text inside a string; the bytes outside the table unchanged; the repository test green and shown failing on a planted file. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
+
+---
+
+## [ ] M19-05 — Crew records and shared output
+**Size:** S · **Depends on:** M15-12 · **Sources:** `docs/LAB_PLAN.md` §20.5 term 4; ADR-0036 term 4; ADR-0031
+
+`wowlab doctor --redact` never prints a crew record, a name from one or a note. `snap export` says, when the archive holds a `WowLab.lua` with crew records, that the archive includes them and how many players.
+
+**Acceptance:** tests on constructed records for both; `doctor --redact`'s output searched for every constructed name, guild and note; the `snap export` sentence in text and `--json`; the archive's bytes unchanged by the sentence. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: one new sentence from `snap export`.
+
+---
+
+## [ ] M19-06 — The Crew tab
+**Size:** M · **Depends on:** M19-02, M19-03 · **Sources:** `docs/LAB_PLAN.md` §20.4; ADR-0029
+
+A Crew tab in `wowlab ui` after Account and Character: the list with search, the rating filter and the sort, from `crew list --json`; a row opens `crew show`; forget, rate and note through the confirm flow. Names, guilds and notes reach the page as text nodes only.
+
+**Acceptance:** the UI parity and server tests cover the new commands both ways; a constructed hostile name and note (markup, a script tag, an event attribute, a `javascript:` link) shown as text; the tab with the feature off; no new endpoint. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new tab; release notes and the wiki's Browser-View page.
+
+---
+
+## [ ] M19-07 — Owner: the crew book in game
+**Size:** S · **Depends on:** M19-01, M19-02 · **owner** (a short in-game check)
+
+Install the addon from the branch or `main`, `/wowlab crew on`, join a group (open world, then an instance if one is to hand), rate one player and note another, `/reload`, leave and rejoin to see the warning, log out, then `wowlab crew list`. What to report: whether names were recorded in the instance or `dropped` rose (secret values), whether a same-realm member's key carries the realm, and whether the warning printed. No capture is committed: the conductor records the answers as dated notes in §20.6, without any name.
+
+**Acceptance:** §20.6's three [verify] items resolved or kept with what was seen, dated.
+
+---
+
+## [ ] M19-08 — Crew book wave review
+**Size:** S · **Depends on:** M19-01, M19-02, M19-03, M19-04, M19-05, M19-06, M19-07
+
+`docs/handoffs/M19-review.md`: what shipped, each ADR-0036 term with its proof, what stayed [verify], the wiki rows, and what the owner might pick next.
+
+**Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
