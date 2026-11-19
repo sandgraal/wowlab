@@ -15,6 +15,7 @@ from pydantic import Field
 from wowlab_core import (
     combatlog,
     filemap,
+    firstrun,
     gaps,
     install,
     layout,
@@ -1382,14 +1383,18 @@ def _plain_arg(text: str) -> str:
     return longpath.plain_text(text) if longpath.ON_WINDOWS else text
 
 
-def _stored_target(target: str | None) -> str | None:
+def _stored_target(target: str | None) -> str:
     """A link target as a manifest stores it (`snapshot.Entry.target`, what
     `readlink` answered), for display: on Windows without the extended-length
     prefix an absolute target is answered with, where it has a plain spelling
     (`longpath.plain_text`, as `tree` shows a link, M13-43). The manifest
     keeps the raw text, which `guard` and `profiles` compare raw to raw; a
-    relative target, and any target off Windows, is shown as stored (M13-52)."""
-    if target is None or not longpath.ON_WINDOWS:
+    relative target, and any target off Windows, is shown as stored (M13-52).
+    A target that could not be read (stored as None) is shown in the words
+    the first-run survey uses, not as `None` (M13-66)."""
+    if target is None:
+        return firstrun.UNREADABLE_TARGET
+    if not longpath.ON_WINDOWS:
         return target
     return longpath.plain_text(target)
 
