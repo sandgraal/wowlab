@@ -5,7 +5,8 @@ CONSTRUCTED input (L8: a boundary and hostile case), labelled in the test
 id: a 4096 x 4096 DXT5 of random blocks, the most pixels `MAX_PIXELS`
 admits, every block's colour and alpha endpoints its own, so the endpoint
 caches would grow without bound if they were not emptied past
-`blp.CACHE_LIMIT` pairs (before the fix: about 411 MiB more and 62 s). A
+`blp.CACHE_LIMIT` pairs (before the fix: about 411 MiB more, and about
+10 s; the 62 s first recorded here was a loaded machine). A
 child process builds the file, reads its own peak RSS, decodes it, and
 reports the growth, which must stay under four times the 64 MiB output.
 Measured 2026-11-18 on the owner's M1 with tracemalloc: 170 MiB, 3.6 s.

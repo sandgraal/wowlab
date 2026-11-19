@@ -134,12 +134,15 @@ def test_the_census_by_header_adds_up_to_the_census_by_outcome(sample: str) -> N
     assert sum(census["by_header"].values()) == census["blp2"]
 
 
-def test_the_timing_row_is_a_1024_square_dxt1_within_the_target() -> None:
+def test_the_timing_row_is_a_1024_square_dxt1() -> None:
+    """The row's recorded `decode_seconds` is not bounded here: it was
+    taken once, under load, and a bound on it would grade the fixture, not
+    the code. §17.2's target (at most 0.5 s) is held by the CPU-clock test
+    in `test_blp_constructed.py` and by the `@live` test (M15-17)."""
     timing = FACTS["timing"]
     assert timing is not None
     assert (timing["header"]["width"], timing["header"]["height"]) == (1024, 1024)
     assert timing["format"] == "dxt1"
-    assert timing["decode_seconds"] <= 0.5
 
 
 def test_the_record_holds_no_bytes() -> None:
