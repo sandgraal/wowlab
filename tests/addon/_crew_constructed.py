@@ -156,6 +156,13 @@ end
     if not secret(level) and not secret(targetName) then
         WowLabCrewDB.level = ns.Number(level)
     end
+    local isPlayer = UnitIsPlayer("target")
+    if not secret(isPlayer) and isPlayer and not secret(targetName) and targetName ~= UNKNOWNOBJECT then
+        WowLabCrewDB.targetSeen = true
+    end
+    if IsInGroup() and IsInRaid() then
+        WowLabCrewDB.inRaid = true
+    end
     levelOf("target")
     levelOf(first)
 end

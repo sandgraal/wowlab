@@ -2550,10 +2550,10 @@ def test_carry_reads_saved_tables_only_through_fields() -> None:
 # --- API inventory: std file, sources, README -----------------------------------
 
 
-def _std_globals() -> set[str]:
+def _std_globals(std: Path | None = None) -> set[str]:
     names = set()
     in_globals = False
-    for line in STD.read_text(encoding="utf-8").splitlines():
+    for line in (std or STD).read_text(encoding="utf-8").splitlines():
         if line.startswith("globals:"):
             in_globals = True
             continue
@@ -8029,12 +8029,44 @@ def test_m19_01_constructed_calls_behind_the_gate_pass() -> None:
     assert _crew_rules(_CREW_PATH, text)["UNIT_ARGUMENT"] == []
 
 
-def _crew_installed_failures(crew: str) -> list[str]:
+def _std_without(text: str, names: set[str]) -> str:
+    """wow_client.yml text with each `  NAME:` entry (and its indented
+    lines) of `names` left out."""
+    out: list[str] = []
+    skipping = False
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^  ([A-Za-z_][\w.]*):\s*$", line)
+        if match:
+            skipping = match.group(1) in names
+        elif not line.startswith("    "):
+            skipping = False
+        if not skipping:
+            out.append(line)
+    return "".join(out)
+
+
+def _readme_without(text: str, names: set[str]) -> str:
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not any(line.startswith(f"| `{name}` |") for name in names)
+    )
+
+
+def _crew_installed_failures(crew: str, source: Path | None = None) -> list[str]:
     """Install `crew` as Crew.lua in a constructed copy of lab/addon (the
     TOC listing it and the book, Core.lua with the pinned call, the std file
     and README declaring the client names it uses, as M19-10 must), load a
     fresh copy of this grader pointed at it, and run every test in it (each
-    source for a `path` test). The names of the tests that fail."""
+    source for a `path` test). The names of the tests that fail. `source` is
+    the lab/addon folder copied (the tree's own by default).
+
+    Follow-up (M19-10): when the copy already holds a real Crew.lua, the std
+    file and README names only that file uses (declared, referenced by no
+    other source) are taken out before `crew` replaces it, as the names
+    `crew` uses are added; so the result does not depend on which client
+    names the real file happens to call. A name nothing uses stays, and
+    still fails."""
     import importlib.util
     import inspect
     import shutil
@@ -8044,8 +8076,22 @@ def _crew_installed_failures(crew: str) -> list[str]:
         # The same layout under a temporary root, as the review probes use,
         # so paths reported relative to ROOT read the same.
         root = Path(tmp) / "lab" / "addon"
-        shutil.copytree(ADDON_ROOT, root)
+        shutil.copytree(source or ADDON_ROOT, root)
         addon = root / "WowLab"
+        real_only: set[str] = set()
+        if (addon / CREW_FILE).is_file():
+            real = _tokens(addon / CREW_FILE)
+            others: set[str] = set()
+            for path in sorted(addon.glob("*.lua")):
+                if path.name != CREW_FILE:
+                    tokens = _tokens(path)
+                    others |= _fn_lookups(tokens) | _dotted_references(tokens)
+            real_refs = _fn_lookups(real) | _dotted_references(real)
+            real_only = (_std_globals(root / "wow_client.yml") & real_refs) - others - OWN_GLOBALS
+        std_text = _std_without((root / "wow_client.yml").read_text(encoding="utf-8"), real_only)
+        (root / "wow_client.yml").write_text(std_text, encoding="utf-8")
+        readme_text = _readme_without((root / "README.md").read_text(encoding="utf-8"), real_only)
+        (root / "README.md").write_text(readme_text, encoding="utf-8")
         (addon / CREW_FILE).write_text(crew, encoding="utf-8")
         (addon / "Core.lua").write_text(_core_with_call(), encoding="utf-8")
         toc = (addon / "WowLab.toc").read_text(encoding="utf-8")
@@ -8055,11 +8101,9 @@ def _crew_installed_failures(crew: str) -> list[str]:
             )
             toc = toc.rstrip("\n") + f"\n{CREW_FILE}\n"
         (addon / "WowLab.toc").write_text(toc, encoding="utf-8")
-        scan = _SectionScan(
-            [*(addon / p.name for p in SOURCES if p.name != CREW_FILE), addon / CREW_FILE]
-        )
+        scan = _SectionScan(sorted(addon.glob("*.lua")))
         used = {re.split(r"[.:]", r.api)[0] for r in scan.refs if r.client and r.file == CREW_FILE}
-        declared = _std_globals()
+        declared = _std_globals(root / "wow_client.yml")
         std = (root / "wow_client.yml").read_text(encoding="utf-8").rstrip("\n") + "\n"
         readme = (root / "README.md").read_text(encoding="utf-8").rstrip("\n") + "\n\n"
         if CREW_DB not in declared:
@@ -8105,6 +8149,8 @@ _CREW_INSTALLED_SKIP = frozenset(
     {
         "test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed",
         "test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails",
+        "test_m19_01_the_installed_run_drops_names_only_a_real_crew_lua_uses",
+        "test_m19_01_the_installed_run_keeps_a_name_nothing_uses",
     }
 )
 
@@ -8130,6 +8176,44 @@ def test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails() -> 
         ]
     )
     assert _crew_installed_failures(bad)
+
+
+def _pretend_tree(tmp: str, crew_extra: str, name: str) -> Path:
+    """A copy of lab/addon with a pretend real Crew.lua (the constructed
+    source plus `crew_extra`) and `name` declared in the std file and README,
+    as M19-10's tree declares the names its Crew.lua calls."""
+    import shutil
+
+    source = Path(tmp) / "source" / "addon"
+    shutil.copytree(ADDON_ROOT, source)
+    (source / "WowLab" / CREW_FILE).write_text(_CREW_SOURCE + crew_extra, encoding="utf-8")
+    std = source / "wow_client.yml"
+    std.write_text(
+        std.read_text("utf-8").rstrip("\n") + f"\n  {name}:\n    property: read-only\n", "utf-8"
+    )
+    readme = source / "README.md"
+    readme.write_text(
+        readme.read_text("utf-8").rstrip("\n") + f"\n\n| `{name}` | {VERIFY_STATUS} |\n", "utf-8"
+    )
+    return source
+
+
+def test_m19_01_the_installed_run_drops_names_only_a_real_crew_lua_uses() -> None:
+    """Follow-up (M19-10): a name the real Crew.lua declares and calls, and
+    no other file uses, is taken out when the constructed source replaces it,
+    so the installed run passes whichever client names the real file uses."""
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        source = _pretend_tree(tmp, "local spare = CrewOnlyThing\n", "CrewOnlyThing")
+        assert _crew_installed_failures(_CREW_SOURCE, source) == []
+
+
+def test_m19_01_the_installed_run_keeps_a_name_nothing_uses() -> None:
+    """Control: a declared name no file uses, the real Crew.lua included,
+    is not taken out, so the installed run still fails on it."""
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        source = _pretend_tree(tmp, "", "NothingUsesThis")
+        failed = _crew_installed_failures(_CREW_SOURCE, source)
+        assert any(f.startswith("test_every_std_global_is_used") for f in failed), failed
 
 
 def test_m19_01_one_file_level_registration_per_core_event_passes() -> None:
