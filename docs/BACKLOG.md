@@ -1484,7 +1484,7 @@ Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main`
 ---
 
 ## [ ] M15-22 — The CLI imports a command's module when that command runs
-**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18)
+**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18) · **owner** (to see it first: it was not one of the four questions of 2026-11-18)
 
 `python -P -m wowlab_core --version` costs 0.66 s of CPU against 0.02 s for a bare interpreter; about 0.37 s of that is wowlab's own modules, imported whole by `import wowlab_core.cli` whatever the command (`addoncheck` and what it pulls in are the largest). The suite starts about 1,900 such children, 1,700 of them from the UI tests, and `wowlab ui` starts one per command a player runs. Import a command group's module when that command runs. `test_cli_package.py` (M16-111) requires every name of every `cli` module on the package, so the package re-exports lazily and that test's monkeypatch rule is looked at again, with the reviewer.
 
