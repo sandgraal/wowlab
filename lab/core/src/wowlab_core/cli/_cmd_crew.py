@@ -15,6 +15,7 @@ is ASCII-escaped as everywhere.
 """
 
 import hashlib
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -593,10 +594,10 @@ class _Edit:
             raise CliError(
                 f"The crew book of {self.words()} is gone since wowlab looked; nothing was changed."
             )
+        self.backup_error: str | None = None
         self.backup_rel = self._backup()
         self.backup_data: bytes | None = None
-        self.backup_error: str | None = None
-        if self.backup_rel is not None:
+        if self.backup_rel is not None and self.backup_error is None:
             try:
                 self.backup_data = _listed(labaddon.read_file_bytes, self.lay, self.backup_rel)
                 crewbook.parse_book(self.backup_data)
@@ -619,6 +620,25 @@ class _Edit:
             and sv.account == self.place.account
             and sv.path.rsplit("/", 1)[-1].casefold() == _BACKUP_NAME.casefold()
         ]
+        # The listing takes regular files only: anything else there under the
+        # backup's name (a link, a folder) could still lead to an old book,
+        # so it is refused rather than taken for no backup (looked at, never
+        # followed or opened).
+        folder = self.lay.flavor_path / self.rel.rsplit("/", 1)[0]
+        try:
+            with os.scandir(folder) as entries:
+                odd = [
+                    e.name
+                    for e in entries
+                    if e.name.casefold() == _BACKUP_NAME.casefold()
+                    and not e.is_file(follow_symlinks=False)
+                ]
+        except OSError:
+            odd = []
+        if odd:
+            # Only a forget needs the backup; it refuses on this.
+            self.backup_error = "it is a link or a folder, not a file"
+            return self.rel.rsplit("/", 1)[0] + "/" + odd[0]
         exact = [sv for sv in mine if sv.path == self.rel + ".bak"]
         if exact:
             return exact[0].path
@@ -661,7 +681,7 @@ def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
     return found[0]
 
 
-def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool) -> str:
+def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
     """What a forget does not reach (§20.3), in its plan and its result.
     wowlab has no command that removes a snapshot yet, and the sentence says
     so."""
@@ -672,6 +692,42 @@ def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool) -> str:
         f"bring them back. That copy and every earlier snapshot stay in wowlab's snapshot "
         f"folder ({store.path}): wowlab cannot remove a snapshot yet. Archives you made "
         "with `snap export` keep theirs."
+    ) + (
+        " The character's name alone, without the realm, may still be in your notes about "
+        "other players: forget looks for the whole name."
+        if one
+        else ""
+    )
+
+
+_FIELD_WORDS = {"note": "note", "guild": "guild name", "where": "instance name"}
+
+
+def _still_there(spot: crewedit.NameSpot, rel: str) -> str:
+    """Why a forget refuses when the name would still be in a file: where,
+    in the player's words (the text itself is never quoted), and what to do."""
+    then = "then run the forget again. Nothing was changed."
+    if spot.player is not None and spot.field == "note":
+        return (
+            f"The name is also in your note about {spot.player!r} in {rel}, so the forget "
+            "would not remove every copy of it. Change or clear that note with `wowlab crew "
+            f"note`, {then}"
+        )
+    if spot.player is not None and spot.field == "key":
+        return (
+            f"{spot.player!r} in {rel} is the same name in another spelling, so the forget "
+            f"would not remove every copy of it. Forget that entry too, {then}"
+        )
+    if spot.player is not None:
+        what = _FIELD_WORDS.get(spot.field or "", "record")
+        return (
+            f"The name is also in the {what} kept for {spot.player!r} in {rel}, which wowlab "
+            "does not change, so the forget would not remove every copy of it. Forget that "
+            f"player too, {then}"
+        )
+    return (
+        f"The name is also elsewhere in {rel}, outside the crew book's players, so the forget "
+        "would not remove every copy of it. Nothing was changed."
     )
 
 
@@ -725,7 +781,16 @@ def _write(
                 f"{edit.rel} or its backup changed after it was read, so the change was rolled "
                 "back; run the command again"
             )
-    return guard.history(store=store.path)[-1].id
+    # The record this transaction journaled: the newest one with this label
+    # and exactly these paths and hashes (another process's write, journaled
+    # after it, is never taken for it).
+    mine = [(rel, _sha(before), _sha(data)) for rel, before, data, _ in writes]
+    for record in reversed(guard.history(store=store.path)):
+        if record.label == label and [(c.path, c.before, c.after) for c in record.paths] == mine:
+            return record.id
+    raise CliError(  # pragma: no cover - the gate journals every committed write
+        "the change was written but its journal record was not found; `wowlab undo` lists it"
+    )
 
 
 def _apply(
@@ -848,13 +913,10 @@ def crew_forget(
             )
     except crewedit.CrewEditError as exc:
         raise CliError(str(exc)) from None
-    left = crewedit.names_left(new, keys) + crewedit.names_left(new_backup or b"", keys)
-    if left:
-        raise CliError(
-            f"The name {left[0]!r} is still in {edit.rel} or its backup outside the player "
-            "list (in another player's note, say), which wowlab does not change, so it cannot "
-            "remove every copy of it. Nothing was changed."
-        )
+    for rel, after in ((edit.rel, new), (edit.backup_rel, new_backup)):
+        left = crewedit.names_left(after, keys) if after is not None and rel else []
+        if left:
+            raise CliError(_still_there(left[0], rel or edit.rel))
     backup_changed = new_backup is not None and new_backup != edit.backup_data
     outcome: BackupOutcome = (
         "absent" if edit.backup_data is None else "changed" if backup_changed else "left_alone"
@@ -885,7 +947,9 @@ def crew_forget(
             written_sha256=written_sha,
             backup_sha256=backup_sha,
             backup_written_sha256=backup_after if changed else None,
-            not_reached=_not_reached(store, count, done=written) if changed else None,
+            not_reached=_not_reached(store, count, done=written, one=name is not None)
+            if changed
+            else None,
             notes=[],
         )
 
@@ -912,7 +976,7 @@ def crew_forget(
             show(f"  {edit.backup_rel}, the game's backup, does not hold {them}: left alone")
         else:
             show(f"  There is no {_BACKUP_NAME} beside it.")
-        show(_not_reached(store, count, done=False))
+        show(_not_reached(store, count, done=False, one=name is not None))
 
     def done(finished: CrewEditReport) -> None:
         who = keys[0] if name is not None else _plural(len(keys), "player")

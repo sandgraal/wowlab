@@ -6140,6 +6140,14 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   M19-03 registers them in `cli.EXPECT_FIELDS`; M19-06 adds the UI's
   pin-check sentence. `wowlab ui` passes the exact key from
   `crew list --json`.
+  *Amended 2026-11-19 (M19-03, as built):* `crew forget`'s pin always has
+  four parts, `target_sha256:written_sha256:backup_sha256:backup_written_sha256`:
+  the backup pair is pinned even when `WowLab.lua.bak` is not written (its
+  SHA-256 as read, twice, when it is left alone; `absent:absent` when there
+  is none), because the UI reads a pin from fixed report fields that must
+  each hold a value. A backup that changed between plan and confirm is
+  refused. `crew rate` and `crew note` pin two parts,
+  `target_sha256:written_sha256`.
 - **What these commands never do.** They never create `WowLabCrewDB`,
   never change `on`, and refuse a `schema` they do not know. Their guard
   label, which reaches the journal, the snapshot's message, `snap list`,

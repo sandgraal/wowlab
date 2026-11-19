@@ -565,8 +565,8 @@ def undo(
     json_out: JsonOpt = False,
 ) -> None:
     """Undo the most recent change wowlab made to your game files: a
-    `snap restore`, `profile apply`, `sv merge`, `macros fix`, `addon install`
-    or `addon remove`, or an earlier undo. It shows the plan and asks first, then
+    `snap restore`, `profile apply`, `sv merge`, `macros fix`, `addon install`,
+    `addon remove`, `crew forget`, `crew rate` or `crew note`, or an earlier undo. It shows the plan and asks first, then
     puts your files back as they were before that change, from the snapshot
     taken before it; files it added are deleted.
 

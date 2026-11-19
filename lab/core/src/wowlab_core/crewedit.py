@@ -18,6 +18,7 @@ top-level variable, and every other field of the book, as it was).
 from __future__ import annotations
 
 import math
+import unicodedata
 from collections.abc import Callable, Collection
 from typing import Literal
 
@@ -48,10 +49,13 @@ def check_note(text: str) -> str | None:
     """The note to store for `text`, as typed at the desk: spaces trimmed
     from both ends, None when nothing is left (the note is dropped). Refused
     (`CrewEditError`): text that is not valid UTF-8, holds a control
-    character (C0, DEL or C1) or `|` (the game's escape character), or is
+    character (C0, DEL or C1), an invisible formatting character (Unicode
+    category Cf: bidi controls, zero-width characters; the addon prints a
+    note as it is, so one would reorder or hide part of that line) or `|`
+    (the game's escape character), or is
     over `NOTE_MAX_BYTES` bytes after trimming (never cut: a cut can split a
     character). The game removes control characters and `|` from a note; the
-    desk refuses them instead (§20.1)."""
+    desk refuses them, and Cf too, a superset (§20.1)."""
     trimmed = text.strip(" ")
     try:
         data = trimmed.encode("utf-8")
@@ -61,6 +65,12 @@ def check_note(text: str) -> str | None:
         raise CrewEditError(
             "The note holds a control character (a tab or a line break, say), which a note "
             "cannot hold; nothing was changed."
+        )
+    if any(unicodedata.category(c) == "Cf" for c in trimmed):
+        raise CrewEditError(
+            "The note holds an invisible formatting character (one that reverses the "
+            "direction of text, or a zero-width one), which would change how the game shows "
+            "the line it prints; nothing was changed."
         )
     if "|" in trimmed:
         raise CrewEditError(
@@ -393,6 +403,61 @@ def set_field(data: bytes, key: str, field: Field, value: str | None) -> bytes:
     return _checked(book.loaded, out, change)
 
 
-def names_left(data: bytes, keys: Collection[str]) -> list[str]:
-    """The keys among `keys` whose bytes are still anywhere in `data`."""
-    return [k for k in keys if k.encode("utf-8", "surrogateescape") in data]
+def _strings(value: object, path: tuple[object, ...]) -> list[tuple[tuple[object, ...], str]]:
+    """Every string of a loaded value, keys and values, with where it is."""
+    out: list[tuple[tuple[object, ...], str]] = []
+    if isinstance(value, str):
+        out.append((path, value))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str):
+                out.append(((*path, k, None), k))
+            out.extend(_strings(v, (*path, k)))
+    elif isinstance(value, list):
+        for i, v in enumerate(value, 1):
+            out.extend(_strings(v, (*path, i)))
+    return out
+
+
+class NameSpot:
+    """Where a forgotten name is still found in a file: the stored key of
+    the player whose entry holds it and which field (`note`, `guild`,
+    `where`, ...), or neither when it is elsewhere in the file."""
+
+    def __init__(self, player: str | None, field: str | None) -> None:
+        self.player = player
+        self.field = field
+
+
+def names_left(data: bytes, keys: Collection[str]) -> list[NameSpot]:
+    """Where any of `keys` is still in `data`: its bytes anywhere, or, in
+    any string the file loads as (keys and values; an escaped spelling
+    included), the name under §20.2's matching rule (`crewbook.fold`: NFC,
+    case folding, spaces and the two apostrophes ignored). Empty when none
+    is left."""
+    raw = [k for k in keys if k.encode("utf-8", "surrogateescape") in data]
+    wanted = {crewbook.fold(k) for k in keys}
+    wanted.discard("")
+    spots: list[NameSpot] = []
+    loaded = luadata.parse(data).to_python()
+    for path, text in _strings(loaded, ()):
+        folded = crewbook.fold(text)
+        if not any(w in folded for w in wanted):
+            continue
+        spots.append(_spot(path))
+    if raw and not spots:
+        spots.append(NameSpot(None, None))
+    return spots
+
+
+def _spot(path: tuple[object, ...]) -> NameSpot:
+    """The player and field a loaded string's path names, when it is inside
+    the book's player list."""
+    if (
+        len(path) >= 4
+        and path[0] == crewbook.CREW_VARIABLE
+        and path[1] == _PLAYERS
+        and isinstance(path[2], str)
+    ):
+        return NameSpot(path[2], "key" if path[3] is None else str(path[3]))
+    return NameSpot(None, None)

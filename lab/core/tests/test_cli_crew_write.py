@@ -737,3 +737,125 @@ def test_a_book_set_twice_is_not_changed_constructed() -> None:
     data = _three() + book({KEY_C: player()})
     with pytest.raises(crewedit.CrewEditError):
         crewedit.forget(data, [KEY_A])
+
+
+# ─── fix round 1 (review of #630) ────────────────────────────────────────────
+
+
+def _noted_b(note_raw: bytes) -> bytes:
+    """A book whose KEY_B note is `note_raw`, as raw Lua string bytes
+    (constructed: an escaped spelling the client could write)."""
+    return _three().replace(f'"{NOTE_B}"'.encode(), b'"' + note_raw + b'"')
+
+
+def test_a_name_written_with_escapes_in_another_note_refuses_the_forget_constructed(
+    make: Any,
+) -> None:
+    name, realm = KEY_A.split("-")
+    data = _noted_b(f"met {name}\\045{realm}".encode())
+    (loaded,) = [p for p in crewbook.parse_book(data).players if p.key == KEY_B]
+    assert loaded.note == f"met {KEY_A}"
+    env = make(data, backup=data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    err = " ".join(result.stderr.split())
+    assert f"your note about '{KEY_B}'" in err and "`wowlab crew note`" in err
+    assert "run the forget again" in err and "met " not in err
+    assert env.live() == data and env.bak().read_bytes() == data
+    assert guard.history() == ()
+
+
+def test_another_spelling_of_the_name_refuses_the_forget_constructed(make: Any) -> None:
+    data = _noted_b(f"same as {KEY_A.upper().replace('-', ' - ')}".encode())
+    env = make(data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1 and "your note about" in result.stderr
+    assert env.live() == data
+
+
+def test_a_twin_key_refuses_the_forget_of_its_spelling_constructed(make: Any) -> None:
+    twin = KEY_A.lower()  # assembled at run time
+    data = account_file(book({KEY_A: player(), twin: player()}))
+    env = make(data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1 and "another spelling" in result.stderr
+    assert env.live() == data
+
+
+def test_the_name_alone_is_not_refused_and_the_plan_says_it_may_remain_constructed(
+    make: Any,
+) -> None:
+    name = KEY_A.split("-")[0]
+    env = make(_noted_b(f"ask {name} about the key".encode()))
+    out = " ".join(env.ok("crew", "forget", KEY_A, "--yes").stdout.split())
+    assert "The character's name alone, without the realm, may still be in your notes" in out
+    assert KEY_A.encode() not in env.live()
+    assert name.encode() in env.live()
+
+
+@pytest.mark.parametrize("kind", ["link", "folder"])
+def test_a_backup_that_is_not_a_file_refuses_the_forget_constructed(
+    make: Any, tmp_path: Path, kind: str
+) -> None:
+    data = _three()
+    env = make(data)
+    old = tmp_path / "old-book.lua"
+    old.write_bytes(data)
+    if kind == "link":
+        try:
+            env.bak().symlink_to(old)
+        except OSError:
+            pytest.skip("this system cannot make a symbolic link")
+    else:
+        env.bak().mkdir()
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert BAK in " ".join(result.stderr.split()) and "not a file" in result.stderr
+    assert env.live() == data and old.read_bytes() == data and guard.history() == ()
+    # rate and note never touch the backup, so they go on.
+    env.ok("crew", "rate", KEY_A, "good", "--yes")
+
+
+@pytest.mark.parametrize("char", [chr(0x202E), chr(0x200B), chr(0xFEFF)])
+def test_a_note_with_an_invisible_formatting_character_is_refused_constructed(
+    make: Any, char: str
+) -> None:
+    data = _three()
+    env = make(data)
+    result = env.run("crew", "note", KEY_A, f"left{char}right", "--yes")
+    assert result.exit_code == 2, (result.stdout, result.stderr)
+    assert "invisible formatting character" in result.stderr
+    assert env.live() == data and guard.history() == ()
+
+
+def test_the_record_reported_is_this_write_s_even_with_a_newer_one_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = make(_three())
+    real = guard.history
+
+    def with_a_newer(*a: Any, **k: Any) -> tuple[Any, ...]:
+        records = real(*a, **k)
+        if not records:
+            return records
+        newer = records[-1].model_copy(update={"id": "someone-else", "label": "sv merge x"})
+        return (*records, newer)
+
+    monkeypatch.setattr(guard, "history", with_a_newer)
+    rep = env.report("crew", "rate", KEY_A, "good", "--yes")
+    monkeypatch.setattr(guard, "history", real)
+    assert rep.transaction == guard.history()[-1].id != "someone-else"
+
+
+def test_undo_help_names_the_crew_commands() -> None:
+    result = runner.invoke(cli.app, ["undo", "--help"], terminal_width=200)
+    text = " ".join(result.stdout.split())
+    assert "`crew forget`, `crew rate` or `crew note`" in text
+
+
+def test_the_commands_tab_names_all_ten_and_which_refuse_after_a_change() -> None:
+    page = (Path(ui.__file__).parent / "templates" / "page.html").read_text(encoding="utf-8")
+    (intro,) = [line for line in page.splitlines() if "Runs the commands of the" in line]
+    for command in ("crew forget", "crew rate", "crew note", "macros fix", "addon remove"):
+        assert f"<code>{command}</code>" in intro, command
+    assert "Six of them refuse to run when something changed after the plan" in intro
