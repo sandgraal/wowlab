@@ -382,7 +382,7 @@ def _field_lines(p: crewbook.CrewPlayer) -> list[str]:
 
     # `where` is left out in the open world and kept when a later read was
     # refused (§20.1), so it can be from an earlier group than `last`.
-    where = f"{p.where} (instance id {said(p.where_id)})" if p.where else "no instance recorded"
+    where = f"{p.where} (instance id {said(p.where_id)})" if p.where else "none"
     # `current` holds every key counted since the group formed, so a player
     # who left it before the save still counts.
     counted = "yes" if p.in_current_group else "no"

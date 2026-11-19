@@ -74,7 +74,7 @@ _FIELD_WORDS = {
     "skipped": "count of skipped reads",
     "loads": "load count",
     "players": "player list",
-    "current": "list of the players in your group",
+    "current": "list of the players counted in the group you were in at the last save",
     "probe": "load record",
     "on": "on/off setting",
 }

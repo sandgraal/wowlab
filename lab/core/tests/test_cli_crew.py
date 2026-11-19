@@ -240,7 +240,10 @@ def test_show_prints_every_field_constructed(make: Any) -> None:
     report = cli.CrewShowReport.model_validate(env.json("crew", "show", KEY_A))
     assert report.player is not None and report.player.key == KEY_A and report.player.note == NOTE
     other = env.run("crew", "show", KEY_B).stdout
-    assert "Last instance recorded: no instance recorded" in other
+    assert "  Last instance recorded: none\n" in other
+    rows = env.run("crew", "list").stdout.splitlines()
+    (b_row,) = [r for r in rows if r.startswith(f"  {KEY_B}:")]
+    assert "instance" not in b_row
     assert "Counted in the group you were in at the last save: no" in other
     row = env.run("crew", "list").stdout.splitlines()[1]
     assert row.endswith("; last instance recorded: Invented Test Dungeon; rated bad; has a note")

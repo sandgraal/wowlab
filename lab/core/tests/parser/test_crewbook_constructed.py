@@ -356,3 +356,13 @@ def test_constructed_the_book_keeps_the_file_round_trip() -> None:
     """The constructed file is data `luadata` reads losslessly (L4)."""
     data = account_file(book({hostile(KEY_A): player(note=hostile(KEY_B))}))
     assert luadata.serialize(luadata.parse(data)) == data
+
+
+def test_constructed_a_broken_current_set_is_named_in_player_words() -> None:
+    raw = {"schema": 1, "on": True, "current": 3}
+    with pytest.raises(crewbook.CrewBookError) as caught:
+        crewbook.load_book(raw)
+    assert str(caught.value) == (
+        "The crew book's list of the players counted in the group you were in at the last "
+        "save is not readable. Nothing was read."
+    )
