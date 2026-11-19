@@ -5730,7 +5730,7 @@ WowLabCrewDB = {
 - **Secret values.** In combat or restricted content the client may hand
   addon code a secret value (GLOSSARY). It is believed to refuse use as a
   table key (a hypothesis, **[verify]**). Every value read (name, realm,
-  class, level, role, guild, instance type and id) goes through the same
+  class, level, role, guild, instance name, type and id) goes through the same
   `issecretvalue` test `Actions.lua` uses. A secret name or realm skips
   the member; any other secret value leaves that field as it was. Each
   skip adds one to `skipped`, which counts attempts, not players. Without
