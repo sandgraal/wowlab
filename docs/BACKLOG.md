@@ -995,7 +995,7 @@ Found 2026-10-18 in the security review of #277 (M13-53), pre-existing. `check_p
 
 ---
 
-## [ ] M13-64 — `check_wiki` and `Player-<n>-<hex>` GUIDs
+## [x] M13-64 — `check_wiki` and `Player-<n>-<hex>` GUIDs
 **Size:** XS · **Depends on:** M13-53
 *Owner decision, 2026-11-18 (in session: the conductor's default, taken): the first option. Record in the `check_wiki` docstring and in a dated note under ADR-0019 that the wiki gate does not match `Player-<n>-<hex>` GUIDs, and why (the owner's own GUIDs never reach the runner; the scrubbed placeholders would be false positives). No matcher is added.*
 
@@ -1014,7 +1014,7 @@ Three small items found 2026-10-18 in the security and code reviews of #278 (M13
 
 ---
 
-## [ ] M13-66 — Link-target display: `snap show` prints `-> None` for an unreadable target; `doctor` and `tree` spell the same link differently
+## [x] M13-66 — Link-target display: `snap show` prints `-> None` for an unreadable target; `doctor` and `tree` spell the same link differently
 **Size:** XS · **Depends on:** M13-52, M13-51
 *Owner decision, 2026-11-18 (in session: the conductor's default, taken): build part (1) only, `snap show` and the profile listing print the same words as `firstrun` for an unreadable target. Part (2) is dropped: `tree` and `doctor` keep their two spellings of a link.*
 
@@ -1422,7 +1422,7 @@ Found in review after M15-05 merged. In `casc.py`, `_read_checked` and `_probe_o
 
 ---
 
-## [ ] M15-15 — The 70450 `@live` tests and a leftover flavor folder
+## [x] M15-15 — The 70450 `@live` tests and a leftover flavor folder
 **Size:** XS · **Depends on:** M15-05 · **Sources:** the reviews of #598 and #597 (2026-11-18)
 
 The owner's install is the launch client now (`_forever_`, product `wowf`). The beta's folder `_classic_beta_` is still on disk, with no row in `.build.info`.
@@ -1518,6 +1518,8 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 **Size:** XS · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
 
 - Two characters share one `char model` file stem when a realm folder and a character folder both carry a hyphen (realm `A-B` with character `C`, realm `A` with character `B-C`), and when two folders differ only by letter case or Unicode normalisation on a volume that folds them; one run then replaces and removes the other's files. A real install cannot produce the first (character names have no hyphen). Nest the files as `characters/<account>/<realm>/<character>.glb`, or refuse the hyphen in the character folder name; §17.1 gets the dated note either way.
+- `tests/scripts/test_lab_capture_own_guids.py::test_constructed_many_own_link_lines_scrub_in_linear_time` times on the wall clock against 5 s (its call takes about 1.8 s alone) and failed once under a loaded `make test-fast` (the review of #616). Time CPU with `cpu_clock()` from `lab/core/tests/parser/_cpu_clock.py`, as `lab/core/tests/review/README.md` prescribes for timing tests.
+- `test_m2_live.py`, `test_renderplan_live.py`, `test_compositor_live.py` and `test_blp_live.py` open the fixture's flavor before comparing versions, so they will fail, not skip, once that product loses its `.build.info` row, as the 70450 tests did. Share the `_install()` skip that #616 added to the three `casc` live tests (one helper, not seven copies).
 - `str(root) != ""` in `_cmd_doctor.py`, `_common.py`, `_cmd_char.py`, `_cmd_filemap.py` and `_cmd_sv.py` can never be false, because an empty `--root` becomes `.`: decide what `--root ""` should mean (refused, most likely) and make the five sites say it (`install._resolve`, which also takes a `str`, is not one of them).
 
 **Acceptance:** each item fixed or explained in the PR; constructed tests. Reviewed by `code-reviewer`; `security-reviewer` on the first item. User-facing: none expected.
