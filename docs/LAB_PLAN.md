@@ -6042,7 +6042,7 @@ must come from the repository test's fixed list of constructed names.)
   and `PLAYER_REGEN_ENABLED`, plus once per event at file level for events
   Core.lua already registers at file level, so nothing new is registered
   while off. Handlers are named local functions that never read the event
-  or its payload. A key of `players` or `current` is `name .. "-" .. realm`
+  or its payload, except `crewLoaded`, which compares the addon name. A key of `players` or `current` is `name .. "-" .. realm`
   from the name calls, or a key walked from those tables. Those handlers
   are gated, except one pinned `crewLoaded` at
   `ADDON_LOADED`, which raises `probe.loads` whenever a book exists, on or
@@ -6229,7 +6229,8 @@ nil line, or a table whose every key is a constructed name or a §20.1 field
 Not caught: `getfenv()[…]`, a bare Markdown table row, a `["Name"]` key with
 a `realm` field, a file not naming the book, `WowLabCrewDB = f` then a table
 on the next line, a table hand-written after an accepted empty book, a
-comment or line break between the name and a field path.
+comment or line break between the name and a field path, a field
+assignment written behind `_G.` (found at the last security check of #624).
 
 ### 20.6 What is not known
 
