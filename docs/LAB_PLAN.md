@@ -6038,9 +6038,13 @@ must come from the repository test's fixed list of constructed names.)
   The M11-37 scan accepts its client calls in functions behind the on and
   combat tests, in the pinned helpers, a `type()` test of a name call
   anywhere, and in `ns.CrewCommand` the typed text, `time` and `date`. It
-  may call `ns.On` there, plus once per event at file level for events
+  may call `ns.On` there only for `GROUP_ROSTER_UPDATE`, `UNIT_NAME_UPDATE`
+  and `PLAYER_REGEN_ENABLED`, plus once per event at file level for events
   Core.lua already registers at file level, so nothing new is registered
-  while off. Those handlers are gated, except one pinned `crewLoaded` at
+  while off. Handlers are named local functions that never read the event
+  or its payload. A key of `players` or `current` is `name .. "-" .. realm`
+  from the name calls, or a key walked from those tables. Those handlers
+  are gated, except one pinned `crewLoaded` at
   `ADDON_LOADED`, which raises `probe.loads` whenever a book exists, on or
   off ("like §13.1's"), and creates nothing. `"NONE"` and `"none"` appear
   only after `==` or `~=`. `pairs` may walk `players` and `current`.

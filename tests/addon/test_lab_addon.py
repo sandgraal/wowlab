@@ -259,6 +259,10 @@ NON_LITERAL_UNIT = "<a local name as the unit>"
 GATED = "<a function behind the on and combat tests>"
 CREW_COMMAND = "ns.CrewCommand"
 CREW_ON_CALLS = "<Crew.lua's ns.On calls, as _crew_on_call_ok allows them>"
+# Fix round 4: the events §20.1 "When it records" names for the book, the
+# only ones Crew.lua may register inside a function (the roster, a name
+# arriving, the end of combat); at file level only Core.lua's own.
+CREW_EVENTS = frozenset({"GROUP_ROSTER_UPDATE", "UNIT_NAME_UPDATE", "PLAYER_REGEN_ENABLED"})
 # Fix round 3: "NONE" (UnitGroupRolesAssigned's no-role answer) and "none"
 # (GetInstanceInfo's open-world type) look like unit tokens; in Crew.lua they
 # may be compared with `==` / `~=`, nothing else.
@@ -6894,9 +6898,23 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
     k = s if t[s].text == "ns" else s - 2
     if k < 0 or _render(t[k : k + 4]) != "ns . On (" or _is_field(t, k):
         return False
+    # Every call: `ns.On("<EVENT>", <local function>)`, nothing else.
+    shape = (
+        t[k + 4].kind == "string"
+        and t[k + 5].text == ","
+        and t[k + 6].kind == "name"
+        and t[k + 7].text == ")"
+    )
+    if not shape:
+        return False
     fn = flow.function_at(k)
     if fn is not None:
-        return flow.labels.get(fn.head) == CREW_COMMAND or _crew_gated(flow, fn.head)
+        # Fix round 4: inside, only the events §20.1 names for the book.
+        return (
+            (flow.labels.get(fn.head) == CREW_COMMAND or _crew_gated(flow, fn.head))
+            and t[k + 4].text in CREW_EVENTS
+            and _crew_handler_ok(flow, k + 6, gated=True)
+        )
     # Fix round 3: at most one file-level call per event, each for an event
     # Core.lua registers at file level.
     same_event = [
@@ -6906,24 +6924,13 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
         and flow.function_at(j) is None
         and t[j + 4].text == t[k + 4].text
     ]
-    if same_event != [k] or not (
-        t[k + 4].kind == "string"
-        and t[k + 4].text in core_events
-        and t[k + 5].text == ","
-        and t[k + 6].kind == "name"
-        and t[k + 7].text == ")"
-    ):
+    if same_event != [k] or t[k + 4].text not in core_events:
         return False
-    decl = flow.resolve(t[k + 6].text, k)
-    if decl is None or decl.function is None:
-        return False
-    if any(
-        r.rstrip(".") == t[k + 6].text and flow.resolve(r.rstrip("."), ts) is decl
-        for r, ts in flow.rebound
-    ):
-        return False  # the handler's local assigned another function
-    if _crew_gated(flow, decl.function):
+    if _crew_handler_ok(flow, k + 6, gated=True):
         return True
+    decl = flow.resolve(t[k + 6].text, k)
+    if decl is None or decl.function is None or not _crew_handler_ok(flow, k + 6, gated=False):
+        return False
     # The ungated one: the pinned probe handler, for ADDON_LOADED only.
     head = decl.function
     return (
@@ -6931,6 +6938,39 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
         and t[k + 6].text == "crewLoaded"
         and _render(t[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
     )
+
+
+def _crew_handler_ok(flow: _Flow, h: int, gated: bool) -> bool:
+    """The handler named at token h of a Crew.lua `ns.On`: a local function,
+    never assigned again. Gated: not `crewLoaded`, behind the gate, and
+    taking no parameter but `_` or `event`, never read (fix round 4: Core
+    calls a handler as `fn(event, ...)`, and the payload may be a GUID or a
+    name). Not gated: only `crewLoaded` (pinned by the caller)."""
+    t = flow.tokens
+    name = t[h].text
+    decl = flow.resolve(name, h)
+    if decl is None or decl.function is None:
+        return False
+    if any(r.rstrip(".") == name and flow.resolve(name, ts) is decl for r, ts in flow.rebound):
+        return False  # the handler's local assigned another function
+    if not gated:
+        return name == "crewLoaded"
+    head = decl.function
+    if name == "crewLoaded" or not _crew_gated(flow, head):
+        return False
+    fn = flow.functions[head]
+    opening = next(p for p in range(head, len(t)) if t[p].text == "(")
+    params = [x for x in t[opening + 1 : flow.pair[opening]] if x.text != ","]
+    if any(x.text not in {"_", "event"} for x in params):
+        return False
+    for x in params:
+        param = flow.resolve(x.text, fn.start)
+        if any(
+            y.text == x.text and not _is_field(t, j) and flow.resolve(x.text, j) is param
+            for j, y in enumerate(t[fn.start : fn.stop], start=fn.start)
+        ):
+            return False
+    return True
 
 
 def _pcall_literal(t: list[Token], head: int) -> bool:
@@ -7299,6 +7339,7 @@ def _crew_problems(path: Path, text: str) -> list[str]:
         if key == "on" and t[after].text in {"=", ","} and not in_command(ts):
             problems.append(f"line {t[ts].line}: {CREW_DB}.on set outside the slash handler")
     problems += _crew_parameter_problems(flow)
+    problems += _crew_book_key_problems(flow)
     # The slash handler's first statement, pinned (fix round 2, item 1).
     n_head = len(CREW_COMMAND_HEAD.split(" "))
     for head, label in flow.labels.items():
@@ -7310,6 +7351,178 @@ def _crew_problems(path: Path, text: str) -> list[str]:
         on_call = _render(t[k : k + 4]) == "ns . On (" and not _is_field(t, k)
         if on_call and not _crew_on_call_ok(flow, k, events):
             problems.append(f"line {t[k].line}: ns.On called where Crew.lua may not register")
+    return problems
+
+
+_CREW_BOOK_TABLES = ("players", "current")
+
+
+def _crew_name_decls(flow: _Flow) -> set[int]:
+    """ids of the locals bound by a relaxed name call (`local name, realm =
+    UnitFullName(unit)`), which the secret rule already holds to its test."""
+    t = flow.tokens
+    out: set[int] = set()
+    for k in _crew_relaxed_calls(t):
+        if t[k].text not in CREW_NAME_CALLS or t[k - 1].text != "=":
+            continue
+        close = flow.pair[k + 1]
+        j = k - 2  # the last name before `=`
+        while j >= 1 and t[j].kind == "name" and t[j].text not in _KEYWORDS:
+            decl = flow.resolve(t[j].text, close + 1)
+            if decl is not None:
+                out.add(id(decl))
+            if t[j - 1].text != ",":
+                break
+            j -= 2
+    return out
+
+
+def _crew_book_key_problems(flow: _Flow) -> list[str]:
+    """Fix round 4: what may become a key of `WowLabCrewDB.players` or
+    `.current`. Graded on tokens:
+    - the two tables are reached only as `WowLabCrewDB.players` /
+      `.current` written out, or through a local bound once, directly, to
+      one (an alias); either is only indexed (`[...]` or `.field`) or walked
+      by `pairs`, never handed on, returned, stored or assigned whole, and
+      `WowLabCrewDB` is never indexed by brackets;
+    - a store `<table>[K] ... =` takes as K exactly `<a> .. "-" .. <b>`, with
+      a and b bound by a relaxed name call, or a local bound once to that, or
+      the key of a `for K in pairs(<table>)` loop;
+    - the two tables are only ever assigned whole as `{}`, and no table
+      constructor in Crew.lua has a `[...] =` key.
+    Left to review: a key read back from an entry's own fields."""
+    t = flow.tokens
+    problems: list[str] = []
+    names = _crew_name_decls(flow)
+    aliases: dict[int, str] = {}  # id(decl) -> the alias's name
+    for p in range(len(t) - 5):
+        if (
+            t[p].text == "local"
+            and t[p + 1].kind == "name"
+            and t[p + 2].text == "="
+            and _render(t[p + 3 : p + 6]) in {f"{CREW_DB} . {n}" for n in _CREW_BOOK_TABLES}
+            and _ends_expression(t, p + 6)
+        ):
+            name = t[p + 1].text
+            for d in flow.decls.get(name, []):
+                if not p < d.start <= p + 8:
+                    continue
+                if any(r == name and flow.resolve(name, ts) is d for r, ts in flow.rebound):
+                    problems.append(
+                        f"line {t[p].line}: {name} holds a book table and is assigned again"
+                    )
+                else:
+                    aliases[id(d)] = name
+
+    def table_at(k: int) -> int | None:
+        """If a book table starts at token k, the index just after it."""
+        x = t[k]
+        if x.kind != "name" or _is_field(t, k):
+            return None
+        if x.text == CREW_DB and t[k + 1].text == "." and t[k + 2].text in _CREW_BOOK_TABLES:
+            return k + 3
+        decl = flow.resolve(x.text, k)
+        if decl is not None and id(decl) in aliases:
+            return k + 1
+        return None
+
+    def key_ok(s: int, e: int) -> bool:
+        key = t[s:e]
+        if _name_dash_name(key):
+            return all(id(flow.resolve(x.text, s)) in names for x in (key[0], key[4]))
+        if len(key) != 1 or key[0].kind != "name":
+            return False
+        decl = flow.resolve(key[0].text, s)
+        if decl is None:
+            return False
+        # A loop key over a book table.
+        for b in flow.blocks:
+            if b.kind != "loop" or t[b.head].text != "for" or not b.head < s < b.stop:
+                continue
+            if t[b.head + 1].text != key[0].text or t[b.head + 2].text not in {",", "in"}:
+                continue
+            if flow.resolve(key[0].text, b.start) is not decl:
+                continue
+            rest = next(q for q in range(b.head, b.stop) if t[q].text == "in")
+            after = table_at(rest + 3) if _render(t[rest + 1 : rest + 3]) == "pairs (" else None
+            if (
+                after is not None
+                and t[after].text == ")"
+                and not any(
+                    r.rstrip(".") == key[0].text and flow.resolve(key[0].text, ts) is decl
+                    for r, ts in flow.rebound
+                )
+            ):
+                return True
+        # A local bound once to `<a> .. "-" .. <b>` from name calls.
+        for p in range(len(t) - 8):
+            if [t[p].text, t[p + 1].text, t[p + 2].text] == ["local", key[0].text, "="]:
+                bound = [d for d in flow.decls.get(key[0].text, []) if p < d.start <= p + 9]
+                if bound and bound[0] is decl and _name_dash_name(t[p + 3 : p + 8]):
+                    if not _ends_expression(t, p + 8):
+                        return False
+                    if any(
+                        r.rstrip(".") == key[0].text and flow.resolve(key[0].text, ts) is decl
+                        for r, ts in flow.rebound
+                    ):
+                        return False
+                    return all(id(flow.resolve(t[q].text, p)) in names for q in (p + 3, p + 7))
+        return False
+
+    for k in range(len(t) - 3):
+        after = table_at(k)
+        if after is None:
+            continue
+        walk = t[k - 1].text == "(" and t[k - 2].text == "pairs" and t[after].text == ")"
+        alias_binding = (
+            t[k].text == CREW_DB
+            and t[k - 1].text == "="
+            and t[k - 2].kind == "name"
+            and t[k - 3].text == "local"
+            and _ends_expression(t, after)
+        )
+        if walk or alias_binding:
+            continue
+        nxt = t[after].text
+        if nxt == "=" and t[k].text == CREW_DB:
+            if _render(t[after + 1 : after + 3]) != "{ }" or not _ends_expression(t, after + 3):
+                problems.append(f"line {t[k].line}: a book table assigned other than {{}}")
+            continue
+        if nxt == ".":
+            continue
+        if nxt != "[":
+            problems.append(f"line {t[k].line}: a book table used other than indexed or walked")
+            continue
+        close = flow.pair[after]
+        # Is this index the target of a store (`...[K] ... =`)?
+        j = close + 1
+        while j < len(t) and t[j].text in {".", "["}:
+            j = flow.pair[j] + 1 if t[j].text == "[" else j + 2
+        store = j < len(t) and t[j].text in {"=", ","} and flow.statement_level(k)
+        if store and not key_ok(after + 1, close):
+            problems.append(f"line {t[k].line}: a book key is not a name-realm from the name calls")
+    for k in range(len(t) - 1):
+        if t[k].text == CREW_DB and t[k + 1].text == "[" and not _is_field(t, k):
+            close = flow.pair[k + 1]
+            if t[close + 1].text != "=":
+                problems.append(f"line {t[k].line}: {CREW_DB} read through brackets")
+        opener = flow.opener[k]
+        bracket_key = (
+            t[k].kind == "op"
+            and t[k].text == "["
+            and opener is not None
+            and t[opener].text == "{"
+            and t[k - 1].text in {"{", ","}
+        )
+        if bracket_key:
+            problems.append(f"line {t[k].line}: a table constructor with a [...] key")
+        if (
+            t[k].text in _CREW_BOOK_TABLES
+            and t[k + 1].text == "="
+            and t[k - 1].text in {"{", ","}
+            and (_render(t[k + 2 : k + 4]) != "{ }" or t[k + 4].text not in {",", "}"})
+        ):
+            problems.append(f"line {t[k].line}: a book table built other than {{}}")
     return problems
 
 
@@ -7376,7 +7589,9 @@ def _crew_parameter_use(flow: _Flow, k: int, name: str) -> list[str]:
         return [f"{where} may be the value of an and/or expression"]
     if opener == "(":
         callee = _render(t[max(0, o - 3) : o])
-        if callee.split(" ")[-1] in {"pcall", "xpcall"} or callee == "ns . Call":
+        if callee.split(" ")[-1] in {"pcall", "xpcall"} or callee.startswith("ns ."):
+            # Fix round 4: every ns helper (ns.String, ns.Number, ...)
+            # returns its argument or calls it.
             return [f"{where} is handed to {callee.split(' ')[-1]}"]
     return []
 
@@ -7500,6 +7715,7 @@ end
             entry.last = time()
             entry.day = date("%Y-%m-%d", entry.last)
             book[name .. "-" .. realm] = entry
+            WowLabCrewDB.current[key] = true
         end
     end
     if not secret(home) then
@@ -7589,6 +7805,9 @@ ns.On("PLAYER_ENTERING_WORLD", onWorld)
     end
     if word == "off" and type(WowLabCrewDB) == "table" then
         WowLabCrewDB.on = false
+        for key in pairs(WowLabCrewDB.current) do
+            WowLabCrewDB.current[key] = nil
+        end
     end
     print(nameAbsent() or "Crew book.")
     return "constructed"
@@ -7597,6 +7816,10 @@ end
 )
 _CREW_PATH = Path(CREW_FILE)
 _CREW_TAIL = '    return "constructed"\nend\n'  # the end of the file: code is added after it
+_CREW_GATE_BODY = (
+    "    if not crewOn() then\n        return\n    end\n"
+    "    if crewBlocked() then\n        return\n    end\n"
+)
 assert _CREW_SOURCE.endswith(_CREW_TAIL)
 
 
@@ -8029,6 +8252,128 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
             "local function countBook()\n",
             "local function leak(...)\n    print(...)\nend\n\nlocal function countBook()\n",
         )
+    ],
+    # Fix round 4 (security re-check): event payloads and book keys.
+    "a payload stored from INSPECT_READY": [
+        (
+            "local function onRoster()\n",
+            "local function onPayload(event, p)\n"
+            + _CREW_GATE_BODY
+            + "    WowLabCrewDB.seen = ns.String(p)\nend\n\n"
+            "local function arm()\n"
+            + _CREW_GATE_BODY
+            + '    ns.On("INSPECT_READY", onPayload)\nend\n\nlocal function onRoster()\n',
+        )
+    ],
+    "an inviter's name stored as a key": [
+        (
+            "local function onRoster()\n",
+            "local function onInvite(event, p)\n"
+            + _CREW_GATE_BODY
+            + "    WowLabCrewDB.players[ns.String(p)] = { met = 0 }\nend\n\n"
+            "local function arm()\n"
+            + _CREW_GATE_BODY
+            + '    ns.On("PARTY_INVITE_REQUEST", onInvite)\nend\n\nlocal function onRoster()\n',
+        )
+    ],
+    "a roster handler reading its payload": [
+        ("local function onRoster()\n", "local function onRoster(event, unit)\n"),
+        ("    readGroup(4)\n", "    readGroup(4)\n    WowLabCrewDB.lastUnit = unit\n"),
+    ],
+    "a roster handler comparing the event": [
+        ("local function onRoster()\n", "local function onRoster(event)\n"),
+        (
+            "    readGroup(4)\n",
+            '    readGroup(4)\n    WowLabCrewDB.flag = event == "UNIT_NAME_UPDATE"\n',
+        ),
+    ],
+    "a roster handler as a function literal": [
+        (
+            '    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n',
+            '    ns.On("GROUP_ROSTER_UPDATE", function(...)\n        onRoster()\n    end)\nend\n',
+        )
+    ],
+    "an event §20.1 does not name": [
+        (
+            '    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n',
+            '    ns.On("PLAYER_TARGET_CHANGED", onRoster)\nend\n',
+        )
+    ],
+    "an event that is not a literal": [
+        (
+            '    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n',
+            '    local e = "GROUP_ROSTER_UPDATE"\n    ns.On(e, onRoster)\nend\n',
+        )
+    ],
+    "the probe handler registered inside a gated function": [
+        (
+            '    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n',
+            '    ns.On("GROUP_ROSTER_UPDATE", crewLoaded)\nend\n',
+        )
+    ],
+    "a parameter handed to ns.Number": [
+        (
+            "local function countBook()\n",
+            "local function leak(box)\n    local s = ns.Number(box)\n    return 1\nend\n\n"
+            "local function countBook()\n",
+        )
+    ],
+    "a key from a parameter": [
+        (
+            "local function countBook()\n",
+            "local function keep(k)\n"
+            + _CREW_GATE_BODY
+            + "    WowLabCrewDB.players[k] = { met = 0 }\nend\n\nlocal function countBook()\n",
+        )
+    ],
+    "a key from another client call": [
+        (
+            '            book[name .. "-" .. realm] = entry\n',
+            "            local zone = GetInstanceInfo()\n            book[zone] = entry\n",
+        )
+    ],
+    "a key with a piece not from a name call": [
+        (
+            '            book[name .. "-" .. realm] = entry\n',
+            '            local zone = GetInstanceInfo()\n            book[zone .. "-" .. realm] = entry\n',
+        )
+    ],
+    "a key from a walk over another table": [
+        (
+            '            book[name .. "-" .. realm] = entry\n',
+            "            for slot in pairs(entry) do\n                book[slot] = entry\n            end\n",
+        )
+    ],
+    "a key stored in a multiple assignment": [
+        (
+            '            book[name .. "-" .. realm] = entry\n',
+            "            local zone = GetInstanceInfo()\n            book[zone], entry.x = entry, 1\n",
+        )
+    ],
+    "a constructor with a bracket key": [
+        (
+            "            WowLabCrewDB.current[key] = true\n",
+            "            WowLabCrewDB.extra = { [key] = true }\n",
+        )
+    ],
+    "the players table rebuilt": [
+        (
+            "        WowLabCrewDB.on = false\n",
+            "        WowLabCrewDB.on = false\n        WowLabCrewDB.players = { met = 1 }\n",
+        )
+    ],
+    "the players table created full": [("players = {}, current", "players = { 1 }, current")],
+    "a book table handed on": [
+        ("    readGroup(4)\n", "    readGroup(4)\n    print(WowLabCrewDB.players)\n")
+    ],
+    "a book alias assigned again": [
+        (
+            "    local book = WowLabCrewDB.players\n",
+            "    local book = WowLabCrewDB.players\n    book = {}\n",
+        )
+    ],
+    "the book read through brackets": [
+        ("    local book = WowLabCrewDB.players\n", '    local book = WowLabCrewDB["players"]\n')
     ],
     # Fix round 3, item 3: the ungated probe handler, pinned.
     "the probe handler creating the book": [
