@@ -1477,7 +1477,18 @@ With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and
 
 Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main` (run 44374160065: 25.3 parallel, 3.1 serial, about 14,400 tests; a pull-request run, 44384026727, took 29.4 min); `lab (windows)` takes 44.9 min and runs on every push to `main`, as `lab (macos)` does; a local `make ci` takes about as long: reviewers run it on their first round, and implementers do for guard, parser, lockfile and workflow diffs. The review comes first (which tests cost the time, which are duplicates or probes that could run nightly, what each trigger runs); the cuts follow the owner's choices on it.
 
+*Owner decisions, 2026-11-18 (in session, each picked from a question that stated the option; the review is `docs/handoffs/test-time-2026-11.md`):* (1) the seventeen lab-addon mutation probes run on a pull request only when `lab/addon/**`, `tests/addon/**`, `lab/core/src/wowlab_core/toc.py`, the probes themselves, `conftest.py`, `pyproject.toml` or `uv.lock` change, and every night; (2) the Windows and macOS suites run every night at 09:17 UTC (03:17 in the owner's local time) and on demand, not after each merge, with an on-demand run of both on the branch of a ticket that touches path handling, `guard`, `snapshot` or `process`; (3) the serial (budget) pass runs every night, and the one `os.fork` test of the write gate stays on the pull request; (4) local runs are slimmer: reviewers do not run the full `make ci` per review, implementers run `make test-fast` only when `lab/core/src` or its tests changed, and the full local run stays for `guard.py`, `luadata.py`, `proposal.py`, `conftest.py`, `pyproject.toml`, `uv.lock` and the `Makefile`. The review's S1 to S5 need no decision. Not asked: O5 and O7 (the review recommends against them) and O6 (only if the UI tests still dominate after O4). O4 is filed as M15-22, a speedup the review recommends; it was not one of the four questions, and it is not dispatched before the owner has seen it. The conductor writes (4) into the agents' instructions and `docs/AGENT_WORKFLOW.md`; an implementer builds S1 to S4 and (1) to (3).
+
 **Acceptance:** `docs/handoffs/test-time-2026-11.md` with the measurements and the options; the owner's choices recorded here; the changes they pick merged with before and after times. Reviewed by `code-reviewer`, and `security-reviewer` for anything under `.github/`.
+
+---
+
+## [ ] M15-22 — The CLI imports a command's module when that command runs
+**Size:** M · **Depends on:** M15-20, M15-21 · **Sources:** `docs/handoffs/test-time-2026-11.md`, O4 (2026-11-18)
+
+`python -P -m wowlab_core --version` costs 0.66 s of CPU against 0.02 s for a bare interpreter; about 0.37 s of that is wowlab's own modules, imported whole by `import wowlab_core.cli` whatever the command (`addoncheck` and what it pulls in are the largest). The suite starts about 1,900 such children, 1,700 of them from the UI tests, and `wowlab ui` starts one per command a player runs. Import a command group's module when that command runs. `test_cli_package.py` (M16-111) requires every name of every `cli` module on the package, so the package re-exports lazily and that test's monkeypatch rule is looked at again, with the reviewer.
+
+**Acceptance:** the import cost of `--version` and of one read command measured before and after (CPU, best of several, in the PR); text and `--json` output byte-identical on every command; the UI parity tests green; `make ci` green; the suite's parallel pass timed before and after on CI. Reviewed by `code-reviewer`. User-facing: none but speed.
 
 ---
 

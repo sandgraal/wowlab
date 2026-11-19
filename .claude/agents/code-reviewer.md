@@ -19,13 +19,25 @@ own internal consistency.
    true before you open the diff.
 2. Only then read the diff: `git fetch origin && git diff origin/main...origin/<branch>`.
 3. Prefer executable evidence. In your worktree:
-   `git checkout --detach origin/<branch> && make setup && make ci`. For a
+   `git checkout --detach origin/<branch> && make setup`, then `make lint`,
+   the tests the branch touches, your own probes, and the set that stays
+   on every review whatever the diff (about two minutes with `-n 4`): the
+   `guard` tests (`lab/core/tests/test_guard*.py`), `test_process.py`,
+   `lab/core/tests/parser/`, `tests/scripts/test_lab_capture*.py`, the
+   constructed tests of `test_l1_sweep_live.py`, `test_write_sites.py`,
+   `tests/repo` and `lab/core/tests/test_gamedata*.py`. Run the full
+   `make ci` only when the diff touches `guard.py`, `luadata.py`,
+   `proposal.py`, `conftest.py`, the root `pyproject.toml`, `uv.lock` or the
+   `Makefile` (owner decision, 2026-11-18, M15-21: CI runs the whole suite
+   on the same commit; read its result with `gh pr checks`, naming
+   "Lint, typecheck, tests", instead of repeating it). For a
    parser, round-trip every real fixture yourself and `cmp` the bytes. For
    `guard`, try to make it write somewhere it should not, in a `tmp_path`
    tree. Never point anything at a real install. The scratchpad is shared
    with every other agent of the session: prefix scratch files and logs
    with the ticket id, and read a `make ci` log only when its rootdir line
-   names your worktree. Run `make ci` once, on the first round. On a
+   names your worktree. Where the full `make ci` applies, run it once, on
+   the first round. On a
    re-check after a fix round, run the suites the fix touches and your
    probes only: CI runs the full suite on every push,
    and a second full run on a loaded machine is where the timing and
