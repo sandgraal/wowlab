@@ -175,6 +175,7 @@ if TYPE_CHECKING:
     from wowlab_core import addoninstall as addoninstall
     from wowlab_core import bindscoach as bindscoach
     from wowlab_core import combatlog as combatlog
+    from wowlab_core import crewbook as crewbook
     from wowlab_core import doctorredact as doctorredact
     from wowlab_core import dressing as dressing
     from wowlab_core import filemap as filemap
@@ -210,6 +211,7 @@ if TYPE_CHECKING:
     from wowlab_core.cli import _cmd_casc as _cmd_casc
     from wowlab_core.cli import _cmd_char as _cmd_char
     from wowlab_core.cli import _cmd_charmodel as _cmd_charmodel
+    from wowlab_core.cli import _cmd_crew as _cmd_crew
     from wowlab_core.cli import _cmd_cvar as _cmd_cvar
     from wowlab_core.cli import _cmd_db2 as _cmd_db2
     from wowlab_core.cli import _cmd_doctor as _cmd_doctor
@@ -1003,6 +1005,15 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_charmodel import (
         char_model as char_model,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        CrewPlace as CrewPlace,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        CrewReport as CrewReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
+        CrewShowReport as CrewShowReport,
     )
     from wowlab_core.cli._cmd_cvar import (
         _ACCOUNT_BINDINGS as _ACCOUNT_BINDINGS,
@@ -2586,6 +2597,9 @@ if TYPE_CHECKING:
         CONFIRM_DECLINED as CONFIRM_DECLINED,
     )
     from wowlab_core.cli._common import (
+        CREW_BOOK_SENTENCE as CREW_BOOK_SENTENCE,
+    )
+    from wowlab_core.cli._common import (
         EXIT_ERROR as EXIT_ERROR,
     )
     from wowlab_core.cli._common import (
@@ -2929,6 +2943,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         char_app as char_app,
+    )
+    from wowlab_core.cli._common import (
+        crew_app as crew_app,
     )
     from wowlab_core.cli._common import (
         cvar_app as cvar_app,

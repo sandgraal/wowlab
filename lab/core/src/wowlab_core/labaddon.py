@@ -1605,6 +1605,14 @@ def _read(path: Path, root: Path | None = None) -> bytes:
     return snapshot.read_regular_file(path, limit=luadata.MAX_FILE_BYTES, root=Path(home))
 
 
+def read_file_bytes(path: Path, *, root: Path | None = None) -> bytes:
+    """A `WowLab.lua`'s bytes, read as `read_char` and `read_account` read
+    them (read-only, L1): from the install root one folder at a time, within
+    `luadata.MAX_FILE_BYTES`. For another reader of the same file (the crew
+    book, `crewbook`, M19-02)."""
+    return _read(path, root)
+
+
 def read_char(path: Path, *, root: Path | None = None) -> CharDB:
     """Read a character's `WowLab.lua` (read-only; writes nothing, L1), from
     the install root (`root`, else the one the path spells) one folder at a

@@ -107,6 +107,10 @@ CONSTRUCTED_TEST_FILES = frozenset(
         "tests/repo/test_crew_book_out_of_repo.py",
         # M19-01: the constructed Crew.lua sources the addon grader checks.
         "tests/addon/_crew_constructed.py",
+        # M19-02: the reader's constructed books and the tests that read them.
+        "lab/core/tests/parser/_crew_build.py",
+        "lab/core/tests/parser/test_crewbook_constructed.py",
+        "lab/core/tests/test_cli_crew.py",
     }
 )
 FIXTURES = "lab/core/tests/fixtures/"

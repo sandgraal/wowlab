@@ -459,6 +459,23 @@ casc_app = typer.Typer(
 app.add_typer(
     casc_app, name="casc", short_help="Look up and extract the game's files by file data id."
 )
+# The sentence of docs/LAB_PLAN.md §20.5, term 2 (ADR-0036): what the crew
+# book keeps, where, and that it knows names, not people. `crew --help` says
+# it whole; a test pins it.
+CREW_BOOK_SENTENCE = (
+    "The crew book keeps, for each player you group with, their name, realm, guild, class, "
+    "level and role, when you first and last grouped, how many times and in which instance, "
+    "and your own rating and note. It keeps them in WowLab.lua (and the game's backup, "
+    "WowLab.lua.bak) in this game account's SavedVariables folder, and in wowlab's snapshots "
+    "of it. Nothing is sent anywhere. The book knows names, not people: a player who renames "
+    "or moves realm appears as a new entry, and someone else may later take a name you rated."
+)
+crew_app = typer.Typer(
+    help="The lab-addon's crew book: the players you grouped with, as of your last logout or "
+    "/reload. It is off until you turn it on in game with /wowlab crew on. " + CREW_BOOK_SENTENCE,
+    no_args_is_help=True,
+)
+app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -485,6 +502,7 @@ _PART_NAMES = (
     "_cmd_looks",
     "_cmd_casc",
     "_cmd_charmodel",
+    "_cmd_crew",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -512,6 +530,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "looks": ("_cmd_looks",),
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
+    "crew": ("_cmd_crew",),
 }
 
 

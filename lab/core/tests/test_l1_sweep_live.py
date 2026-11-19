@@ -24,7 +24,8 @@ What it does, in order:
    `--yes` anywhere, stdin closed so nothing can be asked), for every flavor
    folder, every account folder, and one character per flavor; `snap show`,
    `snap diff`, `snap verify`, `profile show` and `cvar get` on what the
-   store and the install hold. Three groups read game tables that they
+   store and the install hold; `crew list` for every account and `crew show`
+   for the first player of each crew book (M19-02). Three groups read game tables that they
    download when missing, so each runs only when every table it reads is
    already cached, and is otherwise listed as skipped with that reason:
    `names fetch`, `looks races/options/show/compare` and `db2 head`.
@@ -41,7 +42,10 @@ What it does, in order:
    it fails if a command crashed, exited with something other than 0 or 1
    (0 ok, 1 error; §6's exit codes: 2 is a usage mistake in this test, 3 a
    refusal by the write gate, which no read reaches), or printed something
-   other than JSON under `--json`.
+   other than JSON under `--json`. A failure prints the end of the run's
+   stderr, except for the runs that can print other players' names or the
+   player's notes (`QUIET_RUNS`: the crew commands, `sv dump` and `snap
+   diff`), which print their exit code only (docs/LAB_PLAN.md §20.5).
 
 With `-s` it prints one block for the release record: the verdicts, every
 command's exit code and every skip, with `account#N`, `character#N`,
@@ -452,13 +456,11 @@ def _login() -> str | None:
         return None
 
 
-def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
-    """The lines for the release record: the verdicts, each run's exit code
-    and command, and each skip, with the install root as `<root>`, the home
-    folder as `<home>`, the login as `<login>`, and every account and
-    character folder as `account#N` / `character#N`. It is all the sweep
-    prints; only a failure's message names real paths, so it can be read
-    on the terminal and is never pasted into the record."""
+def _scrubber(sweep: Sweep, root: Path) -> Callable[[str], str]:
+    """Text with the install root as `<root>`, the home folder as `<home>`,
+    the login as `<login>`, and every account and character folder and
+    crew-book key the sweep met as `account#N` / `character#N` /
+    `player#N`."""
     swaps: list[tuple[str, str]] = [(str(root), "<root>")]
     with contextlib.suppress(RuntimeError, KeyError, OSError):
         swaps.append((str(Path.home()), "<home>"))
@@ -472,6 +474,40 @@ def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
             text = text.replace(old, new)
         return text
 
+    return scrub
+
+
+# The runs whose output can hold other players' names or the player's notes
+# (the crew book, docs/LAB_PLAN.md §20.5, "No real name through process"):
+# a failure of one prints its exit code only, never its output (M19-02).
+QUIET_RUNS = ("wowlab crew ", "wowlab sv dump ", "wowlab snap diff ", "ui POST /api/run crew ")
+
+
+def failure_lines(sweep: Sweep, root: Path) -> list[str]:
+    """One entry per run that did not end as a read may: the command and
+    what went wrong, then the end of its stderr; for a run in `QUIET_RUNS`,
+    the command (scrubbed as the release record is) and its exit code only."""
+    scrub = _scrubber(sweep, root)
+    lines: list[str] = []
+    for r in sweep.ran:
+        if not r.problem:
+            continue
+        if r.what.startswith(QUIET_RUNS):
+            lines.append(f"{scrub(r.what)}: exit {r.exit_code} (output not shown)")
+        else:
+            lines.append(f"{r.what}: {r.problem}\n{r.stderr[-2000:]}")
+    return lines
+
+
+def record_summary(sweep: Sweep, root: Path, verdicts: list[str]) -> list[str]:
+    """The lines for the release record: the verdicts, each run's exit code
+    and command, and each skip, with the install root as `<root>`, the home
+    folder as `<home>`, the login as `<login>`, and every account and
+    character folder and crew-book key as `account#N` / `character#N` /
+    `player#N`. It is all the sweep prints; only a failure's message names
+    real paths, so it can be read on the terminal and is never pasted into
+    the record (and a failure of a run in `QUIET_RUNS` prints no output)."""
+    scrub = _scrubber(sweep, root)
     lines = ["--- L1 sweep, for the release record ---"]
     lines += [scrub(v) for v in verdicts]
     for ran in sweep.ran:
@@ -521,6 +557,23 @@ def _offline_tables(f: install.Flavor, sweep: Sweep) -> None:
         sweep.skipped.append(
             f"db2 head: ChrClasses is not cached for {f.folder}, so it would go online"
         )
+
+
+def _crew(sweep: Sweep, ac: tuple[str, ...], where: str) -> None:
+    """`crew list` for one account and `crew show` of its first player, the
+    key hidden as `player#N` in everything the sweep prints (M19-02)."""
+    listed = _report(sweep.cli("crew", "list", *ac, "--json"))
+    keys = [
+        str(p.get("key"))
+        for p in (listed or {}).get("players", [])
+        if isinstance(p, dict) and p.get("key")
+    ]
+    for key in keys:
+        sweep.hide("player", key)
+    if keys:
+        sweep.cli("crew", "show", *ac, "--json", "--", keys[0])
+    else:
+        sweep.skipped.append(f"crew show: {where} has no player in a crew book")
 
 
 def run_commands(inst: install.Install, sweep: Sweep) -> None:
@@ -615,6 +668,7 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
                 sweep.cli("sv", "dump", "--install-only", *ac, "--json", "--", str(path))
             else:
                 sweep.skipped.append(f"sv dump: {f.folder} {account} has no SavedVariables file")
+            _crew(sweep, ac, f"{f.folder} {account}")
         chars = _report(sweep.cli("char", "list", *fl, "--brief", "--json"))
         sweep.hide_rows(chars, "characters", "label")
         sweep.cli("char", "list", "--summary", *fl, "--json")
@@ -741,6 +795,7 @@ def run_ui(inst: install.Install, sweep: Sweep) -> None:
                 (["sv", "list"], fl),
                 (["char", "list"], {**fl, "summary": True}),
             ]
+            runs += [(["crew", "list"], {**fl, "account": a}) for a in _accounts(f.path)]
         for command, params in runs:
             leaf = leaves.get(tuple(command))
             if leaves and leaf is None:
@@ -783,7 +838,7 @@ def sweep_and_compare(root: Path, data_dir: Path) -> Sweep:
     assert not data_changed, f"wowlab's user data directory {data_dir} changed:\n" + "\n".join(
         data_changed
     )
-    bad = [f"{r.what}: {r.problem}\n{r.stderr[-2000:]}" for r in flagged]
+    bad = failure_lines(sweep, inst.root)
     assert not bad, "runs that did not end as a read may:\n" + "\n".join(bad)
     return sweep
 
@@ -1070,6 +1125,16 @@ def test_a_run_that_ends_badly_is_flagged_constructed() -> None:
         assert ran.problem == problem, ran.what
 
 
+def _crew_build() -> Any:
+    """`parser/_crew_build.py`, the constructed crew books (M19-02)."""
+    parser = str(Path(__file__).resolve().parent / "parser")
+    if parser not in sys.path:
+        sys.path.insert(0, parser)
+    import _crew_build
+
+    return _crew_build
+
+
 def _copy_install(tmp_path: Path) -> Path:
     """The captured flavor `macos-70888` copied into `tmp_path` as an
     install, with a captured combat log beside it and a constructed Data/
@@ -1158,6 +1223,11 @@ def captured_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: child_data)
     monkeypatch.delenv(install.ENV_FLAVOR, raising=False)
     root = _copy_install(tmp_path)
+    # A constructed crew book in the account's WowLab.lua (M19-02; ADR-0036
+    # term 3: built at run time, invented keys only), so `crew show` runs.
+    book = _crew_build()
+    sv = root / FLAVOR / "WTF" / "Account" / ACCOUNT / "SavedVariables" / "WowLab.lua"
+    sv.write_bytes(book.account_file(book.book({book.KEY_A: book.player(note=book.NOTE)})))
     version = install.discover(root).flavors[0].version
     assert version is not None
     tables = child_data / "gamedata" / "tables" / version
@@ -1215,9 +1285,17 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
         "wowlab looks options ",
         "wowlab looks show ",
         "wowlab db2 head ",
+        "wowlab crew list ",
+        "wowlab crew show ",
         "ui POST /api/run char list",
+        "ui POST /api/run crew list",
     ):
         assert any(w.startswith(started) for w in ran), started
+    # The planted book's key reaches the release record only as `player#1`.
+    key = _crew_build().KEY_A
+    (shown,) = [r for w, r in ran.items() if w.startswith("wowlab crew show ")]
+    assert shown.exit_code == 0 and key in shown.what
+    assert key not in "\n".join(sweep.summary) and "player#1" in "\n".join(sweep.summary)
     assert f"--character 1/{KEPT}" in " ".join(w for w in ran if w.startswith("wowlab char kept"))
     # Every name table is cached: `names fetch` runs, and downloads nothing
     # (any request would fail against the dead proxy).
@@ -1439,3 +1517,45 @@ def test_record_summary_holds_no_folder_or_path_constructed(
     assert "<root>" in text and "<login>" in text
     assert "exit   2  wowlab char list --json  !! exit 2" in text
     assert f"skipped  sv dump: {FLAVOR} account#1 has no SavedVariables file" in text
+
+
+def test_a_failed_crew_dump_or_diff_run_prints_its_exit_code_only_constructed() -> None:
+    """M19-02 (§20.5, "No real name through process"): a failure of a crew
+    command, `sv dump` or `snap diff` prints the exit code and the scrubbed
+    command, never its stdout or stderr; any other failure keeps its stderr."""
+    root = Path("/constructed/World of Warcraft")
+    secret = "constructed player text"
+    sweep = Sweep()
+    sweep.hide("player", "Inventeda-Fakerealm")
+    sweep.ran += [
+        Ran("wowlab crew list --json", 1, stdout=secret, stderr=secret, problem="exit 1"),
+        Ran(
+            "wowlab crew show --json -- Inventeda-Fakerealm",
+            2,
+            stdout=secret,
+            stderr=f"wowlab: no player {secret}",
+            problem="exit 2",
+        ),
+        Ran(
+            f"wowlab sv dump --install-only --json -- {root}/x.lua",
+            3,
+            stderr=secret,
+            problem="exit 3",
+        ),
+        Ran("wowlab snap diff --json -- ~1 latest", 0, stdout=secret, problem="stdout is not JSON"),
+        Ran("ui POST /api/run crew list {}", 1, stderr=secret, problem="exit 1"),
+        Ran("wowlab doctor --json", 2, stderr="doctor's own error", problem="exit 2"),
+        Ran("wowlab crew list --json", 0),
+    ]
+    lines = failure_lines(sweep, root)
+    text = "\n".join(lines)
+    assert secret not in text and "Inventeda-Fakerealm" not in text
+    assert lines[:5] == [
+        "wowlab crew list --json: exit 1 (output not shown)",
+        "wowlab crew show --json -- player#1: exit 2 (output not shown)",
+        "wowlab sv dump --install-only --json -- <root>/x.lua: exit 3 (output not shown)",
+        "wowlab snap diff --json -- ~1 latest: exit 0 (output not shown)",
+        "ui POST /api/run crew list {}: exit 1 (output not shown)",
+    ]
+    assert lines[5] == "wowlab doctor --json: exit 2\ndoctor's own error"
+    assert len(lines) == 6
