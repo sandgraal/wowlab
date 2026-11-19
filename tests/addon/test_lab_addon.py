@@ -303,9 +303,17 @@ CREW_COMPARANDS = frozenset({"NONE", "none"})
 CREW_PROBE_EVENT = "ADDON_LOADED"
 # The slash handler's first statement, pinned: the typed text is a string or
 # nothing happens, so the argument can carry no table or function in or out.
+# Follow-up (M19-10 security review): then, before anything else, a book of
+# another schema is left alone (CREW_BOOK_SCHEMA_TEST).
 CREW_COMMAND_HEAD = (
-    'function ns . CrewCommand ( word ) if type ( word ) ~= "string" then return end'
+    'function ns . CrewCommand ( word ) if type ( word ) ~= "string" then return end '
+    + _CONSTRUCTED.CREW_BOOK_SCHEMA_TEST
 )
+# The file's own schema, pinned: one file-level local, the number literal 1,
+# never assigned again, declared nowhere else (§20.1: `schema = 1`). A local
+# number literal is a value the M11-13 stored-value check accepts.
+CREW_SCHEMA_NAME = "CREW_SCHEMA"
+CREW_SCHEMA_DECL = "local CREW_SCHEMA = 1"
 # Core.lua's one call of it: in its slash handler, a statement of its own,
 # handing on exactly the typed text.
 CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
@@ -2550,10 +2558,10 @@ def test_carry_reads_saved_tables_only_through_fields() -> None:
 # --- API inventory: std file, sources, README -----------------------------------
 
 
-def _std_globals() -> set[str]:
+def _std_globals(std: Path | None = None) -> set[str]:
     names = set()
     in_globals = False
-    for line in STD.read_text(encoding="utf-8").splitlines():
+    for line in (std or STD).read_text(encoding="utf-8").splitlines():
         if line.startswith("globals:"):
             in_globals = True
             continue
@@ -7360,7 +7368,11 @@ def _crew_problems(path: Path, text: str) -> list[str]:
     n_head = len(CREW_COMMAND_HEAD.split(" "))
     for head, label in flow.labels.items():
         if label == CREW_COMMAND and _render(t[head : head + n_head]) != CREW_COMMAND_HEAD:
-            problems.append(f"{CREW_COMMAND} does not start with the pinned string test")
+            problems.append(
+                f"{CREW_COMMAND} does not start with the pinned string and schema tests"
+            )
+    problems += _crew_schema_problems(flow)
+    problems += _crew_write_problems(flow)
     # ns.On, only where _crew_on_call_ok allows it (item 4).
     events = _core_events_on_disk()
     for k in range(len(t) - 3):
@@ -7587,6 +7599,65 @@ def _crew_book_key_problems(flow: _Flow) -> list[str]:
             and (_render(t[k + 2 : k + 4]) != "{ }" or t[k + 4].text not in {",", "}"})
         ):
             problems.append(f"line {t[k].line}: a book table built other than {{}}")
+    return problems
+
+
+def _crew_schema_problems(flow: _Flow) -> list[str]:
+    """Follow-up (M19-10 security review): the file's schema constant is
+    exactly one file-level CREW_SCHEMA_DECL, never assigned again, declared
+    nowhere else (no local, parameter or loop variable of that name)."""
+    t = flow.tokens
+    n = len(CREW_SCHEMA_DECL.split(" "))
+    at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == CREW_SCHEMA_DECL]
+    problems = []
+    if len(at) != 1 or flow.function_at(at[0]) is not None or not _ends_expression(t, at[0] + n):
+        problems.append(f"{CREW_SCHEMA_NAME} is not one file-level `{CREW_SCHEMA_DECL}`")
+    if len(flow.decls.get(CREW_SCHEMA_NAME, [])) != 1:
+        problems.append(f"{CREW_SCHEMA_NAME} is declared more than once")
+    if any(r.rstrip(".") == CREW_SCHEMA_NAME for r, _ in flow.rebound):
+        problems.append(f"{CREW_SCHEMA_NAME} is assigned again")
+    return problems
+
+
+def _crew_write_problems(flow: _Flow) -> list[str]:
+    """Follow-up (M19-10 security review): every store into a table field
+    or index (`x.f = ...`, `x[k] = ...`, the book's included) is made behind
+    the gate (whose `crewOn` tests the schema), in `ns.CrewCommand` (whose
+    pinned head refuses a book of another schema), in the pinned
+    `crewLoaded`, or into a table built by a constructor in the same
+    function. So no other function can write into a book, of any schema.
+    Globals and `ns` are already refused elsewhere."""
+    t = flow.tokens
+    problems = []
+    for root, ts in flow.rebound:
+        if not root.endswith("."):
+            continue
+        base = root[:-1]
+        fn = flow.function_at(ts)
+        head = fn.head if fn else None
+        if head is not None and (
+            _crew_gated(flow, head)
+            or flow.labels.get(head) == CREW_COMMAND
+            or _render(t[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
+        ):
+            continue
+        decl = flow.resolve(base, ts)
+        fresh = (
+            decl is not None
+            and fn is not None
+            and any(
+                [t[p].text, t[p + 1].text, t[p + 2].text, t[p + 3].text]
+                == ["local", base, "=", "{"]
+                and flow.function_at(p) is fn
+                and p < decl.start <= flow.pair[p + 3] + 2
+                for p in range(fn.start, fn.stop - 3)
+            )
+            and not any(r == base and flow.resolve(base, s) is decl for r, s in flow.rebound)
+        )
+        if not fresh:
+            problems.append(
+                f"line {t[ts].line}: {base} written outside the gate and the slash handler"
+            )
     return problems
 
 
@@ -8029,12 +8100,44 @@ def test_m19_01_constructed_calls_behind_the_gate_pass() -> None:
     assert _crew_rules(_CREW_PATH, text)["UNIT_ARGUMENT"] == []
 
 
-def _crew_installed_failures(crew: str) -> list[str]:
+def _std_without(text: str, names: set[str]) -> str:
+    """wow_client.yml text with each `  NAME:` entry (and its indented
+    lines) of `names` left out."""
+    out: list[str] = []
+    skipping = False
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^  ([A-Za-z_][\w.]*):\s*$", line)
+        if match:
+            skipping = match.group(1) in names
+        elif not line.startswith("    "):
+            skipping = False
+        if not skipping:
+            out.append(line)
+    return "".join(out)
+
+
+def _readme_without(text: str, names: set[str]) -> str:
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not any(line.startswith(f"| `{name}` |") for name in names)
+    )
+
+
+def _crew_installed_failures(crew: str, source: Path | None = None) -> list[str]:
     """Install `crew` as Crew.lua in a constructed copy of lab/addon (the
     TOC listing it and the book, Core.lua with the pinned call, the std file
     and README declaring the client names it uses, as M19-10 must), load a
     fresh copy of this grader pointed at it, and run every test in it (each
-    source for a `path` test). The names of the tests that fail."""
+    source for a `path` test). The names of the tests that fail. `source` is
+    the lab/addon folder copied (the tree's own by default).
+
+    Follow-up (M19-10): when the copy already holds a real Crew.lua, the std
+    file and README names only that file uses (declared, referenced by no
+    other source) are taken out before `crew` replaces it, as the names
+    `crew` uses are added; so the result does not depend on which client
+    names the real file happens to call. A name nothing uses stays, and
+    still fails."""
     import importlib.util
     import inspect
     import shutil
@@ -8044,8 +8147,22 @@ def _crew_installed_failures(crew: str) -> list[str]:
         # The same layout under a temporary root, as the review probes use,
         # so paths reported relative to ROOT read the same.
         root = Path(tmp) / "lab" / "addon"
-        shutil.copytree(ADDON_ROOT, root)
+        shutil.copytree(source or ADDON_ROOT, root)
         addon = root / "WowLab"
+        real_only: set[str] = set()
+        if (addon / CREW_FILE).is_file():
+            real = _tokens(addon / CREW_FILE)
+            others: set[str] = set()
+            for path in sorted(addon.glob("*.lua")):
+                if path.name != CREW_FILE:
+                    tokens = _tokens(path)
+                    others |= _fn_lookups(tokens) | _dotted_references(tokens)
+            real_refs = _fn_lookups(real) | _dotted_references(real)
+            real_only = (_std_globals(root / "wow_client.yml") & real_refs) - others - OWN_GLOBALS
+        std_text = _std_without((root / "wow_client.yml").read_text(encoding="utf-8"), real_only)
+        (root / "wow_client.yml").write_text(std_text, encoding="utf-8")
+        readme_text = _readme_without((root / "README.md").read_text(encoding="utf-8"), real_only)
+        (root / "README.md").write_text(readme_text, encoding="utf-8")
         (addon / CREW_FILE).write_text(crew, encoding="utf-8")
         (addon / "Core.lua").write_text(_core_with_call(), encoding="utf-8")
         toc = (addon / "WowLab.toc").read_text(encoding="utf-8")
@@ -8055,11 +8172,9 @@ def _crew_installed_failures(crew: str) -> list[str]:
             )
             toc = toc.rstrip("\n") + f"\n{CREW_FILE}\n"
         (addon / "WowLab.toc").write_text(toc, encoding="utf-8")
-        scan = _SectionScan(
-            [*(addon / p.name for p in SOURCES if p.name != CREW_FILE), addon / CREW_FILE]
-        )
+        scan = _SectionScan(sorted(addon.glob("*.lua")))
         used = {re.split(r"[.:]", r.api)[0] for r in scan.refs if r.client and r.file == CREW_FILE}
-        declared = _std_globals()
+        declared = _std_globals(root / "wow_client.yml")
         std = (root / "wow_client.yml").read_text(encoding="utf-8").rstrip("\n") + "\n"
         readme = (root / "README.md").read_text(encoding="utf-8").rstrip("\n") + "\n\n"
         if CREW_DB not in declared:
@@ -8105,6 +8220,8 @@ _CREW_INSTALLED_SKIP = frozenset(
     {
         "test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed",
         "test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails",
+        "test_m19_01_the_installed_run_drops_names_only_a_real_crew_lua_uses",
+        "test_m19_01_the_installed_run_keeps_a_name_nothing_uses",
     }
 )
 
@@ -8130,6 +8247,55 @@ def test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails() -> 
         ]
     )
     assert _crew_installed_failures(bad)
+
+
+def _pretend_tree(tmp: str, crew_extra: str, name: str) -> Path:
+    """A copy of lab/addon with a pretend real Crew.lua (the constructed
+    source plus `crew_extra`) and `name` declared in the std file and README,
+    as M19-10's tree declares the names its Crew.lua calls."""
+    import shutil
+
+    source = Path(tmp) / "source" / "addon"
+    shutil.copytree(ADDON_ROOT, source)
+    (source / "WowLab" / CREW_FILE).write_text(_CREW_SOURCE + crew_extra, encoding="utf-8")
+    std = source / "wow_client.yml"
+    std.write_text(
+        std.read_text("utf-8").rstrip("\n") + f"\n  {name}:\n    property: read-only\n", "utf-8"
+    )
+    readme = source / "README.md"
+    readme.write_text(
+        readme.read_text("utf-8").rstrip("\n") + f"\n\n| `{name}` | {VERIFY_STATUS} |\n", "utf-8"
+    )
+    return source
+
+
+def test_m19_01_the_installed_run_drops_names_only_a_real_crew_lua_uses() -> None:
+    """Follow-up (M19-10): a name the real Crew.lua declares and calls, and
+    no other file uses, is taken out when the constructed source replaces it,
+    so the installed run passes whichever client names the real file uses."""
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        source = _pretend_tree(tmp, "local spare = CrewOnlyThing\n", "CrewOnlyThing")
+        assert _crew_installed_failures(_CREW_SOURCE, source) == []
+
+
+def test_m19_01_the_installed_run_keeps_a_name_nothing_uses() -> None:
+    """Control: a declared name no file uses, the real Crew.lua included,
+    is not taken out, so the installed run still fails on it."""
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        source = _pretend_tree(tmp, "", "NothingUsesThis")
+        failed = _crew_installed_failures(_CREW_SOURCE, source)
+        assert any(f.startswith("test_every_std_global_is_used") for f in failed), failed
+
+
+def test_m19_01_a_fresh_table_may_be_written_outside_the_gate() -> None:
+    """Control (follow-up, M19-10 security review): an ungated helper may
+    fill a table it built itself; only stores into anything else need the
+    gate or the slash handler."""
+    extra = "local function fresh()\n    local t = {}\n    t.x = 1\n    return t\nend\n"
+    text = _crew_edited([(_CREW_TAIL, _CREW_TAIL + extra)])
+    assert _crew_problems(_CREW_PATH, text) == []
+    rebound = extra.replace("    t.x = 1\n", "    t = ns\n    t.x = 1\n")
+    assert _crew_problems(_CREW_PATH, _crew_edited([(_CREW_TAIL, _CREW_TAIL + rebound)]))
 
 
 def test_m19_01_one_file_level_registration_per_core_event_passes() -> None:

@@ -52,6 +52,7 @@ from wowlab_core.cli._common import (
     _emit,
     _given_flavor,
     _handled,
+    _is_lab_file,
     _listed,
     _local_time,
     _no_flavors,
@@ -111,6 +112,24 @@ class SyncCVar(_Out):
     value: str | None
 
 
+class CrewBookSummary(_Out):
+    """A game account's crew book as `doctor` sees it (M19-05, ADR-0036
+    term 4): on or off, how many players it keeps, or that it could not be
+    read. Never a key, a name, a guild, a note or any other text of the
+    file: `reason` is in wowlab's words and quotes nothing from it (a token
+    the parser refused may itself be a name). Only accounts whose
+    `WowLab.lua` holds a book, or could not be read, are listed."""
+
+    account: str
+    file: str  # the account `WowLab.lua`, relative to the flavor folder
+    state: Literal["on", "off", "unreadable"]
+    # The players the book keeps, read and unread; None when unreadable.
+    players: int | None
+    # Of `players`, the entries that could not be read.
+    unread: int | None
+    reason: str | None
+
+
 class DoctorFlavor(_Out):
     folder: str
     product: str
@@ -127,6 +146,9 @@ class DoctorFlavor(_Out):
     # them, set when one is missing.
     names_missing: list[str] | None = None
     names_command: str | None = None
+    # The crew books of this flavor's game accounts (M19-05): on or off and
+    # a count, never a record.
+    crew_books: list[CrewBookSummary] = Field(default_factory=list)
 
 
 # What a file the rollback left holds as `doctor` reads it now (M16-84):
@@ -385,6 +407,83 @@ def _sync_cvars(lay: layout.Layout) -> list[SyncCVar]:
                 )
             )
     return out
+
+
+def _crew_unreadable_reason(exc: BaseException) -> str:
+    """Why an account `WowLab.lua`'s crew book could not be read, in
+    wowlab's words and quoting nothing from the file (M19-05): the parser's
+    message and the token it refused are left out, since the token may be a
+    name; only the place is given. A crew-book refusal is already in the
+    player's words and quotes nothing."""
+    from wowlab_core import crewbook, luadata
+
+    if isinstance(exc, crewbook.CrewBookError):
+        return str(exc)
+    if isinstance(exc, luadata.LuaDataError):
+        return (
+            f"WowLab.lua is not readable as saved variables (at line {exc.line}, "
+            f"column {exc.column})."
+        )
+    if isinstance(exc, OSError):
+        return f"wowlab could not open WowLab.lua ({exc.strerror or type(exc).__name__})."
+    return "wowlab could not read WowLab.lua."
+
+
+def _crew_books(lay: layout.Layout) -> list[CrewBookSummary]:
+    """Each game account's crew book in this flavor folder that is there or
+    could not be read (M19-05, ADR-0036 term 4): its state and a count,
+    never a record. A `WowLab.lua` that holds no book is left out. Read
+    through `crewbook`, the one reader of the book, read-only (L1)."""
+    from wowlab_core import crewbook, luadata
+    from wowlab_core.errors import WowlabError
+
+    try:
+        files = [sv for sv in lay.saved_variables("account") if _is_lab_file(sv)]
+    except OSError:
+        return []
+    out: list[CrewBookSummary] = []
+    for sv in sorted(files, key=lambda s: (s.account, s.path)):
+        try:
+            book = _listed(crewbook.read_book, lay, sv.path)
+        except (WowlabError, luadata.LuaDataError, OSError) as exc:
+            out.append(
+                CrewBookSummary(
+                    account=sv.account,
+                    file=sv.path,
+                    state="unreadable",
+                    players=None,
+                    unread=None,
+                    reason=_crew_unreadable_reason(exc),
+                )
+            )
+            continue
+        if book.state == "not_turned_on":
+            continue
+        out.append(
+            CrewBookSummary(
+                account=sv.account,
+                file=sv.path,
+                state=book.state,
+                players=len(book.players) + len(book.unread),
+                unread=len(book.unread),
+                reason=None,
+            )
+        )
+    return out
+
+
+def _crew_book_line(book: CrewBookSummary) -> str:
+    """The one `doctor` line about a crew book (M19-05): on or off and a
+    count, or why it could not be read; never a key, name, guild or note."""
+    where = f"Crew book (game account {book.account})"
+    if book.state == "unreadable":
+        return f"  {where}: could not be read. {book.reason}"
+    n = book.players or 0
+    kept = _plural(n, "player")
+    unread = f", {book.unread} of them unreadable" if book.unread else ""
+    if book.state == "on":
+        return f"  {where}: on, {kept}{unread} (as of your last logout or /reload)"
+    return f"  {where}: off (not recording), {kept} kept{unread}"
 
 
 def _no_version_cause(folder: str, product: str, matching_rows: int) -> str:
@@ -803,6 +902,7 @@ def _doctor(
                         if names_missing
                         else None
                     ),
+                    crew_books=_crew_books(lay),
                 )
             )
             steps += _flavor_steps(
@@ -1754,6 +1854,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                     f'"{sync.value}"' if sync.value is not None else f"not set ({_SYNC_UNSET_ONE})"
                 )
                 _say(f"    {sync.file}: {sync.name} {value}")
+        for book in f.crew_books:
+            _say_prose(_crew_book_line(book), hang="    ")
     if any(f.sync_cvars for f in report.flavors):
         notes.append(_SYNC_NOTE)
     for line in _not_taken_lines(report.not_taken, report.other_dirs):
