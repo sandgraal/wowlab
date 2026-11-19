@@ -1212,3 +1212,22 @@ Dated entries, newest last. Each names the fixture that prompted it.
   The fixture was written three times (2026-11-17 twice, 2026-11-18 once
   for the review's added fields); every value that was in an earlier run
   was unchanged, the timings and `captured` aside.
+- **2026-11-19, §4, the lab-addon's account file gains the crew book
+  (M19-10; no fixture: ADR-0036 term 3 keeps every real crew record out of
+  the repository, `docs/LAB_PLAN.md` §20.5).** From M19-10 the account
+  `WowLab.lua` may hold a second top-level table, `WowLabCrewDB`, beside
+  `WowLabDB` (the TOC's `## SavedVariables: WowLabDB, WowLabCrewDB`). It is
+  absent until the player types `/wowlab crew on`, and the addon never
+  creates it at load. Its layout is `docs/LAB_PLAN.md` §20.1's: `schema`
+  (1, its own number; `WowLabDB`'s and the per-character schema do not
+  change), `on`, `started`, `probe = { loads, lost? }` (as §13.1's, raised
+  at every load while a book exists), `skipped`, `current` (keys to `true`)
+  and `players`, keyed by the player's `Name-Realm` string, each entry with
+  `class`, `level`, `role`, `guild`, `met`, `first`, `last`, `where`,
+  `where_id`, `rating` and `note`, any of them left out. The keys are
+  opaque strings to the reader: whether a cross-realm member's realm part
+  arrives normalized, and whether a realm part can hold a space, are
+  **[verify]** until the owner's in-game check (M19-07). How the client
+  writes this table (key order, bracketed keys, CRLF) is expected to follow
+  §4.2 as amended, like `WowLabDB`; no capture shows it yet **[verify]**.
+  The empty shape the capture tool accepts is §20.5's "As built" note.
