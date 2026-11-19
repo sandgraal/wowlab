@@ -176,6 +176,7 @@ if TYPE_CHECKING:
     from wowlab_core import bindscoach as bindscoach
     from wowlab_core import combatlog as combatlog
     from wowlab_core import crewbook as crewbook
+    from wowlab_core import crewcount as crewcount
     from wowlab_core import doctorredact as doctorredact
     from wowlab_core import dressing as dressing
     from wowlab_core import filemap as filemap
@@ -330,6 +331,15 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._changes import (
         _client_managed as _client_managed,
+    )
+    from wowlab_core.cli._changes import (
+        _crew_restored as _crew_restored,
+    )
+    from wowlab_core.cli._changes import (
+        _crew_side as _crew_side,
+    )
+    from wowlab_core.cli._changes import (
+        _crew_undone as _crew_undone,
     )
     from wowlab_core.cli._changes import (
         _detail_lines as _detail_lines,
@@ -2153,6 +2163,9 @@ if TYPE_CHECKING:
         _undo_plan as _undo_plan,
     )
     from wowlab_core.cli._cmd_restore import (
+        _undo_plan_crew as _undo_plan_crew,
+    )
+    from wowlab_core.cli._cmd_restore import (
         _undone_unlisted as _undone_unlisted,
     )
     from wowlab_core.cli._cmd_restore import (
@@ -2691,6 +2704,18 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._common import (
         _confirm as _confirm,
+    )
+    from wowlab_core.cli._common import (
+        _crew_export_line as _crew_export_line,
+    )
+    from wowlab_core.cli._common import (
+        _crew_plan_line as _crew_plan_line,
+    )
+    from wowlab_core.cli._common import (
+        _crew_state_words as _crew_state_words,
+    )
+    from wowlab_core.cli._common import (
+        _crew_unread_words as _crew_unread_words,
     )
     from wowlab_core.cli._common import (
         _discover as _discover,

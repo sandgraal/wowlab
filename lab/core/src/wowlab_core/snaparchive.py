@@ -49,7 +49,7 @@ from typing import IO
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import snapshot
+from wowlab_core import crewcount, snapshot
 from wowlab_core.snapshot import (
     ManifestIntegrityError,
     ObjectCorruptError,
@@ -121,6 +121,10 @@ class ExportReport(_Frozen):
     bytes: int
     """Their total size, uncompressed."""
     archive_bytes: int
+    crew_book: crewcount.CrewBookCarried | None = None
+    """The crew book the archive holds, decided from each file's content
+    (M19-11): None when no file holds one. `paths` are the snapshot's paths
+    of the files that do. Counts only, never a name."""
 
 
 class ImportReport(_Frozen):
@@ -294,9 +298,12 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
     manifest = store.show(snapshot_id)
     data = snapshot.manifest_bytes(manifest)
     sizes: dict[str, int] = {}
+    named: dict[str, list[str]] = {}  # each content's paths in the snapshot
     for entry in manifest.entries:
         if entry.kind == "file" and entry.sha256 is not None:
             sizes.setdefault(entry.sha256, entry.size)
+            named.setdefault(entry.sha256, []).append(entry.path)
+    held: list[tuple[str, bytes]] = []  # the contents that name the crew book
     target, resolved = _refuse_destination(store, dest)
     dir_fd = _open_checked_folder(target, resolved)
     try:
@@ -327,10 +334,12 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
                     zf.comment = ARCHIVE_COMMENT
                     zf.writestr(_member(MANIFEST_NAME), data)
                     for digest in sorted(sizes):
-                        zf.writestr(
-                            _member(f"objects/{digest}"),
-                            store.read_object(digest, size=sizes[digest]),
-                        )
+                        content = store.read_object(digest, size=sizes[digest])
+                        zf.writestr(_member(f"objects/{digest}"), content)
+                        # Read here, not again: what the archive says it
+                        # carries is decided from the bytes it holds (M19-11).
+                        if _names_the_book(content):
+                            held.extend((path, content) for path in named[digest])
                 out.flush()
                 os.fsync(out.fileno())
                 archive_bytes = os.fstat(out.fileno()).st_size
@@ -347,7 +356,29 @@ def export_snapshot(store: SnapshotStore, snapshot_id: str, dest: Path) -> Expor
         objects=len(sizes),
         bytes=sum(sizes.values()),
         archive_bytes=archive_bytes,
+        crew_book=_crew_book(held),
     )
+
+
+def _names_the_book(content: bytes) -> bool:
+    """`crewcount.names_the_book`, never raising into the export: an error
+    there counts the content as naming the book, which `_crew_book` then
+    says it cannot read (M19-11)."""
+    try:
+        return crewcount.names_the_book(content)
+    except Exception:
+        return True
+
+
+def _crew_book(held: list[tuple[str, bytes]]) -> crewcount.CrewBookCarried | None:
+    """What the archive carries of the crew book (M19-11). The archive is
+    already written and is the same either way; an error nothing expected
+    in the check is said as a book wowlab cannot read, never silence and
+    never a traceback that hides a finished export."""
+    try:
+        return crewcount.carried(held)
+    except Exception:
+        return crewcount.unreadable(path for path, _ in held)
 
 
 def _member(name: str) -> zipfile.ZipInfo:
