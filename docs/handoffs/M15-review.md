@@ -67,13 +67,25 @@ Settled by a test on the install:
   points, false for the held-item points.
 - Texture formats (DXT1, DXT5 and palette, all decoded).
 
-Waiting for the owner's look at a `.glb` (the steps are in #611's body):
+Seen by the owner on 2026-11-19, in a glTF viewer, on a character no
+fixture covers (an undead in a robe at 1.60.1.70959, front view, stand-in
+look because the addon holds no barber-shop record for it):
 
-- The axis signs for Y-up, mirroring, and which way the character faces.
-- Whether the tables describe how Forever's playable races look.
-- The rest pose.
-- Head, shoulder and back items placed as stored (no fixture character
-  wears a model there, so none has been drawn).
+- Y-up is right: the character stands upright, head up.
+- Shoulder items placed as stored sit on the shoulders, one each side.
+  This is the first time an attached model was drawn.
+- The body texture lands where it belongs: the face on the head, the robe,
+  belt, sleeves and gloves in their places. The robe's skirt is drawn.
+- The rest pose is arms out and down, hands open.
+- The tables give a recognisable undead. Whether hair, face and skin match
+  is not tested: the look is the stand-in.
+
+Still waiting for the owner:
+
+- Mirroring (an asymmetric feature compared with the game) and which way
+  the character faces: one front view does not settle either.
+- Head and back items placed as stored (none worn).
+- The real look, after a barber-shop visit records it.
 
 Still open, with nothing on Forever to test against:
 
