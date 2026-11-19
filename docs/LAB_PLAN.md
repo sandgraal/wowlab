@@ -6033,6 +6033,18 @@ must come from the repository test's fixed list of constructed names.)
   short functions whose text the scans grade; the 200-byte measure is
   mirrored in Python, where M19-03 tests it (the character rule differs
   on purpose: the game removes, the desk refuses).
+  *Note (2026-11-19, M19-01, conductor decisions):* (a) `Crew.lua` is not
+  section code: it runs from roster events and the slash command, and
+  `/wowlab skip` does not reach it; its own switch is `on`. The M11-37
+  section scan accepts its client calls only in a function behind the on
+  and combat tests, in the pinned helpers, and (the typed text only) in the
+  slash handler `ns.CrewCommand`, through the same `Crew.lua`-only
+  relaxation, so M19-10 adds none. (b) The M11-13 stored-value check is not
+  relaxed. (c) Each relaxed call's result is bound to a local and read only
+  under `not secret(x)`, a pinned helper. (d) Rating the target and `crew
+  who` do nothing while the book is off or in combat; a caller may print
+  why. `Crew.lua` names neither `WowLabDB` nor `WowLabCharDB`, exports only
+  `ns.CrewCommand`, and only that handler creates the book or sets `on`.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
