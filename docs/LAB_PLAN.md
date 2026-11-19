@@ -5636,27 +5636,36 @@ wave.
 
 A new file, `lab/addon/WowLab/Crew.lua`, and a new account-wide saved
 variable, `WowLabCrewDB`, declared on the TOC's `## SavedVariables:` line
-beside `WowLabDB`. It is account-wide because a player meets the same
-people on every character. It has its own version number
+beside `WowLabDB`. It has its own version number
 (`WowLabCrewDB.schema = 1`) and does not change the per-character schema
 (4 on `main`, 5 on the parked M16-45 branch), so this wave does not wait
 for M16-45.
+
+"Account-wide" is the client's word and is narrower than it sounds: the
+file sits in one game account's folder inside one flavor folder. A
+Battle.net login with several game accounts has one book per account, each
+flavor folder has its own, and when a flavor folder is renamed (GLOSSARY,
+flavor folder) the book stays where it was. The README and the empty-state
+sentence of `crew list` say so.
 
 ```
 WowLabCrewDB = {
   schema = 1,
   on = true,                 -- absent or false: nothing is recorded
-  dropped = 0,               -- members skipped this account, see "Secret values"
+  started = 1794950000,      -- time() when the book was (last) started
+  probe = { loads = 12 },    -- as §13.1's probe, for this file
+  skipped = 0,               -- reads skipped, counted per attempt (below)
+  current = { ["Name-Realm"] = true },  -- counted in the group the player is in now
   players = {
     ["Name-Realm"] = {
       class = "MAGE",        -- the class token, as UnitClass gives it
-      level = 60,
-      role = "HEALER",       -- TANK, HEALER, DAMAGER or NONE, the last one seen
-      guild = "…",           -- left out when none
-      met = 3,               -- groups shared, counted once per group joined
+      level = 60,            -- only a positive number is stored
+      role = "HEALER",       -- the last role other than NONE; left out when never set
+      guild = "…",           -- the last one seen; never cleared by a nil
+      met = 3,               -- groups shared (below)
       first = 1794950000,    -- time() of the first group
       last = 1795640000,     -- time() of the latest
-      where = 2291,          -- instance id of the latest group, 0 in the open world
+      where = 2291,          -- instance id of the latest group; left out in the open world
       rating = "good",       -- "good" or "bad"; left out when unrated
       note = "…",            -- the player's own text; left out when empty
     },
@@ -5664,61 +5673,127 @@ WowLabCrewDB = {
 }
 ```
 
+- **Nothing here is proven on the client.** The repository's captures
+  prove only `UnitClass("player")`, `C_Timer.After` and that
+  `issecretvalue` can be probed. Every other call this section names is
+  from community documentation and is **[verify]** until M19-07:
+  `GROUP_ROSTER_UPDATE`, `UNIT_NAME_UPDATE`, `IsInGroup`, `IsInRaid`,
+  `UnitName` or `UnitFullName` on `partyN` and `raidN`,
+  `GetNormalizedRealmName`, `UnitIsUnit`, `UnitClass` and `UnitLevel` on
+  another unit, `UnitGroupRolesAssigned`, `GetGuildInfo(unit)`,
+  `GetInstanceInfo`, `time`, `UNKNOWNOBJECT`. Each is tested for before it
+  is called, and a missing one gives that field (or, for the name calls
+  and the roster event, the whole feature) an `absent` reason that
+  `/wowlab crew` prints, as `Identity.lua` does.
 - **Off until turned on (term 2).** With `on` absent the addon registers no
-  roster event, calls no unit-name API and writes nothing but
-  `schema`. `/wowlab crew on` turns it on and prints the notice of §20.5;
-  `/wowlab crew off` stops recording and keeps what is stored;
-  `/wowlab crew` alone says whether it is on and how many players are
-  kept.
-- **When it records.** On `GROUP_ROSTER_UPDATE` (debounced by the 2 s the
-  other sections use) and once after the first on-world pass, while the
-  player is in a party or raid: every member but the player. A member is
-  counted (`met` + 1) once per group: the addon keeps, in memory only, the
-  set of keys already counted since the player last had no group.
-- **The key** is `Name-Realm` with the realm as `GetNormalizedRealmName()`
-  gives it when the member's realm comes back empty (same realm)
-  **[verify]**. No GUID is read or stored (ADR-0036: GUIDs stay out of
-  scope).
-- **Secret values.** In an instance the client may hand addon code a
-  member's name as a secret value, which cannot be used as a table key
-  (GLOSSARY). Every value is tested with `issecretvalue` where the client
-  has it, as `Actions.lua` does; a member whose name or realm is secret is
-  skipped, `dropped` is raised by one, and the next roster update tries
-  again. Whether Forever marks unit names secret, and when, is
-  **[verify]** in the owner's check (M19-08).
+  roster event and calls no unit-name API; if `WowLabCrewDB` loaded as
+  nil it creates nothing, so a book is never replaced by an empty table
+  just by loading. `/wowlab crew on` turns it on, sets `started` if there
+  is no book, and prints the notice of §20.5; `/wowlab crew off` stops
+  recording and keeps what is stored; `/wowlab crew` alone says whether it
+  is on, how many players are kept, when the book was started, and any
+  `absent` reason.
+- **A failed load.** The Forever beta once wrote SavedVariables and did
+  not load them back (§13.4). The account file has had no watcher, so
+  `WowLabCrewDB` carries its own `probe = { loads = n }`, raised at
+  `ADDON_LOADED` like §13.1's. The addon cannot tell a lost book from a
+  first one. So whenever it starts a new book it prints one chat line
+  saying so, and `started` lets the player (and `crew list`) see that a
+  book is younger than they remember. An earlier snapshot still holds the
+  old one.
+- **When it records.** On `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`
+  (debounced by the 2 s the other sections use) and once after the first
+  on-world pass, while the player is in a party or raid: `raidN` units in
+  a raid, `partyN` otherwise, the player skipped with `UnitIsUnit`, never
+  by comparing names. As `Actions.lua` does, nothing is read while
+  `InCombatLockdown()` is true or cannot be asked; the pass runs again at
+  `PLAYER_REGEN_ENABLED`.
+- **`met`.** A member is counted once per group. `current` holds the keys
+  already counted in the group the player is in, is saved with the book so
+  a `/reload` or relog inside the same group does not count or warn again,
+  and is emptied when a pass finds the player in no group. A crash loses
+  what was not saved, like everything else here.
+- **The key** is `Name-Realm`. A realm that comes back nil or empty means
+  the player's own realm, filled from `GetNormalizedRealmName()`; if that
+  is nil too the member is skipped, and a key ending in `-` is never
+  written. Whether a cross-realm member's realm arrives already
+  normalized is **[verify]**. No GUID is read or stored (ADR-0036).
+- **The book knows names, not people.** A player who renames or moves
+  realm appears as a new entry and the old entry keeps the note; someone
+  else may later take a name that was rated. The warning, the README and
+  `wowlab crew --help` say so.
+- **Secret values.** In combat or restricted content the client may hand
+  addon code a secret value (GLOSSARY). It is believed to refuse use as a
+  table key (a hypothesis, **[verify]**). Every value read (name, realm,
+  class, level, role, guild, instance type and id) goes through the same
+  `issecretvalue` test `Actions.lua` uses. A secret name or realm skips
+  the member; any other secret value leaves that field as it was. Each
+  skip adds one to `skipped`, which counts attempts, not players. Without
+  `issecretvalue` each member is read inside its own `pcall`, so one bad
+  value cannot end the pass.
+- **Names not loaded yet.** A member whose name is nil or equal to the
+  client's `UNKNOWNOBJECT` text (compared only after the secret test) is
+  skipped without counting and tried again on the next event or pass.
+- **Role and guild.** `UnitGroupRolesAssigned` is believed to return
+  `NONE` unless the group set roles, and the repository has no evidence
+  that Forever has a group finder; so `NONE` never replaces a stored role
+  and the Lab labels the field "role (if the group set one)". A nil guild
+  can mean "not loaded yet", so it never clears a stored guild.
+- **Where.** `GetInstanceInfo()`'s instance type decides: when it is
+  `"none"` (the open world) `where` is left out, because the id returned
+  there is believed to be the continent's, and 0 is a real one. Otherwise
+  `where` is the instance id, which the Lab reads as a `Map` table id.
 - **Times.** Unlike the per-character record (§13.1, "no wall-clock time"),
   crew records carry `time()`: "last grouped on a date" is the point of the
   feature, and these records never enter the repository (term 3), so the
   scrub tool has no time to shift.
-- **Limits.** At most 5,000 players; when full, the unrated, un-noted
-  player with the oldest `last` is dropped first, and a rated or noted
-  player is never dropped to make room (the addon then stops adding and
-  says so once per session). A note is at most 200 bytes after trimming,
-  stored through the addon's string writer; control characters and `|`
-  (the client's escape character) are removed before storing, so a note
-  cannot carry a chat link or colour code.
+- **Limits.** At most 5,000 players. When full, the unrated, un-noted
+  player with the oldest `last` is dropped first; a rated or noted player
+  is never dropped, and when all 5,000 are rated or noted the addon
+  refuses new members and new ratings alike and says so once per session.
+  A note is at most 200 bytes after trimming spaces; a longer one is
+  refused with one line, never cut, since a cut can split a character
+  (200 bytes is about 66 characters of Chinese, Japanese or Korean text,
+  and the chat box is believed to cap a whole command near 255 bytes).
+  Control characters and `|` (the client's escape character) are removed
+  before storing, so a note cannot carry a chat link or colour code; the
+  removal is byte-level and leaves multi-byte text alone. The 5,000 drop
+  order cannot be exercised in game and is proven only by reading the
+  code.
 - **Rating and note in game.** `/wowlab crew good [Name-Realm]`,
   `/wowlab crew bad [Name-Realm]`, `/wowlab crew clear [Name-Realm]` (drops
   the rating), `/wowlab crew note [Name-Realm] <text>` (empty text drops
-  the note). With no name, the current target is used when it is a player.
-  A name that is not in the book and not in the group is refused with one
-  chat line; a rated or noted player need not have been grouped with
-  (`met = 0`).
-- **The warning.** When a member is first seen in a group and already has a
-  rating or a note, one line in the player's own chat frame
-  (`DEFAULT_CHAT_FRAME:AddMessage`): the name, the rating, how many groups
-  and the date of the last, and the note. `/wowlab crew who` prints the same
-  line for every known member of the current group. The addon never sends a
-  chat message, whisper or addon message: `SendChatMessage`,
-  `C_ChatInfo.SendAddonMessage` and their kin are refused by the static
-  checks for the whole addon (M19-01 adds any that
-  `tests/addon/test_lab_addon.py` does not refuse yet).
-- **Static checks.** The addon's source scans (ADR-0026;
-  `tests/addon/test_lab_addon.py`) today refuse name-reading calls
-  anywhere. They now allow `UnitName`, `UnitFullName`,
-  `GetNormalizedRealmName`, `GetGuildInfo`, `UnitClass`, `UnitLevel` and
-  `UnitGroupRolesAssigned` in `Crew.lua` only, and require each to sit
-  behind the `on` test. `UnitGUID` stays refused everywhere.
+  the note). A first word is a name only if it contains `-`; otherwise the
+  current target is used when it is a player. Unlike the rest of
+  `/wowlab`, the name and the note are not lowercased. A name that is not
+  in the book and not in the group is refused with one chat line (the
+  target is exempt); a rated or noted player need not have been grouped
+  with (`met = 0`). Every reply ends by saying the change is kept at the
+  next `/reload` or logout and that a crash loses it, as `/wowlab save`
+  does.
+- **The warning.** When a member is first counted in a group and already
+  has a rating or a note, one line in the player's own chat frame
+  (`DEFAULT_CHAT_FRAME:AddMessage`): "a player named X-Realm, whom you
+  rated bad", how many groups, the date of the last, and the note.
+  `/wowlab crew who` prints the same line for every known member of the
+  current group. The addon never sends a chat message, whisper or addon
+  message: `SendChatMessage`, `C_ChatInfo` and their kin are refused by
+  the static checks for the whole addon (M19-01 adds any that
+  `tests/addon/test_lab_addon.py` does not refuse yet). Whether a line
+  printed this way reaches `Logs/WoWChatLog.txt` when the player has
+  `/chatlog` on is **[verify]** (believed not).
+- **Static checks.** `tests/addon/test_lab_addon.py` today refuses, for
+  the whole addon: the name-reading calls (`FORBIDDEN_APIS`), `time`
+  (`CLOCK`), `name` and `realm` as keys or locals (`NAME_FIELDS`), and the
+  declaration of `UnitName`, `GetNormalizedRealmName` and `GetGuildInfo`
+  in `wow_client.yml` (`STD_PRIVACY`, which is global, not per file).
+  M19-01 relaxes each for `Crew.lua` only, names each relaxation, and
+  adds a test that every other file still refuses them. In `Crew.lua`
+  each name call sits behind the `on` test. `UnitGUID` stays refused
+  everywhere. Behaviour a source scan cannot prove (the drop order, the
+  note rule) is pinned as named constants and short functions whose text
+  the scans grade, and the note rule is mirrored in Python, where M19-03
+  tests it.
 - **The TOC note** stops saying "No names, realms or GUIDs" without
   qualification: "No GUIDs. No names or realms unless you turn the crew
   book on (`/wowlab crew on`), and then only on this computer."
@@ -5740,8 +5815,16 @@ logout or /reload".
 - `crew list [--rated good|bad|any] [--noted] [--search TEXT] [--sort last|met|name]`:
   one line per player, newest first by default. `--json` is `CrewReport`.
 - `crew show NAME-REALM`: everything kept about one player.
-- Instance names come from the game tables already cached for the
-  installed version, as `char list --summary` does; otherwise the id.
+- Instance names come from the `Map` game table (id, name, instance
+  type; **[verify]** on the Forever build). `gamedata.NAME_TABLES` does
+  not hold `Map` today, so M19-02 adds it to the names download; until it
+  is cached the id is shown and the missing-names line says "instances".
+- `crew show`, and §20.3's commands, match the typed name without regard
+  to case, spaces or apostrophes, and list the candidates when more than
+  one key matches. The stored key is never split or rewritten and is
+  shown as stored.
+- `crew list` gives the day the book was started, and its empty-state
+  sentence says which game account and flavor folder it read.
 - With the feature never turned on, the answer is one sentence saying so
   and how to turn it on in game; exit 0.
 
@@ -5751,12 +5834,16 @@ All through `guard` (L2), with the client not running, a snapshot first and
 `wowlab undo` after:
 
 - `crew forget NAME-REALM` and `crew forget --all` (term 5). The plan and
-  the result both say: this clears the live file; snapshots taken earlier
-  still hold their copy until you remove them and run `wowlab snap gc`.
-  `--all` leaves `schema` and `on` as they were.
+  the result both say: this clears WowLab.lua. The game's backup,
+  WowLab.lua.bak, keeps the previous copy until your next logout or
+  /reload; snapshots taken earlier still hold theirs until you remove
+  them and run `wowlab snap gc`. (The client keeps a `.lua.bak` beside
+  every SavedVariables file, believed to be the previous save:
+  `docs/LAB_FILE_MAP.md`.) `--all` leaves `schema`, `on`, `started` and
+  `probe` as they were and empties `players` and `current`.
 - `crew rate NAME-REALM good|bad|none` and `crew note NAME-REALM TEXT`:
   the same edits the slash commands make, for a player who would rather
-  type a note at the desk. The same 200-byte and character rules apply, and
+  type a note at the desk. The same 200-byte and character rules apply (a longer note is refused), and
   the edit is a targeted change to the one entry: every other byte of
   `WowLab.lua` is kept (L4).
 
@@ -5780,27 +5867,44 @@ SavedVariables content, graded on a constructed hostile name).
 
 | Term | In this wave | Proof |
 |---|---|---|
-| 1. Local only | Records live in `WowLab.lua` and, as copies, in the snapshot store. No network call is added anywhere | the existing no-network tests still pass; `crewbook` imports no network module |
-| 2. Opt-in | `on` absent by default; the in-game notice and `wowlab crew --help` both say: "The crew book keeps the names, realms, guilds, classes, levels and roles of players you group with, and your own rating and note about them, in WowLab.lua in your account's SavedVariables folder and in wowlab's snapshots of it. Nothing is sent anywhere." | static scan: every name call behind `on`; a help-text test |
-| 3. Out of the repository | Tests use constructed records, labelled. `scripts/lab_capture.py` refuses a `WowLab.lua` whose `WowLabCrewDB.players` is not empty, naming the reason, unless `--empty-crew` is given, which blanks that table's body byte for byte and records the fact in the provenance row | capture-tool tests on constructed files, both ways; a repository test that no fixture holds a non-empty `players` table |
-| 4. Shared output | `doctor --redact` never prints a crew record or a count of them by name. `snap export` says, when the archive holds a `WowLab.lua` with crew records, that it includes them | tests of both on constructed records |
-| 5. Visible and deletable | `crew list`, `crew show`, `crew forget`, with the snapshot sentence | §20.3's tests |
+| 1. Local only | Records live in `WowLab.lua`, in the game's own `WowLab.lua.bak` and, as copies, in the snapshot store. No network call is added anywhere | the existing no-network tests still pass; `crewbook` imports no network module |
+| 2. Opt-in | `on` absent by default; the in-game notice and `wowlab crew --help` both carry the sentence below | static scan: every name call behind `on`; a help-text test |
+| 3. Out of the repository | Tests use constructed records, labelled. `scripts/lab_capture.py` refuses a `WowLab.lua` or `WowLab.lua.bak` whose `WowLabCrewDB.players` or `current` is not empty, naming the reason, unless `--empty-crew` is given, which blanks those tables' bodies byte for byte and records the fact in the provenance row | capture-tool tests on constructed files, both ways; a repository test that no fixture holds a non-empty `players` or `current` table |
+| 4. Shared output | `doctor --redact` never prints a crew record, from the live file or its `.bak`. `snap export` says, when the archive holds a `WowLab.lua` or its `.bak` with crew records, that it includes them | tests of both on constructed records |
+| 5. Visible and deletable | `crew list`, `crew show`, `crew forget`, with the backup and snapshot sentence | §20.3's tests |
+
+The sentence of term 2: "The crew book keeps, for each player you group
+with, their name, realm, guild, class, level and role, when you first and
+last grouped, how many times and in which instance, and your own rating
+and note. It keeps them in WowLab.lua (and the game's backup,
+WowLab.lua.bak) in this game account's SavedVariables folder, and in
+wowlab's snapshots of it. Nothing is sent anywhere. The book knows names,
+not people: a player who renames or moves realm appears as a new entry,
+and someone else may later take a name you rated."
 
 `sv dump`, `--json` output and `wowlab ui` showing these records locally is
 storage under term 1 and needs nothing new.
 
 ### 20.6 What is not known
 
-- Whether unit names are secret values in Forever's instances, and whether
-  a party member's realm comes back empty on the same realm (§20.1). The
-  owner's check settles both; until then the addon's skip-and-count is the
-  safe reading.
-- Whether `GROUP_ROSTER_UPDATE` fires before member names are loaded (a
-  name of `Unknown` **[verify]**): such a member is skipped without
-  counting and tried again.
-- Cross-realm names with spaces or apostrophes in the realm: the
-  normalized realm has none **[verify]**; the reader and the CLI take the
-  key as an opaque string and never split it to act on it.
+Every **[verify]** in §20.1 is open until the owner's check (M19-07); the
+ones that could change the record or the wording:
+
+- whether unit names (or anything else read) are secret values in
+  Forever's instances, and whether a secret value refuses use as a key;
+- the realm a same-realm and a cross-realm member come back with;
+- whether a roster update arrives before names are loaded, and whether
+  `UNIT_NAME_UPDATE` follows;
+- what roles come back on a client that may have no group finder;
+- what `GetInstanceInfo` gives in the open world and in an instance;
+- whether `WowLab.lua.bak` holds the records, and whether a printed line
+  reaches `WoWChatLog.txt`;
+- whether the account file's probe survives a logout (the §13.4 loader
+  bug would wipe a book; a snapshot is the way back);
+- the 5,000 drop order, which no in-game check can reach.
+
+The reader and the CLI take the key as an opaque string whatever the
+answers are.
 
 ### 20.7 Tickets and order
 
@@ -5830,9 +5934,15 @@ Each is the smallest thing that does the job; say so and it changes.
 2. "Near" means "in your group". No tooltip line, no nameplate check.
 3. Notes can be written in game and at the desk (the second needs the game
    closed).
-4. The book is per account, not per character.
-5. 5,000 players at most, rated and noted ones never dropped.
+4. The book is per game account and flavor folder, not per character.
+5. 5,000 players at most, rated and noted ones never dropped; at the cap
+   new ratings are refused too.
 6. Guild names are kept (ADR-0036 allows them); chat text is never read.
+7. `crew forget` leaves the game's `WowLab.lua.bak` alone and says it
+   keeps the old copy until the next logout or `/reload`. Clearing it too,
+   through `guard`, is possible if the owner wants a forget to be complete
+   at once.
+8. A note over 200 bytes is refused, not cut.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
