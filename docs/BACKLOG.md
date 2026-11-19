@@ -1476,7 +1476,7 @@ With typer 0.29.1 (from 0.28.0) the suite fails (run 43947984605: 195 failed and
 
 ---
 
-## [ ] M15-21 — The tests take too long: measure, then cut and reschedule
+## [x] M15-21 — The tests take too long: measure, then cut and reschedule
 **Size:** M · **Depends on:** nothing · **Sources:** the owner, 2026-11-18 in session ("the tests take seriously way too long"; "schedule it during off hours and/or reduce their length or how often they're called")
 
 Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main` (run 44374160065: 25.3 parallel, 3.1 serial, about 14,400 tests; a pull-request run, 44384026727, took 29.4 min); `lab (windows)` takes 44.9 min and runs on every push to `main`, as `lab (macos)` does; a local `make ci` takes about as long: reviewers run it on their first round, and implementers do for guard, parser, lockfile and workflow diffs. The review comes first (which tests cost the time, which are duplicates or probes that could run nightly, what each trigger runs); the cuts follow the owner's choices on it.
@@ -1496,7 +1496,7 @@ Measured 2026-11-18: "Lint, typecheck, tests" takes 28.8 min on a push to `main`
 
 ---
 
-## [ ] M15-23 — `lab (windows)` is red again: a `--root` value compared as text
+## [x] M15-23 — `lab (windows)` is red again: a `--root` value compared as text
 **Size:** XS · **Depends on:** M15-20 · **Sources:** the review of #610 (2026-11-18); Windows run 44428717366 on `main` at a277cd7
 
 After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:219`, `test_every_view_argv_parses_against_the_click_tree[/install root/World of Warcraft]`, fails on Windows only: `assert '\\install ro...d of Warcraft' == '/install roo...d of Warcraft'`. typer 0.29 converts values through Pydantic, so `ctx.params["root"]` comes back as a `Path`, and `str()` of it uses backslashes on Windows. Compare paths as paths in that test. Also check whether any library code turns a parsed `--root` (or another path option) into text and compares or prints it where 0.28 gave the text the player typed: the UI builds its argv from strings, so it is probably the test alone, but that is not verified. The run at e2b320b, before #606, was green; the three runs between were cancelled.
@@ -1505,7 +1505,26 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
-## [ ] M15-17 — Leftovers from the M15-06 to M15-09 reviews
+## [ ] M15-24 — Held items in `char model`: a place for weapons, shields and off-hand items
+**Size:** M · **Depends on:** M15-11 · **Sources:** the domain review of #611 (2026-11-18); `docs/LAB_PLAN.md` §17.6 note of 2026-11-18
+
+`char model` leaves out every item whose attachment point the body model stores at its origin: on both fixture body models at 70959 that is points 0, 1 and 2 (shield and hands), so no weapon is drawn. Two ideas from the review, both hypotheses until a probe reads the files: (a) the sheath points (the community list gives 26 to 33) may hold real stored positions, so a weapon could be drawn sheathed, as a player sees it out of combat; that needs the item's sheathe type from the game tables and gives a position without the bone's rotation; (b) the pivot of the hand point's parent bone. Probe first with `scripts/charmodel_facts.py` (record the sheath points and their bones' pivots for both body models, as a derived fixture row), report what is there, and stop if neither idea holds: reading bones and the stand animation is Wave 7's subject, not this ticket's.
+
+**Acceptance:** the probe's rows in the derived fixture with a provenance row; if a place is found, held items drawn there with the report saying how ("drawn sheathed", not "as in game"), constructed tests, the `@live` test updated and the owner's viewer check listed in the PR; if not, a dated note in §17.6 and no code. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: weapons in `char model`, or none.
+
+---
+
+## [ ] M15-25 — Leftovers from the M15-11 and M15-23 reviews
+**Size:** XS · **Depends on:** M15-11 · **Sources:** the reviews of #611 and #612 (2026-11-18)
+
+- Two characters share one `char model` file stem when a realm folder and a character folder both carry a hyphen (realm `A-B` with character `C`, realm `A` with character `B-C`), and when two folders differ only by letter case or Unicode normalisation on a volume that folds them; one run then replaces and removes the other's files. A real install cannot produce the first (character names have no hyphen). Nest the files as `characters/<account>/<realm>/<character>.glb`, or refuse the hyphen in the character folder name; §17.1 gets the dated note either way.
+- `str(root) != ""` in `_cmd_doctor.py`, `_common.py`, `_cmd_char.py`, `_cmd_filemap.py` and `_cmd_sv.py` can never be false, because an empty `--root` becomes `.`: decide what `--root ""` should mean (refused, most likely) and make the five sites say it.
+
+**Acceptance:** each item fixed or explained in the PR; constructed tests. Reviewed by `code-reviewer`; `security-reviewer` on the first item. User-facing: none expected.
+
+---
+
+## [x] M15-17 — Leftovers from the M15-06 to M15-09 reviews
 **Size:** XS · **Depends on:** M15-07, M15-08 · **Sources:** the reviews of #595, #597 and #598 (2026-11-18)
 
 - `blp.py`'s docstring says a decode peaks at "two and a half to three times" the output; by resident memory the palette and BGRA cases reach about three and a half. Say so.
