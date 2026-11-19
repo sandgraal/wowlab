@@ -53,8 +53,9 @@ It is on `main` and in no release. The viewer inside `wowlab ui` is Wave 7
   70450 live tests skip with that reason (M15-15).
 - **Held items have no rest position.** The hand and shield points of both
   fixture body models are stored at the origin, so `char model` draws no
-  weapon. The probe (M15-24) found stored positions for the sheath points;
-  the rotation that would give the carry angle is not read yet.
+  weapon. The probe (M15-24) found points 26 to 33 stored away from the
+  origin. That they are the sheath points is a hypothesis, and the rotation
+  that would give a carry angle is not read yet.
 
 ## The state of §17.7's [verify] list
 
@@ -63,8 +64,8 @@ Settled by a test on the install:
 - The M2 vertex count against the skin's, for `humanmale_hd` and
   `humanfemale_hd` (the seven skins' sets, one after another).
 - Whether the install streams (it does not, in any way that matters here).
-- Attachment positions in the bind pose: true for head, shoulder and back
-  points, false for the held-item points.
+- Attachment positions in the bind pose: not so for the held-item points
+  (0, 1, 2), which are stored at the origin. Why is not settled (below).
 - Texture formats (DXT1, DXT5 and palette, all decoded).
 
 Seen by the owner on 2026-11-19, in a glTF viewer, on a character no
@@ -77,29 +78,57 @@ look because the addon holds no barber-shop record for it):
 - The body texture lands where it belongs: the face on the head, the robe,
   belt, sleeves and gloves in their places. The robe's skirt is drawn.
 - The rest pose is arms out and down, hands open.
-- The tables give a recognisable undead. Whether hair, face and skin match
-  is not tested: the look is the stand-in.
+
+Whether the tables describe how Forever's playable races look is not
+settled by this: the look is the stand-in, so hair, face and skin were not
+compared with the game.
 
 Still waiting for the owner:
 
 - Mirroring (an asymmetric feature compared with the game) and which way
   the character faces: one front view does not settle either.
 - Head and back items placed as stored (none worn).
-- The real look, after a barber-shop visit records it.
+- The real look, after a barber-shop visit records it, and with it whether
+  the tables describe how Forever's playable races look.
 
 Still open, with nothing on Forever to test against:
 
 - The bonus-id semantics (no type-7 `ItemBonus` row at 70959), and whether
   Forever has transmog at all.
-- Every item under the compositor's note of 2026-11-18: layer order, the
-  per-slot texture layer table, the blend formulas, how a stretched texture
-  is filtered, the canvas starting black.
-- Which `.idx` version wins when two exist; whether LZ4 ever appears; the
-  root's architecture bits; a partly downloaded install; when the client
-  fetches a file it lacks; the Windows handle question; why `ecache/`
-  exists.
-- The blend-mode enum and the two-face flag (both taken from wow.export).
+- The compositor's note of 2026-11-18, every item: layer order, the
+  per-slot texture layer table and whether its numbers share a number space
+  with `Layer`, the blend formulas, item pieces always painted with mode
+  15, how a stretched texture is filtered, the canvas starting black, and
+  whether base skin 959287's 918 black pixels ever show in game.
+- `casc`: which `.idx` version wins when two exist; whether LZ4 ever
+  appears; whether any player gear is encrypted; the root's architecture
+  bits and whether an Apple-silicon client skips a block beyond the `0x108`
+  mask; a partly downloaded install; when the client fetches a file it
+  lacks; the Windows handle question; why `ecache/` exists.
+- `blp`: the 4-bit palette alpha; the DXT choice enum and the DXT rule
+  conflict; the `TextureFileData` usage type.
+- `m2`: whether a LOD skin's lookup is relative to its set's start, and
+  the vertex layout of other models; every race's HD body keeping its bones
+  inside; collection models at the origin; the blend-mode enum and the
+  two-face flag (both taken from wow.export).
+- `renderplan`: the `+1` in the item geoset value; the per-slot
+  geoset-group table and the default geoset rule.
+- Attachments: that the held-item points are placed by animation; that
+  points 26 to 33 are the sheath points.
 - How a browser's CSP admits the vendored modules (Wave 7, ADR-0034).
+
+## Cheaper or dearer than estimated
+
+- **Cheaper:** the readers. Pure Python met every timing target, so no
+  ticket needed a faster path.
+- **Dearer:** the wave took 25 numbered tickets against the 12 planned.
+  Of the 13 added, four were review leftovers (M15-14, M15-15, M15-17,
+  M15-25), six were CI and test repairs (M15-16, M15-18 to M15-21, M15-23),
+  one split the render plan in two (M15-13), one made the CLI start faster
+  (M15-22), and one was a probe the plan had not foreseen (M15-24).
+- **Dearer:** weapons. The plan expected to place every attached item at a
+  stored position; held items need either the sheath points or the stand
+  animation.
 
 ## What went wrong
 
@@ -125,7 +154,7 @@ Still open, with nothing on Forever to test against:
 - **§11 item 5** (owner decision, 2026-10-21): the wave's dated amendments
   are not folded into §17's body, and there is no
   `docs/handoffs/M15-plan-history.md`. No earlier wave review did this
-  either. It is a rewrite of about 590 lines of the spec; the conductor
+  either. It is a rewrite of about 670 lines of the spec (§17 through §17.7); the conductor
   asks before doing it.
 - **A follow-up to M15-22:** `cli/_common.py` still imports `keymap`,
   `labaddon` and `guard` for every command, about 0.15 s. Not filed.

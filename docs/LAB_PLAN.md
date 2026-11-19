@@ -5260,11 +5260,11 @@ transparent; the compositor copies them as they are) ever show in game.
 
 *Note, 2026-11-19 (the owner's first look at a `.glb`, in a glTF viewer; a
 character no fixture covers, an undead in a robe at 1.60.1.70959, front
-view, stand-in look):* Y-up is right (the character stands upright); two
-shoulder items placed at their stored points sit on the shoulders, the
-first attached models drawn; the body texture lands on the face, robe,
-belt, sleeves and gloves, and the robe's skirt is drawn; the rest pose is
-arms out and down. Still **[verify]**: mirroring and which way the
+view, stand-in look):* Y-up is right (the character stands upright, head
+up); two shoulder items placed at their stored points sit on the shoulders,
+one each side, the first attached models drawn; the body texture lands on
+the face, robe, belt, sleeves and gloves, and the robe's skirt is drawn; the
+rest pose is arms out and down, hands open. Still **[verify]**: mirroring and which way the
 character faces (one front view settles neither), head and back items,
 and the real look, which needs a barber-shop record.
 
