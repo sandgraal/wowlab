@@ -16,7 +16,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 DOCS_ONLY = "needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'"
 FULL = "needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true'"
-BIDI_RUN = "uv run --frozen pytest -q tests/repo/test_bidi_controls.py"
+# The crew-book scan (M19-04) reads every tracked file too and runs beside it.
+BIDI_RUN = (
+    "uv run --frozen pytest -q tests/repo/test_bidi_controls.py"
+    " tests/repo/test_crew_book_out_of_repo.py"
+)
 
 
 def _quality() -> list[dict[str, Any]]:

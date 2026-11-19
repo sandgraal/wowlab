@@ -60,8 +60,9 @@ NAME_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"wowlabcrewdb"), r
 # An assignment to the name, anywhere on a line and whatever precedes it
 # (`_G.WowLabCrewDB = {`, `> WowLabCrewDB = {`, an indented block), in any casing.
 ASSIGNMENT_RE = re.compile(rb"wowlabcrewdb\s*=(?!=)", re.IGNORECASE)
-# A table opened right after the assignment's `=`.
-OPEN_TABLE_RE = re.compile(rb"\s*\{")
+# After the assignment's `=`: a comment, a long string, a line break, or any
+# other non-blank byte (`_value_end` walks the value with these).
+VALUE_TOKEN_RE = re.compile(rb"--|\[=*\[|\r\n|[\r\n]|[^ \t\f\v]")
 # Inside a book: comments, long strings, a bracket, quoted strings and braces.
 BOOK_TOKEN_RE = re.compile(rb"--|\[=*\[|\[|[\"'{}]")
 # Quoted strings, each quote read on its own, a backslash escaping the next byte.
@@ -246,32 +247,43 @@ def _line(data: bytes, at: int) -> int:
     return data.count(b"\n", 0, at) + 1
 
 
-def _book_end(data: bytes, start: int) -> int:
-    """End of the table opening at `start` (its `{`), braces counted outside
-    strings and comments; the end of the data when it never closes."""
+def _value_end(data: bytes, start: int) -> int:
+    """End of the value assigned at `start` (just after its `=`), whatever
+    form it takes (`{…}`, `({…})`, `nil or {…}`, a comment before the brace):
+    the first line break at bracket depth 0 after something other than
+    blanks and comments; strings and comments are skipped; the end of the
+    data when brackets never balance."""
     depth = 0
+    seen = False
     at = start
-    while (token := BOOK_TOKEN_RE.search(data, at)) is not None:
+    while (token := VALUE_TOKEN_RE.search(data, at)) is not None:
+        text = token.group(0)
+        first = text[:1]
         at = token.end()
-        first = token.group(0)[:1]
-        if first == b"{":
-            depth += 1
-        elif first == b"}":
-            depth -= 1
-            if depth == 0:
-                return at
-        elif first == b"-" or (token.group(0).startswith(b"[") and len(token.group(0)) > 1):
-            closer = (
-                lab_capture._skip_comment(data, token.start())
-                if first == b"-"
-                else lab_capture._skip_long(data, token.start())
-            )
-            if closer < 0:
+        if first in b"\r\n":
+            if depth <= 0 and seen:
+                return token.start()
+        elif text == b"--":
+            at = lab_capture._skip_comment(data, token.start())
+            if at < 0:
                 return len(data)
-            at = closer
+        elif first == b"[" and len(text) > 1:
+            seen = True
+            at = lab_capture._skip_long(data, token.start())
+            if at < 0:
+                return len(data)
         elif first in (b'"', b"'"):
+            seen = True
             string = QUOTED_STRING_RE[first].match(data, token.start())
             at = string.end() if string else _end_of_line(data, token.start())
+        elif first in b"{(":
+            seen = True
+            depth += 1
+        elif first in b"})":
+            seen = True
+            depth -= 1
+        else:
+            seen = True
     return len(data)
 
 
@@ -340,11 +352,10 @@ def _assignment_problems(path: str, data: bytes) -> list[str]:
         exact = data.startswith(lab_capture.CREW_BOOK_NAME, start)
         if exact and lab_capture.crew_book_assignment_ok(data, start):
             continue
-        opened = OPEN_TABLE_RE.match(data, match.end())
-        if opened is None:
-            continue  # not a table: no record can follow
-        table = opened.end() - 1
-        if _book_key_problems(data, table, _book_end(data, table)):
+        # Any other value, whatever its form, is checked: no form is "not a
+        # table, therefore fine".
+        value = match.end()
+        if _book_key_problems(data, value, _value_end(data, value)):
             problems.append(f"{path}:{line}: a crew book holding a key not in the fixed lists")
     return problems
 
@@ -597,6 +608,31 @@ def test_constructed_a_book_key_not_in_the_fixed_lists_fails(case: str) -> None:
     for path in ("docs/x.md", "lab/addon/README.md", "lab/addon/WowLab/Crew.lua"):
         problems = scan([(path, planted)], NO_INDEX)
         assert problems == [f"{path}:3: a crew book holding a key not in the fixed lists"], path
+
+
+# Value forms other than a brace right after `=` (code re-check, round 3);
+# the same `<`, `>`, `~` spelling as FOREIGN_KEYS.
+VALUE_FORMS = {
+    "a line comment before the brace": "= ~~ c\n{",
+    "a long comment before the brace": "= ~~<<c>> {",
+    "in parentheses": "= ({",
+    "behind nil or": "= nil or {",
+}
+
+
+@pytest.mark.parametrize("case", sorted(VALUE_FORMS))
+def test_constructed_any_value_form_is_checked(case: str) -> None:
+    opener = VALUE_FORMS[case].translate(_LUA)
+    closer = "})" if "(" in opener else "}"
+    entry = '<"Fakeperson~Fake Land"> = { <"note"> = "x", },'.translate(_LUA)
+    planted = f"prose\n```\n{NAME} {opener}\n{entry}\n{closer}\n```\n".encode()
+    assert scan([("docs/x.md", planted)], NO_INDEX) == [
+        "docs/x.md:3: a crew book holding a key not in the fixed lists"
+    ]
+    # Control: the same form holding only fixed names passes.
+    fixed = entry.replace("Fakeperson~Fake Land".translate(_LUA), "Inventeda-Fakerealm")
+    control = f"prose\n```\n{NAME} {opener}\n{fixed}\n{closer}\n```\n".encode()
+    assert scan([("docs/x.md", control)], NO_INDEX) == []
 
 
 def test_constructed_a_book_of_fixed_names_passes() -> None:
