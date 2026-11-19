@@ -505,11 +505,6 @@ _RULE = (
             "'0'), and none is Active",
         ),
         (
-            [("1", "wow_other_product")],
-            0,
-            f".build.info has no row for the product '{PRODUCT}'",
-        ),
-        (
             [("1", PRODUCT), ("1", PRODUCT)],
             2,
             f".build.info has 2 rows for the product '{PRODUCT}' (branches us, us; Active "
@@ -522,7 +517,7 @@ _RULE = (
             "Active cells '1', '2', '0'), and 2 are Active",
         ),
     ],
-    ids=["inactive", "other-product-only", "two-active", "two-active-one-not"],
+    ids=["inactive", "two-active", "two-active-one-not"],
 )
 def test_a_product_without_exactly_one_active_row_is_refused_constructed(
     tmp_path: Path, rows: list[tuple[str, str]], count: int, saw: str
@@ -533,6 +528,30 @@ def test_a_product_without_exactly_one_active_row_is_refused_constructed(
         casc.open_storage(read_install(root), FLAVOR)
     assert str(caught.value) == saw + _RULE
     assert (caught.value.product, caught.value.count) == (PRODUCT, count)
+
+
+LEFTOVER = (
+    f".build.info has no row for the product '{PRODUCT}': the Battle.net app no longer "
+    f"lists it, so the folder '{FLAVOR}' is left over from a version that is no longer "
+    "installed (`wowlab install show` lists the versions that are)."
+)
+
+
+@pytest.mark.parametrize(
+    "rows", [[("1", "wow_other_product")], []], ids=["other-product-only", "no-rows"]
+)
+def test_a_product_with_no_row_is_a_leftover_folder_constructed(
+    tmp_path: Path, rows: list[tuple[str, str]]
+) -> None:
+    """Zero rows for the product (M15-15): the launcher no longer lists it,
+    so the folder is left over; the refusal says so and names
+    `wowlab install show`, and does not speak of picking between rows."""
+    root, _ = make_install(tmp_path, rows=rows)
+    with pytest.raises(casc.BuildRowError) as caught:
+        casc.open_storage(read_install(root), FLAVOR)
+    assert str(caught.value) == LEFTOVER
+    assert (caught.value.product, caught.value.count) == (PRODUCT, 0)
+    assert caught.value.path == root / ".build.info"
 
 
 def test_one_active_row_among_others_is_taken_constructed(tmp_path: Path) -> None:

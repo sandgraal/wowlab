@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from wowlab_core import casc
-from wowlab_core.install import ENV_ROOT, discover
+from wowlab_core.install import ENV_ROOT, Install, discover
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "macos-70450" / "derived"
 FACTS: dict[str, Any] = json.loads((FIXTURE / "casc-index.json").read_text(encoding="utf-8"))
@@ -37,6 +37,20 @@ def _root() -> Path:
     if not value.strip():
         pytest.skip(f"set {ENV_ROOT} to the install to run the live casc tests")
     return Path(value)
+
+
+def _install() -> Install:
+    """The install, or a skip when its `.build.info` has no row for the
+    fixture's product (M15-15): the fixture's flavor folder is then left
+    over from a version no longer installed, so there is no build to
+    compare."""
+    found = discover(_root())
+    if not any((r.product or "").strip() == FACTS["product"] for r in found.products):
+        pytest.skip(
+            f".build.info has no row for the fixture's product {FACTS['product']!r}: "
+            f"the folder {FACTS['flavor']} is left over from a version no longer installed"
+        )
+    return found
 
 
 # Every open in the process raises the "open" audit event, whatever API it
@@ -61,7 +75,7 @@ def _state(folder: Path) -> dict[str, tuple[int, int]]:
 @pytest.mark.live
 def test_live_index_matches_the_derived_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     root = _root()
-    install = discover(root)
+    install = _install()
     data = root / "Data" / "data"
     before = _state(data)
     opened: list[tuple[str, int]] = []

@@ -860,7 +860,9 @@ def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, Bu
     """The flavor (a `Flavor` of `install`, or its folder name) and its
     product's one `Active` row of `.build.info`. Refused with
     `BuildRowError` when the flavor is not in the install, names no
-    product, or its product has no `Active` row or more than one."""
+    product, or its product has no `Active` row or more than one. A
+    product with no row at all is named as a folder left over from a version
+    no longer installed (`count` 0)."""
     if isinstance(flavor, str):
         found = next((f for f in install.flavors if f.folder == flavor), None)
         if found is None:
@@ -878,18 +880,26 @@ def select_build_row(install: Install, flavor: Flavor | str) -> tuple[Flavor, Bu
         )
     mine = [r for r in install.products if (r.product or "").strip() == product]
     rows = [r for r in mine if r.is_active]
+    if not mine:
+        # No row at all: the launcher dropped the product, and the folder is
+        # what an uninstalled version left behind (M15-15).
+        raise BuildRowError(
+            f".build.info has no row for the product {product!r}: the Battle.net app no "
+            f"longer lists it, so the folder {flavor.folder!r} is left over from a version "
+            "that is no longer installed (`wowlab install show` lists the versions that are).",
+            product,
+            0,
+            install.root / ".build.info",
+        )
     if len(rows) != 1:
-        if not mine:
-            saw = f".build.info has no row for the product {product!r}"
-        else:
-            branches = ", ".join((r.branch or "").strip() or "(empty)" for r in mine)
-            cells = ", ".join(repr(r.active or "") for r in mine)
-            active = "none is" if not rows else f"{len(rows)} are"
-            plural = "s" if len(mine) != 1 else ""
-            saw = (
-                f".build.info has {len(mine)} row{plural} for the product {product!r} "
-                f"(branches {branches}; Active cells {cells}), and {active} Active"
-            )
+        branches = ", ".join((r.branch or "").strip() or "(empty)" for r in mine)
+        cells = ", ".join(repr(r.active or "") for r in mine)
+        active = "none is" if not rows else f"{len(rows)} are"
+        plural = "s" if len(mine) != 1 else ""
+        saw = (
+            f".build.info has {len(mine)} row{plural} for the product {product!r} "
+            f"(branches {branches}; Active cells {cells}), and {active} Active"
+        )
         raise BuildRowError(
             f"{saw}. wowlab reads the build of the one Active row and does not pick "
             "between rows (`wowlab install show` lists them).",

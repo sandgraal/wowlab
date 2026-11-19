@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from wowlab_core import casc
-from wowlab_core.install import ENV_ROOT, discover
+from wowlab_core.install import ENV_ROOT, Install, discover
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "macos-70450" / "derived"
 FACTS: dict[str, Any] = json.loads((FIXTURE / "casc-blte.json").read_text(encoding="utf-8"))
@@ -43,12 +43,26 @@ def _root() -> Path:
     return Path(value)
 
 
+def _install() -> Install:
+    """The install, or a skip when its `.build.info` has no row for the
+    fixture's product (M15-15): the fixture's flavor folder is then left
+    over from a version no longer installed, so there is no build to
+    compare."""
+    found = discover(_root())
+    if not any((r.product or "").strip() == FACTS["product"] for r in found.products):
+        pytest.skip(
+            f".build.info has no row for the fixture's product {FACTS['product']!r}: "
+            f"the folder {FACTS['flavor']} is left over from a version no longer installed"
+        )
+    return found
+
+
 def _state(folder: Path) -> dict[str, tuple[int, int]]:
     return {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in folder.iterdir()}
 
 
 def _storage() -> casc.CascStorage:
-    storage = casc.open_storage(discover(_root()), FACTS["flavor"])
+    storage = casc.open_storage(_install(), FACTS["flavor"])
     if storage.report.version != FACTS["version"]:
         pytest.skip(
             f"the install is at {storage.report.version}; the fixture at {FACTS['version']}"
