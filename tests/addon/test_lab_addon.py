@@ -276,10 +276,14 @@ CREW_PROBE_EVENT = "ADDON_LOADED"
 CREW_PROBE = (
     "local function crewLoaded ( _ , name ) "
     'if name ~= "WowLab" or type ( WowLabCrewDB ) ~= "table" then return end '
+    # Fix round 5: the shape of Core.lua's loadProbe (§13.1), so the
+    # unrelaxed M11-13 stored-value check accepts it.
+    "local probe = { loads = 1 } "
     "local prior = WowLabCrewDB . probe "
     'if type ( prior ) == "table" and type ( prior . loads ) == "number" then '
-    "WowLabCrewDB . probe = { loads = prior . loads + 1 } "
-    "else WowLabCrewDB . probe = { loads = 1 , lost = true } end end"
+    "probe . loads = ns . Number ( prior . loads + 1 ) "
+    "else probe . lost = true end "
+    "WowLabCrewDB . probe = probe end"
 )
 # The slash handler's first statement, pinned: the typed text is a string or
 # nothing happens, so the argument can carry no table or function in or out.
@@ -7355,6 +7359,7 @@ def _crew_problems(path: Path, text: str) -> list[str]:
 
 
 _CREW_BOOK_TABLES = ("players", "current")
+CREW_KEY_CALLS = frozenset({"UnitName", "UnitFullName", "GetNormalizedRealmName"})
 
 
 def _crew_name_decls(flow: _Flow) -> set[int]:
@@ -7363,7 +7368,8 @@ def _crew_name_decls(flow: _Flow) -> set[int]:
     t = flow.tokens
     out: set[int] = set()
     for k in _crew_relaxed_calls(t):
-        if t[k].text not in CREW_NAME_CALLS or t[k - 1].text != "=":
+        # Fix round 5: a guild name is not a key part.
+        if t[k].text not in CREW_KEY_CALLS or t[k - 1].text != "=":
             continue
         close = flow.pair[k + 1]
         j = k - 2  # the last name before `=`
@@ -7426,6 +7432,69 @@ def _crew_book_key_problems(flow: _Flow) -> list[str]:
             return k + 1
         return None
 
+    def walk_key(s: int) -> bool:
+        """Is the name at token s the key of a `for K in pairs(<book
+        table>)` around it, never assigned?"""
+        name = t[s].text
+        decl = flow.resolve(name, s)
+        if t[s].kind != "name" or decl is None:
+            return False
+        for b in flow.blocks:
+            if b.kind != "loop" or t[b.head].text != "for" or not b.head < s < b.stop:
+                continue
+            if t[b.head + 1].text != name or t[b.head + 2].text not in {",", "in"}:
+                continue
+            if flow.resolve(name, b.start) is not decl:
+                continue
+            rest = next(q for q in range(b.head, b.stop) if t[q].text == "in")
+            after = table_at(rest + 3) if _render(t[rest + 1 : rest + 3]) == "pairs (" else None
+            if (
+                after is not None
+                and t[after].text == ")"
+                and not any(
+                    r.rstrip(".") == name and flow.resolve(name, ts) is decl
+                    for r, ts in flow.rebound
+                )
+            ):
+                return True
+        return False
+
+    def walked_local(s: int) -> bool:
+        """Fix round 5: a local assigned only from walk keys (`oldest = key`
+        inside the walk, any number of times) or nil, and declared bare or
+        as nil (the oldest-unrated drop)."""
+        name = t[s].text
+        decl = flow.resolve(name, s)
+        if decl is None:
+            return False
+        declared = [
+            p
+            for p in range(len(t) - 2)
+            if t[p].text == "local"
+            and t[p + 1].text == name
+            and any(d is decl for d in flow.decls.get(name, []) if p < d.start <= p + 4)
+        ]
+        if len(declared) != 1:
+            return False
+        p = declared[0]
+        if t[p + 2].text == ",":
+            return False
+        if t[p + 2].text == "=" and not (t[p + 3].text == "nil" and _ends_expression(t, p + 4)):
+            return False
+        sets = [ts for r, ts in flow.rebound if r == name and flow.resolve(name, ts) is decl]
+        if any(
+            r.rstrip(".") == name and r != name and flow.resolve(name, ts) is decl
+            for r, ts in flow.rebound
+        ):
+            return False
+        for ts in sets:
+            if t[ts + 1].text != "=" or t[ts - 1].text == ",":
+                return False
+            value_ok = (t[ts + 2].text == "nil" or walk_key(ts + 2)) and _ends_expression(t, ts + 3)
+            if not value_ok:
+                return False
+        return bool(sets)
+
     def key_ok(s: int, e: int) -> bool:
         key = t[s:e]
         if _name_dash_name(key):
@@ -7435,25 +7504,8 @@ def _crew_book_key_problems(flow: _Flow) -> list[str]:
         decl = flow.resolve(key[0].text, s)
         if decl is None:
             return False
-        # A loop key over a book table.
-        for b in flow.blocks:
-            if b.kind != "loop" or t[b.head].text != "for" or not b.head < s < b.stop:
-                continue
-            if t[b.head + 1].text != key[0].text or t[b.head + 2].text not in {",", "in"}:
-                continue
-            if flow.resolve(key[0].text, b.start) is not decl:
-                continue
-            rest = next(q for q in range(b.head, b.stop) if t[q].text == "in")
-            after = table_at(rest + 3) if _render(t[rest + 1 : rest + 3]) == "pairs (" else None
-            if (
-                after is not None
-                and t[after].text == ")"
-                and not any(
-                    r.rstrip(".") == key[0].text and flow.resolve(key[0].text, ts) is decl
-                    for r, ts in flow.rebound
-                )
-            ):
-                return True
+        if walk_key(s) or walked_local(s):
+            return True
         # A local bound once to `<a> .. "-" .. <b>` from name calls.
         for p in range(len(t) - 8):
             if [t[p].text, t[p + 1].text, t[p + 2].text] == ["local", key[0].text, "="]:
@@ -7503,9 +7555,9 @@ def _crew_book_key_problems(flow: _Flow) -> list[str]:
             problems.append(f"line {t[k].line}: a book key is not a name-realm from the name calls")
     for k in range(len(t) - 1):
         if t[k].text == CREW_DB and t[k + 1].text == "[" and not _is_field(t, k):
-            close = flow.pair[k + 1]
-            if t[close + 1].text != "=":
-                problems.append(f"line {t[k].line}: {CREW_DB} read through brackets")
+            # Fix round 5: never, read or written (`WowLabCrewDB["players"] =
+            # fake` would get past every rule on `.players`).
+            problems.append(f"line {t[k].line}: {CREW_DB} indexed through brackets")
         opener = flow.opener[k]
         bracket_key = (
             t[k].kind == "op"
@@ -7670,7 +7722,7 @@ local function levelOf(member)
     end
     local level = UnitLevel(member)
     if not secret(level) then
-        WowLabCrewDB.lastLevel = level
+        WowLabCrewDB.lastLevel = ns.Number(level)
     end
 end
 
@@ -7686,47 +7738,50 @@ end
         local name, realm = UnitFullName(unit)
         if not secret(me) and not me and not secret(name) and not secret(realm) then
             local key = name .. "-" .. realm
-            local entry = book[key] or { met = 0 }
-            entry.name = name
-            entry["realm"] = realm
+            if book[key] == nil then
+                book[key] = { met = 0 }
+            end
+            local entry = book[key]
+            entry.name = ns.String(name)
+            entry["realm"] = ns.String(realm)
             local _, classFile = UnitClass(unit)
             if not secret(classFile) then
-                entry.class = classFile
+                entry.class = ns.String(classFile)
             end
             local role = UnitGroupRolesAssigned(unit)
             if not secret(role) and role ~= "NONE" then
-                entry.role = role
+                entry.role = ns.String(role)
             end
             local _, kind = GetInstanceInfo()
             if kind ~= "none" then
-                entry.where_kind = kind
+                entry.where_kind = ns.String(kind)
             end
             local other = UnitName(unit)
             if not secret(other) and other ~= nil then
-                entry.alias = other
+                entry.alias = ns.String(other)
             end
             local done = pcall(function()
                 local guild = GetGuildInfo(unit)
                 if not secret(guild) then
-                    entry.guild = guild
+                    entry.guild = ns.String(guild)
                 end
             end)
-            entry.read = done
-            entry.last = time()
-            entry.day = date("%Y-%m-%d", entry.last)
-            book[name .. "-" .. realm] = entry
+            entry.read = ns.Bool(done)
+            entry.last = ns.Number(time())
+            entry.day = ns.String(date("%Y-%m-%d", entry.last))
+            book[name .. "-" .. realm].seen = true
             WowLabCrewDB.current[key] = true
         end
     end
     if not secret(home) then
-        WowLabCrewDB.home = home
+        WowLabCrewDB.home = ns.String(home)
     end
     local first = "raid" .. 1
     local level = UnitLevel(first)
     local target = "target"
     local targetName = UnitName(target)
     if not secret(level) and not secret(targetName) then
-        WowLabCrewDB.level = level
+        WowLabCrewDB.level = ns.Number(level)
     end
     levelOf("target")
     levelOf(first)
@@ -7746,6 +7801,15 @@ local function countBook()
     end
     for key in pairs(WowLabCrewDB.current) do
         kept = kept + #key
+    end
+    local oldest
+    for key, entry in pairs(players) do
+        if oldest == nil or entry.last < players[oldest].last then
+            oldest = key
+        end
+    end
+    if oldest ~= nil and kept > 5000 then
+        players[oldest] = nil
     end
     return kept
 end
@@ -7775,12 +7839,14 @@ local function crewLoaded(_, name)
     if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then
         return
     end
+    local probe = { loads = 1 }
     local prior = WowLabCrewDB.probe
     if type(prior) == "table" and type(prior.loads) == "number" then
-        WowLabCrewDB.probe = { loads = prior.loads + 1 }
+        probe.loads = ns.Number(prior.loads + 1)
     else
-        WowLabCrewDB.probe = { loads = 1, lost = true }
+        probe.lost = true
     end
+    WowLabCrewDB.probe = probe
 end
 
 ns.On("ADDON_LOADED", crewLoaded)
@@ -7796,7 +7862,7 @@ ns.On("PLAYER_ENTERING_WORLD", onWorld)
     end
     if word == "on" then
         if type(WowLabCrewDB) ~= "table" then
-            WowLabCrewDB = { schema = 1, players = {}, current = {}, started = time() }
+            WowLabCrewDB = { schema = 1, players = {}, current = {}, started = ns.Number(time()) }
         end
         WowLabCrewDB.on = true
         print(date("%Y-%m-%d", WowLabCrewDB.started))
@@ -7933,7 +7999,8 @@ def test_m19_01_unit_guid_and_the_chat_sends_stay_refused_in_crew_lua() -> None:
             assert text != _CREW_SOURCE
             if not _forbidden_api_problems(_CREW_PATH, tokenize(text)):
                 missed.append((name, text is call))
-    os_time = _CREW_SOURCE.replace("entry.last = time()", "entry.last = os.time()")
+    os_time = _CREW_SOURCE.replace("entry.last = ns.Number(time())", "entry.last = os.time()")
+    assert os_time != _CREW_SOURCE
     if not _clock_problems(_CREW_PATH, tokenize(os_time)):
         missed.append(("os", True))
     assert not missed, missed
@@ -8108,19 +8175,19 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     # Item 2: crew data leaving the book.
     "a name stored under ns": [
         (
-            "            entry.name = name\n",
+            "            entry.name = ns.String(name)\n",
             "            entry.name = name\n            ns.lastName = name\n",
         )
     ],
     "a name stored in WowLabCharDB": [
         (
-            "            entry.name = name\n",
+            "            entry.name = ns.String(name)\n",
             "            entry.name = name\n            WowLabCharDB.met = name\n",
         )
     ],
     "a key stored in WowLabDB": [
         (
-            "            entry.name = name\n",
+            "            entry.name = ns.String(name)\n",
             "            entry.name = name\n            WowLabDB.seen = key\n",
         )
     ],
@@ -8328,25 +8395,25 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     ],
     "a key from another client call": [
         (
-            '            book[name .. "-" .. realm] = entry\n',
+            '            book[name .. "-" .. realm].seen = true\n',
             "            local zone = GetInstanceInfo()\n            book[zone] = entry\n",
         )
     ],
     "a key with a piece not from a name call": [
         (
-            '            book[name .. "-" .. realm] = entry\n',
+            '            book[name .. "-" .. realm].seen = true\n',
             '            local zone = GetInstanceInfo()\n            book[zone .. "-" .. realm] = entry\n',
         )
     ],
     "a key from a walk over another table": [
         (
-            '            book[name .. "-" .. realm] = entry\n',
+            '            book[name .. "-" .. realm].seen = true\n',
             "            for slot in pairs(entry) do\n                book[slot] = entry\n            end\n",
         )
     ],
     "a key stored in a multiple assignment": [
         (
-            '            book[name .. "-" .. realm] = entry\n',
+            '            book[name .. "-" .. realm].seen = true\n',
             "            local zone = GetInstanceInfo()\n            book[zone], entry.x = entry, 1\n",
         )
     ],
@@ -8375,6 +8442,33 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     "the book read through brackets": [
         ("    local book = WowLabCrewDB.players\n", '    local book = WowLabCrewDB["players"]\n')
     ],
+    # Fix round 5, item 1.
+    "the players table replaced through brackets": [
+        (_CREW_READ, _CREW_READ + '    local fake = {}\n    WowLabCrewDB["players"] = fake\n')
+    ],
+    "the current table replaced through brackets": [
+        (_CREW_READ, _CREW_READ + '    WowLabCrewDB["current"] = {}\n')
+    ],
+    "a guild name as a key part": [
+        (
+            '            book[name .. "-" .. realm].seen = true\n',
+            "            local g = GetGuildInfo(unit)\n            if not secret(g) then\n"
+            '                book[g .. "-" .. realm].seen = true\n            end\n',
+        )
+    ],
+    # Fix round 5, item 4: the running "oldest" takes walk keys only.
+    "an oldest taken from elsewhere": [
+        ("            oldest = key\n", '            oldest = "x"\n')
+    ],
+    "an oldest declared with a value": [
+        ("    local oldest\n", "    local oldest = WowLabCrewDB.home\n")
+    ],
+    "an oldest set in a multiple assignment": [
+        ("            oldest = key\n", "            oldest, kept = key, 1\n")
+    ],
+    "an oldest taken from an entry's field": [
+        ("            oldest = key\n", "            oldest = entry.last\n")
+    ],
     # Fix round 3, item 3: the ungated probe handler, pinned.
     "the probe handler creating the book": [
         (
@@ -8386,8 +8480,8 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     "the probe handler counting other addons": [('    if name ~= "WowLab" or type', "    if type")],
     "the probe handler turning the book on": [
         (
-            "        WowLabCrewDB.probe = { loads = 1, lost = true }\n",
-            "        WowLabCrewDB.on = true\n",
+            "        probe.lost = true\n",
+            "        probe.lost = true\n        WowLabCrewDB.on = true\n",
         )
     ],
     "the probe handler for another event": [
@@ -8482,14 +8576,14 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     ],
     "a value used in the else branch": [
         (
-            "                entry.alias = other\n            end\n",
-            "                entry.alias = other\n            else\n                entry.raw = other\n"
+            "                entry.alias = ns.String(other)\n            end\n",
+            "                entry.alias = ns.String(other)\n            else\n                entry.raw = other\n"
             "            end\n",
         )
     ],
     "the test's answer ignored": [
         (
-            "            if not secret(classFile) then\n                entry.class = classFile\n"
+            "            if not secret(classFile) then\n                entry.class = ns.String(classFile)\n"
             "            end\n",
             "            local hidden = secret(classFile)\n            entry.class = classFile\n",
         )
@@ -8594,9 +8688,10 @@ def test_m19_01_the_core_call_tests_hold_once_core_lua_has_the_call() -> None:
             if source.is_file():
                 (copy / source.name).write_bytes(source.read_bytes())
         core = copy / "Core.lua"
-        core.write_text(
-            core.read_text("utf-8").replace(_CORE_SLASH, _CORE_CREW_CALL, 1), encoding="utf-8"
-        )
+        if not _real_core_calls():  # fix round 5: M19-10 may have added it
+            core.write_text(
+                core.read_text("utf-8").replace(_CORE_SLASH, _CORE_CREW_CALL, 1), encoding="utf-8"
+            )
         ADDON = copy
         try:
             assert _real_core_calls() == 1
@@ -8713,6 +8808,109 @@ def test_m19_01_constructed_calls_behind_the_gate_pass() -> None:
     assert _crew_problems(_CREW_PATH, text) == []
     assert _crew_section_failures(_CREW_PATH, text) == []
     assert _crew_rules(_CREW_PATH, text)["UNIT_ARGUMENT"] == []
+
+
+def _crew_installed_failures(crew: str) -> list[str]:
+    """Install `crew` as Crew.lua in a constructed copy of lab/addon (the
+    TOC listing it and the book, Core.lua with the pinned call, the std file
+    and README declaring the client names it uses, as M19-10 must), load a
+    fresh copy of this grader pointed at it, and run every test in it (each
+    source for a `path` test). The names of the tests that fail."""
+    import importlib.util
+    import inspect
+    import shutil
+    import sys
+
+    with tempfile.TemporaryDirectory(prefix="wowlab-m19-01-") as tmp:
+        # The same layout under a temporary root, as the review probes use,
+        # so paths reported relative to ROOT read the same.
+        root = Path(tmp) / "lab" / "addon"
+        shutil.copytree(ADDON_ROOT, root)
+        addon = root / "WowLab"
+        (addon / CREW_FILE).write_text(crew, encoding="utf-8")
+        (addon / "Core.lua").write_text(_core_with_call(), encoding="utf-8")
+        toc = (addon / "WowLab.toc").read_text(encoding="utf-8")
+        if CREW_FILE not in toc:
+            toc = toc.replace(
+                "## SavedVariables: WowLabDB\n", f"## SavedVariables: WowLabDB, {CREW_DB}\n"
+            )
+            toc = toc.rstrip("\n") + f"\n{CREW_FILE}\n"
+        (addon / "WowLab.toc").write_text(toc, encoding="utf-8")
+        scan = _SectionScan(
+            [*(addon / p.name for p in SOURCES if p.name != CREW_FILE), addon / CREW_FILE]
+        )
+        used = {re.split(r"[.:]", r.api)[0] for r in scan.refs if r.client and r.file == CREW_FILE}
+        declared = _std_globals()
+        std = (root / "wow_client.yml").read_text(encoding="utf-8").rstrip("\n") + "\n"
+        readme = (root / "README.md").read_text(encoding="utf-8").rstrip("\n") + "\n\n"
+        if CREW_DB not in declared:
+            std += f"  {CREW_DB}:\n    property: full-write\n"
+        for name in sorted(used - declared):
+            std += f"  {name}:\n    property: read-only\n"
+            readme += f"| `{name}` | constructed for M19-01, {VERIFY_STATUS} |\n"
+        (root / "wow_client.yml").write_text(std, encoding="utf-8")
+        (root / "README.md").write_text(readme, encoding="utf-8")
+
+        spec = importlib.util.spec_from_file_location("m19_01_installed_grader", __file__)
+        assert spec is not None and spec.loader is not None
+        grader = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = grader  # dataclasses resolve annotations through it
+        try:
+            spec.loader.exec_module(grader)
+            grader.ROOT = Path(tmp)
+            grader.ADDON_ROOT = root
+            grader.ADDON = addon
+            grader.TOC = addon / "WowLab.toc"
+            grader.STD = root / "wow_client.yml"
+            grader.README = root / "README.md"
+            grader.SOURCES = sorted(addon.glob("*.lua"))
+            grader.ACTIONS = addon / "Actions.lua"
+            failed = []
+            for name, fn in inspect.getmembers(grader, inspect.isfunction):
+                if not name.startswith("test_") or name in _CREW_INSTALLED_SKIP:
+                    continue
+                params = inspect.signature(fn).parameters
+                for args in [(p,) for p in grader.SOURCES] if "path" in params else [()]:
+                    try:
+                        fn(*args)
+                    except AssertionError as error:
+                        failed.append(f"{name}{[a.name for a in args]}: {str(error)[:300]}")
+            return failed
+        finally:
+            del sys.modules[spec.name]
+
+
+# Not run on the installed copy: this test itself, and the tests that build
+# installed copies of their own.
+_CREW_INSTALLED_SKIP = frozenset(
+    {
+        "test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed",
+        "test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails",
+    }
+)
+
+
+def test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed() -> None:
+    """Fix round 5: the constructed Crew.lua, pinned helpers and all, passes
+    every test in this file, the unrelaxed whole-addon checks (M11-13's
+    stored-value check, the M11-37 scan, the M13-05 rules) included, when
+    installed as M19-10 will install the real one. So no pin is unpassable."""
+    failed = _crew_installed_failures(_CREW_SOURCE)
+    assert not failed, failed
+
+
+def test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails() -> None:
+    """Control for the test above: a Crew.lua storing an unchecked client
+    value fails the installed run."""
+    bad = _crew_edited(
+        [
+            (
+                "    WowLabCrewDB.probe = probe\n",
+                "    WowLabCrewDB.probe = probe\n    WowLabCrewDB.raw = GetInstanceInfo()\n",
+            )
+        ]
+    )
+    assert _crew_installed_failures(bad)
 
 
 def test_m19_01_one_file_level_registration_per_core_event_passes() -> None:
