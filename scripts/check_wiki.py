@@ -48,13 +48,17 @@ What it checks:
   character and realm names are public, so the wiki may name them.
   A `Player-<n>-<hex>` GUID is not matched either (M13-64, owner decision
   2026-11-18; the dated note under ADR-0019 records it). ADR-0019 keeps the
-  owner's own GUIDs scrubbed, but they live in the owner's SavedVariables
-  and combat logs, which this check never reads and which never reach the
-  machine that runs it; the GUIDs a page can quote are the scrubbed
-  placeholders of the fixtures and docs (`Player-9999-00000001`,
-  `Player-1234-0ABCDEF0`), and a matcher would refuse those as false
-  positives. So a GUID in prose passes, and a link whose target is one fails
-  only as a broken link, and that failure line quotes the GUID;
+  owner's own GUIDs, and other players' GUIDs in combat logs, out of the
+  repository: `scripts/lab_capture.py` rewrites them to invented GUIDs
+  (`Player-9999-<8 hex>` for the owner's, `Player-9998-<8 hex>` for other
+  players') before a capture is committed. The wiki is written from the
+  repository, so the GUIDs a page can quote are those invented ones and the
+  constructed examples of the docs and tests (`Player-1234-0ABCDEF0`), and a
+  matcher would refuse them as false positives. This check runs locally, on
+  the owner's machine, but never reads the install; a real GUID copied into a
+  page by hand is not caught here. So a GUID in prose passes, and a link whose
+  target is one fails only as a broken link, and that failure line, printed
+  locally, quotes the GUID;
 - with `--base REF` (a commit in DIR): the change against REF stays under a
   fixed size cap, so no single run can rewrite the wiki, and no link goes to
   a host the wiki at REF does not already link to (Markdown links, reference
@@ -307,8 +311,9 @@ def personal_kinds(text: str) -> list[str]:
 
 def _kinds(text: str) -> Iterator[str]:
     # No `Player-<n>-<hex>` GUID matcher, on purpose (M13-64): see the module
-    # docstring. The owner's own GUIDs never reach this check; the ones a
-    # page can hold are scrubbed placeholders, which would be false positives.
+    # docstring. The wiki is written from the repository, whose GUIDs are the
+    # capture tool's invented ones or constructed examples; a matcher would
+    # refuse those as false positives.
     for _ in _HOME_PATH.finditer(text):
         yield "an absolute home path"
     for m in _INSTALL_DIR.finditer(text):

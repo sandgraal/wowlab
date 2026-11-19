@@ -363,7 +363,7 @@ def test_constructed_a_name_realm_pair_is_not_personal_data(tmp_path: Path, line
     "line",
     [
         "The player GUID Player-1234-0ABCDEF0 in prose.",
-        "In code: `Player-9999-00000001`, and in a log line `Player-3676-0A1B2C3D`.",
+        "In code: `Player-9999-00000001`, and in a log line `Player-9998-00000001`.",
     ],
     ids=["prose", "code"],
 )
