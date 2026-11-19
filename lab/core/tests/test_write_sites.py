@@ -222,7 +222,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     "which characters/ re-makes on request (os.replace replaces a link there, never writes "
     "through it)",
     (_CASCFILES, "target.unlink()"): _CHAR_FILE
-    + "; remove_derived: a regular file named <realm>-<character>.<body|hair|eyes|texture<n>>"
+    + "; remove_derived: a regular file named <character>.<body|hair|eyes|texture<n>>"
     ".png beside the character's .glb that this run no longer makes",
     (_CASCFILES, "tmp.rename(target)"): _CASC_FILE
     + "; where no hard link can be made, the whole temp file renamed onto a name checked "
