@@ -38,6 +38,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, BinaryIO
 
 import platformdirs
@@ -71,13 +72,25 @@ def _modules() -> list[str]:
     return sorted(m.name for m in pkgutil.iter_modules(wowlab_core.__path__))
 
 
+def _model_modules() -> list[ModuleType]:
+    """Every module models are defined in: each top-level module of the
+    package, and each module of `wowlab_core.cli` (`_PART_NAMES`), imported
+    here by name. Since the CLI imports a command's module only when the
+    command runs (M15-22), the package alone holds none of their models, so
+    reading it would make the lint depend on what ran first."""
+    from wowlab_core.cli import _common
+
+    found = [importlib.import_module(f"wowlab_core.{mod}") for mod in _modules()]
+    found += [importlib.import_module(f"wowlab_core.cli.{p}") for p in _common._PART_NAMES]
+    return found
+
+
 def _model_names() -> frozenset[str]:
     """Every Pydantic model class defined in the package, by name, when the
     name is CamelCase with two humps or more (`DoctorReport`): a one-word
     name (`Install`, `Manifest`) is an ordinary English word."""
     names: set[str] = set()
-    for mod in _modules():
-        module = importlib.import_module(f"wowlab_core.{mod}")
+    for module in _model_modules():
         for name, obj in vars(module).items():
             if (
                 inspect.isclass(obj)
@@ -194,6 +207,31 @@ def test_help_screen_is_player_copy(path: tuple[str, ...], cmd: Any) -> None:
     assert short.exit_code == 0, (short.stdout, short.stderr)
     assert short.stdout == long.stdout
     assert hits(long.stdout) == []
+
+
+def test_the_model_lint_sees_a_model_of_every_command_module() -> None:
+    """Every module of the CLI package that defines a model class with a
+    CamelCase name has it in the lint's set, however the tests were ordered
+    (the lazy CLI of M15-22 once hid them all)."""
+    from wowlab_core.cli import _common
+
+    names = _model_names()
+    checked = 0
+    for part in _common._PART_NAMES:
+        module = importlib.import_module(f"wowlab_core.cli.{part}")
+        own = {
+            name
+            for name, obj in vars(module).items()
+            if inspect.isclass(obj)
+            and issubclass(obj, BaseModel)
+            and obj.__module__ == module.__name__
+            and re.fullmatch(r"_?[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+", name)
+        }
+        if own:
+            checked += 1
+            assert {n.lstrip("_") for n in own} <= names, part
+    assert checked >= 10
+    assert {"DoctorReport", "CrewReport", "CrewShowReport"} <= names
 
 
 def test_lint_catches_what_it_is_for_constructed() -> None:
@@ -405,6 +443,11 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["casc", "cat", "--fdid", "1"],
         # M15-11: likewise; its full text is linted by test_cli_char_model.py.
         ["char", "model"],
+        # M19-02: the captures hold no crew book, so both say it is not
+        # turned on; test_cli_crew.py runs them on constructed books.
+        ["crew", "list"],
+        ["crew", "list", "--notes"],
+        ["crew", "show", "Inventeda-Fakerealm"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],

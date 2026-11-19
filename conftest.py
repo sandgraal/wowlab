@@ -85,6 +85,8 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_constructed_a_header_wider_than_sqlite_allows_is_malformed_and_quick",
         "lab/core/tests/parser/test_db2lake_constructed.py"
         "::test_constructed_200k_rows_load_within_the_cpu_budget",
+        "lab/core/tests/parser/test_crewbook_constructed.py"
+        "::test_constructed_five_thousand_players_read_within_the_budget",
         "lab/core/tests/parser/test_luadata_constructed.py"
         "::test_multi_megabyte_document_parses_whole",
         "lab/core/tests/parser/test_toc_constructed.py"
