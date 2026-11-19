@@ -17,7 +17,7 @@ Tests that only bound allocations with `tracemalloc` stay parallel: that
 counts the test process's own allocations and does not change with load.
 Tests whose clock is a hang guard with a margin of seconds (a deadline that
 must stop "within moments", a FIFO read that must not block) also stay
-parallel. One test is serial for another reason, said where it is listed.
+parallel. Three tests are serial for other reasons, said where they are listed.
 
 The marker is applied here, by node id, rather than in the test files:
 review probes (`lab/core/tests/review/`) belong to code-reviewer, and the
@@ -90,6 +90,10 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         "::test_hostile_lines_parse_in_linear_time_constructed",
         "lab/core/tests/parser/test_blp_constructed.py"
         "::test_a_1024_square_dxt1_decodes_within_half_a_second_constructed",
+        "lab/core/tests/parser/test_compositor_constructed.py"
+        "::test_a_2048x1024_composite_within_three_seconds_constructed",
+        "lab/core/tests/parser/test_compositor_constructed.py"
+        "::test_the_worst_layout_within_the_cost_models_bound_constructed",
         "lab/core/tests/test_snap_gc_keep_rule.py"
         "::test_the_keep_rule_takes_exactly_seven_parts_and_stops_splitting_a_long_path_constructed",
         "tests/scripts/test_lab_capture_followup.py"
@@ -111,6 +115,12 @@ SERIAL_TESTS: frozenset[str] = frozenset(
         # deadlock. Alone, the process forking has one thread.
         "lab/core/tests/test_guard_pins_m10_16.py"
         "::test_constructed_pin_a_forked_child_leaving_the_with_neither_unlocks_nor_commits",
+        # Not a measurement: each starts a process named like the game client
+        # (M15-18). Every process on the machine sees it, so a test in another
+        # worker that asks the real probe would find the client running.
+        "tests/scripts/test_perf_budget.py::test_constructed_the_pipeline_runs_on_a_small_tree",
+        "tests/scripts/test_perf_budget.py"
+        "::test_constructed_without_the_stub_the_gate_refuses_the_same_children",
     }
 )
 

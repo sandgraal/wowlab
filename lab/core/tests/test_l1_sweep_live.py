@@ -77,6 +77,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -204,8 +205,16 @@ def fingerprint(
         for child in children:
             sub = (*parts, child.name)
             key = "/".join(sub)
+            # `os.lstat`, not `child.stat()`: on Windows a DirEntry's stat is
+            # the copy of the times NTFS keeps in the parent folder's listing,
+            # which it refreshes lazily (a folder's copy only once the folder
+            # itself is opened and closed, as listing it here does), so two
+            # looks a moment apart saw a folder's time move with nothing
+            # written (M15-19; shown on windows-latest in run 44409573297,
+            # where os.lstat was stable across three looks). `os.lstat` reads the path's own record, as
+            # the root's `lstat` above does. On POSIX both are lstat(2).
             try:
-                st = child.stat(follow_symlinks=False)
+                st = os.lstat(child.path)
             except OSError as exc:
                 found[key] = Entry(kind="unreadable", error=f"{type(exc).__name__}: {exc.strerror}")
                 continue
@@ -923,6 +932,60 @@ def test_added_and_removed_paths_are_found_constructed(tmp_path: Path) -> None:
         f"removed  {FLAVOR}/WTF/Config.wtf (file)",
         f"added    {FLAVOR}/WTF/Config.wtf.lock (file)",
     ]
+
+
+def _tree_over_ticks(tmp_path: Path) -> Path:
+    """`_tree`, but each step a clock tick after the one before, as on a
+    loaded runner: each folder's time is then a later child's, not its own
+    creation's (M15-19)."""
+    root = tmp_path / "World of Warcraft"
+    steps: list[Callable[[], object]] = [
+        lambda: (root / FLAVOR / "WTF").mkdir(parents=True),
+        lambda: (root / FLAVOR / "WTF" / "Config.wtf").write_bytes(b'SET a "1"\n'),
+        lambda: (root / FLAVOR / "World of Warcraft.app" / "Contents" / "MacOS").mkdir(
+            parents=True
+        ),
+        lambda: (
+            root / FLAVOR / "World of Warcraft.app" / "Contents" / "MacOS" / "World of Warcraft"
+        ).write_bytes(b"constructed"),
+        lambda: (root / "Data" / "data").mkdir(parents=True),
+        lambda: (root / "Data" / "data" / "data.000").write_bytes(b"0123456789"),
+        lambda: (root / ".build.info").write_bytes(b"constructed\n"),
+    ]
+    for step in steps:
+        step()
+        time.sleep(0.03)
+    return root
+
+
+def test_two_looks_at_a_tree_built_over_several_ticks_agree_constructed(
+    tmp_path: Path,
+) -> None:
+    """On Windows a DirEntry's stat of a folder is the parent listing's copy
+    of its times, refreshed only once the folder itself is listed, so the
+    sweep's first look saw older folder times than its second (M15-19, run
+    44409573297). Each path's own record is read instead."""
+    root = _tree_over_ticks(tmp_path)
+    first = install_fingerprint(root)
+    for key, entry in first.items():
+        assert entry.mtime_ns == (root / key).lstat().st_mtime_ns, key
+    assert differences(first, install_fingerprint(root)) == []
+
+
+def test_a_file_created_removed_or_rewritten_is_found_constructed(tmp_path: Path) -> None:
+    """The three writes the sweep exists to catch, with no folder time put
+    back, on a tree whose folder times the M15-19 change reads differently."""
+    root = _tree_over_ticks(tmp_path)
+    wtf = root / FLAVOR / "WTF"
+    for write, expected in [
+        (lambda: (wtf / "new.txt").write_bytes(b"x"), f"added    {FLAVOR}/WTF/new.txt (file)"),
+        (lambda: (wtf / "new.txt").unlink(), f"removed  {FLAVOR}/WTF/new.txt (file)"),
+        (lambda: (wtf / "Config.wtf").write_bytes(b'SET a "22"\n'), f"{FLAVOR}/WTF/Config.wtf: "),
+    ]:
+        before = install_fingerprint(root)
+        write()
+        lines = differences(before, install_fingerprint(root))
+        assert any(expected in line for line in lines), (expected, lines)
 
 
 def test_data_and_executables_compare_by_size_and_time_constructed(tmp_path: Path) -> None:
