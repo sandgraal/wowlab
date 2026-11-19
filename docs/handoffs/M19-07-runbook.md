@@ -118,7 +118,7 @@ Each step says what it settles.
     ```
 
     - *Report:* paste its output. It holds no names, and it gives the
-      skipped count and how many players have each role.
+      skipped count and how many players have a role at all.
 
 15. Does the game's backup hold the book? This prints a number only:
 
@@ -146,8 +146,14 @@ Each step says what it settles.
   line number, not a player.
 - **The book is gone after a login:** do not play on. Close the game and
   tell the conductor: this is the loader bug §20.6 names. The snapshot
-  from step 4 holds the book as it was then (`uv run wowlab snap list`
-  shows it, and `uv run wowlab snap restore` puts it back, asking first).
+  from step 4 holds the book as it was then. `uv run wowlab snap list`
+  gives its id, and this puts back that one file and nothing else, asking
+  first:
+
+  ```bash
+  uv run wowlab snap restore <ID> --paths "WTF/Account/<your account folder>/SavedVariables/WowLab.lua"
+  ```
+
   What was recorded after that snapshot is lost. `wowlab undo` does not
   help here: it reverses wowlab's own last change, which is the addon
   install.
