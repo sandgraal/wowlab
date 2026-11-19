@@ -49,6 +49,7 @@ from wowlab_core.cli._common import (
     _bytes,
     _client_running,
     _confirm,
+    _crew_export_line,
     _discover,
     _emit,
     _emit_manifest,
@@ -628,7 +629,8 @@ def snap_export(
     """Write one snapshot, with every file it holds, into a single new FILE
     that `wowlab snap import` reads on another computer. Reads the store
     only and opens nothing in a game install; FILE inside an install is
-    refused.
+    refused. When a file in it holds the crew book, says so and how many
+    players it keeps.
 
     \f
     JSON: snaparchive.ExportReport."""
@@ -642,6 +644,9 @@ def snap_export(
         f"  {report.files} file(s), {_bytes(report.bytes)}; "
         f"the archive is {_bytes(report.archive_bytes)}"
     )
+    crew = _crew_export_line(report.crew_book)
+    if crew is not None:
+        _say(f"  {crew}")
 
 
 @snap_app.command("import", short_help="Add a snapshot from a file snap export wrote.")

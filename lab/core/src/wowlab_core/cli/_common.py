@@ -39,6 +39,7 @@ from typer.core import TyperGroup
 
 from wowlab_core import (
     __version__,
+    crewcount,
     guard,
     install,
     keymap,
@@ -2134,6 +2135,59 @@ _BLOCKED_PLACE = {
 
 def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+# ─── the crew book in exports and plans (§20.3, §20.5 term 4; M19-11) ───────
+
+
+def _crew_state_words(carried: crewcount.CrewBookCarried) -> str:
+    """ "on, 3 players" or "turned off, 3 players kept": counts only."""
+    if carried.on:
+        return f"on, {_plural(carried.players, 'player')}"
+    return f"turned off, {_plural(carried.players, 'player')} kept"
+
+
+def _crew_unread_words(carried: crewcount.CrewBookCarried) -> str:
+    return "a copy" if carried.unreadable == 1 else f"{carried.unreadable} copies"
+
+
+def _crew_export_line(carried: crewcount.CrewBookCarried | None) -> str | None:
+    """`snap export`'s one sentence on the crew book the archive holds:
+    None when it holds none, or only books that keep no player."""
+    if carried is None:
+        return None
+    readable = carried.readable > 0 and carried.players > 0
+    if readable and carried.unreadable:
+        return (
+            f"This archive includes the crew book ({_crew_state_words(carried)}) and "
+            f"{_crew_unread_words(carried)} of it wowlab cannot read."
+        )
+    if readable:
+        return f"This archive includes the crew book: {_crew_state_words(carried)}."
+    if carried.unreadable:
+        return (
+            "This archive includes a crew book wowlab cannot read, which may hold the players "
+            "you grouped with."
+        )
+    return None
+
+
+def _crew_plan_line(carried: crewcount.CrewBookCarried | None) -> str | None:
+    """A write plan's one sentence on the crew book it brings back: None
+    when it brings none back."""
+    if carried is None:
+        return None
+    if carried.readable and carried.unreadable:
+        return (
+            f"  This brings back the crew book ({_crew_state_words(carried)}) and "
+            f"{_crew_unread_words(carried)} of it wowlab cannot read."
+        )
+    if carried.readable:
+        return f"  This brings back the crew book: {_crew_state_words(carried)}."
+    return (
+        "  This brings back a crew book wowlab cannot read, so it cannot say whether it is on "
+        "or how many players it keeps."
+    )
 
 
 def _first_name_folder(e: labaddon.CharacterFile) -> bool:

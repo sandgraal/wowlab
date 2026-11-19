@@ -141,6 +141,7 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on
         "plan_lines",
         "written_paths",
         "unlisted_written",
+        "crew_book",  # M19-11: the crew book the undo brings back, counts only
     ]
     assert list(cli.SvMergeReport.model_fields) == [
         *merge_before,
@@ -148,6 +149,7 @@ def test_json_gains_exactly_the_pin_fields_on_the_merge_report_and_plan_lines_on
         "merged_sha256",
         "removed",  # M16-12: every key the merge removes, and --replace
         "replace",
+        "crew_book",  # M19-11: the crew book the merge brings back, counts only
     ]
 
 

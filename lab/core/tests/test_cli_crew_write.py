@@ -847,6 +847,36 @@ def test_the_record_reported_is_this_write_s_even_with_a_newer_one_constructed(
     assert rep.transaction == guard.history()[-1].id != "someone-else"
 
 
+@pytest.mark.parametrize(
+    ("args", "words"),
+    [
+        (("forget", KEY_A), "on, 3 players"),
+        (("forget", "--all"), "on, 3 players"),
+        (("rate", KEY_A, "bad"), "on, 3 players"),
+        (("note", KEY_A, NOTE_B), "on, 3 players"),
+    ],
+)
+def test_undo_of_a_crew_write_says_it_brings_the_book_back_without_a_name_constructed(
+    make: Any, args: tuple[str, ...], words: str
+) -> None:
+    """M19-11's sentence in the plan of `undo` after one of these writes;
+    the crew writes' own plans do not carry it."""
+    data = _three(note=NOTE)
+    env = make(data, backup=data)
+    own = env.run("crew", *args, input="")
+    assert "brings back the crew book" not in own.stdout + own.stderr
+    env.ok("crew", *args, "--yes")
+    plan = runner.invoke(cli.app, ["undo"], input="", terminal_width=10_000)
+    assert plan.exit_code == 1, (plan.stdout, plan.stderr)
+    shown = plan.stdout + plan.stderr
+    assert f"This brings back the crew book: {words}." in shown
+    as_json = runner.invoke(cli.app, ["undo", "--json"], input="", terminal_width=10_000)
+    for text in (KEY_A, KEY_B, KEY_C, NOTE, NOTE_B, "Fakerealm", "Invented"):
+        assert text not in shown and text not in as_json.stdout, text
+    done = runner.invoke(cli.app, ["undo", "--yes"])
+    assert done.exit_code == 0 and env.live() == data and env.bak().read_bytes() == data
+
+
 def test_undo_help_names_the_crew_commands() -> None:
     result = runner.invoke(cli.app, ["undo", "--help"], terminal_width=200)
     text = " ".join(result.stdout.split())
