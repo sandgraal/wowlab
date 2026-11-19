@@ -105,10 +105,8 @@ CONSTRUCTED_TEST_FILES = frozenset(
     {
         "tests/scripts/test_lab_capture_crew.py",
         "tests/repo/test_crew_book_out_of_repo.py",
-        # M19-01: the addon's static checks, on constructed Crew.lua sources.
-        # Split so test_addon_mutation_marking does not take this file for
-        # one that loads the addon grader.
-        "tests/addon/test_lab" + "_addon.py",
+        # M19-01: the constructed Crew.lua sources the addon grader checks.
+        "tests/addon/_crew_constructed.py",
     }
 )
 FIXTURES = "lab/core/tests/fixtures/"
