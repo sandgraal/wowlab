@@ -2,7 +2,7 @@
 
 Moved here from the end of `docs/LAB_PLAN.md` on 2026-11-19, unchanged, because the plan had
 reached the repository's 512 KB limit for one file. A reference to "Appendix A", "A.1" to
-"A.5", or to an older wording of §6.10 resolves here.
+"A.8", or to an older wording of §6.10 resolves here.
 
 §6.10 was rewritten as one current section on 2026-11-12 (M16-110), with no rule changed. This appendix keeps what it replaced, unchanged: the base text of M10-11 (A.1) and each dated amendment in the order it was added (A.2 to A.8). The one exception is the dated 2026-11-12 sentence on `undone_as` under A.8's (a1), added by PR #500 on the same day and kept here so both texts carry it. Every owner decision keeps its date and its words here. If §6.10 and this appendix read differently, that is an error in §6.10: the latest dated amendment here governs until §6.10 is corrected.
 

@@ -6825,5 +6825,5 @@ text is what M20-07 is built from.
 ## Appendix A. §6.10's earlier text and its dated amendments
 
 *Moved on 2026-11-19, unchanged, to `docs/handoffs/LAB_PLAN-appendix-A.md`: this file had
-reached the repository's 512 KB limit. A reference to "Appendix A", "A.1" to "A.5", or to an
+reached the repository's 512 KB limit. A reference to "Appendix A", "A.1" to "A.8", or to an
 older wording of §6.10 resolves there.*
