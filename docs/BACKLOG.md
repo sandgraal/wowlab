@@ -1535,6 +1535,15 @@ A probe only, as M15-24 was. M15-24 found points 26 to 33 of both fixture body m
 
 ---
 
+## [ ] M15-27 — `char model` draws held items sheathed, labelled approximate
+**Size:** M · **Depends on:** M15-26 · **Sources:** `docs/LAB_PLAN.md` §17.6 (the M15-24 and M15-26 notes), `docs/LAB_FORMATS.md` §12 (amendment of 2026-11-19); owner decision, 2026-11-19 ("draw them now, labelled")
+
+`char model` places a main-hand, off-hand and shield item at a sheath point (26 to 28, 30 to 33), using the sheath bone's first rotation key applied about its pivot after its parent chain's rest transforms, and the item's `SheatheType` to pick the point. Every fact this rests on is unconfirmed (M15-26's list: the decoding rule, how the rotation combines with the parent, which axis of an item is its length, the axis signs, the `SheatheType` mapping, the item's grip origin), so the text output, `--json` and the report say for each such item "drawn sheathed, placement approximate (not yet confirmed)" once per report, and a `--no-held` option leaves them out as today. An item whose point, bone or sheathe type cannot be resolved stays not drawn, with the reason. No animation is played and the rest pose is unchanged.
+
+**Acceptance:** constructed tests of the transform (a bone with a known rotation and pivot under a parent with a known transform puts a marker where arithmetic says); the derived fixture's rows used, not new reads of the install; the two fixture characters' reports list their weapons as drawn sheathed with the caveat; `--no-held` reproduces today's output byte for byte; the GLB re-parsed in the test; the owner's check in a glTF viewer listed in the PR as the only proof of placement. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: weapons appear in `char model`, labelled approximate; release notes and the wiki.
+
+---
+
 ## [x] M15-17 — Leftovers from the M15-06 to M15-09 reviews
 **Size:** XS · **Depends on:** M15-07, M15-08 · **Sources:** the reviews of #595, #597 and #598 (2026-11-18)
 
@@ -3571,6 +3580,15 @@ Install the addon from `main`, then, with the conductor's runbook beside you (`d
 *Owner decision, 2026-11-19:* build it, on the command line only; `wowlab ui` does not offer it. ADR-0036's term 5 has the player remove snapshots to drop the copies they hold, and wowlab has no command that removes one. `wowlab snap rm ID [ID…]` removes a snapshot's manifest under the store lock, with a plan first and a confirmation; `snap gc` then drops the objects nothing references. It refuses a snapshot a journal record needs unless `--break-undo` is given; the plan then says that `undo` of that change and of every earlier one becomes impossible. `undo` of such a record refuses and changes nothing, with the message it gives on `main` for an unreadable snapshot: no new recovery wording (ADR-0037). It never touches the install. §6's snapshot section gains the command with a dated note.
 
 **Acceptance:** tests on a constructed store: plan, confirm, the manifest gone and `snap verify` clean on the rest; `snap gc` afterwards drops the unreferenced objects and nothing else; refusal on an unknown id, on a snapshot a journal record needs, on a store locked by another process; with `--break-undo`, `undo` refuses with the existing message and changes nothing; the full suite green on the PR. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: a new command; release notes and the wiki.
+
+---
+
+## [ ] M19-12 — `snap rm` removes a damaged snapshot named by its full id
+**Size:** S · **Depends on:** M19-09 · **Sources:** the code and security reviews of #639 (2026-11-19); ADR-0036 term 5; ADR-0037; owner decision, 2026-11-19 ("allow by full id")
+
+Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while any manifest is damaged, so one broken snapshot that holds a forgotten player's copy can never be cleared by wowlab. `snap rm <full id>` removes a manifest that cannot be read when the id typed is the complete id (never a prefix, never among several ids unless each is complete), after a plan that says the snapshot is damaged, that wowlab cannot tell what it held or whether a change needs it, and that `--break-undo` is required; `snap gc` then runs. Also, `snap gc`'s own refusal on a damaged manifest (on `main` since before M19-09) passes on the validator's text, which quotes a fragment of the file: it is put in the player's words, as `snap rm`'s is. Nothing else about `snap gc`, `undo` or recovery changes (ADR-0037).
+
+**Acceptance:** tests on a constructed store: a damaged manifest removed by full id with `--break-undo` and refused without it, by prefix, and when a link stands in its place; `snap gc` runs afterwards and drops only unreferenced objects; `snap verify` clean; the refusal and plan in the player's words, quoting nothing from the file. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: one changed refusal and plan of `snap rm`.
 
 ---
 
