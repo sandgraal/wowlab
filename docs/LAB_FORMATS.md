@@ -1272,4 +1272,16 @@ Dated entries, newest last. Each names the fixture that prompted it.
   (keys 66, 67), first array of animation id 0, translation: 959310
   (0.077, −0.791, 1.137) and (0.078, 0.792, 1.136); 917116
   (−0.020, ∓0.573, 0.909). What the numbers mean for drawing is
-  `docs/LAB_PLAN.md` §17.6's note of the same date.
+  `docs/LAB_PLAN.md` §17.6's note of the same date. Unverified before
+  anything is drawn with the sheath keys: the decoding rule; composing a
+  key with its animated spine parent; an item model's long axis and where
+  its grip origin sits; the axis signs; whether the sheath bones have scale
+  tracks (not read); the `SheatheType` mapping, which point of each
+  left/right pair a main-hand or off-hand weapon uses, and whether the
+  client adds its own adjustment per `SheatheType`. `animation_0_array`
+  takes the first array with animation id 0 and keys
+  (`scripts/charmodel_facts.py`, `_keys`) and ignores variations and alias
+  sequences; the animation lookup array at MD20 0x24 is the reliable way
+  to find Stand, and whether id 0 is Stand is from memory. Point 29 is
+  believed to be a nameplate point, not a sheath point, which would
+  explain its missing rotation on 959310 (**[verify]**).
