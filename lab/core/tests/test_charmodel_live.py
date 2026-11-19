@@ -9,7 +9,9 @@ tables and the `macos-70450` lab-addon records, with each file's state from
 `casc.open_source`, draws it with `charmodel.build`, re-reads the `.glb`
 with the tests' stdlib reader, and checks its facts (counts and the MD5s
 of its chunks), each model's and each PNG's, and the body model's
-attachment points with their bones' pivots, against the fixture. Skipped
+attachment points with their bones' pivots, every other attachment point
+the hand and sheath bones' parents, and those bones' key ids, flags and
+track counts (M15-24), against the fixture. Skipped
 when the install has patched past the fixture's build. A read: nothing in
 the install is opened for writing, and nothing is written anywhere.
 """
@@ -77,4 +79,10 @@ def test_live_the_glb_is_the_recorded_one(source: casc.CascSource, char: dict[st
     assert [f.file_data_id for f in built.left_out] == [f["file_data_id"] for f in char["left_out"]]
     data = source.read(plan.body.file_data_id)
     body = m2.parse_m2(data)
-    assert _script().attachment_points(body, data) == char["attachment_points"]
+    script = _script()
+    assert script.attachment_points(body, data) == char["attachment_points"]
+    # M15-24, the held-items probe: every other point, and the hand bones' parents.
+    assert script.other_attachment_points(body, data) == char["other_attachment_points"]
+    assert script.held_point_parents(body, data) == char["held_point_parents"]
+    assert script.sheath_point_parents(body, data) == char["sheath_point_parents"]
+    assert script.bone_facts(body, data) == char["bones"]

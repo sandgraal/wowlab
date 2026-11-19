@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -292,7 +293,10 @@ def test_the_derived_fixture_is_consistent() -> None:
     """The recorded facts of the two fixture characters at 70959 (written by
     `scripts/charmodel_facts.py` on the owner's install; asserted against
     the install by `test_charmodel_live.py`): one node per placed model, the
-    hand points stored at the origin, no path and no geometry."""
+    hand points stored at the origin, no path and no geometry; and the
+    held-items probe's rows (M15-24): points 26 to 33 away from the origin,
+    the hand bones' parents at the origin and the next bone up not, and
+    each named bone's key id, flags and track counts."""
     import json
 
     path = cb.FIXTURES / "macos-70959" / "derived" / "charmodel.json"
@@ -312,6 +316,58 @@ def test_the_derived_fixture_is_consistent() -> None:
         for worn in ("5", "6", "11", "12"):  # shoulders, head, back: away from the origin
             assert any(points[worn]["position"]) and points[worn]["position"][2] > 1.0
         assert all(not m["placed"] for m in char["models"] if m["what"] == "item")
+        # M15-24, the held-items probe. Every other point the file holds, in
+        # file order, none of the seven above, each at its bone's pivot.
+        others = char["other_attachment_points"]
+        ids = [o["id"] for o in others]
+        assert ids == sorted(set(ids)) and not set(ids) & {int(p) for p in points}
+        assert all(o["position"] == o["bone_pivot"] for o in others)
+        # Points 26 to 33 (the community list's sheath points, 29 excepted):
+        # all eight held, each away from the origin.
+        sheath = {o["id"]: o for o in others if 26 <= o["id"] <= 33}
+        assert sorted(sheath) == list(range(26, 34))
+        assert all(o["position"][2] > 1.0 for o in sheath.values())
+        # The hand bones' parents rest at the origin; the next bone up does not.
+        parents = char["held_point_parents"]
+        assert sorted(parents, key=int) == ["0", "1", "2"]
+        for chain in parents.values():
+            assert len(chain) == 2
+            assert not any(chain[0]["bone_pivot"]) and any(chain[1]["bone_pivot"])
+        # Points 26 to 33's bones' parents, by the same walk.
+        sheath_parents = char["sheath_point_parents"]
+        assert sorted(sheath_parents, key=int) == [str(i) for i in range(26, 34)]
+        assert all(len(chain) <= 2 for chain in sheath_parents.values())
+        # Each bone those rows name, and no other, has its key id, flags,
+        # parent and two counted tracks.
+        bones = char["bones"]
+        by_id = {o["id"]: o for o in others} | {int(k): v for k, v in points.items()}
+        named = {by_id[i]["bone"] for i in (0, 1, 2, 5, 6, 11, 12, *range(26, 34))}
+        for chains in (parents, sheath_parents):
+            named |= {link["bone"] for chain in chains.values() for link in chain}
+        assert sorted(bones, key=int) == [str(b) for b in sorted(named)]
+        for bone in bones.values():
+            for track in (bone["translation"], bone["rotation"]):
+                assert (track["sequences"] == 0) == (track["first_keys"] is None)
+        for point, chain in parents.items():
+            # The hand point's own bone has no key id and no translation track;
+            # the two bones above it are key bones with one per sequence.
+            own = bones[str(points[point]["bone"])]
+            assert own["key_bone_id"] == -1 and own["translation"]["sequences"] == 0
+            for link in chain:
+                above = bones[str(link["bone"])]
+                assert above["key_bone_id"] >= 0 and above["translation"]["global_sequence"] == -1
+                assert above["translation"]["sequences"] > 1
+
+    # The hand bones' two ancestors carry the same key ids on both body models.
+    def ancestor_keys(char: dict[str, Any]) -> dict[str, list[int]]:
+        bones = char["bones"]
+        return {
+            point: [bones[str(link["bone"])]["key_bone_id"] for link in chain]
+            for point, chain in char["held_point_parents"].items()
+        }
+
+    first, second = facts["characters"]
+    assert ancestor_keys(first) == ancestor_keys(second)
 
 
 def _counting_decode(monkeypatch: pytest.MonkeyPatch) -> list[int]:
