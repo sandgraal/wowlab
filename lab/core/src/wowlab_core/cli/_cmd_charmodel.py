@@ -107,8 +107,8 @@ class CharModelReport(_Out):
     placed (a held item drawn sheathed carries `sheathed`, its
     `sheath_point`, `rotation` and `placement`, "drawn sheathed, placement
     approximate (not yet confirmed)"; one that could not be, its
-    `sheath_reason`; none with `--no-held`), the body texture's painted and not-painted layers, every file
-    the plan names with its state, the files left out and why, the items
+    `sheath_reason`; none with `--no-held`), the body texture's painted
+    and not-painted layers, every file the plan names with its state, the files left out and why, the items
     not drawn, the two dates (`gear_as_of`: the record's last save, at
     logout or /reload; `look_as_of`: the barber-shop record, whose
     `saved_at` is the latest it can be, older when `carried`),
