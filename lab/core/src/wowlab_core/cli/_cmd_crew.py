@@ -708,7 +708,8 @@ def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool
         f"This command first {saves} a copy that still holds {them}, so `wowlab undo` can "
         f"bring them back. That copy and every earlier snapshot stay in wowlab's snapshot "
         f"folder ({store.path}) until you remove them with `wowlab snap rm` and run "
-        "`wowlab snap gc`. Archives you made with `snap export` keep theirs."
+        "`wowlab snap gc`; files stored in the last hour stay until a `snap gc` run after "
+        "that hour. Archives you made with `snap export` keep theirs."
     ) + (
         " The character's name alone, without the realm, may still be in your notes about "
         "other players: forget looks for the whole name."

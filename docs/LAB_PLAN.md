@@ -1282,7 +1282,17 @@ without the flag names the change by its journal label and says the files
 can no longer be put back as they were before it. A damaged manifest is
 refused in the player's words, pointing at `snap verify`. It shows the plan and asks (`--yes`, `--dry-run`,
 `--json`: `SnapRmReport`, whose `plan_lines` are the text plan). The
-objects stay until `snap gc` drops the ones nothing refers to. The command
+objects stay until `snap gc` drops the ones nothing refers to.
+*2026-11-19 (M19-09 security review):* `snap gc` keeps an unreferenced
+object younger than its grace period (an hour, `GC_GRACE_SECONDS`,
+unchanged), and a forget's pre-write snapshot usually holds one, so a
+forget, `snap rm` and `snap gc` in one sitting can keep the forgotten
+player's copy. `GcReport` gains `kept_young` (the count left only for
+that reason); `snap gc` says it, after "Removed" and after "Nothing to
+collect" alike, and that a run after that hour removes them; `snap rm`'s
+last plan line and its result, and the forget sentence of §20.3, say that
+files stored in the last hour stay until a `snap gc` run after that hour.
+The command
 never opens the install and does not go through `guard`'s transaction: it
 writes only wowlab's own store, as `snap gc` does. `undo` of a record
 whose snapshot was removed refuses and changes nothing, with the message it
@@ -6222,7 +6232,9 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   review):* removing it ends `undo` of that change while it is the most
   recent one; `undo` only ever reverses the most recent change, so it
   never reached an earlier one. `snap rm`'s plan says which case applies
-  (§6.9).
+  (§6.9). *2026-11-19 (M19-09 security review):* the sentence
+  adds, after `wowlab snap gc`, "; files stored in the last hour stay
+  until a `snap gc` run after that hour" (§6.9).
 - **The backup's cases.** `WowLab.lua.bak` absent: left absent. It does
   not hold the player: left alone. It cannot be read, or holds a schema
   wowlab does not know: the forget refuses, naming the file, and changes

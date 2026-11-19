@@ -1214,6 +1214,10 @@ class GcReport(_Frozen):
     points) or not regular files, plus any object whose path changed before
     its delete, as store-relative POSIX paths, sorted (M11-15). Nothing is
     ever deleted through a link."""
+    kept_young: int = 0
+    """How many objects no manifest refers to (and `keep` does not name)
+    were left alone only because they are younger than the grace period;
+    a run after it removes them (M19-09). Not in `unreferenced`."""
 
 
 def default_store_path() -> Path:
@@ -3236,6 +3240,7 @@ class SnapshotStore:
         cutoff = datetime.now(UTC).timestamp() - grace_seconds if grace_seconds > 0 else None
         candidates: list[tuple[str, _ObjectFile]] = []
         skipped: list[str] = []
+        kept_young = 0
         for obj in self._object_files():
             if _is_link_stat(obj.st) or not stat.S_ISREG(obj.st.st_mode):
                 skipped.append(obj.path.relative_to(self.path).as_posix())
@@ -3243,6 +3248,7 @@ class SnapshotStore:
             if obj.name is None or obj.name in referenced or obj.shard_st is None:
                 continue
             if cutoff is not None and obj.st.st_mtime > cutoff:
+                kept_young += 1
                 continue
             candidates.append((obj.name, obj))
         candidates.sort(key=lambda c: c[0])
@@ -3264,6 +3270,7 @@ class SnapshotStore:
             removed=tuple(removed),
             removed_bytes=removed_bytes,
             skipped=tuple(sorted(skipped)),
+            kept_young=kept_young,
         )
 
     def _privatize_existing(self) -> None:

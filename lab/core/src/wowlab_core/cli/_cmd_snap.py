@@ -542,7 +542,8 @@ def snap_gc(
     json_out: JsonOpt = False,
 ) -> None:
     """Remove stored objects that nothing keeps, once they are older than an
-    hour (in case a snapshot is being written). Kept: every
+    hour (in case a snapshot is being written); it says how many younger ones
+    it kept, which a run after that hour removes. Kept: every
     object a snapshot refers to, and what each committed write left in a
     character's WowLab.lua (the lab-addon's per-character file, in any
     install), which the SavedVariables loader check of `sv merge` compares
@@ -612,6 +613,18 @@ def snap_gc(
         )
     else:
         _say(f"Removed {len(report.removed)} object(s), {_bytes(report.removed_bytes)}.")
+    if report.kept_young:
+        _say(_kept_young_line(report.kept_young))
+
+
+def _kept_young_line(n: int) -> str:
+    """What `snap gc` left only because it is younger than an hour (M19-09):
+    a file a snapshot just removed with `snap rm` may still be one of them."""
+    return (
+        f"Kept {n} object(s) no snapshot needs because they were stored in the last hour "
+        "(in case a snapshot is being written); a `wowlab snap gc` run after that hour "
+        "removes them."
+    )
 
 
 class SnapRmItem(_Out):
@@ -685,7 +698,8 @@ def _rm_plan_lines(
                 )
     lines.append(
         "Only the snapshots' records go now. The stored files stay until `wowlab snap gc` "
-        "removes the ones no other snapshot needs."
+        "removes the ones no other snapshot needs; files stored in the last hour stay until "
+        "a `wowlab snap gc` run after that hour."
     )
     return [_safe(line) for line in lines]
 
@@ -826,7 +840,8 @@ def snap_rm(
         return
     _say(
         f"Removed {len(removed)} snapshot(s). `wowlab snap gc` removes the stored files no "
-        "snapshot needs any more."
+        "snapshot needs any more; files stored in the last hour stay until a run after that "
+        "hour."
     )
 
 

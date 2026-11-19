@@ -141,8 +141,18 @@ def test_gc_afterwards_drops_only_the_objects_the_removed_snapshot_alone_held(
     ok("snap", "rm", a.id, "--yes")
     assert _objects(user_data) == before, "rm deletes no object itself"
     _age_objects(user_data)
+    young = store.put_object(b"constructed: an object stored just now\n")
+    text = ok("snap", "gc", "--dry-run").stdout
     report = _json(GcReport, "snap", "gc", "--yes")
     assert set(report.removed) == only_a
+    # The young one is kept and counted, in the "Removed" case too (M19-09
+    # security review), and text and --json agree.
+    assert report.kept_young == 1 and young in _objects(user_data)
+    assert (
+        "Kept 1 object(s) no snapshot needs because they were stored in the last hour"
+        in " ".join(text.split())
+    )
+    store.object_path(young).unlink()  # constructed: out of the way of the counts below
     assert _objects(user_data) == before - only_a
     assert kept <= _objects(user_data)
     verified = store.verify()
