@@ -16,9 +16,10 @@ the required `quality` job, with the rest of `lab/core/tests`.
   Click tree here (each `--yes` leaf with the plan-run shape its
   declarations give it, §16.1), never listed or counted, and the server runs
   it only as a plan, never with `--yes` from a form. On the real tree no
-  `--yes` leaf is excluded; a `--yes` leaf with no shape (a dummy) is
-  excluded with `NO_CONFIRM_SHAPE`, and one the server is made to run
-  without the step fails this check.
+  `--yes` leaf is excluded but the ones an owner ruling keeps on the command
+  line (`EXCLUDED_YES`: `snap rm`, 2026-11-19, M19-09); a `--yes` leaf with
+  no shape (a dummy) is excluded with `NO_CONFIRM_SHAPE`, and one the server
+  is made to run without the step fails this check.
 - `ui` itself is excluded.
 - `looks page --out`, `casc cat --out` (a path, or `-` for the output),
   `char model --out` and `log tail --follow` are refused; `casc cat` and
@@ -88,6 +89,16 @@ EXCLUDED: Mapping[tuple[str, ...], str] = {
 }
 """Leaves excluded for a reason other than `--yes`. A new entry needs its
 reason written here and in the server, and nothing else."""
+
+EXCLUDED_YES: Mapping[tuple[str, ...], str] = {
+    # M19-09: the owner ruled on 2026-11-19 (§20.8 decision 9) that `snap rm`
+    # is offered on the command line only. It declares `--yes`, so it is
+    # kept out of the confirm step by this ruling, never for want of a shape.
+    ("snap", "rm"): "removing a snapshot is offered on the command line only",
+}
+"""`--yes` leaves the owner keeps out of the UI by a ruling of their own.
+Each is excluded with its written reason, here and in the server, and not
+in the confirm step; every other `--yes` leaf goes through it."""
 
 REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     # Owner rulings of 2026-10-15 (ADR-0029).
@@ -193,7 +204,7 @@ def _confirm_step(tree: Any) -> dict[tuple[str, ...], str]:
     """The `--yes` leaves of `tree` that have a plan-run shape, with it."""
     step: dict[tuple[str, ...], str] = {}
     for path, cmd in _leaves(tree):
-        if _declares_yes(cmd) and path != ("ui",):
+        if _declares_yes(cmd) and path != ("ui",) and path not in EXCLUDED_YES:
             shape = _shape_in_tree(path, cmd)
             if shape is not None:
                 step[path] = shape
@@ -366,7 +377,7 @@ def _expected_exclusions(
     confirm_step: Mapping[tuple[str, ...], str] = CONFIRM_STEP,
 ) -> dict[tuple[str, ...], str]:
     expected = {
-        path: NO_CONFIRM_SHAPE
+        path: EXCLUDED_YES.get(path, NO_CONFIRM_SHAPE)
         for path, cmd in _leaves(tree)
         if _declares_yes(cmd) and path not in confirm_step
     }
@@ -647,7 +658,8 @@ def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     tree = _real_tree()
     yes = {path for path, cmd in _leaves(tree) if _declares_yes(cmd)}
     assert yes >= _KNOWN_YES
-    assert set(CONFIRM_STEP) == yes, "a --yes leaf has no plan-run shape"
+    assert set(EXCLUDED_YES) <= yes
+    assert set(CONFIRM_STEP) == yes - set(EXCLUDED_YES), "a --yes leaf has no plan-run shape"
     assert {CONFIRM_STEP[p] for p in [("undo",), ("sv", "merge")]} == {"declined"}
     assert CONFIRM_STEP[("doctor",)] == "doctor"
     assert {p for p, shape in CONFIRM_STEP.items() if shape == "dry_run"} >= _KNOWN_YES - {
@@ -657,7 +669,9 @@ def test_every_yes_leaf_goes_through_the_confirm_step(real: _Served) -> None:
     }
     assert _confirm_problems(tree, real, CONFIRM_STEP) == []
     listed = real.commands()
-    assert {path for path, item in listed.items() if item["excluded"] is not None} == set(EXCLUDED)
+    assert {path for path, item in listed.items() if item["excluded"] is not None} == set(
+        EXCLUDED
+    ) | set(EXCLUDED_YES)
     assert not any(item["excluded"] == NO_CONFIRM_SHAPE for item in listed.values())
     assert {path for path, item in listed.items() if item["confirm"]} == set(CONFIRM_STEP)
     for path in sorted(CONFIRM_STEP):
@@ -726,6 +740,26 @@ def test_the_reason_confirm_flow_m14_has_left_the_code() -> None:
     source = (resources.files(ui) / "__init__.py").read_text(encoding="utf-8")
     assert "confirm flow: M14" not in source
     assert "_CONFIRM_READY" not in source
+
+
+def test_snap_rm_is_offered_on_the_command_line_only(real: _Served) -> None:
+    """M19-09, the owner's ruling of 2026-11-19: `snap rm` is a leaf of the
+    tree that declares `--yes` and `--dry-run`, so it would have the dry-run
+    shape; the ruling excludes it with its own reason instead, its plan run
+    is refused, and so is a confirm or a request that sets `--yes`."""
+    leaves = dict(_leaves(_real_tree()))
+    for path, reason in EXCLUDED_YES.items():
+        assert reason.strip(), path
+        assert path in leaves, f"EXCLUDED_YES names {path}, which is not a leaf"
+        assert _declares_yes(leaves[path]), f"{path} declares no --yes: use EXCLUDED"
+        assert path not in EXCLUDED and path not in CONFIRM_STEP, path
+        item = real.commands()[path]
+        assert item["excluded"] == reason and item["confirm"] is None, path
+        assert real.run(path, {}) == (403, {"error": "excluded"}), path
+        assert real.run(path, {"snapshot_ids": ["latest"]}) == (403, {"error": "excluded"}), path
+        assert real.run(path, {"yes": True})[0] == 403, path
+    assert _shape_in_tree(("snap", "rm"), leaves[("snap", "rm")]) == "dry_run"
+    assert ui._EXCLUDED_LEAVES[("snap", "rm")] == EXCLUDED_YES[("snap", "rm")]
 
 
 def test_the_crew_commands_both_ways(real: _Served) -> None:

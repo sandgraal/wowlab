@@ -151,6 +151,7 @@ def test_commands_are_registered_in_the_order_they_were_before_the_split() -> No
         "diff",
         "verify",
         "gc",
+        "rm",  # M19-09, added after the split
         "export",
         "import",
         "restore",

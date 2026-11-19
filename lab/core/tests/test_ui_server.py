@@ -1405,9 +1405,12 @@ def test_every_yes_leaf_of_the_real_tree_refuses_yes_and_ui_is_refused(
     assert {("snap", "gc"), ("doctor",), ("snap", "restore"), ("undo",)} <= every
     assert ("ui",) in leaves
     for path in sorted(every):
+        # M19-09: a `--yes` leaf the owner keeps on the command line (`snap
+        # rm`) is refused whole, before its parameters are looked at.
+        want = "excluded" if path in _ui()._EXCLUDED_LEAVES else "unknown_parameter"
         for params in ({"yes": True}, {"yes": False}):
             reply = _run(real, path, params)
-            assert (reply.status, reply.error()) == (403, "unknown_parameter"), (path, params)
+            assert (reply.status, reply.error()) == (403, want), (path, params)
     reply = _run(real, ["ui"], {})
     assert (reply.status, reply.error()) == (403, "excluded")
     assert recorder.calls() == []
