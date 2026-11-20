@@ -7,7 +7,7 @@ all) the three things `docs/LAB_PLAN.md` §20.1 says a scan must pin:
 
 - nothing is registered, called or created while the book's `on` is absent
   or false (ADR-0036 term 2);
-- the note rule (200 bytes after removing control characters and `|` and
+- the note rule (2,000 bytes since M20-14, 200 before, after removing control characters and `|` and
   trimming spaces; a longer note refused, never cut), held in a named
   constant and two short functions;
 - the drop order (5,000 players; the unrated, un-noted player with the
@@ -164,16 +164,41 @@ def test_crew_book_source_scan_the_book_is_created_and_turned_on_only_by_crew_on
 # --- The note rule (§20.1 "Limits") -------------------------------------------
 
 
+# Every name that takes part of a string: Lua's `sub` (as `string.sub`,
+# `s:sub` or a local alias's field), the client's `strsub`, and `format` /
+# `strformat`, whose `%.Ns` keeps the first N bytes.
+_CUT_NAMES = frozenset({"sub", "strsub", "format", "strformat"})
+_PRECISION = re.compile(r"%[-+ #0]*\d*\.\d*s")
+
+
+def _cuts_outside_note_start(flow: g._Flow) -> list[str]:
+    """Each substring call or `%.Ns` precision in Crew.lua outside the one
+    noteStart (labelled source scan; M20-14 fix round 1)."""
+    t = flow.tokens
+    heads = [h for h, lab in flow.labels.items() if lab == "noteStart"]
+    inside = flow.functions[heads[0]] if len(heads) == 1 else None
+    bad = []
+    for k, x in enumerate(t):
+        cut = (x.kind == "name" and x.text in _CUT_NAMES) or (
+            x.kind == "string" and _PRECISION.search(x.text) is not None
+        )
+        if cut and (inside is None or flow.function_at(k) is not inside):
+            bad.append(f"line {x.line}: {x.text!r} outside noteStart")
+    return bad
+
+
 def test_crew_book_source_scan_the_note_rule_is_named_and_refuses_not_cuts() -> None:
-    """Labelled source scan: NOTE_MAX_BYTES is 200; cleanNote removes control
+    """Labelled source scan: NOTE_MAX_BYTES is 2,000 (M20-14; it was 200); cleanNote removes control
     characters and `|` byte by byte (`%c` is the bytes 0 to 31 and 127, so a
     multi-byte character is left alone) and then trims spaces; noteFits
     measures the cleaned bytes; the slash handler refuses a note that does not
     fit (and returns) before anything is read or stored, and stores only the
-    cleaned text. Nothing in the file shortens a note (no `string.sub`)."""
+    cleaned text. Nothing in the file shortens a stored note: the one
+    `string.sub` is in noteStart (M20-14), whose result is only shown on the
+    tooltip line, and `.note` is stored only by the slash handler."""
     flow = _flow()
     text = CREW.read_text(encoding="utf-8")
-    assert re.search(r"^local NOTE_MAX_BYTES = 200$", text, re.MULTILINE)
+    assert re.search(r"^local NOTE_MAX_BYTES = 2000$", text, re.MULTILINE)
     assert _text(flow, "cleanNote") == (
         'function cleanNote ( text ) if type ( text ) ~= "string" then return "" end '
         'local removed = string . gsub ( text , "[%c|]" , "" ) '
@@ -183,7 +208,17 @@ def test_crew_book_source_scan_the_note_rule_is_named_and_refuses_not_cuts() -> 
     assert (
         _text(flow, "noteFits") == "function noteFits ( note ) return # note <= NOTE_MAX_BYTES end"
     )
-    assert not re.search(r"\bsub\s*\(", text)
+    rendered = g._render(flow.tokens)
+    start = _text(flow, "noteStart")
+    assert rendered.count(" . sub (") == start.count(" . sub (") == 2
+    # Fix round 1 (code review of #673): no substring call in any form
+    # (`string.sub`, `:sub`, `.sub`, `strsub`, a `format` and its `%.Ns`
+    # precision) outside noteStart, whose result is only shown.
+    assert not _cuts_outside_note_start(flow), _cuts_outside_note_start(flow)
+    assert rendered.count("noteStart (") == 2  # its definition, and one call
+    assert "shown ( noteStart ( entry . note ) )" in _text(flow, "tipText")
+    # The two stores below, nothing else (`. note ==` is a comparison).
+    assert len(re.findall(r"\. note = (?!=)", rendered)) == 2
     command = _text(flow, g.CREW_COMMAND)
     refusal = 'if verb == "note" and not noteFits ( tidy ) then'
     assert command.count(refusal) == 1

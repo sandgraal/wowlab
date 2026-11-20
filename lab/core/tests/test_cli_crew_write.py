@@ -402,8 +402,8 @@ def test_rate_and_note_plans_write_nothing_constructed(make: Any) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("x" * 201, id="201-bytes"),
-        pytest.param("漢" * 67, id="201-bytes-of-cjk"),
+        pytest.param("x" * 2001, id="2001-bytes"),
+        pytest.param("漢" * 667, id="2001-bytes-of-cjk"),
         pytest.param("tab\there", id="tab"),
         pytest.param("line\nbreak", id="line-break"),
         pytest.param("del\x7f", id="del"),
@@ -424,8 +424,8 @@ def test_a_note_over_the_limit_or_with_a_control_character_or_pipe_is_refused_co
     assert env.live() == data and guard.history() == ()
 
 
-def test_a_note_of_exactly_200_bytes_after_trimming_is_kept_constructed(make: Any) -> None:
-    text = "漢" * 66 + "xy"  # 198 + 2 bytes
+def test_a_note_of_exactly_2000_bytes_after_trimming_is_kept_constructed(make: Any) -> None:
+    text = "漢" * 666 + "xy"  # 1,998 + 2 bytes (M20-14: the limit was 200)
     assert len(text.encode()) == crewedit.NOTE_MAX_BYTES
     env = make(_three())
     env.ok("crew", "note", KEY_A, f"   {text} ", "--yes")

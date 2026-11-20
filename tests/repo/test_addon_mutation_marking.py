@@ -59,8 +59,9 @@ def test_the_list_is_every_file_that_loads_the_grader() -> None:
     listed = set(_root_conftest().ADDON_MUTATION_FILES)
     # M20-13 deleted the clock probe (the clock rule left with ADR-0026's
     # note of 2026-11-20) and added its code review's probe.
-    assert len(listed) == 18, (
-        "M15-21's seventeen, M20-11's one and M20-13's one, less the clock probe"
+    # M20-14 added its code review's probe.
+    assert len(listed) == 19, (
+        "M15-21's seventeen, M20-11's one, M20-13's one and M20-14's one, less the clock probe"
     )
     found = _files_loading_the_grader()
     assert found - listed == set(), "load the addon grader but are not in ADDON_MUTATION_FILES"

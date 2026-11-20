@@ -66,8 +66,13 @@ local NEAR_FULL_SECONDS = 604800
 -- The note rule (§20.1 "Limits"): control characters and | are removed byte
 -- by byte (multi-byte text is left alone), spaces are trimmed, and what is
 -- left may be at most NOTE_MAX_BYTES bytes. A longer note is refused, never
--- cut (cleanNote, noteFits).
-local NOTE_MAX_BYTES = 200
+-- cut (cleanNote, noteFits). 2,000 since M20-14 (owner decision, 2026-11-20;
+-- it was 200).
+local NOTE_MAX_BYTES = 2000
+-- The tooltip line (M20-14) shows at most TIP_NOTE_CHARS characters of a note,
+-- cut before a character's first byte (noteStart), never inside one. Only the
+-- line is cut; the stored note is not.
+local TIP_NOTE_CHARS = 60
 -- The debounce the sections use, and the first pass's wait (Core.lua).
 local DEBOUNCE = 2
 local FIRST_PASS_DELAY = 15
@@ -99,6 +104,8 @@ local firstDone = false -- ... and has run
 local greeted = false -- the login line was printed
 local fullSaid = false -- "the book is full" was printed
 local rosterAbsent = nil -- why the roster event could not be registered
+local tipHooked = false -- the tooltip hook was tried (once per session)
+local tipAbsent = nil -- why no tooltip line can be shown
 -- The keys of the match being written (recordMatch): makeRoom never drops one.
 local roomKeep = nil
 -- The instance of the current pass (readWhere): open world true or false,
@@ -419,6 +426,9 @@ local function fieldsMissing()
     if type(issecretvalue) ~= "function" then
         missing = missing .. " Values are not tested for secrets: the client has no issecretvalue function."
     end
+    if tipAbsent ~= nil then
+        missing = missing .. tipAbsent
+    end
     if missing == "" then
         return nil
     end
@@ -524,6 +534,183 @@ local function lineFor(label)
         text = text .. " Your note: " .. shown(entry.note)
     end
     return text .. " (The book knows names, not people.)"
+end
+
+-- The start of a note for the tooltip line: at most TIP_NOTE_CHARS
+-- characters, cut before the first byte of the next character (a byte below
+-- 128 or from 192 up starts one), so no character is split. Only the line is
+-- cut; the stored note is never shortened.
+local function noteStart(note)
+    if type(note) ~= "string" then
+        return ""
+    end
+    local size = #note
+    local cut = size
+    local chars = 0
+    for i = 1, size do
+        local byte = string.byte(note, i)
+        if byte < 128 or byte >= 192 then
+            chars = chars + 1
+            if chars > TIP_NOTE_CHARS then
+                cut = i - 1
+                break
+            end
+        end
+    end
+    if cut < size then
+        return string.sub(note, 1, cut) .. "..."
+    end
+    return string.sub(note, 1, size)
+end
+
+-- The tooltip line for one kept player (M20-14): the rating, the matches with
+-- and against you, and the start of the note, in the warning's words; nil
+-- when the book holds none of the three. One lookup, no walk of the book.
+local function tipText(key)
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local entry = WowLabCrewDB.players[key]
+    if type(entry) ~= "table" then
+        return nil
+    end
+    local text = ""
+    if entry.rating == "good" then
+        text = text .. " You rated good."
+    elseif entry.rating == "bad" then
+        text = text .. " You rated bad."
+    end
+    local allied = ns.Number(entry.allied) or 0
+    local faced = ns.Number(entry.faced) or 0
+    if allied > 0 or faced > 0 then
+        text = text .. " In matches with you " .. allied .. ", against you " .. faced .. "."
+    end
+    if type(entry.note) == "string" and entry.note ~= "" then
+        text = text .. " Your note: " .. shown(noteStart(entry.note))
+    end
+    if text == "" then
+        return nil
+    end
+    return "Crew book:" .. text
+end
+
+-- The key of the player under the mouse, built as the roster pass builds a
+-- member's (name-realm, a missing realm being the owner's own); nil for
+-- anything else, and when the name or realm is a secret value.
+local function hoverKey()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(UnitIsPlayer) ~= "function" or type(UnitName) ~= "function" then
+        return nil
+    end
+    local isPlayer = UnitIsPlayer("mouseover")
+    local name, realm = UnitName("mouseover")
+    if secret(isPlayer) or secret(name) or secret(realm) then
+        return nil
+    end
+    if
+        not secret(isPlayer)
+        and isPlayer
+        and not secret(name)
+        and not secret(realm)
+        and type(name) == "string"
+        and name ~= ""
+        and name ~= UNKNOWNOBJECT
+    then
+        if type(realm) == "string" and realm ~= "" then
+            local key = name .. "-" .. realm
+            return key
+        elseif type(GetNormalizedRealmName) == "function" then
+            local home = GetNormalizedRealmName()
+            if not secret(home) and type(home) == "string" and home ~= "" then
+                local key = name .. "-" .. home
+                return key
+            end
+        end
+    end
+    return nil
+end
+
+-- Adds the line to the game's tooltip when the book holds the player.
+local function tipShow()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local key = hoverKey()
+    if type(key) ~= "string" then
+        return
+    end
+    local text = tipText(key)
+    if type(text) ~= "string" then
+        return
+    end
+    GameTooltip:AddLine(text, 1, 0.82, 0, true)
+end
+
+-- The tooltip hook (M20-14). Installed only while the book is on (hookTooltip);
+-- once installed it stays for the session, so it starts with the on and combat
+-- tests: with the book off or in combat it does nothing. Only the game's own
+-- tooltip gets the line, and the work runs inside pcall, so an error cannot
+-- break the tooltip. [verify] on the Forever client: the hook call, that the
+-- tooltip's unit is "mouseover", that adding a line taints nothing, and
+-- whether a name is a secret value in an instance.
+local function onTooltip(tooltip)
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if tooltip ~= GameTooltip then
+        return
+    end
+    pcall(tipShow)
+end
+
+-- Installs the tooltip hook, once per session, only while the book is on and
+-- out of combat, the modern way (TooltipDataProcessor), tested for first. A
+-- client without it gets no tooltip line, and `/wowlab crew` says why.
+local function hookTooltip()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if tipHooked then
+        return
+    end
+    tipHooked = true
+    if type(TooltipDataProcessor) ~= "table" or type(TooltipDataProcessor.AddTooltipPostCall) ~= "function" then
+        tipAbsent = " No tooltip line: the client has no TooltipDataProcessor.AddTooltipPostCall function."
+        return
+    end
+    if type(Enum) ~= "table" or type(Enum.TooltipDataType) ~= "table" then
+        tipAbsent = " No tooltip line: the client has no Enum.TooltipDataType table."
+        return
+    end
+    local unitType = Enum.TooltipDataType.Unit
+    if secret(unitType) then
+        tipAbsent = " No tooltip line: the client did not say which tooltips show a unit."
+        return
+    end
+    if not secret(unitType) and type(unitType) ~= "number" then
+        tipAbsent = " No tooltip line: the client did not say which tooltips show a unit."
+        return
+    end
+    if not pcall(TooltipDataProcessor.AddTooltipPostCall, unitType, onTooltip) then
+        tipAbsent = " No tooltip line: the client refused the tooltip hook."
+    end
 end
 
 -- The instance the owner is in now, for this pass.
@@ -1160,6 +1347,7 @@ local function onRegen()
         return
     end
     pcall(pvpPass)
+    hookTooltip()
     kick()
 end
 
@@ -1231,6 +1419,7 @@ local function onWorld()
     end
     pcall(nearFull)
     pcall(pvpPass)
+    hookTooltip()
     kick()
 end
 
@@ -1539,7 +1728,7 @@ function ns.CrewCommand(word)
                 .. #tidy
                 .. " bytes after removing control characters and |; a note holds at most "
                 .. NOTE_MAX_BYTES
-                .. " bytes (about 66 characters of Chinese, Japanese or Korean). Nothing was changed."
+                .. " bytes (about 666 characters of Chinese, Japanese or Korean). Nothing was changed."
         )
         return
     end

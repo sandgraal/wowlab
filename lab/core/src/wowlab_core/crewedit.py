@@ -35,7 +35,7 @@ from wowlab_core.luaquote import lua_quote
 
 # The longest note, in UTF-8 bytes after trimming spaces (§20.1): the same
 # measure the addon applies in game.
-NOTE_MAX_BYTES = 200
+NOTE_MAX_BYTES = 2000
 
 Field = Literal["rating", "note"]
 
@@ -90,7 +90,7 @@ def check_note(text: str) -> str | None:
     if len(data) > NOTE_MAX_BYTES:
         raise CrewEditError(
             f"The note is {len(data)} bytes long; a note holds at most {NOTE_MAX_BYTES} bytes "
-            "(about 66 characters of Chinese, Japanese or Korean text). It was not cut; "
+            "(about 666 characters of Chinese, Japanese or Korean text). It was not cut; "
             "nothing was changed."
         )
     return trimmed or None

@@ -299,7 +299,7 @@ def test_the_database_refuses_a_row_changed_since_it_was_read_constructed(make: 
 @pytest.mark.parametrize(
     "text",
     [
-        "x" * 201,
+        "x" * 2001,
         "a\tb",
         "a|cff00ff00b",
         "a" + chr(0x200B) + "b",  # Cf
@@ -307,7 +307,7 @@ def test_the_database_refuses_a_row_changed_since_it_was_read_constructed(make: 
         "a" + chr(0x2029) + "b",  # Zp
         "a" + chr(0x85) + "b",  # C1
     ],
-    ids=["over-200-bytes", "control", "bar", "cf", "zl", "zp", "c1"],
+    ids=["over-2000-bytes", "control", "bar", "cf", "zl", "zp", "c1"],
 )
 def test_a_database_only_note_keeps_the_note_rules_constructed(make: Any, text: str) -> None:
     env = make(_three())
@@ -320,10 +320,10 @@ def test_a_database_only_note_keeps_the_note_rules_constructed(make: Any, text: 
     assert env.rows()[KEY_C].note is None
 
 
-def test_a_database_only_note_of_200_bytes_is_kept_whole_constructed(make: Any) -> None:
+def test_a_database_only_note_of_2000_bytes_is_kept_whole_constructed(make: Any) -> None:
     env = make(_three())
     _dropped(env)
-    text = "é" * 100  # 200 bytes
+    text = "é" * 1000  # 2,000 bytes (M20-14: the limit was 200)
     assert env.run("crew", "note", KEY_C, text, "--yes").exit_code == 0
     assert env.rows()[KEY_C].note == text
 
