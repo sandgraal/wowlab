@@ -3738,7 +3738,7 @@ own integer limit does not.
 
 ---
 
-## [ ] M20-11 — The addon records matches, opponents and what the client shows of each player
+## [x] M20-11 — The addon records matches, opponents and what the client shows of each player
 **Size:** L · **Depends on:** M20-05, M20-09 · **Sources:** `docs/LAB_PLAN.md` §21.2 with its note of 2026-11-20; ADR-0036 with its notes of 2026-11-20
 
 Owner decision, 2026-11-20: the limits on what the crew book records are lifted. One session changes `Crew.lua` and the static checks that grade it (the split into a tests-only ticket is not required here: `Crew.lua` is not a load-bearing file).
