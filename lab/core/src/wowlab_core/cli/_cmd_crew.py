@@ -1,5 +1,6 @@
 """`wowlab crew list` and `crew show` (docs/LAB_PLAN.md §20.2, M19-02);
-`crew forget`, `crew rate` and `crew note` (§20.3, M19-03).
+`crew forget`, `crew rate` and `crew note` (§20.3, M19-03); `crew matches`
+and the match filters of `crew list` (§21.3, "Reading", M20-09).
 
 `list` and `show` read the crew book (`crewbook`) from a game account's
 `WowLab.lua` and write nothing anywhere. `forget`, `rate` and `note` change
@@ -82,6 +83,13 @@ _CREW_NOTES = [
     "The class is the game's internal name for it (MAGE, PRIEST, ...), as the game gave it.",
     "Dates are in this computer's time zone.",
 ]
+_MATCH_NOTE = (
+    "A match is kept only when you stayed in it until the scoreboard showed its end. With you "
+    "and against you are the teams of that match, not factions."
+)
+_MATCH_NOTES = [*_CREW_NOTES, _MATCH_NOTE]
+# `crew list --sort`: the book's own orders, and two of the database's.
+CrewSort = Literal["last", "met", "name", "faced", "allied"]
 
 
 class CrewPlace(_Out):
@@ -125,7 +133,7 @@ class CrewReport(_Out):
     skipped: int | None
     current_count: int
     total: int
-    sort: crewbook.SortBy
+    sort: CrewSort
     rated: crewbook.RatedFilter | None
     noted: bool
     search: str | None
@@ -136,6 +144,14 @@ class CrewReport(_Out):
     keeps: str
     notes: list[str]
     sync: crewdb.SyncOutcome | None = None
+    # The match filters (§21.3, "Reading", M20-09): only players who were
+    # against you (`faced`) or with you (`allied`) in a match the database
+    # counts, in a match on a map whose name holds `map`, and whose latest
+    # group or match is on or after the date `since` (YYYY-MM-DD).
+    faced: bool = False
+    allied: bool = False
+    map: str | None = None
+    since: str | None = None
 
 
 class CrewShowReport(_Out):
@@ -388,8 +404,11 @@ def _row(p: crewbook.CrewPlayer) -> str:
         parts.append(f"rated {p.rating}")
     if p.note:
         parts.append("has a note")
-    if isinstance(p, crewdb.CrewRow) and not p.in_game_list:
-        parts.append(_NOT_LISTED)
+    if isinstance(p, crewdb.CrewRow):
+        if p.allied or p.faced:
+            parts.append(f"in matches with you {p.allied}, against you {p.faced}")
+        if not p.in_game_list:
+            parts.append(_NOT_LISTED)
     return f"  {p.key}: " + "; ".join(parts)
 
 
@@ -409,15 +428,45 @@ def _unread_lines(book: crewbook.CrewBook) -> list[str]:
     return lines
 
 
+def _since(text: str | None) -> int | None:
+    """`--since DATE` as the time() of that day's start in this computer's
+    time zone; None without it. Anything but YYYY-MM-DD is refused."""
+    if text is None:
+        return None
+    try:
+        day = time.strptime(text, "%Y-%m-%d")
+        return int(time.mktime(day))
+    except (ValueError, OverflowError) as exc:
+        raise CliError(
+            f"--since {text!r} is not a date; give it as YYYY-MM-DD", EXIT_USAGE
+        ) from exc
+
+
+def _latest_meeting(p: crewdb.CrewRow) -> int:
+    """The time of the player's latest group or match (-1 for neither)."""
+    return max(t for t in (p.last, p.pvp_last, -1) if t is not None)
+
+
+def _sorted(players: Sequence[crewdb.CrewRow], by: CrewSort) -> list[crewdb.CrewRow]:
+    """`faced`: most matches against you first; `allied`: most with you
+    first (ties by the stored key); the book's own orders otherwise."""
+    if by == "faced":
+        return sorted(players, key=lambda p: (-p.faced, p.key))
+    if by == "allied":
+        return sorted(players, key=lambda p: (-p.allied, p.key))
+    return crewbook.ordered(players, by)
+
+
 RatedOpt = Annotated[
     crewbook.RatedFilter | None,
     typer.Option("--rated", help="Only players you rated good, bad, or either (any)."),
 ]
 SortOpt = Annotated[
-    crewbook.SortBy,
+    CrewSort,
     typer.Option(
         "--sort",
-        help="last: newest group first (the default); met: most groups first; name: by name.",
+        help="last: newest group first (the default); met: most groups first; name: by name; "
+        "faced: most matches against you first; allied: most matches with you first.",
     ),
 ]
 
@@ -435,6 +484,29 @@ def crew_list(
             "--search",
             help="Only players whose name, realm, guild or note holds this text (case, "
             "spaces and apostrophes ignored).",
+        ),
+    ] = None,
+    faced: Annotated[
+        bool, typer.Option("--faced", help="Only players who were against you in a match.")
+    ] = False,
+    allied: Annotated[
+        bool, typer.Option("--allied", help="Only players who were with you in a match.")
+    ] = False,
+    map_text: Annotated[
+        str | None,
+        typer.Option(
+            "--map",
+            metavar="TEXT",
+            help="Only players in a match on a map whose name holds this text.",
+        ),
+    ] = None,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since",
+            metavar="DATE",
+            help="Only players you last grouped with or met in a match on or after this date "
+            "(YYYY-MM-DD, this computer's time zone).",
         ),
     ] = None,
     sort: SortOpt = "last",
@@ -455,10 +527,29 @@ def crew_list(
             "give some letters of a name, realm, guild or note",
             EXIT_USAGE,
         )
+    if map_text is not None and not map_text.strip():
+        raise CliError("--map is empty; give some letters of a map's name", EXIT_USAGE)
+    since_at = _since(since)
     opened = _open_book(root, flavor, account)
     book = opened.book
     outcome, kept = _from_database(opened)
-    shown = crewbook.ordered(crewbook.select(kept, rated=rated, noted=noted, search=search), sort)
+    on_map: set[str] | None = None
+    target = _target(opened)
+    if map_text is not None:
+        on_map = (
+            crewdb.keys_on_map(target.flavor_folder, target.account, map_text)
+            if target is not None
+            else set()
+        )
+    picked = [
+        p
+        for p in crewbook.select(kept, rated=rated, noted=noted, search=search)
+        if (not faced or p.faced > 0)
+        and (not allied or p.allied > 0)
+        and (on_map is None or p.key in on_map)
+        and (since_at is None or _latest_meeting(p) >= since_at)
+    ]
+    shown = _sorted(picked, sort)
     place = opened.place
     if book.state == "not_turned_on":
         words = _never_on(opened.places if place is None else [place])
@@ -486,6 +577,10 @@ def crew_list(
         keeps=CREW_BOOK_SENTENCE,
         notes=_CREW_NOTES,
         sync=outcome,
+        faced=faced,
+        allied=allied,
+        map=map_text,
+        since=since,
     )
     if json_out:
         _emit(report)
@@ -496,7 +591,15 @@ def crew_list(
         _say(caveat)
     if book.state == "not_turned_on" and not kept:
         return
-    filtered = rated is not None or noted or bool(search)
+    filtered = (
+        rated is not None
+        or noted
+        or bool(search)
+        or faced
+        or allied
+        or map_text is not None
+        or since is not None
+    )
     if filtered:
         _say(f"{len(shown)} of {_plural(len(kept), 'player')} match.")
     for p in shown:
@@ -504,6 +607,21 @@ def crew_list(
     for line in _unread_lines(book):
         _say(line)
     _say_notes(_CREW_NOTES, notes)
+
+
+def _record_lines(p: crewdb.CrewRow) -> list[str]:
+    """The record with and against (§21.3, "Reading"): the matches the
+    database counts on each side, of them the ones your side won, and the
+    latest match the game's list named."""
+    lines = [
+        f"  Matches with you: {p.allied} (your side won {p.allied_won})",
+        f"  Matches against you: {p.faced} (your side won {p.faced_won})",
+    ]
+    if p.pvp_last is not None:
+        side = {"with": ", with you", "against": ", against you"}.get(p.pvp_side or "", "")
+        where = f" on {p.pvp_map}" if p.pvp_map else ""
+        lines.append(f"  Latest match: {_date(p.pvp_last)}{where}{side}")
+    return lines
 
 
 def _field_lines(p: crewbook.CrewPlayer) -> list[str]:
@@ -582,6 +700,7 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
+        lines += _record_lines(player)
         if not player.in_game_list:
             lines.append(
                 "  In the game's list: no; only wowlab's crew database keeps them now "
@@ -612,6 +731,151 @@ def crew_show(
         _say(line)
     if player is not None:
         _say_notes(_CREW_NOTES, notes)
+
+
+# ─── matches (§21.3, "Reading", M20-09) ──────────────────────────────────────
+
+
+class CrewMatchesReport(_Out):
+    """`wowlab crew matches --json`: the matches wowlab's crew database
+    keeps for one game account's crew book, newest first, after a sync
+    (`sync`, as in `CrewReport`). With a player named, only the matches
+    they were in: `typed` is the name as typed and `player` their stored
+    key (both None without one). Each match has its time (`at`), map name
+    and id, `kind` (`bg` or `arena`), `won` (whether your side won; null
+    when the game gave no winner), and the stored keys `team` (with you)
+    and `foes` (against you). `total` counts the matches listed. `lines`
+    are the lines the text output prints, `words` the one it opens with."""
+
+    flavor_folder: str | None
+    account: str | None
+    file: str | None
+    state: crewbook.State
+    typed: str | None
+    player: str | None
+    total: int
+    matches: list[crewdb.CrewMatchRow]
+    places: list[CrewPlace]
+    words: str
+    lines: list[str]
+    notes: list[str]
+    sync: crewdb.SyncOutcome | None = None
+
+
+_MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena"}
+
+
+def _match_lines(m: crewdb.CrewMatchRow) -> list[str]:
+    """One match as `crew matches` prints it: when, where, the result, and
+    the players on each side by stored key."""
+    result = (
+        "no winner recorded" if m.won is None else "your side won" if m.won else "your side lost"
+    )
+    where = m.map if m.map else "map not recorded"
+    return [
+        f"  {_date(m.at)} {where} ({_MATCH_KIND_WORDS[m.kind]}): {result}",
+        "    With you: " + (", ".join(m.team) if m.team else "none kept"),
+        "    Against you: " + (", ".join(m.foes) if m.foes else "none kept"),
+    ]
+
+
+def _one_of(keys: Sequence[str], typed: str) -> list[str]:
+    """The stored keys `typed` names, as `crew show` finds a player: the
+    exact key, else every key equal to it folded."""
+    if typed in keys:
+        return [typed]
+    want = crewbook.fold(typed)
+    return [k for k in keys if crewbook.fold(k) == want]
+
+
+@crew_app.command("matches", short_help="The battlegrounds and arenas wowlab keeps, newest first.")
+@_handled
+def crew_matches(
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="[NAME-REALM]",
+            help="Only the matches this player was in, as crew list shows them. Case, spaces "
+            "and apostrophes are ignored when no stored name matches exactly.",
+            show_default=False,
+        ),
+    ] = None,
+    account: AccountOpt = None,
+    root: RootOpt = None,
+    flavor: FlavorOpt = None,
+    json_out: JsonOpt = False,
+    notes: NotesOpt = False,
+) -> None:
+    """The battlegrounds and arenas wowlab's crew database keeps, newest
+    first: when, on which map, whether your side won, and who was with you
+    and against you. Name a player to list only the matches they were in.
+    Nothing is changed.
+
+    \f
+    JSON: CrewMatchesReport."""
+    opened = _open_book(root, flavor, account)
+    book, place = opened.book, opened.place
+    outcome, kept = _from_database(opened)
+    target = _target(opened)
+    caveat = _sync_caveat(outcome)
+    key: str | None = None
+    found: list[crewdb.CrewMatchRow] = []
+    if target is not None:
+        assert place is not None
+        if name is not None:
+            held = crewdb.holds(target.flavor_folder, target.account)
+            known = list(dict.fromkeys([*(p.key for p in kept), *held]))
+            keys = _one_of(known, name)
+            if not keys:
+                also = f" {caveat}" if caveat is not None else ""
+                raise CliError(
+                    f"no player {name!r} in the crew book of {_place_words(place)}{also}"
+                )
+            if len(keys) > 1:
+                raise CliError(
+                    f"{name!r} matches {len(keys)} players ({', '.join(keys)}); type the name "
+                    "as crew list shows it",
+                    EXIT_USAGE,
+                )
+            key = keys[0]
+        found = crewdb.matches(target.flavor_folder, target.account, key)
+    if target is None or (book.state == "not_turned_on" and not found and not kept):
+        words = _never_on(opened.places if place is None else [place])
+        lines: list[str] = []
+    else:
+        assert place is not None
+        n = "1 match" if len(found) == 1 else f"{len(found)} matches"
+        whose = f" with {key} in them" if key is not None else ""
+        words = (
+            f"Matches{whose} wowlab keeps for the crew book of {_place_words(place)}, newest "
+            f"first: {n}."
+        )
+        lines = [line for m in found for line in _match_lines(m)]
+    report = CrewMatchesReport(
+        flavor_folder=place.flavor_folder if place else None,
+        account=place.account if place else None,
+        file=place.file if place else None,
+        state=book.state,
+        typed=name,
+        player=key,
+        total=len(found),
+        matches=found,
+        places=opened.places,
+        words=words,
+        lines=lines,
+        notes=_MATCH_NOTES,
+        sync=outcome,
+    )
+    if json_out:
+        _emit(report)
+        return
+    _say(words)
+    if caveat is not None:
+        _say(caveat)
+    for line in lines:
+        _say(line)
+    if lines:
+        _say_notes(_MATCH_NOTES, notes)
 
 
 # ─── sync (§21.3, M20-01) ────────────────────────────────────────────────────

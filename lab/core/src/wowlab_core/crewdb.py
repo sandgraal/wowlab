@@ -78,6 +78,7 @@ DAILY_COPIES = 3
 
 # What a sync will take (§21.3, "The book is checked whole").
 MAX_PLAYERS = 20_000
+MAX_MATCHES = 500
 KEY_MAX_BYTES = 256
 TEXT_MAX_BYTES = 256  # class, role, guild, instance name
 NOTE_MAX_BYTES = 200  # §20.1, as `crewedit.NOTE_MAX_BYTES`
@@ -203,21 +204,50 @@ _SQL_META_SET = (
 _SQL_PLAYERS_ALL = (
     "SELECT player_key, name, realm, class, level, role, guild, met, first_at, last_at,"
     " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
-    " rating_own, note_own"
+    " rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last, pvp_map,"
+    " pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
     "INSERT INTO players (player_key, name, realm, class, level, role, guild, met, first_at,"
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
-    " marks_agreed, rating_own, note_own)"
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " marks_agreed, rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last,"
+    " pvp_map, pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+    " ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
     " met = ?, first_at = ?, last_at = ?, where_name = ?, where_id = ?, rating = ?,"
     " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?,"
-    " rating_own = ?, note_own = ?"
+    " rating_own = ?, note_own = ?, allied = ?, faced = ?, allied_won = ?, faced_won = ?,"
+    " pvp_last = ?, pvp_map = ?, pvp_side = ?, allied_seen = ?, faced_seen = ?,"
+    " allied_won_seen = ?, faced_won_seen = ?"
     " WHERE player_key = ?"
+)
+# Matches (§21.3 rule 3, M20-09): one row per match, told apart by `at` and
+# `map_id` (a unique index), and one row per player in it.
+_SQL_MATCH_IDS = "SELECT at, map_id FROM matches"
+_SQL_MATCH_INSERT = "INSERT INTO matches (at, map, map_id, kind, won) VALUES (?, ?, ?, ?, ?)"
+_SQL_MATCH_PLAYER_INSERT = "INSERT INTO match_players (match_id, player_key, side) VALUES (?, ?, ?)"
+_SQL_MATCHES_ALL = (
+    "SELECT match_id, at, map, map_id, kind, won FROM matches ORDER BY at DESC, match_id DESC"
+)
+_SQL_MATCHES_OF = (
+    "SELECT match_id, at, map, map_id, kind, won FROM matches WHERE match_id IN"
+    " (SELECT match_id FROM match_players WHERE player_key = ?)"
+    " ORDER BY at DESC, match_id DESC"
+)
+_SQL_MATCH_PLAYERS_ALL = (
+    "SELECT match_id, player_key, side FROM match_players ORDER BY match_id, rowid"
+)
+_SQL_MATCH_KEYS = "SELECT DISTINCT player_key FROM match_players"
+# `crew list --map`: a `LIKE` with `\` as its escape, the text's own `\`,
+# `%` and `_` escaped (`_like`).
+_SQL_KEYS_ON_MAP = (
+    "SELECT DISTINCT match_players.player_key FROM match_players"
+    " JOIN matches ON matches.match_id = match_players.match_id"
+    " WHERE matches.map LIKE ? ESCAPE '\\'"
 )
 
 # ─── errors and models ───────────────────────────────────────────────────────
@@ -253,6 +283,32 @@ class CrewRow(crewbook.CrewPlayer):
     and only the database keeps them)."""
 
     in_game_list: bool = True
+    # The record with and against (§21.2, §21.3): matches on your side and
+    # against you, and of each the ones your side won, as the database adds
+    # them up across syncs; and the latest match the saved file named.
+    allied: int = 0
+    faced: int = 0
+    allied_won: int = 0
+    faced_won: int = 0
+    pvp_last: int | None = None
+    pvp_map: str | None = None
+    pvp_side: crewbook.PvpSide | None = None
+
+
+class CrewMatchRow(_Model):
+    """One match wowlab's crew database keeps (§21.3): `at` (time() of the
+    game's read), the map's name and id as the client gave them, `kind`
+    (`bg` or `arena`), `won` (whether your side won; None when the client
+    gave no winner), and the stored keys on your side (`team`) and against
+    you (`foes`) that the database still holds."""
+
+    at: int
+    map: str | None
+    map_id: int
+    kind: crewbook.MatchKind
+    won: bool | None
+    team: list[str]
+    foes: list[str]
 
 
 SyncState = Literal[
@@ -300,6 +356,9 @@ class SyncOutcome(_Model):
     """Entries of the book not synced because they could not be read or are
     outside what a sync takes (each listed as unread); every other entry is
     synced."""
+    matches_left_out: int = 0
+    """Entries of the book's `matches` not synced because they could not be
+    read or are outside what a sync takes; every other match is synced."""
 
 
 class AdoptOutcome(_Model):
@@ -571,6 +630,20 @@ class _Row:
     # file is never the database's own.
     rating_own: int = 0
     note_own: int = 0
+    # The four counters of §21.2 (each added up across syncs as `met` is,
+    # beside the value the saved file showed at the last sync) and the
+    # latest match the saved file named.
+    allied: int = 0
+    faced: int = 0
+    allied_won: int = 0
+    faced_won: int = 0
+    pvp_last: int | None = None
+    pvp_map: str | None = None
+    pvp_side: str | None = None
+    allied_seen: int = 0
+    faced_seen: int = 0
+    allied_won_seen: int = 0
+    faced_won_seen: int = 0
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -593,6 +666,17 @@ class _Row:
             self.marks_agreed,
             self.rating_own,
             self.note_own,
+            self.allied,
+            self.faced,
+            self.allied_won,
+            self.faced_won,
+            self.pvp_last,
+            self.pvp_map,
+            self.pvp_side,
+            self.allied_seen,
+            self.faced_seen,
+            self.allied_won_seen,
+            self.faced_won_seen,
         )
 
 
@@ -623,6 +707,17 @@ def _public(row: _Row, book: crewbook.CrewBook | None) -> CrewRow:
         in_current_group=held.in_current_group if held is not None else False,
         other_keys=list(held.other_keys) if held is not None else [],
         in_game_list=bool(row.in_book),
+        allied=row.allied,
+        faced=row.faced,
+        allied_won=row.allied_won,
+        faced_won=row.faced_won,
+        pvp_last=row.pvp_last,
+        pvp_map=row.pvp_map,
+        pvp_side="with"
+        if row.pvp_side == "with"
+        else "against"
+        if row.pvp_side == "against"
+        else None,
     )
 
 
@@ -645,6 +740,76 @@ def read(flavor_folder: str, account: str, book: crewbook.CrewBook | None = None
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
         conn.close()
+
+
+def _read_with(
+    flavor_folder: str, account: str, use: Callable[[sqlite3.Connection], object]
+) -> object:
+    """`use(conn)` on the database, or None when there is none."""
+    path = database_path(flavor_folder, account)
+    try:
+        conn = _open(path, create=False)
+    except sqlite3.OperationalError as exc:
+        raise CrewDbError(f"The crew database {path} cannot be read now ({exc}).") from exc
+    if conn is None:
+        return None
+    try:
+        return use(conn)
+    except sqlite3.Error as exc:
+        raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
+    finally:
+        conn.close()
+
+
+def matches(flavor_folder: str, account: str, key: str | None = None) -> list[CrewMatchRow]:
+    """The matches wowlab's crew database keeps for this book, newest first
+    (`key`: only those the player was in, by stored key); empty when there
+    is no database yet. Each names the stored keys the database still holds
+    in it: a forgotten player is in none."""
+
+    def use(conn: sqlite3.Connection) -> list[CrewMatchRow]:
+        found = (
+            conn.execute(_SQL_MATCHES_ALL).fetchall()
+            if key is None
+            else conn.execute(_SQL_MATCHES_OF, (key,)).fetchall()
+        )
+        sides: dict[int, tuple[list[str], list[str]]] = {r[0]: ([], []) for r in found}
+        for match_id, player_key, side in conn.execute(_SQL_MATCH_PLAYERS_ALL):
+            if match_id in sides:
+                sides[match_id][0 if side == "team" else 1].append(str(player_key))
+        return [
+            CrewMatchRow(
+                at=int(at),
+                map=_text(map_name),
+                map_id=int(map_id),
+                kind="arena" if kind == "arena" else "bg",
+                won=None if won is None else bool(won),
+                team=sides[match_id][0],
+                foes=sides[match_id][1],
+            )
+            for match_id, at, map_name, map_id, kind, won in found
+        ]
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, list) else []
+
+
+def _like(text: str) -> str:
+    """`text` as a `LIKE` pattern that finds it anywhere, with `\\`, `%` and
+    `_` in it escaped (§21.3, "SQL")."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def keys_on_map(flavor_folder: str, account: str, text: str) -> set[str]:
+    """The stored keys of every player the database keeps in a match on a
+    map whose name holds `text` (ASCII letters in any case)."""
+
+    def use(conn: sqlite3.Connection) -> set[str]:
+        return {str(r[0]) for r in conn.execute(_SQL_KEYS_ON_MAP, (_like(text),))}
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, set) else set()
 
 
 # ─── the whole-book check ────────────────────────────────────────────────────
@@ -691,6 +856,8 @@ def check_book(book: crewbook.CrewBook) -> str | None:
     unread, `entry_problems`)."""
     if len(book.players) + len(book.unread) > MAX_PLAYERS:
         return _refused("the number of players", f"at most {MAX_PLAYERS:,}")
+    if len(book.matches) + len(book.matches_unread) > MAX_MATCHES:
+        return _refused("the number of matches", f"at most {MAX_MATCHES:,}")
     if book.started is not None and not TIME_MIN <= book.started <= _latest():
         return _refused(
             "the book's start time",
@@ -707,7 +874,41 @@ def _latest() -> int:
     return min(int(time.time()) + TIME_AHEAD, TIME_MAX)
 
 
-def _entry_problem(p: crewbook.CrewPlayer) -> str | None:
+_PVP_COUNTERS = (
+    ("allied", "count of matches with you"),
+    ("faced", "count of matches against you"),
+    ("allied_won", "count of matches won with you"),
+    ("faced_won", "count of matches you won against them"),
+)
+
+
+def _pvp_problem(pvp: crewbook.CrewPvp | None) -> str | None:
+    """Why a player's match counters and latest match are outside what a
+    sync takes (§21.3: each counter a whole number from 0 to
+    `COUNTER_MAX`, the time within range, the map's name within its
+    length), never quoting them."""
+    if pvp is None:
+        return None
+    for field, kind in _PVP_COUNTERS:
+        value = getattr(pvp, field)
+        if value is not None and not 0 <= value <= COUNTER_MAX:
+            return f"the {kind} is over {COUNTER_MAX:,}, so it is not synced"
+    if pvp.pvp_last is not None and not TIME_MIN <= pvp.pvp_last <= _latest():
+        return (
+            f"the latest match's time is before 2004 or more than {TIME_AHEAD // 86_400} days "
+            "after this computer's clock, so it is not synced"
+        )
+    if pvp.pvp_map is not None:
+        size = _bytes_of(pvp.pvp_map)
+        if size is None or size > TEXT_MAX_BYTES:
+            return (
+                f"the latest match's map is not text of at most {TEXT_MAX_BYTES} bytes, so it "
+                "is not synced"
+            )
+    return None
+
+
+def _entry_problem(p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None = None) -> str | None:
     """Why one player's entry is outside what a sync takes, in wowlab's
     words (as the reader gives its reasons), never quoting the entry."""
     if not _key_ok(p.key):
@@ -732,7 +933,7 @@ def _entry_problem(p: crewbook.CrewPlayer) -> str | None:
                 f"the {kind} is before 2004 or more than {TIME_AHEAD // 86_400} days after "
                 "this computer's clock, so it is not synced"
             )
-    return None
+    return _pvp_problem(pvp)
 
 
 def entry_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
@@ -741,18 +942,59 @@ def entry_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
     `crew list` lists as entries that could not be read."""
     out = []
     for p in book.players:
-        why = _entry_problem(p)
+        why = _entry_problem(p, book.pvp.get(p.key))
         if why is not None:
             out.append(crewbook.UnreadEntry(key=p.key, reason=why))
     return out
 
 
-def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int]:
-    """The book with only the entries a sync takes, and how many it left out
-    (the reader's unread entries included)."""
-    kept = [p for p in book.players if _entry_problem(p) is None]
+def _match_problem(m: crewbook.CrewMatch) -> str | None:
+    """Why one entry of `matches` is outside what a sync takes, in wowlab's
+    words, never quoting it: its time, its map id (which tells it apart),
+    its map's name, and every key in `team` and `foes` (Name-Realm, each
+    once, on one side)."""
+    if not TIME_MIN <= m.at <= _latest():
+        return (
+            f"its time is before 2004 or more than {TIME_AHEAD // 86_400} days after this "
+            "computer's clock, so it is not synced"
+        )
+    if m.map_id is None:
+        return "it has no map id, so it is not synced"
+    if m.map is not None:
+        size = _bytes_of(m.map)
+        if size is None or size > TEXT_MAX_BYTES:
+            return f"its map is not text of at most {TEXT_MAX_BYTES} bytes, so it is not synced"
+    keys = [*m.team, *m.foes]
+    if not all(_key_ok(k) for k in keys):
+        return (
+            f"a name in it is not Name-Realm within {KEY_MAX_BYTES} bytes of text, so it is "
+            "not synced"
+        )
+    if len(set(keys)) != len(keys):
+        return "a name in it is listed twice, so it is not synced"
+    return None
+
+
+def match_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadMatch]:
+    """The entries of `matches` the reader read but a sync does not take,
+    each with its place in the list and why. With the reader's own
+    `matches_unread`, they are the matches a sync leaves out."""
+    out = []
+    for m in book.matches:
+        why = _match_problem(m)
+        if why is not None:
+            out.append(crewbook.UnreadMatch(position=m.position, reason=why))
+    return out
+
+
+def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int]:
+    """The book with only the entries and matches a sync takes, and how
+    many of each it left out (the reader's unread ones included)."""
+    kept = [p for p in book.players if _entry_problem(p, book.pvp.get(p.key)) is None]
     left_out = len(book.players) - len(kept) + len(book.unread)
-    return book.model_copy(update={"players": kept}), left_out
+    games = [m for m in book.matches if _match_problem(m) is None]
+    games_out = len(book.matches) - len(games) + len(book.matches_unread)
+    return book.model_copy(update={"players": kept, "matches": games}), left_out, games_out
 
 
 # ─── the hold ────────────────────────────────────────────────────────────────
@@ -839,12 +1081,52 @@ def _number(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _merged(row: _Row | None, p: crewbook.CrewPlayer, mode: Mode, now: int) -> _Row:
-    """The row after one player of the saved file is synced into it."""
+def _added(total: int, before: int, seen: int, mode: Mode) -> int:
+    """A counter's total after a sync (rule 2): added to by the difference
+    from the value the saved file showed at the last sync (`before`), or by
+    the whole new value when that is lower (the game dropped the player and
+    started again) or the book is another one; from a book put back, the
+    larger of the two, never counting twice."""
+    if mode == "restored":
+        return max(total, seen)
+    if mode == "new_book" or seen < before:
+        return total + seen
+    return total + seen - before
+
+
+def _with_pvp(new: _Row, row: _Row | None, pvp: crewbook.CrewPvp | None, mode: Mode) -> _Row:
+    """`new` with the four match counters of §21.2 synced by rule 2 (each
+    beside the value the saved file showed, as `met` is) and the latest
+    match taken from the saved file when it is not older."""
+    pvp = pvp or crewbook.CrewPvp()
+    for field in ("allied", "faced", "allied_won", "faced_won"):
+        value = getattr(pvp, field)
+        seen = value if value is not None else 0
+        total = getattr(row, field) if row is not None else 0
+        before = getattr(row, field + "_seen") if row is not None else 0
+        setattr(new, field, _added(total, before, seen, mode) if row is not None else seen)
+        setattr(new, field + "_seen", seen)
+    newer = pvp.pvp_last is not None and (new.pvp_last is None or pvp.pvp_last >= new.pvp_last)
+    if row is None or newer:
+        new.pvp_last = pvp.pvp_last if pvp.pvp_last is not None else new.pvp_last
+        new.pvp_map = pvp.pvp_map if pvp.pvp_map is not None else new.pvp_map
+        new.pvp_side = pvp.pvp_side if pvp.pvp_side is not None else new.pvp_side
+    return new
+
+
+def _merged(
+    row: _Row | None,
+    p: crewbook.CrewPlayer,
+    mode: Mode,
+    now: int,
+    pvp: crewbook.CrewPvp | None = None,
+) -> _Row:
+    """The row after one player of the saved file (and their match
+    counters, `pvp`) is synced into it."""
     seen = p.met if p.met is not None else 0
     name, _, realm = p.key.partition("-")
     if row is None:
-        return _Row(
+        first = _Row(
             p.key,
             name,
             realm,
@@ -864,14 +1146,11 @@ def _merged(row: _Row | None, p: crewbook.CrewPlayer, mode: Mode, now: int) -> _
             now,
             now,
         )
+        return _with_pvp(first, None, pvp, mode)
     new = dataclasses.replace(row, in_book=1, met_seen=seen)
     # Rule 2: counters are added to, never replaced.
-    if mode == "restored":
-        new.met = max(row.met, seen)
-    elif mode == "new_book" or seen < row.met_seen:
-        new.met = row.met + seen
-    else:
-        new.met = row.met + seen - row.met_seen
+    new.met = _added(row.met, row.met_seen, seen, mode)
+    new = _with_pvp(new, row, pvp, mode)
     firsts = [t for t in (row.first, p.first) if t is not None]
     lasts = [t for t in (row.last, p.last) if t is not None]
     new.first = min(firsts) if firsts else None
@@ -919,7 +1198,15 @@ def _kept_on_return(old: _Row, new: _Row, p: crewbook.CrewPlayer) -> tuple[bool,
 
 def _left(row: _Row) -> _Row:
     """A row whose player the saved file no longer holds."""
-    return dataclasses.replace(row, in_book=0, met_seen=0)
+    return dataclasses.replace(
+        row,
+        in_book=0,
+        met_seen=0,
+        allied_seen=0,
+        faced_seen=0,
+        allied_won_seen=0,
+        faced_won_seen=0,
+    )
 
 
 def _changes(
@@ -933,7 +1220,7 @@ def _changes(
     for p in book.players:
         keys.add(p.key)
         old = rows.get(p.key)
-        new = _merged(old, p, mode, now)
+        new = _merged(old, p, mode, now, book.pvp.get(p.key))
         if old is None:
             added.append(new)
             continue
@@ -948,7 +1235,8 @@ def _changes(
         ratings_gone += old.rating is not None and new.rating is None
         notes_gone += old.note is not None and new.note is None
     for key, row in rows.items():
-        if key not in keys and (row.in_book or row.met_seen):
+        seen = row.met_seen or row.allied_seen or row.faced_seen
+        if key not in keys and (row.in_book or seen or row.allied_won_seen or row.faced_won_seen):
             updated.append(_left(row))
             left += bool(row.in_book)
     plan = SyncPlan(
@@ -984,6 +1272,14 @@ def kept_words(plan: SyncPlan) -> str:
         f" It kept {' and '.join(parts)} the game's list had dropped and holds again, "
         "which the game itself does not show."
     )
+
+
+def _matches_words(n: int) -> str:
+    """The sync sentence's count of matches added (with a leading comma;
+    empty when none was)."""
+    if not n:
+        return ""
+    return f", {n} {'match' if n == 1 else 'matches'} added"
 
 
 def _same(a: _Row, b: _Row) -> bool:
@@ -1023,14 +1319,37 @@ def _daily_copy(conn: sqlite3.Connection, path: Path) -> None:
             old.unlink()
 
 
+def _new_matches(conn: sqlite3.Connection, book: crewbook.CrewBook) -> list[crewbook.CrewMatch]:
+    """The book's matches the database does not keep yet, each once (rule 3:
+    told apart by `at` and `map_id`, so a match the game's list dropped and
+    named again, or that a book lists twice, is not added again)."""
+    held = {(int(at), int(map_id)) for at, map_id in conn.execute(_SQL_MATCH_IDS)}
+    out: list[crewbook.CrewMatch] = []
+    for m in book.matches:
+        if m.map_id is None or (m.at, m.map_id) in held:
+            continue
+        held.add((m.at, m.map_id))
+        out.append(m)
+    return out
+
+
 def _write(
     conn: sqlite3.Connection,
     added: list[_Row],
     updated: list[_Row],
     meta: dict[str, object],
+    games: Sequence[crewbook.CrewMatch] = (),
 ) -> None:
     conn.executemany(_SQL_PLAYER_INSERT, [(r.key, *r.values()) for r in added])
     conn.executemany(_SQL_PLAYER_UPDATE, [(*r.values(), r.key) for r in updated])
+    for m in games:
+        won = None if m.won is None else int(m.won)
+        cursor = conn.execute(_SQL_MATCH_INSERT, (m.at, m.map, m.map_id, m.kind, won))
+        match_id = cursor.lastrowid
+        conn.executemany(
+            _SQL_MATCH_PLAYER_INSERT,
+            [(match_id, k, "team") for k in m.team] + [(match_id, k, "foes") for k in m.foes],
+        )
     conn.executemany(_SQL_META_SET, list(meta.items()))
 
 
@@ -1104,7 +1423,7 @@ def sync(
     why = check_book(book)
     if why is not None:
         return SyncOutcome(state="refused", words=why, database=str(path))
-    book, left_out = _usable(book)
+    book, left_out, matches_out = _usable(book)
     exists = os.path.lexists(path)
     if not exists:
         orphan = _orphans(target)
@@ -1131,16 +1450,19 @@ def sync(
             reread=reread,
             ident=ident,
         )
-        if not left_out or outcome.state not in ("synced", "unchanged"):
+        if not (left_out or matches_out) or outcome.state not in ("synced", "unchanged"):
             return outcome
-        entries = "1 entry" if left_out == 1 else f"{left_out} entries"
-        verb = "was" if left_out == 1 else "were"
+        words = outcome.words
+        if left_out:
+            entries = "1 entry" if left_out == 1 else f"{left_out} entries"
+            verb = "was" if left_out == 1 else "were"
+            words += f" {entries} of the book could not be read and {verb} not synced."
+        if matches_out:
+            games = "1 match" if matches_out == 1 else f"{matches_out} matches"
+            verb = "was" if matches_out == 1 else "were"
+            words += f" {games} of the book could not be read and {verb} not synced."
         return outcome.model_copy(
-            update={
-                "left_out": left_out,
-                "words": f"{outcome.words} {entries} of the book could not be read and "
-                f"{verb} not synced.",
-            }
+            update={"left_out": left_out, "matches_left_out": matches_out, "words": words}
         )
     except (_Replaced, FileNotFoundError):
         return SyncOutcome(
@@ -1259,6 +1581,7 @@ def _sync_open(
     now = time.time_ns()
     if reasons:
         _, _, plan = _changes(_rows(conn), book, mode, now)
+        plan = plan.model_copy(update={"matches_added": len(_new_matches(conn, book))})
         words = _held_words(reasons)
         if not by_hand:
             return SyncOutcome(
@@ -1283,14 +1606,16 @@ def _sync_open(
             _daily_copy(conn, path)
         rows = _rows(conn)
         added, updated, plan = _changes(rows, book, mode, now)
-        _write(conn, added, updated, _meta_rows(target, book, data, newest))
+        games = _new_matches(conn, book)
+        plan = plan.model_copy(update={"matches_added": len(games)})
+        _write(conn, added, updated, _meta_rows(target, book, data, newest), games)
     total = len(rows) + len(added)
     return SyncOutcome(
         state="synced",
         words=(
             f"Synced the crew book into wowlab's crew database: {plan.players_added} added, "
-            f"{plan.players_updated} updated; it keeps {total:,} "
-            f"{'player' if total == 1 else 'players'}.{kept_words(plan)}"
+            f"{plan.players_updated} updated{_matches_words(plan.matches_added)}; it keeps "
+            f"{total:,} {'player' if total == 1 else 'players'}.{kept_words(plan)}"
         ),
         held=reasons,
         plan=plan,
@@ -1588,8 +1913,17 @@ def _forget_in(path: Path, keys: Sequence[str]) -> None:
 
 
 def holds(flavor_folder: str, account: str) -> list[str]:
-    """The keys of every player wowlab's crew database keeps for this book."""
-    return [r.key for r in read(flavor_folder, account)]
+    """The keys of every player wowlab's crew database keeps for this book:
+    its players, and any key a match it keeps names (a player the game's
+    list dropped before a sync saw them may be in a match only)."""
+    keys = [r.key for r in read(flavor_folder, account)]
+
+    def use(conn: sqlite3.Connection) -> list[str]:
+        return [str(r[0]) for r in conn.execute(_SQL_MATCH_KEYS)]
+
+    in_matches = _read_with(flavor_folder, account, use)
+    more = in_matches if isinstance(in_matches, list) else []
+    return list(dict.fromkeys([*keys, *sorted(more)]))
 
 
 class _Holding:
@@ -1862,10 +2196,12 @@ __all__ = [
     "COUNTER_MAX",
     "DAILY_COPIES",
     "LOCK_WAIT_SECONDS",
+    "MAX_MATCHES",
     "MAX_PLAYERS",
     "SCHEMA",
     "AdoptOutcome",
     "CrewDbError",
+    "CrewMatchRow",
     "CrewRow",
     "DatabaseSummary",
     "Forgetting",
@@ -1884,8 +2220,11 @@ __all__ = [
     "forget",
     "holds",
     "kept_words",
+    "keys_on_map",
     "mark_only",
     "marks",
+    "match_problems",
+    "matches",
     "read",
     "summaries",
     "sync",

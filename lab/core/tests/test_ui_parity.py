@@ -767,15 +767,33 @@ def test_the_crew_commands_both_ways(real: _Served) -> None:
     that run as asked; `crew forget`, `crew rate` and `crew note` are in the
     confirm step with the declined shape and their pins, and a form can set
     neither `--yes` nor `--expect`. A name that starts with `-` reaches each
-    as an argument, after `--` (constructed values)."""
+    as an argument, after `--` (constructed values). M20-09: `crew matches`
+    is a read leaf too, with its player as an argument, and `crew list`'s
+    match filters and sorts reach the command as options."""
     listed = real.commands()
     name = "-" + "Crewname-Crewrealm".lower()  # starts with a dash: an argument
-    for path in (("crew", "list"), ("crew", "show")):
+    for path in (("crew", "list"), ("crew", "show"), ("crew", "matches")):
         assert path not in CONFIRM_STEP and listed[path]["confirm"] is None, path
         assert listed[path]["excluded"] is None, path
-    status, payload = real.run(("crew", "show"), {"name": name})
+    for path in (("crew", "show"), ("crew", "matches")):
+        status, payload = real.run(path, {"name": name})
+        assert status == 200 and "confirm" not in payload
+        assert json.loads(payload["stdout"]) == [*path, "--json", "--", name]
+    status, payload = real.run(("crew", "matches"), {})
+    assert status == 200 and json.loads(payload["stdout"]) == ["crew", "matches", "--json"]
+    filters = {"faced": True, "allied": True, "map_text": "%_x", "since": "2026-11-01"}
+    status, payload = real.run(("crew", "list"), {**filters, "sort": "faced"})
     assert status == 200 and "confirm" not in payload
-    assert json.loads(payload["stdout"]) == ["crew", "show", "--json", "--", name]
+    assert json.loads(payload["stdout"]) == [
+        "crew",
+        "list",
+        "--faced",
+        "--allied",
+        "--map=%_x",
+        "--since=2026-11-01",
+        "--sort=faced",
+        "--json",
+    ]
     writes = {
         ("crew", "forget"): {},
         ("crew", "rate"): {"rating": "good"},

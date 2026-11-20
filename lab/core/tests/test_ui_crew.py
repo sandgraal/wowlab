@@ -51,11 +51,15 @@ from _crew_build import (
     KEY_A,
     KEY_B,
     KEY_C,
+    KEY_D,
+    MAP,
     NOTE,
+    T2,
     WHERE,
     account_file,
     book,
     install,
+    match,
     player,
 )
 
@@ -450,6 +454,10 @@ function crewView() {
       plan: t("crew-plan-lines"), note: t("crew-confirm-note"), buttonHidden: ids["crew-confirm"].hidden,
       button: t("crew-confirm"), disabled: ids["crew-confirm"].disabled },
     about: { keeps: t("crew-keeps"), notes: ids["crew-notes"].children.map((c) => c.textContent) },
+    matches: { hidden: ids["crew-matches"].hidden, words: t("crew-matches-words"),
+      lines: ids["crew-matches-lines"].children.map((c) => c.textContent) },
+    playerMatches: { hidden: ids["crew-player-matches"].hidden, words: t("crew-player-matches-words"),
+      lines: ids["crew-player-matches"].children.map((c) => c.textContent) },
     active: active ? active.id : null,
     // Every element the tab drew: its tag, class, id, title and attributes.
     drawn: crewEls().filter((e) => !(e.id in ids)).map((e) => ({ tag: e.tagName, cls: e.className, id: e.id,
@@ -822,3 +830,169 @@ def test_a_list_that_cannot_be_read_hides_the_table_constructed(
     (view,) = out["steps"]
     assert "2 crew books to choose from" in view["status"] and view["statusRole"] == "alert"
     assert view["tableHidden"] is True and view["rows"] == [] and view["toolsHidden"] is True
+
+
+# ─── matches at the desk (M20-09) ────────────────────────────────────────────
+
+MATCHES = ("crew", "matches")
+
+
+def _pvp_book(map_name: str = MAP) -> bytes:
+    """A schema 2 book (constructed): KEY_A with you twice, KEY_C against
+    you once, two matches, the first on `map_name`."""
+    return book(
+        {
+            KEY_A: player(allied=2, allied_won=1),
+            KEY_B: player(),
+            KEY_C: player(faced=1),
+        },
+        schema=2,
+        matches=[
+            match([KEY_A, KEY_B], [KEY_C], map=map_name),
+            match([KEY_A], [], at=T2 + 60, map="Invented Ring", kind="arena", won=None),
+        ],
+    )
+
+
+def test_the_match_filters_and_history_go_through_the_command_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    crew = crew_at(_pvp_book())
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_set": "crew-pvp", "value": "faced"},
+        {"crew_set": "crew-pvp", "value": ""},
+        {"crew_set": "crew-sort", "value": "allied"},
+        {"crew_set": "crew-map", "value": "ring", "event": "input"},
+        {"crew_set": "crew-map", "value": "", "event": "input"},
+        {"crew_set": "crew-since", "value": "2026-11-01"},
+        {"crew_click": "crew-matches-show"},
+        {"crew_open": 0},
+        {"crew_click": "crew-player-matches-show"},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    tab, faced, _, by_allied, on_ring, _, since, history, opened, theirs = out["steps"]
+    # Opening the tab reads the list alone, as before.
+    assert _bodies(tab) == [{"command": ["crew", "list"], "params": {"sort": "last"}}]
+    assert tab["matches"]["hidden"] is True
+    assert _bodies(faced) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "faced": True}}
+    ]
+    assert [r[0] for r in faced["rows"]] == [KEY_C]
+    assert by_allied["rows"][0][0] == KEY_A
+    assert _bodies(on_ring)[0]["params"] == {"sort": "allied", "map_text": "ring"}
+    assert [r[0] for r in on_ring["rows"]] == [KEY_A]
+    assert _bodies(since)[0]["params"] == {"sort": "allied", "since": "2026-11-01"}
+    # The history is `crew matches`' own words and lines.
+    assert _bodies(history) == [
+        {"command": ["crew", "matches"], "params": {"account": ACCOUNT, "flavor": FLAVOR}}
+    ]
+    report = crew.report(MATCHES, {})
+    assert history["matches"]["hidden"] is False
+    assert history["matches"]["words"] == report["words"]
+    assert history["matches"]["lines"] == [line.strip() for line in report["lines"]]
+    assert history["matches"]["lines"][1] == f"With you: {KEY_A}"
+    # The player's panel: the record from `crew show`, their matches on demand.
+    assert any(line.startswith("Matches with you: 2") for line in opened["player"]["lines"])
+    assert opened["playerMatches"]["hidden"] is True
+    key = opened["player"]["title"]
+    assert _bodies(theirs) == [
+        {
+            "command": ["crew", "matches"],
+            "params": {"account": ACCOUNT, "flavor": FLAVOR, "name": key},
+        }
+    ]
+    mine = crew.report(MATCHES, {"name": key})
+    assert theirs["playerMatches"]["words"] == mine["words"]
+    assert theirs["playerMatches"]["lines"] == [line.strip() for line in mine["lines"]]
+
+
+def test_a_hostile_map_name_is_shown_as_text_on_the_page_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    # Markup, a script tag, a link, ESC, the C1 CSI and U+202E in a map name.
+    hostile = _hostile(KEY_D).replace("-", " ")
+    crew = crew_at(_pvp_book(hostile))
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_click": "crew-matches-show"},
+        {"crew_open": 0},
+        {"crew_click": "crew-player-matches-show"},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    pieces = ("<img", "onerror", "<script>", "javascript:", chr(0x1B), chr(0x9B), chr(0x202E))
+    for view in out["steps"]:
+        _inert(view, *pieces)
+    history = out["steps"][1]
+    assert any(_visible(hostile) in line for line in history["matches"]["lines"])
+    assert any("⟨U+202E⟩" in line for line in history["matches"]["lines"])
+    theirs = out["steps"][3]
+    assert any(_visible(hostile) in line for line in theirs["playerMatches"]["lines"])
+
+
+def test_after_a_forget_on_the_page_the_history_holds_no_trace_of_the_player_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    crew = crew_at(_pvp_book())
+    at = [p["key"] for p in crew.report(LIST, {"sort": "last"})["players"]]
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_click": "crew-matches-show"},
+        {"crew_open": at.index(KEY_C)},
+        {"crew_click": "crew-forget"},
+        {"crew_click": "crew-confirm"},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    before, after = out["steps"][1], out["steps"][4]
+    assert any(KEY_C in line for line in before["matches"]["lines"])
+    assert after["matches"]["hidden"] is False and after["matches"]["lines"]
+    assert all(KEY_C not in line for line in after["matches"]["lines"])
+    assert after["rows"] and all(KEY_C not in r[0] for r in after["rows"])
+    assert KEY_C not in json.dumps(crew.report(MATCHES, {}))
+    for f in (crew.data / "crew").rglob("*"):
+        if f.is_file():
+            assert KEY_C.encode() not in f.read_bytes(), f.name
+
+
+def test_a_rating_of_a_player_only_the_database_keeps_goes_through_the_step_constructed(
+    crew_at: Any,
+) -> None:
+    """A database-only rating (§21.3, "Writing"): planned, offered Confirm
+    with the row's pin, and written to the database alone; a row changed
+    between the plan and Confirm is refused (exit 3) and nothing is written."""
+    crew = crew_at(_three())
+    crew.report(LIST, {})  # the first sync: three players
+    # The game's list drops KEY_C; the next read syncs that.
+    crew.live.write_bytes(account_file(book({KEY_A: player(), KEY_B: player()})))
+    gone = next(p for p in crew.report(LIST, {})["players"] if p["key"] == KEY_C)
+    assert gone["in_game_list"] is False
+    before = crew.live.read_bytes()
+    records = crew.history()
+    params: dict[str, object] = {"name": KEY_C, "rating": "bad"}
+    plan = _plan(crew.server, RATE, params)
+    token = _token(plan)
+    assert token is not None, plan["stderr"]
+    shown = json.loads(plan["stdout"])
+    fields = cli.EXPECT_FIELDS[RATE]
+    pin = ":".join(shown[f] for f in fields)
+    assert "row_sha256" in fields and f"--expect {pin}:" in plan["confirm"]["note"]
+    # The row changes after the plan: a note given at the desk meanwhile.
+    note_params: dict[str, object] = {"name": KEY_C, "text": "invented: held the flag"}
+    note_token = _token(_plan(crew.server, NOTE_CMD, note_params))
+    assert note_token is not None
+    status, noted = _confirm(crew.server, NOTE_CMD, note_token, note_params)
+    assert status == 200 and noted["exit_code"] == 0, noted["stderr"]
+    status, refused = _confirm(crew.server, RATE, token, params)
+    assert status == 200 and refused["exit_code"] == 3, refused["stderr"]
+    shown_now = crew.report(SHOW, {"name": KEY_C})["player"]
+    assert shown_now["rating"] is None and shown_now["note"] == "invented: held the flag"
+    # Planned again and confirmed: the database alone changes.
+    token = _token(_plan(crew.server, RATE, params))
+    assert token is not None
+    status, done = _confirm(crew.server, RATE, token, params)
+    assert status == 200 and done["exit_code"] == 0, done["stderr"]
+    confirmed = crew.argvs()[-1]
+    assert confirmed.count("--yes") == 1 and any(a.startswith("--expect=") for a in confirmed)
+    assert crew.report(SHOW, {"name": KEY_C})["player"]["rating"] == "bad"
+    assert crew.live.read_bytes() == before  # nothing written into the install
+    assert crew.history() == records  # nothing journaled
