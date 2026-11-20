@@ -577,15 +577,26 @@ def snap_gc(
             for change in record.paths
             if change.after is not None and _is_character_lab_file(change.path)
         }
-        report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS, keep=written)
-        if report.unreferenced and not dry_run:
-            if not json_out:
-                _say(
-                    f"{len(report.unreferenced)} object(s) no snapshot refers to and the "
-                    f"loader check does not need, {_bytes(report.unreferenced_bytes)} on disk."
-                )
-            _confirm("Remove them?", yes)
-            report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
+        try:
+            report = store.gc(dry_run=True, grace_seconds=GC_GRACE_SECONDS, keep=written)
+            if report.unreferenced and not dry_run:
+                if not json_out:
+                    _say(
+                        f"{len(report.unreferenced)} object(s) no snapshot refers to and the "
+                        f"loader check does not need, {_bytes(report.unreferenced_bytes)} on disk."
+                    )
+                _confirm("Remove them?", yes)
+                report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
+        except snapshot.ManifestNotAFileError as exc:
+            raise CliError(
+                _not_a_record(store, exc.name)
+                + " snap gc removes nothing while it is there, since wowlab cannot tell "
+                "which stored files that snapshot needs."
+            ) from None
+        except snapshot.DamagedManifestError:
+            # The loader's words quote part of the file (M19-12): the player
+            # gets the fact, and the two commands that find and remove it.
+            raise CliError(_GC_DAMAGED) from None
     # `dry_run` says whether this was a dry run: a run that was not, and found
     # nothing to remove, did not list as a dry run (M16-21).
     report = report.model_copy(update={"dry_run": dry_run})
@@ -617,6 +628,25 @@ def snap_gc(
         _say(_kept_young_line(report.kept_young))
 
 
+_GC_DAMAGED = (
+    "a snapshot in wowlab's snapshot folder is damaged: its record cannot be read, so "
+    "wowlab cannot tell which stored files it needs, and snap gc removes nothing while it "
+    "is there. `wowlab snap verify` names it; `wowlab snap rm <full id> --break-undo` "
+    "removes it."
+)
+"""`snap gc`'s refusal while a manifest does not load (M19-12)."""
+
+
+def _not_a_record(store: snapshot.SnapshotStore, name: str) -> str:
+    """Said of a link, or anything not a regular file, in a snapshot
+    record's place (M19-12 review), by `snap gc` and `snap rm` alike."""
+    return _safe(
+        f"something other than a snapshot record (a link, or not a regular file) stands in "
+        f"the place of the record of {name} in wowlab's snapshot folder ({store.path}). "
+        "wowlab leaves it alone and never removes it; you can remove it by hand."
+    )
+
+
 def _kept_young_line(n: int) -> str:
     """What `snap gc` left only because it is younger than an hour (M19-09):
     a file a snapshot just removed with `snap rm` may still be one of them."""
@@ -631,10 +661,17 @@ class SnapRmItem(_Out):
     """One snapshot `snap rm` removes, or would."""
 
     id: str
-    created_at: str
+    created_at: str | None
+    """None for a damaged snapshot, whose record cannot be read."""
     label: str
-    kind: snapshot.SnapshotKind
-    files: int
+    kind: snapshot.SnapshotKind | None
+    """None for a damaged snapshot."""
+    files: int | None
+    """None for a damaged snapshot."""
+    damaged: bool = False
+    """True when the snapshot's record cannot be read (M19-12): wowlab cannot
+    tell what it held. It is removed only when named by its full id, and
+    only with `--break-undo`."""
     needed_by: list[str]
     """The journal records whose pre-write snapshot this is (the files as
     they were just before that change), oldest first; empty when no record
@@ -659,12 +696,72 @@ class SnapRmReport(_Out):
     journal_named: bool
     """True when a snapshot in the plan is one a journal record names (an
     item with `needed_by`); the run then went ahead only with
-    `--break-undo`."""
+    `--break-undo`, as it does for any item that is `damaged`."""
     dry_run: bool
     applied: bool
     removed: list[str]
     plan_lines: list[str]
     """The plan as the text output shows it, line by line."""
+
+
+_DAMAGED_PLAN = (
+    "is damaged: its record in the snapshot folder cannot be read, so wowlab cannot tell "
+    "what it held or whether a change of yours needs it. It is removed only with "
+    "--break-undo."
+)
+"""What `snap rm`'s plan says of a damaged snapshot (M19-12)."""
+
+_DAMAGED_UNNAMED = (
+    "wowlab's change history does not name it, but with its record unreadable wowlab "
+    "cannot tell whether one of your changes needed it."
+)
+"""Said of a damaged snapshot no journal record names (M19-12)."""
+
+
+def _check_damaged(store: snapshot.SnapshotStore, full: str) -> None:
+    """Hold a damaged snapshot named by its full id to what `remove_damaged`
+    removes; a link or anything but a file in its place is refused here, in
+    the player's words, before any plan."""
+    try:
+        store.check_damaged(full)
+    except snapshot.ManifestIntegrityError:
+        raise CliError(_not_a_record(store, full) + " Nothing was removed.") from None
+
+
+def _damaged_refusal(
+    damaged: list[SnapRmItem],
+    needed: list[SnapRmItem],
+    records: Sequence[guard.HistoryRecord],
+) -> str:
+    """`snap rm`'s refusal without `--break-undo` when a damaged snapshot is
+    in the plan (M19-12); a journal-named healthy one is said too."""
+    by_id = {r.id: r for r in records}
+    said: list[str] = []
+    for item in damaged:
+        sentence = (
+            f"{item.id} is damaged: its record in the snapshot folder cannot be read, so "
+            "wowlab cannot tell what it held or whether a change of yours needs it"
+        )
+        rec = by_id.get(item.needed_by[-1]) if item.needed_by else None
+        if rec is not None:
+            sentence += (
+                f'; it is the copy wowlab took just before your change "{rec.label}" '
+                f"({rec.created_at})"
+            )
+        said.append(sentence + ".")
+    for item in needed:
+        if item.damaged:
+            continue
+        rec = by_id[item.needed_by[-1]]
+        said.append(
+            f'{item.id} is the copy wowlab took just before your change "{rec.label}" '
+            f"({rec.created_at}), so the files can no longer be put back as they were before "
+            "that change once it is removed."
+        )
+    them = "it" if len(said) == 1 else "them"
+    return _safe(
+        " ".join(said) + f" Nothing was removed. Add --break-undo to remove {them} anyway."
+    )
 
 
 def _rm_plan_lines(
@@ -678,7 +775,12 @@ def _rm_plan_lines(
         f"Remove {len(items)} snapshot(s) from wowlab's snapshot folder ({store.path}):",
     ]
     for item in items:
-        lines.append(f"  {item.id}  taken {item.created_at}, {item.kind}, {item.files} file(s)")
+        if item.damaged:
+            lines.append(f"  {item.id}  {_DAMAGED_PLAN}")
+            if not item.needed_by:
+                lines.append(f"    {_DAMAGED_UNNAMED}")
+        else:
+            lines.append(f"  {item.id}  taken {item.created_at}, {item.kind}, {item.files} file(s)")
         if item.label:
             lines.append(f'    label: "{item.label}"')
         for rec_id in item.needed_by:
@@ -721,7 +823,8 @@ def snap_rm(
             "--break-undo",
             help="Remove a snapshot even when it is the copy wowlab took just before one of "
             "your changes. The files can then no longer be put back as they were before that "
-            "change; for your most recent change, `wowlab undo` can no longer reverse it.",
+            "change; for your most recent change, `wowlab undo` can no longer reverse it. "
+            "Also needed to remove a damaged snapshot, named by its full id.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -736,6 +839,8 @@ def snap_rm(
     before one of your changes is refused unless you add --break-undo: the
     files can then no longer be put back as they were before that change,
     and for your most recent change `wowlab undo` can no longer reverse it.
+    A damaged snapshot, whose record cannot be read, is removed only when
+    you give its full id and add --break-undo.
     The files a snapshot holds stay in the store until
     `wowlab snap gc` removes the ones no other snapshot needs. Holds the
     store lock for the whole run.
@@ -758,7 +863,28 @@ def snap_rm(
                 full = _resolve_ref(store, given)  # an unknown id refuses the whole run
                 if any(item.id == full for item in items):
                     continue  # an id given twice is removed once
-                m = store.show(full)
+                needed_by = [r.id for r in records if r.snapshot_id == full]
+                reverses = target is not None and target.snapshot_id == full
+                try:
+                    m = store.show(full)
+                except snapshot.ManifestIntegrityError:
+                    # A damaged one goes only by its complete id (M19-12).
+                    if given != full:
+                        raise
+                    _check_damaged(store, full)
+                    items.append(
+                        SnapRmItem(
+                            id=full,
+                            created_at=None,
+                            label="",
+                            kind=None,
+                            files=None,
+                            damaged=True,
+                            needed_by=needed_by,
+                            undo_reverses=reverses,
+                        )
+                    )
+                    continue
                 items.append(
                     SnapRmItem(
                         id=m.id,
@@ -766,19 +892,23 @@ def snap_rm(
                         label=m.label,
                         kind=snapshot.kind_of(m, pre_write, imported),
                         files=sum(1 for e in m.entries if e.kind == "file"),
-                        needed_by=[r.id for r in records if r.snapshot_id == m.id],
-                        undo_reverses=target is not None and target.snapshot_id == m.id,
+                        needed_by=needed_by,
+                        undo_reverses=reverses,
                     )
                 )
         except snapshot.ManifestIntegrityError:
-            # The loader's own words name a model and its validators; the
-            # player gets the fact, and `snap verify` for the detail.
+            # The loader's own words name a model and its validators, and
+            # quote the file; the player gets the fact, and `snap verify`.
             raise CliError(
                 "a snapshot you named, or one wowlab had to read to find it, is damaged: "
-                "its record in the snapshot folder cannot be read. snap rm leaves a damaged "
-                "snapshot alone, and nothing was removed. `wowlab snap verify` names it."
+                "its record in the snapshot folder cannot be read, and nothing was removed. "
+                "snap rm removes a damaged snapshot only when you give its full id, with "
+                "--break-undo. `wowlab snap verify` names it."
             ) from None
         needed = [item for item in items if item.needed_by]
+        damaged = [item for item in items if item.damaged]
+        if damaged and not break_undo:
+            raise CliError(_damaged_refusal(damaged, needed, records))
         if needed and not break_undo:
             by_id = {r.id: r for r in records}
             said = "; ".join(
@@ -826,14 +956,24 @@ def snap_rm(
         removed: list[str] = []
         for item in items:
             try:
-                store.remove(item.id)
+                if item.damaged:
+                    store.remove_damaged(item.id)
+                else:
+                    store.remove(item.id)
             except snapshot.SnapshotError as exc:
                 done = (
                     f"; removed before it: {', '.join(removed)}, and not the rest"
                     if removed
                     else "; nothing was removed"
                 )
-                raise CliError(f"{exc}{done}") from exc
+                # A loader's message may quote the file (M19-12): not shown.
+                said = (
+                    f"the record of snapshot {item.id} could not be removed: it cannot be read, "
+                    "or something other than a file stands in its place"
+                    if isinstance(exc, snapshot.ManifestIntegrityError)
+                    else str(exc)
+                )
+                raise CliError(f"{said}{done}") from exc
             removed.append(item.id)
     if json_out:
         _emit(report(applied=True, removed=removed))

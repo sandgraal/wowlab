@@ -446,7 +446,9 @@ def test_a_damaged_snapshot_is_refused_in_player_words_constructed(
     path = _manifest_file(user_data, a.id)
     good = path.read_bytes()
     path.write_bytes(good[: len(good) // 2])  # constructed: cut short
-    for ref in (a.id, "latest"):
+    # By its full id it is removed with --break-undo, and refused without it
+    # (M19-12; test_cli_snap_rm_damaged.py); by any other name it is refused.
+    for ref in (a.id[:20], "latest"):
         result = run("snap", "rm", ref, "--yes")
         assert result.exit_code == 1, ref
         text = " ".join(result.stderr.split())

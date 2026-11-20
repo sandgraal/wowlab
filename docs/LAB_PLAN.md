@@ -1299,6 +1299,33 @@ whose snapshot was removed refuses and changes nothing, with the message it
 gives for any snapshot it cannot read (no new recovery wording, ADR-0037).
 `wowlab ui` does not offer `snap rm` (owner, 2026-11-19): the server
 excludes it with its own reason, though it declares `--yes`.
+*Amended 2026-11-19 (M19-12; owner decision of 2026-11-19, "allow by full
+id"):* a damaged snapshot can be removed. `SnapshotStore.remove_damaged(id)`
+removes a manifest that is a regular file and does not load, in `remove`'s
+order (a store in an install refused first; `manifests/` never through a
+link; `lstat`, a read through the directory's descriptor confirming it
+still does not load, `lstat` again, unlink through the descriptor), and its
+`imported/<id>` record; a link or anything not a regular file in its place
+is refused, and so is a manifest that loads. `snap rm` takes that path only
+when the ID typed is the complete id: a start or end of one, `latest`,
+`latest-user` or `~N` naming a damaged snapshot refuses the whole run as
+before, now saying a damaged one goes only by its full id with
+`--break-undo`. The flag is required for every damaged snapshot, whether
+or not a journal record names it. The plan says it is damaged, that wowlab
+cannot tell what it held or whether a change needs it, and, from the
+journal (the id is the manifest's file name), which change it was taken
+before, as for a readable one, or that the change history does not name
+it. Several IDs stay all-or-nothing. `SnapRmItem` gains `damaged`; its
+`created_at`, `kind` and `files` are null for a damaged item. `snap gc`
+still refuses while a manifest does not load (`DamagedManifestError`, a
+`ManifestIntegrityError`), now in the player's words, naming `wowlab snap
+verify` and `wowlab snap rm <full id> --break-undo`, never the loader's
+text, which quotes the file. A link or anything not a regular file in a
+manifest's place is not damaged in this sense (`ManifestNotAFileError`):
+`snap gc` and `snap rm` both say something other than a snapshot record
+stands there, name the id, and say wowlab leaves it alone and it can be
+removed by hand. Nothing else about `snap gc`, `undo`,
+`doctor` or recovery changes (ADR-0037).
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 

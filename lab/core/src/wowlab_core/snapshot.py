@@ -59,11 +59,13 @@ __all__ = [
     "MANIFEST_FORMAT",
     "OBJECTS_DIR_ENTRY",
     "Change",
+    "DamagedManifestError",
     "Entry",
     "GcReport",
     "InvalidManifest",
     "Manifest",
     "ManifestIntegrityError",
+    "ManifestNotAFileError",
     "MissingObject",
     "ObjectCorruptError",
     "ObjectSource",
@@ -133,6 +135,23 @@ class SnapshotExistsError(SnapshotError):
 
 class ManifestIntegrityError(SnapshotError):
     """A manifest on disk does not parse or does not match its own id."""
+
+
+class DamagedManifestError(ManifestIntegrityError):
+    """`gc` met a manifest file that does not load (M19-12). Its message is
+    the loader's, which may quote part of the file."""
+
+
+class ManifestNotAFileError(ManifestIntegrityError):
+    """`gc` met a link, or anything not a regular file, standing in a
+    manifest's place (M19-12 review). `name` is the entry's name without
+    `.json`; wowlab never removes or follows it."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"manifest {name}{_MANIFEST_SUFFIX} is a link or not a regular file; gc refuses"
+        )
+        self.name = name
 
 
 class ObjectCorruptError(SnapshotError):
@@ -2756,7 +2775,8 @@ class SnapshotStore:
         an imported snapshot has; no object is deleted (`gc` then drops the
         ones nothing refers to any more). The full id is required (no prefix
         or reference), and the manifest must load, as `show` loads it: a
-        damaged one is not removed here. Nothing is followed: `manifests/`
+        damaged one is not removed here (`remove_damaged` is for it, M19-12).
+        Nothing is followed: `manifests/`
         is opened as `create` opens it, never through a link, and the file
         removed is the regular file that was read, checked again by
         `lstat` just before the delete (`SnapshotError` if it changed).
@@ -2798,6 +2818,84 @@ class SnapshotStore:
                 raise SnapshotError(f"cannot remove manifest {name}: {exc}") from exc
         self._forget_imported(snapshot_id)
         return manifest
+
+    # -- removing a damaged snapshot (M19-12) ----------------------------------
+
+    @staticmethod
+    def _damaged_entry(manifests: _StoreDir, snapshot_id: str) -> os.stat_result:
+        """The `lstat` of `manifests/<id>.json` when it is a regular file
+        that does not load as `show` loads it; read only. Missing is
+        `SnapshotNotFoundError`; a link or anything not a regular file is
+        `ManifestIntegrityError`; a file swapped while read, or one that
+        loads, is `SnapshotError`. Nothing of the file's content is put in
+        any message."""
+        name = snapshot_id + _MANIFEST_SUFFIX
+        try:
+            st = os.stat(manifests.at(name), dir_fd=manifests.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}") from None
+        except OSError as exc:
+            raise SnapshotError(f"cannot inspect manifest {name}: {exc.strerror}") from None
+        if _is_link_stat(st) or not stat.S_ISREG(st.st_mode):
+            raise ManifestIntegrityError(
+                f"manifest {name} is a link or not a regular file; it is not removed"
+            )
+        try:
+            data = read_regular_file(manifests.at(name), expect=st, dir_fd=manifests.fd)
+        except UnsafeReadError:
+            raise SnapshotError(
+                f"manifest {name} changed while it was read; nothing was removed"
+            ) from None
+        except OSError:
+            return st  # it cannot be read at all: damaged
+        try:
+            SnapshotStore._parse(snapshot_id, data)
+        except ManifestIntegrityError:
+            return st
+        raise SnapshotError(f"manifest {name} loads; it is not damaged, and is not removed here")
+
+    def check_damaged(self, snapshot_id: str) -> None:
+        """Return when `manifests/<id>.json`, for this full id, is a regular
+        file that does not load (a damaged snapshot `remove_damaged` would
+        remove); raise as `remove_damaged` would otherwise. Reads only."""
+        if not isinstance(snapshot_id, str) or not _ID_RE.match(snapshot_id):
+            raise SnapshotError(f"not a snapshot id: {snapshot_id!r}")
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
+            self._damaged_entry(manifests, snapshot_id)
+
+    def remove_damaged(self, snapshot_id: str) -> None:
+        """Remove exactly this damaged snapshot's manifest (M19-12): one
+        that is a regular file and does not load, so what it held cannot be
+        known. The full id is required (no prefix or reference). The order
+        is `remove`'s: a store inside any install is refused first (L1);
+        `manifests/` is opened without following a link; the entry is
+        `lstat`ed (a link or anything not a regular file is refused,
+        `ManifestIntegrityError`), read through the directory's descriptor
+        to confirm it still does not load (one that loads is refused,
+        `SnapshotError`: `remove` is for it), checked again by `lstat` and
+        unlinked through that descriptor; then the empty `imported/<id>`
+        record, if any, goes. No object is deleted. A caller holds the store
+        lock and decides whether a journal record names the id, as for
+        `remove`. No message quotes the file's content."""
+        if not isinstance(snapshot_id, str) or not _ID_RE.match(snapshot_id):
+            raise SnapshotError(f"not a snapshot id: {snapshot_id!r}")
+        self._refuse_inside_any_install()
+        name = snapshot_id + _MANIFEST_SUFFIX
+        with self._store_dir(("manifests",), create=False) as manifests:
+            if manifests is None:
+                raise SnapshotNotFoundError(f"no snapshot {snapshot_id!r}")
+            st = self._damaged_entry(manifests, snapshot_id)
+            if not self._entry_is(manifests, name, st):
+                raise SnapshotError(
+                    f"manifest {name} changed while it was read; nothing was removed"
+                )
+            try:
+                os.unlink(manifests.at(name), dir_fd=manifests.fd)
+            except OSError as exc:
+                raise SnapshotError(f"cannot remove manifest {name}: {exc.strerror}") from None
+        self._forget_imported(snapshot_id)
 
     def _forget_imported(self, snapshot_id: str) -> None:
         """Remove the empty `imported/<id>` record of a removed snapshot, if
@@ -3198,7 +3296,10 @@ class SnapshotStore:
         anything is listed or removed.
 
         Dry-run is the default. Refuses outright when any manifest fails to
-        load, because that manifest's objects would look unreferenced.
+        load (`DamagedManifestError`, M19-12), or when a link or anything
+        not a regular file stands in a manifest's place
+        (`ManifestNotAFileError`), because that manifest's objects would
+        look unreferenced.
         Objects modified within the last `grace_seconds` are left alone and
         not reported. Only well-formed object files are ever candidates.
 
@@ -3234,7 +3335,20 @@ class SnapshotStore:
         if not dry_run:
             self._refuse_inside_any_install()
         self._refuse_gc_without_manifests()
-        for manifest in self.list():  # raises ManifestIntegrityError
+        for path in self._manifest_files():
+            try:
+                st = os.lstat(path)
+            except FileNotFoundError:
+                continue  # removed while we listed; `list` below decides
+            if _is_link_stat(st) or not stat.S_ISREG(st.st_mode):
+                raise ManifestNotAFileError(path.name.removesuffix(_MANIFEST_SUFFIX))
+        try:
+            manifests = self.list()
+        except ManifestIntegrityError as exc:
+            # A manifest that does not load: its own subclass (M19-12), so a
+            # caller can tell it from a `manifests/` it cannot trust.
+            raise DamagedManifestError(str(exc)) from exc
+        for manifest in manifests:
             referenced.update(e.sha256 for e in manifest.entries if e.sha256 is not None)
 
         cutoff = datetime.now(UTC).timestamp() - grace_seconds if grace_seconds > 0 else None

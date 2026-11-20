@@ -576,6 +576,10 @@ def test_no_operation_but_set_label_changes_a_manifest_file(
         # full id, and never rewrites the bytes of one that stays; not run
         # above, since it would leave no manifest file to compare.
         "remove",
+        # M19-12 (§6.9 as amended 2026-11-19): deletes one manifest that does
+        # not load, by full id, and rewrites none; the check reads only.
+        "remove_damaged",
+        "check_damaged",
     }
 
 
