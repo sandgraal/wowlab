@@ -13,6 +13,7 @@ recorded layouts (all multiples of 4). The plans come from the real
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -104,7 +105,13 @@ def at_origin(points: tuple[int, ...]) -> tuple[Point, ...]:
     return tuple((a, b, (0.0, 0.0, 0.0) if a in points else p) for a, b, p in ATTACHMENTS)
 
 
-def body_files(fdid: int, attachments: tuple[Point, ...] = ATTACHMENTS) -> dict[int, bytes]:
+def body_files(
+    fdid: int,
+    attachments: tuple[Point, ...] = ATTACHMENTS,
+    *,
+    bone_list: list[mb.Bone] | None = None,
+    global_sequences: tuple[int, ...] | list[int] = (),
+) -> dict[int, bytes]:
     vertices, sections = _triangles(BODY_GEOSETS)
     textures = tuple((kind, 0) for kind, _ in BODY_TEXTURES)
     blob = mb.md20(
@@ -114,6 +121,8 @@ def body_files(fdid: int, attachments: tuple[Point, ...] = ATTACHMENTS) -> dict[
         combos=tuple(range(len(BODY_TEXTURES))),
         attachments=attachments,
         lookup=(),
+        bone_list=bone_list,
+        global_sequences=global_sequences,
     )
     skin_id = fdid + SKIN_OFFSET
     model = mb.chunked(
@@ -130,6 +139,69 @@ def body_files(fdid: int, attachments: tuple[Point, ...] = ATTACHMENTS) -> dict[
         ),
     )
     return {fdid: model, skin_id: skin, TXID_FILE: texture((10, 20, 30, 255))}
+
+
+DERIVED = FIXTURES / "macos-70959" / "derived" / "charmodel.json"
+SHEATH = tuple(range(26, 34))
+
+
+def derived_character(body_fdid: int) -> dict[str, object]:
+    """The derived fixture's row for the body model `body_fdid` (959310 or
+    917116; read from the install by `scripts/charmodel_facts.py`)."""
+    rows = json.loads(DERIVED.read_text(encoding="utf-8"))["characters"]
+    return next(c for c in rows if c["body_file_data_id"] == body_fdid)  # type: ignore[no-any-return]
+
+
+def fixture_sheath(body_fdid: int) -> tuple[tuple[Point, ...], list[mb.Bone], list[int]]:
+    """The sheath points 26 to 33 of a fixture body model as the derived
+    fixture records them (M15-24, M15-26): each point (id, bone, position),
+    and the bones under them with their pivots, their parents with theirs,
+    and each sheath bone's rotation track holding its recorded first key
+    (encoded back to i16, so it decodes within 2e-5 of the recorded value);
+    the global sequences the tracks name, with their recorded durations. A
+    parent's parent the fixture does not record is a root at the origin: in
+    the rest pose a parent turns nothing, whatever its pivot. Every other
+    bone is a root at the origin with no track."""
+    row: dict[str, object] = derived_character(body_fdid)
+    points = [p for p in row["other_attachment_points"] if p["id"] in SHEATH]  # type: ignore[attr-defined]
+    recorded = row["bones"]
+    parents = row["sheath_point_parents"]
+    keys = row["sheath_rotation_keys"]
+    bones: dict[int, mb.Bone] = {}
+    loops: dict[int, int] = {}
+    for p in points:
+        pid = str(p["id"])
+        for parent in parents[pid]:  # type: ignore[index]
+            up = recorded.get(str(parent["bone"]), {}).get("parent", -1)  # type: ignore[attr-defined]
+            bones[parent["bone"]] = (
+                up if str(up) in recorded else -1,
+                tuple(parent["bone_pivot"]),
+                None,
+            )
+        track = keys[pid]["rotation"]  # type: ignore[index]
+        rotation = None
+        if track["global_sequence"] >= 0 and track["first_array"] is not None:
+            loops[track["global_sequence"]] = track["global_duration"]
+            rotation = (
+                track["global_sequence"],
+                track["interpolation"],
+                [mb.quat(*track["first_array"]["first_value"])],
+            )
+        parent_of = recorded[str(p["bone"])]["parent"]  # type: ignore[index]
+        bones[p["bone"]] = (parent_of, tuple(p["bone_pivot"]), rotation)
+    count = max(bones) + 1
+    bone_list = [bones.get(i, (-1, (0.0, 0.0, 0.0), None)) for i in range(count)]
+    durations = [loops.get(i, 1000) for i in range(max(loops, default=-1) + 1)]
+    sheath = tuple((p["id"], p["bone"], tuple(p["position"])) for p in points)
+    return sheath, bone_list, durations  # type: ignore[return-value]
+
+
+def fixture_body_files(fdid: int) -> dict[int, bytes]:
+    """`body_files` for a fixture body model (959310, 917116): the hand
+    points at the origin as the real files store them, and the sheath points
+    and their bones from the derived fixture (`fixture_sheath`)."""
+    sheath, bone_list, durations = fixture_sheath(fdid)
+    return body_files(fdid, ORIGIN_HANDS + sheath, bone_list=bone_list, global_sequences=durations)
 
 
 def item_files(fdid: int, geoset: int = 0) -> dict[int, bytes]:
@@ -169,10 +241,18 @@ def many_textures_item(fdid: int, count: int, first_texture: int) -> dict[int, b
 
 
 def files_for(
-    plan: renderplan.RenderPlan, attachments: tuple[Point, ...] = ATTACHMENTS
+    plan: renderplan.RenderPlan,
+    attachments: tuple[Point, ...] = ATTACHMENTS,
+    *,
+    fixture: bool = False,
 ) -> dict[int, bytes]:
-    """A constructed file for every id the plan names."""
-    out = body_files(plan.body.file_data_id, attachments)
+    """A constructed file for every id the plan names. `fixture`: the body
+    is `fixture_body_files` (`attachments` is not used)."""
+    out = (
+        fixture_body_files(plan.body.file_data_id)
+        if fixture
+        else body_files(plan.body.file_data_id, attachments)
+    )
     for m in plan.item_models:
         out.update(item_files(m.file_data_id))
     for f in plan.files:

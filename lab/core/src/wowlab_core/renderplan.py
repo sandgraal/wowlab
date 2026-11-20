@@ -363,6 +363,7 @@ through a component row, and is not placed when it has none (the module
 docstring; both **[verify]**). A shield in the off hand is drawn at
 `SHIELD_ATTACHMENT` instead."""
 SHIELD_ATTACHMENT = 0
+_SHEATHE_TYPE = "SheatheType"
 
 # The groups two slots select, the slots in priority order: the first whose
 # value is not 0 takes the group.
@@ -603,7 +604,10 @@ class ItemModel(_Frozen):
     attachment known": no component row and no attachment listed, so the
     plan does not place it (attached at a point the plan does not list, or a
     collection model, **[verify]**). `attachment_geoset_values` are the
-    display's `AttachmentGeosetGroup` cells, kept, not applied."""
+    display's `AttachmentGeosetGroup` cells, kept, not applied.
+    `sheathe_type` is the item's `Item.SheatheType` (None when the table
+    has no such column or no row for the item); `charmodel` uses it to draw
+    a held item sheathed (M15-27)."""
 
     slot: int
     item_id: int
@@ -619,6 +623,7 @@ class ItemModel(_Frozen):
     attachment_id: int | None
     model_type: int
     attachment_geoset_values: tuple[int, ...] = ()
+    sheathe_type: int | None = None
 
 
 class ItemTexture(_Frozen):
@@ -837,6 +842,14 @@ class _Row:
                 f"{self._table} row {self._line}: {column}={text!r} is not a whole number"
             ) from None
 
+    def optional_number(self, column: str) -> int | None:
+        """The column as a whole number, or None when the row has no such
+        column or its text is not one."""
+        try:
+            return int(self._row[column])
+        except (KeyError, ValueError):
+            return None
+
     def has(self, column: str) -> bool:
         return column in self._row
 
@@ -950,9 +963,16 @@ class RenderTables:
             for m in model_ids:
                 if race not in self.model_races[m]:
                     self.model_races[m].append(race)
-        self.item_inventory: dict[int, int] = {
-            r.number("ID"): r.number("InventoryType") for r in _rows("Item", tables["Item"])
-        }
+        self.item_inventory: dict[int, int] = {}
+        # `Item.SheatheType` (M15-27), kept when the column is there and a
+        # whole number; an item without one is not drawn sheathed.
+        self.item_sheathe: dict[int, int] = {}
+        for r in _rows("Item", tables["Item"]):
+            item_id = r.number("ID")
+            self.item_inventory[item_id] = r.number("InventoryType")
+            sheathe = r.optional_number(_SHEATHE_TYPE)
+            if sheathe is not None:
+                self.item_sheathe[item_id] = sheathe
         # ItemBonus type 7 (appearance) rows by bonus list: (row, modifier, priority).
         self.appearance_bonuses: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
         for r in _rows("ItemBonus", tables["ItemBonus"]):
@@ -1739,6 +1759,7 @@ def _item_files(
                 attachment_id=attachment,
                 model_type=d.model_types[index],
                 attachment_geoset_values=d.attachment_groups,
+                sheathe_type=tables.item_sheathe.get(item.item_id),
             )
         )
     for index, resources in enumerate(d.model_materials):

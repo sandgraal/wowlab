@@ -969,6 +969,9 @@ if TYPE_CHECKING:
         _PNG_PARTS as _PNG_PARTS,
     )
     from wowlab_core.cli._cmd_charmodel import (
+        _SHEATHED as _SHEATHED,
+    )
+    from wowlab_core.cli._cmd_charmodel import (
         CharModelPlan as CharModelPlan,
     )
     from wowlab_core.cli._cmd_charmodel import (
