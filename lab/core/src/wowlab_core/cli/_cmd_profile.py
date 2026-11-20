@@ -30,7 +30,6 @@ from wowlab_core.cli._cmd_restore import (
 )
 from wowlab_core.cli._cmd_snap import (
     SnapshotSummary,
-    _damaged_records,
     _plan_line,
     _summary,
     _version,
@@ -46,6 +45,7 @@ from wowlab_core.cli._common import (
     _bytes,
     _client_running,
     _confirm,
+    _damaged_records,
     _discover,
     _emit,
     _flavor_list,

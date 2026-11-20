@@ -1,7 +1,7 @@
 """`wowlab snap create`, `list`, `show`, `diff`, `verify`, `gc`, `rm` (M19-09),
 `export` and `import` (M16-111)."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -52,6 +52,7 @@ from wowlab_core.cli._common import (
     _client_running,
     _confirm,
     _crew_export_line,
+    _damaged_records,
     _damaged_words,
     _discover,
     _emit,
@@ -644,16 +645,6 @@ _GC_DAMAGED = (
     "is there. `wowlab snap verify` names it; " + _RM_DAMAGED.format("<full id>")
 )
 """`snap gc`'s refusal while a manifest does not load (M19-12)."""
-
-
-def _damaged_records(
-    store: snapshot.SnapshotStore, invalid: Iterable[snapshot.InvalidManifest]
-) -> list[snapshot.InvalidManifest]:
-    """`invalid` with each reason replaced by `_damaged_words` (M19-13)."""
-    return [
-        snapshot.InvalidManifest(name=bad.name, reason=_damaged_words(store, bad.name))
-        for bad in invalid
-    ]
 
 
 def _read_snapshot(store: snapshot.SnapshotStore, reference: str) -> snapshot.Manifest:

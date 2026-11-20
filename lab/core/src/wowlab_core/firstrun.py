@@ -895,6 +895,7 @@ def run(
     say: Callable[[str], None],
     choose: Callable[[Sequence[str]], int | None] | None,
     confirm: Callable[[str], bool] | None,
+    damaged_words: Callable[[str], str],
     clients: Callable[[], Sequence[str]] = tuple,
 ) -> FirstRunReport:
     """The first-run section of `doctor`, after its report.
@@ -907,8 +908,11 @@ def run(
     with several flavors it still needs `--flavor`. `client_running` is the
     probe `snap create` uses; it is asked again right before the snapshot,
     since a prompt can wait while the game starts. `clients` names the
-    client processes found, for the text. Every line goes through `say`,
-    the undo line last."""
+    client processes found, for the text. `damaged_words` is what is said
+    of a snapshot record the verify finds damaged, given its file name: the
+    command's fixed sentence, never the loader's words, which quote the
+    file (M19-15); text and the report carry it alike. Every line goes
+    through `say`, the undo line last."""
     others: list[str] = []
 
     def report(
@@ -1058,6 +1062,11 @@ def run(
         return report(
             "failed", scans=scans, flavor=flavor, running=running, taken=taken, error=str(exc)
         )
+    damaged = tuple(
+        snapshot.InvalidManifest(name=bad.name, reason=damaged_words(bad.name))
+        for bad in verified.invalid_manifests
+    )
+    verified = verified.model_copy(update={"invalid_manifests": damaged})
     for line in _verify_lines(verified):
         say(line)
     for folder in others:

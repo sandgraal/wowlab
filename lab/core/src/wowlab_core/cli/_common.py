@@ -19,7 +19,7 @@ import sys
 import textwrap
 import time
 import traceback
-from collections.abc import Callable, Iterator, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, MutableMapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
@@ -736,6 +736,18 @@ def _damaged_words(store: snapshot.SnapshotStore, name: str) -> str:
         f"snapshot {sid} is damaged: its record in wowlab's snapshot folder cannot be read. "
         + _RM_DAMAGED.format(sid)
     )
+
+
+def _damaged_records(
+    store: snapshot.SnapshotStore, invalid: Iterable[snapshot.InvalidManifest]
+) -> list[snapshot.InvalidManifest]:
+    """`invalid` with each reason replaced by `_damaged_words` (M19-13), for
+    `snap list` and `verify`, and for plain `doctor` and its first-run check
+    (M19-15)."""
+    return [
+        snapshot.InvalidManifest(name=bad.name, reason=_damaged_words(store, bad.name))
+        for bad in invalid
+    ]
 
 
 # Player copy (M16-15, docs/LAB_PLAN.md §18.1 item 4): text output carries
