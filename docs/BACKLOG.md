@@ -3718,6 +3718,13 @@ what is never read; the two are to be checked against each other.
 
 The sync copies `matches` into the database once each; `crew matches [NAME-REALM]`; `crew list --faced`, `--allied`, `--map`, `--since` and the two sorts; `crew show` with the record with and against; `crew forget` clears a player from every match; the Crew tab shows the same, and a database-only rating or note from the tab goes through the existing token check and Confirm step with the row's `--expect` pin, covered by the parity tests.
 
+*Added 2026-11-20, from M20-03's code review (#656):* this ticket also owns
+syncing the four counters. §21.3 rule 2 adds them up across syncs and the
+database has the columns, but nothing reads the counters the reader now
+holds beside each record (`CrewBook.pvp`), and no other ticket names it.
+The sync applies §21.3's stated bound to each counter, which the reader's
+own integer limit does not.
+
 **Acceptance:** tests on constructed books and databases; text and `--json` say the same; hostile map names shown as text; the UI parity tests cover the new commands; no new endpoint. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: one new command, new options and the Crew tab's match history.
 
 ---
