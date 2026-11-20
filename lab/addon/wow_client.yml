@@ -237,6 +237,15 @@ globals:
   UnitGroupRolesAssigned:
     args:
       - type: string
+  UnitGUID:
+    args:
+      - type: string
+  UnitFactionGroup:
+    args:
+      - type: string
+  UnitHonorLevel:
+    args:
+      - type: string
   GetGuildInfo:
     args:
       - type: string
@@ -248,6 +257,8 @@ globals:
   # tested for before it is called, called only in a battleground or arena,
   # while the book is on and out of combat. [verify] until M20-06.
   C_PvP.GetScoreInfo:
+    property: read-only
+  C_PvP.IsSoloShuffle:
     property: read-only
   GetNumBattlefieldScores:
     property: read-only

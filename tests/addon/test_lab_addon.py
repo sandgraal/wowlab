@@ -31,6 +31,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -290,7 +291,11 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK})
 #   at file level for an event Core.lua registers itself at file level, with
 #   a gated local function as the handler (no new registration while off).
 CREW_FILE = "Crew.lua"
-CREW_NAME_CALLS = frozenset({"UnitName", "UnitFullName", "GetNormalizedRealmName", "GetGuildInfo"})
+# M20-11 (owner decision, 2026-11-20, ADR-0036's second note of that date):
+# also `UnitGUID`, held to the same gate and secret test as the others.
+CREW_NAME_CALLS = frozenset(
+    {"UnitName", "UnitFullName", "GetNormalizedRealmName", "GetGuildInfo", "UnitGUID"}
+)
 CREW_DB = BOOK  # the crew book's saved variable, from _crew_constructed.py
 _CREW_PATH = Path(CREW_FILE)
 NON_LITERAL_UNIT = "<a local name as the unit>"
@@ -351,7 +356,8 @@ CREW_COMMAND_CALL = "ns . CrewCommand ( message )"
 CREW_RELAXED: dict[str, frozenset[str]] = {
     "FORBIDDEN_APIS": CREW_NAME_CALLS,
     "CLOCK": frozenset({"time", "date"}),
-    "NAME_FIELDS": frozenset({"name", "realm"}),
+    # M20-11: and `guid` (a group member's, a scoreboard row's).
+    "NAME_FIELDS": frozenset({"name", "realm", "guid"}),
     "STD_PRIVACY": CREW_NAME_CALLS,
     "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS}),
     "CONCAT_INDEX": frozenset({"-"}),
@@ -372,10 +378,13 @@ CREW_EXPORTS = frozenset({"CrewCommand"})
 CREW_NS_READS = frozenset(
     {"On", "Call", "Fn", "Number", "String", "Bool", "Pack", "Numbers", *CREW_EXPORTS}
 )
-# Never relaxed, Crew.lua included (§20.1; ADR-0036 keeps GUIDs and chat out).
+# Never relaxed, Crew.lua included: every send (§20.1), the combat log and the
+# chat and community readers (no ticket builds them), the clock's `os`. M20-11
+# (owner decision, 2026-11-20): `UnitGUID` left this list for Crew.lua only
+# (CREW_NAME_CALLS); `GetPlayerInfoByGUID` stays, since Crew.lua has no use
+# for it.
 NEVER_RELAXED = frozenset(
     {
-        "UnitGUID",
         "GetPlayerInfoByGUID",
         "C_ChatInfo",
         "C_Club",
@@ -418,16 +427,10 @@ CREW_PINNED_1 = {"crewOn": CREW_ON, "crewBlocked": CREW_BLOCKED, "secret": CREW_
 
 # --- M20-04: schema 2 (docs/LAB_PLAN.md §21.1, §21.2) ---------------------------
 #
-# The pinned helpers of the scoreboard probe, rendered from the constructed
-# source's own text (tests/addon/_crew_constructed.py), each behind the gate:
-# - pvpInstance: true only in an instance whose GetInstanceInfo type is `pvp`
-#   or `arena` (nil while off or in combat, false when it cannot say);
-# - pvpWon: true once GetBattlefieldWinner reports a winner;
-# - pvpSnapshot: one probe run, a fresh table holding exactly what §21.2
-#   lists, nothing read from a row but its field names and their type names,
-#   the type at each position, the name (for three yes-or-no tests only) and
-#   the side; a row's GUID field is never indexed.
-# The migration (CREW_MIGRATE) is pinned with them; it holds no client name.
+# The scoreboard's candidate calls (§21.2). M20-11: no longer pinned to the
+# probe's helpers; each is held to the gate, `pcall` and the secret test
+# (`_crew_score_problems`). The migration (CREW_MIGRATE) is pinned; it holds
+# no client name.
 CREW_PVP_CALLS = frozenset(
     {
         "C_PvP",
@@ -439,7 +442,6 @@ CREW_PVP_CALLS = frozenset(
         "IsActiveBattlefieldArena",
     }
 )
-# pvpInstance, pvpWon and pvpSnapshot are added below `_render`.
 CREW_PINNED = {**CREW_PINNED_1, "crewMigrate": CREW_MIGRATE}
 # The limits and the near-full line (§21.1, §21.2): each a named file-level
 # constant holding a number literal, declared once and never assigned again.
@@ -451,24 +453,13 @@ CREW_LIMITS = {
 }
 
 
-# §21.2's fields that the addon of M20-07 and M20-08 writes, not this wave's
-# M20-05: no store into any of them (as a field, a constructor key or a
-# written-out bracket key) is accepted yet. `matches` is written only by the
-# migration and in a new book's constructor, empty; elsewhere it is only
-# counted (`#`) or type()-tested.
 def _crew_scoreboard_name(name: str) -> bool:
     """Fix round 1 (security review): a candidate call, or any global named
     `GetBattlefield...` (GetBattlefieldStatData, GetBattlefieldTeamInfo,
-    GetBattlefieldStatus, ...), or `C_PvP` (so any member of it): at schema 2
-    only in the pinned probe helpers or a `type()` test."""
+    GetBattlefieldStatus, ...), or `C_PvP` (so any member of it). M20-11:
+    behind the gate, through `pcall` or in a `type()` test
+    (`_crew_score_problems`)."""
     return name in CREW_PVP_CALLS or name.startswith("GetBattlefield")
-
-
-# The probe's two event counts (session locals pvpSnapshot stores).
-CREW_PVP_COUNTERS = frozenset({"pvpScoreEvents", "pvpCompleteEvents"})
-CREW_LATER_FIELDS = frozenset(
-    {"allied", "faced", "allied_won", "faced_won", "pvp_last", "pvp_map", "pvp_side", "matched"}
-)
 
 
 @dataclass(frozen=True)
@@ -946,18 +937,10 @@ def _render(tokens: list[Token]) -> str:
     return " ".join(f'"{t.text}"' if t.kind == "string" else t.text for t in tokens)
 
 
-# M20-04: the scoreboard probe's pinned helpers, rendered from the constructed
-# source's text (see CREW_PINNED); filled here, once the lexer exists.
-CREW_PINNED.update(
-    {
-        name: _render(tokenize(text))
-        for name, text in (
-            ("pvpInstance", _CONSTRUCTED._CREW_PVP_INSTANCE),
-            ("pvpWon", _CONSTRUCTED._CREW_PVP_WON),
-            ("pvpSnapshot", _CONSTRUCTED._CREW_PVP_SNAPSHOT),
-        )
-    }
-)
+# M20-04 pinned the scoreboard probe's helpers (pvpInstance, pvpWon,
+# pvpSnapshot) whole here. M20-11 (owner decision, 2026-11-20) dropped the
+# pins: they held the probe to type names only. The gate, the pcall and the
+# secret test of every scoreboard call are `_crew_score_problems`'.
 
 
 def _statement_at(tokens: list[Token], start: int, length: int) -> str:
@@ -1344,19 +1327,27 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
     assert not problems, problems
 
 
+_CREW_ROW_BINDING = "local okRow , row = pcall ( C_PvP . GetScoreInfo ,"
+
+
 def _crew_row_walk(path: Path, tokens: list[Token], i: int) -> bool:
-    """M20-04: is the `pairs` at i the `pairs ( row )` of a schema 2
-    Crew.lua's pinned pvpSnapshot, as pinned?"""
+    """M20-04: is the `pairs` at i a walk of a scoreboard row in a schema 2
+    Crew.lua? M20-11 (owner decision, 2026-11-20): no longer only in the
+    pinned pvpSnapshot; in any function that binds `row` as
+    _CREW_ROW_BINDING (what is done with each value is the secret rule's,
+    `_crew_score_problems`)."""
     if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema != 2:
         return False
     if _render(tokens[i : i + 4]) != "pairs ( row )":
         return False
     flow = _Flow(path, tokens)
     fn = flow.function_at(i)
-    return (
-        fn is not None
-        and flow.labels.get(fn.head) == "pvpSnapshot"
-        and _render(tokens[fn.head - 1 : flow.block_end(fn.head) + 1]) == CREW_PINNED["pvpSnapshot"]
+    if fn is None:
+        return False
+    n = len(_CREW_ROW_BINDING.split(" "))
+    return any(
+        _render(tokens[k : k + n]) == _CREW_ROW_BINDING and flow.function_at(k) is fn
+        for k in range(fn.start, min(i, len(tokens) - n))
     )
 
 
@@ -2411,8 +2402,9 @@ _TRUSTED_NAMES = _LUA_BUILTINS | {"ns"}
 def test_sources_store_nothing_through_table_library(path: Path) -> None:
     """Review of M11-13: `table.insert(out, api_table)` stores through a call,
     which the stored-value check does not read. The addon appends with
-    `t[#t + 1] = v`; `table` is used only as `table.sort`, and `tinsert` (and a
-    string naming either) never appears."""
+    `t[#t + 1] = v`; `table` is used only as `table.sort` or (M20-11, the
+    oldest match dropped) `table.remove`, which stores nothing, and `tinsert`
+    (and a string naming either) never appears."""
     tokens = _tokens(path)
     bad = []
     for i, t in enumerate(tokens):
@@ -2422,7 +2414,10 @@ def test_sources_store_nothing_through_table_library(path: Path) -> None:
             continue
         if t.text == "tinsert":
             bad.append(f"{_where(path, t)} tinsert")
-        if t.text == "table" and [x.text for x in tokens[i + 1 : i + 3]] != [".", "sort"]:
+        if t.text == "table" and [x.text for x in tokens[i + 1 : i + 3]] not in (
+            [".", "sort"],
+            [".", "remove"],
+        ):
             bad.append(f"{_where(path, t)} {_render(tokens[i : i + 3])!r}")
     assert not bad, bad
 
@@ -7568,200 +7563,25 @@ def _crew_problems(path: Path, text: str, pins: _CrewPins | None = None) -> list
 
 
 _CREW_BOOK_TABLES = ("players", "current")
-CREW_KEY_CALLS = frozenset({"UnitName", "UnitFullName", "GetNormalizedRealmName"})
-
-
-def _crew_name_decls(flow: _Flow) -> set[int]:
-    """ids of the locals bound by a relaxed name call (`local name, realm =
-    UnitFullName(unit)`), which the secret rule already holds to its test."""
-    t = flow.tokens
-    out: set[int] = set()
-    for k in _crew_relaxed_calls(t):
-        # Fix round 5: a guild name is not a key part.
-        if t[k].text not in CREW_KEY_CALLS or t[k - 1].text != "=":
-            continue
-        close = flow.pair[k + 1]
-        j = k - 2  # the last name before `=`
-        while j >= 1 and t[j].kind == "name" and t[j].text not in _KEYWORDS:
-            decl = flow.resolve(t[j].text, close + 1)
-            if decl is not None:
-                out.add(id(decl))
-            if t[j - 1].text != ",":
-                break
-            j -= 2
-    return out
 
 
 def _crew_book_key_problems(flow: _Flow) -> list[str]:
-    """Fix round 4: what may become a key of `BOOK.players` or
-    `.current`. Graded on tokens:
-    - the two tables are reached only as `BOOK.players` /
-      `.current` written out, or through a local bound once, directly, to
-      one (an alias); either is only indexed (`[...]` or `.field`) or walked
-      by `pairs`, never handed on, returned, stored or assigned whole, and
-      `BOOK` is never indexed by brackets;
-    - a store `<table>[K] ... =` takes as K exactly `<a> .. "-" .. <b>`, with
-      a and b bound by a relaxed name call, or a local bound once to that, or
-      the key of a `for K in pairs(<table>)` loop;
-    - the two tables are only ever assigned whole as `{}`, and no table
-      constructor in Crew.lua has a `[...] =` key.
-    Left to review: a key read back from an entry's own fields."""
+    """Fix round 4, cut by M20-11 (owner decision, 2026-11-20): the rule that
+    a key of `BOOK.players` / `.current` is built only from the name calls,
+    and that the two tables are never handed on, existed for what the book
+    may hold and are gone (a scoreboard row's name is a key now). What stays
+    keeps the schema and limit rules seeing every store: the two tables are
+    assigned whole only as `{}`, `BOOK` is never indexed by brackets, and no
+    table constructor in Crew.lua has a `[...] =` key."""
     t = flow.tokens
     problems: list[str] = []
-    names = _crew_name_decls(flow)
-    aliases: dict[int, str] = {}  # id(decl) -> the alias's name
-    for p in range(len(t) - 5):
-        if (
-            t[p].text == "local"
-            and t[p + 1].kind == "name"
-            and t[p + 2].text == "="
-            and _render(t[p + 3 : p + 6]) in {f"{CREW_DB} . {n}" for n in _CREW_BOOK_TABLES}
-            and _ends_expression(t, p + 6)
-        ):
-            name = t[p + 1].text
-            for d in flow.decls.get(name, []):
-                if not p < d.start <= p + 8:
-                    continue
-                if any(r == name and flow.resolve(name, ts) is d for r, ts in flow.rebound):
-                    problems.append(
-                        f"line {t[p].line}: {name} holds a book table and is assigned again"
-                    )
-                else:
-                    aliases[id(d)] = name
-
-    def table_at(k: int) -> int | None:
-        """If a book table starts at token k, the index just after it."""
-        x = t[k]
-        if x.kind != "name" or _is_field(t, k):
-            return None
-        if x.text == CREW_DB and t[k + 1].text == "." and t[k + 2].text in _CREW_BOOK_TABLES:
-            return k + 3
-        decl = flow.resolve(x.text, k)
-        if decl is not None and id(decl) in aliases:
-            return k + 1
-        return None
-
-    def walk_key(s: int) -> bool:
-        """Is the name at token s the key of a `for K in pairs(<book
-        table>)` around it, never assigned?"""
-        name = t[s].text
-        decl = flow.resolve(name, s)
-        if t[s].kind != "name" or decl is None:
-            return False
-        for b in flow.blocks:
-            if b.kind != "loop" or t[b.head].text != "for" or not b.head < s < b.stop:
-                continue
-            if t[b.head + 1].text != name or t[b.head + 2].text not in {",", "in"}:
-                continue
-            if flow.resolve(name, b.start) is not decl:
-                continue
-            rest = next(q for q in range(b.head, b.stop) if t[q].text == "in")
-            after = table_at(rest + 3) if _render(t[rest + 1 : rest + 3]) == "pairs (" else None
-            if (
-                after is not None
-                and t[after].text == ")"
-                and not any(
-                    r.rstrip(".") == name and flow.resolve(name, ts) is decl
-                    for r, ts in flow.rebound
-                )
-            ):
-                return True
-        return False
-
-    def walked_local(s: int) -> bool:
-        """Fix round 5: a local assigned only from walk keys (`oldest = key`
-        inside the walk, any number of times) or nil, and declared bare or
-        as nil (the oldest-unrated drop)."""
-        name = t[s].text
-        decl = flow.resolve(name, s)
-        if decl is None:
-            return False
-        declared = [
-            p
-            for p in range(len(t) - 2)
-            if t[p].text == "local"
-            and t[p + 1].text == name
-            and any(d is decl for d in flow.decls.get(name, []) if p < d.start <= p + 4)
-        ]
-        if len(declared) != 1:
-            return False
-        p = declared[0]
-        if t[p + 2].text == ",":
-            return False
-        if t[p + 2].text == "=" and not (t[p + 3].text == "nil" and _ends_expression(t, p + 4)):
-            return False
-        sets = [ts for r, ts in flow.rebound if r == name and flow.resolve(name, ts) is decl]
-        if any(
-            r.rstrip(".") == name and r != name and flow.resolve(name, ts) is decl
-            for r, ts in flow.rebound
-        ):
-            return False
-        for ts in sets:
-            if t[ts + 1].text != "=" or t[ts - 1].text == ",":
-                return False
-            value_ok = (t[ts + 2].text == "nil" or walk_key(ts + 2)) and _ends_expression(t, ts + 3)
-            if not value_ok:
-                return False
-        return bool(sets)
-
-    def key_ok(s: int, e: int) -> bool:
-        key = t[s:e]
-        if _name_dash_name(key):
-            return all(id(flow.resolve(x.text, s)) in names for x in (key[0], key[4]))
-        if len(key) != 1 or key[0].kind != "name":
-            return False
-        decl = flow.resolve(key[0].text, s)
-        if decl is None:
-            return False
-        if walk_key(s) or walked_local(s):
-            return True
-        # A local bound once to `<a> .. "-" .. <b>` from name calls.
-        for p in range(len(t) - 8):
-            if [t[p].text, t[p + 1].text, t[p + 2].text] == ["local", key[0].text, "="]:
-                bound = [d for d in flow.decls.get(key[0].text, []) if p < d.start <= p + 9]
-                if bound and bound[0] is decl and _name_dash_name(t[p + 3 : p + 8]):
-                    if not _ends_expression(t, p + 8):
-                        return False
-                    if any(
-                        r.rstrip(".") == key[0].text and flow.resolve(key[0].text, ts) is decl
-                        for r, ts in flow.rebound
-                    ):
-                        return False
-                    return all(id(flow.resolve(t[q].text, p)) in names for q in (p + 3, p + 7))
-        return False
-
     for k in range(len(t) - 3):
-        after = table_at(k)
-        if after is None:
+        if t[k].text != CREW_DB or _is_field(t, k) or t[k + 1].text != ".":
             continue
-        walk = t[k - 1].text == "(" and t[k - 2].text == "pairs" and t[after].text == ")"
-        alias_binding = (
-            t[k].text == CREW_DB
-            and t[k - 1].text == "="
-            and t[k - 2].kind == "name"
-            and t[k - 3].text == "local"
-            and _ends_expression(t, after)
-        )
-        if walk or alias_binding:
+        if t[k + 2].text not in _CREW_BOOK_TABLES or t[k + 3].text != "=":
             continue
-        nxt = t[after].text
-        if nxt == "=" and t[k].text == CREW_DB:
-            if _render(t[after + 1 : after + 3]) != "{ }" or not _ends_expression(t, after + 3):
-                problems.append(f"line {t[k].line}: a book table assigned other than {{}}")
-            continue
-        if nxt == ".":
-            continue
-        if nxt != "[":
-            problems.append(f"line {t[k].line}: a book table used other than indexed or walked")
-            continue
-        close = flow.pair[after]
-        # Is this index the target of a store (`...[K] ... =`)?
-        j = close + 1
-        while j < len(t) and t[j].text in {".", "["}:
-            j = flow.pair[j] + 1 if t[j].text == "[" else j + 2
-        store = j < len(t) and t[j].text in {"=", ","} and flow.statement_level(k)
-        if store and not key_ok(after + 1, close):
-            problems.append(f"line {t[k].line}: a book key is not a name-realm from the name calls")
+        if _render(t[k + 4 : k + 6]) != "{ }" or not _ends_expression(t, k + 6):
+            problems.append(f"line {t[k].line}: a book table assigned other than {{}}")
     for k in range(len(t) - 1):
         if t[k].text == CREW_DB and t[k + 1].text == "[" and not _is_field(t, k):
             # Fix round 5: never, read or written (`BOOK["players"] =
@@ -7863,23 +7683,19 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
     - the migration: `crewMigrate` called only where its two pins call it
       (in `crewLoaded`, for a book that is on, and in the slash handler's
       head, for the word `on`);
-    - the probe: `probe.pvp` written only by the two pinned stores
-      (CREW_PVP_ENTRY_STORE, CREW_PVP_WINNER_STORE), each once, in a gated
-      function whose next statement asks `pvpInstance()`, the second only
-      under a condition holding `pvpWon()`; the book's `probe` reached
-      nowhere else but in `crewLoaded` and in a `type()` test;
-      `pvpSnapshot` used only in those two stores; the candidate calls
-      (CREW_PVP_CALLS) named only in the pinned helpers or in a `type()`
-      test;
+    - the scoreboard calls behind the gate, through `pcall`, their values
+      held to the secret test (`_crew_score_problems`, M20-11);
     - the near-full line: `warned` stored once, as `<book>.warned = <local>`
       right before the line is printed, in a gated function, under an `if`
       whose condition compares with NEAR_FULL_SECONDS and holds
       NEAR_FULL_PERCENT, MAX_PLAYERS and MAX_MATCHES;
-    - the fields of M20-07 and M20-08 (CREW_LATER_FIELDS) never written;
-      `matches` written only empty, by the migration or in a new book's
-      constructor, and otherwise only counted or type()-tested; `schema`
-      stored only by the migration, or as `schema = CREW_SCHEMA` in a
-      constructor."""
+    - `matched` read and written before a counter is raised, and the oldest
+      match dropped before one is added (`_crew_match_problems`, M20-11);
+      `matches` created only empty in a constructor; `schema` stored only by
+      the migration, or as `schema = CREW_SCHEMA` in a constructor.
+    M20-11 (owner decision, 2026-11-20) removed the probe's pinned stores
+    and helpers and the refusal of the per-player counters, `matched` and
+    `matches` entries: they served what the book may hold."""
     t = flow.tokens
     problems: list[str] = []
     for name, decl in CREW_LIMITS.items():
@@ -7924,100 +7740,13 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
         if not (pinned_function(k, {"crewLoaded"}) or in_head(k)):
             problems.append(f"line {x.line}: crewMigrate used outside its two pinned calls")
 
-    # The probe's two stores, and the book's `probe` reached nowhere else.
-    stores = {"entry": CREW_PVP_ENTRY_STORE, "winner": CREW_PVP_WINNER_STORE}
-    at: dict[str, list[int]] = {}
-    for tag, text in stores.items():
-        n = len(text.split(" "))
-        at[tag] = [
-            k
-            for k in range(len(t) - n + 1)
-            if _render(t[k : k + n]) == text
-            and not _is_field(t, k)
-            and flow.statement_level(k)
-            and _ends_expression(t, k + n)
-        ]
-        if len(at[tag]) != 1:
-            problems.append(f"the {tag} store of probe.pvp is not exactly one `{text}`")
-            continue
-        k = at[tag][0]
-        fn = flow.function_at(k)
-        while fn is not None and _pcall_literal(t, fn.head):
-            fn = flow.function_at(fn.head - 1)
-        if fn is None or not _crew_gated(flow, fn.head):
-            problems.append(
-                f"line {t[k].line}: the {tag} store of probe.pvp is not behind the gate"
-            )
-            continue
-        asks = fn.start + _CREW_GATE_LEN
-        if _render(t[asks : asks + 6]) != "if not pvpInstance ( ) then":
-            problems.append(
-                f"line {t[k].line}: the {tag} store's function does not ask pvpInstance() first"
-            )
-        if tag == "winner" and not any(
-            b.kind in {"if", "elseif"}
-            and b.cond is not None
-            and b.start <= k < b.stop
-            and "pvpWon ( )" in _render(t[b.cond[0] : b.cond[1]])
-            for b in flow.blocks
-        ):
-            problems.append(f"line {t[k].line}: the winner store is not under a pvpWon() test")
-    starts = {k for ks in at.values() for k in ks}
-    for k in range(len(t) - 2):
-        if t[k].text != CREW_DB or _is_field(t, k) or t[k + 1].text != ".":
-            continue
-        if t[k + 2].text != "probe":
-            continue
-        if k in starts or pinned_function(k, {"crewLoaded"}) or type_test(k):
-            continue
-        problems.append(f"line {t[k].line}: {CREW_DB}.probe reached outside its pinned uses")
-    snapshot_uses = {k + stores[tag].split(" ").index("pvpSnapshot") for tag in at for k in at[tag]}
-    for k, x in enumerate(t):
-        if x.kind != "name" or x.text != "pvpSnapshot" or _is_field(t, k):
-            continue
-        if t[k - 1].text == "function" and t[k - 2].text == "local":
-            continue
-        if k not in snapshot_uses:
-            problems.append(f"line {x.line}: pvpSnapshot used outside the two probe.pvp stores")
-
-    # The candidate calls: in the pinned helpers, or presence tests.
-    # The two event counts pvpSnapshot stores: file-level `local X = 0`,
-    # and otherwise only `X = 0` or `X = X + 1`, so they hold nothing else.
-    for name in sorted(CREW_PVP_COUNTERS):
-        decl = f"local {name} = 0"
-        n = len(decl.split(" "))
-        at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == decl]
-        if (
-            len(at) != 1
-            or flow.function_at(at[0]) is not None
-            or not _ends_expression(t, at[0] + n)
-            or len(flow.decls.get(name, [])) != 1
-        ):
-            problems.append(f"{name} is not one file-level `{decl}`")
-    for root, ts in flow.rebound:
-        if root not in CREW_PVP_COUNTERS:
-            continue
-        value = _render(t[ts + 2 : ts + 5])
-        if (
-            t[ts + 1].text != "="
-            or t[ts - 1].text == ","
-            or (
-                not (t[ts + 2].text == "0" and _ends_expression(t, ts + 3))
-                and not (value == f"{root} + 1" and _ends_expression(t, ts + 5))
-            )
-        ):
-            problems.append(f"line {t[ts].line}: {root} set other than to 0 or itself + 1")
-    helpers = {"pvpInstance", "pvpWon", "pvpSnapshot"}
-    for name in sorted(n for n in flow.decls if _crew_scoreboard_name(n)):
-        problems.append(f"{name} declared as a local")
-    for k, x in enumerate(t):
-        if x.kind == "string" and _crew_scoreboard_name(x.text):
-            problems.append(f"line {x.line}: a scoreboard call named in a string")
-        if x.kind != "name" or not _crew_scoreboard_name(x.text) or _is_field(t, k):
-            continue
-        if flow.resolve(x.text, k) is None and not (pinned_function(k, helpers) or type_test(k)):
-            problems.append(f"line {x.line}: {x.text} used outside the pinned probe helpers")
-
+    # M20-11 (owner decision, 2026-11-20): the probe's pins, its two pinned
+    # stores and "type names only" are gone, and so is "the scoreboard calls
+    # only in the pinned helpers". What stays is about the client: every
+    # scoreboard call behind the gate, through `pcall`, after a test that it
+    # exists; and what a call returns held to the secret test
+    # (`_crew_score_problems`).
+    problems += _crew_score_problems(flow, type_test)
     # The near-full line and `warned`.
     warned = [
         k
@@ -8081,10 +7810,12 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
             or not _ends_expression(t, flow.pair[k + 2] + 1)
         ):
             problems.append(f"line {t[k].line}: {CREW_DB} assigned other than from a constructor")
-    # Fields: the later ones never written; `matches`, `warned`, `schema`.
+    # Fields. M20-11: the counters and `matches` are written now; what stays
+    # is the limit on `matches`, `matched` before the counters
+    # (`_crew_match_problems`), `warned` and `schema`.
     for k, x in enumerate(t):
         if x.kind == "string" and t[k - 1].text == "[" and t[k + 1].text == "]":
-            if x.text in CREW_LATER_FIELDS | {"matches", "warned", "schema", "pvp"}:
+            if x.text in CREW_COUNTERS | {"matched", "matches", "warned", "schema"}:
                 problems.append(f"line {x.line}: {x.text!r} as a bracket key")
             continue
         if x.kind != "name" or k + 4 >= len(t):
@@ -8094,36 +7825,11 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
         if key and flow.opener[k] is not None and t[flow.opener[k]].text != "{":
             key = False  # a multiple assignment's name, not a constructor key
         stored = field and t[k + 1].text in {"=", ","} and flow.statement_level(k)
-        j = k + 1  # a store into the field's own table counts too (`e.allied.x = 1`)
-        while j < len(t) and t[j].text in {".", "["}:
-            j = flow.pair[j] + 1 if t[j].text == "[" else j + 2
-        into = field and j < len(t) and t[j].text in {"=", ","} and flow.statement_level(k)
-        if x.text in CREW_LATER_FIELDS and (into or key):
-            problems.append(f"line {x.line}: {x.text} is written before M20-07 and M20-08")
-        elif x.text == "matches" and field:
-            ok = (
-                (pinned_function(k, {"crewMigrate"}))
-                or (k >= 3 and t[k - 3].text == "#" and t[k - 2].text == CREW_DB)
-                or (t[k - 2].text == CREW_DB and type_test(k - 2))
-            )
-            if not ok:
-                problems.append(f"line {x.line}: matches used other than counted or created empty")
-        elif x.text == "matches" and key:
+        if x.text == "matches" and key:
             if _render(t[k + 2 : k + 4]) != "{ }" or t[k + 4].text not in {",", "}"}:
                 problems.append(f"line {x.line}: matches created other than empty")
         elif x.text == "warned" and key:
             problems.append(f"line {x.line}: warned set in a constructor")
-        elif x.text == "pvp" and key:
-            # Fix round 1 (code review): `probe.pvp` only by the two stores.
-            problems.append(f"line {x.line}: pvp set in a constructor")
-        elif (
-            x.text == "probe"
-            and key
-            and _render(t[k + 2 : k + 7]) != "{ loads = 1 }"
-            and _render(t[k + 2 : k + 11]) != "{ loads = 1 , lost = true }"
-        ):
-            # A new book's probe, or crewLoaded's, holds only its count.
-            problems.append(f"line {x.line}: probe set in a constructor other than its count")
         elif x.text == "schema" and stored and not pinned_function(k, {"crewMigrate"}):
             problems.append(f"line {x.line}: schema stored outside the migration")
         elif (
@@ -8132,6 +7838,308 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
             and (t[k + 2].text != CREW_SCHEMA_NAME or t[k + 3].text not in {",", "}"})
         ):
             problems.append(f"line {x.line}: schema set other than to {CREW_SCHEMA_NAME}")
+    problems += _crew_match_problems(flow)
+    problems += _crew_limit_problems(flow)
+    return problems
+
+
+# M20-11 (§21.2): the four per-player counters, raised once per match.
+CREW_COUNTERS = frozenset({"allied", "faced", "allied_won", "faced_won"})
+# The one way a store into `matches` keeps the limit: the oldest dropped first.
+CREW_MATCH_DROP = "while # {list} >= MAX_MATCHES do table . remove ( {list} , 1 ) end"
+
+
+def _crew_inner_block(flow: _Flow, fn: _Block, k: int) -> bool:
+    """Is token k inside a block (an if, a loop, ...) within function fn?"""
+    return any(
+        b.kind != "function" and fn.start <= b.head and b.start <= k < b.stop for b in flow.blocks
+    )
+
+
+def _crew_match_problems(flow: _Flow) -> list[str]:
+    """M20-11 (§21.2, "Once per match"; the limit of 500):
+    - every function that raises a counter (CREW_COUNTERS, as a field store)
+      first reads `<book>.matched` and then stores `<book>.matched = {`, as
+      one of its own statements (not inside an `if` or a loop), before its
+      first counter store; so a repeated event or a /reload counts a match
+      once;
+    - `matches` is stored into only through a local bound as `local L =
+      <book>.matches`, in a function that holds CREW_MATCH_DROP for L before
+      the store; `<book>.matches` is otherwise assigned only `{}`."""
+    t = flow.tokens
+    problems: list[str] = []
+    by_fn: dict[int, list[int]] = {}
+    for k in range(1, len(t) - 1):
+        x = t[k]
+        if x.kind != "name" or x.text not in CREW_COUNTERS or t[k - 1].text != ".":
+            continue
+        if t[k + 1].text != "=" or not flow.statement_level(k):
+            continue
+        fn = flow.function_at(k)
+        if fn is None:
+            problems.append(f"line {x.line}: {x.text} raised at file level")
+            continue
+        by_fn.setdefault(fn.head, []).append(k)
+    for head, stores in by_fn.items():
+        fn = flow.functions[head]
+        first = min(stores)
+        marks = [
+            k
+            for k in range(fn.start, first)
+            if _render(t[k : k + 5]) == f"{CREW_DB} . matched = {{"
+            and flow.function_at(k) is fn
+            and not _crew_inner_block(flow, fn, k)
+        ]
+        reads = [
+            k
+            for k in range(fn.start, marks[0] if marks else first)
+            if _render(t[k : k + 3]) == f"{CREW_DB} . matched"
+            and t[k + 3].text != "="
+            and _crew_marker_decides(flow, fn, k, marks[0] if marks else first)
+        ]
+        if not marks or not reads:
+            problems.append(
+                f"line {t[first].line}: a counter is raised without `matched` read and then "
+                "written first, outside any if or loop"
+            )
+    lists: dict[int, str] = {}
+    for p in range(len(t) - 6):
+        if (
+            t[p].text == "local"
+            and t[p + 2].text == "="
+            and _render(t[p + 3 : p + 6]) == f"{CREW_DB} . matches"
+            and _ends_expression(t, p + 6)
+        ):
+            decl = flow.resolve(t[p + 1].text, p + 6)
+            if decl is not None:
+                lists[id(decl)] = t[p + 1].text
+    for root, ts in flow.rebound:
+        base = root.rstrip(".")
+        if root == f"{CREW_DB}." and t[ts + 2].text == "matches" and t[ts + 3].text != "=":
+            problems.append(f"line {t[ts].line}: a store into {CREW_DB}.matches not through a list")
+        if (
+            root == f"{CREW_DB}."
+            and t[ts + 2].text == "matches"
+            and t[ts + 3].text == "="
+            and (_render(t[ts + 4 : ts + 6]) != "{ }" or not _ends_expression(t, ts + 6))
+        ):
+            problems.append(f"line {t[ts].line}: {CREW_DB}.matches assigned other than {{}}")
+        if not root.endswith(".") or base == CREW_DB:
+            continue
+        decl = flow.resolve(base, ts)
+        if decl is None or id(decl) not in lists:
+            continue
+        fn = flow.function_at(ts)
+        drop = CREW_MATCH_DROP.format(list=base)
+        n = len(drop.split(" "))
+        held = fn is not None and any(_render(t[k : k + n]) == drop for k in range(fn.start, ts))
+        if not held:
+            problems.append(f"line {t[ts].line}: a match stored without the oldest dropped first")
+    return problems
+
+
+def _crew_marker_decides(flow: _Flow, fn: _Block, k: int, before: int) -> bool:
+    """Fix round 1 (code review, #664): the `matched` read at token k decides
+    whether the match is counted: it sits, directly or through a local bound
+    once to it (`local m = <book>.matched`), in the condition of an `if`
+    of fn, before `before`, whose whole body is `return`."""
+    t = flow.tokens
+    names: set[int] = set()
+    if t[k - 1].text == "=" and t[k - 2].kind == "name" and t[k - 3].text == "local":
+        decl = flow.resolve(t[k - 2].text, k + 3)
+        if decl is not None and not any(
+            r.rstrip(".") == t[k - 2].text and flow.resolve(t[k - 2].text, ts) is decl
+            for r, ts in flow.rebound
+        ):
+            names.add(id(decl))
+    for b in flow.blocks:
+        if b.kind != "if" or b.cond is None or not fn.start <= b.head < before:
+            continue
+        if flow.function_at(b.head) is not fn or _render(t[b.start : b.stop]) != "return":
+            continue
+        cs, ce = b.cond
+        if cs <= k < ce:
+            return True
+        if any(
+            t[q].kind == "name" and id(flow.resolve(t[q].text, q)) in names for q in range(cs, ce)
+        ):
+            return True
+    return False
+
+
+def _crew_limit_problems(flow: _Flow) -> list[str]:
+    """Fix round 1 (code review, #664), the 20,000 limit:
+    - a new player entry (`<players>[K] = {`, the book's `players` written
+      out or through a local bound to it) is stored only inside an `if`
+      whose condition calls `makeRoom ( )`;
+    - a player dropped (`<players>[X] = nil`) is named by a local X declared
+      bare or as nil and assigned only nil or the key of a
+      `for K ... in pairs(<players>)` loop around the assignment, so the drop
+      takes a real entry."""
+    t = flow.tokens
+    problems: list[str] = []
+    alias: set[int] = set()
+    for q in range(len(t) - 5):
+        if (
+            t[q].text == "local"
+            and t[q + 2].text == "="
+            and _render(t[q + 3 : q + 6]) == f"{CREW_DB} . players"
+            and _ends_expression(t, q + 6)
+        ):
+            decl = flow.resolve(t[q + 1].text, q + 6)
+            if decl is not None:
+                alias.add(id(decl))
+
+    def players_at(k: int) -> int | None:
+        """If the book's players table starts at token k, the index after it."""
+        x = t[k]
+        if x.kind != "name" or _is_field(t, k):
+            return None
+        if x.text == CREW_DB and _render(t[k + 1 : k + 3]) == ". players":
+            return k + 3
+        if id(flow.resolve(x.text, k)) in alias:
+            return k + 1
+        return None
+
+    def walk_key(name: str, at: int) -> bool:
+        for b in flow.blocks:
+            if b.kind != "loop" or t[b.head].text != "for" or not b.head < at < b.stop:
+                continue
+            rest = next((q for q in range(b.head, b.start) if t[q].text == "in"), None)
+            if rest is None or t[b.head + 1].text != name or t[rest + 1].text != "pairs":
+                continue
+            after = players_at(rest + 3)
+            if after is not None and t[after].text == ")":
+                return True
+        return False
+
+    for k in range(len(t) - 3):
+        after = players_at(k)
+        if after is None or t[after].text != "[":
+            continue
+        close = flow.pair[after]
+        if t[close + 1].text != "=" or not flow.statement_level(k):
+            continue
+        value = t[close + 2]
+        if value.text == "{":
+            guarded = any(
+                b.kind in {"if", "elseif"}
+                and b.cond is not None
+                and b.start <= k < b.stop
+                and "makeRoom ( )" in _render(t[b.cond[0] : b.cond[1]])
+                for b in flow.blocks
+            )
+            if not guarded:
+                problems.append(f"line {t[k].line}: a new player added without makeRoom()")
+        elif value.text == "nil":
+            inner = t[after + 1 : close]
+            name = inner[0].text if len(inner) == 1 and inner[0].kind == "name" else None
+            decl = flow.resolve(name, after + 1) if name else None
+            ok = decl is not None and name is not None
+            if ok:
+                for r, ts in flow.rebound:
+                    if r != name or flow.resolve(name, ts) is not decl:
+                        continue
+                    v = t[ts + 2]
+                    if not (
+                        (v.text == "nil" or (v.kind == "name" and walk_key(v.text, ts)))
+                        and _ends_expression(t, ts + 3)
+                    ):
+                        ok = False
+                declared = [
+                    q
+                    for q in range(len(t) - 2)
+                    if t[q].text == "local"
+                    and t[q + 1].text == name
+                    and any(d is decl for d in flow.decls.get(name, []) if q < d.start <= q + 4)
+                ]
+                if len(declared) != 1 or not (
+                    t[declared[0] + 2].text != "="
+                    or (t[declared[0] + 3].text == "nil" and _ends_expression(t, declared[0] + 4))
+                ):
+                    ok = False
+            if not ok:
+                problems.append(
+                    f"line {t[k].line}: a player dropped who is not an entry of the book"
+                )
+    return problems
+
+
+def _crew_score_problems(flow: _Flow, type_test: Callable[[int], bool]) -> list[str]:
+    """M20-11 (§21.2; the client, not privacy): every scoreboard name
+    (`_crew_scoreboard_name`) is a global, never a local or a string, used
+    in a gated function either as a `type()` test or as the first argument
+    of `pcall` (or inside a function literal handed to `pcall`). Each name
+    bound from `local ok, v = pcall(<scoreboard call>, ...)`, and the key
+    and value of a `pairs` walk over such a name, is read only as
+    `secret(x)`, `type(x)`, or under an `if` whose condition has `not
+    secret(x)` as a top-level conjunct."""
+    t = flow.tokens
+    problems: list[str] = []
+    for name in sorted(n for n in flow.decls if _crew_scoreboard_name(n)):
+        problems.append(f"{name} declared as a local")
+    bound: list[tuple[str, int]] = []
+    for k, x in enumerate(t):
+        if x.kind == "string" and _crew_scoreboard_name(x.text):
+            problems.append(f"line {x.line}: a scoreboard call named in a string")
+        if x.kind != "name" or not _crew_scoreboard_name(x.text) or _is_field(t, k):
+            continue
+        if flow.resolve(x.text, k) is not None:
+            continue
+        fn = flow.function_at(k)
+        if not _crew_gated(flow, fn.head if fn else None):
+            problems.append(f"line {x.line}: {x.text} used outside the gate")
+            continue
+        first_arg = t[k - 1].text == "(" and t[k - 2].text == "pcall" and not _is_field(t, k - 2)
+        if not (type_test(k) or first_arg or (fn is not None and _pcall_literal(t, fn.head))):
+            problems.append(f"line {x.line}: {x.text} called other than through pcall")
+            continue
+        if first_arg and t[k - 3].text == "=":
+            names: list[str] = []
+            j = k - 4
+            while j >= 0 and t[j].kind == "name" and t[j].text not in _KEYWORDS:
+                names.insert(0, t[j].text)
+                j -= 2 if t[j - 1].text == "," else 1
+            # Only a `local` binds here (a stored pcall result is the stored-
+            # value rule's); the first name is pcall's own true or false.
+            if j >= 0 and t[j].text == "local":
+                bound += [(n, flow.pair[k - 1] + 1) for n in names[1:]]
+    walked: list[tuple[str, int]] = []
+    for name, k in bound:
+        decl = flow.resolve(name, k)
+        for b in flow.blocks:
+            if b.kind != "loop" or t[b.head].text != "for" or b.head < k:
+                continue
+            rest = next((q for q in range(b.head, b.start) if t[q].text == "in"), None)
+            if rest is None or _render(t[rest + 1 : rest + 5]) != f"pairs ( {name} )":
+                continue
+            if flow.resolve(name, rest + 3) is not decl:
+                continue
+            for q in range(b.head + 1, rest):
+                if t[q].kind == "name":
+                    walked.append((t[q].text, b.start))
+    for name, k in bound + walked:
+        if name == "_":
+            continue
+        decl = flow.resolve(name, k)
+        if decl is None:
+            continue
+        for u in range(k + 1, len(t)):
+            y = t[u]
+            if y.kind != "name" or y.text != name or _is_field(t, u):
+                continue
+            if flow.resolve(name, u) is not decl:
+                continue
+            if (
+                t[u - 1].text == "("
+                and t[u - 2].text in {"secret", "type"}
+                and t[u + 1].text == ")"
+            ):
+                continue
+            if not _crew_secret_guarded(flow, decl, name, u):
+                problems.append(
+                    f"line {y.line}: {name} (from the scoreboard) used before the secret test"
+                )
     return problems
 
 
@@ -8335,7 +8343,8 @@ def test_m19_01_unit_guid_and_the_chat_sends_stay_refused_in_crew_lua() -> None:
 
 def test_m19_01_the_std_rule_ties_each_name_call_to_crew_lua() -> None:
     """Constructed: wow_client.yml may declare a name call only while Crew.lua
-    alone references it; UnitGUID and the chat sends never."""
+    alone references it; the chat sends never. M20-11 (owner decision,
+    2026-11-20): UnitGUID is one of Crew.lua's name calls now."""
     crew = {_CREW_PATH: {"UnitFullName"}}
     assert _std_privacy_problems({"UnitFullName"}, crew) == []
     refused = {
@@ -8346,7 +8355,6 @@ def test_m19_01_the_std_rule_ties_each_name_call_to_crew_lua() -> None:
         ),
         "used by no file": ({"UnitFullName"}, {}),
         "a near-miss name": ({"UnitFullName"}, {Path("crew.lua"): {"UnitFullName"}}),
-        "UnitGUID": ({"UnitGUID"}, {_CREW_PATH: {"UnitGUID"}}),
         "GetRealmName": ({"GetRealmName"}, {_CREW_PATH: {"GetRealmName"}}),
     }
     for name in ("SendChatMessage", "BNSendWhisper", "ChatFrame_OpenChat", "ChatEdit_InsertLink"):
@@ -8798,7 +8806,7 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
             "    local x = GetRealmName()\n",
         ],
         "CLOCK": ["    local x = GetServerTime()\n", '    local x = os.date("%Y")\n'],
-        "NAME_FIELDS": ["    entry.fullName = name\n", '    entry["guid"] = name\n'],
+        "NAME_FIELDS": ["    entry.fullName = name\n", '    entry["battleTag"] = name\n'],
         # The bracket form of a relaxed field passes in Crew.lua (the
         # constructed source writes `entry.realm`).
         "NAME_FIELDS_CONTROL": ['    entry["realm"] = realm\n', '    entry["name"] = name\n'],
@@ -8993,12 +9001,8 @@ def test_m20_04_the_schema_is_read_from_the_declaration() -> None:
     assert _crew_pins(tokenize("local CREW_SCHEMA = 3\n")) is CREW_PINS_2
     assert _crew_pins([]) is CREW_PINS_2
     assert CREW_PINS_1.pinned == CREW_PINNED_1 and CREW_PINS_1.events == CREW_EVENTS_1
-    assert set(CREW_PINS_2.pinned) == set(CREW_PINNED_1) | {
-        "crewMigrate",
-        "pvpInstance",
-        "pvpWon",
-        "pvpSnapshot",
-    }
+    # M20-11: the probe's three helpers are no longer pinned.
+    assert set(CREW_PINS_2.pinned) == set(CREW_PINNED_1) | {"crewMigrate"}
 
 
 def test_m20_04_arena_is_only_a_comparand_at_schema_2() -> None:
@@ -9022,12 +9026,11 @@ def test_m20_04_arena_is_only_a_comparand_at_schema_2() -> None:
 
 
 def test_m20_04_the_row_walk_is_only_the_pinned_one() -> None:
-    """Constructed: `pairs(row)` passes only inside the pinned pvpSnapshot of
-    a schema 2 Crew.lua; edited, in another function, at schema 1 or in
+    """Constructed: `pairs(row)` passes only in a function of a schema 2
+    Crew.lua that binds `row` from the newer score call (M20-11: no longer
+    only in a pinned pvpSnapshot); in another function, at schema 1 or in
     another file it is refused by the PAIRS rule."""
     assert _pairs_problems(_CREW_PATH, tokenize(_CREW_SOURCE)) == []
-    walk = "            for field, value in pairs(row) do\n"
-    edited = _CREW_SOURCE.replace(walk, walk + "                print(field)\n")
     elsewhere = _CREW_SOURCE.replace(
         "local function pvpPass()\n",
         "local function peek(row)\n    for k in pairs(row) do\n    end\nend\n\n"
@@ -9035,7 +9038,6 @@ def test_m20_04_the_row_walk_is_only_the_pinned_one() -> None:
     )
     at_one = _CREW_SOURCE.replace("local CREW_SCHEMA = 2\n", "local CREW_SCHEMA = 1\n")
     refused = {
-        "the snapshot edited": (_CREW_PATH, edited),
         "another function": (_CREW_PATH, elsewhere),
         "at schema 1": (_CREW_PATH, at_one),
         "another file": (Path("Core.lua"), _CREW_SOURCE),
