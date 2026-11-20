@@ -24,3 +24,5 @@ condition is kept.
 | Merged | Ticket | What changed for the player | Wiki pages (from the PR) |
 |---|---|---|---|
 | 2026-11-20 | M19-13 (#646) | `snap list`, `snap show`, `snap verify` and five more commands say a snapshot is damaged in one plain sentence and quote nothing from it | none, unless a page quotes the old message |
+| 2026-11-20 | M19-14 (#649) | `sv merge --from` and `--base` say a snapshot is damaged in the same plain sentence; `wowlab ui --help` and the install guide say ten commands can change the install, not seven | CLI-Reference (regenerate), SavedVariables-and-Merging only if the page quotes the old message |
+| 2026-11-20 | M20-02 (#645) | `crew rate` and `crew note` reach wowlab's crew database too; a rating or note given to a player the game's list had dropped is kept when the player returns, and `crew sync` says how many it kept; `doctor` has a crew database line (counts, size, path; never a record) | CLI-Reference (regenerate), Lab-Addon-and-Characters, Getting-Started (the doctor line), FAQ |
