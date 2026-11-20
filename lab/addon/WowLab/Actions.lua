@@ -10,22 +10,20 @@
 --               each item's `type`;
 --   actionbars  every action slot that holds something: its type, its id
 --               when the id is a number, and its subtype. A macro slot keeps
---               an id only, never the macro's name or body (they are text
---               the owner typed, ADR-0026): with no subtype the id is the
---               macro's index [verify]; with one it is the spell or item the
---               macro shows now [verify]. An equipment-set slot, whose id is
---               the set's name, keeps no id at all;
---   bindings    every binding command GetBinding lists that is a plain
---               upper-case name, with the keys GetBindingKey returns for it
---               now, to cross-check bindings-cache.wtf (§15.2). Commands
---               that are not a plain upper-case name (text after the name,
---               as in `MACRO x`, or other characters) are counted as
---               `commands_left_out` and never asked about or stored: a
---               macro's name is text the owner typed. GetBinding lists
---               named commands; whether a key bound straight to a spell,
---               macro, item or click (a spell dragged onto a key, an
---               action-bar addon's button) is among them at all is
---               [verify], so `commands_left_out` counts only those it listed.
+--               an id only (the macro itself is in `macros`, schema 5):
+--               with no subtype the id is the macro's index [verify]; with
+--               one it is the spell or item the macro shows now [verify]. An
+--               equipment-set slot, whose id is the set's name, keeps no id;
+--   bindings    every binding command GetBinding lists, as the client
+--               returns it (`CLICK`, `MACRO`, `SPELL`, `ITEM` included since
+--               schema 5), with the keys GetBindingKey returns for it now,
+--               to cross-check bindings-cache.wtf (§15.2). GetBinding lists
+--               the client's binding list; whether a key bound straight to a
+--               spell, macro, item or click (a spell dragged onto a key, an
+--               action-bar addon's button) is among them at all is [verify];
+--   macros      (schema 5) every macro, account-wide and this character's,
+--               with its index, name, icon and body as GetMacroInfo returns
+--               them (ADR-0026, note of 2026-11-20).
 --
 -- Out of combat only (ADR-0026, docs/GLOSSARY.md "secret value"): each
 -- gather asks InCombatLockdown first and reads nothing in combat, or when it
@@ -384,24 +382,6 @@ ns.Section({
 
 -- bindings --------------------------------------------------------------------
 
--- A binding command kept by name: upper-case letters, digits and "_" only,
--- at most 128 (ACTIONBUTTON1, MULTIACTIONBAR1BUTTON3, MOVEFORWARD).
-local function command(value)
-    if type(value) == "string" and #value <= 128 and string.find(value, "^[%u%d_]+$") then
-        return value
-    end
-    return nil
-end
-
--- A key as the client names it (1, SHIFT-F, CTRL-MOUSEWHEELUP): printable
--- ASCII with no space, at most 64.
-local function keyName(value)
-    if type(value) == "string" and #value <= 64 and string.find(value, "^[%w%p]+$") then
-        return value
-    end
-    return nil
-end
-
 ns.Section({
     key = "bindings",
     path = { "bindings" },
@@ -431,7 +411,7 @@ ns.Section({
         if missing then
             return { absent = ns.String(missing .. " missing"), probes = list }
         end
-        local record = { list = {}, commands = 0, commands_left_out = 0, keys_left_out = 0, probes = list }
+        local record = { list = {}, commands = 0, probes = list }
         -- The client's names for its two binding sets [verify], so a reader
         -- can name `binding_set` without assuming the numbers.
         record.account_bindings = ns.Number(ACCOUNT_BINDINGS)
@@ -459,7 +439,7 @@ ns.Section({
         if not okCount or type(total) ~= "number" then
             return { absent = "GetNumBindings gave no number", probes = list }
         end
-        local commands, leftOut, keysLeftOut = 0, 0, 0
+        local commands = 0
         for index = 1, math.min(total, MAX_BINDINGS) do
             -- First return only: the command. The header, category and keys
             -- GetBinding also returns are not bound.
@@ -471,35 +451,119 @@ ns.Section({
             end
             tally(binding, okBinding, type(found) == "string")
             if okBinding and type(found) == "string" then
+                -- Schema 5: every command as the client returns it, typed
+                -- text included (a `MACRO <name>`, a `CLICK <frame>:<button>`).
                 commands = commands + 1
-                local name = command(found)
-                if not name then
-                    leftOut = leftOut + 1
-                else
-                    local keys = ns.Pack(pcall(getKey, name))
-                    local kept, any = {}, false
-                    for i = 2, keys[1] and keys.n or 1 do
-                        local given = clean(isSecret, secret, key, keys[i])
-                        local value = keyName(given)
-                        if given ~= nil then
-                            any = true
-                        end
-                        if value then
-                            kept[#kept + 1] = ns.String(value)
-                        elseif given ~= nil then
-                            keysLeftOut = keysLeftOut + 1
-                        end
+                local keys = ns.Pack(pcall(getKey, found))
+                local kept, any = {}, false
+                for i = 2, keys[1] and keys.n or 1 do
+                    local given = clean(isSecret, secret, key, keys[i])
+                    if given ~= nil then
+                        any = true
                     end
-                    tally(key, keys[1], any)
-                    if #kept > 0 then
-                        record.list[#record.list + 1] = { command = ns.String(name), keys = kept }
+                    if type(given) == "string" then
+                        kept[#kept + 1] = ns.String(given)
                     end
+                end
+                tally(key, keys[1], any)
+                if #kept > 0 then
+                    record.list[#record.list + 1] = { command = ns.String(found), keys = kept }
                 end
             end
         end
         record.commands = commands
-        record.commands_left_out = leftOut
-        record.keys_left_out = keysLeftOut
+        return record
+    end,
+})
+
+-- macros ----------------------------------------------------------------------
+
+-- Schema 5 (M20-13; ADR-0026, note of 2026-11-20): every macro, account-wide
+-- and this character's, as GetMacroInfo returns it. GetNumMacros gives the
+-- two counts; account macros are indices 1 to the account count, and this
+-- character's start after MAX_ACCOUNT_MACROS, the client's constant (both
+-- [verify] on Forever). Only those indices are asked: an out-of-range index
+-- into a C API is the crash class in docs/DATA_SOURCES.md (2026-09-28). A
+-- count is walked to at most MAX_MACROS_PER_SCOPE, the addon's own bound.
+local MAX_MACROS_PER_SCOPE = 256
+
+ns.Section({
+    key = "macros",
+    path = { "macros" },
+    events = { "UPDATE_MACROS" },
+    retry = { "PLAYER_REGEN_ENABLED" },
+    on_world = true,
+    gather = function()
+        local blocked = combatReason()
+        if blocked then
+            return ns.Blocked(blocked)
+        end
+        local isSecret = type(issecretvalue) == "function" and issecretvalue or nil
+        local getCount = type(GetNumMacros) == "function" and GetNumMacros or nil
+        local getInfo = type(GetMacroInfo) == "function" and GetMacroInfo or nil
+        local count = probe("GetNumMacros", getCount)
+        local info = probe("GetMacroInfo", getInfo)
+        local secret = probe("issecretvalue", isSecret)
+        local list = { count, info, secret }
+        lookedUp(list)
+        local missing = (not getCount and "GetNumMacros") or (not getInfo and "GetMacroInfo")
+        if missing then
+            return { absent = ns.String(missing .. " missing"), probes = list }
+        end
+        local perAccount = ns.Number(MAX_ACCOUNT_MACROS)
+        if not perAccount then
+            return { absent = "MAX_ACCOUNT_MACROS is not a number", probes = list }
+        end
+        local okCount, accountCount, characterCount = pcall(getCount)
+        if okCount then
+            accountCount = clean(isSecret, secret, count, accountCount)
+            characterCount = clean(isSecret, secret, count, characterCount)
+        else
+            accountCount, characterCount = nil, nil
+        end
+        tally(count, okCount, type(accountCount) == "number" and type(characterCount) == "number")
+        if type(accountCount) ~= "number" or type(characterCount) ~= "number" then
+            return { absent = "GetNumMacros gave no two numbers", probes = list }
+        end
+        local record = {
+            account = ns.Number(accountCount),
+            character = ns.Number(characterCount),
+            first_character_index = perAccount + 1,
+            list = {},
+            probes = list,
+        }
+        local ranges = {
+            { scope = "account", first = 1, last = math.min(accountCount, MAX_MACROS_PER_SCOPE) },
+            {
+                scope = "character",
+                first = perAccount + 1,
+                last = perAccount + math.min(characterCount, MAX_MACROS_PER_SCOPE),
+            },
+        }
+        for r = 1, #ranges do
+            local range = ranges[r]
+            for index = range.first, range.last do
+                local okMacro, name, icon, body = pcall(getInfo, index)
+                if okMacro then
+                    name = clean(isSecret, secret, info, name)
+                    icon = clean(isSecret, secret, info, icon)
+                    body = clean(isSecret, secret, info, body)
+                else
+                    name, icon, body = nil, nil, nil
+                end
+                tally(info, okMacro, type(name) == "string")
+                if okMacro and type(name) == "string" then
+                    record.list[#record.list + 1] = {
+                        index = index,
+                        scope = ns.String(range.scope),
+                        name = ns.String(name),
+                        icon = ns.Number(icon),
+                        icon_text = ns.String(icon),
+                        body = ns.String(body),
+                    }
+                end
+            end
+        end
         return record
     end,
 })

@@ -162,7 +162,6 @@ TIMEOUT_OVERRIDES: dict[str, int] = {
 ADDON_MUTATION_FILES: frozenset[str] = frozenset(
     {
         "lab/core/tests/review/test_m11_01_carry_check_misses_saved_subtables.py",
-        "lab/core/tests/review/test_m11_01_clock_check_misses_os_time.py",
         "lab/core/tests/review/test_m11_01_line_based_privacy_tests_fail_open.py",
         "lab/core/tests/review/test_m11_01_pet_guid_check_misses_concatenated_lookup.py",
         "lab/core/tests/review/test_m11_13_stored_value_check_misses_call_stores.py",

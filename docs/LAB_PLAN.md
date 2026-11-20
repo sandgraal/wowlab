@@ -2561,6 +2561,37 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `_absent` reason), and `char show` prints one `Identity:` line after the
   spec for a schema-4 record; nothing else in either command's output
   changes.
+
+  *Schema 5, as built (2026-11-20, M20-13; ADR-0026, note of 2026-11-20).*
+  Schema 4 plus what the owner's own account shows, kept as the client
+  returns it, and a quieter addon (`lab/addon/README.md`, "Schema 5"):
+  - `macros` (`Actions.lua`, out of combat, every value cleaned with
+    `issecretvalue`): `account`, `character` (`GetNumMacros`),
+    `first_character_index` (`MAX_ACCOUNT_MACROS + 1`) and `list = { {
+    index, scope = "account"|"character", name, icon | icon_text, body } }`;
+  - `bindings`: every command `GetBinding` lists, `CLICK`, `MACRO`, `SPELL`
+    and `ITEM` included, with its keys; `commands_left_out` and
+    `keys_left_out` are gone;
+  - `identity` adds `guid`, `name`, `realm` and `guild`, each one of the
+    value and `<field>_absent`; `gear` links keep a crafter's GUID and
+    `crafter_removed` is gone;
+  - top level: `gathered`, a list of `{ section, at }` (`time()` at each
+    section's last gather), `written_at` (`time()`) and `written_by` (`"logout"` or
+    `"save"`), `announced` (the schema whose first-pass line was printed in
+    a session the addon wrote) and `debug = true` (left out when off);
+  - `probes` and `events_received` only after `/wowlab debug on`; outside
+    a debug session each `Actions.lua` record carries `dropped`, one whole
+    number;
+  - quieter: the chat line once per schema or after a session whose write
+    did not run; one gathering pass at most every 30 s, out of combat, and
+    at logout (none in combat); the `Constants` sweep once per session.
+
+  The reader reads schema 1 to 4 files as before and refuses a schema it
+  does not know. The real schema-5 capture is the owner's, taken after this
+  merges; the reader is graded on constructed files until then. The capture
+  tool replaces the GUID, macro names and bodies, typed names in binding
+  commands and the guild name, shifts the times, and refuses a capture
+  still holding one.
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's

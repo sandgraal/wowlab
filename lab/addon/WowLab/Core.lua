@@ -2,13 +2,13 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file. It
 -- gathers each section during the session (on entering the world and on the
--- section's change events) and writes the versioned tables (schema 4) into
+-- section's change events) and writes the versioned tables (schema 5) into
 -- its SavedVariables at PLAYER_LOGOUT. `/wowlab save` refreshes the tables in
 -- memory; the client writes the file at the next /reload, logout or clean
--- exit, and a crash writes nothing. Only three things are carried from one
+-- exit, and a crash writes nothing. Only five things are carried from one
 -- session to the next: the probe count, the last barber-shop record
--- (Customization.lua) and the skip list, all read back from the file at
--- ADDON_LOADED.
+-- (Customization.lua), the skip list, and (schema 5) the debug switch and the
+-- announced schema, all read back from the file at ADDON_LOADED.
 --
 -- The owner can switch a section off (`/wowlab skip <section>`, M11-21): a
 -- client assertion inside a section crashes the client, `pcall` cannot catch
@@ -16,10 +16,16 @@
 -- itself. The skip list is read at ADDON_LOADED, before any section registers
 -- an event or is gathered.
 --
--- Privacy (ADR-0026): no names, realms, GUIDs, guild or chat of anyone, the
--- owner included; no text the owner typed (loadout, equipment-set or pet
--- names); no Battle.net identity; no wall-clock time. Every unit token is the
--- literal "player". tests/addon/test_lab_addon.py checks this statically.
+-- What stays out (ADR-0026, note of 2026-11-20): nothing is ever sent (no
+-- chat, addon message, mail or whisper); no dynamic lookup or dynamic code;
+-- no BattleTag (BNGetInfo); nothing is gathered in combat; and a client value
+-- is tested with issecretvalue before it is compared or stored where the
+-- section reads it (Actions.lua, and Identity.lua's schema-5 values). Since
+-- schema 5 the owner's own account is kept as the client gives it: macros,
+-- every binding command, the character's GUID, name, realm and guild, a
+-- crafter's GUID in an item link, and the time of each gather and of the
+-- write. Every unit token outside Crew.lua is the literal "player".
+-- tests/addon/test_lab_addon.py checks what stays statically.
 --
 -- Availability is decided by testing for the API itself, never by
 -- WOW_PROJECT_ID, the interface number or the flavor. A section the client
@@ -42,7 +48,15 @@ local ADDON_NAME, ns = ...
 -- variables. Schema 4 (M15-01): schema 3 plus one section, `identity`
 -- (Identity.lua: race id, UnitSex's raw value, class id and file); nothing
 -- else changed, and an older file moves to schema 4 the same way.
-ns.SCHEMA = 4
+-- Schema 5 (M20-13; ADR-0026, note of 2026-11-20): schema 4 plus what the
+-- owner's own account shows (Actions.lua's `macros` and every binding
+-- command, Identity.lua's guid, name, realm and guild, Gear.lua's links as
+-- the client gives them), `gathered` (time() of each section's last gather)
+-- and `written_at` / `written_by` (time() of this write, and what made it);
+-- and quieter: `announced` and `debug` (below), `probes` and
+-- `events_received` only in a debug session, `dropped` in their place. An
+-- older file moves to schema 5 the same way.
+ns.SCHEMA = 5
 
 -- Sections, in the order they register (the file order in WowLab.toc).
 ns.sections = {}
@@ -53,6 +67,25 @@ ns.probe = nil
 -- Section keys the owner switched off, as saved in the file (`skip`). A key
 -- switched back on stays off for the rest of the session (section.off).
 ns.skip = {}
+-- Debug (`/wowlab debug on|off`, schema 5): off by default. When on, the
+-- research scaffolding is written this session: the `probes` on Actions.lua's
+-- records and the count-only events (the control event and the barber-shop
+-- names counted without gathering, Customization.lua) with their
+-- `events_received`. Read from the file at ADDON_LOADED (`debug = true`, left
+-- out when off); the slash command changes it from the next /reload or
+-- login, never in the same session, because events register at ADDON_LOADED.
+ns.debug = false
+-- What `/wowlab debug on|off` asked for, saved for the next load.
+local debugNext = false
+-- `announced` (schema 5): the schema of the addon whose own write of the
+-- tables last ran after a first pass. The chat line prints when it differs
+-- from ns.SCHEMA (a new lab-addon format, or a first run) or the probe was
+-- lost. It is cleared from the live table at ADDON_LOADED and put back only
+-- by this session's own write, so a session that ended without that write
+-- (a crash writes nothing) prints the line again next time.
+ns.announced = nil
+-- time() of each section's last gather this session, by section key.
+local gatheredAt = {}
 
 -- The absent reason of a switched-off section.
 local SWITCHED_OFF = "switched off by the owner"
@@ -239,6 +272,21 @@ local FIRST_PASS_DELAY = 15
 local firstPassStarted = false
 local firstPassDone = false
 
+-- After the first pass (schema 5): change events only mark their section
+-- dirty, and the dirty sections are gathered together at most once every
+-- GATHER_INTERVAL seconds, out of combat, and at PLAYER_LOGOUT. A pass whose
+-- timer ends in combat waits for PLAYER_REGEN_ENABLED, and no new timer
+-- starts meanwhile. Combat is known from the client's own events
+-- (PLAYER_REGEN_DISABLED and PLAYER_REGEN_ENABLED) and asked as the world is
+-- entered; a section that must not read in combat (Actions.lua) still asks
+-- the client itself.
+local GATHER_INTERVAL = 30
+local inCombat = false
+-- A timer's pass waiting for the end of combat; `pending` stays set meanwhile.
+local waitingForCombat = false
+-- The first pass waiting for the end of combat.
+local firstPassWaiting = false
+
 local function gather(section, event)
     if section.off then
         return
@@ -270,6 +318,7 @@ local function gather(section, event)
     else
         section.gathered = true
         section.dirty = false
+        gatheredAt[section.key] = ns.Number(time())
     end
 end
 
@@ -283,14 +332,22 @@ end
 
 local function schedule()
     if not timerAfter then
-        gatherDirty()
+        if inCombat then
+            waitingForCombat = true
+        else
+            gatherDirty()
+        end
         return
     end
     if pending then
         return
     end
     pending = true
-    timerAfter(2, function()
+    timerAfter(GATHER_INTERVAL, function()
+        if firstPassDone and inCombat then
+            waitingForCombat = true
+            return
+        end
         pending = false
         if firstPassDone then
             gatherDirty()
@@ -306,14 +363,23 @@ local function startFirstPass()
         return
     end
     firstPassStarted = true
-    say(
-        "recording in "
-            .. FIRST_PASS_DELAY
-            .. " s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)"
-    )
+    -- Once per schema (each new lab-addon format), or after a session whose
+    -- own write did not run, or when the probe was lost.
+    if ns.announced ~= ns.SCHEMA or ns.probe.lost then
+        say(
+            "recording in "
+                .. FIRST_PASS_DELAY
+                .. " s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)"
+        )
+    end
     timerAfter(FIRST_PASS_DELAY, function()
         firstPassDone = true
-        gatherDirty()
+        -- Out of combat, like every later pass.
+        if inCombat then
+            firstPassWaiting = true
+        else
+            gatherDirty()
+        end
     end)
 end
 
@@ -339,8 +405,9 @@ local function listen(section)
     for _, event in ipairs(section.events or {}) do
         changes[event] = true
     end
+    -- Count-only events and their counts are debug only (schema 5).
     local counts = nil
-    if section.count_only then
+    if section.count_only and ns.debug then
         counts = {}
     end
     local retries = {}
@@ -397,9 +464,11 @@ local function listen(section)
             counts[event] = 0
         end
     end
-    for _, event in ipairs(section.count_only or {}) do
-        if ns.On(event, onEvent) and counts then
-            counts[event] = 0
+    if counts then
+        for _, event in ipairs(section.count_only or {}) do
+            if ns.On(event, onEvent) then
+                counts[event] = 0
+            end
         end
     end
 end
@@ -429,6 +498,8 @@ local function switchOff(section)
         for _, event in ipairs(section.events or {}) do
             off(event, section.listener)
         end
+        -- Outside a debug session the count-only events were never
+        -- registered; `off` is then a no-op for them.
         for _, event in ipairs(section.count_only or {}) do
             off(event, section.listener)
         end
@@ -466,6 +537,59 @@ local function putSkip(db)
     else
         db.skip = nil
     end
+end
+
+-- Writes the debug switch for the next load into `db`, or removes it when off.
+local function putDebug(db)
+    if debugNext then
+        db.debug = true
+    else
+        db.debug = nil
+    end
+end
+
+-- At ADDON_LOADED: the debug switch and the announced schema the loaded file
+-- holds. Anything but `true` is off; anything but a number is none.
+local function loadQuiet(saved)
+    if type(saved) ~= "table" then
+        return
+    end
+    ns.debug = saved.debug == true
+    debugNext = ns.debug
+    if type(saved.announced) == "number" then
+        ns.announced = ns.Number(saved.announced)
+    end
+end
+
+-- Outside a debug session (schema 5) a record keeps no `probes`; in their
+-- place `dropped`, one whole number: the calls that raised plus the values
+-- dropped as secret or untestable, over every probe but issecretvalue's own
+-- (its errors are values already counted on the API that gave them).
+local function quiet(record)
+    if ns.debug or type(record) ~= "table" or type(record.probes) ~= "table" then
+        return
+    end
+    local dropped = 0
+    for _, entry in ipairs(record.probes) do
+        if type(entry) == "table" and entry.api ~= "issecretvalue" then
+            dropped = dropped + (ns.Number(entry.errors) or 0) + (ns.Number(entry.secret) or 0)
+        end
+    end
+    record.probes = nil
+    record.dropped = dropped
+end
+
+-- `gathered`: time() of each section's last gather this session, in section
+-- order; a section not gathered this session, or switched off, has none.
+local function gatheredList()
+    local list = {}
+    for _, section in ipairs(ns.sections) do
+        local at = ns.Number(gatheredAt[section.key])
+        if at and not section.off then
+            list[#list + 1] = { section = ns.String(section.key), at = at }
+        end
+    end
+    return list
 end
 
 -- The keys of the sections `pick` accepts, comma-separated.
@@ -510,8 +634,9 @@ local function copyProbe()
     return probe
 end
 
--- Builds WowLabCharDB from what was gathered this session.
-function ns.Write()
+-- Builds WowLabCharDB from what was gathered this session. `by` is what
+-- made the write: "logout" (PLAYER_LOGOUT) or "save" (`/wowlab save`).
+function ns.Write(by)
     local db = { schema = ns.SCHEMA, probe = copyProbe(), client = clientInfo() }
     for _, section in ipairs(ns.sections) do
         -- A section with no gather (collections.appearances, M11-20) keeps
@@ -535,6 +660,7 @@ function ns.Write()
             if section.listener and type(section.events) == "table" and #section.events > 0 then
                 record.events_unregistered = section.events_unregistered or {}
             end
+            quiet(record)
         end
         place(db, section.path, record)
         -- M11-29: the counts kept by `listen`, on whatever record is written
@@ -547,6 +673,16 @@ function ns.Write()
         end
     end
     putSkip(db)
+    putDebug(db)
+    db.gathered = gatheredList()
+    db.written_at = ns.Number(time())
+    db.written_by = ns.String(by)
+    -- Put back only after a first pass this session (see ns.announced).
+    if firstPassDone then
+        db.announced = ns.SCHEMA
+    else
+        db.announced = ns.Number(ns.announced)
+    end
     WowLabCharDB = db
     -- Account-wide table: empty until M11-03 shows which data reads the same
     -- from every character (docs/LAB_PLAN.md §13.1).
@@ -578,6 +714,7 @@ ns.On("ADDON_LOADED", function(_, name)
         return
     end
     ns.probe = loadProbe(WowLabCharDB)
+    loadQuiet(WowLabCharDB)
     -- The skip list first: a switched-off section is not carried and
     -- registers no event.
     loadSkip(WowLabCharDB)
@@ -601,9 +738,45 @@ ns.On("ADDON_LOADED", function(_, name)
     end
     WowLabCharDB.probe = copyProbe()
     putSkip(WowLabCharDB)
+    -- Until this session's own write puts it back (see ns.announced).
+    WowLabCharDB.announced = nil
+end)
+
+-- Combat, from the client's events: a pass that waited for combat to end
+-- runs as soon as it does.
+ns.On("PLAYER_REGEN_DISABLED", function()
+    inCombat = true
+end)
+
+ns.On("PLAYER_REGEN_ENABLED", function()
+    inCombat = false
+    local run = false
+    if firstPassWaiting then
+        firstPassWaiting = false
+        run = true
+    end
+    if waitingForCombat then
+        waitingForCombat = false
+        pending = false
+        run = true
+    end
+    if run then
+        gatherDirty()
+    end
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function()
+    -- Combat as the client says it now: a /reload in combat sends no
+    -- PLAYER_REGEN_DISABLED. When the client cannot say, the flag is left as
+    -- the events set it.
+    if type(InCombatLockdown) == "function" then
+        local ok, locked = pcall(InCombatLockdown)
+        if ok and locked == true then
+            inCombat = true
+        elseif ok then
+            inCombat = false
+        end
+    end
     for _, section in ipairs(ns.sections) do
         if section.on_world and not section.off and not (section.heavy and ns.state[section.key]) then
             section.dirty = true
@@ -620,19 +793,28 @@ ns.On("PLAYER_LOGOUT", function()
     if not ns.probe then
         return
     end
-    gatherDirty()
-    ns.Write()
+    -- Nothing is gathered in combat: a logout or /reload in combat writes
+    -- what the session's earlier passes gathered.
+    if not inCombat then
+        gatherDirty()
+    end
+    ns.Write("logout")
 end)
 
 -- Slash command ---------------------------------------------------------------
 
+-- `/wowlab save`: false, and nothing gathered or written, in combat.
 function ns.Refresh()
+    if inCombat then
+        return false
+    end
     for _, section in ipairs(ns.sections) do
         if section.on_world and not section.off then
             gather(section)
         end
     end
-    ns.Write()
+    ns.Write("save")
+    return true
 end
 
 local function isSection()
@@ -687,6 +869,26 @@ local function skipCommand(command, key)
     end
 end
 
+-- `/wowlab debug [on|off]` (schema 5). The typed word is only compared.
+local function debugCommand(word)
+    if word == "on" or word == "off" then
+        debugNext = word == "on"
+        if type(WowLabCharDB) == "table" then
+            putDebug(WowLabCharDB)
+        end
+    elseif word ~= "" then
+        say("/wowlab debug on  or  /wowlab debug off")
+        return
+    end
+    say(
+        "debug is "
+            .. (ns.debug and "on" or "off")
+            .. " this session, and "
+            .. (debugNext and "on" or "off")
+            .. " from the next /reload or login; /reload or log out to save a change."
+    )
+end
+
 SLASH_WOWLAB1 = "/wowlab"
 SlashCmdList.WOWLAB = function(message)
     -- The typed text is compared, never stored.
@@ -699,13 +901,22 @@ SlashCmdList.WOWLAB = function(message)
             return
         end
         skipCommand(command, key)
+    elseif command == "debug" then
+        if not ns.probe then
+            say("not loaded yet.")
+            return
+        end
+        debugCommand(key)
     elseif command == "save" then
         if not ns.probe then
             say("not loaded yet.")
             return
         end
-        ns.Refresh()
-        say("tables refreshed in memory; the file is written at the next /reload or logout.")
+        if ns.Refresh() then
+            say("tables refreshed in memory; the file is written at the next /reload or logout.")
+        else
+            say("in combat: nothing is gathered in combat. Type it again after the fight.")
+        end
     elseif command == "crew" then
         -- The crew book (Crew.lua), handed the whole typed text: a name and a
         -- note are not lowercased.
@@ -713,6 +924,7 @@ SlashCmdList.WOWLAB = function(message)
     else
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
+        say("/wowlab debug on|off  records the research probes from the next /reload or login (off by default).")
         say("/wowlab crew  the crew book of players you group with: off until you turn it on.")
     end
 end
