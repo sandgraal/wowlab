@@ -35,7 +35,14 @@ repos:
         # cli.py had its own 1 MB ceiling (owner decision 2026-11-10) until it
         # was split into the cli/ package (M16-111); each module of it is far
         # under 512 KB.
-        exclude: '^lab/core/tests/fixtures/'
+        # docs/*.md has its own 4 MB ceiling (owner decision 2026-11-20:
+        # the 512 KB one forced LAB_PLAN's appendix out on 2026-11-19 and was
+        # about to bite again; the cap exists to stop captures, not prose).
+        exclude: '^lab/core/tests/fixtures/|^docs/[^/]+\.md$'
+      - id: check-added-large-files
+        name: check for added large files (docs, 4 MB)
+        args: [--maxkb=4096, --enforce-all]
+        files: '^docs/[^/]+\.md$'
       - id: check-added-large-files
         name: check for added large files (fixtures, 16 MB)
         args: [--maxkb=16384, --enforce-all]
