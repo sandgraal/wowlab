@@ -3668,7 +3668,7 @@ Tests only, before any addon code, by a session that does not write M20-05: the 
 
 ---
 
-## [ ] M20-05 — The addon, schema 2: the larger list, the migration and the probe
+## [x] M20-05 — The addon, schema 2: the larger list, the migration and the probe
 **Size:** M · **Depends on:** M20-03, M20-04 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.2
 
 `Crew.lua` at schema 2: 20,000 players, the near-full line (at 90% of either limit, at most once in seven days, by `warned`), the migration of a schema 1 book at load, and the scoreboard probe writing `probe.pvp`. No opponent is recorded yet. The README and the turn-on notice say what changed.
