@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import sys
 import textwrap
 import time
@@ -694,6 +695,47 @@ def _safe(text: str) -> str:
     except UnicodeEncodeError:
         text = text.encode("utf-8", "backslashreplace").decode("utf-8")
     return _UNSAFE.sub(_escape, text)
+
+
+_RM_DAMAGED = "`wowlab snap rm {} --break-undo` removes it."
+"""How a damaged snapshot is removed, said by `snap gc` (with `<full id>`)
+and by `snap list`, `show` and `verify` and `sv merge` (with the id)
+alike. Here, with `_damaged_words` and `_not_a_record`, because `_cmd_snap`
+imports `_cmd_sv` and both say them (M19-14)."""
+
+
+def _not_a_record(store: snapshot.SnapshotStore, name: str) -> str:
+    """Said of a link, or anything not a regular file, in a snapshot
+    record's place (M19-12 review), by `snap gc` and `snap rm` alike."""
+    return _safe(
+        f"something other than a snapshot record (a link, or not a regular file) stands in "
+        f"the place of the record of {name} in wowlab's snapshot folder ({store.path}). "
+        "wowlab leaves it alone and never removes it; you can remove it by hand."
+    )
+
+
+def _damaged_words(store: snapshot.SnapshotStore, name: str) -> str:
+    """What is said of a manifest file `name` (`<id>.json`) that does not
+    load (M19-13): its id, that its record cannot be read, and how it is
+    removed; for a link or anything not a regular file in its place,
+    `_not_a_record`. Never the loader's words, which quote the file. Text
+    and `--json` carry the same sentence."""
+    sid = name.removesuffix(".json")
+    try:
+        st: os.stat_result | None = os.lstat(store.manifests_dir / name)
+    except (OSError, ValueError):
+        st = None
+    if st is not None and (snapshot._is_link_stat(st) or not stat.S_ISREG(st.st_mode)):
+        return _not_a_record(store, sid)
+    if not snapshot._ID_RE.match(sid):
+        return _safe(
+            f"{name} in wowlab's snapshot folder cannot be read as a snapshot record, and its "
+            "name is not a snapshot id. wowlab leaves it alone; you can remove it by hand."
+        )
+    return _safe(
+        f"snapshot {sid} is damaged: its record in wowlab's snapshot folder cannot be read. "
+        + _RM_DAMAGED.format(sid)
+    )
 
 
 # Player copy (M16-15, docs/LAB_PLAN.md §18.1 item 4): text output carries
