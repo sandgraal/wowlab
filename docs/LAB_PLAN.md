@@ -2587,7 +2587,12 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     at logout (none in combat); the `Constants` sweep once per session.
 
   The reader reads schema 1 to 4 files as before and refuses a schema it
-  does not know. The real schema-5 capture is the owner's, taken after this
+  does not know. The desk uses the stored text: `char show` prints the
+  character's name, realm and guild, the macro counts and when the file was
+  written; the keymap views name a macro slot by the stored macro at its
+  index; `macros check` judges "on no action bar" by matching each macro of
+  `macros-cache.txt` to a stored one by name and body; `binds coach` picks
+  the owner's casts in a combat log by the stored GUID. The real schema-5 capture is the owner's, taken after this
   merges; the reader is graded on constructed files until then. The capture
   tool replaces the GUID, macro names and bodies, typed names in binding
   commands and the guild name, shifts the times, and refuses a capture

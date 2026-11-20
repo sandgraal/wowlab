@@ -98,7 +98,13 @@ from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
 from typing import Annotated, BinaryIO, Literal, cast, overload
 
-from pydantic import BaseModel, ConfigDict, Discriminator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from wowlab_core import longpath
 
@@ -855,6 +861,21 @@ class CastCounts(_Model):
     first_timestamp: str | None  # of the first counted cast, as written
     last_timestamp: str | None  # of the last counted cast, as written
     spells: tuple[SpellCasts, ...]  # most cast first, then by spell id and name
+    # M20-13: whether the player's casts were picked by the character's own
+    # GUID (the lab-addon's schema-5 record), and how many of the player's
+    # casts carried another GUID and were left out.
+    by_guid: bool = False
+    other_guid: int = 0
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> object:
+        """`by_guid` and `other_guid` are written only when the casts were
+        picked by a GUID, so the `--json` of a pick by flags is as before."""
+        out = handler(self)
+        if isinstance(out, dict) and not self.by_guid:
+            out.pop("by_guid", None)
+            out.pop("other_guid", None)
+        return out
 
 
 def _flags(value: FieldValue) -> int | None:
@@ -863,15 +884,23 @@ def _flags(value: FieldValue) -> int | None:
     return None
 
 
-def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
+def cast_counts(entries: Iterable[Entry | Skipped], own_guid: str | None = None) -> CastCounts:
     """The player's own ``SPELL_CAST_SUCCESS`` records in ``entries`` (a log's
     lines in order, as :func:`read_log` yields them), counted per spell id and
     name. Reads one entry at a time; memory grows only with distinct spells.
 
+    ``own_guid`` (M20-13): the character's own GUID, as the lab-addon's
+    schema-5 record keeps it. With it, a cast the flags call the player's is
+    counted only when its source GUID is that one (compared without case);
+    the player's casts under another GUID (another of their characters, in
+    a log left on across a character change) are counted in ``other_guid``
+    and nothing else.
+
     ``read_log(path, events=CAST_COUNT_EVENTS)`` gives the same counts as
     ``read_log(path)`` without tokenizing any other event's lines, except
     that a malformed line of another event is not among ``unparsed``."""
-    lines = unparsed = cast_events = other_version = not_read = others = mine = 0
+    lines = unparsed = cast_events = other_version = not_read = others = mine = other_guid = 0
+    own = own_guid.upper() if own_guid else None
     versions: list[str] = []
     version: str | None = None
     guids: set[str] = set()
@@ -922,6 +951,9 @@ def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
         ):
             others += 1
             continue
+        if own is not None and guid.upper() != own:
+            other_guid += 1
+            continue
         mine += 1
         guids.add(guid)
         who = fields[_SOURCE_NAME]
@@ -946,6 +978,8 @@ def cast_counts(entries: Iterable[Entry | Skipped]) -> CastCounts:
         first_timestamp=first,
         last_timestamp=last,
         spells=tuple(SpellCasts(spell_id=i, spell_name=n, casts=c) for (i, n), c in spells),
+        by_guid=own is not None,
+        other_guid=other_guid,
     )
 
 

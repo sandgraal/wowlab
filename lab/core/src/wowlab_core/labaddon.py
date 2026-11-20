@@ -107,6 +107,7 @@ from __future__ import annotations
 import re
 import shlex
 from collections.abc import Callable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
@@ -142,6 +143,7 @@ __all__ = [
     "LAB_FILE_NAME",
     "LINKED_FILE",
     "MAX_IMPORT_CHOICES",
+    "MAX_MACROS_PER_SCOPE",
     "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
     "NOT_REGULAR",
@@ -214,6 +216,7 @@ __all__ = [
     "customization_loads_ago",
     "describe",
     "describe_account",
+    "dropped_of",
     "identity_of",
     "is_lab_file_name",
     "legacy_headline",
@@ -223,6 +226,7 @@ __all__ = [
     "older_client",
     "parse_account",
     "parse_char",
+    "quiet_words",
     "read_account",
     "read_all",
     "read_char",
@@ -3675,7 +3679,7 @@ def _spellbook(book: Spellbook) -> list[str]:
     if items:
         lines.append(f"  {_item_type_words(book)}; future (not yet learned) spells are items too")
     lines.extend(_skill_line(line) for line in book.skill_lines)
-    return lines + _probe_lines(book.probes) + _events(book)
+    return lines + _record_probes(book) + _events(book)
 
 
 def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[str]:
@@ -3699,7 +3703,7 @@ def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[s
                 "shows now [verify]); a macro's name and body are never recorded"
             )
         )
-    return lines + _probe_lines(bars.probes) + _events(bars)
+    return lines + _record_probes(bars) + _events(bars)
 
 
 def _binding_set_words(record: Bindings) -> str:
@@ -3729,6 +3733,21 @@ def _binding_set_words(record: Bindings) -> str:
 
 
 def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]:
+    if isinstance(record, BindingsV5):
+        typed = sum(1 for b in record.list_ if b.command.startswith(("MACRO ", "CLICK ")))
+        return [
+            f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
+            f"{record.commands} listed (commands and keys in --json); binding set "
+            f"{_binding_set_words(record)}; read out of combat",
+            f"  every command as the game returns it: {_count(typed, 'macro or click command')} "
+            "among those with a key",
+            render(
+                "  a key bound straight to a spell, macro, item or click may not be listed by "
+                "GetBinding at all [verify]"
+            ),
+            *_record_probes(record),
+            *_events(record),
+        ]
     lines = [
         f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
         f"{record.commands} listed (commands and keys in --json); binding set "
@@ -3741,7 +3760,70 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
             "GetBinding at all [verify]"
         ),
     ]
-    return lines + _probe_lines(record.probes) + _events(record)
+    return lines + _record_probes(record) + _events(record)
+
+
+def dropped_of(record: object) -> int | None:
+    """A schema-5 section's `dropped` (the calls that raised plus the values
+    dropped as secret or untestable, written outside a debug session in
+    place of `probes`), or None."""
+    value = getattr(record, "dropped", None)
+    return value if isinstance(value, int) else None
+
+
+def quiet_words(record: object) -> list[str]:
+    """What a schema-5 section's `dropped` says it may be missing, in the
+    words the readers of `probes` use; empty when it holds probes or drops
+    nothing."""
+    dropped = dropped_of(record)
+    if not dropped or getattr(record, "probes", None):
+        return []
+    return [f"{dropped} call(s) raised an error or value(s) were dropped as secret or untestable"]
+
+
+def _record_probes(record: Any) -> list[str]:
+    """`probes` when the record holds them; a schema-5 record written
+    outside a debug session holds `dropped` instead."""
+    dropped = dropped_of(record)
+    if dropped is not None and not record.probes:
+        return [
+            f"  dropped: {_count(dropped, 'value')} (calls that raised and values dropped as "
+            "secret; the per-call counts are written with /wowlab debug on)"
+        ]
+    return _probe_lines(record.probes)
+
+
+def _macros(record: Macros) -> list[str]:
+    return [
+        f"Macros: {_count(record.account, 'account-wide macro')} and "
+        f"{_count(record.character, 'macro')} of this character's (names and bodies in "
+        "--json); read out of combat",
+        *_record_probes(record),
+        *_events(record),
+    ]
+
+
+def _own_lines(char: CharDBV5) -> list[str]:
+    """Schema 5: the character's own name, realm and guild, and when the
+    addon wrote the file."""
+    section = char.identity
+    lines: list[str] = []
+    if isinstance(section, IdentityV5):
+        parts = []
+        for name, label in (("name", "name"), ("realm", "realm"), ("guild", "guild")):
+            value = getattr(section, name)
+            parts.append(
+                f"{label} {value}"
+                if value is not None
+                else f"{label} absent ({_identity_reason(section, name)})"
+            )
+        guid = "game ID kept" if section.guid is not None else "game ID absent"
+        lines.append(f"Character: {', '.join(parts)}; {guid} (in --json)")
+    if char.written_at is not None:
+        when = datetime.fromtimestamp(char.written_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+        by = {"logout": "at logout", "save": "by /wowlab save"}.get(char.written_by or "", "")
+        lines.append(f"Written: {when}{' ' + by if by else ''}")
+    return lines
 
 
 APPEARANCES_EVENTS_NOTE = (
@@ -3770,7 +3852,7 @@ def _section(label: str, record: object, present: Any) -> list[str]:
             note = ""
             if record.absent.startswith(COMBAT_REASON_PREFIXES):
                 note = f"{COMBAT_NOTE}: "
-            return [f"{label}: {note}{_absent(record)}", *_probe_lines(record.probes)]
+            return [f"{label}: {note}{_absent(record)}", *_record_probes(record)]
         return [f"{label}: {_absent(record)}"]
     lines: list[str] = present(record)
     return lines
@@ -3857,6 +3939,8 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
     lines += _section("Spec", char.spec, _spec)
     if isinstance(char, CharDBV4):
         lines += _section("Identity", char.identity, lambda _: [_identity_line(char, render)])
+    if isinstance(char, CharDBV5):
+        lines += _own_lines(char)
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
     class_config = _class_config(talents) if talents else None
@@ -3881,6 +3965,8 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
         lines += _section("Spellbook", char.spellbook, _spellbook)
         lines += _section("Action bars", char.actionbars, lambda bars: _action_bars(bars, render))
         lines += _section("Key bindings", char.bindings, lambda rec: _bindings(rec, render))
+    if isinstance(char, CharDBV5):
+        lines += _section("Macros", char.macros, _macros)
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")

@@ -433,7 +433,7 @@ def _sections(
         if isinstance(section, labaddon.AbsentProbedSection):
             return f"no {name} record (the section is absent: {section.absent})"
     assert isinstance(bars, labaddon.ActionBars) and isinstance(binds, labaddon.Bindings)
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    why = _dropped(bars.probes, _ACTIONBARS_NEEDS) + labaddon.quiet_words(bars)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -442,7 +442,7 @@ def _sections(
             f"the action-bar record is incomplete ({'; '.join(why)}), so a slot dropped may "
             "hold the spell"
         )
-    why = _dropped(binds.probes, _BINDINGS_NEEDS)
+    why = _dropped(binds.probes, _BINDINGS_NEEDS) + labaddon.quiet_words(binds)
     if why:
         return (
             f"the bindings record is incomplete ({'; '.join(why)}), so a key dropped may reach "

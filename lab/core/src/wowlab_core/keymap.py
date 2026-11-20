@@ -334,13 +334,24 @@ class KeyMap(_Model):
     notes: list[str]
 
 
-def _holds(slot: labaddon.ActionSlot, names: Mapping[int, str], subs: Mapping[int, str]) -> Holds:
+def _holds(
+    slot: labaddon.ActionSlot,
+    names: Mapping[int, str],
+    subs: Mapping[int, str],
+    macro_names: Mapping[int, str] | None = None,
+) -> Holds:
+    """`macro_names` (M20-13): macro index to name, from a schema-5 record's
+    `macros`; a macro slot with no subtype holds a macro index [verify]."""
     spell = slot.type == "spell" and slot.id is not None
+    macro = slot.type == "macro" and slot.sub_type is None and slot.id is not None
+    name = names.get(slot.id) if spell and slot.id is not None else None
+    if macro and slot.id is not None and macro_names:
+        name = macro_names.get(slot.id)
     return Holds(
         type=slot.type,
         id=slot.id,
         sub_type=slot.sub_type,
-        name=names.get(slot.id) if spell and slot.id is not None else None,
+        name=name,
         subtext=subs.get(slot.id) if spell and slot.id is not None else None,
     )
 
@@ -355,6 +366,8 @@ def _does(holds: Holds) -> str:
         rank = f"{holds.subtext}, " if holds.subtext else ""
         return f"casts {holds.name} ({rank}spell{number})"
     if kind == "macro":
+        if holds.name is not None and not holds.sub_type:
+            return f"runs macro {holds.name} (macro{number}, by its index [verify])"
         if holds.sub_type:
             return (
                 f"runs a macro that shows {holds.sub_type}{number} now [verify]; the record "
@@ -383,7 +396,7 @@ def _usable_bars(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the action-bar section is absent: {section.absent}", None
-    why = dropped(section.probes, _ACTIONBARS_NEEDS)
+    why = dropped(section.probes, _ACTIONBARS_NEEDS) + labaddon.quiet_words(section)
     untyped = sum(1 for s in section.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -403,7 +416,7 @@ def _usable_bindings(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the bindings section is absent: {section.absent}", None
-    why = dropped(section.probes, _BINDINGS_NEEDS)
+    why = dropped(section.probes, _BINDINGS_NEEDS) + labaddon.quiet_words(section)
     note = (
         f"The bindings record is incomplete ({'; '.join(why)}): a key shown only in a file "
         "may be one the record dropped."
@@ -414,14 +427,20 @@ def _usable_bindings(
 
 
 def _file_note(
-    key: str, command: str, record_keys: Mapping[str, list[str]], who: str = "the record"
+    key: str,
+    command: str,
+    record_keys: Mapping[str, list[str]],
+    who: str = "the record",
+    every: bool = False,
 ) -> str:
-    if not _KEPT_COMMAND.fullmatch(command):
+    """`every`: the record keeps every command and key as the client
+    returns it (schema 5, M20-13), so it leaves none out."""
+    if not every and not _KEPT_COMMAND.fullmatch(command):
         return (
             f"{who} leaves out commands that are not a plain upper-case name and only counts "
             "them (commands_left_out)"
         )
-    if not _KEPT_KEY.fullmatch(key):
+    if not every and not _KEPT_KEY.fullmatch(key):
         return (
             f"{who} leaves out keys that are not printable ASCII without a space and only "
             "counts them (keys_left_out)"
@@ -441,6 +460,7 @@ def join(
     spellbook: labaddon.Spellbook | labaddon.AbsentProbedSection | None,
     no_bars: str = f"no action-bar record ({GET_RECORD})",
     no_bindings: str = f"no bindings record ({GET_RECORD})",
+    macros: labaddon.Macros | labaddon.AbsentProbedSection | None = None,
 ) -> KeyMap:
     """Every key of the two files and of the record's bindings section,
     joined to the action slots and the spellbook. `no_bars` and
@@ -448,6 +468,10 @@ def join(
     bars, cannot_place, bars_note = _usable_bars(actionbars, no_bars)
     binds, cannot_compare, binds_note = _usable_bindings(bindings, no_bindings)
     names, subtexts, no_book = spell_names(spellbook)
+    # M20-13: a schema-5 record names each macro by its index.
+    macro_names = (
+        {m.index: m.name for m in macros.list_} if isinstance(macros, labaddon.Macros) else {}
+    )
 
     filled = {s.slot: s for s in bars.slots} if bars is not None else {}
     # (key, command) -> the sources that have it, in `_SOURCES` order
@@ -480,7 +504,7 @@ def join(
         elif bars is None:
             does = CANNOT_PLACE
         elif slot in filled:
-            holds = _holds(filled[slot], names, subtexts)
+            holds = _holds(filled[slot], names, subtexts, macro_names)
             does = _does(holds)
         elif bars.first_slot <= slot <= bars.last_slot:
             does = "empty slot (nothing recorded in it)"
@@ -498,7 +522,9 @@ def join(
                     note = "the record has no command on this key either"
                 else:
                     agreement = "file only"
-                    note = _file_note(key, command, record_keys)
+                    note = _file_note(
+                        key, command, record_keys, every=isinstance(binds, labaddon.BindingsV5)
+                    )
             else:
                 others = [(c, s) for c, s in file_keys.get(key, []) if c != command]
                 if others:
@@ -534,7 +560,7 @@ def join(
             slot=s.slot,
             page_note=slot_page_note(s.slot),
             unfollowed_page=s.slot in UNFOLLOWED_SLOTS,
-            holds=(h := _holds(s, names, subtexts)),
+            holds=(h := _holds(s, names, subtexts, macro_names)),
             does=_does(h),
         )
         for s in sorted(filled.values(), key=lambda s: s.slot)
@@ -612,4 +638,5 @@ def join_record(
         bindings=record.bindings,
         actionbars=record.actionbars,
         spellbook=record.spellbook,
+        macros=record.macros if isinstance(record, labaddon.CharDBV5) else None,
     )
