@@ -21,6 +21,16 @@ on a path its pins do not name:
 Each case passes every test in the grader (and selene, checked by hand in
 the review). Constructed inputs (boundary cases for the grader), not addon
 sources; no Lua is run.
+
+Re-check of fix round 1 (head fea50a1c): both cases above are now rejected.
+A third case is added: the fix exempts `gather(section, fired)` behind
+`if section . immediate then` (Core.lua's `onEvent`), meant for the barber
+shop, which cannot be opened in combat. The exemption is keyed on the
+`immediate` flag, not on the section, and nothing pins `immediate = true`
+to Customization.lua: `immediate = true` added to Gear.lua's section (its
+`PLAYER_EQUIPMENT_CHANGED` fires on a weapon swap in combat) gathers gear on
+the event itself, in combat, and passes every test in the grader and
+selene.
 """
 
 from __future__ import annotations
@@ -55,6 +65,14 @@ CASES: dict[str, Edits] = {
             "Gear.lua",
             GEAR_AT,
             GEAR_AT + '                record.guid = ns.String(UnitGUID("player"))\n',
+        ),
+    ],
+    # Re-check of fix round 1: another section made immediate.
+    "constructed-gear-made-immediate-gathers-in-combat": [
+        (
+            "Gear.lua",
+            "    on_world = true,\n",
+            "    on_world = true,\n    immediate = true,\n",
         ),
     ],
 }
