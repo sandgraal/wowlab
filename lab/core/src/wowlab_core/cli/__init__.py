@@ -1031,6 +1031,9 @@ if TYPE_CHECKING:
     from wowlab_core.cli._cmd_crew import (
         CrewShowReport as CrewShowReport,
     )
+    from wowlab_core.cli._cmd_crew import (
+        CrewSyncReport as CrewSyncReport,
+    )
     from wowlab_core.cli._cmd_cvar import (
         _ACCOUNT_BINDINGS as _ACCOUNT_BINDINGS,
     )
@@ -2202,6 +2205,12 @@ if TYPE_CHECKING:
         SnapListReport as SnapListReport,
     )
     from wowlab_core.cli._cmd_snap import (
+        SnapRmItem as SnapRmItem,
+    )
+    from wowlab_core.cli._cmd_snap import (
+        SnapRmReport as SnapRmReport,
+    )
+    from wowlab_core.cli._cmd_snap import (
         SnapshotSummary as SnapshotSummary,
     )
     from wowlab_core.cli._cmd_snap import (
@@ -2215,6 +2224,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_snap import (
         _resolve_ref as _resolve_ref,
+    )
+    from wowlab_core.cli._cmd_snap import (
+        _rm_plan_lines as _rm_plan_lines,
     )
     from wowlab_core.cli._cmd_snap import (
         _say_created as _say_created,
@@ -2248,6 +2260,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_snap import (
         snap_list as snap_list,
+    )
+    from wowlab_core.cli._cmd_snap import (
+        snap_rm as snap_rm,
     )
     from wowlab_core.cli._cmd_snap import (
         snap_show as snap_show,

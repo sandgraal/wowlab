@@ -560,8 +560,9 @@ read other players' names and realms, and only while the book is on.
   grouped, how many times and in which instance, and your own rating and
   note. It keeps them in WowLab.lua (and probably the game's
   backup of it, WowLab.lua.bak) in this game account's
-  SavedVariables folder, and in wowlab's snapshots of it. Nothing is sent
-  anywhere. The book knows names, not people: a player who renames or moves
+  SavedVariables folder, in wowlab's snapshots of it, and in wowlab's own
+  crew database on this computer, which keeps them after the game's list
+  drops them. Nothing is sent anywhere. The book knows names, not people: a player who renames or moves
   realm appears as a new entry, and someone else may later take a name you
   rated."
 - `/wowlab crew off` stops recording and keeps what is stored. `/wowlab

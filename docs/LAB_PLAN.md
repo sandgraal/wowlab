@@ -1255,6 +1255,51 @@ that kind, and `create` never writes it.
 
 (c) A stored manifest's `created_at` must be the moment its id carries. `create` has always written both from one moment. A manifest that fails this is damaged, as any manifest that does not load is: `snap list` names it and exits 1, `latest`, `~N` and `latest-user` refuse, and `snap gc` will not run. An import is held to the same rule, and to its own check against future dates.
 
+*Amended 2026-11-19 (M19-09; owner decision of 2026-11-19, §20.8 decision 9):*
+a snapshot can be removed. "Snapshots are immutable" above still holds of
+a snapshot that exists; removing one takes it out whole.
+`SnapshotStore.remove(id)` removes exactly one manifest, by full id, and
+the empty `imported/<id>` record of an imported one; no object is deleted.
+The manifest must load (a damaged one is not removed this way);
+`manifests/` is opened as `create` opens it, never through a link; the
+file removed is the regular file that was read, checked again by `lstat`
+just before the delete; and a store inside any install is refused first,
+by `create`'s rule (L1). `wowlab snap rm ID [ID…]` (ids as the other
+`snap` commands take them) holds the store lock for the whole run. Under
+it, it resolves every ID (one that names no snapshot refuses the run,
+nothing removed; an ID given twice counts once), reads the journal, and
+refuses a snapshot any journal record names as its pre-write snapshot,
+unless `--break-undo` is given. *Corrected 2026-11-19 (M19-09 review):*
+the plan then says, for each such snapshot, what is lost, decided from the
+journal: for the snapshot of the change `wowlab undo` reverses now (the
+undo target, the most recent change), that `undo` will no longer be able
+to reverse it; for an older change's snapshot, that `undo` only ever
+reverses the most recent change, so it is not affected, and that `snap
+restore` from that snapshot will no longer be possible. (This branch first
+said "`undo` of that change and of every earlier one becomes impossible",
+which is untrue for an older change: undo never reached it.) The refusal
+without the flag names the change by its journal label and says the files
+can no longer be put back as they were before it. A damaged manifest is
+refused in the player's words, pointing at `snap verify`. It shows the plan and asks (`--yes`, `--dry-run`,
+`--json`: `SnapRmReport`, whose `plan_lines` are the text plan). The
+objects stay until `snap gc` drops the ones nothing refers to.
+*2026-11-19 (M19-09 security review):* `snap gc` keeps an unreferenced
+object younger than its grace period (an hour, `GC_GRACE_SECONDS`,
+unchanged), and a forget's pre-write snapshot usually holds one, so a
+forget, `snap rm` and `snap gc` in one sitting can keep the forgotten
+player's copy. `GcReport` gains `kept_young` (the count left only for
+that reason); `snap gc` says it, after "Removed" and after "Nothing to
+collect" alike, and that a run after that hour removes them; `snap rm`'s
+last plan line and its result, and the forget sentence of §20.3, say that
+files stored in the last hour stay until a `snap gc` run after that hour.
+The command
+never opens the install and does not go through `guard`'s transaction: it
+writes only wowlab's own store, as `snap gc` does. `undo` of a record
+whose snapshot was removed refuses and changes nothing, with the message it
+gives for any snapshot it cannot read (no new recovery wording, ADR-0037).
+`wowlab ui` does not offer `snap rm` (owner, 2026-11-19): the server
+excludes it with its own reason, though it declares `--yes`.
+
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing
 
 The only module that writes into an install (L2, ADR-0021).
@@ -6210,9 +6255,17 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   keep theirs." `snap rm` did not exist on 2026-11-18; M19-09 would
   build it, if the owner agrees (the owner agreed on
   2026-11-19: command line only) (§20.8, decision 9), and until it exists
-  the sentence says "wowlab cannot remove a snapshot yet". Removing a
+  the sentence says "wowlab cannot remove a snapshot yet". *2026-11-19
+  (M19-09):* `snap rm` exists (§6.9), and the sentence is the one quoted
+  above. Removing a
   forget's own snapshot ends `undo` for that change and every earlier
-  one, which `snap rm`'s plan must say.
+  one, which `snap rm`'s plan must say. *Corrected 2026-11-19 (M19-09
+  review):* removing it ends `undo` of that change while it is the most
+  recent one; `undo` only ever reverses the most recent change, so it
+  never reached an earlier one. `snap rm`'s plan says which case applies
+  (§6.9). *2026-11-19 (M19-09 security review):* the sentence
+  adds, after `wowlab snap gc`, "; files stored in the last hour stay
+  until a `snap gc` run after that hour" (§6.9).
 - **The backup's cases.** `WowLab.lua.bak` absent: left absent. It does
   not hold the player: left alone. It cannot be read, or holds a schema
   wowlab does not know: the forget refuses, naming the file, and changes
@@ -6314,8 +6367,9 @@ party or raid, including your own side in a battleground or arena (never
 your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
 which instance, and your own rating and note. It keeps them in WowLab.lua
 (and probably the game's backup of it, WowLab.lua.bak) in this game
-account's SavedVariables folder, and in wowlab's snapshots of it. Nothing
-is sent anywhere. The book knows names, not people: a player who renames or
+account's SavedVariables folder, in wowlab's snapshots of it, and in
+wowlab's own crew database on this computer, which keeps them after the
+game's list drops them. Nothing is sent anywhere. The book knows names, not people: a player who renames or
 moves realm appears as a new entry, and someone else may later take a name
 you rated."
 
@@ -6323,6 +6377,11 @@ you rated."
 arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
 is **[verify]** (§20.6), hence "probably". The in-game notice and
 `wowlab crew --help` carry this wording, M19-10.)
+
+(Changed 2026-11-19, M20-01, by §21.4 term 2: the sentence names wowlab's
+own crew database as a place records are kept. A test keeps the four
+copies, `crew --help`, `Crew.lua`'s notice, this quote and the addon
+README's, identical.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is
@@ -6448,7 +6507,11 @@ Each is the smallest thing that does the job; say so and it changes.
    which lists a missing manifest among the frozen cases. Whether
    `wowlab ui` offers the command is the owner's ruling too. Without
    M19-09 the forget sentence keeps saying wowlab cannot remove a
-   snapshot yet.
+   snapshot yet. *Corrected 2026-11-19 (M19-09's code review):* "and
+   every earlier one" was wrong, and it was said to the owner that way.
+   `undo` only ever reverses the most recent change, so removing an older
+   change's snapshot does not touch `undo`; it ends `snap restore` from
+   that snapshot. The command says which of the two applies (§6.9).
 10. The addon uses the clock (`time`, `date`) in `Crew.lua`, which §13.1
     rules out for the per-character record.
 11. The instance is kept by name, as the client gives it, so no game
@@ -6712,10 +6775,46 @@ what a sync takes in stays. Two guards, both before the transaction:
   confirmed by hand records the book's identity and the journal's newest
   record, so the next sync runs by itself.
 
+  *Ruled 2026-11-19 (M20-01, conductor; §20.2's fourth outcome stands):*
+  a violation inside one player's entry (a key of the wrong shape or over
+  its bound, a field of the wrong type or out of range) makes that entry
+  unread, as the reader lists it: it is not synced, it is counted and said,
+  and every other entry syncs. A violation of the book itself (unknown
+  schema, unreadable, more than 20,000 players, a top-level field of the
+  wrong type or out of range) syncs nothing. Either way no invalid value
+  enters the database.
+
   Not caught: a saved file replaced by hand, outside wowlab, and a
   restore made through a snapshot store kept somewhere other than the
   user data directory, whose journal the sync does not read. Such a book
   syncs like any other.
+
+*As built (2026-11-19, M20-01).* Bounds: a key holds a `-`, not last, in
+256 bytes; class, role, guild, instance 256 bytes and a note 200, valid
+UTF-8; `met`, `skipped`, loads 0 to 10,000,000; level 1 to 1,000; times
+from 2004 to 30 days past this computer's clock (one day would leave out
+today's constructed test books, dated up to six days ahead; fix round 1).
+Lock wait 5 s. A player not in the
+saved file keeps 0 as the value it last showed, so a return adds the whole
+new count. Confirmed by hand, another book adds by rule 2; a put-back one
+takes the larger of each count, never counting twice. Class, level, role,
+guild and instance come from the saved file only when its `last` is not
+older. A journal record that changed the account's `WowLab.lua`, not
+rolled back, holds, unless labelled `crew forget`, `rate` or `note` and
+undoing nothing. Another flavor folder's database is offered to `--adopt`
+only when the install folder it was filled from is gone. Copies:
+`<account>.sqlite.daily-<date>`, `.before-schema-<n>`. Brought forward
+from M20-02 (conductor, 2026-11-19): `crew forget` removes the player from
+the database and every copy (a copy it cannot open is deleted), `--all`
+deletes them, and a player only in the database is forgotten from it alone,
+after a plan and a yes; the plan and result carry the sentences of
+"Writing". `crew rate` and `crew note` reach the database at the next sync.
+Fix round 1: a forget takes the database's write lock before it writes the
+saved file and holds it through the database step; a sync re-reads the
+saved file under its lock and is skipped when it changed since it was read;
+temporary copies a killed run leaves are deleted when the database is next
+opened and by every forget; any held book keeps a rating or note the
+database changed.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

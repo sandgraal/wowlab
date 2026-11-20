@@ -448,6 +448,8 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "list"],
         ["crew", "list", "--notes"],
         ["crew", "show", "Inventeda-Fakerealm"],
+        # M20-01: likewise; test_crewdb.py runs it on constructed books.
+        ["crew", "sync"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
@@ -483,6 +485,8 @@ NOT_RUN = {
     ("profile", "delete"): "removes from the store",
     ("snap", "restore"): "writes into the install",
     ("snap", "gc"): "removes from the store",
+    # M19-09: test_cli_snap_rm.py runs it on a constructed store and lints its text.
+    ("snap", "rm"): "removes from the store",
     ("sv", "merge"): "writes into the install",
     ("macros", "fix"): "writes into the install",
     # M19-03: test_cli_crew_write.py runs them on constructed books.

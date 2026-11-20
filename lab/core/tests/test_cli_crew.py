@@ -359,9 +359,24 @@ _RAW = re.compile(
 
 
 def test_hostile_text_reaches_the_terminal_escaped_constructed(make: Any) -> None:
-    key = _hostile(KEY_A, 10_000)
+    # M20-01 (ruling of 2026-11-19): a key over the crew database's 256 bytes
+    # makes its entry unread, listed with its key through the escaping path;
+    # the hostile fields ride on an entry whose key is within the bound.
+    long_key = _hostile(KEY_A, 10_000)
+    key = _hostile(KEY_A, 250)
     guild, note, where = _hostile(KEY_B), _hostile(KEY_C), _hostile(KEY_B)
-    env = make(book({key: player(guild=guild, note=note, where=where, rating="bad")}))
+    env = make(
+        book(
+            {
+                long_key: player(),
+                key: player(guild=guild, note=note, where=where, rating="bad"),
+            }
+        )
+    )
+    listed = env.run("crew", "list")
+    assert "1 entry could not be read:" in listed.stdout and not _RAW.search(listed.stdout)
+    report = cli.CrewReport.model_validate_json(env.run("crew", "list", "--json").stdout)
+    assert [u.key for u in report.unread] == [long_key]
     for args in (("crew", "list"), ("crew", "show", key), ("crew", "list", "--notes")):
         result = env.run(*args)
         assert result.exit_code == 0, result.output

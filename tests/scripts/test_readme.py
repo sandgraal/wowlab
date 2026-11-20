@@ -50,7 +50,7 @@ MACOS_RECORD = ROOT / "docs" / "handoffs" / "M13-10-macos.md"
 # and the confirm step on every `--yes` command, M14-02 and M14-03).
 UI_RUNS = (
     "It runs every wowlab command except `ui` itself, `log tail --follow`, "
-    "`looks page --out` and `snap export`. The commands that read, and the ones that save only to "
+    "`looks page --out`, `snap export` and `snap rm`. The commands that read, and the ones that save only to "
     "wowlab's own data (snapshots, profiles, saved looks, the game-table cache, "
     "pages), run directly. A command that asks before changing anything (`--yes`) "
     "runs first as a plan that changes nothing, and runs for real only when you "
