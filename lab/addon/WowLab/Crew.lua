@@ -793,12 +793,14 @@ local function pvpPass()
         return
     end
     if not pvpEntered then
-        pvpEntered = true
         pvpWinnerRead = false
         pvpRequested = false
         pvpScoreEvents = 0
         pvpCompleteEvents = 0
         WowLabCrewDB.probe.pvp = { pvpSnapshot() }
+        -- Set only once the store is made, so a snapshot that failed never
+        -- lets this match's second one land beside another match's first.
+        pvpEntered = true
         return
     end
     if not pvpWinnerRead and pvpWon() then
@@ -1076,7 +1078,12 @@ function ns.CrewCommand(word)
             if WowLabCrewDB.on == true then
                 say("the crew book cannot be read; nothing is recorded.")
             else
-                say("this crew book cannot be read; it is left as it is and stays off.")
+                -- An off schema 1 book was given the new version number by the
+                -- first lines of this handler before this test; nothing else.
+                say(
+                    "this crew book cannot be read, so it stays off and nothing is recorded. "
+                        .. "At most its version number was updated; the players in it were not touched."
+                )
             end
             return
         elseif WowLabCrewDB.on ~= true then

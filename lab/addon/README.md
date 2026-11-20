@@ -554,11 +554,14 @@ it on (`docs/LAB_PLAN.md` §20.1, §21, ADR-0036). It is the one file allowed to
 read other players' names and realms, and only while the book is on.
 
 What changed in this version (schema 2): the book keeps up to 20,000
-players (it was 5,000), and says once a week at most, at a loading screen,
+players (it was 5,000), and says once a week at most, at a loading screen
+or when you type `/wowlab crew on`,
 "the crew book is nearly full ...: open wowlab so nothing is lost" when it
 holds 90% of that (or of its 500 matches; no match is recorded yet). A book
 that is on is moved to schema 2 when the game loads it, and a book that is
-off is moved when you type `/wowlab crew on`; a book that stays off is not
+off is moved when you type `/wowlab crew on` (even when the book cannot be
+read and so stays off: then only its version number changes, and the reply
+says so); a book that stays off with no `/wowlab crew on` is not
 touched. In a battleground or arena it takes a small probe of the
 scoreboard for the owner's check of what the game gives, and keeps no name
 from it (below). It does not record opponents yet. An older WowLab that
@@ -594,7 +597,7 @@ records nothing.
   off to stop." after the first pass of each login or `/reload`, so a book
   brought back by a snapshot restore, an undo or an `sv merge` is seen.
 - When either list holds 90% of its limit (18,000 players, or 450
-  matches), one line at a loading screen says "the crew book is nearly full
+  matches), one line at a loading screen or at `/wowlab crew on` says "the crew book is nearly full
   (it keeps at most 20,000 players and 500 matches): open wowlab so nothing
   is lost.", not more than once in seven days. The time of that line is kept
   in the book as `warned`.
@@ -637,8 +640,11 @@ row's side, the player's own side and the winner as whole numbers
 (`first_side`, `own_side`, `winner`); and for the first row's name three
 yes-or-no answers (`name_string`, `name_dash`, `name_secret`). No name, GUID
 or other value is kept: each value of the row is handed to `type` only, and
-the GUID field is never indexed. Every call, event and answer here is
-**[verify]** until the owner's battleground check (M20-06).
+the GUID field is never indexed. The first snapshot is taken on entry,
+before the scoreboard data is asked for (the request is made after its
+reads), so 0 rows and no fields in it mean the data had not arrived yet, not
+that a call is missing; the second is the one to read. Every call, event
+and answer here is **[verify]** until the owner's battleground check (M20-06).
 
 How it records: on `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`, debounced
 by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be

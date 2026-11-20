@@ -6741,7 +6741,9 @@ on the scoreboard and out of combat; whether any scoreboard value is a secret va
 `C_PvP.GetScoreInfo`'s row field `faction` and `GetBattlefieldScore`'s sixth value hold the
 side as 0 or 1; and the 20,000 limit at full size (§21.7, decision 18). The probe also runs
 at a loading screen and at the end of combat, so a winner reported while the player was in
-combat is still read once combat ends.
+combat is still read once combat ends. The first snapshot (`probe.pvp[1]`) is taken on entry,
+before the data is requested (the request follows its reads), so 0 rows and no fields there
+mean the data had not arrived yet, not that a call is missing.
 
 ### 21.3 The database (ADR-0039)
 
