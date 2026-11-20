@@ -164,7 +164,9 @@ def test_rate_and_note_reach_the_database_in_the_same_command_constructed(make: 
     assert report.row_sha256 == "absent"
     assert env.rows()[KEY_C].rating == "bad"  # no sync in between
     changed, agreed = _marks_times(env, KEY_C)
-    assert changed > agreed  # a held sync keeps it
+    # Fix round 1: the file and the row were written together, so they agree
+    # (an undo of this write, synced by hand, takes the file's rating again).
+    assert changed == agreed
     assert env.run("crew", "note", KEY_C, "invented: at the desk", "--yes").exit_code == 0
     assert env.rows()[KEY_C].note == "invented: at the desk"
     assert env.sync().state == "synced"
@@ -367,6 +369,154 @@ def test_a_pin_of_the_saved_file_does_not_confirm_a_database_write_constructed(
     _dropped(env)
     refused = env.run("crew", "rate", KEY_C, "bad", "--yes", f"--expect={_pin(plan, 'rate')}")
     assert refused.exit_code == 3
+
+
+# ─── fix round 1: agreement, and a desk mark on a player who returns ─────────
+
+
+def test_an_undone_desk_note_is_taken_back_by_a_sync_by_hand_constructed(make: Any) -> None:
+    env = make(_three())
+    env.sync()
+    assert env.run("crew", "note", KEY_C, "invented: at the desk", "--yes").exit_code == 0
+    assert env.run_bare("undo", "--yes").exit_code == 0  # the file holds no note again
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
+    assert env.rows()[KEY_C].note is None
+    assert env.sync().state == "unchanged"
+
+
+def test_a_desk_rate_keeps_a_note_only_the_database_holds_its_own_constructed(
+    make: Any,
+) -> None:
+    """The file and the row agree on the rating but not on the note the
+    database kept for a returned player: the row does not agree, and the
+    next sync keeps that note."""
+    env = make(_three())
+    _dropped(env)
+    assert env.run("crew", "note", KEY_B, NOTE_B, "--yes").exit_code == 0
+    env.save(book({KEY_A: player(met=4), KEY_B: player(met=10)}))
+    assert env.sync().state == "synced"
+    assert env.run("crew", "rate", KEY_B, "good", "--yes").exit_code == 0
+    changed, agreed = _marks_times(env, KEY_B)
+    assert changed > agreed
+    env.save(book({KEY_A: player(met=5), KEY_B: player(rating="good", met=11)}))
+    assert env.sync().state == "synced"
+    row = env.rows()[KEY_B]
+    assert (row.rating, row.note) == ("good", NOTE_B)
+
+
+def _desk_marks(env: Env, *, note: bool = True) -> None:
+    """B, dropped by the game, rated bad (and noted) at the desk."""
+    _dropped(env)
+    assert env.run("crew", "rate", KEY_B, "bad", "--yes").exit_code == 0
+    if note:
+        assert env.run("crew", "note", KEY_B, NOTE_B, "--yes").exit_code == 0
+
+
+def _returns(env: Env, **marks: Any) -> crewdb.SyncOutcome:
+    """The game's list holds B again, with a fresh entry carrying `marks`."""
+    env.save(book({KEY_A: player(met=4), KEY_B: player(met=1, **marks)}))
+    return env.sync()
+
+
+KEPT_BOTH = (
+    "It kept your rating for 1 player and your note for 1 player the game's list had dropped "
+    "and holds again, which the game itself does not show."
+)
+
+
+@pytest.mark.parametrize(
+    ("marks", "want", "kept"),
+    [
+        ({}, ("bad", NOTE_B), (1, 1)),
+        ({"rating": "good"}, ("good", NOTE_B), (0, 1)),
+        ({"note": "invented: met again"}, ("bad", "invented: met again"), (1, 0)),
+        (
+            {"rating": "good", "note": "invented: met again"},
+            ("good", "invented: met again"),
+            (0, 0),
+        ),
+    ],
+    ids=["no-marks", "rated-in-game", "noted-in-game", "both-in-game"],
+)
+def test_a_desk_mark_survives_the_player_s_return_unless_given_again_in_game_constructed(
+    make: Any, marks: dict[str, str], want: tuple[str, str], kept: tuple[int, int]
+) -> None:
+    env = make(_three())
+    _desk_marks(env)
+    outcome = _returns(env, **marks)
+    assert outcome.state == "synced" and outcome.plan is not None
+    assert (outcome.plan.ratings_kept, outcome.plan.notes_kept) == kept
+    row = env.rows()[KEY_B]
+    assert row.in_game_list and (row.rating, row.note) == want
+    if kept == (1, 1):
+        assert outcome.words.endswith(KEPT_BOTH)
+    if kept == (0, 0):
+        assert "It kept" not in outcome.words
+        changed, agreed = _marks_times(env, KEY_B)
+        assert agreed >= changed  # the row agrees with the file again
+    # Kept for good, not for one sync: a later session leaves it as it is.
+    env.save(book({KEY_A: player(met=6), KEY_B: player(met=3, **marks)}))
+    later = env.sync()
+    assert later.state == "synced" and later.plan is not None
+    assert (later.plan.ratings_kept, later.plan.notes_kept) == (0, 0)
+    assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == want
+    for word in (KEY_B, NOTE_B, "Inventedb"):
+        assert word not in outcome.words
+
+
+def test_only_a_kept_rating_is_said_constructed(make: Any) -> None:
+    env = make(_three())
+    _desk_marks(env, note=False)
+    outcome = _returns(env)
+    assert outcome.plan is not None and (outcome.plan.ratings_kept, outcome.plan.notes_kept) == (
+        1,
+        0,
+    )
+    assert outcome.words.endswith(
+        "It kept your rating for 1 player the game's list had dropped and holds again, which "
+        "the game itself does not show."
+    )
+
+
+def test_crew_list_says_what_was_kept_constructed(make: Any) -> None:
+    env = make(_three())
+    _desk_marks(env)
+    env.save(book({KEY_A: player(met=4), KEY_B: player(met=1)}))
+    listed = env.run("crew", "list")
+    assert listed.exit_code == 0, listed.output
+    assert KEPT_BOTH in " ".join(listed.stdout.split())
+
+
+def test_crew_sync_json_says_what_was_kept_constructed(make: Any) -> None:
+    env2 = make(_three())
+    _desk_marks(env2)
+    env2.save(book({KEY_A: player(met=4), KEY_B: player(met=1)}))
+    as_json = env2.run("crew", "sync", "--json")
+    assert as_json.exit_code == 0, as_json.output
+    report = cli.CrewSyncReport.model_validate_json(as_json.stdout)
+    assert report.sync is not None and report.sync.plan is not None
+    assert (report.sync.plan.ratings_kept, report.sync.plan.notes_kept) == (1, 1)
+    assert KEPT_BOTH in report.sync.words
+
+
+def test_a_kept_desk_rating_can_be_cleared_at_the_desk_constructed(make: Any) -> None:
+    env = make(_three())
+    _desk_marks(env)
+    _returns(env)
+    tree, records = tree_state(env.root), guard.history()
+    plan = env.run("crew", "rate", KEY_B, "none", input="")
+    assert plan.exit_code == 1
+    flat = " ".join(plan.stdout.split())
+    assert "bad -> none" in flat and "kept only in wowlab's crew database" in flat
+    report = _report(env.run("crew", "rate", KEY_B, "none", "--json", input=""))
+    assert report.database_only and report.row_sha256 not in (None, "absent")
+    done = env.run("crew", "rate", KEY_B, "none", "--yes", f"--expect={_pin(report, 'rate')}")
+    assert done.exit_code == 0, done.output
+    assert env.rows()[KEY_B].rating is None
+    assert tree_state(env.root) == tree and guard.history() == records
+    env.save(book({KEY_A: player(met=6), KEY_B: player(met=3)}))
+    env.sync()
+    assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == (None, NOTE_B)
 
 
 # ─── doctor ──────────────────────────────────────────────────────────────────

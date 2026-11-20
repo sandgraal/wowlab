@@ -36,8 +36,9 @@ from pathlib import Path
 import pytest
 from test_crew_book_out_of_repo import _members, tracked
 
-# The paths `db2lake`'s tests may keep an SQLite file at. Empty: `db2lake`
-# (ADR-0028) is not built; its ticket lists its test paths here.
+# The paths `db2lake`'s tests may keep an SQLite file at. Empty: no tracked
+# file is a database (`db2lake`'s tests build theirs at run time); a test
+# that commits one lists its path here.
 DB2LAKE_TEST_PATHS: frozenset[str] = frozenset()
 # The header every SQLite database starts with (assembled, so this file does
 # not hold it).

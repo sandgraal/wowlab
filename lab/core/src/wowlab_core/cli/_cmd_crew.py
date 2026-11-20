@@ -327,7 +327,11 @@ def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
 
 
 def _sync_caveat(outcome: crewdb.SyncOutcome | None) -> str | None:
-    """The one line a list or show adds when its sync did not run."""
+    """The one line a list or show adds when its sync did not run, or when
+    it kept ratings or notes given at the desk to players the game's list
+    holds again."""
+    if outcome is not None and outcome.state == "synced" and outcome.plan is not None:
+        return crewdb.kept_words(outcome.plan).strip() or None
     if outcome is None or outcome.state in ("synced", "unchanged", "not_run"):
         return None
     return outcome.words
@@ -1436,6 +1440,16 @@ def _set(
     def said(text: str | None) -> str:
         return _said(field, text)
 
+    if not changed and db_has:
+        # The saved file already says it, but the database keeps a rating or
+        # note of its own (given at the desk while the game's list had
+        # dropped the player, kept on their return): the database alone.
+        kept = crewdb.marks(folder, acct, key)
+        if kept is not None and (kept[0] if field == "rating" else kept[1]) != value:
+            _set_database_only(
+                edit, command, field, key, value, pin=pin, yes=yes, json_out=json_out, listed=True
+            )
+            return
     if not changed:
         _check_pin(pin, [target_sha, None, ABSENT], edit.rel)
         if json_out:
@@ -1470,7 +1484,16 @@ def _set(
         store=store,
         yes=yes,
         json_out=json_out,
-        database=crewdb.Marking(folder, acct, key, field, value) if db_has else None,
+        database=crewdb.Marking(
+            folder,
+            acct,
+            key,
+            field,
+            value,
+            (value, player.note) if field == "rating" else (player.rating, value),
+        )
+        if db_has
+        else None,
         unfinished=lambda record, exc: (
             f"{edit.rel} was changed and journaled as {record}, but wowlab's crew database "
             f"still holds the old {field}: {exc} `wowlab crew sync` brings the new one in."
@@ -1501,13 +1524,16 @@ def _set_database_only(
     pin: list[str] | None,
     yes: bool,
     json_out: bool,
+    listed: bool = False,
 ) -> None:
     """A rating or note on a player only wowlab's crew database keeps: the
     database alone is changed, after the plan and a yes; no game file is
     written and nothing is journaled, so it cannot be undone (§21.3,
     "Writing"). Pinned by the file as read (it must still not hold them)
     and the row's rating and note as read; refused, exit 3, when either
-    changed."""
+    changed. `listed`: the game's list holds the player, and the saved file
+    already says `value`, but the database keeps a rating or note of its own
+    from when the list had dropped them (§21.3, ruled 2026-11-20)."""
     folder, acct = edit.place.flavor_folder, edit.place.account
     marks = crewdb.marks(folder, acct, key)
     if marks is None:
@@ -1566,7 +1592,7 @@ def _set_database_only(
             f"Change {key}'s {field} in wowlab's crew database for {edit.words()}: "
             f"{_said(field, before)} -> {_said(field, value)}"
         )
-        show(_ONLY_IN_DATABASE)
+        show(_ONLY_IN_DATABASE if not listed else _KEPT_IN_DATABASE)
     try:
         _confirm(f"Write the {field}?", yes)
     except typer.Exit:
@@ -1574,7 +1600,16 @@ def _set_database_only(
             _emit(report())
         raise
     try:
-        crewdb.mark_only(folder, acct, key, field, value, expect=marks)
+        in_file = next((p for p in edit.book.players if p.key == key), None) if listed else None
+        crewdb.mark_only(
+            folder,
+            acct,
+            key,
+            field,
+            value,
+            expect=marks,
+            file_marks=(in_file.rating, in_file.note) if in_file is not None else None,
+        )
     except crewdb.RowChanged as exc:
         raise CliError(str(exc), EXIT_REFUSED) from None
     if json_out:
@@ -1585,13 +1620,18 @@ def _set_database_only(
             f"Change {key}'s {field} in wowlab's crew database for {edit.words()}: "
             f"{_said(field, before)} -> {_said(field, value)}"
         )
-        _say(_ONLY_IN_DATABASE)
+        _say(_ONLY_IN_DATABASE if not listed else _KEPT_IN_DATABASE)
     _say(
         f"Changed {key}'s {field} to {_said(field, value)} in wowlab's crew database. "
         "This cannot be undone."
     )
 
 
+_KEPT_IN_DATABASE = (
+    "  The game's list holds this player again, but the rating or note you gave them while it "
+    "had dropped them is kept only in wowlab's crew database, so only the database is "
+    "changed: no game file is written, and this cannot be undone."
+)
 _ONLY_IN_DATABASE = (
     "  The game's list no longer holds this player, so only wowlab's crew database is changed: "
     "no game file is written, and this cannot be undone. The game will not warn you about a "

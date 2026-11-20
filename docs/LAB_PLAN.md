@@ -6881,6 +6881,18 @@ command shows the old and new value and asks first, and its `--expect`
 pin is the row's rating and note as read, which the Crew tab checks
 before it writes. The sentence on older snapshots is unchanged.
 
+*Ruled 2026-11-20 (M20-02, conductor, for the owner to overturn; §21.7,
+decision 20):* `crew rate` and `crew note` on a player in the saved file
+write the file and the row together, so the row then agrees with the file
+(an `undo` of it, synced by hand, takes the file's value again). A rating
+or note given at the desk to a player the game had dropped survives the
+player's return to the game's list: in a normal sync the database keeps
+its own rating (and, separately, its own note) where the returning entry
+has none, and the saved file's wins where it has one (rated or noted again
+in game). The sync says how many it kept, never whom. A kept one stays
+until the player rates or notes them in game, or changes it at the desk
+(the database alone, asked first).
+
 A forgotten player can come back: `snap restore`, `undo`, `sv merge` or
 an import can put an older book in place. M19-11's sentence in those
 plans ("This brings back the crew book") gains "and a sync by hand would
@@ -6978,6 +6990,9 @@ text is what M20-07 is built from.
     large book fails to load.
 19. One saved marker per match, so a repeated event or a `/reload` never
     counts a match twice.
+20. *2026-11-20, M20-02:* a rating or note given at the desk to a player
+    the game had dropped survives that player's return, unless they are
+    rated or noted again in game.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 
