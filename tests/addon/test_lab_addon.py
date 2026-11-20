@@ -449,11 +449,21 @@ CREW_LIMITS = {
     "NEAR_FULL_PERCENT": "local NEAR_FULL_PERCENT = 90",
     "NEAR_FULL_SECONDS": "local NEAR_FULL_SECONDS = 604800",
 }
+
+
 # §21.2's fields that the addon of M20-07 and M20-08 writes, not this wave's
 # M20-05: no store into any of them (as a field, a constructor key or a
 # written-out bracket key) is accepted yet. `matches` is written only by the
 # migration and in a new book's constructor, empty; elsewhere it is only
 # counted (`#`) or type()-tested.
+def _crew_scoreboard_name(name: str) -> bool:
+    """Fix round 1 (security review): a candidate call, or any global named
+    `GetBattlefield...` (GetBattlefieldStatData, GetBattlefieldTeamInfo,
+    GetBattlefieldStatus, ...), or `C_PvP` (so any member of it): at schema 2
+    only in the pinned probe helpers or a `type()` test."""
+    return name in CREW_PVP_CALLS or name.startswith("GetBattlefield")
+
+
 # The probe's two event counts (session locals pvpSnapshot stores).
 CREW_PVP_COUNTERS = frozenset({"pvpScoreEvents", "pvpCompleteEvents"})
 CREW_LATER_FIELDS = frozenset(
@@ -7998,12 +8008,12 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
         ):
             problems.append(f"line {t[ts].line}: {root} set other than to 0 or itself + 1")
     helpers = {"pvpInstance", "pvpWon", "pvpSnapshot"}
-    for name in sorted(CREW_PVP_CALLS & set(flow.decls)):
+    for name in sorted(n for n in flow.decls if _crew_scoreboard_name(n)):
         problems.append(f"{name} declared as a local")
     for k, x in enumerate(t):
-        if x.kind == "string" and x.text in CREW_PVP_CALLS:
+        if x.kind == "string" and _crew_scoreboard_name(x.text):
             problems.append(f"line {x.line}: a scoreboard call named in a string")
-        if x.kind != "name" or x.text not in CREW_PVP_CALLS or _is_field(t, k):
+        if x.kind != "name" or not _crew_scoreboard_name(x.text) or _is_field(t, k):
             continue
         if flow.resolve(x.text, k) is None and not (pinned_function(k, helpers) or type_test(k)):
             problems.append(f"line {x.line}: {x.text} used outside the pinned probe helpers")
@@ -8091,6 +8101,17 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
                 problems.append(f"line {x.line}: matches created other than empty")
         elif x.text == "warned" and key:
             problems.append(f"line {x.line}: warned set in a constructor")
+        elif x.text == "pvp" and key:
+            # Fix round 1 (code review): `probe.pvp` only by the two stores.
+            problems.append(f"line {x.line}: pvp set in a constructor")
+        elif (
+            x.text == "probe"
+            and key
+            and _render(t[k + 2 : k + 7]) != "{ loads = 1 }"
+            and _render(t[k + 2 : k + 11]) != "{ loads = 1 , lost = true }"
+        ):
+            # A new book's probe, or crewLoaded's, holds only its count.
+            problems.append(f"line {x.line}: probe set in a constructor other than its count")
         elif x.text == "schema" and stored and not pinned_function(k, {"crewMigrate"}):
             problems.append(f"line {x.line}: schema stored outside the migration")
         elif (

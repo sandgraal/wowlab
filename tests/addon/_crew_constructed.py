@@ -1541,6 +1541,72 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
         [("local pvpCompleteEvents = 0\n", "local pvpCompleteEvents = 3\n")],
         "pvpCompleteEvents is not one file-level `local pvpCompleteEvents = 0`",
     ),
+    # Fix round 1 (security review): every GetBattlefield... global and any
+    # C_PvP member, not only the seven candidates.
+    "a battlefield stat read in a gated function": (
+        [
+            (
+                _PVP_PASS_HEAD,
+                _PVP_PASS_HEAD + "    local okStat, stat = pcall(GetBattlefieldStatData, 1, 1)\n"
+                '    if okStat and type(stat) == "number" then\n'
+                "        WowLabCrewDB.stat = ns.Number(stat)\n    end\n",
+            )
+        ],
+        "GetBattlefieldStatData used outside the pinned probe helpers",
+    ),
+    "a battlefield team read in a gated function": (
+        [
+            (
+                _PVP_PASS_HEAD,
+                _PVP_PASS_HEAD + "    local okTeam, team = pcall(GetBattlefieldTeamInfo, 0)\n",
+            )
+        ],
+        "GetBattlefieldTeamInfo used outside the pinned probe helpers",
+    ),
+    "a battlefield status read in a gated function": (
+        [
+            (
+                _PVP_PASS_HEAD,
+                _PVP_PASS_HEAD + "    local okStatus, status = pcall(GetBattlefieldStatus, 1)\n",
+            )
+        ],
+        "GetBattlefieldStatus used outside the pinned probe helpers",
+    ),
+    "another C_PvP member read": (
+        [
+            (
+                _PVP_PASS_HEAD,
+                _PVP_PASS_HEAD + "    local okIds, ids = pcall(C_PvP.GetMatchPVPStatIDs)\n",
+            )
+        ],
+        "C_PvP used outside the pinned probe helpers",
+    ),
+    "a battlefield call named in a string": (
+        [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + '    local f = ns.Fn(ns, "GetBattlefieldStatus")\n')],
+        "a scoreboard call named in a string",
+    ),
+    # Fix round 1 (code review): `probe.pvp` and the later fields through a
+    # table constructor.
+    "probe.pvp set in a new book": (
+        [("matches = {}, started", "matches = {}, probe = { pvp = { 1 } }, started")],
+        "pvp set in a constructor",
+    ),
+    "pvp set in any constructor": (
+        [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    local block = { pvp = 1 }\n")],
+        "pvp set in a constructor",
+    ),
+    "a new book's probe holding more than its count": (
+        [("matches = {}, started", "matches = {}, probe = { loads = 1, rows = 2 }, started")],
+        "probe set in a constructor other than its count",
+    ),
+    "matched in a new book": (
+        [("matches = {}, started", "matches = {}, matched = {}, started")],
+        "matched is written before M20-07 and M20-08",
+    ),
+    "a later field in a new book": (
+        [("matches = {}, started", "matches = {}, faced_won = 0, started")],
+        "faced_won is written before M20-07 and M20-08",
+    ),
     "a probe event registered at load": (
         [(_CREW_TAIL, _CREW_TAIL + 'ns.On("PVP_MATCH_COMPLETE", onComplete)\n')],
         "ns.On called where Crew.lua may not register",
@@ -1601,6 +1667,16 @@ _CREW_SCHEMA_2_CONTROLS: dict[str, list[tuple[str, str]]] = {
             _ENTRY_READ,
             _ENTRY_READ + "            if entry.allied ~= nil then\n"
             "                entry.read = true\n            end\n",
+        )
+    ],
+    "a new book with its probe count": [
+        ("matches = {}, started", "matches = {}, probe = { loads = 1 }, started")
+    ],
+    "a battlefield call presence-tested": [
+        (
+            _KEPT,
+            '    if type(GetBattlefieldStatus) ~= "function" then\n        return\n    end\n'
+            + _KEPT,
         )
     ],
     "the probe block type()-tested": [

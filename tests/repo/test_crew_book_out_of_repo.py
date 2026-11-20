@@ -111,6 +111,8 @@ CONSTRUCTED_TEST_FILES = frozenset(
         "lab/core/tests/parser/_crew_build.py",
         "lab/core/tests/parser/test_crewbook_constructed.py",
         "lab/core/tests/test_cli_crew.py",
+        # M20-04 review: the probe that writes probe.pvp through a constructor.
+        "lab/core/tests/review/test_m20_04_probe_pvp_written_through_the_book_constructor.py",
     }
 )
 FIXTURES = "lab/core/tests/fixtures/"
