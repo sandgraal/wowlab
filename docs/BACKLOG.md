@@ -3779,6 +3779,15 @@ Owner decision, 2026-11-20 ("Yes, all of them"). One session changes the addon a
 
 ---
 
+## [x] M20-16 — The addon's macros and realm on the real client
+**Size:** S · **Depends on:** M20-13 · **Sources:** the owner's first run of the schema 5 addon, 2026-11-20, build 71037
+
+Filed and built the same day (#674). `wowlab char show` said `Macros: absent (MAX_ACCOUNT_MACROS is not a number)` and `realm absent (the return of GetRealmName was not a non-empty string)`. The constant exists only after the macro window has been opened; the realm call gave nothing at that gather. Fixed: macros are read with a fallback of 120 account slots, recorded as assumed; the realm comes from the first of three sources that answers and is asked for again while absent; the action bars line no longer says macros are never recorded; the key bindings line counts non-plain commands with and without a key.
+
+**Acceptance:** met in #674 on constructed input, `code-reviewer` CLEAN. The owner's next login settles it on the client (M20-15).
+
+---
+
 ## [ ] M20-15 — Owner: one capture at schema 5
 **Size:** S · **Depends on:** M20-13 · **owner** (one in-game session, then the capture tool)
 
@@ -3788,7 +3797,7 @@ M20-13 (#669) was merged graded on constructed files and the real schema 4 fixtu
 
 ---
 
-## [ ] M20-14 — The crew book speaks up in the tooltip, and a note may be longer
+## [x] M20-14 — The crew book speaks up in the tooltip, and a note may be longer
 **Size:** M · **Depends on:** M20-13 · **Sources:** `docs/LAB_PLAN.md` §20.8 decisions 2 and 8; ADR-0036's second note of 2026-11-20
 
 Owner decision, 2026-11-20. Out of combat, a player's tooltip gains one line when the crew book holds them: the rating, the start of the note, and "with you N, against you M" when there are matches; each client value secret-tested, nothing shown in combat or when the name is a secret value. A note may be up to 2,000 bytes (it was 200), in game and at the desk, still refused rather than cut when longer. The checks, the reader's bound, `crew note`, the Crew tab's field and the README follow.
