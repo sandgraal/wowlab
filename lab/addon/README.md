@@ -550,11 +550,24 @@ What the switch does not do:
 ### The crew book
 
 `Crew.lua` keeps a book of the players you group with, off until you turn
-it on (`docs/LAB_PLAN.md` §20.1, ADR-0036). It is the one file allowed to
+it on (`docs/LAB_PLAN.md` §20.1, §21, ADR-0036). It is the one file allowed to
 read other players' names and realms, and only while the book is on.
 
+What changed in this version (schema 2): the book keeps up to 20,000
+players (it was 5,000), and says once a week at most, at a loading screen,
+"the crew book is nearly full ...: open wowlab so nothing is lost" when it
+holds 90% of that (or of its 500 matches; no match is recorded yet). A book
+that is on is moved to schema 2 when the game loads it, and a book that is
+off is moved when you type `/wowlab crew on`; a book that stays off is not
+touched. In a battleground or arena it takes a small probe of the
+scoreboard for the owner's check of what the game gives, and keeps no name
+from it (below). It does not record opponents yet. An older WowLab that
+meets a schema 2 book leaves it alone, prints its one line ("this crew book
+was written by another version of WowLab, so it has been left alone") and
+records nothing.
+
 - `/wowlab crew on` turns it on. With no book yet it starts a new, empty
-  one and says so; either way it prints what the book keeps: "The crew book
+  one and says so; a schema 1 book is moved to schema 2 first; either way it prints what the book keeps: "The crew book
   keeps, for each player in your party or raid, including your own side in a
   battleground or arena (never your opponents), their name, realm, guild, class, level and role, when you first and last
   grouped, how many times and in which instance, and your own rating and
@@ -580,6 +593,11 @@ read other players' names and realms, and only while the book is on.
 - While it is on, the addon prints "Crew book on: N players. /wowlab crew
   off to stop." after the first pass of each login or `/reload`, so a book
   brought back by a snapshot restore, an undo or an `sv merge` is seen.
+- When either list holds 90% of its limit (18,000 players, or 450
+  matches), one line at a loading screen says "the crew book is nearly full
+  (it keeps at most 20,000 players and 500 matches): open wowlab so nothing
+  is lost.", not more than once in seven days. The time of that line is kept
+  in the book as `warned`.
 - When a player you rated or noted is first counted in a group, one line in
   your own chat frame says who (the name as the book keeps it, and the guild
   they were last seen in), your rating, how many groups and the date of the last, and your
@@ -588,7 +606,7 @@ read other players' names and realms, and only while the book is on.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
 `WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
-`schema = 1`; the per-character schema does not change. "Account-wide" is
+`schema = 2` (1 before this version); the per-character schema does not change. "Account-wide" is
 narrower than it sounds: one book per game account folder in one flavor
 folder, and a renamed flavor folder leaves the book where it was. The
 record's layout is in `docs/LAB_PLAN.md` §20.1 and `docs/LAB_FORMATS.md`
@@ -600,7 +618,27 @@ record's layout is in `docs/LAB_PLAN.md` §20.1 and `docs/LAB_FORMATS.md`
 `Name-Realm`, each with `class`, `level`, `role` (never replaced by `NONE`),
 `guild` (never cleared by a nil), `met`, `first`, `last` (`time()`),
 `where` and `where_id` (the instance's name and id; left out in the open
-world), `rating` (`good` or `bad`) and `note`.
+world), `rating` (`good` or `bad`) and `note`. Schema 2 adds `matches` (an
+empty list in this version), `warned` (left out until the first near-full
+line) and `probe.pvp`; `probe.loads` is now raised in place, so `probe.pvp`
+survives a load.
+
+The scoreboard probe (`probe.pvp`, `docs/LAB_PLAN.md` §21.2). While the book
+is on and out of combat, in an instance of type `pvp` or `arena`, it runs
+twice per match: after entry, and once `GetBattlefieldWinner` reports a
+winner, at `UPDATE_BATTLEFIELD_SCORE`, `PVP_MATCH_COMPLETE`, a loading
+screen or the end of combat. It keeps a list of at most two snapshots, the
+latest match's only. Each holds: whether each candidate call exists
+(`calls`); the first row's field names and each field's type name
+(`fields`), or the type name at each position (`positions`); the row count
+(`rows`) and whether a request was made (`requested`); how many of the two
+events arrived since entry (`score_events`, `complete_events`); the first
+row's side, the player's own side and the winner as whole numbers
+(`first_side`, `own_side`, `winner`); and for the first row's name three
+yes-or-no answers (`name_string`, `name_dash`, `name_secret`). No name, GUID
+or other value is kept: each value of the row is handed to `type` only, and
+the GUID field is never indexed. Every call, event and answer here is
+**[verify]** until the owner's battleground check (M20-06).
 
 How it records: on `GROUP_ROSTER_UPDATE` and `UNIT_NAME_UPDATE`, debounced
 by 2 s, and once 15 s after entering the world (so `/wowlab crew off` can be
@@ -628,8 +666,8 @@ nothing after it (not yet confirmed). A book written by another version of WowLa
 `/wowlab crew` does nothing with it.
 
 Limits, held in named constants and short functions of `Crew.lua` that
-`tests/addon/test_crew_book.py` reads: at most `MAX_PLAYERS` (5,000)
-players; when full, the unrated, un-noted player with the oldest `last` is
+`tests/addon/test_crew_book.py` reads: at most `MAX_PLAYERS` (20,000;
+5,000 at schema 1) players; when full, the unrated, un-noted player with the oldest `last` is
 dropped (`makeRoom`); rated and noted players never are, and when all are,
 new members and new ratings are refused, said once per session. A note has
 control characters and `|` removed byte by byte and spaces trimmed
@@ -648,7 +686,14 @@ and in an instance; `UNKNOWNOBJECT`; `time` and `date`; the realm a same-realm
 and a cross-realm member come back with; whether anything read is secret in
 an instance; whether `WowLab.lua.bak` holds the book; whether a printed line
 reaches `WoWChatLog.txt` with `/chatlog` on (believed not); and the drop
-order, which no in-game check can reach.
+order and the near-full line, which no in-game check can reach (the 20,000
+limit is not tested at full size, nor how long a login takes with a full
+book). Schema 2 adds, all **[verify]** until M20-06: every scoreboard call
+and event in the API table, what `GetInstanceInfo`'s type is in a
+battleground and an arena, whether a winner is reported before the player
+is moved out, and whether a scoreboard value is a secret value. Confirmed
+from the repository only: the migration, the limits and the near-full
+test, by reading the code (the static checks in `tests/addon`).
 
 ## Lint
 
@@ -850,6 +895,13 @@ on from one, fails the test until someone lists it on purpose.
 | `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
 | `time` | crew book: `started`, `first`, `last` | [verify] | yes |
 | `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |
+| `C_PvP.GetScoreInfo` | crew book's scoreboard probe: whether it exists; for the first row, the field names and each field's type name, the name tested three ways (a string, holds a `-`, secret) and never kept, and the side (`faction`) as a whole number | [verify] | not checked |
+| `GetNumBattlefieldScores` | crew book's scoreboard probe: whether it exists, and the row count | [verify] | not checked |
+| `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | not checked |
+| `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept | [verify] | not checked |
+| `GetBattlefieldWinner` | crew book's scoreboard probe: whether it exists, when the second snapshot is taken, and the winner as a whole number | [verify] | not checked |
+| `GetBattlefieldArenaFaction` | crew book's scoreboard probe: whether it exists, and the player's own side as a whole number | [verify] | not checked |
+| `IsActiveBattlefieldArena` | crew book's scoreboard probe: whether it exists (not called) | [verify] | not checked |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.
 

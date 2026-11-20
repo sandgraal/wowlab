@@ -244,6 +244,24 @@ globals:
     args: []
   UNKNOWNOBJECT:
     property: read-only
+  # The scoreboard probe (Crew.lua only, docs/LAB_PLAN.md §21.2, M20-05): each
+  # tested for before it is called, called only in a battleground or arena,
+  # while the book is on and out of combat. [verify] until M20-06.
+  C_PvP.GetScoreInfo:
+    property: read-only
+  GetNumBattlefieldScores:
+    property: read-only
+  GetBattlefieldScore:
+    args:
+      - type: number
+  RequestBattlefieldScoreData:
+    property: read-only
+  GetBattlefieldWinner:
+    property: read-only
+  GetBattlefieldArenaFaction:
+    property: read-only
+  IsActiveBattlefieldArena:
+    property: read-only
   # The clock, for `first`, `last`, `started` and the warning's date.
   time:
     args:

@@ -9063,7 +9063,6 @@ class TestM2005Activation:
     `test_` function bare, without its marker, and would read the expected
     failure as a real one."""
 
-    @pytest.mark.xfail(strict=True, reason="M20-05 not implemented")
     def test_the_real_crew_lua_keeps_the_schema_2_rules(self) -> None:
         crew = ADDON / CREW_FILE
         text = crew.read_text(encoding="utf-8")
