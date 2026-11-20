@@ -169,7 +169,7 @@ def test_constructed_a_match_that_does_not_fit_is_listed_and_the_rest_read() -> 
     read = crewbook.parse_book(_book2({KEY_A: player()}, matches=matches))
     assert [(u.position, u.reason) for u in read.matches_unread] == [
         (1, "at is not a time"),
-        (2, 'kind is neither "bg" nor "arena"'),
+        (2, 'kind is not "bg", "arena" or "shuffle"'),
         (3, "won is neither true nor false"),
         (4, "foes is not a list of names"),
         (5, "map is not text"),
@@ -562,14 +562,92 @@ def _as_built() -> bytes:
     )
 
 
-def test_constructed_the_desk_on_main_reads_the_m20_11_shape() -> None:
-    """The fields M20-11 adds are kept as unknown fields, nothing unread."""
+def test_constructed_the_desk_reads_the_m20_11_shape() -> None:
+    """M20-12: the fields M20-11 adds are read, nothing unread and no
+    unknown field left; the scoreboard line keeps every plain field but the
+    row's `name` and `guid`, which the entry holds."""
     read = crewbook.parse_book(_as_built())
     assert read.unread == [] and read.matches_unread == []
     a = next(p for p in read.players if p.key == KEY_A)
-    assert set(a.other_keys) == set(_M20_11)
+    b = next(p for p in read.players if p.key == KEY_B)
+    assert a.other_keys == [] and b.other_keys == []
+    assert (a.guid, a.race, a.faction, a.spec, a.honor_level) == (
+        _GUID_A,
+        "Gnome",
+        "Alliance",
+        "Frost",
+        3,
+    )
+    assert b.guid == _GUID_B and b.score is None
+    assert a.score is not None and a.score.at == T2
+    assert "name" not in a.score.values and "guid" not in a.score.values
+    assert sorted(a.score.other_keys) == ["guid", "name"]
+    assert a.score.values.get("damageDone") == 1000
+    assert a.score.values.get("talentSpec") == "Frost"
     assert [(m.team, m.foes) for m in read.matches] == [([KEY_B], [KEY_A])]
     assert read.matched is True
+
+
+def test_constructed_a_schema_1_book_keeps_the_m20_11_fields_unknown() -> None:
+    """At schema 1 the fields are keys this reader does not know, as every
+    schema 2 field is there."""
+    data = account_file(book({KEY_A: player(**_M20_11)}))
+    read = crewbook.parse_book(data)
+    assert read.schema_number == 1 and read.unread == []
+    assert set(read.players[0].other_keys) == set(_M20_11)
+    assert read.players[0].guid is None
+
+
+def test_constructed_a_solo_shuffle_and_a_key_with_no_entry_are_read() -> None:
+    """`kind = "shuffle"` (everyone in `team`, no `won`) and a match key the
+    book has no entry for (refused when full) land in neither unread list."""
+    shuffle = match([KEY_A, KEY_C, KEY_D], [], won=None, kind="shuffle")
+    data = _book2({KEY_A: player()}, matches=[shuffle, match([KEY_D], [KEY_C])])
+    read = crewbook.parse_book(data)
+    assert read.unread == [] and read.matches_unread == []
+    assert [(m.kind, m.won, m.team, m.foes) for m in read.matches] == [
+        ("shuffle", None, [KEY_A, KEY_C, KEY_D], []),
+        ("bg", True, [KEY_D], [KEY_C]),
+    ]
+    assert [p.key for p in read.players] == [KEY_A]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("guid", 7, "guid is not text"),
+        ("race", True, "race is not text"),
+        ("faction", 1, "faction is not text"),
+        ("spec", 2, "spec is not text"),
+        ("honor_level", -1, "honor_level is not a whole number of 0 or more"),
+        ("honor_level", "invented", "honor_level is not a whole number of 0 or more"),
+        ("score", 5, "score is not a table"),
+        ("score", {"at": "invented"}, "the time of score is not a time"),
+    ],
+    ids=lambda v: str(v),
+)
+def test_constructed_an_m20_11_field_of_the_wrong_type_makes_only_that_entry_unread(
+    field: str, value: object, reason: str
+) -> None:
+    read = crewbook.parse_book(_book2({KEY_A: player(**{field: value}), KEY_B: player()}))
+    assert [p.key for p in read.players] == [KEY_B]
+    assert [(u.key, u.reason) for u in read.unread] == [(KEY_A, reason)]
+
+
+def test_constructed_a_scoreboard_line_keeps_plain_values_only() -> None:
+    """A table in the line (the battleground's own columns) is named, not
+    kept; text, numbers and true/false are kept in the order given."""
+    line = {"at": T2, "damageDone": 12.5, "stats": {"x": 1}, "isOwn": False, "className": "Mage"}
+    read = crewbook.parse_book(_book2({KEY_A: player(score=line)}))
+    score = read.players[0].score
+    assert score is not None
+    assert list(score.values.items()) == [
+        ("damageDone", 12.5),
+        ("isOwn", False),
+        ("className", "Mage"),
+    ]
+    (only,) = score.other_keys
+    assert only == "stats"
 
 
 def test_constructed_forget_reaches_what_m20_11_keeps_of_a_player() -> None:

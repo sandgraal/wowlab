@@ -743,6 +743,8 @@ def _as_schema_1(env: Env) -> None:
         conn.execute(_SCHEMA_1_PLAYERS)
         conn.execute(f"INSERT INTO players ({cols}) SELECT {cols} FROM players_new")
         conn.execute("DROP TABLE players_new")
+        # Nor had schema 1 the shuffle mark M20-12 added to matches.
+        conn.execute("ALTER TABLE matches DROP COLUMN shuffle")
         for index in ("last_at", "rating", "faced", "allied"):
             name = "last" if index == "last_at" else index
             conn.execute(f"CREATE INDEX players_{name} ON players ({index})")
@@ -777,7 +779,7 @@ def test_a_schema_1_database_is_migrated_and_its_own_marks_survive_constructed(
         conn.close()
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 3
     finally:
         conn.close()
     assert _own(env, KEY_B) == (1, 1) and _own(env, KEY_A) == (0, 0)

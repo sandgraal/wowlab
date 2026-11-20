@@ -236,6 +236,25 @@ def keys_held(data: bytes) -> list[str]:
     return _keys(_Book(data))
 
 
+def guids_held(data: bytes) -> dict[str, str]:
+    """The `guid` text of every player entry the book in `data` holds, by
+    stored key, read from the loaded entries as they are (an entry the
+    reader could not read included); empty when the file holds no book.
+    Refuses an unknown schema (`crewbook.CrewBookError`)."""
+    book = _Book(data)
+    if book.index is None:
+        return {}
+    value = book.loaded.get(crewbook.CREW_VARIABLE)
+    players = value.get(_PLAYERS) if isinstance(value, dict) else None
+    if not isinstance(players, dict):
+        return {}
+    return {
+        k: v["guid"]
+        for k, v in players.items()
+        if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("guid"), str)
+    }
+
+
 def _entry_key(entry: Entry) -> str | None:
     """A keyed entry's key, or a positional entry's string value: how a
     player key is held in `players`, `current`, `team` and `foes`."""

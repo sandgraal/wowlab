@@ -3738,7 +3738,7 @@ own integer limit does not.
 
 ---
 
-## [ ] M20-11 — The addon records matches, opponents and what the client shows of each player
+## [x] M20-11 — The addon records matches, opponents and what the client shows of each player
 **Size:** L · **Depends on:** M20-05, M20-09 · **Sources:** `docs/LAB_PLAN.md` §21.2 with its note of 2026-11-20; ADR-0036 with its notes of 2026-11-20
 
 Owner decision, 2026-11-20: the limits on what the crew book records are lifted. One session changes `Crew.lua` and the static checks that grade it (the split into a tests-only ticket is not required here: `Crew.lua` is not a load-bearing file).
@@ -3753,10 +3753,12 @@ Owner decision, 2026-11-20: the limits on what the crew book records are lifted.
 
 ---
 
-## [ ] M20-12 — The desk keeps and shows what M20-11 records
+## [x] M20-12 — The desk keeps and shows what M20-11 records
 **Size:** L · **Depends on:** M20-11 · **Sources:** `docs/LAB_PLAN.md` §21.2 as built by M20-11, §21.3; ADR-0039
 
 The reader accepts the new fields; the sync keeps them in the crew database (a schema step, with the copy taken first, as M20-02's); `crew show`, `crew matches` and the Crew tab show them; `crew forget` reaches every place a player's key or GUID is held, in the file and the database. One player met under two names (same GUID) is shown as one, with the other names listed.
+
+*As built (conductor ruling during review of #668, 2026-11-20):* `crew forget` forgets the name it is given and nothing else; no row is deleted because of a shared GUID. The link by GUID is for showing only ("also seen as", `also_known_as`), and the forget's plan and result name the other names kept for the same character. The acceptance line below about "no GUID of the player" holds for the forgotten name's own entry. Four separate defects were found in forget-by-GUID before it was withdrawn.
 
 **Acceptance:** tests on constructed books and databases; forget leaves no key and no GUID of the player in any file under the crew folder or in the saved file; `doctor` and `doctor --redact` still print counts only; text and `--json` say the same. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the new lines and columns; the wiki's crew pages.
 
@@ -3771,7 +3773,7 @@ Owner decision, 2026-11-20 ("Yes, all of them"). One session changes the addon a
 - **The checks** lose the addon-wide privacy list (`UnitName`, `GetRealmName`, `UnitGUID`, `GetGuildInfo`, `GetMacroBody` and the rest), the `CLICK` rules and the left-out counts. They keep: no send of any kind, no dynamic lookup or code, `BNGetInfo` refused, nothing gathered in combat, the secret-value test before any compare or store.
 - **Quieter (from M16-45):** the chat line once per addon version or after an unclean session; probes behind `/wowlab debug`; the `Constants` sweep once per session; change events mark sections dirty and gathering runs out of combat at most once every 30 to 60 s and at logout.
 - **The desk:** `labaddon` reads schema 5 and still reads 4; `char show`, `binds coach`, `macros` and the keybind views use the stored text where they guessed or joined before; the combat-log reader picks the owner's casts by the stored GUID when it is there.
-- **The capture tool** (`scripts/lab_capture.py`), because the repository is public: the owner's GUID replaced as now; macro bodies and names, typed button names in binding commands and guild names replaced by invented text of the same shape, by byte-level replacement, never by parsing and re-serializing; the new times shifted. A capture that still holds any of them is refused.
+- **The capture tool** (`scripts/lab_capture.py`): the owner's GUID replaced as now, and another player's GUID (a crafter's in an item link) given the invented form the tool already gives one in a combat log, by byte-level replacement. *Corrected 2026-11-20 (owner: "Yes, not secret"; ADR-0026's Correction of that date):* macro names and bodies, binding commands, guild names and times are committed as captured; no scrub of them is built.
 
 **Acceptance:** the static Lua tests and selene pass; constructed files for the reader's hostile and boundary cases; the real-capture fixture at schema 5 is the owner's one capture, taken after this merges (the ticket is done without it and says so; the capture and its provenance row are a follow-up the conductor files). `make ci` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the capture tool). User-facing: in-game chat, `/wowlab debug`, `char show`, `binds coach`, the keybind views.
 
