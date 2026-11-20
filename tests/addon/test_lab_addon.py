@@ -454,6 +454,8 @@ CREW_LIMITS = {
 # written-out bracket key) is accepted yet. `matches` is written only by the
 # migration and in a new book's constructor, empty; elsewhere it is only
 # counted (`#`) or type()-tested.
+# The probe's two event counts (session locals pvpSnapshot stores).
+CREW_PVP_COUNTERS = frozenset({"pvpScoreEvents", "pvpCompleteEvents"})
 CREW_LATER_FIELDS = frozenset(
     {"allied", "faced", "allied_won", "faced_won", "pvp_last", "pvp_map", "pvp_side", "matched"}
 )
@@ -7969,6 +7971,32 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
             problems.append(f"line {x.line}: pvpSnapshot used outside the two probe.pvp stores")
 
     # The candidate calls: in the pinned helpers, or presence tests.
+    # The two event counts pvpSnapshot stores: file-level `local X = 0`,
+    # and otherwise only `X = 0` or `X = X + 1`, so they hold nothing else.
+    for name in sorted(CREW_PVP_COUNTERS):
+        decl = f"local {name} = 0"
+        n = len(decl.split(" "))
+        at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == decl]
+        if (
+            len(at) != 1
+            or flow.function_at(at[0]) is not None
+            or not _ends_expression(t, at[0] + n)
+            or len(flow.decls.get(name, [])) != 1
+        ):
+            problems.append(f"{name} is not one file-level `{decl}`")
+    for root, ts in flow.rebound:
+        if root not in CREW_PVP_COUNTERS:
+            continue
+        value = _render(t[ts + 2 : ts + 5])
+        if (
+            t[ts + 1].text != "="
+            or t[ts - 1].text == ","
+            or (
+                not (t[ts + 2].text == "0" and _ends_expression(t, ts + 3))
+                and not (value == f"{root} + 1" and _ends_expression(t, ts + 5))
+            )
+        ):
+            problems.append(f"line {t[ts].line}: {root} set other than to 0 or itself + 1")
     helpers = {"pvpInstance", "pvpWon", "pvpSnapshot"}
     for name in sorted(CREW_PVP_CALLS & set(flow.decls)):
         problems.append(f"{name} declared as a local")

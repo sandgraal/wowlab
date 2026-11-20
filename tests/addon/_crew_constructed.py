@@ -1,4 +1,4 @@
-"""Constructed crew-book sources for the lab-addon grader (M19-01).
+"""Constructed crew-book sources for the lab-addon grader (M19-01; schema 2, M20-04).
 
 CONSTRUCTED INPUT, labelled as such (L8, ADR-0036 term 3): nothing here is
 addon code, nothing is installed or run, and no line holds a player's name,
@@ -1527,6 +1527,19 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
             )
         ],
         "ns.On called where Crew.lua may not register",
+    ),
+    "an event count given another value": (
+        [
+            (
+                "    pvpScoreEvents = pvpScoreEvents + 1\n",
+                '    pvpScoreEvents = ns.Number(UnitLevel("player"))\n',
+            )
+        ],
+        "pvpScoreEvents set other than to 0 or itself + 1",
+    ),
+    "an event count declared with a value": (
+        [("local pvpCompleteEvents = 0\n", "local pvpCompleteEvents = 3\n")],
+        "pvpCompleteEvents is not one file-level `local pvpCompleteEvents = 0`",
     ),
     "a probe event registered at load": (
         [(_CREW_TAIL, _CREW_TAIL + 'ns.On("PVP_MATCH_COMPLETE", onComplete)\n')],
