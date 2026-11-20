@@ -60,7 +60,7 @@ from wowlab_core.cli._cmd_doctor import (
 from wowlab_core.cli._cmd_snap import (
     _REF_HELP,
     _plan_line,
-    _resolve_ref,
+    _read_snapshot,
     _version,
 )
 from wowlab_core.cli._common import (
@@ -241,7 +241,7 @@ def snap_restore(
         _one_folder_name(into_flavor, "--into-flavor")
     accounts_given = _account_pairs(map_account)
     store = snapshot.SnapshotStore()
-    manifest = store.show(_resolve_ref(store, snapshot_id))
+    manifest = _read_snapshot(store, snapshot_id)
     inst, _ = _discover(into_root if into_root is not None else root)
     wanted_folder = into_flavor if into_flavor is not None else manifest.flavor_folder
     if wanted_folder is None:
