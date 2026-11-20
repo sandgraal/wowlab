@@ -528,6 +528,8 @@ def test_crew_matches_with_the_book_never_turned_on_says_so_constructed(make: An
         "last logout or /reload). Turn it on in game with /wowlab crew on."
     ]
     assert env.json("crew", "matches")["matches"] == []
+    named = env.run("crew", "matches", KEY_A)
+    assert named.exit_code == 0 and named.stdout == result.stdout
 
 
 HOSTILE_MAP = "Invented\x1b[31m Map" + chr(0x202E) + "<b>x</b>\x07"

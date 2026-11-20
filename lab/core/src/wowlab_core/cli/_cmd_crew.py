@@ -820,7 +820,8 @@ def crew_matches(
     caveat = _sync_caveat(outcome)
     key: str | None = None
     found: list[crewdb.CrewMatchRow] = []
-    if target is not None:
+    never_on = target is None or (book.state == "not_turned_on" and not kept)
+    if target is not None and not never_on:
         assert place is not None
         if name is not None:
             held = crewdb.holds(target.flavor_folder, target.account)
@@ -839,7 +840,7 @@ def crew_matches(
                 )
             key = keys[0]
         found = crewdb.matches(target.flavor_folder, target.account, key)
-    if target is None or (book.state == "not_turned_on" and not found and not kept):
+    if never_on:
         words = _never_on(opened.places if place is None else [place])
         lines: list[str] = []
     else:
