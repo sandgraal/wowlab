@@ -41,6 +41,7 @@ rewritten (§20.6); `match` compares a folded form of it.
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -335,6 +336,18 @@ def _pvp_field(name: str, item: object, pvp: dict[str, Any]) -> str | None:
 
 
 _PVP_FIELDS = frozenset({*_PVP_NUMBERS, "pvp_map", "pvp_side"})
+
+# The game's id of a player character as the client gives it:
+# `Player-<server id>-<8 hex digits>` (the capture tool's matcher, with the
+# hex part's length the client writes). A value of any other shape is never
+# stored or used to link two names (§21.3, M20-12).
+GUID_SHAPE = re.compile(r"Player-[0-9]+-[0-9A-Fa-f]{8}", re.ASCII)
+
+
+def guid_shaped(text: str | None) -> bool:
+    """Whether `text` is a player GUID in the client's shape."""
+    return text is not None and GUID_SHAPE.fullmatch(text) is not None
+
 
 # What M20-11 keeps of each player (§21.2, as built): four texts, a whole
 # number and the latest scoreboard line.

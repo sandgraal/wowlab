@@ -1267,33 +1267,19 @@ def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
     return found[0]
 
 
-def _same_character(chosen: str, edit: _Edit) -> tuple[list[str], set[str]]:
-    """The player `chosen` names and every other stored key that is the
-    same character by the game's id (§21.3, one player met under two
-    names), in the saved file, the game's backup of it and wowlab's crew
-    database, until no more is found; and every id they hold. A forget
-    takes all of them, so no copy of the id is left behind."""
+def _other_names(chosen: str, edit: _Edit) -> list[str]:
+    """The other stored keys wowlab keeps for the same character as
+    `chosen`, by the game's id in its shape (§21.3, one player met under
+    two names): in the saved file, the game's backup of it and wowlab's
+    crew database. For a sentence only: a forget never takes them."""
     held: list[crewbook.CrewPlayer] = [*edit.book.players]
     if edit.backup_data is not None:
         # A backup wowlab cannot read was refused before the forget got here.
         with contextlib.suppress(*_READ_ERRORS):
             held += crewbook.parse_book(edit.backup_data).players
     held += crewdb.read(edit.place.flavor_folder, edit.place.account)
-    ids_of: dict[str, set[str]] = {}
-    keys_of: dict[str, set[str]] = {}
-    for p in held:
-        if p.guid:
-            ids_of.setdefault(p.key, set()).add(p.guid)
-            keys_of.setdefault(p.guid, set()).add(p.key)
-    keys = [chosen]
-    guids: set[str] = set()
-    at = 0
-    while at < len(keys):
-        for guid in sorted(ids_of.get(keys[at], set()) - guids):
-            guids.add(guid)
-            keys += sorted(keys_of[guid] - set(keys))
-        at += 1
-    return keys, guids
+    ids = {p.guid for p in held if p.key == chosen and crewbook.guid_shaped(p.guid)}
+    return sorted({p.key for p in held if p.key != chosen and p.guid in ids})
 
 
 def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
@@ -1542,7 +1528,7 @@ def crew_forget(
     backup_keys = crewedit.keys_held(edit.backup_data) if edit.backup_data is not None else []
     in_db = crewdb.holds(edit.place.flavor_folder, edit.place.account)
     known = list(dict.fromkeys([*live_keys, *backup_keys, *in_db]))
-    guids: set[str] = set()
+    others: list[str] = []
     try:
         if name is None:
             keys = known
@@ -1551,8 +1537,8 @@ def crew_forget(
                 crewedit.forget_all(edit.backup_data) if edit.backup_data is not None else None
             )
         else:
-            chosen = _one_key(known, name, edit)
-            keys, guids = _same_character(chosen, edit)
+            keys = [_one_key(known, name, edit)]
+            others = _other_names(keys[0], edit)
             new = crewedit.forget(edit.data, keys)
             new_backup = (
                 crewedit.forget(edit.backup_data, keys) if edit.backup_data is not None else None
@@ -1563,12 +1549,6 @@ def crew_forget(
         left = crewedit.names_left(after, keys) if after is not None and rel else []
         if left:
             raise CliError(_still_there(left[0], rel or edit.rel))
-        if after is not None and rel and crewedit.ids_left(after, guids):
-            raise CliError(
-                f"The game's id for this character is also elsewhere in {rel} (in an entry "
-                "wowlab could not read, say), so the forget would not remove every copy of it. "
-                "Nothing was changed."
-            )
     backup_changed = new_backup is not None and new_backup != edit.backup_data
     outcome: BackupOutcome = (
         "absent" if edit.backup_data is None else "changed" if backup_changed else "left_alone"
@@ -1618,25 +1598,21 @@ def crew_forget(
             database_forgotten=(written and db_has) if database is None else database,
         )
 
-    # The same character under other names (§21.3): forgotten with them,
-    # and the plan says so first.
-    others = keys[1:] if name is not None else []
+    # The same character under other names (§21.3): said, never taken.
     also_seen = (
-        f"{keys[0]} is the same character by the game's id as {', '.join(others)} (renamed or "
-        "moved realm), so the forget takes every one of these names."
+        f"wowlab also keeps the same character, by the game's id, as {', '.join(others)}; "
+        "forgetting those names too removes the character."
         if others
         else None
     )
     named = ", ".join(keys)
 
-    if not changed and db_has and (name is None or any(k in in_db for k in keys)):
+    if not changed and db_has and (name is None or keys[0] in in_db):
         # Only wowlab's crew database (and its copies) hold them: no file of
         # the game is written, and nothing of this can be undone.
         _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
         show = _say if not json_out else _say_err
         who = named if name is not None else "every player"
-        if also_seen is not None:
-            show(also_seen)
         show(
             f"Forget {who} from wowlab's crew database for {edit.words()}: neither "
             f"{labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME} holds them. The database and every "
@@ -1644,6 +1620,8 @@ def crew_forget(
             "system made of wowlab's folder (Time Machine, File History, a cloud-synced "
             "folder) keep theirs."
         )
+        if also_seen is not None:
+            show(also_seen)
         try:
             _confirm("Forget this player?" if name is not None else "Forget every player?", yes)
         except typer.Exit:
@@ -1655,6 +1633,8 @@ def crew_forget(
             _emit(report(written=True))
             return
         _say(f"Forgot {who}: wowlab's crew database and its copies no longer hold them.")
+        if also_seen is not None:
+            _say(also_seen)
         return
 
     if not changed:
@@ -1668,8 +1648,6 @@ def crew_forget(
     def plan(show: Callable[[str], None]) -> None:
         who = named if name is not None else f"every player ({len(keys)})"
         them = "this player" if name is not None else "any player"
-        if also_seen is not None:
-            show(also_seen)
         show(f"Forget {who} from the crew book of {edit.words()} ({_AS_OF}):")
         if new != edit.data:
             show(f"  replace  {edit.rel}  ({_bytes(len(new))})")
@@ -1684,16 +1662,20 @@ def crew_forget(
             show(f"  There is no {_BACKUP_NAME} beside it.")
         if db_has:
             show("  remove them from wowlab's crew database and every copy it keeps")
+        if also_seen is not None:
+            show(also_seen)
         show(_not_reached(store, count, done=False, one=name is not None))
 
     def done(finished: CrewEditReport) -> None:
         who = named if name is not None else _plural(len(keys), "player")
-        names = "the name" if len(keys) == 1 and name is not None else "their names"
+        names = "the name" if name is not None else "their names"
         also = ", nor wowlab's crew database or its copies," if db_has else ""
         _say(
             f"Forgot {who}: neither {labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME}{also} holds "
             f"{names} now."
         )
+        if also_seen is not None:
+            _say(also_seen)
         assert finished.not_reached is not None
         _say(finished.not_reached)
 

@@ -800,11 +800,12 @@ def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
     player met under two names), in the order of the keys."""
     by_guid: dict[str, list[str]] = {}
     for r in sorted(rows, key=lambda r: r.key):
-        if r.guid:
+        if crewbook.guid_shaped(r.guid):
+            assert r.guid is not None
             by_guid.setdefault(r.guid, []).append(r.key)
     out: dict[str, list[str]] = {}
     for r in rows:
-        if r.guid:
+        if r.guid is not None and r.guid in by_guid:
             out[r.key] = [k for k in by_guid[r.guid] if k != r.key]
     return out
 
@@ -1074,6 +1075,8 @@ def _entry_problem(p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None = None) 
                 f"the {kind} is before 2004 or more than {TIME_AHEAD // 86_400} days after "
                 "this computer's clock, so it is not synced"
             )
+    if p.guid is not None and not crewbook.guid_shaped(p.guid):
+        return "the game's id of the character is not in the game's shape, so it is not synced"
     if p.honor_level is not None and not 0 <= p.honor_level <= HONOR_LEVEL_MAX:
         return f"the honor level is over {HONOR_LEVEL_MAX:,}, so it is not synced"
     return _pvp_problem(pvp) or _score_problem(p.score)
@@ -2124,8 +2127,8 @@ def copies(flavor_folder: str, account: str) -> list[Path]:
 _SQL_FORGET_PLAYER = "DELETE FROM players WHERE player_key = ?"
 _SQL_FORGET_IN_MATCHES = "DELETE FROM match_players WHERE player_key = ?"
 _SQL_PLAYER_COLUMNS = "PRAGMA table_info(players)"
-_SQL_GUID_OF = "SELECT guid FROM players WHERE player_key = ?"
-_SQL_KEYS_OF_GUID = "SELECT player_key FROM players WHERE guid = ? ORDER BY player_key"
+_SQL_SCORES = "SELECT player_key, score FROM players WHERE score IS NOT NULL"
+_SQL_DROP_SCORE = "UPDATE players SET score = NULL, score_at = NULL WHERE player_key = ?"
 
 
 def _gone(path: Path) -> None:
@@ -2135,37 +2138,47 @@ def _gone(path: Path) -> None:
             f.unlink()
 
 
-def _has_guid(conn: sqlite3.Connection) -> bool:
-    """Whether this file's players table has the GUID column (a copy kept
-    before schema 3 does not)."""
-    return any(r[1] == "guid" for r in conn.execute(_SQL_PLAYER_COLUMNS))
-
-
-def _same_person(conn: sqlite3.Connection, keys: Sequence[str]) -> list[str]:
-    """`keys` and every other key this file keeps with a GUID one of them
-    has, until no more is found (§21.3: one player met under two names)."""
-    out = list(dict.fromkeys(keys))
-    if not _has_guid(conn):
-        return out
-    seen: set[str] = set()
-    at = 0
-    while at < len(out):
-        for (guid,) in conn.execute(_SQL_GUID_OF, (out[at],)):
-            if isinstance(guid, str) and guid and guid not in seen:
-                seen.add(guid)
-                for (other,) in conn.execute(_SQL_KEYS_OF_GUID, (guid,)):
-                    if other not in out:
-                        out.append(str(other))
-        at += 1
-    return out
+def _has_score(conn: sqlite3.Connection) -> bool:
+    """Whether this file's players table has the scoreboard line (a copy
+    kept before schema 3 does not)."""
+    return any(r[1] == "score" for r in conn.execute(_SQL_PLAYER_COLUMNS))
 
 
 def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
-    """Delete the players `keys`, and every other key the file keeps with
-    the same GUID, and take them out of every match."""
-    for key in _same_person(conn, keys):
+    """Delete the players `keys` (those keys only: a GUID never adds one,
+    §21.3) and take them out of every match; then drop, from every other
+    player, a kept scoreboard line whose text holds one of them (the line,
+    not the row), so no copy of the name stays in another player's data."""
+    for key in keys:
         conn.execute(_SQL_FORGET_PLAYER, (key,))
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+    if not _has_score(conn):
+        return
+    wanted = [crewbook.fold(k) for k in keys if crewbook.fold(k)]
+    held = [(str(k), s) for k, s in conn.execute(_SQL_SCORES).fetchall()]
+    for key, score in held:
+        if any(w in text for w in wanted for text in _score_texts(score)):
+            conn.execute(_SQL_DROP_SCORE, (key,))
+
+
+def _score_texts(score: object) -> list[str]:
+    """A kept scoreboard line as the texts a name could hide in, folded as
+    names are compared (§20.2): the stored JSON as it is, and each field
+    name and text value it decodes to (an escaped spelling included). Text
+    that is not JSON is searched as it is."""
+    if not isinstance(score, str):
+        return []
+    out = [crewbook.fold(score)]
+    try:
+        loaded = json.loads(score)
+    except ValueError:
+        return out
+    if isinstance(loaded, dict):
+        for k, v in loaded.items():
+            out.append(crewbook.fold(str(k)))
+            if isinstance(v, str):
+                out.append(crewbook.fold(v))
+    return out
 
 
 def _forget_in(path: Path, keys: Sequence[str]) -> None:

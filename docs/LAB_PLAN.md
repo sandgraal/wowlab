@@ -6965,7 +6965,7 @@ leaves that player's entry unread, as before. Database schema 3, after the
 `guid`, and `matches.shuffle` (0 or 1; a shuffle is kept as an arena with
 the mark, since a CHECK cannot be widened in place and rebuilding `matches`
 would cascade into `match_players`). Bounds, each leaving that player's
-entry unread: the GUID 128 bytes, race, faction and spec 256, honor level 0
+entry unread: the GUID 128 bytes and in the client's shape, race, faction and spec 256, honor level 0
 to 100,000; the scoreboard line at most 64 fields, each name 64 bytes, text
 256 bytes, a number within 10^15 either way, its time as the other times. A
 shuffle with a `foes` list or a `won` is left out. **Sync rule for these
@@ -6980,15 +6980,26 @@ with the same GUID are one character (a rename or a realm move gives a new
 key, not a new id). Rows are not merged: `crew list` adds "also seen as
 NAME-REALM" to each, `crew show` an "Also seen as" line, `--json` carries
 `also_known_as`, and the Crew tab puts the other names beside the stored
-key. A GUID is never the only link shown: the names are. `crew forget` of
-one name takes every key with a GUID that key holds, in the saved file, the
-game's backup and the database, until no more is found; the plan says so
-first ("… is the same character by the game's id as …"). Each database file
-forgotten from (the database and every copy) also removes every row with
-the same GUID as a forgotten key, so a copy whose names differ keeps none.
-A forget refuses, writing nothing, when the GUID would still be in the
-saved file or its backup (in an entry it could not read, say), as it does
-for a name. `doctor` and `doctor --redact` still print counts only.
+key. A GUID is never the only link shown: the names are. Only a GUID in
+the client's shape (`Player-<digits>-<8 hex digits>`) is stored or used to
+link; an entry holding any other value is left out of the sync, with a
+reason that does not quote it.
+
+*Ruled 2026-11-20 (M20-12 fix round 1, conductor):* the link by GUID is for
+showing only. `crew forget KEY` forgets the name it was given and nothing
+else: no key is added because of a shared GUID, and no row is deleted by
+GUID, in the saved file, the backup, the database or any copy. When the
+same character is also kept under other names, the plan and the result say
+so in one sentence naming them ("wowlab also keeps the same character, by
+the game's id, as …; forgetting those names too removes the character").
+**What a forget makes complete:** the forgotten key's entry, with its GUID
+and every other field on it, is gone from the saved file, the backup, the
+database and every copy; and a scoreboard line another player keeps in the
+database or a copy whose text holds the forgotten name is removed (the line,
+not the row), as the saved file's own refusal covers a name left in it.
+Another name of the same character is a separate entry and keeps its own
+fields, GUID included, until it is forgotten too. `doctor` and
+`doctor --redact` still print counts only.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

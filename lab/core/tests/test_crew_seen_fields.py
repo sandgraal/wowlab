@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from wowlab_core import cli, crewbook, crewdb, crewedit
+from wowlab_core import cli, crewbook, crewdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -386,57 +386,67 @@ def test_show_text_and_json_say_the_same_with_the_new_lines_constructed(make: An
     assert any(x.startswith(f"  {KEY_A}: MAGE 60 Frost;") for x in listed.stdout.splitlines())
 
 
-# ─── forget reaches every key and every GUID ─────────────────────────────────
+# ─── forget: the name given, everywhere ──────────────────────────────────────
 
 
-def _nothing_left(env: Env, keys: list[str], guids: list[str]) -> None:
+def _holders(env: Env, text: str) -> list[str]:
+    """The files under the crew folder, and the saved file and its backup,
+    whose bytes hold `text`."""
     files = [*_every_file(crewdb.crew_root()), env.file]
     backup = env.file.with_name(env.file.name + ".bak")
     if backup.exists():
         files.append(backup)
-    for f in files:
-        data = f.read_bytes()
-        for text in (*keys, *guids):
-            assert text.encode() not in data, f.name
+    return [f.name for f in files if text.encode() in f.read_bytes()]
 
 
-def test_forget_of_one_name_takes_every_name_and_the_guid_constructed(
+def test_forget_of_one_name_forgets_that_name_only_and_says_so_constructed(
     make: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Fix round 1 ruling: the GUID link is for showing only. Forgetting B
+    removes B's entry (and the GUID on it) everywhere; A, the same
+    character, is a separate entry and keeps its own fields, GUID included;
+    the plan and the result say so in one sentence."""
     env = make(_two_names())
     env.file.with_name(env.file.name + ".bak").write_bytes(account_file(_two_names()))
     env.sync()
-    # A daily copy from another day holds both names and the GUID too.
+    # A daily copy from another day holds both names too.
     monkeypatch.setattr(crewdb, "_today", lambda: "2026-11-01")
     env.save(_two_names().replace(b'["met"] = 1,', b'["met"] = 2,'))
     assert env.sync().state == "synced"
     assert crewdb.copies(FLAVOR, ACCOUNT)
-    assert any(GUID_A.encode() in f.read_bytes() for f in _every_file(crewdb.crew_root()))
 
+    sentence = (
+        f"wowlab also keeps the same character, by the game's id, as {KEY_A}; forgetting "
+        "those names too removes the character."
+    )
     plan = env.run("crew", "forget", KEY_B, "--json", input="")
     assert plan.exit_code != 0
     report = json.loads(plan.stdout)
-    assert report["players"] == [KEY_B, KEY_A] and report["written"] is False
-    assert "is the same character by the game's id as" in plan.stderr
+    assert report["players"] == [KEY_B] and report["written"] is False
+    assert sentence in plan.stderr
 
     result = env.run("crew", "forget", KEY_B, "--yes")
     assert result.exit_code == 0, result.output
-    assert f"Forgot {KEY_B}, {KEY_A}:" in result.stdout
-    _nothing_left(env, [KEY_A, KEY_B], [GUID_A])
-    assert set(env.rows()) == {KEY_C}
-    assert env.rows()[KEY_C].guid == GUID_C
+    assert f"Forgot {KEY_B}:" in result.stdout and sentence in result.stdout
+    assert _holders(env, KEY_B) == []
+    assert set(env.rows()) == {KEY_A, KEY_C}
+    assert env.rows()[KEY_A].guid == GUID_A and env.rows()[KEY_A].also_known_as == []
+    kept = {p.key: p.guid for p in crewbook.parse_book(env.data()).players}
+    assert kept.get(KEY_A) == GUID_A and KEY_B not in kept
 
 
-def test_forget_leaves_no_guid_in_any_file_constructed(make: Any) -> None:
+def test_forget_leaves_no_guid_of_the_entry_in_any_file_constructed(make: Any) -> None:
     env = make(_base())
     env.sync()
     result = env.run("crew", "forget", KEY_C, "--yes")
     assert result.exit_code == 0, result.output
-    _nothing_left(env, [KEY_C], [GUID_C])
+    assert "same character" not in result.stdout
+    for text in (KEY_C, GUID_C):
+        assert _holders(env, text) == [], text
     assert env.rows()[KEY_A].guid == GUID_A
 
 
-def test_forget_of_a_player_only_the_database_keeps_takes_the_other_names_constructed(
+def test_forget_of_a_name_only_the_database_keeps_says_the_other_name_constructed(
     make: Any,
 ) -> None:
     env = make(_two_names())
@@ -446,29 +456,57 @@ def test_forget_of_a_player_only_the_database_keeps_takes_the_other_names_constr
     env.sync()
     result = env.run("crew", "forget", KEY_A, "--yes")
     assert result.exit_code == 0, result.output
-    _nothing_left(env, [KEY_A, KEY_B], [GUID_A])
+    assert f"as {KEY_B}; forgetting those names too" in result.stdout
+    assert _holders(env, KEY_A) == []
+    assert KEY_B in env.rows() and env.rows()[KEY_B].guid == GUID_A
 
 
-def test_forget_refuses_while_the_guid_is_elsewhere_in_the_file_constructed(
+def test_an_unread_entry_holding_the_same_guid_is_another_entry_constructed(
     make: Any,
 ) -> None:
-    # D's entry cannot be read (its level is text), and it holds A's GUID:
-    # the forget would leave the GUID behind, so it changes nothing.
+    """D's entry cannot be read and holds A's GUID: forgetting A forgets A,
+    and D's entry is left as it is (no refusal, no link from it)."""
     env = make(_book({KEY_A: player(**_seen()), KEY_D: player(level="x", guid=GUID_A)}, []))
-    before = env.data()
     result = env.run("crew", "forget", KEY_A, "--yes")
-    assert result.exit_code != 0
-    assert "The game's id for this character is also elsewhere" in result.output
-    assert GUID_A not in result.output
-    assert env.data() == before
+    assert result.exit_code == 0, result.output
+    assert KEY_A.encode() not in env.data() and KEY_D.encode() in env.data()
 
 
-def test_ids_left_finds_an_id_in_a_string_and_in_a_comment() -> None:
-    plain = b'x = "a"\n'
-    assert not crewedit.ids_left(plain, [GUID_A])
-    assert crewedit.ids_left(b'x = "' + GUID_A.encode() + b'"\n', [GUID_A])
-    assert crewedit.ids_left(b"x = 1 -- " + GUID_A.encode() + b"\n", [GUID_A])
-    assert not crewedit.ids_left(plain, [])
+def test_a_forgotten_name_in_another_players_scoreboard_line_is_removed_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security finding 2: C's kept line holds A's name in a text field. A
+    forget of A drops that line (not C's row) from the database and every
+    copy; the saved file no longer holds it (its own refusal covers it)."""
+    held = _line(note=KEY_A)
+    env = make(_book({KEY_A: player(), KEY_C: player(guid=GUID_C, score=held)}, []))
+    env.sync()
+    monkeypatch.setattr(crewdb, "_today", lambda: "2026-11-01")
+    # The game's file moves on: C's entry no longer carries the line.
+    env.save(_book({KEY_A: player(met=4), KEY_C: player(guid=GUID_C)}, []))
+    assert env.sync().state == "synced"
+    assert crewdb.copies(FLAVOR, ACCOUNT)
+    db_files = [f for f in _holders(env, KEY_A) if ".sqlite" in f]
+    assert len(db_files) >= 2  # the database and its daily copy
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 0, result.output
+    assert _holders(env, KEY_A) == []
+    c = env.rows()[KEY_C]
+    assert c.score is None and c.guid == GUID_C
+
+
+def test_a_guid_not_in_the_game_shape_is_left_out_and_never_links_constructed(
+    make: Any,
+) -> None:
+    env = make(_book({KEY_A: player(guid="1"), KEY_B: player(guid="1"), KEY_C: player()}, []))
+    out = env.sync()
+    assert out.left_out == 2, out.words
+    listed = env.json("crew", "list")
+    assert sorted(u["key"] for u in listed["unread"]) == [KEY_A, KEY_B]
+    words = "the game's id of the character is not in the game's shape, so it is not synced"
+    assert all(u["reason"] == words for u in listed["unread"])
+    assert [p["also_known_as"] for p in listed["players"]] == [[]]
+    assert crewbook.guid_shaped(GUID_A) and not crewbook.guid_shaped("Player-1-ABC")
 
 
 # ─── shared output still counts only ─────────────────────────────────────────
