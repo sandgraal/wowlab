@@ -72,6 +72,9 @@ TWO_OFF = book({KEY_C: player(note=NOTE), KEY_D: player()}, on=False)
 EMPTY_ON = book({})
 UNKNOWN_SCHEMA = book({KEY_A: player(note=NOTE)}, schema=99)
 
+# M20-02: M19-11's sentence gains the sync clause (docs/LAB_PLAN.md §21.3).
+SYNC = ", and a sync by hand would add them to wowlab's database"
+
 
 def _out(result: Any) -> str:
     return f"{result.stdout}\n{result.stderr}\n{result.exception!r}"
@@ -267,7 +270,7 @@ def test_one_content_under_several_paths_is_parsed_once_constructed(
     _with(flavor, LAB_FILE, None)
     lines, _ = _restore_plan(manifest)  # text and --json
     assert _sentence(lines, "This brings back") == [
-        "This brings back the crew book: on, 3 players."
+        f"This brings back the crew book: on, 3 players{SYNC}."
     ]
     assert calls == [len(same)] * 2
 
@@ -312,10 +315,16 @@ def _restore_plan(manifest: Manifest) -> tuple[list[str], dict[str, Any]]:
 @pytest.mark.parametrize(
     ("then", "now", "sentence", "on", "players"),
     [
-        (THREE_ON, ONE_ON, "This brings back the crew book: on, 3 players.", True, 3),
-        (TWO_OFF, ONE_ON, "This brings back the crew book: turned off, 2 players kept.", False, 2),
+        (THREE_ON, ONE_ON, f"This brings back the crew book: on, 3 players{SYNC}.", True, 3),
+        (
+            TWO_OFF,
+            ONE_ON,
+            f"This brings back the crew book: turned off, 2 players kept{SYNC}.",
+            False,
+            2,
+        ),
         # On disk no book at all: the restore brings one back.
-        (THREE_ON, None, "This brings back the crew book: on, 3 players.", True, 3),
+        (THREE_ON, None, f"This brings back the crew book: on, 3 players{SYNC}.", True, 3),
     ],
     ids=["on_constructed", "off_constructed", "none_on_disk_constructed"],
 )
@@ -384,8 +393,8 @@ def _undo_plan(flavor: Path, then: bytes | None, after: bytes | None, extra: byt
 @pytest.mark.parametrize(
     ("then", "sentence", "on", "players"),
     [
-        (THREE_ON, "This brings back the crew book: on, 3 players.", True, 3),
-        (TWO_OFF, "This brings back the crew book: turned off, 2 players kept.", False, 2),
+        (THREE_ON, f"This brings back the crew book: on, 3 players{SYNC}.", True, 3),
+        (TWO_OFF, f"This brings back the crew book: turned off, 2 players kept{SYNC}.", False, 2),
     ],
     ids=["on_constructed", "off_constructed"],
 )
@@ -451,8 +460,8 @@ def _merge_plan(
 @pytest.mark.parametrize(
     ("then", "sentence", "on", "players"),
     [
-        (THREE_ON, "This brings back the crew book: on, 3 players.", True, 3),
-        (TWO_OFF, "This brings back the crew book: turned off, 2 players kept.", False, 2),
+        (THREE_ON, f"This brings back the crew book: on, 3 players{SYNC}.", True, 3),
+        (TWO_OFF, f"This brings back the crew book: turned off, 2 players kept{SYNC}.", False, 2),
     ],
     ids=["on_constructed", "off_constructed"],
 )

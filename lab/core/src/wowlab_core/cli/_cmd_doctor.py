@@ -130,6 +130,24 @@ class CrewBookSummary(_Out):
     reason: str | None
 
 
+class CrewDatabaseSummary(_Out):
+    """wowlab's own crew database of one game account in this flavor folder
+    (M20-02, ADR-0036 term 4): where it is, how large (bytes), how many
+    copies wowlab keeps beside it, and how many players (of them, how many
+    the game's list no longer holds) and matches it keeps; the counts are
+    None, with `reason` in wowlab's words, when it cannot be read. Never a
+    row, and never the install it was filled from."""
+
+    account: str
+    path: str
+    size: int
+    copies: int
+    players: int | None
+    not_in_game_list: int | None
+    matches: int | None
+    reason: str | None
+
+
 class DoctorFlavor(_Out):
     folder: str
     product: str
@@ -149,6 +167,9 @@ class DoctorFlavor(_Out):
     # The crew books of this flavor's game accounts (M19-05): on or off and
     # a count, never a record.
     crew_books: list[CrewBookSummary] = Field(default_factory=list)
+    # wowlab's crew databases for this flavor folder (M20-02): path, size and
+    # counts, never a row.
+    crew_databases: list[CrewDatabaseSummary] = Field(default_factory=list)
 
 
 # What a file the rollback left holds as `doctor` reads it now (M16-84):
@@ -484,6 +505,39 @@ def _crew_book_line(book: CrewBookSummary) -> str:
     if book.state == "on":
         return f"  {where}: on, {kept}{unread} (as of your last logout or /reload)"
     return f"  {where}: off (not recording), {kept} kept{unread}"
+
+
+def _crew_databases(flavor_folder: str) -> list[CrewDatabaseSummary]:
+    """wowlab's crew databases for this flavor folder, read-only through
+    `crewdb`, the one reader of them (M20-02): counts, never a row."""
+    from wowlab_core import crewdb
+
+    return [
+        CrewDatabaseSummary.model_validate(s.model_dump()) for s in crewdb.summaries(flavor_folder)
+    ]
+
+
+def _crew_database_line(db: CrewDatabaseSummary) -> str:
+    """The one `doctor` line about a crew database (M20-02): where it is,
+    how large, and counts; never a key, name, guild or note."""
+    where = f"Crew database (game account {db.account})"
+    size = f"{db.size:,} byte" + ("" if db.size == 1 else "s")
+    copies = "1 copy" if db.copies == 1 else f"{db.copies} copies"
+    beside = f", with {copies} wowlab keeps beside it" if db.copies else ""
+    at = f"{size} at {db.path}{beside}"
+    if db.players is None:
+        return f"  {where}: could not be read ({db.reason}); {at}"
+    gone = (
+        f", {db.not_in_game_list} of them no longer in the game's list"
+        if db.not_in_game_list
+        else ""
+    )
+    matches = db.matches or 0
+    return (
+        f"  {where}: {_plural(db.players, 'player')}{gone}, "
+        f"{matches} {'match' if matches == 1 else 'matches'}; {at}. It is the only copy of "
+        "what the game's list has dropped."
+    )
 
 
 def _no_version_cause(folder: str, product: str, matching_rows: int) -> str:
@@ -903,6 +957,7 @@ def _doctor(
                         else None
                     ),
                     crew_books=_crew_books(lay),
+                    crew_databases=_crew_databases(f.folder),
                 )
             )
             steps += _flavor_steps(
@@ -1856,6 +1911,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 _say(f"    {sync.file}: {sync.name} {value}")
         for book in f.crew_books:
             _say_prose(_crew_book_line(book), hang="    ")
+        for db in f.crew_databases:
+            _say_prose(_crew_database_line(db), hang="    ", keep=[db.path])
     if any(f.sync_cvars for f in report.flavors):
         notes.append(_SYNC_NOTE)
     for line in _not_taken_lines(report.not_taken, report.other_dirs):

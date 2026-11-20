@@ -591,7 +591,12 @@ def test_the_expect_fields_are_fields_of_the_report() -> None:
         "backup_written_sha256",
     )
     for command in ("rate", "note"):
-        assert cli.EXPECT_FIELDS[("crew", command)] == ("target_sha256", "written_sha256")
+        # M20-02: the row of wowlab's crew database joins the pin.
+        assert cli.EXPECT_FIELDS[("crew", command)] == (
+            "target_sha256",
+            "written_sha256",
+            "row_sha256",
+        )
     for fields in (cli.EXPECT_FIELDS[("crew", c)] for c in ("forget", "rate", "note")):
         assert set(fields) <= set(cli.CrewEditReport.model_fields)
 
@@ -854,6 +859,10 @@ def test_the_record_reported_is_this_write_s_even_with_a_newer_one_constructed(
     assert rep.transaction == guard.history()[-1].id != "someone-else"
 
 
+# M20-02: M19-11's sentence gains the sync clause (docs/LAB_PLAN.md §21.3).
+SYNC_SENTENCE = ", and a sync by hand would add them to wowlab's database"
+
+
 @pytest.mark.parametrize(
     ("args", "words"),
     [
@@ -876,7 +885,7 @@ def test_undo_of_a_crew_write_says_it_brings_the_book_back_without_a_name_constr
     plan = runner.invoke(cli.app, ["undo"], input="", terminal_width=10_000)
     assert plan.exit_code == 1, (plan.stdout, plan.stderr)
     shown = plan.stdout + plan.stderr
-    assert f"This brings back the crew book: {words}." in shown
+    assert f"This brings back the crew book: {words}{SYNC_SENTENCE}." in shown
     as_json = runner.invoke(cli.app, ["undo", "--json"], input="", terminal_width=10_000)
     for text in (KEY_A, KEY_B, KEY_C, NOTE, NOTE_B, "Fakerealm", "Invented"):
         assert text not in shown and text not in as_json.stdout, text

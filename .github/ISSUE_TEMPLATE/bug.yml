@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Paste no output except that of `wowlab doctor --redact`, and attach no files from your `WTF/` folder.** Other output and those files carry your account name, your characters' names and your home folder, and, if you turned the lab-addon's crew book on, the names, realms and guilds of the players you grouped with and your ratings and notes about them. Never paste `wowlab crew` output or attach `WowLab.lua` or `WowLab.lua.bak`. Describe the problem in words, and write any name or path as a placeholder (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`, `<HOME>`). If you found personal data in a committed fixture, do not open an issue: follow SECURITY.md.
+        **Paste no output except that of `wowlab doctor --redact`, and attach no files from your `WTF/` folder.** Other output and those files carry your account name, your characters' names and your home folder, and, if you turned the lab-addon's crew book on, the names, realms and guilds of the players you grouped with and your ratings and notes about them. Never paste `wowlab crew` output or attach `WowLab.lua` or `WowLab.lua.bak`. Never attach wowlab's crew database (the `.sqlite` file in the `crew` folder of wowlab's data folder) or any copy of it. Describe the problem in words, and write any name or path as a placeholder (`<CHARACTER>`, `<REALM>`, `<ACCOUNT>`, `<HOME>`). If you found personal data in a committed fixture, do not open an issue: follow SECURITY.md.
   - type: textarea
     id: what
     attributes:

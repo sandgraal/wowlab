@@ -116,6 +116,7 @@ def identities(root: Path | None) -> Identities:
     found = Identities()
     _store_names(found)
     _journal_names(found)
+    _crew_names(found)
     try:
         inst = install.discover(root)
     except install.InstallError:
@@ -196,6 +197,27 @@ def _journal_names(found: Identities) -> None:
     found.accounts.update(_names(named.accounts))
     found.realms.update(_names(named.realms))
     found.characters.update(_names(named.characters))
+
+
+def _crew_names(found: Identities) -> None:
+    """The game account folders wowlab's crew databases are named after
+    (`<flavor folder>/<account folder>.sqlite` under its `crew/` folder,
+    M20-02): a database outlives the account folder it was filled from, and
+    `doctor` prints its path. Only the names are listed; no database is
+    opened."""
+    from wowlab_core import crewdb
+
+    try:
+        folders = [f for f in crewdb.crew_root().iterdir() if f.is_dir()]
+        names = [
+            f.name.split(crewdb.SUFFIX, 1)[0]
+            for folder in folders
+            for f in folder.iterdir()
+            if crewdb.SUFFIX in f.name
+        ]
+    except OSError:
+        return
+    found.accounts.update(_names(n.lstrip(".") for n in names))
 
 
 def _account_names(folders: tuple[str, ...], found: Identities) -> None:
@@ -352,6 +374,13 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "flavors.crew_books.file": REDACT,
     "flavors.crew_books.state": AS_IS,
     "flavors.crew_books.reason": REDACT,
+    # wowlab's crew database of a game account (M20-02, ADR-0036 term 4):
+    # the account folder, and the path, which names it and the home folder
+    # (the login in it), redacted; the reason is wowlab's own words. The
+    # counts are numbers; no row and no install root is in the model.
+    "flavors.crew_databases.account": REDACT,
+    "flavors.crew_databases.path": REDACT,
+    "flavors.crew_databases.reason": REDACT,
     "other_dirs": REDACT,
     "not_taken.name": REDACT,
     "not_taken.reason": AS_IS,
