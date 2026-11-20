@@ -6703,8 +6703,9 @@ call between, for the desk (M20-12) to read:
   `"bg"`, `"arena"` or `"shuffle"` (when `C_PvP.IsSoloShuffle()` is true:
   everyone in `team`, `foes` empty, no `won`, no counter raised); `won`
   only when the winner is 0 or 1, true when it is the own side; `team` and
-  `foes` lists of keys, the own row and any row with no `faction` left out.
-  Oldest dropped at 500.
+  `foes` lists of keys, the own row left out, and a row with no `faction`
+  too except in a shuffle. A key may have no player entry (the book full
+  of rated and noted players refused it). Oldest dropped at 500.
 - per row player, keyed `name` when it holds a `-`, else
   `name-<GetNormalizedRealmName()>`, added as §20.1 adds (`{ met = 0 }`;
   the drop order uses `pvp_last` when `last` is unset and never drops a
