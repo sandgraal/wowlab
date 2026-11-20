@@ -59,10 +59,11 @@ What it checks:
   page by hand is not caught here. So a GUID in prose passes, and a link whose
   target is one fails only as a broken link, and that failure line, printed
   locally, quotes the GUID;
-- with `--base REF` (a commit in DIR): the change against REF stays under a
-  fixed size cap, so no single run can rewrite the wiki, and no link goes to
-  a host the wiki at REF does not already link to (Markdown links, reference
-  definitions, protocol-relative links, `https://` and `www.` autolinks).
+- with `--base REF` (a commit in DIR): no link goes to a host the wiki at
+  REF does not already link to (Markdown links, reference definitions,
+  protocol-relative links, `https://` and `www.` autolinks). There is no
+  cap on the size of a change (owner decision, 2026-11-20: the cap was set
+  for the daily job deleted on 2026-11-04).
 
 No failure line quotes text taken from a page or a file name unless that
 text first passed the personal-data matchers; otherwise it names only the
@@ -74,7 +75,6 @@ Reads DIR (and its git objects, with `git show`); writes nothing.
 from __future__ import annotations
 
 import argparse
-import difflib
 import html
 import pkgutil
 import re
@@ -129,16 +129,6 @@ STATE_FILE = ".lab/state.json"
 # Files a Claude Code session would read as instructions if they sat in a
 # checkout of the wiki.
 INSTRUCTION_FILES = frozenset({"claude.md", "claude.local.md"})
-
-# The size cap on one run's change, generated pages and the state file not
-# counted. A changed line counts twice (removed, then added). The wiki held
-# 949 lines (65 KB) when the cap was set (M12-14, for the daily job deleted
-# on 2026-11-04); rewriting it all would be about 1,900 changed lines and
-# 130 KB. Rewriting two pages whole (about 210 lines at the average page
-# size) plus a new page and a few additions fits, and one push can never
-# rewrite more than about a fifth of the wiki.
-MAX_CHANGED_LINES = 400
-MAX_CHANGED_BYTES = 32_000
 
 EXIT_OK, EXIT_FAILURES, EXIT_ERROR, EXIT_PERSONAL = 0, 1, 2, 3
 
@@ -586,8 +576,6 @@ class Checker:
     texts: dict[str, str] = field(default_factory=dict)  # every file, by relative path
     display: dict[str, str] = field(default_factory=dict)  # relative path → as printed
     covered_leaves: set[str] = field(default_factory=set)
-    changed_lines: int = 0
-    changed_bytes: int = 0
 
     def fail(self, where: str, message: str, personal: bool = False) -> None:
         self.failures.append(Failure(where, message, personal))
@@ -842,26 +830,20 @@ class Checker:
                 for kind in personal_kinds(line):
                     self.fail(self.at(rel, number), f"{kind} {PERSONAL_SUFFIX}", personal=True)
 
-    # ── the change against --base ──
+    # ── new external hosts against --base ──
 
     def check_diff(self) -> None:
         if self.base is None:
             return
         old_files = _git_files(self.root_dir, self.base)
-        names = set(old_files) | set(self.pages)
         old_hosts: set[str] = set()
         for name in sorted(old_files):
             old_hosts |= hosts(_git_show(self.root_dir, self.base, name))
-        for name in sorted(names):
+        for name in sorted(self.pages):
             if name in GENERATED or name == STATE_FILE or name.startswith(".lab/"):
                 continue
-            old = _git_show(self.root_dir, self.base, name) if name in old_files else ""
-            new = self.pages[name].text if name in self.pages else ""
-            lines, size = _changed(old, new)
-            self.changed_lines += lines
-            self.changed_bytes += size
-            if name in self.pages and not self.pages[name].generated:
-                for host in sorted(hosts(new) - old_hosts):
+            if not self.pages[name].generated:
+                for host in sorted(hosts(self.pages[name].text) - old_hosts):
                     # Hosts come lower-cased; a name in one is matched as written.
                     shown = (self.quote(host) and self.quote(host.title()) and host) or (
                         "a host (withheld)"
@@ -871,13 +853,6 @@ class Checker:
                         f"links to {shown}, which the wiki at the base does not link to; "
                         "a new external site is added by hand",
                     )
-        if self.changed_lines > MAX_CHANGED_LINES or self.changed_bytes > MAX_CHANGED_BYTES:
-            self.fail(
-                "",
-                f"the change against {self.base} is {self.changed_lines} lines and "
-                f"{self.changed_bytes} bytes; the cap is {MAX_CHANGED_LINES} lines and "
-                f"{MAX_CHANGED_BYTES} bytes per run",
-            )
 
     def run(self) -> list[Failure]:
         # The personal-data check runs first, and on whatever was read even
@@ -922,20 +897,6 @@ def public_modules() -> list[str]:
     return sorted(
         m.name for m in pkgutil.iter_modules(wowlab_core.__path__) if not m.name.startswith("_")
     )
-
-
-def _changed(old: str, new: str) -> tuple[int, int]:
-    """Lines removed plus lines added, and their bytes."""
-    a, b = old.splitlines(keepends=True), new.splitlines(keepends=True)
-    lines = size = 0
-    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        for chunk in (a[i1:i2], b[j1:j2]):
-            lines += len(chunk)
-            size += sum(len(s.encode("utf-8")) for s in chunk)
-    return lines, size
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -987,7 +948,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("dir", type=Path, metavar="DIR", help="a checkout of the wiki")
     parser.add_argument(
-        "--base", metavar="REF", help="a commit in DIR to measure this run's change against"
+        "--base", metavar="REF", help="a commit in DIR whose external hosts are already allowed"
     )
     args = parser.parse_args(argv)
     if not args.dir.is_dir():
@@ -1014,13 +975,7 @@ def main(argv: list[str] | None = None) -> int:
             return _crash_code(checker)
         if checker.failures:
             return EXIT_PERSONAL if any(f.personal for f in checker.failures) else EXIT_FAILURES
-        size = (
-            f"; change {checker.changed_lines} lines, {checker.changed_bytes} bytes "
-            f"(cap {MAX_CHANGED_LINES}, {MAX_CHANGED_BYTES})"
-            if args.base
-            else ""
-        )
-        print(f"check_wiki: ok ({len(checker.pages)} pages{size})")
+        print(f"check_wiki: ok ({len(checker.pages)} pages)")
         return EXIT_OK
     except KeyboardInterrupt:
         raise

@@ -407,59 +407,18 @@ def test_constructed_kept_identifiers_still_exit_personal_beside_a_name_realm(
     assert cw.main([str(root)]) == cw.EXIT_PERSONAL
 
 
-# ─── the change against --base ───────────────────────────────────────────────
+# ─── new external hosts against --base ───────────────────────────────────────
 
 
-def test_constructed_oversized_diff_fails(tmp_path: Path) -> None:
-    root = _build(tmp_path / "wiki")
-    base = _commit_all(root)
-    body = "".join(f"Line {i} of a rewrite.\n" for i in range(cw.MAX_CHANGED_LINES + 1))
-    (root / "Rewrite.md").write_text(body, encoding="utf-8")
-    out = _failures(root, base)
-    assert len(out) == 1
-    assert out[0].startswith(f"the change against {base} is {cw.MAX_CHANGED_LINES + 1} lines")
-    assert cw.main([str(root), "--base", base]) == 1
-
-
-def test_constructed_oversized_diff_in_bytes_fails(tmp_path: Path) -> None:
-    root = _build(tmp_path / "wiki")
-    base = _commit_all(root)
-    (root / "Long.md").write_text("x" * (cw.MAX_CHANGED_BYTES + 1) + "\n", encoding="utf-8")
-    out = _failures(root, base)
-    assert len(out) == 1 and "the cap is" in out[0]
-
-
-def test_constructed_diff_under_the_cap_passes_and_counts_changed_lines_twice(
-    tmp_path: Path,
-) -> None:
-    root = _build(tmp_path / "wiki")
-    base = _commit_all(root)
-    page = root / "Getting-Started.md"
-    page.write_text(page.read_text(encoding="utf-8").replace("Run", "Then run"), encoding="utf-8")
-    checker = cw.check(root, base)
-    assert checker.failures == []
-    assert checker.changed_lines == 2
-
-
-def test_constructed_generated_page_and_state_do_not_count_toward_the_cap(tmp_path: Path) -> None:
-    root = _build(tmp_path / "wiki")
-    (root / "CLI-Reference.md").unlink()
-    (root / "_Sidebar.md").write_text("- [Home](Home)\n", encoding="utf-8")
-    (root / "Command-Reference.md").write_text("# Command Reference\n", encoding="utf-8")
-    base = _commit_all(root)
-    (root / "CLI-Reference.md").write_text(gen.render(), encoding="utf-8")
-    (root / ".lab").mkdir()
-    (root / ".lab" / "state.json").write_text("{}\n" * 1000, encoding="utf-8")
-    checker = cw.check(root, base)
-    assert checker.failures == []
-    assert checker.changed_lines == 0
-
-
-def test_constructed_deleting_the_wiki_is_over_the_cap(tmp_path: Path) -> None:
-    root = _build(tmp_path / "wiki", Big="# Big\n\n" + "A line.\n" * (cw.MAX_CHANGED_LINES + 5))
+def test_constructed_a_large_change_has_no_size_cap(tmp_path: Path) -> None:
+    """Owner decision, 2026-11-20: a change of any size passes against --base."""
+    root = _build(tmp_path / "wiki", Big="# Big\n\n" + "A line.\n" * 2000)
     base = _commit_all(root)
     (root / "Big.md").unlink()
-    assert any("the cap is" in f for f in _failures(root, base))
+    body = "".join(f"Line {i} of a rewrite.\n" for i in range(5000))
+    (root / "Rewrite.md").write_text("# Rewrite\n\n" + body, encoding="utf-8")
+    assert _failures(root, base) == []
+    assert cw.main([str(root), "--base", base]) == 0
 
 
 def test_constructed_a_new_external_host_fails_against_the_base(tmp_path: Path) -> None:
@@ -502,7 +461,7 @@ def test_constructed_cli_ok_line_and_bad_dir(
     root = _build(tmp_path / "wiki")
     base = _commit_all(root)
     assert cw.main([str(root), "--base", base]) == 0
-    assert capsys.readouterr().out.startswith("check_wiki: ok (6 pages; change 0 lines")
+    assert capsys.readouterr().out == "check_wiki: ok (6 pages)\n"
     assert cw.main([str(tmp_path / "missing")]) == 2
     assert cw.main([str(root), "--base", "no-such-ref"]) == 2
 
@@ -577,7 +536,6 @@ def test_real_wiki_passes_once_the_first_run_adds_what_it_lacks(tmp_path: Path) 
     _first_run(root)
     checker = cw.check(root, base, commands=ERA)
     assert [str(f) for f in checker.failures] == []
-    assert 0 < checker.changed_lines <= cw.MAX_CHANGED_LINES
 
 
 def _tree_with_a_new_command(group: str | None) -> tuple[object, str]:
