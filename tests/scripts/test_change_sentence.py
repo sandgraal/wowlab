@@ -213,6 +213,13 @@ def test_ui_help_names_the_commands_the_code_declares() -> None:
     # No second count of them, which would go stale on its own.
     assert "the seven" not in text.lower() and "any of the" not in text.lower()
 
+    # INSTALL.md's commands tab names the same list.
+    install_text = _flat(_install_ui_section())
+    in_install = re.search(r"The commands that change game files are (.*?): each", install_text)
+    assert in_install is not None, install_text
+    assert _names(in_install.group(1).replace("`", "")) == writers
+    assert "the seven" not in install_text.lower()
+
 
 def test_install_lists_character_and_looks() -> None:
     section = _install_ui_section()
