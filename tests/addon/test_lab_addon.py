@@ -8069,6 +8069,18 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
                 "and of 90% of either limit"
             )
 
+    # Fix round 2 (code review): the book assigned whole only from a table
+    # constructor written in place, so every key a new book holds is one the
+    # constructor-key rules below see (no local book, call or expression).
+    for k in range(len(t) - 2):
+        if t[k].text != CREW_DB or _is_field(t, k) or t[k + 1].text != "=":
+            continue
+        if (
+            t[k - 1].text == ","
+            or t[k + 2].text != "{"
+            or not _ends_expression(t, flow.pair[k + 2] + 1)
+        ):
+            problems.append(f"line {t[k].line}: {CREW_DB} assigned other than from a constructor")
     # Fields: the later ones never written; `matches`, `warned`, `schema`.
     for k, x in enumerate(t):
         if x.kind == "string" and t[k - 1].text == "[" and t[k + 1].text == "]":

@@ -1297,6 +1297,10 @@ _NEAR_FULL_PRINT = (
     '        print("constructed: the crew book is nearly full; open wowlab so nothing is lost.")\n'
 )
 _SNAPSHOT_NAME = "            name = row.name\n"
+_NEW_BOOK = (
+    "            WowLabCrewDB = { schema = CREW_SCHEMA, players = {}, current = {}, matches = {}, "
+    "started = ns.Number(time()) }\n"
+)
 _ENTRY_READ = "            entry.read = ns.Bool(done)\n"
 _KEPT = "    local kept = #WowLabCrewDB.matches\n"
 _WINNER_STORE = "        WowLabCrewDB.probe.pvp[2] = pvpSnapshot()\n"
@@ -1607,6 +1611,50 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
         [("matches = {}, started", "matches = {}, faced_won = 0, started")],
         "faced_won is written before M20-07 and M20-08",
     ),
+    # Fix round 2 (code review): the book assigned whole only from a
+    # constructor written in place.
+    "a new book from a local holding probe.pvp": (
+        [
+            (
+                _NEW_BOOK,
+                "            local fresh = { schema = CREW_SCHEMA, players = {}, current = {}, "
+                "matches = {}, probe = { loads = 1 } }\n"
+                "            fresh.probe.pvp = { ns.Number(time()) }\n"
+                "            WowLabCrewDB = fresh\n",
+            )
+        ],
+        "WowLabCrewDB assigned other than from a constructor",
+    ),
+    "a new book from a local holding a match": (
+        [
+            (
+                _NEW_BOOK,
+                "            local fresh = { schema = CREW_SCHEMA, players = {}, current = {}, "
+                "matches = {} }\n"
+                "            fresh.matches[1] = { won = true }\n"
+                "            WowLabCrewDB = fresh\n",
+            )
+        ],
+        "WowLabCrewDB assigned other than from a constructor",
+    ),
+    "a new book from a call": (
+        [
+            (
+                _NEW_BOOK,
+                "            WowLabCrewDB = nameAbsent()\n",
+            )
+        ],
+        "WowLabCrewDB assigned other than from a constructor",
+    ),
+    "a new book from an expression": (
+        [
+            (
+                "matches = {}, started = ns.Number(time()) }\n",
+                "matches = {}, started = ns.Number(time()) } or nil\n",
+            )
+        ],
+        "WowLabCrewDB assigned other than from a constructor",
+    ),
     "a probe event registered at load": (
         [(_CREW_TAIL, _CREW_TAIL + 'ns.On("PVP_MATCH_COMPLETE", onComplete)\n')],
         "ns.On called where Crew.lua may not register",
@@ -1667,6 +1715,18 @@ _CREW_SCHEMA_2_CONTROLS: dict[str, list[tuple[str, str]]] = {
             _ENTRY_READ,
             _ENTRY_READ + "            if entry.allied ~= nil then\n"
             "                entry.read = true\n            end\n",
+        )
+    ],
+    # Fix round 2: the new book as the real file makes it (§20.1), at schema 2.
+    "a new book written in place over several lines": [
+        (
+            _NEW_BOOK,
+            "            local startedAt = ns.Number(time())\n"
+            "            WowLabCrewDB = {\n                schema = CREW_SCHEMA,\n"
+            "                on = true,\n                started = startedAt,\n"
+            "                probe = { loads = 1 },\n                skipped = 0,\n"
+            "                players = {},\n                current = {},\n"
+            "                matches = {},\n            }\n",
         )
     ],
     "a new book with its probe count": [
