@@ -3610,7 +3610,7 @@ On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `
 
 ---
 
-## [ ] M19-15 — `undo`, `doctor` and the first-run check do not quote a damaged snapshot
+## [x] M19-15 — `undo`, `doctor` and the first-run check do not quote a damaged snapshot
 **Size:** S · **Depends on:** M19-13 · **Sources:** the security review of #646 (2026-11-20); ADR-0037 and its note of 2026-11-20 (owner: "yes, fix the wording")
 
 Three places still show the validator's text for a damaged snapshot record, which quotes a fragment of the file: `wowlab undo --yes` when the snapshot behind the change is damaged (the message comes from `guard.py`), plain `wowlab doctor` in text and `--json` (`cli/_cmd_doctor.py`), and `doctor`'s first-run check (`firstrun.py`). `doctor --redact` already withholds it. Give each M19-13's fixed sentence. For `undo`, do it in the command's handler, when the error's cause is a damaged record: `guard.py` is not changed. For `doctor` and the first-run check, reuse what the redacted path already does. Recovery behaviour does not change: which cases refuse, their exit codes, what `doctor` advises and every other sentence stay as ADR-0037 froze them.
