@@ -49,6 +49,7 @@ from _crew_build import (
     T2,
     account_file,
     book,
+    many_keys,
     match,
     player,
 )
@@ -662,3 +663,68 @@ def test_nothing_is_written_under_the_data_directory_but_the_crew_folder_constru
     data = snapshot.user_data_dir()
     written = {f.relative_to(data).parts[0] for f in _every_file(data)}
     assert written <= {"crew"}, written
+
+
+# ─── fix round 1: an unsynced entry is still in the game's list ─────────────
+
+
+def test_an_unsynced_entry_keeps_its_row_and_a_real_drop_is_still_seen_constructed(
+    make: Any,
+) -> None:
+    counts = {"allied": 3, "faced": 2, "allied_won": 1, "faced_won": 1}
+    env = make(_four(**counts))
+    env.sync()
+    # One save whose KEY_A entry a sync does not take: the row stays as it
+    # was, still in the game's list.
+    env.save(_four(**{**counts, "allied": crewdb.COUNTER_MAX + 1}))
+    out = env.sync()
+    assert out.left_out == 1 and out.plan is not None and out.plan.left_game_list == 0
+    a = env.rows()[KEY_A]
+    assert a.in_game_list and (a.allied, a.faced, a.met) == (3, 2, 3)
+    # Read again with the same counts: nothing is counted twice.
+    env.save(_four(**counts))
+    env.sync()
+    a = env.rows()[KEY_A]
+    assert (a.allied, a.faced, a.allied_won, a.faced_won, a.met) == (3, 2, 1, 1, 3)
+    # Gone from the saved file for real: marked as no longer listed.
+    env.save(_book({KEY_B: player()}, [match([KEY_B], [])]))
+    out = env.sync()
+    assert out.plan is not None and out.plan.left_game_list >= 1
+    assert not env.rows()[KEY_A].in_game_list
+
+
+def test_a_key_the_reader_could_not_read_is_still_in_the_game_list_constructed(
+    make: Any,
+) -> None:
+    env = make(_four(allied=2))
+    env.sync()
+    env.save(_four(allied="two"))  # the reader cannot read this entry
+    out = env.sync()
+    assert out.left_out == 1 and out.plan is not None and out.plan.left_game_list == 0
+    env.save(_four(allied=2))
+    env.sync()
+    assert env.rows()[KEY_A].allied == 2 and env.rows()[KEY_A].met == 3
+
+
+@pytest.mark.parametrize("side", ["team", "foes"])
+def test_a_match_with_more_than_100_names_on_a_side_is_left_out_constructed(
+    make: Any, side: str
+) -> None:
+    big = match([KEY_A], [KEY_C], at=T2 + 60)
+    big[side] = many_keys(crewdb.MATCH_SIDE_MAX + 1)
+    env = make(_four([match([KEY_A, KEY_B], [KEY_C, KEY_D]), big]))
+    out = env.sync()
+    assert out.state == "synced" and out.matches_left_out == 1
+    assert [m.at for m in env.matches()] == [T2]
+
+
+def test_a_match_with_100_names_on_each_side_is_taken_constructed(make: Any) -> None:
+    keys = many_keys(2 * crewdb.MATCH_SIDE_MAX)
+    team, foes = keys[: crewdb.MATCH_SIDE_MAX], keys[crewdb.MATCH_SIDE_MAX :]
+    env = make(_four([match(team, foes)]))
+    out = env.sync()
+    assert out.matches_left_out == 0
+    (m,) = env.matches()
+    assert len(m.team) == len(m.foes) == crewdb.MATCH_SIDE_MAX
+    (theirs,) = env.matches(foes[0])  # one player's matches, filtered in SQL
+    assert theirs.foes == foes

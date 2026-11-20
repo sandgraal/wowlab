@@ -79,6 +79,9 @@ DAILY_COPIES = 3
 # What a sync will take (§21.3, "The book is checked whole").
 MAX_PLAYERS = 20_000
 MAX_MATCHES = 500
+MATCH_SIDE_MAX = 100
+"""At most this many keys on each side of one match: the largest
+battleground side is 40 players, with room to spare."""
 KEY_MAX_BYTES = 256
 TEXT_MAX_BYTES = 256  # class, role, guild, instance name
 NOTE_MAX_BYTES = 200  # §20.1, as `crewedit.NOTE_MAX_BYTES`
@@ -237,6 +240,11 @@ _SQL_MATCHES_OF = (
     "SELECT match_id, at, map, map_id, kind, won FROM matches WHERE match_id IN"
     " (SELECT match_id FROM match_players WHERE player_key = ?)"
     " ORDER BY at DESC, match_id DESC"
+)
+_SQL_MATCH_PLAYERS_OF = (
+    "SELECT match_id, player_key, side FROM match_players WHERE match_id IN"
+    " (SELECT match_id FROM match_players WHERE player_key = ?)"
+    " ORDER BY match_id, rowid"
 )
 _SQL_MATCH_PLAYERS_ALL = (
     "SELECT match_id, player_key, side FROM match_players ORDER BY match_id, rowid"
@@ -774,7 +782,12 @@ def matches(flavor_folder: str, account: str, key: str | None = None) -> list[Cr
             else conn.execute(_SQL_MATCHES_OF, (key,)).fetchall()
         )
         sides: dict[int, tuple[list[str], list[str]]] = {r[0]: ([], []) for r in found}
-        for match_id, player_key, side in conn.execute(_SQL_MATCH_PLAYERS_ALL):
+        players = (
+            conn.execute(_SQL_MATCH_PLAYERS_ALL)
+            if key is None
+            else conn.execute(_SQL_MATCH_PLAYERS_OF, (key,))
+        )
+        for match_id, player_key, side in players:
             if match_id in sides:
                 sides[match_id][0 if side == "team" else 1].append(str(player_key))
         return [
@@ -964,6 +977,8 @@ def _match_problem(m: crewbook.CrewMatch) -> str | None:
         size = _bytes_of(m.map)
         if size is None or size > TEXT_MAX_BYTES:
             return f"its map is not text of at most {TEXT_MAX_BYTES} bytes, so it is not synced"
+    if len(m.team) > MATCH_SIDE_MAX or len(m.foes) > MATCH_SIDE_MAX:
+        return f"a side of it lists more than {MATCH_SIDE_MAX} names, so it is not synced"
     keys = [*m.team, *m.foes]
     if not all(_key_ok(k) for k in keys):
         return (
@@ -985,6 +1000,12 @@ def match_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadMatch]:
         if why is not None:
             out.append(crewbook.UnreadMatch(position=m.position, reason=why))
     return out
+
+
+def _unsynced(book: crewbook.CrewBook) -> frozenset[str]:
+    """The keys of the entries the saved file holds that a sync does not
+    take: the reader's unread ones and those outside a sync's bounds."""
+    return frozenset([u.key for u in book.unread] + [u.key for u in entry_problems(book)])
 
 
 def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int]:
@@ -1210,9 +1231,18 @@ def _left(row: _Row) -> _Row:
 
 
 def _changes(
-    rows: dict[str, _Row], book: crewbook.CrewBook, mode: Mode, now: int
+    rows: dict[str, _Row],
+    book: crewbook.CrewBook,
+    mode: Mode,
+    now: int,
+    unsynced: frozenset[str] = frozenset(),
 ) -> tuple[list[_Row], list[_Row], SyncPlan]:
-    """(rows to insert, rows to update, the plan)."""
+    """(rows to insert, rows to update, the plan). `unsynced`: the keys of
+    entries the saved file holds but this sync does not take (unread, or
+    outside its bounds); such a player is still in the game's list, so
+    nothing about their row changes, and above all their last shown counts
+    are not reset (rule 2 adds the whole value only when the game dropped
+    the player)."""
     added: list[_Row] = []
     updated: list[_Row] = []
     ratings = notes = left = ratings_gone = notes_gone = ratings_kept = notes_kept = 0
@@ -1236,6 +1266,8 @@ def _changes(
         notes_gone += old.note is not None and new.note is None
     for key, row in rows.items():
         seen = row.met_seen or row.allied_seen or row.faced_seen
+        if key in unsynced:
+            continue
         if key not in keys and (row.in_book or seen or row.allied_won_seen or row.faced_won_seen):
             updated.append(_left(row))
             left += bool(row.in_book)
@@ -1423,6 +1455,7 @@ def sync(
     why = check_book(book)
     if why is not None:
         return SyncOutcome(state="refused", words=why, database=str(path))
+    unsynced = _unsynced(book)
     book, left_out, matches_out = _usable(book)
     exists = os.path.lexists(path)
     if not exists:
@@ -1449,6 +1482,7 @@ def sync(
             confirm=confirm,
             reread=reread,
             ident=ident,
+            unsynced=unsynced,
         )
         if not (left_out or matches_out) or outcome.state not in ("synced", "unchanged"):
             return outcome
@@ -1558,6 +1592,7 @@ def _sync_open(
     confirm: Callable[[SyncPlan, str], bool] | None,
     reread: Callable[[], bytes] | None = None,
     ident: tuple[int, int] | None = None,
+    unsynced: frozenset[str] = frozenset(),
 ) -> SyncOutcome:
     meta = _meta(conn)
     synced_before = "install_root" in meta
@@ -1580,7 +1615,7 @@ def _sync_open(
     mode: Mode = "new_book" if "other_book" in reasons else "restored" if reasons else "normal"
     now = time.time_ns()
     if reasons:
-        _, _, plan = _changes(_rows(conn), book, mode, now)
+        _, _, plan = _changes(_rows(conn), book, mode, now, unsynced)
         plan = plan.model_copy(update={"matches_added": len(_new_matches(conn, book))})
         words = _held_words(reasons)
         if not by_hand:
@@ -1605,7 +1640,7 @@ def _sync_open(
         if synced_before:
             _daily_copy(conn, path)
         rows = _rows(conn)
-        added, updated, plan = _changes(rows, book, mode, now)
+        added, updated, plan = _changes(rows, book, mode, now, unsynced)
         games = _new_matches(conn, book)
         plan = plan.model_copy(update={"matches_added": len(games)})
         _write(conn, added, updated, _meta_rows(target, book, data, newest), games)
@@ -2196,6 +2231,7 @@ __all__ = [
     "COUNTER_MAX",
     "DAILY_COPIES",
     "LOCK_WAIT_SECONDS",
+    "MATCH_SIDE_MAX",
     "MAX_MATCHES",
     "MAX_PLAYERS",
     "SCHEMA",
