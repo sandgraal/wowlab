@@ -6389,10 +6389,13 @@ cannot be kept). The edit is not refused.
 | 4. Shared output | `doctor --redact` never prints a crew record, from the live file or its `.bak`; it may say on or off and a count, never a key, and an unreadable `WowLab.lua` is reported without quoting the token that failed. `snap export` says, when any object in the archive holds a non-empty crew book (decided from content, not the file name), that it includes it. Profiles never carry `WowLab.lua` (`profile_presets.toml` excludes it), which a test pins. The `char advise --send` packet of ADR-0032, when built, never reads `WowLabCrewDB` | tests of each on constructed records |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew forget` (the live file and the game's backup), `snap rm` for the copies in snapshots (M19-09), and the sentence that says what a forget does not reach | §20.3's tests; M19-09's |
 
-The sentence of term 2: "The crew book keeps, for each player in your
-party or raid, including your own side in a battleground or arena (never
-your opponents), their name, realm, guild, class, level and role, when you first and last grouped, how many times and in
-which instance, and your own rating and note. It keeps them in WowLab.lua
+The sentence of term 2: "The crew book keeps, for each player in your party or raid and on either
+team in a battleground or arena, what the game shows of them: name, realm,
+guild, class, race, faction, spec, level, role, honor level and the game's
+ID for the character, when you first and last grouped, how many times and
+in which instance, how many matches with and against you and how they
+ended, their scoreboard line from the latest match, the teams of each
+match, and your own rating and note. It keeps them in WowLab.lua
 (and probably the game's backup of it, WowLab.lua.bak) in this game
 account's SavedVariables folder, in wowlab's snapshots of it, and in
 wowlab's own crew database on this computer, which keeps them after the
@@ -6409,6 +6412,9 @@ is **[verify]** (§20.6), hence "probably". The in-game notice and
 own crew database as a place records are kept. A test keeps the four
 copies, `crew --help`, `Crew.lua`'s notice, this quote and the addon
 README's, identical.)
+
+(Changed 2026-11-20, M20-11, by the owner's decision of that date: the
+sentence names both teams and what the game shows of each player.)
 
 `sv dump`, `snap diff`, the plans of `undo`, `snap restore` and `sv
 merge`, `--json` output and `wowlab ui` showing these records locally is
@@ -6677,16 +6683,41 @@ The book's `schema` becomes 2. What changes from §20.1:
 
 The key, the secret-value rule, the combat block, the gate, the note
 rules, the warning's flattening and "the book knows names, not people" are
-§20.1's, unchanged. `UnitGUID` and the combat log stay refused.
+§20.1's, unchanged. The combat log stays unread.
 
-**Opponents.** After a match ends and out of combat, the addon reads the
-match's scoreboard once: each row's name and realm, class, and which side
-it is on, and the winner. Nothing else on a scoreboard row is read: no
-GUID, rating, matchmaking value, honor, race, faction, spec, or damage,
-healing and kill totals (the amendment to ADR-0036 names them). It builds
-`team` and `foes`, raises the counters, and adds or updates each player as
-§20.1 does for a group member, except that level, role and guild are not
-on a scoreboard and are left as they were.
+**Opponents, as built (2026-11-20, M20-11).** `recordMatch`, run by the
+probe's pass once `GetBattlefieldWinner` gives a value, out of combat and
+book on, writes, for the desk (M20-12) to read:
+
+- `matched = { map_id = <instance id>, at = <time()> }`, read first (same
+  `map_id`: nothing more) and written before any counter; emptied by a pass
+  outside a `pvp` or `arena` instance. Nothing is written while the
+  scoreboard has no rows, or the own row (by `UnitGUID("player")`) or side
+  cannot be found; a later score event tries again.
+- one `matches` entry `{ at, map, map_id, kind, won, team, foes }`: `kind`
+  `"bg"` or `"arena"` (the instance type); `won` only when the winner is 0
+  or 1, true when it equals the own row's `faction` (else
+  `GetBattlefieldArenaFaction`); `team` and `foes` lists of keys, the own
+  row left out. Oldest dropped at 500 (`table.remove(list, 1)`).
+- per row player, keyed `name` when it holds a `-`, else
+  `name-<GetNormalizedRealmName()>`, added as §20.1 adds (`{ met = 0 }`,
+  drop order): `allied` or `faced` +1; `allied_won` or `faced_won` +1 when
+  your side won; `pvp_side`, `pvp_last` (= the match's `at`), `pvp_map`;
+  `first` if unset; and, from the row, `guid` (`guid`), `race`
+  (`raceName`), `class` (`classToken`), `spec` (`talentSpec`) and
+  `honor_level` (`honorLevel`), each kept as it was when the row lacks it.
+- `score` on that player's entry: the row of the latest match, every field
+  whose key is text and value a number, text or boolean, not secret (tables
+  such as `stats` left out), plus `at`. It sits in the player's entry, not
+  the match, so `crew forget` on main removes it with the entry; a name
+  stored inside `matches` outside `team`/`foes`, or in `probe.pvp`, would
+  make forget refuse, so the probe still keeps no name.
+
+Group members also get `guid` (`UnitGUID`), `race` (`UnitRace`, first
+return), `faction` (`UnitFactionGroup`, first return) and `honor_level`
+(`UnitHonorLevel`). Not kept: a member's spec (it needs an inspect), a
+row's `stats`. Every row field name and the meaning of `faction` and the
+winner are **[verify]** until M20-06.
 
 What is believed, each **[verify]**:
 
@@ -6720,10 +6751,6 @@ pass counts teammates in `met`, as in any group; `allied` counts matches.
 The warning's "with you N times" is `allied`. Whether queueing as a
 premade group empties `current` when the battleground's raid replaces the
 party, and so counts a friend's `met` again, is **[verify]**.
-
-Which calls exist, what they return and whether any of it is a secret
-value decide M20-07 and M20-08; they are not written before M20-06
-reports.
 
 **The warning.** As §20.1: one line when a rated player joins your team,
 now with "with you N times, against you M". Whether the client lists the
@@ -6984,7 +7011,7 @@ database, it is never synced without that step (above).
 | Term | What holds it | Proof |
 |---|---|---|
 | 1. Local only | The database is under the user data directory; nothing reads it but `crewdb`; no network module is imported | the no-network tests; an import scan |
-| 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and opponents from M20-08, which removes "(never your opponents)" from the sentence of #634 and names opponents in its place | text tests |
+| 2. Opt-in | Nothing is recorded, probed or synced until the book is turned on in game. The one sentence of §20.5 term 2 (the turn-on notice, `crew --help`, the README) names wowlab's own database as a place records are kept from M20-01, and, from M20-11, both teams and what is kept of each player | text tests |
 | 3. Out of the repository | A repository test refuses any tracked SQLite file (by its file signature, and any `*.sqlite*` name) outside the listed `db2lake` test paths, whatever its `application_id`; the capture tool refuses any SQLite file, and a schema 2 book whose `matches` is not empty; tests build databases at run time from the constructed keys of M19-04 | the tests, shown failing on a planted file, a planted journal and a renamed copy |
 | 4. Shared output | `doctor --redact` gives the path with the home-path login and the account folder redacted, a size and row counts, never a row and never `meta`'s install root; `snap export` does not include the database and says so; no command exports it; the bug-report template says not to attach it | tests on constructed rows |
 | 5. Visible and deletable | `crew list`, `crew show`, `crew matches`; `crew forget` and `--all` reach the database and its copies | tests that a forgotten key's bytes are in no database file |

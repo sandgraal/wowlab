@@ -522,3 +522,63 @@ def test_constructed_a_table_used_as_a_key_is_refused_by_the_parser() -> None:
         crewedit.keys_held(data)
     found = crewcount.carried([("WowLab.lua", data)])
     assert found is not None and found.unreadable == 1
+
+
+# ─── M20-11: the shape the addon writes, as built (§21.2) ────────────────────
+
+# Constructed: an obviously invented GUID and a scoreboard line of invented
+# numbers; the addon writes these fields from M20-11 on.
+_GUID_A = "Player-0000-00000000"
+_GUID_B = "Player-0000-00000001"
+_SCORE_A = {
+    "name": KEY_A,
+    "guid": _GUID_A,
+    "faction": 1,
+    "damageDone": 1000,
+    "healingDone": 10,
+    "killingBlows": 2,
+    "deaths": 1,
+    "honorGained": 0,
+    "rating": 0,
+    "ratingChange": 0,
+    "talentSpec": "Frost",
+    "at": T2,
+}
+_M20_11 = {
+    "guid": _GUID_A,
+    "race": "Gnome",
+    "faction": "Alliance",
+    "spec": "Frost",
+    "honor_level": 3,
+    "score": _SCORE_A,
+}
+
+
+def _as_built() -> bytes:
+    return _book2(
+        {KEY_A: player(**PVP, **_M20_11), KEY_B: player(**PVP, guid=_GUID_B)},
+        matches=[match([KEY_B], [KEY_A])],
+        matched={"map_id": MAP_ID, "at": T2},
+    )
+
+
+def test_constructed_the_desk_on_main_reads_the_m20_11_shape() -> None:
+    """The fields M20-11 adds are kept as unknown fields, nothing unread."""
+    read = crewbook.parse_book(_as_built())
+    assert read.unread == [] and read.matches_unread == []
+    a = next(p for p in read.players if p.key == KEY_A)
+    assert set(a.other_keys) == set(_M20_11)
+    assert [(m.team, m.foes) for m in read.matches] == [([KEY_B], [KEY_A])]
+    assert read.matched is True
+
+
+def test_constructed_forget_reaches_what_m20_11_keeps_of_a_player() -> None:
+    """`score` and `guid` sit in the player's own entry, so forget removes
+    them with it and no copy of the name or GUID is left."""
+    data = _as_built()
+    out = crewedit.forget(data, [KEY_A])
+    assert crewedit.names_left(out, [KEY_A]) == []
+    after = _crew(out)
+    assert KEY_A not in after["players"]
+    assert _GUID_A.encode() not in out
+    assert after["players"][KEY_B]["guid"] == _GUID_B

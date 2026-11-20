@@ -113,8 +113,6 @@ CONSTRUCTED_TEST_FILES = frozenset(
         "lab/core/tests/test_cli_crew.py",
         # M20-03: schema 2's constructed books and the tests that read and edit them.
         "lab/core/tests/parser/test_crewbook_schema_2_constructed.py",
-        # M20-04 review: the probe that writes probe.pvp through a constructor.
-        "lab/core/tests/review/test_m20_04_probe_pvp_written_through_the_book_constructor.py",
     }
 )
 FIXTURES = "lab/core/tests/fixtures/"
@@ -195,6 +193,13 @@ FIELD_KEYS = frozenset(
         "GetBattlefieldWinner",
         "GetBattlefieldArenaFaction",
         "IsActiveBattlefieldArena",
+        # M20-11 (§21.2, as built): what the addon keeps of each player.
+        "guid",
+        "race",
+        "faction",
+        "spec",
+        "honor_level",
+        "score",
     }
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.

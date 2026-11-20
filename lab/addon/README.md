@@ -557,24 +557,26 @@ What changed in this version (schema 2): the book keeps up to 20,000
 players (it was 5,000), and says once a week at most, at a loading screen
 or when you type `/wowlab crew on`,
 "the crew book is nearly full ...: open wowlab so nothing is lost" when it
-holds 90% of that (or of its 500 matches; no match is recorded yet). A book
+holds 90% of that (or of its 500 matches). A book
 that is on is moved to schema 2 when the game loads it, and a book that is
 off is moved when you type `/wowlab crew on` (even when the book cannot be
 read and so stays off: then only its version number changes, and the reply
 says so); a book that stays off with no `/wowlab crew on` is not
 touched. In a battleground or arena it takes a small probe of the
 scoreboard for the owner's check of what the game gives, and keeps no name
-from it (below). It does not record opponents yet. An older WowLab that
+from it (below). Matches are recorded (below). An older WowLab that
 meets a schema 2 book leaves it alone, prints its one line ("this crew book
 was written by another version of WowLab, so it has been left alone") and
 records nothing.
 
 - `/wowlab crew on` turns it on. With no book yet it starts a new, empty
-  one and says so; a schema 1 book is moved to schema 2 first; either way it prints what the book keeps: "The crew book
-  keeps, for each player in your party or raid, including your own side in a
-  battleground or arena (never your opponents), their name, realm, guild, class, level and role, when you first and last
-  grouped, how many times and in which instance, and your own rating and
-  note. It keeps them in WowLab.lua (and probably the game's
+  one and says so; a schema 1 book is moved to schema 2 first; either way it prints what the book keeps: "The crew book keeps, for each player in your party or raid and on either
+  team in a battleground or arena, what the game shows of them: name,
+  realm, guild, class, race, faction, spec, level, role, honor level and
+  the game's ID for the character, when you first and last grouped, how
+  many times and in which instance, how many matches with and against you
+  and how they ended, their scoreboard line from the latest match, the
+  teams of each match, and your own rating and note. It keeps them in WowLab.lua (and probably the game's
   backup of it, WowLab.lua.bak) in this game account's
   SavedVariables folder, in wowlab's snapshots of it, and in wowlab's own
   crew database on this computer, which keeps them after the game's list
@@ -655,10 +657,25 @@ or empty is your own (`GetNormalizedRealmName`). A name that is nil or the
 client's "unknown" text is tried again later. Every value read goes
 through `issecretvalue` where the client has it: a secret name or realm
 skips the member, any other secret value leaves its field as it was, and
-each adds one to `skipped`; each member is read inside its own `pcall`. No
-GUID is read. `/wowlab skip` does not reach this file: its switch is `on`.
-Your own side in a battleground or arena counts as a group (never your
-opponents). If you are in combat when the
+each adds one to `skipped`; each member is read inside its own `pcall`.
+A member's GUID (`UnitGUID`), race, faction and honor level are kept too.
+`/wowlab skip` does not reach this file: its switch is `on`.
+Your own side in a battleground or arena counts as a group.
+
+Matches. When a battleground or arena reports a winner and you are out of
+combat, the book reads the scoreboard once: for each player on either team
+it raises how many matches they were with or against you and how many your
+side won, keeps their GUID, race, class, spec and honor level as the
+scoreboard gives them, and keeps their scoreboard line from that match
+(damage, healing, kills, deaths, honor, rating and its change, and the
+rest the game lists). The match itself is kept with its map, its kind, the
+result and both teams, at most 500, the oldest dropped first. A `/reload`
+or a repeated scoreboard update counts a match once. A match you leave
+before it ends, or before you are out of combat after it, is not
+recorded. Which scoreboard fields the game gives, and that its side and
+winner numbers mean what they are taken to, are not yet confirmed.
+
+If you are in combat when the
 world loads, the book waits, silently, for the next loading screen or the
 next `/wowlab crew` command; `/wowlab crew` then says it was waiting.
 
@@ -847,7 +864,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_BarberShop.GetAvailableCustomizations` | customization: options, choices, current index | ran on 70058 (M11-23 capture: seven options with choices) and 70425 (M11-29 capture: `currentChoiceIndex` 1-based, confirmed against the swatch picked); other builds: [verify] | yes |
 | `C_BarberShop.GetCurrentCharacterData` | customization: `sex` only (name fields never read) | ran on 70058 (M11-23 capture: `sex` 0, no name stored); `sex` 1 not yet seen: [verify] | yes |
 | `C_BarberShop.GetViewingChrModel` | customization: chr model id, or `chr_model_id_absent`: how the call went (schema 2, M11-29) | [verify]: no number on 70058 (M11-23 capture); returned nil on 70425 (M11-29 capture); why stays open | yes |
-| `UnitRace` | customization and identity: race id (third return only) | ran on 70058 (M11-23 capture: `race_id` 5) and on 70450 (M15-01 capture: `identity.race_id` 2 and 5, matching the owner's report); the drop on a race change is untested: [verify] | yes |
+| `UnitRace` | customization and identity: race id (third return only); crew book: a member's `race` (first return, the localized name), [verify] | ran on 70058 (M11-23 capture: `race_id` 5) and on 70450 (M15-01 capture: `identity.race_id` 2 and 5, matching the owner's report); the drop on a race change is untested: [verify] | yes |
 | `UnitSex` | identity: `sex_raw`, the first return as the client gives it (1 unknown, 2 male, 3 female, from memory) | ran on 70450 (M15-01 capture: 2 on two first-body-type characters, which `Enum.UnitSex` 0 matches on one with a carried barber record); UnitSex 3 not yet seen: [verify] | yes |
 | `UnitClass` | identity: class file and class id (second and third returns; the localized name is never kept); crew book: a member's class file (on another unit: [verify]) | ran on 70450 (M15-01 capture: (8, `MAGE`) and (9, `WARLOCK`), matching the owner's report); other classes: [verify] | yes |
 | `C_MountJournal.GetMountIDs` | mounts: every mount id, unfiltered | [verify] | yes |
