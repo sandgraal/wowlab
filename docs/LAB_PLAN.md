@@ -6735,6 +6735,21 @@ stored once, right before the line, under a seven-day and 90% test; `pvpInstance
 the two scoreboard events beside the roster's. Refused until M20-07 and M20-08: writing
 the per-player counters, `matched`, or a `matches` entry.
 
+*Note (2026-11-20, M20-05, what is confirmed).* `Crew.lua` is at schema 2 and passes the
+checks above with no relaxation added. Confirmed from the repository only, by those static
+checks and by reading the code: the migration and its two callers, the four limit constants,
+the near-full test and `warned`, the probe's two stores and that it keeps nothing but what
+this section lists. Still **[verify]** until M20-06, nothing having run in game: every call
+and event in "What is believed"; that `GetInstanceInfo`'s second return is `pvp` in a
+battleground and `arena` in an arena; that a winner is reported while the player is still
+on the scoreboard and out of combat; whether any scoreboard value is a secret value; that
+`C_PvP.GetScoreInfo`'s row field `faction` and `GetBattlefieldScore`'s sixth value hold the
+side as 0 or 1; and the 20,000 limit at full size (§21.7, decision 18). The probe also runs
+at a loading screen and at the end of combat, so a winner reported while the player was in
+combat is still read once combat ends. The first snapshot (`probe.pvp[1]`) is taken on entry,
+before the data is requested (the request follows its reads), so 0 rows and no fields there
+mean the data had not arrived yet, not that a call is missing.
+
 ### 21.3 The database (ADR-0039)
 
 One file per book: `<user data>/wowlab/crew/<flavor folder>/<account

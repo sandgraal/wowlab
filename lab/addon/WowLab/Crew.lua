@@ -2,7 +2,7 @@
 --
 -- Runs in the game client only; the Lab never loads or runs this file (L3).
 -- It remembers the players the owner groups with, in the account-wide saved
--- variable WowLabCrewDB (its own schema, 1; the per-character schema does not
+-- variable WowLabCrewDB (its own schema, 2; the per-character schema does not
 -- change), and says so in the owner's own chat frame when a rated or noted
 -- player joins the group again. Nothing is sent anywhere: no chat message,
 -- whisper or addon message (tests/addon/test_lab_addon.py refuses the calls).
@@ -27,21 +27,36 @@
 -- client's UNKNOWNOBJECT text is skipped without counting and tried again on
 -- the next pass. No GUID is read or stored.
 --
+-- Schema 2 (§21.2): the larger list, the near-full line, the migration of a
+-- schema 1 book that is on, and the scoreboard probe (`probe.pvp`), which
+-- stores only the shape of what the client gives in a battleground or arena:
+-- which calls exist, type names, counts and three whole numbers, never a
+-- name or any other scoreboard value. No opponent is recorded yet.
+--
 -- API status: every client API used is listed in lab/addon/README.md; all of
--- them are [verify] for this file until the owner's in-game check (M19-07).
+-- them are [verify] for this file until the owner's in-game checks (M19-07,
+-- and M20-06 for the scoreboard).
 
 local _, ns = ...
 
--- The book's own version number (§20.1). A book of any other schema (a newer
--- WowLab, a restored snapshot) is left wholly alone: crewOn, crewLoaded and
--- the slash handler's first lines test it.
-local CREW_SCHEMA = 1
--- The drop order (§20.1 "Limits"): at most MAX_PLAYERS players. When the book
--- is full, the unrated, un-noted player with the oldest `last` is dropped
--- first (makeRoom); a rated or noted player is never dropped, and when every
--- kept player is rated or noted, new members and new ratings are refused and
--- the owner is told once per session.
-local MAX_PLAYERS = 5000
+-- The book's own version number (§20.1, §21.2). A book of schema 1 that is
+-- on is migrated (crewMigrate); a book of any other schema (a newer WowLab,
+-- a restored snapshot) is left wholly alone: crewOn, crewLoaded and the
+-- slash handler's first lines test it.
+local CREW_SCHEMA = 2
+-- The drop order (§20.1 "Limits", §21.2): at most MAX_PLAYERS players. When
+-- the book is full, the unrated, un-noted player with the oldest `last` is
+-- dropped first (makeRoom); a rated or noted player is never dropped, and
+-- when every kept player is rated or noted, new members and new ratings are
+-- refused and the owner is told once per session.
+local MAX_PLAYERS = 20000
+-- At most MAX_MATCHES matches (§21.2); nothing adds one until M20-07, so the
+-- list stays empty in this version and only counts toward the near-full line.
+local MAX_MATCHES = 500
+-- The near-full line (§21.1): when either list holds NEAR_FULL_PERCENT of
+-- its limit, at most once in NEAR_FULL_SECONDS (seven days), by `warned`.
+local NEAR_FULL_PERCENT = 90
+local NEAR_FULL_SECONDS = 604800
 -- The note rule (§20.1 "Limits"): control characters and | are removed byte
 -- by byte (multi-byte text is left alone), spaces are trimmed, and what is
 -- left may be at most NOTE_MAX_BYTES bytes. A longer note is refused, never
@@ -81,6 +96,14 @@ local rosterAbsent = nil -- why the roster event could not be registered
 local passOpenWorld = nil
 local passWhere = nil
 local passWhereId = nil
+-- The scoreboard probe (§21.2): inside a battleground or arena since the last
+-- pass outside one; the second snapshot taken; a score request made; and the
+-- two candidate events counted since entry.
+local pvpEntered = false
+local pvpWinnerRead = false
+local pvpRequested = false
+local pvpScoreEvents = 0
+local pvpCompleteEvents = 0
 
 local function crewOn()
     return type(WowLabCrewDB) == "table" and WowLabCrewDB.schema == CREW_SCHEMA
@@ -108,6 +131,140 @@ end
 
 local function say(text)
     print("|cff33ff99WowLab|r: " .. text)
+end
+
+-- The migration (§21.2), pinned whole: a schema 1 book becomes schema 2 by
+-- the new number and an empty `matches`, and nothing else. Called only for a
+-- book that is on (crewLoaded) or is being turned on (the slash handler's
+-- head). A book that is off stays at schema 1; any other schema is left alone.
+local function crewMigrate()
+    if type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= 1 then
+        return
+    end
+    WowLabCrewDB.schema = CREW_SCHEMA
+    WowLabCrewDB.matches = {}
+end
+
+-- The probe's helpers (§21.2), pinned whole. True only in an instance whose
+-- type is `pvp` (a battleground) or `arena`.
+local function pvpInstance()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(GetInstanceInfo) ~= "function" then
+        return false
+    end
+    local _, kind = GetInstanceInfo()
+    if secret(kind) then
+        return false
+    end
+    return kind == "pvp" or kind == "arena"
+end
+
+-- True once the client reports a winner for the match.
+local function pvpWon()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(GetBattlefieldWinner) ~= "function" then
+        return false
+    end
+    local ok, winner = pcall(GetBattlefieldWinner)
+    if not ok or secret(winner) then
+        return false
+    end
+    return winner ~= nil
+end
+
+-- One probe run: whether each candidate call exists; the first row's field
+-- names and their type names (the table form) or the type at each position
+-- (the several-values form); the row count and whether a request was made;
+-- the two event counts; the first row's side, the player's own and the
+-- winner as whole numbers; and three yes-or-no answers about the first
+-- row's name. No name, GUID or other value is kept: each value of the row is
+-- handed to `type` only, and its GUID field is never indexed.
+local function pvpSnapshot()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local snap = { calls = {}, positions = {}, fields = {} }
+    snap.calls.GetScoreInfo = type(C_PvP) == "table" and type(C_PvP.GetScoreInfo) == "function"
+    snap.calls.GetNumBattlefieldScores = type(GetNumBattlefieldScores) == "function"
+    snap.calls.GetBattlefieldScore = type(GetBattlefieldScore) == "function"
+    snap.calls.RequestBattlefieldScoreData = type(RequestBattlefieldScoreData) == "function"
+    snap.calls.GetBattlefieldWinner = type(GetBattlefieldWinner) == "function"
+    snap.calls.GetBattlefieldArenaFaction = type(GetBattlefieldArenaFaction) == "function"
+    snap.calls.IsActiveBattlefieldArena = type(IsActiveBattlefieldArena) == "function"
+    snap.requested = pvpRequested == true
+    snap.score_events = ns.Number(pvpScoreEvents)
+    snap.complete_events = ns.Number(pvpCompleteEvents)
+    if snap.calls.GetNumBattlefieldScores then
+        local okRows, rows = pcall(GetNumBattlefieldScores)
+        if okRows and not secret(rows) and type(rows) == "number" then
+            snap.rows = ns.Number(rows)
+        end
+    end
+    local read = false
+    local name = nil
+    local side = nil
+    if snap.calls.GetScoreInfo then
+        local okRow, row = pcall(C_PvP.GetScoreInfo, 1)
+        if okRow and not secret(row) and type(row) == "table" then
+            for field, value in pairs(row) do
+                if type(field) == "string" then
+                    snap.fields[field] = type(value)
+                end
+            end
+            read = true
+            name = row.name
+            side = row.faction
+        end
+    end
+    if snap.calls.GetBattlefieldScore then
+        local okScore, packed = pcall(function()
+            return ns.Pack(GetBattlefieldScore(1))
+        end)
+        if okScore and type(packed) == "table" then
+            for i = 1, ns.Number(packed.n) or 0 do
+                snap.positions[i] = type(packed[i])
+            end
+            if not read then
+                name = packed[1]
+                side = packed[6]
+            end
+        end
+    end
+    snap.name_string = type(name) == "string"
+    snap.name_secret = secret(name)
+    snap.name_dash = type(name) == "string" and not secret(name) and string.find(name, "-", 1, true) ~= nil
+    if not secret(side) and type(side) == "number" then
+        snap.first_side = ns.Number(side)
+    end
+    if snap.calls.GetBattlefieldArenaFaction then
+        local okMine, mine = pcall(GetBattlefieldArenaFaction)
+        if okMine and not secret(mine) and type(mine) == "number" then
+            snap.own_side = ns.Number(mine)
+        end
+    end
+    if snap.calls.GetBattlefieldWinner then
+        local okWinner, winner = pcall(GetBattlefieldWinner)
+        if okWinner and not secret(winner) and type(winner) == "number" then
+            snap.winner = ns.Number(winner)
+        end
+    end
+    if snap.calls.RequestBattlefieldScoreData and not pvpRequested then
+        pvpRequested = pcall(RequestBattlefieldScoreData) == true
+    end
+    return snap
 end
 
 -- A field as it is printed: the bidirectional embeddings and isolates
@@ -262,7 +419,7 @@ end
 -- player with the oldest `last` was just dropped. A rated or noted player is
 -- never dropped; when there is no one to drop it returns false and says so
 -- once per session. Proven only by reading this code: no in-game check can
--- fill 5,000 entries.
+-- fill 20,000 entries.
 local function makeRoom()
     if not crewOn() then
         return
@@ -615,6 +772,56 @@ local function onRoster()
     kick()
 end
 
+
+-- The scoreboard probe's schedule (§21.2): in a battleground or arena, one
+-- snapshot after entry and a second once a winner is reported; again in the
+-- next match (a pass outside the instance resets it). Each stores into
+-- `probe.pvp` and nowhere else.
+local function pvpPass()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if not pvpInstance() then
+        pvpEntered = false
+        pvpWinnerRead = false
+        return
+    end
+    if type(WowLabCrewDB.probe) ~= "table" then
+        return
+    end
+    if not pvpEntered then
+        pvpWinnerRead = false
+        pvpRequested = false
+        pvpScoreEvents = 0
+        pvpCompleteEvents = 0
+        WowLabCrewDB.probe.pvp = { pvpSnapshot() }
+        -- Set only once the store is made, so a snapshot that failed never
+        -- lets this match's second one land beside another match's first.
+        pvpEntered = true
+        return
+    end
+    if not pvpWinnerRead and pvpWon() then
+        pvpWinnerRead = true
+        WowLabCrewDB.probe.pvp[2] = pvpSnapshot()
+    end
+end
+
+local function onScore()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    pvpScoreEvents = pvpScoreEvents + 1
+    pcall(pvpPass)
+end
+
+-- Out of combat again: a pass, and the probe (a winner may have been
+-- reported while the player was in combat).
 local function onRegen()
     if not crewOn() then
         return
@@ -622,7 +829,56 @@ local function onRegen()
     if crewBlocked() then
         return
     end
+    pcall(pvpPass)
     kick()
+end
+
+local function onComplete()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    pvpCompleteEvents = pvpCompleteEvents + 1
+    pcall(pvpPass)
+end
+
+-- The near-full line (§21.1): when either list holds 90% of its limit, once
+-- in seven days at most, by `warned` (`time()` of the last such line). A
+-- list at its limit stays there, so without the seven days it would print
+-- at every login.
+local function nearFull()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(time) ~= "function" then
+        return
+    end
+    local now = ns.Number(time())
+    local last = ns.Number(WowLabCrewDB.warned) or 0
+    local held = 0
+    for _ in pairs(WowLabCrewDB.players) do
+        held = held + 1
+    end
+    local kept = 0
+    if type(WowLabCrewDB.matches) == "table" then
+        kept = #WowLabCrewDB.matches
+    end
+    if
+        now ~= nil
+        and now - last >= NEAR_FULL_SECONDS
+        and (held * 100 >= MAX_PLAYERS * NEAR_FULL_PERCENT or kept * 100 >= MAX_MATCHES * NEAR_FULL_PERCENT)
+    then
+        WowLabCrewDB.warned = now
+        say(
+            "the crew book is nearly full (it keeps at most 20,000 players and 500 matches): "
+                .. "open wowlab so nothing is lost."
+        )
+    end
 end
 
 -- Registers the roster events, once per session, and asks for a pass.
@@ -640,22 +896,34 @@ local function onWorld()
         end
         ns.On("UNIT_NAME_UPDATE", onRoster)
         ns.On("PLAYER_REGEN_ENABLED", onRegen)
+        ns.On("UPDATE_BATTLEFIELD_SCORE", onScore)
+        ns.On("PVP_MATCH_COMPLETE", onComplete)
     end
+    pcall(nearFull)
+    pcall(pvpPass)
     kick()
 end
 
+-- At this addon's load: a book that is on is migrated from schema 1, then
+-- `probe.loads` is raised in place (so `probe.pvp` survives a load) for a
+-- book of this schema only. A book that is off is not touched beyond that.
 local function crewLoaded(_, name)
-    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" or WowLabCrewDB.schema ~= CREW_SCHEMA then
+    if name ~= "WowLab" or type(WowLabCrewDB) ~= "table" then
         return
     end
-    local probe = { loads = 1 }
+    if WowLabCrewDB.on == true then
+        crewMigrate()
+    end
+    if WowLabCrewDB.schema ~= CREW_SCHEMA then
+        return
+    end
     local prior = WowLabCrewDB.probe
     if type(prior) == "table" and type(prior.loads) == "number" then
-        probe.loads = ns.Number(prior.loads + 1)
+        prior.loads = ns.Number(prior.loads + 1)
+        prior.lost = nil
     else
-        probe.lost = true
+        WowLabCrewDB.probe = { loads = 1, lost = true }
     end
-    WowLabCrewDB.probe = probe
 end
 
 -- Rating the target: when it is another player, its key, after adding it
@@ -777,6 +1045,9 @@ function ns.CrewCommand(word)
     if type(word) ~= "string" then
         return
     end
+    if string.match(string.lower(word), "^%s*%S+%s+on%s*$") ~= nil then
+        crewMigrate()
+    end
     if type(WowLabCrewDB) == "table" and WowLabCrewDB.schema ~= CREW_SCHEMA then
         print("|cff33ff99WowLab|r: this crew book was written by another version of WowLab, so it has been left alone.")
         return
@@ -800,13 +1071,19 @@ function ns.CrewCommand(word)
                 skipped = 0,
                 players = {},
                 current = {},
+                matches = {},
             }
             say("a new, empty crew book was started.")
         elseif not pcall(bookIntact) then
             if WowLabCrewDB.on == true then
                 say("the crew book cannot be read; nothing is recorded.")
             else
-                say("this crew book cannot be read; it is left as it is and stays off.")
+                -- An off schema 1 book was given the new version number by the
+                -- first lines of this handler before this test; nothing else.
+                say(
+                    "this crew book cannot be read, so it stays off and nothing is recorded. "
+                        .. "At most its version number was updated; the players in it were not touched."
+                )
             end
             return
         elseif WowLabCrewDB.on ~= true then
@@ -821,7 +1098,11 @@ function ns.CrewCommand(word)
         -- This notice stands for the login line in this session.
         greeted = true
         say("Crew book on. " .. TERMS)
-        say("Recording starts out of combat. /wowlab crew off stops it and keeps what is stored. " .. KEPT)
+        say(
+            "Recording starts out of combat. The book keeps up to 20,000 players and says when it is nearly full. "
+                .. "/wowlab crew off stops it and keeps what is stored. "
+                .. KEPT
+        )
     end
     if type(WowLabCrewDB) ~= "table" then
         say("the crew book is off and holds no one. /wowlab crew on starts it.")
@@ -837,6 +1118,8 @@ function ns.CrewCommand(word)
         end
         ns.On("UNIT_NAME_UPDATE", onRoster)
         ns.On("PLAYER_REGEN_ENABLED", onRegen)
+        ns.On("UPDATE_BATTLEFIELD_SCORE", onScore)
+        ns.On("PVP_MATCH_COMPLETE", onComplete)
         onWorld()
     end
     if verb == "on" then
