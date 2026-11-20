@@ -158,6 +158,69 @@ def test_six_is_the_number_the_ui_offers() -> None:
     assert confirmable >= SIX
 
 
+_NUMBER_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+]
+
+
+def _names(listed: str) -> set[tuple[str, ...]]:
+    """`a b, c, d and e f` as command paths."""
+    parts = re.split(r",\s*|\s+and\s+", listed.strip())
+    return {tuple(p.split()) for p in parts if p}
+
+
+def test_ui_help_names_the_commands_the_code_declares() -> None:
+    """M19-14: `wowlab ui --help` said seven, after the crew book made it
+    ten. The list it names, its count word, and the commands it says refuse
+    after the plan come from the code: the confirm step's leaves less the
+    store-only ones (`ui._STORE_ONLY`), and `cli.EXPECT_FIELDS`."""
+    import typer
+
+    leaves = ui._read_tree(typer.main.get_command(cli.app))
+    writers = {p for p, leaf in leaves.items() if leaf.confirm is not None} - ui._STORE_ONLY
+    refusers = set(cli.EXPECT_FIELDS)
+    text = _flat(_docstring())
+    count = re.search(r"\b(\w+) commands can change game files", text)
+    assert count is not None, text
+    assert count.group(1).lower() == _NUMBER_WORDS[len(writers)]
+    listed = re.search(r"The commands that change game files are (.*?), and `wowlab undo`", text)
+    assert listed is not None, text
+    assert _names(listed.group(1)) == writers
+    refusing = re.search(r"Of these, (.*?) refuse when something changed after the plan", text)
+    assert refusing is not None, text
+    assert _names(refusing.group(1)) == refusers
+    assert refusers <= writers
+    # No second count of them, which would go stale on its own.
+    assert "the seven" not in text.lower() and "any of the" not in text.lower()
+
+    # INSTALL.md's commands tab names the same list.
+    install_text = _flat(_install_ui_section())
+    in_install = re.search(r"The commands that change game files are (.*?): each", install_text)
+    assert in_install is not None, install_text
+    assert _names(in_install.group(1).replace("`", "")) == writers
+    assert "the seven" not in install_text.lower()
+
+
 def test_install_lists_character_and_looks() -> None:
     section = _install_ui_section()
     assert "- **Character.**" in section

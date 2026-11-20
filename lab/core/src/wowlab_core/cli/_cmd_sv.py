@@ -48,6 +48,7 @@ from wowlab_core.cli._common import (
     _bytes,
     _confirm,
     _crew_plan_line,
+    _damaged_words,
     _discover,
     _emit,
     _handled,
@@ -1327,7 +1328,11 @@ def _read_sv(lay: layout.Layout, rel: str) -> bytes:
 
 
 def _snapshot_sv(store: snapshot.SnapshotStore, snapshot_id: str, rel: str, folder: str) -> bytes:
-    manifest = store.show(snapshot_id)
+    try:
+        manifest = store.show(snapshot_id)
+    except snapshot.ManifestIntegrityError:
+        # The loader's words quote the record; say M19-13's sentence instead.
+        raise CliError(_damaged_words(store, snapshot_id + ".json")) from None
     held = f"{manifest.flavor_folder or folder}/{rel}"
     entry = manifest.entry(held)
     if entry is None or entry.kind != "file" or entry.sha256 is None:
