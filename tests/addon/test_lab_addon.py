@@ -8827,6 +8827,41 @@ def test_m20_13_identity_values_are_asked_about_before_use() -> None:
     assert _m20_13_identity_problems(IDENTITY) == []
 
 
+# Fix round 1 (code review of #669): the owner's own values and macros are
+# read only where a secret rule holds: the four own-value calls in
+# Identity.lua (`_m20_13_identity_problems`), the macro calls in Actions.lua
+# (the structural rule, `_m13_05_secret_problems`). Crew.lua keeps its own
+# rules for its name calls (`_crew_problems`).
+_M20_13_OWN_HOME = {
+    **dict.fromkeys(_M20_13_OWN_CALLS, "Identity.lua"),
+    **dict.fromkeys(("GetMacroInfo", "GetMacroBody", "GetNumMacros"), "Actions.lua"),
+}
+
+
+def _m20_13_own_value_problems(path: Path) -> list[str]:
+    """A name of `_M20_13_OWN_HOME` in a file other than its home, as a name
+    or a string; Crew.lua is graded by its own rules."""
+    if path.name == CREW_FILE:
+        return []
+    return [
+        f"{_where(path, x)} {x.text} outside {_M20_13_OWN_HOME[x.text]}"
+        for x in _tokens(path)
+        if x.kind in {"name", "string"}
+        and x.text in _M20_13_OWN_HOME
+        and _M20_13_OWN_HOME[x.text] != path.name
+    ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_m20_13_own_values_are_read_only_where_a_secret_rule_holds(path: Path) -> None:
+    bad = _m20_13_own_value_problems(path)
+    assert not bad, bad
+
+
+def _m20_13_gear_own_values(path: Path) -> list[str]:
+    return _m20_13_own_value_problems(path)
+
+
 def _m20_13_edited(
     path: Path, edits: list[tuple[str, str]], check: Callable[[Path], list[str]]
 ) -> list[str]:
@@ -8877,7 +8912,68 @@ def _m20_13_core_combat(path: Path) -> list[str]:
             problems.append(f"{pin!r} is not there once")
     if rendered.count("inCombat = false") != 3 or rendered.count("inCombat = true") != 2:
         problems.append("inCombat is set other than by the combat events and the world check")
+    # Fix round 1 (code review of #669): every call of a gather, wherever it
+    # is added, stands right after its own combat guard. Each place is pinned
+    # by the function it is in and the tokens just before the call; a call
+    # anywhere else (a `gatherDirty()` in the slash handler, say) fails.
+    t = flow.tokens
+    for k in range(1, len(t) - 1):
+        x = t[k]
+        if x.kind != "name" or x.text not in _M20_13_GATHERS or t[k + 1].text != "(":
+            continue
+        if _is_field(t, k) or t[k - 1].text == "function":
+            continue
+        where = _m20_13_named_function(flow, k)
+        guard = next(
+            (
+                g
+                for g in _M20_13_GATHER_GUARDS.get((where, x.text), ())
+                if _render(t[k - len(g.split(" ")) : k]) == g
+            ),
+            None,
+        )
+        if guard is None:
+            problems.append(f"line {x.line}: {x.text}() in {where} with no combat guard pinned")
+    # `section.gather` is called only by `gather`, and `ns.Refresh` only by the
+    # slash handler's `save` branch.
+    # (`ns . Refresh ( )` twice: its definition and its one call.)
+    if rendered.count("section . gather ,") != 1 or rendered.count("ns . Refresh ( )") != 2:
+        problems.append("a section's gather or ns.Refresh is reached another way")
     return problems
+
+
+_M20_13_GATHERS = frozenset({"gather", "gatherDirty"})
+
+
+def _m20_13_named_function(flow: _Flow, k: int) -> str | None:
+    """The innermost named function around token k: a function literal (a
+    timer's callback) counts as the function it is written in."""
+    named = [
+        (head, label)
+        for head, label in flow.labels.items()
+        if not label.startswith("function@") and head < k <= flow.block_end(head)
+    ]
+    return max(named)[1] if named else None
+
+
+# (function, callee) -> the tokens that must stand right before each call.
+_M20_13_GATHER_GUARDS: dict[tuple[str | None, str], tuple[str, ...]] = {
+    ('ns.On("PLAYER_LOGOUT")', "gatherDirty"): ("if not inCombat then",),
+    ("schedule", "gatherDirty"): (
+        "if inCombat then waitingForCombat = true else",
+        "pending = false if firstPassDone then",
+    ),
+    ("startFirstPass", "gatherDirty"): ("if inCombat then firstPassWaiting = true else",),
+    # Its handler starts with `inCombat = false` (pinned above).
+    ('ns.On("PLAYER_REGEN_ENABLED")', "gatherDirty"): ("if run then",),
+    # gatherDirty's own loop: reached only from the guarded calls above.
+    ("gatherDirty", "gather"): ("if section . dirty then",),
+    # ns.Refresh returns at once in combat (pinned above).
+    ("ns.Refresh", "gather"): ("if section . on_world and not section . off then",),
+    # An immediate section (customization, on BARBER_SHOP_OPEN and
+    # BARBER_SHOP_APPLIED): the barber shop is not reachable in combat.
+    ("onEvent", "gather"): ("if section . immediate then",),
+}
 
 
 def test_m20_13_core_gathers_nothing_in_combat() -> None:
@@ -9006,6 +9102,31 @@ _M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list
         [("    return not ok or hidden == true\n", "    return false\n")],
         _m20_13_identity_problems,
         "secret",
+    ),
+    # Fix round 1 (code review of #669).
+    "secret test: the own GUID stored untested in another file": (
+        ADDON / "Gear.lua",
+        [
+            (
+                "                local level, source = itemLevel(slot, raw)\n",
+                "                local level, source = itemLevel(slot, raw)\n"
+                '                record.guid = ns.String(UnitGUID("player"))\n',
+            )
+        ],
+        _m20_13_gear_own_values,
+        "UnitGUID outside Identity.lua",
+    ),
+    "secret test: a macro body read outside Actions.lua": (
+        ADDON / "Talents.lua",
+        [("local _, ns = ...\n", "local _, ns = ...\nlocal body = GetMacroBody(1)\n")],
+        _m20_13_gear_own_values,
+        "GetMacroBody outside Actions.lua",
+    ),
+    "nothing in combat: a gather added to the debug branch": (
+        ADDON / "Core.lua",
+        [("        debugCommand(key)\n", "        gatherDirty()\n        debugCommand(key)\n")],
+        _m20_13_core_combat,
+        "no combat guard pinned",
     ),
 }
 

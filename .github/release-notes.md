@@ -122,6 +122,8 @@ Scripts that read `wowlab … --json` depend on the models behind it. Each relea
 - `MacrosCheckReport` (`macros check --json`) and `CharMacrosReport` (`char macros --json`): every finding gains `fixable`, true when `macros fix` corrects it.
 - `CharSummaryReport` (`char list --summary --json`) gains `records_in_backups`: folders with no lab record whose record a backup holds.
 - `CharKeptRow` gains `folder_present`: true for a character whose folder is still in the game folder but holds no lab record, false when the folder is gone.
+- `CharShowReport` (`char show --json`): `record` may be a `CharDBV5`, the lab-addon's schema 5: `macros` (each macro's index, scope, name, icon and body), every binding command as the game returns it, `identity` gains `guid`, `name`, `realm` and `guild`, gear links keep a crafter's GUID, and the record gains `debug`, `announced`, `gathered`, `written_at` and `written_by`; outside a debug session a section of the action bars, bindings, spellbook or macros holds `dropped` and an empty `probes`. A schema 1 to 4 record is unchanged. A script reading `record` should accept schema 5.
+- `BindsCoachReport` (`binds coach --json`): `log.counts` gains `by_guid` and `other_guid` when the casts were picked by the character's own GUID (a schema-5 record): `other_guid` counts your casts under another GUID, left out. Without a schema-5 record neither is written.
 
 **From v0.2.1 to v0.3.0**, every change adds something; nothing was removed or renamed:
 

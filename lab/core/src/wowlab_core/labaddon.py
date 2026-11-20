@@ -1616,7 +1616,8 @@ class BindingV5(Binding):
 
 class BindingsV5(Bindings, _Quiet):
     """`bindings` in schema 5: every command `GetBinding` lists, as the
-    client returns it, with its keys. `commands_left_out` and
+    client returns it, with its keys (whether that list holds `MACRO`,
+    `SPELL`, `ITEM` and `CLICK` commands is [verify]). `commands_left_out` and
     `keys_left_out` are not written any more; they read 0 (nothing is left
     out)."""
 
@@ -3739,8 +3740,8 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
             f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
             f"{record.commands} listed (commands and keys in --json); binding set "
             f"{_binding_set_words(record)}; read out of combat",
-            f"  every command as the game returns it: {_count(typed, 'macro or click command')} "
-            "among those with a key",
+            "  every command the game's binding list gives: "
+            f"{_count(typed, 'macro or click command')} among those with a key",
             render(
                 "  a key bound straight to a spell, macro, item or click may not be listed by "
                 "GetBinding at all [verify]"
@@ -3803,7 +3804,12 @@ def _macros(record: Macros) -> list[str]:
     ]
 
 
-def _own_lines(char: CharDBV5) -> list[str]:
+# The addon's reason for a nil guild (Identity.lua): no guild, or one the
+# client had not loaded yet.
+NO_GUILD_REASON = "the first return of GetGuildInfo was not a non-empty string"
+
+
+def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
     """Schema 5: the character's own name, realm and guild, and when the
     addon wrote the file."""
     section = char.identity
@@ -3812,17 +3818,18 @@ def _own_lines(char: CharDBV5) -> list[str]:
         parts = []
         for name, label in (("name", "name"), ("realm", "realm"), ("guild", "guild")):
             value = getattr(section, name)
-            parts.append(
-                f"{label} {value}"
-                if value is not None
-                else f"{label} absent ({_identity_reason(section, name)})"
-            )
+            if value is not None:
+                parts.append(f"{label} {value}")
+            elif name == "guild" and section.guild_absent == NO_GUILD_REASON:
+                parts.append(render("no guild, or the guild not loaded yet [verify]"))
+            else:
+                parts.append(f"{label} absent ({_identity_reason(section, name)})")
         guid = "game ID kept" if section.guid is not None else "game ID absent"
         lines.append(f"Character: {', '.join(parts)}; {guid} (in --json)")
     if char.written_at is not None:
         when = datetime.fromtimestamp(char.written_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
         by = {"logout": "at logout", "save": "by /wowlab save"}.get(char.written_by or "", "")
-        lines.append(f"Written: {when}{' ' + by if by else ''}")
+        lines.append(f"Written: {when}{' ' + by if by else ''} (a crash keeps the write before it)")
     return lines
 
 
@@ -3940,7 +3947,7 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
     if isinstance(char, CharDBV4):
         lines += _section("Identity", char.identity, lambda _: [_identity_line(char, render)])
     if isinstance(char, CharDBV5):
-        lines += _own_lines(char)
+        lines += _own_lines(char, render)
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
     class_config = _class_config(talents) if talents else None

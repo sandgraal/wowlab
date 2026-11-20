@@ -691,6 +691,12 @@ def _say_coach(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
             f"(picked by the source flags: yours, and a player); {counts.others} by other units"
         )
+        if counts.by_guid:
+            _say(
+                "  Picked by this character's own game ID from its lab-addon record: "
+                f"{counts.other_guid} of your cast(s) under another of your characters were "
+                "not counted"
+            )
         if counts.other_version:
             _say(
                 f"  {counts.other_version} cast(s) under a COMBAT_LOG_VERSION other than "

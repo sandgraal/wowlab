@@ -433,8 +433,16 @@ def _file_note(
     who: str = "the record",
     every: bool = False,
 ) -> str:
-    """`every`: the record keeps every command and key as the client
-    returns it (schema 5, M20-13), so it leaves none out."""
+    """`every`: the record keeps every command GetBinding lists and every
+    key as the client returns it (schema 5, M20-13), so it leaves none out;
+    whether that list holds a command that is not a plain name (`MACRO x`,
+    `SPELL x`, `ITEM x`, `CLICK f:b`) is not yet confirmed, so such a
+    command keeps its caveat."""
+    if every and not _KEPT_COMMAND.fullmatch(command):
+        return (
+            f"{who} keeps every command the game's binding list gives; whether that list holds "
+            "macro, spell, item and click commands is [verify]"
+        )
     if not every and not _KEPT_COMMAND.fullmatch(command):
         return (
             f"{who} leaves out commands that are not a plain upper-case name and only counts "

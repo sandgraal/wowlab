@@ -207,7 +207,8 @@ def test_constructed_unknown_character_is_a_usage_error(flavor: Path) -> None:
 
 
 def test_constructed_schema_6_capture_is_refused(flavor: Path) -> None:
-    # Schema 2 is known since M11-29, 3 since M13-05 and 4 since M15-01, so the first unknown is 5.
+    # Schema 2 is known since M11-29, 3 since M13-05, 4 since M15-01 and 5 since M20-13,
+    # so the first unknown is 6.
     _lab_file(flavor, FIRST).write_bytes(b'\r\nWowLabCharDB = {\r\n["schema"] = 6,\r\n}\r\n')
     result = run("char", "show", "--character", FIRST)
     assert result.exit_code == 1

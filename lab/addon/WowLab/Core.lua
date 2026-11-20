@@ -81,8 +81,12 @@ local debugNext = false
 -- tables last ran after a first pass. The chat line prints when it differs
 -- from ns.SCHEMA (a new lab-addon format, or a first run) or the probe was
 -- lost. It is cleared from the live table at ADDON_LOADED and put back only
--- by this session's own write, so a session that ended without that write
--- (a crash writes nothing) prints the line again next time.
+-- by this session's own write, so a session the client saved without that
+-- write prints the line again next time. A crash is not seen: it writes
+-- nothing, so the file still holds the last clean write and its
+-- `announced`. Once per schema, not per addon version: the addon carries no
+-- version of its own (the installed TOC has no `## Version` yet), and the
+-- schema is bumped with every change to what the addon writes.
 ns.announced = nil
 -- time() of each section's last gather this session, by section key.
 local gatheredAt = {}

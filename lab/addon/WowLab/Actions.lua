@@ -15,8 +15,11 @@
 --               one it is the spell or item the macro shows now [verify]. An
 --               equipment-set slot, whose id is the set's name, keeps no id;
 --   bindings    every binding command GetBinding lists, as the client
---               returns it (`CLICK`, `MACRO`, `SPELL`, `ITEM` included since
---               schema 5), with the keys GetBindingKey returns for it now,
+--               returns it (since schema 5 none is left out; whether that
+--               list includes MACRO, SPELL, ITEM and CLICK commands is
+--               [verify], believed not: a key bound straight to one is
+--               believed reachable only through GetBindingAction(key) and
+--               bindings-cache.wtf), with the keys GetBindingKey returns for it now,
 --               to cross-check bindings-cache.wtf (§15.2). GetBinding lists
 --               the client's binding list; whether a key bound straight to a
 --               spell, macro, item or click (a spell dragged onto a key, an
@@ -451,8 +454,9 @@ ns.Section({
             end
             tally(binding, okBinding, type(found) == "string")
             if okBinding and type(found) == "string" then
-                -- Schema 5: every command as the client returns it, typed
-                -- text included (a `MACRO <name>`, a `CLICK <frame>:<button>`).
+                -- Schema 5: every command as the client returns it, none
+                -- left out (whether GetBinding lists a `MACRO <name>` or a
+                -- `CLICK <frame>:<button>` at all is [verify]).
                 commands = commands + 1
                 local keys = ns.Pack(pcall(getKey, found))
                 local kept, any = {}, false

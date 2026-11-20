@@ -82,14 +82,11 @@ empty shape of `docs/LAB_PLAN.md` §20.5 (CREW_BOOK_NAME, crew_book_problems).
 There is no flag that empties a book or skips the check; the refusal gives the
 reason, never a key.
 
-The lab-addon's own-account text (M20-13; ADR-0026, note of 2026-11-20): in
-any file holding `WowLabCharDB`, every macro's name and body, the typed part
-of a `MACRO` or `CLICK` binding command (a mouse-button name stays) and the
-guild name are replaced by invented text of the same shape, and the
-`written_at` and `gathered` times move by the file's secret offset, byte-level
-(labaddon_scan). A file whose scrubbed bytes still hold one, or whose tables
-cannot be bounded, is refused with a count only (labaddon_unreplaced). The
-own GUID is the identity scrub's, as everywhere.
+The lab-addon's file (M20-13): in a file holding `WowLabCharDB`, a player
+GUID that is not the owner's (a crafter's in an item link) gets an invented
+GUID, as another player's does in a combat log (labaddon_other_guids). Macro
+text, binding commands, guild names and times are kept as captured (owner's
+ruling, 2026-11-20).
 
 SQLite files (M20-02, `docs/LAB_PLAN.md` §21.4 term 3): any file, whatever its
 name or kind, holding the SQLite database header, or starting with a rollback
@@ -1137,7 +1134,6 @@ class Identity:
         country_tags: Sequence[tuple[int, int, bytes, str]] = (),
         bare_guids: bool = False,
         honorbound: Sequence[tuple[int, int, bytes, str]] = (),
-        labaddon: Sequence[tuple[int, int, bytes, str]] = (),
     ) -> ScrubResult:
         """Return `data` with identity replaced, plus every edit and any reason to refuse.
 
@@ -1154,9 +1150,7 @@ class Identity:
         `character-list-order.txt`, where any `<n>-<hex>` token left unmapped
         refuses (BARE_GUID_TOKEN_RE). `honorbound` are a
         `macros-cache.txt`'s `#HB<n>` hash values replaced by `0`s
-        (honorbound_scan), claimed in the same pass. `labaddon` are the
-        lab-addon's typed text replaced by invented text and its times moved
-        (labaddon_scan, M20-13), claimed in the same pass.
+        (honorbound_scan), claimed in the same pass.
         """
         # Three passes over the ORIGINAL bytes, highest priority first. Matches
         # within a pass never overlap each other; a match that overlaps a
@@ -1207,7 +1201,7 @@ class Identity:
             claim(start, end, new, "unit-guid")
         for start, end, new in timestamps:
             claim(start, end, new, "timestamp")
-        for start, end, new, reason in (*country_tags, *honorbound, *labaddon):
+        for start, end, new, reason in (*country_tags, *honorbound):
             claim(start, end, new, reason)
         close_pass()
         if others is not None:
@@ -1720,6 +1714,36 @@ class OtherPlayers:
         )
 
 
+# ─── another player's GUID in the lab-addon's file (M20-13) ──────────────────
+
+# Since schema 5 (ADR-0026, note of 2026-11-20, and its correction of that
+# day) the lab-addon's per-character `WowLabCharDB` keeps an item link as the
+# client gives it, and a crafted item's link can carry its crafter's player
+# GUID. The owner's own GUID is replaced as in every file; any other player
+# GUID in a file holding that variable gets the invented form a combat log
+# gives another player (OTHER_GUID_FORMAT), numbered in order of first
+# appearance, byte-level, so the owner's capture is not refused for wearing
+# a crafted item. Macro text, binding commands, guild names and times are
+# not secret (the owner's ruling of 2026-11-20) and are kept as captured.
+LABADDON_VARIABLE_RE = re.compile(rb"(?m)^WowLabCharDB\s*=")
+
+
+def labaddon_other_guids(data: bytes, identity: Identity) -> OtherUnits | None:
+    """Invented GUIDs for every player GUID in `data` that is not one of
+    the owner's, when `data` holds `WowLabCharDB`; None otherwise."""
+    if LABADDON_VARIABLE_RE.search(data) is None:
+        return None
+    players: dict[bytes, int] = {}
+    for m in GUID_RE.finditer(data):
+        key = m.group(0).upper()
+        if key not in identity.guids:
+            players.setdefault(key, len(players))
+    if not players:
+        return None
+    guids = {key: OTHER_GUID_FORMAT % (index + 1) for key, index in players.items()}
+    return OtherUnits(guids=guids, edits=(), fields=(), hunted=(), unpaired=0)
+
+
 # ─── non-player unit GUIDs in a combat log (always) ──────────────────────────
 
 
@@ -1915,15 +1939,6 @@ LOG_NAME_UNSHIFTABLE_LABEL = "in path: combat-log file name date that cannot be 
 TIMESTAMPS_SHIFTED = "timestamps-shifted"
 
 
-def draw_labaddon_shift() -> int:
-    """One lab-addon file's time offset in seconds (M20-13), drawn as a
-    combat log's is; a function of its own so a log's draws stay one per
-    log. Tests replace this function."""
-    span = SHIFT_MAX_SECONDS - SHIFT_MIN_SECONDS + 1
-    magnitude = SHIFT_MIN_SECONDS + secrets.randbelow(span)
-    return magnitude if secrets.randbelow(2) else -magnitude
-
-
 def draw_time_shift() -> int:
     """One log's timestamp offset in seconds. Tests replace this function."""
     span = SHIFT_MAX_SECONDS - SHIFT_MIN_SECONDS + 1
@@ -1963,12 +1978,6 @@ class TimeShift:
 
     def __repr__(self) -> str:
         return "TimeShift(<hidden>)"
-
-    @property
-    def seconds(self) -> int:
-        """The offset in whole seconds, for an epoch time (M20-13: the
-        lab-addon's `written_at` and `gathered` times). Never printed."""
-        return int(self._delta.total_seconds())
 
     def file_name(self, name: str) -> str | None:
         """`WoWCombatLog-MMDDYY_HHMMSS.txt` moved by the offset; any other name as it is;
@@ -2179,221 +2188,6 @@ def honorbound_unreplaced(scrubbed: bytes) -> int:
         if live or not zeroed:
             count += 1
     return count
-
-
-# ─── the lab-addon's own-account text (M20-13) ───────────────────────────────
-
-# Since schema 5 (ADR-0026, note of 2026-11-20) the lab-addon's per-character
-# `WowLabCharDB` keeps text the owner typed and wall-clock times. The
-# repository is public (ADR-0019), so in any file holding that variable:
-#
-# - every string value of `name` and `body` inside the `["macros"]` table,
-#   the part after `MACRO ` of every `["command"]` inside `["bindings"]`, the
-#   frame part (and a button part that is not a mouse-button name) after
-#   `CLICK `, and the string `["guild"]` inside `["identity"]` are replaced by
-#   invented text of the same shape (`invented_lua_text`: a lower-case
-#   letter becomes `x`, an upper-case one `X`, a digit `0`, any other
-#   character above ASCII `x`, a decimal escape `x` (a control-character
-#   escape is kept), ASCII punctuation, spaces and the other escapes stay);
-# - `["written_at"]` at any depth and every `["at"]` inside `["gathered"]`
-#   are moved by the file's secret offset (TimeShift, never shown).
-#
-# The own GUID in `["guid"]` and in a link is the identity scrub's, as for
-# every file. Byte-level only: each table is found by its key and its
-# braces (strings and `--` comments skipped), each value by a pattern, and
-# each is replaced in place; nothing is parsed into values and written back.
-# A capture whose scrubbed bytes still hold one of these values unchanged
-# (a value that is not its own invented form, a time the tool did not
-# write, or a table it could not bound) is refused, with a count only.
-LABADDON_VARIABLE_RE = re.compile(rb"(?m)^WowLabCharDB\s*=")
-LABADDON_TEXT_REASON = "labaddon-text"
-LABADDON_TIME_REASON = "labaddon-time"
-LABADDON_TEXT_LABEL = "lab-addon text the owner typed (a macro, a binding command, a guild)"
-LABADDON_TIME_LABEL = "lab-addon time not shifted"
-LABADDON_TABLE_LABEL = "lab-addon table whose end cannot be found"
-# A Lua string as the client writes it: `"`, then escapes or plain bytes.
-_LUA_STRING = rb'"((?:[^"\\]|\\(?s:.))*)"'
-_KEY_STRING = rb'\["%s"\]\s*=\s*' + _LUA_STRING
-_KEY_NUMBER = rb'\["%s"\]\s*=\s*(-?[0-9]+)(?![0-9.eExX])'
-_TABLE_OPEN = rb'\["%s"\]\s*=\s*\{'
-_MOUSE_BUTTON_RE = re.compile(rb"LeftButton|RightButton|MiddleButton|Button[1-9][0-9]?")
-_COMMAND_RE = re.compile(rb"(MACRO |CLICK )(.*)", re.DOTALL)
-
-
-def invented_lua_text(escaped: bytes) -> bytes:
-    """Invented text of the same shape as the escaped body of a Lua string;
-    a fixed point: applying it to its own result gives that result again."""
-    out = bytearray()
-    i = 0
-    while i < len(escaped):
-        byte = escaped[i]
-        if byte == 0x5C and i + 1 < len(escaped):  # a backslash escape
-            nxt = escaped[i + 1]
-            if 0x30 <= nxt <= 0x39:
-                j = i + 1
-                while j < len(escaped) and j < i + 4 and 0x30 <= escaped[j] <= 0x39:
-                    j += 1
-                value = int(escaped[i + 1 : j])
-                out += escaped[i:j] if value < 0x20 else b"x"
-                i = j
-                continue
-            out += escaped[i : i + 2]
-            i += 2
-            continue
-        if 0x61 <= byte <= 0x7A:
-            out += b"x"
-        elif 0x41 <= byte <= 0x5A:
-            out += b"X"
-        elif 0x30 <= byte <= 0x39:
-            out += b"0"
-        elif byte < 0x80:
-            out.append(byte)
-        elif byte >= 0xC0:  # the first byte of a UTF-8 sequence
-            out += b"x"
-        # a continuation byte (0x80 to 0xBF) goes with its first byte
-        i += 1
-    return bytes(out)
-
-
-def _skip_lua_noise(data: bytes, i: int) -> int:
-    """The index after a string or a `--` comment starting at `i`, or `i`."""
-    if data[i : i + 1] == b'"':
-        m = re.compile(_LUA_STRING).match(data, i)
-        return m.end() if m is not None else len(data)
-    if data[i : i + 2] == b"--":
-        end = data.find(b"\n", i)
-        return len(data) if end == -1 else end
-    return i
-
-
-def _table_spans(
-    data: bytes, key: bytes, start: int = 0, end: int | None = None
-) -> list[Span] | None:
-    """The `{ ... }` spans of every `["key"] = {` in data[start:end], or None
-    when one has no matching `}`."""
-    stop = len(data) if end is None else end
-    spans: list[Span] = []
-    for m in re.compile(_TABLE_OPEN % re.escape(key)).finditer(data, start, stop):
-        depth = 0
-        i = m.end() - 1
-        close = None
-        while i < stop:
-            skipped = _skip_lua_noise(data, i)
-            if skipped != i:
-                i = skipped
-                continue
-            if data[i] == 0x7B:
-                depth += 1
-            elif data[i] == 0x7D:
-                depth -= 1
-                if depth == 0:
-                    close = i + 1
-                    break
-            i += 1
-        if close is None:
-            return None
-        spans.append((m.end() - 1, close))
-    return spans
-
-
-@dataclass(frozen=True)
-class LabAddonScan:
-    """What `labaddon_scan` found in one file holding `WowLabCharDB`."""
-
-    edits: tuple[tuple[int, int, bytes, str], ...]
-    unbounded: int  # tables whose end could not be found
-    unshifted: int  # times found with no offset to move them by
-
-
-def _command_tail(tail: bytes, click: bool) -> bytes:
-    if not click:
-        return invented_lua_text(tail)
-    frame, colon, button = tail.partition(b":")
-    if colon and _MOUSE_BUTTON_RE.fullmatch(button):
-        return invented_lua_text(frame) + colon + button
-    return invented_lua_text(frame) + colon + invented_lua_text(button)
-
-
-def _labaddon_values(data: bytes) -> tuple[list[tuple[int, int, bytes, str]], int, list[Span]]:
-    """(start, end, wanted, reason) for every typed value, the tables that
-    could not be bounded, and the spans of the `gathered` tables."""
-    found: list[tuple[int, int, bytes, str]] = []
-    unbounded = 0
-    tables: dict[bytes, list[Span]] = {}
-    for key in (b"macros", b"bindings", b"identity", b"gathered"):
-        spans = _table_spans(data, key)
-        if spans is None:
-            unbounded += 1
-            spans = []
-        tables[key] = spans
-    for start, end in tables[b"macros"]:
-        for key in (b"name", b"body"):
-            for m in re.compile(_KEY_STRING % key).finditer(data, start, end):
-                found.append(
-                    (m.start(1), m.end(1), invented_lua_text(m.group(1)), LABADDON_TEXT_REASON)
-                )
-    for start, end in tables[b"bindings"]:
-        for m in re.compile(_KEY_STRING % b"command").finditer(data, start, end):
-            command = _COMMAND_RE.fullmatch(m.group(1))
-            if command is not None:
-                tail_start = m.start(1) + len(command.group(1))
-                wanted = _command_tail(command.group(2), command.group(1) == b"CLICK ")
-                found.append((tail_start, m.end(1), wanted, LABADDON_TEXT_REASON))
-    for start, end in tables[b"identity"]:
-        for m in re.compile(_KEY_STRING % b"guild").finditer(data, start, end):
-            found.append(
-                (m.start(1), m.end(1), invented_lua_text(m.group(1)), LABADDON_TEXT_REASON)
-            )
-    return found, unbounded, tables[b"gathered"]
-
-
-def _labaddon_times(data: bytes, gathered: list[Span]) -> list[re.Match[bytes]]:
-    times = list(re.compile(_KEY_NUMBER % b"written_at").finditer(data))
-    for start, end in gathered:
-        times.extend(re.compile(_KEY_NUMBER % b"at").finditer(data, start, end))
-    return times
-
-
-def labaddon_scan(data: bytes, shift: TimeShift | None) -> LabAddonScan | None:
-    """Edits replacing the owner's typed text and moving the times of a
-    file holding `WowLabCharDB` (the ORIGINAL bytes); None for any other."""
-    if LABADDON_VARIABLE_RE.search(data) is None:
-        return None
-    found, unbounded, gathered = _labaddon_values(data)
-    edits = [(start, end, wanted, reason) for start, end, wanted, reason in found]
-    times = _labaddon_times(data, gathered)
-    unshifted = 0
-    for m in times:
-        if shift is None:
-            unshifted += 1
-            continue
-        moved = str(int(m.group(1)) + shift.seconds).encode("ascii")
-        edits.append((m.start(1), m.end(1), moved, LABADDON_TIME_REASON))
-    return LabAddonScan(tuple(edits), unbounded, unshifted)
-
-
-def labaddon_unreplaced(scrubbed: bytes, edits: Sequence[Edit]) -> list[str]:
-    """Why `scrubbed` (a file holding `WowLabCharDB`) still holds the owner's
-    typed text or a real time; counts only, never an offset or a value."""
-    if LABADDON_VARIABLE_RE.search(scrubbed) is None:
-        return []
-    found, unbounded, gathered = _labaddon_values(scrubbed)
-    problems = []
-    typed = sum(1 for start, end, wanted, _ in found if scrubbed[start:end] != wanted)
-    if typed:
-        problems.append(f"{LABADDON_TEXT_LABEL} x{typed}")
-    written = Counter(e.new for e in edits if e.reason == LABADDON_TIME_REASON)
-    real = 0
-    for m in _labaddon_times(scrubbed, gathered):
-        if written[m.group(1)] > 0:
-            written[m.group(1)] -= 1
-        else:
-            real += 1
-    if real:
-        problems.append(f"{LABADDON_TIME_LABEL} x{real}")
-    if unbounded:
-        problems.append(f"{LABADDON_TABLE_LABEL} x{unbounded}")
-    return problems
 
 
 def _lines_with_offsets(data: bytes) -> Iterator[tuple[int, bytes]]:
@@ -3714,13 +3508,13 @@ def process(
         problems = [*binary, *path_problems]
         return Outcome(item, dest, ScrubResult(b"", (), tuple(binary)), problems)
     units = others.units(original, identity) if others is not None and kind == "combatlog" else None
+    if units is None:
+        # A lab-addon file (M20-13): another player's GUID, a crafter's in an
+        # item link, gets an invented GUID instead of refusing the file.
+        units = labaddon_other_guids(original, identity)
     located = (locations or UnitGuids()).scan(original) if kind == "combatlog" else None
     stamped = shift.scan(original) if shift is not None and kind == "combatlog" else None
     countries = country_scan(original) if kind == "build-info" else None
-    # Any file holding the lab-addon's WowLabCharDB, whatever its name (M20-13):
-    # its times move by an offset of the file's own, drawn here when the run
-    # passed none (only a combat log gets one from the run).
-    own_text = labaddon_scan(original, shift or TimeShift(draw_labaddon_shift()))
     result = identity.scrub(
         original,
         blank_cvars=config,
@@ -3731,7 +3525,6 @@ def process(
         country_tags=countries.edits if countries is not None else (),
         bare_guids=name == CHARACTER_LIST_NAME,
         honorbound=honorbound_scan(original) if name == MACROS_NAME else (),
-        labaddon=own_text.edits if own_text is not None else (),
     )
     kept_whole: list[str] = []  # files an identity match refuses rather than rewrites
     if result.edits and (_third_party(item.rel) or kind == "addons-txt"):
@@ -3776,10 +3569,6 @@ def process(
     if countries is not None:
         # Counts only: an offset would point at the country.
         kept_whole.extend(f"{label} x{count}" for label, count in countries.unplaced)
-    if own_text is not None and own_text.unshifted:
-        # Counts only: an offset would point at the text or the time.
-        kept_whole.append(f"{LABADDON_TIME_LABEL} x{own_text.unshifted}")
-    kept_whole.extend(labaddon_unreplaced(result.data, result.edits))
     if name == MACROS_NAME and (unreplaced := honorbound_unreplaced(result.data)):
         # Count only: an offset would point at the hash.
         kept_whole.append(f"{HONORBOUND_UNREPLACED_LABEL} x{unreplaced}")
@@ -3850,8 +3639,6 @@ def provenance_row(outcome: Outcome, platform: str, captured_by: str, consent: s
             ("geoip", "geoip-country-replaced"),
             ("acct", "acct-country-replaced"),
             (HONORBOUND_REASON, "honorbound-hash-replaced"),
-            (LABADDON_TEXT_REASON, "labaddon-text-replaced"),
-            (LABADDON_TIME_REASON, "labaddon-times-shifted"),
         )
         if result.count(reason)
     ]

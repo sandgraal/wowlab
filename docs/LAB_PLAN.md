@@ -2569,9 +2569,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     `issecretvalue`): `account`, `character` (`GetNumMacros`),
     `first_character_index` (`MAX_ACCOUNT_MACROS + 1`) and `list = { {
     index, scope = "account"|"character", name, icon | icon_text, body } }`;
-  - `bindings`: every command `GetBinding` lists, `CLICK`, `MACRO`, `SPELL`
-    and `ITEM` included, with its keys; `commands_left_out` and
-    `keys_left_out` are gone;
+  - `bindings`: every command `GetBinding` lists, with its keys;
+    `commands_left_out` and `keys_left_out` are gone. Whether that list
+    includes `MACRO`, `SPELL`, `ITEM` and `CLICK` commands is **[verify]**
+    (believed not; no key-by-key walk is built);
   - `identity` adds `guid`, `name`, `realm` and `guild`, each one of the
     value and `<field>_absent`; `gear` links keep a crafter's GUID and
     `crafter_removed` is gone;
@@ -2594,9 +2595,10 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   `macros-cache.txt` to a stored one by name and body; `binds coach` picks
   the owner's casts in a combat log by the stored GUID. The real schema-5 capture is the owner's, taken after this
   merges; the reader is graded on constructed files until then. The capture
-  tool replaces the GUID, macro names and bodies, typed names in binding
-  commands and the guild name, shifts the times, and refuses a capture
-  still holding one.
+  tool replaces the owner's GUID as in every file and gives another
+  player's GUID in the file (a crafter's in an item link) an invented one;
+  macro text, binding commands, the guild and the times are kept as
+  captured (ADR-0026, correction of 2026-11-20).
 - **Install** `wowlab addon install lab` / `wowlab addon remove lab`: copies
   the addon into `Interface/AddOns/WowLab/` through a `guard` transaction
   (client closed, snapshot first, undoable), filling the TOC's

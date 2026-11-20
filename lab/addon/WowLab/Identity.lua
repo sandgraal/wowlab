@@ -32,7 +32,8 @@
 -- - name: the first return of UnitName("player");
 -- - realm: GetRealmName(), the realm's display name;
 -- - guild: the first return of GetGuildInfo("player"); nil means no guild,
---   or a guild the client has not loaded yet [verify].
+--   or a guild the client has not loaded yet [verify]. PLAYER_GUILD_UPDATE
+--   gathers the section again.
 -- Each value is tested with issecretvalue (`secret`) before it is compared
 -- or stored; one it calls secret, or cannot say about, is not kept. All four
 -- calls are [verify] on Forever until the owner's schema-5 capture.
@@ -63,7 +64,10 @@ end
 ns.Section({
     key = "identity",
     path = { "identity" },
-    events = { "BARBER_SHOP_APPEARANCE_APPLIED" },
+    -- PLAYER_GUILD_UPDATE (schema 5, [verify]): the guild is nil until the
+    -- client has its guild data, which may come after the first pass, and
+    -- joining or leaving a guild changes it.
+    events = { "BARBER_SHOP_APPEARANCE_APPLIED", "PLAYER_GUILD_UPDATE" },
     on_world = true,
     gather = function()
         local record = {}

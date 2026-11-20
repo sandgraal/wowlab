@@ -77,12 +77,12 @@ def test_constructed_char_show_prints_the_own_text() -> None:
     lines = labaddon.describe(_v5())
     text = "\n".join(lines)
     assert (
-        "Character: name Inventedname, realm Invented Realm, guild absent (the first return of "
-        "GetGuildInfo was not a non-empty string); game ID kept (in --json)"
+        "Character: name Inventedname, realm Invented Realm, no guild, or the guild not "
+        "loaded yet [verify]; game ID kept (in --json)"
     ) in lines
-    assert "Written: 2025-11-20 00:53 UTC at logout" in lines
+    assert "Written: 2025-11-20 00:53 UTC at logout (a crash keeps the write before it)" in lines
     assert "Macros: 2 account-wide macros and 0 macros of this character's" in text
-    assert "every command as the game returns it: 1 macro or click command" in text
+    assert "every command the game's binding list gives: 1 macro or click command" in text
     assert "probes: none recorded" not in text
     assert "dropped: 0 values" in text
     assert GUID not in text  # the GUID itself is in --json only

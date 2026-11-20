@@ -9,7 +9,8 @@
 -- ("Player-<realm id>-<hex>"). Since schema 5 (ADR-0026, note of
 -- 2026-11-20) the link is stored as the client gives it, the GUID included,
 -- and `crafter_removed` is no longer written. Whether Forever fills the
--- field is [verify]. The capture tool replaces a GUID in a committed capture.
+-- field is [verify]. The capture tool replaces a GUID in a committed capture
+-- (another player's with an invented one).
 
 local _, ns = ...
 

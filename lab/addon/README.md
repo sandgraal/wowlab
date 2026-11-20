@@ -42,9 +42,10 @@ both variables.
   `"player"`. The crew book (`Crew.lua`, below) is the one file that reads
   other players, and only while the player has it on.
 - The repository is public, so `scripts/lab_capture.py` replaces the
-  owner's GUID, macro names and bodies, typed names inside binding commands
-  and the guild name, and shifts the times, before a capture is committed;
-  it refuses a capture that still holds one.
+  owner's GUID before a capture is committed, and gives another player's
+  GUID (a crafter's in an item link) an invented one. Macro text, binding
+  commands, the guild and the times are not secret and are kept as captured
+  (ADR-0026, correction of 2026-11-20).
 - Availability is tested per API function, never by `WOW_PROJECT_ID`, the
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
@@ -135,11 +136,18 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   out of combat, every value cleaned with `issecretvalue` first, like the
   other three sections there. That the character macros start after
   `MAX_ACCOUNT_MACROS` on Forever, and the constant itself, are **[verify]**.
-- `bindings` keeps every command `GetBinding` lists, `CLICK`, `MACRO`,
-  `SPELL` and `ITEM` included, with every key `GetBindingKey` gives for it,
-  as text. `commands_left_out` and `keys_left_out` are no longer written.
-  Whether `GetBinding` lists a key bound straight to a spell, macro, item or
-  click stays **[verify]**.
+- `bindings` keeps every command `GetBinding` lists, as the client
+  returns it, with every key `GetBindingKey` gives for it, as text.
+  `commands_left_out` and `keys_left_out` are no longer written. Whether
+  that list includes `MACRO`, `SPELL`, `ITEM` and `CLICK` commands is
+  **[verify]**: they are believed not to be in it, a key bound straight to
+  one being reached only through `GetBindingAction(key)` and
+  `bindings-cache.wtf`. No key-by-key walk is built. Override bindings
+  (set by bar addons such as ElvUI) are in neither `GetBinding` nor the
+  bindings file.
+- `macros` keeps the macro as the client holds it: an addon that writes
+  long macros (beyond the client's 255 characters) leaves only a short stub
+  there, and the stub is what is kept.
 - `identity` adds the character's `guid` (`UnitGUID("player")`), `name`
   (the first return of `UnitName("player")`), `realm` (`GetRealmName()`)
   and `guild` (the first return of `GetGuildInfo("player")`), each exactly
@@ -152,8 +160,12 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   `written_at` and `written_by` say when the addon wrote the tables and
   whether a logout or `/wowlab save` did.
 - Quieter: the chat line "recording in 15 s" prints once per schema, after
-  a session whose own write did not run (`announced` missing), or when the
-  probe was lost. After the first pass a change event only marks its
+  a session the client saved without the addon's own write (`announced`
+  missing), or when the probe was lost. Not once per addon version, which
+  the ticket asked for: the addon carries no version of its own (the
+  installed TOC has no `## Version` yet), and each change to what it writes
+  bumps the schema. A crash is not seen: it writes nothing, so the file
+  still holds the last clean write. After the first pass a change event only marks its
   section dirty; one pass gathers every dirty section at most once every
   30 s, out of combat (a pass whose timer ends in combat waits for
   `PLAYER_REGEN_ENABLED`), and at logout. Nothing is gathered in combat: a
@@ -237,8 +249,8 @@ Notes on the fields:
   on-world section) and again on `BARBER_SHOP_APPEARANCE_APPLIED`, since
   a body type can change in the barber shop. That the event fires is
   confirmed (70425, M11-29 capture: `events_received` 1); that `UnitSex`
-  already returns the new body type when the debounced gather runs 2 s
-  after it is **[verify]**, and not tested by the M15-01 capture. If that
+  already returns the new body type when the next pass runs after it (2 s
+  before schema 5; at most 30 s since) is **[verify]**, and not tested by the M15-01 capture. If that
   gather is too early, the logout write does not gather again (the section
   is no longer dirty), so the file keeps the old value until the next
   loading screen or `/reload` (each `PLAYER_ENTERING_WORLD` gathers it
@@ -598,14 +610,15 @@ loading screen clears (**[verify]**), so a little less than 15 s is left
 once the world is visible, less on a slow first login. The chat line is
 `WowLab: recording in 15 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
 Until that pass has run, change events gather nothing (what they would have
-gathered is taken by the pass); after it, change events keep the 2 s
-debounce. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
+gathered is taken by the pass); after it, change events mark their
+section dirty and one pass gathers every dirty section at most once every
+30 s, out of combat (2 s before schema 5). A `/wowlab skip` typed inside the 15 s takes effect for that pass.
 A logout or `/reload` inside the 15 s still records: `PLAYER_LOGOUT` gathers
 every section still waiting, the crashing one included unless it was
 switched off first. `/wowlab save` inside the 15 s gathers at once, as
 always. If the client has no `C_Timer`, there is no window: the pass runs at
 once, as before. After the first pass, a section that crashes on a later
-change event (2 s debounce) gives no window; switch it off at the next
+change event (a pass at most every 30 s) gives no window; switch it off at the next
 login.
 
 What the switch does not do:
@@ -1169,7 +1182,8 @@ after each one you want to keep):
 - `/reload` while fighting a training dummy and keep fighting past the 15 s
   pass, then `/reload` again still in combat: that file shows the combat
   reason on all three sections (nothing was gathered in that session).
-- Then end combat, wait at least 3 s (the debounce is 2 s), pull the dummy
+- Then end combat, wait at least 35 s (a pass runs at most every 30 s
+  since schema 5; it was 2 s), pull the dummy
   again and `/reload` in combat. Records present means the retry ran; the
   combat reason means it did not. Don't use `/wowlab save` in between.
 - Separately: after a clean first pass out of combat, pull the dummy and
@@ -1228,7 +1242,8 @@ Items:
     `PLAYER_REGEN_ENABLED` are known.
 11. Combat, if those steps were done: the reason only in the file written
     while nothing had been gathered; the retry after combat: end combat,
-    wait at least 3 s (the debounce is 2 s), pull the dummy again and
+    wait at least 35 s (a pass runs at most every 30 s since schema 5; it
+    was 2 s), pull the dummy again and
     `/reload` in combat. Records present means the retry ran; the combat
     reason means it did not. Don't use `/wowlab save` in between. And the
     pre-fight records kept through a `/reload` in combat.

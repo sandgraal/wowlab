@@ -179,6 +179,8 @@ ADDON_MUTATION_FILES: frozenset[str] = frozenset(
         "lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py",
         # M20-11 code review (#664): the once-per-match and 20,000 rules.
         "lab/core/tests/review/test_m20_11_hollow_once_and_limit_rules.py",
+        # M20-13 code review (#669): a new gather path, an own value outside Identity.lua.
+        "lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py",
     }
 )
 
