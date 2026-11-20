@@ -86,6 +86,11 @@ def _value(value: Any) -> bytes:
     raise TypeError(type(value))
 
 
+def lua_value(value: Any) -> bytes:
+    """`value` written as the builder writes any value of a book."""
+    return _value(value)
+
+
 def _table(entries: Mapping[Any, Any]) -> bytes:
     """A table as the client writes it: one bracketed entry per line."""
     lines = [b"{"]

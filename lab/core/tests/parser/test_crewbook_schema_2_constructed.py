@@ -29,6 +29,7 @@ from _crew_build import (
     T2,
     account_file,
     book,
+    lua_value,
     many_keys,
     match,
     player,
@@ -433,3 +434,91 @@ def test_constructed_twenty_thousand_players_are_read_and_one_forgotten() -> Non
     out = crewedit.forget(data, [keys[0]])
     assert keys[0] not in crewedit.keys_held(out)
     assert len(crewedit.keys_held(out)) == 20_000 - 1
+
+
+# ─── values that are not a key where a key is expected (fix round 1) ─────────
+
+# A list where a player key is expected may hold something else in a damaged
+# or hand-edited file: a nested table (it once made every forget raise
+# TypeError), a number, a boolean. Each is kept and never compared; nothing
+# raises. (A table used as a key is not data `luadata` reads at all.)
+ODD_VALUES: dict[str, list[Any]] = {
+    "nested_table_constructed": [[KEY_C]],
+    "number_constructed": [7],
+    "boolean_constructed": [True],
+}
+PLACES = ["team", "foes", "current", "matched", "matches"]
+
+
+def _odd_book(where: str, odd: list[Any]) -> bytes:
+    """A schema 2 book holding `odd` in `where`: a match's `team` or
+    `foes`, the `current` list, the `matched` marker, or `matches` itself."""
+    players = {KEY_A: player(), KEY_B: player()}
+    good = match([KEY_A], [KEY_B])
+    if where == "team":
+        return _book2(players, matches=[good, match(odd, [KEY_B])])
+    if where == "foes":
+        return _book2(players, matches=[good, match([KEY_A], [KEY_B, *odd])])
+    if where == "current":
+        data = _book2(players, matches=[good])
+        empty = b'["current"] = {\r\n}'
+        assert data.count(empty) == 1
+        return data.replace(empty, b'["current"] = ' + lua_value(odd))
+    if where == "matched":
+        return _book2(players, matches=[good], matched=odd)
+    assert where == "matches"
+    return _book2(players, matches=[good, *odd])
+
+
+@pytest.mark.parametrize("odd", list(ODD_VALUES), ids=list(ODD_VALUES))
+@pytest.mark.parametrize("where", PLACES)
+def test_constructed_an_odd_value_breaks_no_reader_count_or_edit(where: str, odd: str) -> None:
+    data = _odd_book(where, ODD_VALUES[odd])
+    before = _crew(data)
+    read = crewbook.parse_book(data)
+    assert [p.key for p in read.players] == [KEY_A, KEY_B]
+    found = crewcount.carried([("WowLab.lua", data)])
+    assert found is not None and found.unreadable == 0 and found.players >= 2
+    held = crewedit.keys_held(data)
+    assert KEY_A in held and KEY_B in held
+    # A player the odd value is not is forgotten everywhere; the odd value,
+    # and every part of the book the forget does not change, stay.
+    out = crewedit.forget(data, [KEY_B])
+    assert crewedit.names_left(out, [KEY_B]) == []
+    after = _crew(out)
+    for name in ("schema", "matched", "probe", "warned"):
+        assert after.get(name) == before.get(name), name
+    emptied = _crew(crewedit.forget_all(data))
+    assert emptied.get("matched") == before.get("matched")
+    rated = _crew(crewedit.set_field(data, KEY_A, "rating", "good"))
+    assert rated.get("matches") == before.get("matches")
+    assert rated.get("current") == before.get("current")
+
+
+def test_constructed_a_key_inside_a_nested_table_is_never_a_silent_survivor() -> None:
+    """The forget does not reach into a nested table; `names_left` finds the
+    name there, which makes `crew forget` refuse with nothing written (the
+    command's own test is in `test_cli_crew_write.py`)."""
+    data = _odd_book("team", [[KEY_A]])
+    out = crewedit.forget(data, [KEY_A])
+    assert KEY_A not in _crew(out).get("players", {})
+    assert crewedit.names_left(out, [KEY_A]) != []
+
+
+def test_constructed_a_table_used_as_a_key_is_refused_by_the_parser() -> None:
+    """Not data the client writes: `luadata` refuses it with a position, so
+    every read and edit refuses the file before anything is planned."""
+    data = _book2({KEY_A: player()}, matches=[match([KEY_A])])
+    team = b'["team"] = {'
+    assert team in data
+    data = data.replace(team, b"[{}] = 1,\r\n" + team, 1)
+    with pytest.raises(luadata.LuaDataError):
+        crewbook.parse_book(data)
+    with pytest.raises(luadata.LuaDataError):
+        crewedit.forget(data, [KEY_A])
+    with pytest.raises(luadata.LuaDataError):
+        crewedit.forget_all(data)
+    with pytest.raises(luadata.LuaDataError):
+        crewedit.keys_held(data)
+    found = crewcount.carried([("WowLab.lua", data)])
+    assert found is not None and found.unreadable == 1

@@ -307,13 +307,23 @@ def _checked(
     return after
 
 
+def _named(value: object, keys: Collection[str]) -> bool:
+    """Whether `value` is a string `keys` holds. Only a string can be a
+    player key: a nested table, a number or a boolean in a list is never
+    compared (a table cannot be hashed, and is not a key)."""
+    return isinstance(value, str) and value in keys
+
+
 def _dropped(value: object, keys: Collection[str]) -> object:
-    """A loaded table without the entries `keys` name (as keys, or as the
-    values of a list); an emptied table loads as `{}`."""
+    """A loaded table without the entries `keys` name (as string keys, or
+    as the string values of a list), as `forget` takes them out of the
+    document (`_entry_key`); an emptied table loads as `{}`. Anything else
+    stays, a key inside a nested table included: `names_left` finds such a
+    name, so the command refuses with nothing written."""
     if isinstance(value, dict):
-        return {k: v for k, v in value.items() if k not in keys}
+        return {k: v for k, v in value.items() if not _named(k, keys)}
     if isinstance(value, list):
-        kept = [v for v in value if v not in keys]
+        kept = [v for v in value if not _named(v, keys)]
         return kept if kept else {}
     return value
 

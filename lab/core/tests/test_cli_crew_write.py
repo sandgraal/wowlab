@@ -480,6 +480,22 @@ def test_two_matching_keys_refuse_and_list_the_stored_keys_constructed(
     assert env.live() == data and guard.history() == ()
 
 
+def test_forget_refuses_a_name_inside_a_nested_table_of_a_match_constructed(make: Any) -> None:
+    """M20-03 fix round 1: a damaged match whose `team` holds a table with
+    the name in it. The forget does not reach into it, so it refuses, with
+    nothing written; it never raises and never leaves the name silently."""
+    nested = match([[KEY_A]], [KEY_B])
+    data = account_file(book({KEY_A: player(), KEY_B: player()}, schema=2, matches=[nested]))
+    env = make(data)
+    result = env.run("crew", "forget", KEY_A, "--yes")
+    assert result.exit_code == 1, (result.stdout, result.stderr)
+    assert "would not remove every copy of it. Nothing was changed." in result.stderr
+    assert env.live() == data and guard.history() == ()
+    # A player the nested table does not hold is forgotten as usual.
+    other = env.report("crew", "forget", KEY_B, "--yes")
+    assert other.written and KEY_B.encode() not in env.live()
+
+
 @pytest.mark.parametrize("command", ["forget", "rate", "note"])
 def test_an_unknown_schema_is_refused_constructed(make: Any, command: str) -> None:
     # Schema 3: this wowlab reads 1 and 2 (M20-03; it was 2 before).
