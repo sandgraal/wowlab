@@ -3678,7 +3678,9 @@ Tests only, before any addon code, by a session that does not write M20-05: the 
 ---
 
 ## [ ] M20-06 — Owner: one battleground, and a login timing
-**Size:** S · **Depends on:** M20-05 · **owner** (a short in-game check)
+**Size:** S · **Depends on:** M20-11 · **owner** (a short in-game check)
+
+*Changed 2026-11-20:* this check now comes after M20-11, with the addon that records real matches. Play one battleground to its end, log out, then `wowlab crew sync` and `wowlab crew matches`: the check is whether the match, both teams and what was kept of each player are right. The probe block in `doctor` is still there to read if something is missing.
 
 With the conductor's runbook: install the addon from `main`, play one battleground to its end; after the end stay on the scoreboard, out of combat, for about 30 seconds before leaving or being moved out, so the second probe runs; log out, and read the probe block that `wowlab doctor` prints. Note how long a login takes as the book stands, which will be small: the 20,000 limit is not tested at full size here (§21.7, decision 18).
 
@@ -3686,8 +3688,10 @@ With the conductor's runbook: install the addon from `main`, play one battlegrou
 
 ---
 
-## [ ] M20-07 — Static checks for reading the scoreboard
+## [x] M20-07 — Static checks for reading the scoreboard (dropped)
 **Size:** M · **Depends on:** M20-06 · **Sources:** `docs/LAB_PLAN.md` §21.2 as amended after M20-06
+
+*Dropped 2026-11-20 (owner decision, ADR-0036's second note of that date): the limits these checks would have enforced are lifted. Replaced by M20-11.*
 
 Tests only, by a session that does not write M20-08: the scoreboard calls M20-06 confirmed, gated as the roster calls are, read only after the match has ended and out of combat, each value through the secret-value test; keys built only from a row's name and realm; `matches` entries of the fixed shape; the `matched` marker written before the counters are raised, so a repeated event or a `/reload` counts a match once; nothing from a scoreboard row read, stored, printed or compared but name, realm, class and side: a read of any other field of a row fails, stored or not (ADR-0036's amendment).
 
@@ -3704,8 +3708,10 @@ what is never read; the two are to be checked against each other.
 
 ---
 
-## [ ] M20-08 — The addon: matches and opponents
+## [x] M20-08 — The addon: matches and opponents (dropped)
 **Size:** M · **Depends on:** M20-07, M20-09 · **Sources:** `docs/LAB_PLAN.md` §21.2
+
+*Dropped 2026-11-20: replaced by M20-11.*
 
 `Crew.lua` records each finished match and both teams, raises the counters, and adds "with you N times, against you M" to the warning.
 
@@ -3729,8 +3735,32 @@ own integer limit does not.
 
 ---
 
+## [ ] M20-11 — The addon records matches, opponents and what the client shows of each player
+**Size:** L · **Depends on:** M20-05, M20-09 · **Sources:** `docs/LAB_PLAN.md` §21.2 with its note of 2026-11-20; ADR-0036 with its notes of 2026-11-20
+
+Owner decision, 2026-11-20: the limits on what the crew book records are lifted. One session changes `Crew.lua` and the static checks that grade it (the split into a tests-only ticket is not required here: `Crew.lua` is not a load-bearing file).
+
+- **Matches.** After a battleground or arena ends, out of combat, the addon reads the scoreboard once and writes one `matches` entry: `at`, `map`, `map_id`, `kind`, `won`, `team`, `foes`, and for each player what the row gives (damage, healing, kills, deaths, honor, rating and its change, spec, whatever else the client returns and is a plain value). The `matched` marker is written before the counters are raised, so a repeated event or a `/reload` counts a match once. The four counters and `pvp_last`, `pvp_map`, `pvp_side` are raised as §21.2 says.
+- **Players.** For a group member and for a scoreboard row: the GUID, race, faction, spec, level, guild and honor level where the client gives them, beside what §20.1 already keeps. `UnitGUID` is allowed.
+- **The probe** may store real values of one row and of its own unit, so one match tells the owner what the client returns.
+- **The checks** (`tests/addon/test_lab_addon.py`, `_crew_constructed.py`) lose every rule that existed for privacy: the list of fields never read, "type names only", the refusal of `UnitGUID`, of the later fields and of scoreboard calls outside pinned helpers, and whole-function pins that only served those. They keep the rules about the client and the machine: off means off (nothing read or written while the book is off), the combat block, the secret-value test before any compare or store, no send of any kind (chat, addon message, whisper), the two limits, the schema refusal, no dynamic code. The constructed-keys rule and the repository scan stay (ADR-0036 term 3).
+- **Words.** The turn-on notice, `crew --help`, §20.5 and the addon README say what is now kept, in one identical sentence.
+
+**Acceptance:** `make lint-lua` clean; the reduced checks green on the real file and each kept rule still fails on its own constructed edit; the shape of what is written is set down in §21.2, as built, for M20-12 to read; every in-game fact marked not yet confirmed. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: opponents and match totals are recorded; the wiki's addon page. Not released before M20-12.
+
+---
+
+## [ ] M20-12 — The desk keeps and shows what M20-11 records
+**Size:** L · **Depends on:** M20-11 · **Sources:** `docs/LAB_PLAN.md` §21.2 as built by M20-11, §21.3; ADR-0039
+
+The reader accepts the new fields; the sync keeps them in the crew database (a schema step, with the copy taken first, as M20-02's); `crew show`, `crew matches` and the Crew tab show them; `crew forget` reaches every place a player's key or GUID is held, in the file and the database. One player met under two names (same GUID) is shown as one, with the other names listed.
+
+**Acceptance:** tests on constructed books and databases; forget leaves no key and no GUID of the player in any file under the crew folder or in the saved file; `doctor` and `doctor --redact` still print counts only; text and `--json` say the same. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the new lines and columns; the wiki's crew pages.
+
+---
+
 ## [ ] M20-10 — PvP book wave review
-**Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-07, M20-08, M20-09
+**Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-09, M20-11, M20-12
 
 `docs/handoffs/M20-review.md`: what shipped, each ADR-0036 term with its proof for the database, what stayed [verify], what the option A gap lost in practice, and whether world PvP is worth a wave.
 

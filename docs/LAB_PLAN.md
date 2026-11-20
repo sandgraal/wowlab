@@ -6607,6 +6607,18 @@ every login for good (§21.7, decision 8).
 
 ### 21.2 The saved file, schema 2
 
+*Owner decision, 2026-11-20 (ADR-0036's second note of that date): the
+limits on what the book records are lifted. Read this section with that
+in mind: wherever it says a value is never read or never stored (a GUID,
+race, faction, spec, rating, honor, the scoreboard's totals, `UnitGUID`),
+that rule is gone, and so is the probe's "type names only". What the
+addon records from here on is M20-11's to fix and to write down below,
+as built; M20-07 and M20-08 are dropped for it, and M20-06, the owner's
+match, comes after it. The rules that stay are about the client and the
+machine, not about privacy: the secret-value test, the combat block, the
+gate (off means off), no send of any kind, the limits of 20,000 and 500,
+and L4 at the desk. §21.4's terms 1, 3, 4 and 5 stand.*
+
 The book's `schema` becomes 2. What changes from §20.1:
 
 - **The limit** is 20,000 players (a named constant). The drop order and
@@ -7002,6 +7014,8 @@ small (§21.7, decision 18).
 | M20-07 | Static checks for reading the scoreboard, from what the probe found (tests only) | code, security |
 | M20-08 | The addon: matches and opponents | code, domain, security |
 | M20-09 | Matches at the desk: the sync, `crew matches`, the new filters, the Crew tab | code, security |
+| M20-11 | (2026-11-20, replaces M20-07 and M20-08) The addon records matches, opponents and what the client shows of each player; the checks cut to the rules that stay | code, domain |
+| M20-12 | (2026-11-20) The desk keeps and shows what M20-11 records; one player under two names is linked by GUID | code, security |
 | M20-10 | Wave review | — |
 
 M20-01 needs nothing from the game and starts first; M20-02 follows it.
