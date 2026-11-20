@@ -3650,7 +3650,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 
 ---
 
-## [ ] M20-03 — The desk reads and writes schema 2 of the saved file
+## [x] M20-03 — The desk reads and writes schema 2 of the saved file
 **Size:** M · **Depends on:** M20-01, M20-02 · **Sources:** `docs/LAB_PLAN.md` §21.2; `docs/LAB_FORMATS.md`
 
 `crewbook`, `crewedit`, `crewcount`, the capture tool's empty shape and the repository scan's field list accept schema 2 (the counters, `matches`, `matched`, `probe.pvp`, `warned`, the 20,000 limit) beside schema 1, and the write commands write back the schema they read. `crew forget` removes the key from every match's `team` and `foes`, and `--all` empties `matches`. `doctor` prints the `probe.pvp` block: only whole numbers, true or false, and Lua's fixed type names, anything else as `?` (a test plants a name in the block and searches `doctor --redact` for it). The capture tool refuses a schema 2 book whose `matches` is not empty. `guard.py` and `luadata.py` are not changed.
