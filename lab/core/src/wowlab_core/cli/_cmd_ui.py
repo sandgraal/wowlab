@@ -37,11 +37,12 @@ def ui_command() -> None:
 
     On the Commands tab, a command that asks first (--yes) runs as a plan
     that changes nothing, and runs for real only when you press Confirm
-    under it. snap gc and doctor change only wowlab's own store. The seven
-    that change game files are snap restore, undo, profile apply, sv merge,
-    macros fix, addon install and addon remove, and `wowlab undo` reverses
-    any of the seven. undo, sv merge and macros fix refuse when something
-    changed after the plan;
+    under it. snap gc and doctor change only wowlab's own store. The
+    commands that change game files are snap restore, undo, profile apply,
+    sv merge, macros fix, addon install, addon remove, crew forget, crew
+    rate and crew note, and `wowlab undo` reverses each of them. Of these,
+    undo, sv merge, macros fix, crew forget, crew rate and crew note refuse
+    when something changed after the plan;
     the others apply what is there when you confirm. ui itself, log tail
     --follow, looks page --out, casc cat --out, char model --out, snap
     export and snap rm are not offered, so casc cat and char model write only

@@ -1,8 +1,6 @@
 """`wowlab snap create`, `list`, `show`, `diff`, `verify`, `gc`, `rm` (M19-09),
 `export` and `import` (M16-111)."""
 
-import os
-import stat
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Annotated
@@ -41,6 +39,7 @@ from wowlab_core.cli._cmd_sv import (
 )
 from wowlab_core.cli._common import (
     _KIND_WORDS,
+    _RM_DAMAGED,
     EXIT_ERROR,
     EXIT_USAGE,
     CliError,
@@ -53,11 +52,13 @@ from wowlab_core.cli._common import (
     _client_running,
     _confirm,
     _crew_export_line,
+    _damaged_words,
     _discover,
     _emit,
     _emit_manifest,
     _given_flavor,
     _handled,
+    _not_a_record,
     _note,
     _Out,
     _pre_write_ids,
@@ -637,40 +638,12 @@ def snap_gc(
         _say(_kept_young_line(report.kept_young))
 
 
-_RM_DAMAGED = "`wowlab snap rm {} --break-undo` removes it."
-"""How a damaged snapshot is removed, said by `snap gc` (with `<full id>`)
-and by `snap list`, `show` and `verify` (with the id) alike."""
-
 _GC_DAMAGED = (
     "a snapshot in wowlab's snapshot folder is damaged: its record cannot be read, so "
     "wowlab cannot tell which stored files it needs, and snap gc removes nothing while it "
     "is there. `wowlab snap verify` names it; " + _RM_DAMAGED.format("<full id>")
 )
 """`snap gc`'s refusal while a manifest does not load (M19-12)."""
-
-
-def _damaged_words(store: snapshot.SnapshotStore, name: str) -> str:
-    """What is said of a manifest file `name` (`<id>.json`) that does not
-    load (M19-13): its id, that its record cannot be read, and how it is
-    removed; for a link or anything not a regular file in its place,
-    `_not_a_record`. Never the loader's words, which quote the file. Text
-    and `--json` carry the same sentence."""
-    sid = name.removesuffix(".json")
-    try:
-        st: os.stat_result | None = os.lstat(store.manifests_dir / name)
-    except (OSError, ValueError):
-        st = None
-    if st is not None and (snapshot._is_link_stat(st) or not stat.S_ISREG(st.st_mode)):
-        return _not_a_record(store, sid)
-    if not snapshot._ID_RE.match(sid):
-        return _safe(
-            f"{name} in wowlab's snapshot folder cannot be read as a snapshot record, and its "
-            "name is not a snapshot id. wowlab leaves it alone; you can remove it by hand."
-        )
-    return _safe(
-        f"snapshot {sid} is damaged: its record in wowlab's snapshot folder cannot be read. "
-        + _RM_DAMAGED.format(sid)
-    )
 
 
 def _damaged_records(
@@ -698,16 +671,6 @@ def _read_snapshot(store: snapshot.SnapshotStore, reference: str) -> snapshot.Ma
         return store.show(full)
     except snapshot.ManifestIntegrityError:
         raise CliError(_damaged_words(store, full + ".json")) from None
-
-
-def _not_a_record(store: snapshot.SnapshotStore, name: str) -> str:
-    """Said of a link, or anything not a regular file, in a snapshot
-    record's place (M19-12 review), by `snap gc` and `snap rm` alike."""
-    return _safe(
-        f"something other than a snapshot record (a link, or not a regular file) stands in "
-        f"the place of the record of {name} in wowlab's snapshot folder ({store.path}). "
-        "wowlab leaves it alone and never removes it; you can remove it by hand."
-    )
 
 
 def _kept_young_line(n: int) -> str:

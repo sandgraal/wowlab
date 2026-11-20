@@ -508,9 +508,10 @@ What to look for:
   log. Other files have no Preview button.
 - **The commands tab.** Runs this wowlab's commands with `--json` and shows
   the result. Every command is offered except `ui` itself,
-  `log tail --follow`, `looks page --out` and `snap export`. The seven that change game
+  `log tail --follow`, `looks page --out` and `snap export`. The commands that change game
   files are `snap restore`, `undo`, `profile apply`, `sv merge`,
-  `macros fix`, `addon install` and `addon remove`: each shows its plan first, takes a
+  `macros fix`, `addon install`, `addon remove`, `crew forget`, `crew rate`
+  and `crew note`: each shows its plan first, takes a
   snapshot before it writes, and `wowlab undo` reverses it.
 - **Character.** One character as the lab-addon last saved it, at logout
   or `/reload`: gear, key bindings and macros, the same answers

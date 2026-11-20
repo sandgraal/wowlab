@@ -6552,8 +6552,11 @@ with a warning, 20,000 players in game, opponents from the scoreboard,
 world PvP left out, and M19 finishes first. The owner accepted ADR-0036's
 amendment of 2026-11-19 and ADR-0039 in session on 2026-11-19, and ruled
 the same day that M20-01, which needs nothing from the game, may start as
-soon as M19-10 and M19-06 have merged; every other ticket waits for
-M19-08.*
+soon as M19-10 and M19-06 have merged. On 2026-11-20 the owner let the
+other desk tickets (M20-02, M20-03, M20-09) and the addon's schema 2 work
+(M20-04, M20-05) start before M19-08 as well, knowing that the in-game
+check of M19-07 may send some of the addon work back. M20-06 onward still
+waits for the owner.*
 
 **Aim.** The crew book (§20) remembers the players you group with, up to
 5,000. This wave removes the limit at the desk, and adds the players you
