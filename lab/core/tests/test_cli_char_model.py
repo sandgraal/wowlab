@@ -13,6 +13,7 @@ reaches the network. The user data directory is redirected into
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import random
@@ -26,7 +27,7 @@ from typing import Any, BinaryIO
 import pytest
 from typer.testing import CliRunner
 
-from wowlab_core import cascfiles, cli, renderplan
+from wowlab_core import cascfiles, charmodel, cli, renderplan
 from wowlab_core.gamedata import GameData
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
@@ -89,8 +90,12 @@ class _Tables:
         return f"fixture:{table}.{build}.csv"
 
 
-def _plan_files(label: str, origin_hands: bool | tuple[int, ...] = False) -> dict[int, bytes]:
+def _plan_files(
+    label: str, origin_hands: bool | tuple[int, ...] = False, fixture: bool = False
+) -> dict[int, bytes]:
     bare = renderplan.plan_for_record(cb.tables(), cb.record(label))
+    if fixture:
+        return cb.files_for(bare, fixture=True)
     if isinstance(origin_hands, tuple):
         return cb.files_for(bare, cb.at_origin(origin_hands))
     return cb.files_for(bare, cb.ORIGIN_HANDS if origin_hands else cb.ATTACHMENTS)
@@ -100,11 +105,12 @@ def _install(
     tmp: Path,
     drop: set[int] = frozenset(),  # type: ignore[assignment]
     origin_hands: bool | tuple[int, ...] = False,
+    fixture: bool = False,
 ) -> Path:
     rng = random.Random(1511)
     files: dict[int, bytes] = {}
     for label in ("Sangraal-Sett", "Dangling-Participle"):
-        files.update(_plan_files(label, origin_hands))
+        files.update(_plan_files(label, origin_hands, fixture))
     stored = []
     rows: list[EncodingRow] = []
     ids, keys = [], []
@@ -152,6 +158,7 @@ def _env(
     *,
     origin_hands: bool | tuple[int, ...] = False,
     copy_to: tuple[str, str] | None = None,
+    fixture: bool = False,
 ) -> Iterator[Env]:
     monkeypatch.delenv("WOWLAB_WOW_ROOT", raising=False)
     monkeypatch.delenv("WOWLAB_FLAVOR", raising=False)
@@ -165,7 +172,7 @@ def _env(
         yield GameData(served, cache_dir=home / "gamedata")
 
     monkeypatch.setattr(cli, "_open_gamedata", fake)
-    root = _install(tmp_path, drop, origin_hands)
+    root = _install(tmp_path, drop, origin_hands, fixture)
     if copy_as is not None:
         realm = root / FLAVOR / "WTF" / "Account" / cb.ACCOUNT / "1"
         shutil.copytree(realm / "Sangraal-Sett", realm / copy_as)
@@ -249,7 +256,7 @@ def test_an_item_at_the_origin_that_is_not_held_gets_the_general_sentence(
 
     monkeypatch.setattr(renderplan, "plan_for_record", as_shoulder)
     for env in _env(tmp_path, monkeypatch, set(), origin_hands=(0, 1, 2, 5, 6)):
-        result = env.run("--character", "Sangraal-Sett")
+        result = env.run("--character", "Sangraal-Sett", "--no-held")
         assert result.exit_code == 0, result.output
         text = " ".join(result.stdout.split())
         assert "Not drawn (2): main hand, item 2632; shoulder, item 15969" in text
@@ -262,14 +269,14 @@ def test_held_items_at_the_origin_are_listed_once_with_one_reason(
     """Constructed: a body model whose hand points sit at its origin, as the
     fixture body models at 70959 store them."""
     for env in _env(tmp_path, monkeypatch, set(), origin_hands=True):
-        result = env.run("--character", "Sangraal-Sett")
+        result = env.run("--character", "Sangraal-Sett", "--no-held")
         assert result.exit_code == 0, result.output
         text = " ".join(result.stdout.split())
         assert (
             "Not drawn (2): main hand, item 2632; off hand, item 15969. " + cli._HELD_ITEMS
         ) in text
         assert "attachment point" not in text and text.count(cli._HELD_ITEMS) == 1
-        report = json.loads(env.run("--character", "Sangraal-Sett", "--json").stdout)
+        report = json.loads(env.run("--character", "Sangraal-Sett", "--json", "--no-held").stdout)
         held = [m for m in report["models"] if m["what"] == "item"]
         assert all(m["at_origin"] and not m["placed"] for m in held)
         assert held[0]["reason"] == (
@@ -643,3 +650,72 @@ def test_replace_derived_only_writes_under_characters(env: Env) -> None:
     cascfiles.replace_derived(b"two", target, folder)
     assert target.read_bytes() == b"two"
     assert oct(target.parent.stat().st_mode & 0o777) in ("0o700", "0o777")
+
+
+# ─── held items, sheathed (M15-27) ───────────────────────────────────────────
+
+
+@pytest.fixture
+def derived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
+    """The fixture body models' sheath points and bones from the derived
+    fixture (`_charmodel_build.fixture_body_files`), hand points at the
+    origin as the real files store them."""
+    yield from _env(tmp_path, monkeypatch, set(), fixture=True)
+
+
+@pytest.mark.parametrize(
+    ("label", "lines"),
+    [
+        (
+            "Sangraal-Sett",
+            ["main hand: item 2632, drawn sheathed", "off hand: item 15969, drawn sheathed"],
+        ),
+        ("Dangling-Participle", ["main hand: item 5778, drawn sheathed"]),
+    ],
+)
+def test_the_fixture_weapons_are_drawn_sheathed_and_said_once(
+    derived: Env, label: str, lines: list[str]
+) -> None:
+    result = derived.run("--character", label)
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.stdout.split())
+    for line in lines:
+        assert line in text
+    assert text.count(cli._SHEATHED) == 1
+    assert cli._SHEATHED == "Items drawn sheathed: placement approximate (not yet confirmed)."
+    assert text.count("(not yet confirmed)") == 1
+    assert cli._HELD_ITEMS not in text and "Not drawn" not in text
+    report = json.loads(derived.run("--character", label, "--json").stdout)
+    items = [m for m in report["models"] if m["what"] == "item"]
+    assert len(items) == len(lines)
+    assert all(
+        m["placed"] and m["sheathed"] and m["placement"] == charmodel.SHEATHED for m in items
+    )
+    assert report["glb"]["nodes"] == 1 + len(lines)
+    parsed = read_glb(derived.glb(label).read_bytes())
+    assert all("rotation" in node for node in parsed.nodes[1:])
+    cli.CharModelReport.model_validate(report)
+
+
+@pytest.mark.parametrize("label", ["Sangraal-Sett", "Dangling-Participle"])
+def test_no_held_writes_mains_glb_and_pngs_and_says_what_main_said(
+    derived: Env, label: str
+) -> None:
+    from test_charmodel_sheathed import MAIN_GLB, MAIN_PNG
+
+    result = derived.run("--character", label, "--no-held")
+    assert result.exit_code == 0, result.output
+    glb = derived.glb(label)
+    digest = hashlib.md5(glb.read_bytes(), usedforsecurity=False).hexdigest()
+    assert digest == MAIN_GLB[(label, "origin")]
+    for part, expected in MAIN_PNG.items():
+        png = glb.with_name(f"{label}.{part}.png").read_bytes()
+        assert hashlib.md5(png, usedforsecurity=False).hexdigest() == expected
+    text = " ".join(result.stdout.split())
+    assert cli._HELD_ITEMS in text and "sheathed" not in text
+    assert "(not yet confirmed)" not in text
+
+
+def test_no_held_is_in_the_help() -> None:
+    result = runner.invoke(cli.app, ["char", "model", "--help"], terminal_width=200)
+    assert "--no-held" in result.stdout
