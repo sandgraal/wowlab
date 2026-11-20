@@ -82,6 +82,12 @@ empty shape of `docs/LAB_PLAN.md` §20.5 (CREW_BOOK_NAME, crew_book_problems).
 There is no flag that empties a book or skips the check; the refusal gives the
 reason, never a key.
 
+The lab-addon's file (M20-13): in a file holding `WowLabCharDB`, a player
+GUID that is not the owner's (a crafter's in an item link) gets an invented
+GUID, as another player's does in a combat log (labaddon_other_guids). Macro
+text, binding commands, guild names and times are kept as captured (owner's
+ruling, 2026-11-20).
+
 SQLite files (M20-02, `docs/LAB_PLAN.md` §21.4 term 3): any file, whatever its
 name or kind, holding the SQLite database header, or starting with a rollback
 journal's header, is refused with one fixed reason (SQLITE_LABEL,
@@ -1706,6 +1712,36 @@ class OtherPlayers:
             hunted=tuple(hunted),
             unpaired=unpaired,
         )
+
+
+# ─── another player's GUID in the lab-addon's file (M20-13) ──────────────────
+
+# Since schema 5 (ADR-0026, note of 2026-11-20, and its correction of that
+# day) the lab-addon's per-character `WowLabCharDB` keeps an item link as the
+# client gives it, and a crafted item's link can carry its crafter's player
+# GUID. The owner's own GUID is replaced as in every file; any other player
+# GUID in a file holding that variable gets the invented form a combat log
+# gives another player (OTHER_GUID_FORMAT), numbered in order of first
+# appearance, byte-level, so the owner's capture is not refused for wearing
+# a crafted item. Macro text, binding commands, guild names and times are
+# not secret (the owner's ruling of 2026-11-20) and are kept as captured.
+LABADDON_VARIABLE_RE = re.compile(rb"(?m)^WowLabCharDB\s*=")
+
+
+def labaddon_other_guids(data: bytes, identity: Identity) -> OtherUnits | None:
+    """Invented GUIDs for every player GUID in `data` that is not one of
+    the owner's, when `data` holds `WowLabCharDB`; None otherwise."""
+    if LABADDON_VARIABLE_RE.search(data) is None:
+        return None
+    players: dict[bytes, int] = {}
+    for m in GUID_RE.finditer(data):
+        key = m.group(0).upper()
+        if key not in identity.guids:
+            players.setdefault(key, len(players))
+    if not players:
+        return None
+    guids = {key: OTHER_GUID_FORMAT % (index + 1) for key, index in players.items()}
+    return OtherUnits(guids=guids, edits=(), fields=(), hunted=(), unpaired=0)
 
 
 # ─── non-player unit GUIDs in a combat log (always) ──────────────────────────
@@ -3472,6 +3508,10 @@ def process(
         problems = [*binary, *path_problems]
         return Outcome(item, dest, ScrubResult(b"", (), tuple(binary)), problems)
     units = others.units(original, identity) if others is not None and kind == "combatlog" else None
+    if units is None:
+        # A lab-addon file (M20-13): another player's GUID, a crafter's in an
+        # item link, gets an invented GUID instead of refusing the file.
+        units = labaddon_other_guids(original, identity)
     located = (locations or UnitGuids()).scan(original) if kind == "combatlog" else None
     stamped = shift.scan(original) if shift is not None and kind == "combatlog" else None
     countries = country_scan(original) if kind == "build-info" else None

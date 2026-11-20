@@ -120,7 +120,6 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'lab/core/tests/review/test_m11_01_carry_check_misses_saved_subtables.py'
-              - 'lab/core/tests/review/test_m11_01_clock_check_misses_os_time.py'
               - 'lab/core/tests/review/test_m11_01_line_based_privacy_tests_fail_open.py'
               - 'lab/core/tests/review/test_m11_01_pet_guid_check_misses_concatenated_lookup.py'
               - 'lab/core/tests/review/test_m11_13_stored_value_check_misses_call_stores.py'
@@ -137,6 +136,7 @@ jobs:
               - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_raw_value_not_from_a_named_handle.py'
               - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py'
               - 'lab/core/tests/review/test_m20_11_hollow_once_and_limit_rules.py'
+              - 'lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py'
 
   quality:
     name: Lint, typecheck, tests

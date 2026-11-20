@@ -83,43 +83,30 @@ STD = ADDON_ROOT / "wow_client.yml"
 README = ADDON_ROOT / "README.md"
 SOURCES = sorted(ADDON.glob("*.lua"))
 
-# The ticket's list: identity, realm, GUID, guild, Battle.net and chat APIs.
+# What stays refused in every file, Crew.lua included (ADR-0026, note of
+# 2026-11-20; M20-13): every send (chat, whisper, addon message, mail, a link
+# or text put into the chat box), the Battle.net identity (`BNGetInfo` and the
+# tables that give a BattleTag), and the readers no ticket builds (the chat
+# and community tables, the combat log, the group finder, the friends list,
+# each of which also holds a call that acts on the server). The addon-wide
+# privacy list of M11-01 to M19-01 (`UnitName`, `GetRealmName`, `UnitGUID`,
+# `GetGuildInfo`, `GetMacroBody` and the rest) is gone with that note.
 FORBIDDEN_APIS = (
-    "UnitName",
-    "UnitFullName",
-    "GetUnitName",
-    "GetRealmName",
-    "GetNormalizedRealmName",
-    "UnitGUID",
-    "GetGuildInfo",
     "BNGetInfo",
     "C_BattleNet",
-    "C_ChatInfo",
-    "GetPlayerInfoByGUID",
-    # Added in review (M11-01 fix round 1): more identity, roster and typed text.
-    "UnitNameUnmodified",
-    "UnitPVPName",
-    "GetGuildRosterInfo",
     "BNGetFriendInfo",
-    "GetMacroBody",
+    "C_ChatInfo",
     "C_Club",
     "C_FriendList",
-    # M19-01 (docs/LAB_PLAN.md §20.1, "The warning"): the addon never sends a
-    # chat message or a whisper, nor puts text or a link into the chat box.
     "SendChatMessage",
     "BNSendWhisper",
     "ChatFrame_OpenChat",
     "ChatEdit_InsertLink",
-    # M19-01 security review: the roster, the combat log, the group finder,
-    # addon messages, mail, a whisper box, and a tooltip's unit (as
-    # `GameTooltip:GetUnit()` or any other receiver's `:GetUnit`).
-    "GetRaidRosterInfo",
     "CombatLogGetCurrentEventInfo",
     "C_LFGList",
     "SendAddonMessage",
     "SendMail",
     "ChatFrame_SendTell",
-    "GetUnit",
 )
 # Dynamic global lookup would let a forbidden name hide in a string.
 DYNAMIC_LOOKUP = (
@@ -145,54 +132,11 @@ DYNAMIC_LOOKUP = (
     "package",
     "loadfile",
 )
-# §13.1: the capture records no wall-clock time.
-# `os` covers os.time() and os.date(); `C_Calendar` covers the in-game calendar.
-CLOCK = (
-    "time",
-    "date",
-    "os",
-    "GetTime",
-    "GetServerTime",
-    "GetGameTime",
-    "C_DateAndTime",
-    "C_Calendar",
-)
-# No std-declared client global may look like an identity, chat, roster,
-# CVar, macro or equipment-set API (security review, M11-01).
-STD_PRIVACY = re.compile(
-    r"Name|Realm|GUID|Guild|^BN|C_BattleNet|C_Club|C_FriendList|C_ChatInfo|CVar|Macro|C_EquipmentSet"
-    r"|SendChatMessage|ChatFrame_OpenChat|ChatEdit_"
-    r"|GetRaidRosterInfo|CombatLog|C_LFGList|SendAddonMessage|SendMail|ChatFrame_SendTell"
-    r"|GameTooltip|GetUnit$"
-)
-# Names that match STD_PRIVACY but are not identity APIs, each with its reason.
-STD_PRIVACY_ALLOW: dict[str, str] = {
-    # M13-05: a spellbook item's name and subtext (a rank where the client
-    # gives one) are the game's text for a spell, not anyone's name.
-    "C_SpellBook.GetSpellBookItemName": "the game's name and subtext of a spell",
-    # M13-05: asked only whether an action slot's id names a macro; the name
-    # is bound to `_`, the body to nothing, and neither is stored
-    # (test_m13_05_macro_info_binds_neither_name_nor_body pins the one use).
-    "GetMacroInfo": "probe only: the name and body are never bound to a used name or stored",
-}
-# Events that would deliver chat, guild, community, Battle.net or friends data.
-PRIVATE_EVENT = re.compile(r"^(CHAT_MSG_|GUILD_|CLUB_|BN_|FRIENDLIST_)")
-# The one place a stored item link may come from (Gear.lua).
-CRAFTER_BLANKING = 'local clean , removed = string . gsub ( raw , "Player%-%d+%-%x+" , "" )'
+# Events that would deliver chat, community or Battle.net data, which no
+# ticket reads (M20-13: the guild and friends events left with the privacy
+# list).
+PRIVATE_EVENT = re.compile(r"^(CHAT_MSG_|CLUB_|BN_)")
 TOC_INTERFACE_LINE = "## Interface: @WOWLAB_INTERFACE@"
-# ADR-0026 / §13.1: no names of anyone, no text the owner typed.
-NAME_FIELDS = (
-    "name",
-    "fullName",
-    "realm",
-    "realmName",
-    "guid",
-    "GUID",
-    "battleTag",
-    "accountName",
-    "customName",
-    "petID",
-)
 # APIs whose first argument is a unit token, besides every `Unit*` function.
 UNIT_FIRST_ARG = frozenset(
     {
@@ -230,16 +174,10 @@ OWN_GLOBALS = frozenset({"WowLabCharDB", "WowLabDB", "SLASH_WOWLAB1", BOOK})
 # all) and is read through `_relaxed` only; no rule has a second exception.
 # Each entry names the rule it relaxes and exactly what it lets through:
 #
-# - FORBIDDEN_APIS: the four name calls of §20.1 (`UnitName`, `UnitFullName`,
-#   `GetNormalizedRealmName`, `GetGuildInfo`), as names, not as fields; and a
-#   string that holds one of them inside a sentence (an `absent` reason such
-#   as "the client has no UnitFullName function"), never the bare name.
-#   `UnitGUID` and every other entry stay refused, chat sends included.
-# - CLOCK: `time` and `date` (the record's `first`/`last`, the warning's
-#   date). `os`, `GetTime` and the rest stay refused.
-# - NAME_FIELDS: `name` and `realm` as a field or a `["..."]` key.
-# - STD_PRIVACY: wow_client.yml (global, not per file) may declare the four
-#   name calls only while Crew.lua references each and no other file does.
+# - M20-13 (ADR-0026, note of 2026-11-20): the FORBIDDEN_APIS, CLOCK,
+#   NAME_FIELDS and STD_PRIVACY relaxations are gone with the addon-wide
+#   rules they relaxed. Crew.lua's own rules still hold its name calls
+#   (CREW_NAME_CALLS) to the gate and the secret test.
 # - UNIT_ARGUMENT: the unit-token literals `party`, `raid` and `target`, and a
 #   unit call whose first argument is a local bound once, only from
 #   `"party" .. i`, `"raid" .. i` (i a number or a numeric `for` variable) or
@@ -354,11 +292,6 @@ CREW_SCHEMA_DECL = "local CREW_SCHEMA = 2"
 CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
 CREW_COMMAND_CALL = "ns . CrewCommand ( message )"
 CREW_RELAXED: dict[str, frozenset[str]] = {
-    "FORBIDDEN_APIS": CREW_NAME_CALLS,
-    "CLOCK": frozenset({"time", "date"}),
-    # M20-11: and `guid` (a group member's, a scoreboard row's).
-    "NAME_FIELDS": frozenset({"name", "realm", "guid"}),
-    "STD_PRIVACY": CREW_NAME_CALLS,
     "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS}),
     "CONCAT_INDEX": frozenset({"-"}),
     "SAVED_VARIABLES": frozenset({CREW_DB}),
@@ -379,29 +312,11 @@ CREW_NS_READS = frozenset(
     {"On", "Call", "Fn", "Number", "String", "Bool", "Pack", "Numbers", *CREW_EXPORTS}
 )
 # Never relaxed, Crew.lua included: every send (§20.1), the combat log and the
-# chat and community readers (no ticket builds them), the clock's `os`. M20-11
-# (owner decision, 2026-11-20): `UnitGUID` left this list for Crew.lua only
-# (CREW_NAME_CALLS); `GetPlayerInfoByGUID` stays, since Crew.lua has no use
-# for it.
-NEVER_RELAXED = frozenset(
-    {
-        "GetPlayerInfoByGUID",
-        "C_ChatInfo",
-        "C_Club",
-        "SendChatMessage",
-        "BNSendWhisper",
-        "ChatFrame_OpenChat",
-        "ChatEdit_InsertLink",
-        "GetRaidRosterInfo",
-        "CombatLogGetCurrentEventInfo",
-        "C_LFGList",
-        "SendAddonMessage",
-        "SendMail",
-        "ChatFrame_SendTell",
-        "GetUnit",
-        "os",
-    }
-)
+# chat and community readers (no ticket builds them). M20-13 (ADR-0026, note
+# of 2026-11-20): exactly FORBIDDEN_APIS; `GetPlayerInfoByGUID`,
+# `GetRaidRosterInfo`, `GetUnit` and the clock's `os` left with the privacy
+# list.
+NEVER_RELAXED = frozenset(FORBIDDEN_APIS)
 # The on test and the combat test, as the first two statements of a function
 # that makes a relaxed call, and the two functions they call, pinned whole: an
 # edited test (`return true`, a dropped `not`) would let the calls run with the
@@ -748,18 +663,15 @@ def test_toc_loads_every_source_and_nothing_else() -> None:
 
 
 def _forbidden_api_problems(path: Path, tokens: list[Token]) -> list[str]:
-    relaxed = _relaxed(path, "FORBIDDEN_APIS")
+    """A kept name (a send, the Battle.net identity, a reader no ticket
+    builds) as a name, a field, or inside any string, in every file: no file
+    is relaxed (M20-13)."""
     bad = []
-    for i, t in enumerate(tokens):
+    for t in tokens:
         if t.kind == "name" and t.text in FORBIDDEN_APIS:
-            if t.text in relaxed and not _is_field(tokens, i):
-                continue  # Crew.lua: the gate test grades each use
             bad.append(f"{_where(path, t)} {t.text}")
-        elif t.kind == "string":
-            hits = [api for api in FORBIDDEN_APIS if api in t.text]
-            # Crew.lua: a name call inside a sentence, never the bare name.
-            if any(api not in relaxed or t.text == api for api in hits):
-                bad.append(f"{_where(path, t)} {t.text!r}")
+        elif t.kind == "string" and any(api in t.text for api in FORBIDDEN_APIS):
+            bad.append(f"{_where(path, t)} {t.text!r}")
     return bad
 
 
@@ -802,44 +714,6 @@ def test_dynamic_lookup_constructed_environment_reads() -> None:
         if name not in {t.text for t in _dynamic_lookups(tokenize(line))}
     ]
     assert not missed, missed
-
-
-def _clock_problems(path: Path, tokens: list[Token]) -> list[str]:
-    clock = set(CLOCK) - _relaxed(path, "CLOCK")
-    return [
-        f"{_where(path, t)} {t.text}"
-        for i, t in enumerate(tokens)
-        if t.kind == "name" and t.text in clock and not _is_field(tokens, i)
-    ]
-
-
-@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
-def test_sources_read_no_clock(path: Path) -> None:
-    bad = _clock_problems(path, _tokens(path))
-    assert not bad, bad
-
-
-def _name_field_problems(path: Path, tokens: list[Token]) -> list[str]:
-    fields = set(NAME_FIELDS) - _relaxed(path, "NAME_FIELDS")
-    bad = []
-    for i, t in enumerate(tokens):
-        if t.kind == "name" and t.text in fields and _is_field(tokens, i):
-            bad.append(f"{_where(path, t)} .{t.text}")
-        if (
-            t.kind == "string"
-            and t.text in fields
-            and i > 0
-            and tokens[i - 1].text == "["
-            and tokens[i + 1].text == "]"
-        ):
-            bad.append(f"{_where(path, t)} [{t.text!r}]")
-    return bad
-
-
-@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
-def test_sources_read_no_name_fields(path: Path) -> None:
-    bad = _name_field_problems(path, _tokens(path))
-    assert not bad, bad
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
@@ -1001,46 +875,6 @@ def _concat_index_problems(path: Path, tokens: list[Token]) -> list[str]:
     return bad
 
 
-def test_stored_item_links_only_come_from_crafter_blanking() -> None:
-    """ADR-0026: a crafted item's link can hold the crafter's player GUID.
-
-    Every `link =` field in the sources is `link = clean`, and `clean` is bound
-    only by the one gsub that blanks `Player-<id>-<hex>` runs, in Gear.lua.
-    """
-    problems = []
-    blanking_sites = []
-    for path in SOURCES:
-        tokens = _tokens(path)
-        for i, t in enumerate(tokens):
-            if t.kind != "name":
-                continue
-            if (
-                t.text == "link"
-                and tokens[i + 1].text == "="
-                and tokens[i - 1].text in {"{", ",", "."}
-            ):
-                value = tokens[i + 2]
-                end = tokens[i + 3].text
-                if not (value.kind == "name" and value.text == "clean" and end in {",", "}"}):
-                    problems.append(
-                        f"{_where(path, t)} link = {value.text} (not the blanked value)"
-                    )
-            if t.text == "clean" and not _is_field(tokens, i):
-                if i > 0 and tokens[i - 1].text == "local":
-                    if (
-                        _statement_at(tokens, i - 1, len(CRAFTER_BLANKING.split(" ")))
-                        == CRAFTER_BLANKING
-                    ):
-                        blanking_sites.append(_where(path, t))
-                    else:
-                        problems.append(f"{_where(path, t)} `clean` bound by something else")
-                elif tokens[i + 1].text == "=" and tokens[i + 2].text != "=":
-                    problems.append(f"{_where(path, t)} `clean` reassigned")
-    assert not problems, problems
-    assert len(blanking_sites) == 1, blanking_sites
-    assert blanking_sites[0].startswith(str(Path("lab/addon/WowLab/Gear.lua")))
-
-
 def _fn_call_problems(path: Path, tokens: list[Token]) -> list[str]:
     """Checks, on tokens: every `ns.Fn(` call other than its definition
     (`function ns.Fn(`) is exactly `ns.Fn(<Name>, "<string literal>")`; `ns.Fn`
@@ -1111,70 +945,6 @@ def test_pet_rows_bind_only_species_and_owned() -> None:
             if not re.fullmatch(r"local \w+ , \w+ = select \( 2 , ns \. Call \( \w+ ,", call):
                 problems.append(f"{_where(path, t)} {call!r}")
     assert lookups == 1
-    assert not problems, problems
-
-
-def _std_privacy_problems(declared: set[str], refs: dict[Path, set[str]]) -> list[str]:
-    """A declared name that looks like an identity or chat API, unless listed
-    in STD_PRIVACY_ALLOW, or one of Crew.lua's name calls that Crew.lua
-    references and no other file does (M19-01: the std is global, so the
-    relaxation is tied to who uses the name)."""
-    hits = []
-    for n in sorted(declared - OWN_GLOBALS):
-        if not STD_PRIVACY.search(n) or n in STD_PRIVACY_ALLOW:
-            continue
-        users = {path for path, names in refs.items() if n in names}
-        if users and all(n in _relaxed(path, "STD_PRIVACY") for path in users):
-            continue
-        hits.append(f"{n} (referenced by {sorted(p.name for p in users)})")
-    return hits
-
-
-def test_std_declares_no_identity_like_api() -> None:
-    refs = {}
-    for path in SOURCES:
-        tokens = _tokens(path)
-        refs[path] = _fn_lookups(tokens) | _dotted_references(tokens)
-    hits = _std_privacy_problems(_std_globals(), refs)
-    assert not hits, hits
-
-
-def test_raw_item_link_only_reaches_item_level_and_blanking() -> None:
-    """The raw link (which may hold a crafter GUID) is bound once, in Gear.lua,
-    and only type-checked, passed to the item-level lookup, and blanked.
-    This covers what the literal `link =` check cannot see."""
-    allowed_uses = {
-        "type ( raw )",
-        "itemLevel ( slot , raw )",
-        'string . gsub ( raw , "Player%-%d+%-%x+"',
-    }
-    binding = 'local raw = GetInventoryItemLink ( "player" , slot )'
-    problems = []
-    bindings = 0
-    for path in SOURCES:
-        tokens = _tokens(path)
-        for i, t in enumerate(tokens):
-            if t.kind == "name" and t.text == "GetInventoryItemLink" and not _is_field(tokens, i):
-                if tokens[i - 1].text == "(" and tokens[i - 2].text == "type":
-                    continue  # existence test
-                if _render(tokens[i - 3 : i + 6]) != binding:
-                    problems.append(f"{_where(path, t)} GetInventoryItemLink not bound to `raw`")
-            if t.kind != "name" or t.text != "raw" or _is_field(tokens, i):
-                continue
-            if path.name != "Gear.lua":
-                problems.append(f"{_where(path, t)} `raw` outside Gear.lua")
-            elif tokens[i - 1].text == "local":
-                bindings += 1
-                if _render(tokens[i - 1 : i + 8]) != binding:
-                    problems.append(f"{_where(path, t)} `raw` bound by something else")
-            elif not any(
-                use in {_render(tokens[i - k : i - k + len(use.split(" "))]) for k in range(6)}
-                for use in allowed_uses
-            ):
-                problems.append(
-                    f"{_where(path, t)} `raw` used as {_render(tokens[i - 3 : i + 3])!r}"
-                )
-    assert bindings == 1
     assert not problems, problems
 
 
@@ -2861,6 +2631,8 @@ def test_skip_section_keys_are_the_plan_keys() -> None:
         "bindings",
         # Schema 4 (M15-01).
         "identity",
+        # Schema 5 (M20-13).
+        "macros",
     }
 
 
@@ -3051,9 +2823,10 @@ def test_first_pass_runs_on_its_own_timer() -> None:
     assert first.startswith(
         "function startFirstPass ( ) if firstPassStarted then return end firstPassStarted = true"
     )
+    # M20-13: the first pass, like every later one, waits for combat to end.
     assert (
-        "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true gatherDirty ( ) end )"
-        in first
+        "timerAfter ( FIRST_PASS_DELAY , function ( ) firstPassDone = true "
+        "if inCombat then firstPassWaiting = true else gatherDirty ( ) end end )" in first
     )
     # Not merged into, nor swallowed by, the change-event debounce.
     assert "pending" not in first.split() and "schedule" not in first.split()
@@ -3095,7 +2868,10 @@ def test_skip_before_the_first_pass_takes_effect() -> None:
     dirty = _body(flow, "gatherDirty")
     assert "if section . dirty then gather ( section ) end" in dirty
     assert _body(flow, "gather").startswith(f"function gather ( section , event ) {OFF_GUARD}")
-    assert "gatherDirty ( ) ns . Write ( )" in _body(flow, 'ns.On("PLAYER_LOGOUT")')
+    # M20-13: out of combat only (nothing is gathered in combat).
+    assert 'if not inCombat then gatherDirty ( ) end ns . Write ( "logout" )' in _body(
+        flow, 'ns.On("PLAYER_LOGOUT")'
+    )
 
 
 def test_unskip_of_a_section_already_back_on_says_so() -> None:
@@ -3170,7 +2946,8 @@ def test_never_gathered_section_is_written_with_events_unregistered() -> None:
         'else record = ns . state [ section . key ] or ns . Absent ( section . not_gathered or "not gathered this session" ) '
         'if section . listener and type ( section . events ) == "table" and # section . events > 0 then '
         "record . events_unregistered = section . events_unregistered or { } end "
-        "end place ( db , section . path , record )"
+        # M20-13 (schema 5): `probes` only in a debug session.
+        "quiet ( record ) end place ( db , section . path , record )"
     ) in write, write
     attach = "record . events_unregistered = section . events_unregistered or { }"
     rendered = [_render(_tokens(path)) for path in SOURCES]
@@ -3371,7 +3148,9 @@ def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
     assert listen.startswith(
         "function listen ( section ) local changes = { } "
         "for _ , event in ipairs ( section . events or { } ) do changes [ event ] = true end "
-        "local counts = nil if section . count_only then counts = { } end"
+        # M20-13 (schema 5): count-only events and their counts in a debug
+        # session only.
+        "local counts = nil if section . count_only and ns . debug then counts = { } end"
     ), listen
     assert _body(flow, "onEvent") == (
         f"function onEvent ( fired ) {OFF_GUARD} "
@@ -3390,8 +3169,8 @@ def test_m11_29_count_only_events_are_counted_and_never_gather() -> None:
         "elseif counts then counts [ event ] = 0 end end"
     ) in listen
     count_only_loop = (
-        "for _ , event in ipairs ( section . count_only or { } ) do "
-        "if ns . On ( event , onEvent ) and counts then counts [ event ] = 0 end end"
+        "if counts then for _ , event in ipairs ( section . count_only or { } ) do "
+        "if ns . On ( event , onEvent ) then counts [ event ] = 0 end end end"
     )
     assert listen.endswith(count_only_loop + " end"), listen
     # events_received is set in `listen` only; nothing else writes the count.
@@ -3477,7 +3256,7 @@ def test_m11_29_schema_2_and_the_probe_survives_the_bump() -> None:
     flow = _core()
     rendered = _render(flow.tokens)
     # Schema 4 since M15-01 (3 since M13-05); the bump keeps every check below.
-    assert "ns . SCHEMA = 4" in rendered
+    assert "ns . SCHEMA = 5" in rendered
     assert rendered.count("ns . SCHEMA =") == 1
     assert "local db = { schema = ns . SCHEMA , probe = copyProbe ( ) ," in _body(flow, "ns.Write")
     assert "WowLabDB = { schema = ns . SCHEMA }" in _body(flow, "ns.Write")
@@ -3518,8 +3297,8 @@ def test_m11_29_readme_and_plan_say_what_is_confirmed_and_what_stays_verify() ->
         assert "the schema stays 1" not in text.split("(M11-29")[-1]
     # The README's layout is schema 4's since M15-01 (3's since M13-05), and
     # schema 1 is still read.
-    assert "### Table layout (schema 4)" in raw_readme
-    assert "  schema = 4," in raw_readme
+    assert "### Table layout (schema 5)" in raw_readme
+    assert "  schema = 5," in raw_readme
     assert "The Lab still reads schema 1 files" in readme
     # M4: the file shows only that the last write came from an open.
     for text in (readme, plan, formats):
@@ -3779,7 +3558,7 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
     ("Core.lua", "off", "frame"): ({"self": 1}, "UnregisterEvent's self argument"),
     ("Core.lua", "schedule", "timerAfter"): (
         {"test": 1, "call": 1},
-        "the 2 s change-event debounce",
+        "the change-event pass, at most once every GATHER_INTERVAL s (M20-13)",
     ),
     ("Core.lua", "startFirstPass", "timerAfter"): ({"call": 1}, "the 15 s first-pass window"),
     ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "timerAfter"): (
@@ -3787,6 +3566,16 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
         "whether there is a 15 s window; never called here",
     ),
     ("Core.lua", "clientInfo", "GetBuildInfo"): ({"test": 1, "call": 1}, "the `client` block"),
+    # M20-13 (schema 5): a /reload in combat sends no PLAYER_REGEN_DISABLED, so
+    # combat is asked once per loading screen; only `true` or `false` is kept.
+    ("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")', "InCombatLockdown"): (
+        {"test": 1, "call": 1},
+        "whether the player is in combat as the world is entered, through pcall",
+    ),
+    # M20-13 (schema 5; ADR-0026, note of 2026-11-20): the time of each
+    # section's gather and of the addon's write.
+    ("Core.lua", "gather", "time"): ({"call": 1}, "the time of a section's gather"),
+    ("Core.lua", "ns.Write", "time"): ({"call": 1}, "the time of the addon's write"),
     # Client-given values (round 3): what the client passes to a function it
     # calls, and where Core.lua takes it. The dispatcher's first parameter
     # (the event frame) and the slash handler's second (the chat edit box)
@@ -3836,7 +3625,9 @@ SECTIONLESS_API: dict[tuple[str, str, str], tuple[dict[str, int], str]] = {
 # section's gather or carry literal is labelled with its key: `gather("gear")`.
 SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
     ("Core.lua", "ns.On"): {
-        ("Core.lua", _TOP): 3,  # ADDON_LOADED, PLAYER_ENTERING_WORLD, PLAYER_LOGOUT
+        # ADDON_LOADED, PLAYER_ENTERING_WORLD, PLAYER_LOGOUT, and (M20-13)
+        # PLAYER_REGEN_DISABLED and PLAYER_REGEN_ENABLED, which track combat
+        ("Core.lua", _TOP): 5,
         # the change events, the retry events (M13-05) and the count-only events
         ("Core.lua", "listen"): 3,
         ("Customization.lua", _TOP): 1,  # the race check
@@ -3849,6 +3640,16 @@ SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
     },
     ("Core.lua", "startFirstPass"): {("Core.lua", 'ns.On("PLAYER_ENTERING_WORLD")'): 1},
     ("Core.lua", "clientInfo"): {("Core.lua", "ns.Write"): 1},
+    # M20-13: `gather` and `ns.Write` read the clock (SECTIONLESS_API).
+    ("Core.lua", "gather"): {
+        ("Core.lua", "gatherDirty"): 1,
+        ("Core.lua", "onEvent"): 1,  # an immediate section's change event
+        ("Core.lua", "ns.Refresh"): 1,
+    },
+    ("Core.lua", "ns.Write"): {
+        ("Core.lua", 'ns.On("PLAYER_LOGOUT")'): 1,
+        ("Core.lua", "ns.Refresh"): 1,
+    },
     ("Customization.lua", "raceID"): {
         ("Customization.lua", 'gather("customization")'): 1,
         ("Customization.lua", 'ns.On("PLAYER_ENTERING_WORLD")'): 1,
@@ -5703,7 +5504,9 @@ _M11_37_CASES: dict[str, tuple[tuple[str, list[tuple[str, str]]], tuple[str, str
             "Core.lua",
             [
                 (
-                    "    if not timerAfter then\n        gatherDirty()\n        return\n    end\n",
+                    "    if not timerAfter then\n        if inCombat then\n"
+                    "            waitingForCombat = true\n        else\n"
+                    "            gatherDirty()\n        end\n        return\n    end\n",
                     "    timerAfter(0, gatherDirty)\n",
                 )
             ],
@@ -5992,7 +5795,8 @@ def test_m11_37_a_call_added_inside_a_section_passes() -> None:
 # re-gathers only a section a blocked gather left dirty.
 
 ACTIONS = ADDON / "Actions.lua"
-M13_05_KEYS = ("spellbook", "actionbars", "bindings")
+# M20-13 (schema 5): and `macros`, under the same combat and secret rules.
+M13_05_KEYS = ("spellbook", "actionbars", "bindings", "macros")
 COMBAT_CHECK = (
     "local blocked = combatReason ( ) if blocked then return ns . Blocked ( blocked ) end"
 )
@@ -6224,104 +6028,50 @@ def _m13_05_underscore_reads(path: Path) -> list[str]:
     ]
 
 
-_M13_05_MACRO = (
-    "local okMacro , _ , icon = pcall ( getMacro , id ) "
-    "if okMacro then icon = clean ( isSecret , secret , macro , icon ) else icon = nil end "
-    "tally ( macro , okMacro , icon ~= nil )"
-)
+# M20-13 (ADR-0026, note of 2026-11-20): the M13-05 macro pin (GetMacroInfo
+# bound only to probe, the name to `_`, the body to nothing) and the
+# plain-command rule of `bindings` are gone. `macros` keeps every macro's
+# name, icon and body, and `bindings` every command the client returns, each
+# value cleaned first (the secret rule below).
 
 
-def _m13_05_macro_problems(path: Path) -> list[str]:
-    """Why `path` (Actions.lua, or an edited copy) may keep a macro's name
-    or body."""
-    t = _tokens(path)
-    text = _render(t)
-    problems = _m13_05_underscore_reads(path)
-    if text.count(_M13_05_MACRO) != 1:
-        problems.append("the GetMacroInfo call is not the pinned one")
-    # Every use of the three names is in the pinned statements.
-    for name, uses in (("getMacro", 4), ("okMacro", 3), ("icon", 5)):
-        seen = sum(1 for k, x in enumerate(t) if x.text == name and not _is_field(t, k))
-        if seen != uses:
-            problems.append(f"{name} is used {seen} times, not {uses}")
-    bound = 'local getMacro = type ( GetMacroInfo ) == "function" and GetMacroInfo or nil'
-    if text.count(bound) != 1 or text.count("GetMacroInfo ") != 2:
-        problems.append("GetMacroInfo is used other than bound once")
-    if text.count('probe ( "GetMacroInfo" , getMacro )') != 1:
-        problems.append("getMacro is not probed once")
-    if text.count("and getMacro then") != 1:
-        problems.append("getMacro is not tested once")
-    return problems
-
-
-def test_m13_05_macro_info_binds_neither_name_nor_body() -> None:
-    """ADR-0026, §15.2: a macro slot keeps an id only. GetMacroInfo is
-    bound once into a handle, and the handle is used only to probe, test and
-    call it as `local okMacro, _, icon = pcall(getMacro, id)`: the name goes to
-    `_`, which nothing in the file reads, the body to nothing, and `icon` is
-    cleaned and then only compared with nil. No other source names
-    GetMacroInfo or the handle."""
-    assert _m13_05_macro_problems(ACTIONS) == []
-    others = [
-        _where(path, x)
-        for path in SOURCES
-        if path != ACTIONS
-        for x in _tokens(path)
-        if x.text in {"GetMacroInfo", "getMacro"}
-    ]
-    assert not others, others
-
-
-_M13_05_MACRO_CASES: dict[str, list[tuple[str, str]]] = {
-    "the name stored through _": [
-        (
-            "local okMacro, _, icon = pcall(getMacro, id)\n",
-            "local okMacro, _, icon = pcall(getMacro, id)\nrecord.name = ns.String(_)\n",
-        )
-    ],
-    "the name bound to a name": [
-        (
-            "local okMacro, _, icon = pcall(getMacro, id)",
-            "local okMacro, name, icon = pcall(getMacro, id)",
-        )
-    ],
-    "the body bound": [
-        (
-            "local okMacro, _, icon = pcall(getMacro, id)",
-            "local okMacro, _, icon, body = pcall(getMacro, id)",
-        )
-    ],
-    "icon used raw": [("icon = clean(isSecret, secret, macro, icon)", "icon = icon")],
-}
-
-
-def test_m13_05_constructed_macro_edits_fail() -> None:
-    missed = []
-    for tag, edits in sorted(_M13_05_MACRO_CASES.items()):
-        text = ACTIONS.read_text(encoding="utf-8")
-        for found, replacement in edits:
-            assert found in text, found
-            text = text.replace(found, replacement, 1)
-        with tempfile.TemporaryDirectory(prefix="wowlab-m13-05-") as tmp:
-            path = Path(tmp) / ACTIONS.name
-            path.write_text(text, encoding="utf-8")
-            if not _m13_05_macro_problems(path):
-                missed.append(tag)
-    assert not missed, missed
-
-
-def test_m13_05_bindings_ask_only_plain_commands() -> None:
-    """A binding command with text after the name (`MACRO <name>` holds text
-    the owner typed) is never handed to GetBindingKey or stored: GetBinding's
-    first return goes through `command()`, which keeps upper-case letters,
-    digits and `_` only, and only that is asked about."""
+def test_m20_13_bindings_ask_and_store_every_command_as_given() -> None:
+    """Every command GetBinding gives is handed to GetBindingKey and stored as
+    it is (cleaned first); every key a command has is kept as it is. No count
+    of left-out commands or keys is written any more."""
     text = _render(_tokens(ACTIONS))
     assert "local okBinding , found = pcall ( getBinding , index )" in text
-    assert "local name = command ( found )" in text
-    assert "ns . Pack ( pcall ( getKey , name ) )" in text
+    assert "local keys = ns . Pack ( pcall ( getKey , found ) )" in text
     assert text.count("getKey ,") == 1
-    assert 'string . find ( value , "^[%u%d_]+$" )' in text
-    assert "{ command = ns . String ( name ) , keys = kept }" in text
+    assert "{ command = ns . String ( found ) , keys = kept }" in text
+    assert (
+        'if type ( given ) == "string" then kept [ # kept + 1 ] = ns . String ( given ) end' in text
+    )
+    for gone in ("commands_left_out", "keys_left_out", "command ( found )", "keyName"):
+        assert gone not in text, gone
+
+
+def test_m20_13_macros_walk_only_the_client_s_own_indices() -> None:
+    """`macros` asks GetMacroInfo only for an index GetNumMacros counts:
+    1 to the account count, and MAX_ACCOUNT_MACROS + 1 on for this
+    character's, each run bounded by the addon's own MAX_MACROS_PER_SCOPE (an
+    out-of-range index into a C API is the crash class in
+    docs/DATA_SOURCES.md, 2026-09-28). The name, icon and body are cleaned
+    before they are stored."""
+    text = _render(_tokens(ACTIONS))
+    assert "local MAX_MACROS_PER_SCOPE = 256" in text
+    assert (
+        '{ scope = "account" , first = 1 , last = math . min ( accountCount , MAX_MACROS_PER_SCOPE ) }'
+    ) in text
+    assert (
+        'scope = "character" , first = perAccount + 1 , '
+        "last = perAccount + math . min ( characterCount , MAX_MACROS_PER_SCOPE ) ,"
+    ) in text
+    assert "local perAccount = ns . Number ( MAX_ACCOUNT_MACROS )" in text
+    assert "local okMacro , name , icon , body = pcall ( getInfo , index )" in text
+    assert text.count("pcall ( getInfo ,") == 1
+    for value in ("name", "icon", "body"):
+        assert f"{value} = clean ( isSecret , secret , info , {value} )" in text
 
 
 # Round 2 of the domain review: a blocked gather keeps the good record ---------
@@ -6353,7 +6103,9 @@ def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
         'record = ns . Absent ( "the section gathered nothing" ) end '
         "ns . state [ section . key ] = record "
         "if blocked then section . dirty = true "
-        "else section . gathered = true section . dirty = false end end"
+        "else section . gathered = true section . dirty = false "
+        # M20-13 (schema 5): the time of the gather.
+        "gatheredAt [ section . key ] = ns . Number ( time ( ) ) end end"
     )
     # `gathered` is set in `gather` only, so a carried record does not count.
     sets = [
@@ -6373,7 +6125,7 @@ def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
         for i in range(len(tokens) - 2)
         if _render(tokens[i : i + 3]) == "ns . Blocked" and tokens[i - 1].text == "return"
     ]
-    assert [name for name, _ in users] == ["Actions.lua"] * 3, users
+    assert [name for name, _ in users] == ["Actions.lua"] * len(M13_05_KEYS), users
 
 
 def test_m13_05_the_retry_event_never_marks_a_section_dirty() -> None:
@@ -6405,7 +6157,7 @@ def test_m13_05_the_retry_event_never_marks_a_section_dirty() -> None:
         for key, entries in _m13_05_sections(flow_)
         if "{retry}" in entries
     )
-    assert users == ["Actions.lua"] * 3, users
+    assert users == ["Actions.lua"] * len(M13_05_KEYS), users
 
 
 # Secret values: every value read from the client goes through `clean` -----
@@ -6572,16 +6324,8 @@ _M13_05_SANITIZERS = {
         'if type ( value ) == "string" and # value <= 32 '
         'and string . find ( value , "^%a+$" ) then return value end return nil end'
     ),
-    "command": (
-        "local function command ( value ) "
-        'if type ( value ) == "string" and # value <= 128 '
-        'and string . find ( value , "^[%u%d_]+$" ) then return value end return nil end'
-    ),
-    "keyName": (
-        "local function keyName ( value ) "
-        'if type ( value ) == "string" and # value <= 64 '
-        'and string . find ( value , "^[%w%p]+$" ) then return value end return nil end'
-    ),
+    # M20-13 (schema 5): `command` and `keyName` are gone; every binding
+    # command and key is stored as the client returns it.
 }
 _M13_05_STORES = ("ns . Number (", "ns . String (", "ns . Bool (")
 _M13_05_COMPARE = frozenset({"==", "~=", "<", "<=", ">", ">="})
@@ -6728,9 +6472,9 @@ def _m13_05_is_secret_problems(t: list[Token], flow: _Flow) -> list[str]:
             params[label] = (id(decl), names.index("isSecret"))
     allowed = binds | {decl for decl, _ in params.values()}
     declared = [at for name, at in flow.assigned if name == "isSecret"]
-    if len(declared) != len(binds) + len(params) or len(binds) != 3:
+    if len(declared) != len(binds) + len(params) or len(binds) != len(M13_05_KEYS):
         problems.append(
-            f"isSecret is bound {len(declared)} times, not only by the three pinned binds and "
+            f"isSecret is bound {len(declared)} times, not only by the pinned binds and "
             f"the parameters of {sorted(params)}"
         )
     for i, x in enumerate(t):
@@ -6788,9 +6532,9 @@ def _m13_05_secret_problems(path: Path) -> list[str]:
     problems: list[str] = []
     if text.count(_M13_05_CLEAN) != 1:
         problems.append("clean is not the pinned one")
-    if text.count(_M13_05_SECRET_BIND) != 3:
+    if text.count(_M13_05_SECRET_BIND) != len(M13_05_KEYS):
         problems.append("a gather does not bind isSecret to issecretvalue")
-    if text.count('probe ( "issecretvalue" , isSecret )') != 3:
+    if text.count('probe ( "issecretvalue" , isSecret )') != len(M13_05_KEYS):
         problems.append("a gather does not probe issecretvalue")
     own = {label for head, label in flow.labels.items() if t[head - 1].text == "local"}
     problems += _m13_05_call_problems(t, flow, own)
@@ -8228,15 +7972,9 @@ def _crew_rules(path: Path, text: str) -> dict[str, list[str]]:
     """Every rule CREW_RELAXED names, run on one source under one file name."""
     tokens = tokenize(text)
     return {
-        "FORBIDDEN_APIS": _forbidden_api_problems(path, tokens),
-        "CLOCK": _clock_problems(path, tokens),
-        "NAME_FIELDS": _name_field_problems(path, tokens),
         "UNIT_ARGUMENT": _unit_argument_problems(path, tokens),
         "CONCAT_INDEX": _concat_index_problems(path, tokens) + _concat_value_problems(path, text),
         "SAVED_VARIABLES": _crew_book_problems(path, tokens),
-        "STD_PRIVACY": _std_privacy_problems(
-            set(CREW_NAME_CALLS), {path: _fn_lookups(tokens) | _dotted_references(tokens)}
-        ),
         "SECTION_SCAN": _crew_section_failures(path, text),
         "PAIRS": _pairs_problems(path, tokens),
     }
@@ -8254,12 +7992,9 @@ def _crew_section_failures(path: Path, text: str) -> list[str]:
 
 def test_m19_01_the_relaxation_is_one_table_keyed_on_crew_lua() -> None:
     """Each rule §20.1 lists is relaxed in CREW_RELAXED and nothing else is;
-    nothing in NEVER_RELAXED (UnitGUID, the chat sends) is in any entry."""
+    nothing in NEVER_RELAXED (the sends and the readers no ticket builds) is
+    in any entry. M20-13: the privacy relaxations left with their rules."""
     assert set(CREW_RELAXED) == {
-        "FORBIDDEN_APIS",
-        "CLOCK",
-        "NAME_FIELDS",
-        "STD_PRIVACY",
         "UNIT_ARGUMENT",
         "CONCAT_INDEX",
         "SAVED_VARIABLES",
@@ -8268,9 +8003,8 @@ def test_m19_01_the_relaxation_is_one_table_keyed_on_crew_lua() -> None:
     }
     assert set(_crew_rules(_CREW_PATH, _CREW_SOURCE)) == set(CREW_RELAXED)
     assert set().union(*CREW_RELAXED.values()) & NEVER_RELAXED == set()
-    assert NEVER_RELAXED - {"os"} <= set(FORBIDDEN_APIS) and "os" in CLOCK
-    assert set(FORBIDDEN_APIS) >= CREW_NAME_CALLS
-    assert {"time", "date"} <= set(CLOCK) and {"name", "realm"} <= set(NAME_FIELDS)
+    assert set(FORBIDDEN_APIS) == NEVER_RELAXED
+    assert not set(FORBIDDEN_APIS) & CREW_NAME_CALLS
     for rule in CREW_RELAXED:
         assert _relaxed(_CREW_PATH, rule) == CREW_RELAXED[rule]
         assert _relaxed(Path("Core.lua"), rule) == frozenset()
@@ -8325,41 +8059,16 @@ def test_m19_01_every_other_file_still_refuses_all_of_it() -> None:
 
 def test_m19_01_unit_guid_and_the_chat_sends_stay_refused_in_crew_lua() -> None:
     """Constructed: each never-relaxed name, used inside the gate in Crew.lua,
-    is still refused, as a call and as a string."""
+    is still refused, as a call and as a string. M20-13: `UnitGUID` and `os`
+    are no longer among them (ADR-0026, note of 2026-11-20)."""
     missed = []
-    for name in sorted(NEVER_RELAXED - {"os"}):
+    for name in sorted(NEVER_RELAXED):
         call = _CREW_SOURCE.replace(_CREW_READ, f"{_CREW_READ}    local x = {name}(unit)\n")
         string = _CREW_SOURCE.replace(_CREW_READ, f'{_CREW_READ}    local x = "{name}"\n')
         for text in (call, string):
             assert text != _CREW_SOURCE
             if not _forbidden_api_problems(_CREW_PATH, tokenize(text)):
                 missed.append((name, text is call))
-    os_time = _CREW_SOURCE.replace("entry.last = ns.Number(time())", "entry.last = os.time()")
-    assert os_time != _CREW_SOURCE
-    if not _clock_problems(_CREW_PATH, tokenize(os_time)):
-        missed.append(("os", True))
-    assert not missed, missed
-
-
-def test_m19_01_the_std_rule_ties_each_name_call_to_crew_lua() -> None:
-    """Constructed: wow_client.yml may declare a name call only while Crew.lua
-    alone references it; the chat sends never. M20-11 (owner decision,
-    2026-11-20): UnitGUID is one of Crew.lua's name calls now."""
-    crew = {_CREW_PATH: {"UnitFullName"}}
-    assert _std_privacy_problems({"UnitFullName"}, crew) == []
-    refused = {
-        "used by another file": ({"UnitFullName"}, {Path("Gear.lua"): {"UnitFullName"}}),
-        "used by Crew.lua and another": (
-            {"UnitFullName"},
-            {**crew, Path("Core.lua"): {"UnitFullName"}},
-        ),
-        "used by no file": ({"UnitFullName"}, {}),
-        "a near-miss name": ({"UnitFullName"}, {Path("crew.lua"): {"UnitFullName"}}),
-        "GetRealmName": ({"GetRealmName"}, {_CREW_PATH: {"GetRealmName"}}),
-    }
-    for name in ("SendChatMessage", "BNSendWhisper", "ChatFrame_OpenChat", "ChatEdit_InsertLink"):
-        refused[name] = ({name}, {_CREW_PATH: {name}})
-    missed = [tag for tag, args in refused.items() if not _std_privacy_problems(*args)]
     assert not missed, missed
 
 
@@ -8798,18 +8507,9 @@ def test_m19_01_one_file_level_registration_per_core_event_passes() -> None:
 
 def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
     """Constructed: what each relaxation does not let through, in Crew.lua."""
+    # M20-13: the FORBIDDEN_APIS, CLOCK and NAME_FIELDS cases left with
+    # their rules (ADR-0026, note of 2026-11-20).
     cases = {
-        "FORBIDDEN_APIS": [
-            '    local fn = ns.Fn(ns, "UnitName")\n',  # the bare name as a string
-            "    local x = ns.UnitFullName\n",  # as a field
-            "    local x = UnitNameUnmodified(unit)\n",
-            "    local x = GetRealmName()\n",
-        ],
-        "CLOCK": ["    local x = GetServerTime()\n", '    local x = os.date("%Y")\n'],
-        "NAME_FIELDS": ["    entry.fullName = name\n", '    entry["battleTag"] = name\n'],
-        # The bracket form of a relaxed field passes in Crew.lua (the
-        # constructed source writes `entry.realm`).
-        "NAME_FIELDS_CONTROL": ['    entry["realm"] = realm\n', '    entry["name"] = name\n'],
         "UNIT_ARGUMENT": [
             '    local x = UnitClass("party1")\n',
             '    local x = UnitClass("focus")\n',
@@ -8847,9 +8547,6 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
         ],
     }
     rules = {
-        "FORBIDDEN_APIS": lambda text: _forbidden_api_problems(_CREW_PATH, tokenize(text)),
-        "CLOCK": lambda text: _clock_problems(_CREW_PATH, tokenize(text)),
-        "NAME_FIELDS": lambda text: _name_field_problems(_CREW_PATH, tokenize(text)),
         "UNIT_ARGUMENT": lambda text: _unit_argument_problems(_CREW_PATH, tokenize(text)),
         "CONCAT_INDEX": lambda text: (
             _concat_index_problems(_CREW_PATH, tokenize(text))
@@ -9071,3 +8768,528 @@ class TestM2005Activation:
         assert _crew_pins(tokenize(text)) is CREW_PINS_2
         bad = _crew_problems(crew, text, CREW_PINS_2)
         assert not bad, bad
+
+
+# M20-13: schema 5 (ADR-0026, note of 2026-11-20) ---------------------------------
+#
+# Source scans; nothing here runs Lua (L3). The addon-wide privacy rules are
+# gone (the list of calls, the clock, the name fields, the std's identity-like
+# names, the crafter blanking, the macro pin and the plain-command rule). What
+# stays has a constructed edit below that fails for that rule's own reason.
+
+IDENTITY = ADDON / "Identity.lua"
+TALENTS = ADDON / "Talents.lua"
+# Identity.lua's schema-5 values: each call is bound to a local that is only
+# ever handed, first, to `ownText`, which tests it with `secret` before any
+# compare or store (both pinned whole).
+_M20_13_OWN_CALLS = ("UnitGUID", "UnitName", "GetRealmName", "GetGuildInfo")
+_M20_13_OWN_TEXT = (
+    "local function ownText ( value , api ) "
+    'if secret ( value ) then return nil , api .. " was a value the client calls secret" end '
+    'if type ( value ) == "string" and value ~= "" then return value , nil end '
+    'return nil , api .. " was not a non-empty string" end'
+)
+
+
+def _m20_13_identity_problems(path: Path) -> list[str]:
+    """Why a schema-5 identity value in `path` (Identity.lua, or an edited
+    copy) may be compared or stored before issecretvalue was asked."""
+    t = _tokens(path)
+    flow = _Flow(path, t)
+    text = _render(t)
+    problems: list[str] = []
+    if text.count(CREW_SECRET) != 1:
+        problems.append("secret is not the pinned one")
+    if text.count(_M20_13_OWN_TEXT) != 1:
+        problems.append("ownText is not the pinned one")
+    for name in ("secret", "ownText"):
+        if [n for n, _ in flow.assigned].count(name) != 1:
+            problems.append(f"{name} is bound more than once")
+    for k, x in enumerate(t):
+        if x.kind != "name" or x.text not in _M20_13_OWN_CALLS or _is_field(t, k):
+            continue
+        if _render(t[k - 2 : k + 2]) == f"type ( {x.text} )":
+            continue
+        if t[k - 1].text != "=" or t[k - 3].text != "local" or t[k + 1].text != "(":
+            problems.append(f"line {x.line}: {x.text} is not bound to a local of its own")
+            continue
+        v = t[k - 2].text
+        close = flow.pair[k + 1]
+        uses = _m13_05_uses(flow, v, close + 1)
+        if len(uses) != 1 or _render(t[uses[0] - 2 : uses[0] + 2]) != f"ownText ( {v} ,":
+            problems.append(f"line {x.line}: {v} is used other than handed once to ownText")
+    if text.count("ownText (") != len(_M20_13_OWN_CALLS) + 1:
+        problems.append("ownText is called other than once per value")
+    return problems
+
+
+def test_m20_13_identity_values_are_asked_about_before_use() -> None:
+    assert _m20_13_identity_problems(IDENTITY) == []
+
+
+# Fix round 1 (code review of #669): the owner's own values and macros are
+# read only where a secret rule holds: the four own-value calls in
+# Identity.lua (`_m20_13_identity_problems`), the macro calls in Actions.lua
+# (the structural rule, `_m13_05_secret_problems`). Crew.lua keeps its own
+# rules for its name calls (`_crew_problems`).
+_M20_13_OWN_HOME = {
+    **dict.fromkeys(_M20_13_OWN_CALLS, "Identity.lua"),
+    **dict.fromkeys(("GetMacroInfo", "GetMacroBody", "GetNumMacros"), "Actions.lua"),
+}
+
+
+def _m20_13_own_value_problems(path: Path) -> list[str]:
+    """A name of `_M20_13_OWN_HOME` in a file other than its home, as a name
+    or a string; Crew.lua is graded by its own rules."""
+    if path.name == CREW_FILE:
+        return []
+    return [
+        f"{_where(path, x)} {x.text} outside {_M20_13_OWN_HOME[x.text]}"
+        for x in _tokens(path)
+        if x.kind in {"name", "string"}
+        and x.text in _M20_13_OWN_HOME
+        and _M20_13_OWN_HOME[x.text] != path.name
+    ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_m20_13_own_values_are_read_only_where_a_secret_rule_holds(path: Path) -> None:
+    bad = _m20_13_own_value_problems(path)
+    assert not bad, bad
+
+
+def _m20_13_gear_own_values(path: Path) -> list[str]:
+    return _m20_13_own_value_problems(path)
+
+
+def _m20_13_edited(
+    path: Path, edits: list[tuple[str, str]], check: Callable[[Path], list[str]]
+) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    for found, replacement in edits:
+        assert found in text, found
+        text = text.replace(found, replacement, 1)
+    with tempfile.TemporaryDirectory(prefix="wowlab-m20-13-") as tmp:
+        edited = Path(tmp) / path.name
+        edited.write_text(text, encoding="utf-8")
+        return check(edited)
+
+
+def _m20_13_forbidden(path: Path) -> list[str]:
+    return _forbidden_api_problems(path, _tokens(path))
+
+
+def _m20_13_dynamic(path: Path) -> list[str]:
+    return [t.text for t in _dynamic_lookups(_tokens(path))]
+
+
+def _m20_13_core_combat(path: Path) -> list[str]:
+    """Why Core.lua (or an edited copy) may gather in combat: the logout
+    write gathers only out of combat, `/wowlab save` refuses in combat, a
+    timer's pass and the first pass wait for the end of combat, and combat
+    is tracked from the client's events and asked as the world is entered."""
+    flow = _Flow(path, _tokens(path))
+    rendered = _render(flow.tokens)
+    problems = []
+    pins = {
+        'ns.On("PLAYER_LOGOUT")': 'if not inCombat then gatherDirty ( ) end ns . Write ( "logout" )',
+        "ns.Refresh": "function ns . Refresh ( ) if inCombat then return false end",
+        "schedule": (
+            "timerAfter ( GATHER_INTERVAL , function ( ) "
+            "if firstPassDone and inCombat then waitingForCombat = true return end"
+        ),
+        "startFirstPass": "if inCombat then firstPassWaiting = true else gatherDirty ( ) end",
+    }
+    for label, pin in pins.items():
+        if pin not in _body(flow, label):
+            problems.append(f"{label}: {pin!r} is missing")
+    for pin in (
+        'ns . On ( "PLAYER_REGEN_DISABLED" , function ( ) inCombat = true end )',
+        'ns . On ( "PLAYER_REGEN_ENABLED" , function ( ) inCombat = false',
+        "if ok and locked == true then inCombat = true elseif ok then inCombat = false end",
+    ):
+        if rendered.count(pin) != 1:
+            problems.append(f"{pin!r} is not there once")
+    if rendered.count("inCombat = false") != 3 or rendered.count("inCombat = true") != 2:
+        problems.append("inCombat is set other than by the combat events and the world check")
+    # Fix round 1 (code review of #669): every call of a gather, wherever it
+    # is added, stands right after its own combat guard. Each place is pinned
+    # by the function it is in and the tokens just before the call; a call
+    # anywhere else (a `gatherDirty()` in the slash handler, say) fails.
+    t = flow.tokens
+    for k in range(1, len(t) - 1):
+        x = t[k]
+        if x.kind != "name" or x.text not in _M20_13_GATHERS or t[k + 1].text != "(":
+            continue
+        if _is_field(t, k) or t[k - 1].text == "function":
+            continue
+        where = _m20_13_named_function(flow, k)
+        guard = next(
+            (
+                g
+                for g in _M20_13_GATHER_GUARDS.get((where, x.text), ())
+                if _render(t[k - len(g.split(" ")) : k]) == g
+            ),
+            None,
+        )
+        if guard is None:
+            problems.append(f"line {x.line}: {x.text}() in {where} with no combat guard pinned")
+    # `section.gather` is called only by `gather`, and `ns.Refresh` only by the
+    # slash handler's `save` branch.
+    # (`ns . Refresh ( )` twice: its definition and its one call.)
+    if rendered.count("section . gather ,") != 1 or rendered.count("ns . Refresh ( )") != 2:
+        problems.append("a section's gather or ns.Refresh is reached another way")
+    return problems
+
+
+_M20_13_GATHERS = frozenset({"gather", "gatherDirty"})
+
+
+def _m20_13_named_function(flow: _Flow, k: int) -> str | None:
+    """The innermost named function around token k: a function literal (a
+    timer's callback) counts as the function it is written in."""
+    named = [
+        (head, label)
+        for head, label in flow.labels.items()
+        if not label.startswith("function@") and head < k <= flow.block_end(head)
+    ]
+    return max(named)[1] if named else None
+
+
+# (function, callee) -> the tokens that must stand right before each call.
+_M20_13_GATHER_GUARDS: dict[tuple[str | None, str], tuple[str, ...]] = {
+    ('ns.On("PLAYER_LOGOUT")', "gatherDirty"): ("if not inCombat then",),
+    ("schedule", "gatherDirty"): (
+        "if inCombat then waitingForCombat = true else",
+        "pending = false if firstPassDone then",
+    ),
+    ("startFirstPass", "gatherDirty"): ("if inCombat then firstPassWaiting = true else",),
+    # Its handler starts with `inCombat = false` (pinned above).
+    ('ns.On("PLAYER_REGEN_ENABLED")', "gatherDirty"): ("if run then",),
+    # gatherDirty's own loop: reached only from the guarded calls above.
+    ("gatherDirty", "gather"): ("if section . dirty then",),
+    # ns.Refresh returns at once in combat (pinned above).
+    ("ns.Refresh", "gather"): ("if section . on_world and not section . off then",),
+    # An immediate section (customization, on BARBER_SHOP_OPEN and
+    # BARBER_SHOP_APPLIED): the barber shop is not reachable in combat.
+    ("onEvent", "gather"): ("if section . immediate then",),
+}
+
+
+def test_m20_13_core_gathers_nothing_in_combat() -> None:
+    assert _m20_13_core_combat(ADDON / "Core.lua") == []
+
+
+# Fix round 2 (code review of #669): `onEvent`'s exemption for an immediate
+# gather holds only for the barber shop, which is not reachable in combat.
+# `immediate` is a key of exactly one section spec: `customization`, in
+# Customization.lua. Anywhere else (Gear.lua's section would gather on
+# PLAYER_EQUIPMENT_CHANGED, which fires in combat on a weapon swap) fails.
+_M20_13_IMMEDIATE = ("Customization.lua", "customization")
+
+
+def _m20_13_immediate_keys(path: Path) -> list[str]:
+    """The key of every immediate section spec in `path` (a literal, or a
+    file-level `local KEY = "..."`)."""
+    t = _tokens(path)
+    flow = _Flow(path, t)
+    constants = dict(
+        re.findall(r'^local ([A-Z_]+) = "([^"]+)"$', path.read_text(encoding="utf-8"), re.M)
+    )
+    keys = []
+    for k in range(len(t) - 4):
+        if [x.text for x in t[k : k + 5]] != ["ns", ".", "Section", "(", "{"]:
+            continue
+        entries = {key: (a, b) for key, a, b in flow.entries(k + 4)}
+        if "{immediate}" not in entries:
+            continue
+        at = t[entries["{key}"][0]] if "{key}" in entries else None
+        if at is None:
+            keys.append("?")
+        elif at.kind == "string":
+            keys.append(at.text)
+        else:
+            keys.append(constants.get(at.text, "?"))
+    return keys
+
+
+def _m20_13_immediate_problems(path: Path) -> list[str]:
+    return [
+        f"{path.name}: section {key} is immediate; only the barber-shop section may be"
+        for key in _m20_13_immediate_keys(path)
+        if (path.name, key) != _M20_13_IMMEDIATE
+    ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_m20_13_only_the_barber_shop_gathers_on_its_event(path: Path) -> None:
+    assert _m20_13_immediate_problems(path) == []
+
+
+def test_m20_13_the_barber_shop_section_is_the_immediate_one() -> None:
+    """Control: the exemption names a section that exists and is immediate."""
+    assert _m20_13_immediate_keys(ADDON / "Customization.lua") == ["customization"]
+
+
+_SEND = '    SendChatMessage("constructed", "SAY")\n'
+# Each kept rule: (the file, its edits, the check, a word the check's report
+# must hold, so the edit fails for that rule's own reason).
+_M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list[str]], str]] = {
+    "no send: a chat message": (
+        ADDON / "Core.lua",
+        [("local function say(message)\n", "local function say(message)\n" + _SEND)],
+        _m20_13_forbidden,
+        "SendChatMessage",
+    ),
+    "no send: an addon message through C_ChatInfo": (
+        ADDON / "Gear.lua",
+        [("local _, ns = ...\n", 'local _, ns = ...\nC_ChatInfo.SendAddonMessage("x", "y")\n')],
+        _m20_13_forbidden,
+        "C_ChatInfo",
+    ),
+    "no send: mail named in a string": (
+        ACTIONS,
+        [("local IN_COMBAT", 'local verb = "SendMail"\nlocal IN_COMBAT')],
+        _m20_13_forbidden,
+        "SendMail",
+    ),
+    "no BattleTag": (
+        IDENTITY,
+        [("local _, ns = ...\n", "local _, ns = ...\nlocal tag = select(2, BNGetInfo())\n")],
+        _m20_13_forbidden,
+        "BNGetInfo",
+    ),
+    "no dynamic lookup": (
+        IDENTITY,
+        [("local _, ns = ...\n", 'local _, ns = ...\nlocal f = _G["UnitName"]\n')],
+        _m20_13_dynamic,
+        "_G",
+    ),
+    "no dynamic code": (
+        ACTIONS,
+        [("local IN_COMBAT", 'local run = loadstring("return 1")\nlocal IN_COMBAT')],
+        _m20_13_dynamic,
+        "loadstring",
+    ),
+    "nothing in combat: the macros gather reads before its check": (
+        ACTIONS,
+        [
+            (
+                '    events = { "UPDATE_MACROS" },\n    retry = { "PLAYER_REGEN_ENABLED" },\n'
+                "    on_world = true,\n    gather = function()\n",
+                '    events = { "UPDATE_MACROS" },\n    retry = { "PLAYER_REGEN_ENABLED" },\n'
+                "    on_world = true,\n    gather = function()\n"
+                "        local early = GetNumMacros()\n",
+            )
+        ],
+        _m13_05_combat_problems,
+        "macros: the gather does not start with the combat check",
+    ),
+    "nothing in combat: the logout gathers in combat": (
+        ADDON / "Core.lua",
+        [("    if not inCombat then\n        gatherDirty()\n    end\n", "    gatherDirty()\n")],
+        _m20_13_core_combat,
+        "PLAYER_LOGOUT",
+    ),
+    "nothing in combat: /wowlab save gathers in combat": (
+        ADDON / "Core.lua",
+        [("    if inCombat then\n        return false\n    end\n", "")],
+        _m20_13_core_combat,
+        "ns.Refresh",
+    ),
+    "nothing in combat: a timer's pass runs in combat": (
+        ADDON / "Core.lua",
+        [
+            (
+                "        if firstPassDone and inCombat then\n",
+                "        if firstPassDone and false then\n",
+            )
+        ],
+        _m20_13_core_combat,
+        "schedule",
+    ),
+    "nothing in combat: the combat flag forced off": (
+        ADDON / "Core.lua",
+        [
+            (
+                "local function gather(section, event)\n",
+                "local function gather(section, event)\n    inCombat = false\n",
+            )
+        ],
+        _m20_13_core_combat,
+        "inCombat is set",
+    ),
+    "secret test: a macro body stored raw": (
+        ACTIONS,
+        [("                    body = clean(isSecret, secret, info, body)\n", "")],
+        _m13_05_secret_problems,
+        "body",
+    ),
+    "secret test: a binding command stored raw": (
+        ACTIONS,
+        [("command = ns.String(found)", "command = found")],
+        _m13_05_secret_problems,
+        "found",
+    ),
+    "secret test: the GUID stored before the test": (
+        IDENTITY,
+        [
+            (
+                '            local keptGuid, whyGuid = ownText(guid, "the return of UnitGUID")\n',
+                "            local keptGuid, whyGuid = guid, nil\n",
+            )
+        ],
+        _m20_13_identity_problems,
+        "guid",
+    ),
+    "secret test: ownText compares before the test": (
+        IDENTITY,
+        [("    if secret(value) then\n", '    if value == "" or secret(value) then\n')],
+        _m20_13_identity_problems,
+        "ownText",
+    ),
+    "secret test: the secret helper always says no": (
+        IDENTITY,
+        [("    return not ok or hidden == true\n", "    return false\n")],
+        _m20_13_identity_problems,
+        "secret",
+    ),
+    # Fix round 1 (code review of #669).
+    "secret test: the own GUID stored untested in another file": (
+        ADDON / "Gear.lua",
+        [
+            (
+                "                local level, source = itemLevel(slot, raw)\n",
+                "                local level, source = itemLevel(slot, raw)\n"
+                '                record.guid = ns.String(UnitGUID("player"))\n',
+            )
+        ],
+        _m20_13_gear_own_values,
+        "UnitGUID outside Identity.lua",
+    ),
+    "secret test: a macro body read outside Actions.lua": (
+        ADDON / "Talents.lua",
+        [("local _, ns = ...\n", "local _, ns = ...\nlocal body = GetMacroBody(1)\n")],
+        _m20_13_gear_own_values,
+        "GetMacroBody outside Actions.lua",
+    ),
+    "nothing in combat: another section gathers on its event": (
+        ADDON / "Gear.lua",
+        [('    key = "gear",\n', '    key = "gear",\n    immediate = true,\n')],
+        _m20_13_immediate_problems,
+        "section gear is immediate",
+    ),
+    "nothing in combat: a gather added to the debug branch": (
+        ADDON / "Core.lua",
+        [("        debugCommand(key)\n", "        gatherDirty()\n        debugCommand(key)\n")],
+        _m20_13_core_combat,
+        "no combat guard pinned",
+    ),
+}
+
+
+def test_m20_13_each_kept_rule_fails_its_own_edit() -> None:
+    """Constructed edits of the real sources (boundary tests of the rules
+    that stay): each is refused, by its own rule, with a report naming what
+    the edit added."""
+    missed = []
+    for tag, (path, edits, check, word) in sorted(_M20_13_KEPT.items()):
+        problems = _m20_13_edited(path, edits, check)
+        if not any(word in problem for problem in problems):
+            missed.append((tag, problems))
+    assert not missed, missed
+
+
+def test_m20_13_the_chat_line_prints_once_per_schema() -> None:
+    """The first-pass line prints only when the file's `announced` is not
+    this schema or the probe was lost; `announced` is cleared from the live
+    table at ADDON_LOADED and put back only by the addon's own write in a
+    session whose first pass ran."""
+    flow = _core()
+    first = _body(flow, "startFirstPass")
+    assert (
+        'if ns . announced ~= ns . SCHEMA or ns . probe . lost then say ( "recording in "' in first
+    )
+    assert first.count("say (") == 1
+    write = _body(flow, "ns.Write")
+    assert (
+        "if firstPassDone then db . announced = ns . SCHEMA "
+        "else db . announced = ns . Number ( ns . announced ) end"
+    ) in write
+    loaded = _body(flow, 'ns.On("ADDON_LOADED")')
+    assert loaded.index("loadQuiet ( WowLabCharDB )") < loaded.index("loadSkip ( WowLabCharDB )")
+    assert loaded.endswith("WowLabCharDB . announced = nil end"), loaded
+    rendered = _render(flow.tokens)
+    assert rendered.count("ns . announced =") == 2  # declared, and loaded
+
+
+def test_m20_13_debug_is_off_by_default_and_gates_probes_and_count_only_events() -> None:
+    """`/wowlab debug on|off` takes effect from the next load: ns.debug is
+    read once at ADDON_LOADED (only `true` is on). Outside a debug session
+    no `probes` and no count-only event: `quiet` drops the probes for a
+    `dropped` count."""
+    flow = _core()
+    rendered = _render(flow.tokens)
+    assert rendered.count("ns . debug =") == 2
+    assert "ns . debug = false" in rendered
+    assert "ns . debug = saved . debug == true debugNext = ns . debug" in _body(flow, "loadQuiet")
+    command = _body(flow, "debugCommand")
+    assert 'if word == "on" or word == "off" then debugNext = word == "on"' in command
+    assert "ns . debug =" not in command
+    assert "if counts then for _ , event in ipairs ( section . count_only or { } ) do" in _body(
+        flow, "listen"
+    )
+    quiet = _body(flow, "quiet")
+    assert quiet.startswith(
+        'function quiet ( record ) if ns . debug or type ( record ) ~= "table" '
+        'or type ( record . probes ) ~= "table" then return end'
+    )
+    assert "record . probes = nil record . dropped = dropped end" in quiet
+    assert 'elseif command == "debug" then' in rendered and "debugCommand ( key )" in rendered
+
+
+def test_m20_13_one_pass_at_most_every_30_to_60_s() -> None:
+    flow = _core()
+    t = flow.tokens
+    k = next(
+        i
+        for i in range(len(t) - 3)
+        if [x.text for x in t[i : i + 3]] == ["local", "GATHER_INTERVAL", "="]
+    )
+    assert 30 <= int(t[k + 3].text) <= 60
+    assert "timerAfter ( 2 ," not in _render(t)
+    assert "else section . dirty = true schedule ( ) end end" in _body(flow, "onEvent")
+
+
+def test_m20_13_the_constants_sweep_runs_once_per_session() -> None:
+    text = _render(_tokens(TALENTS))
+    assert text.count("pairs ( Constants )") == 1
+    assert (
+        "if not systemsSwept then systemsSwept = true for group , fields in pairs ( Constants ) do"
+    ) in text
+    assert (
+        "else for _ , known in ipairs ( answering ) do "
+        "add ( ns . Call ( bySystem , known . system ) , known . how ) end end"
+    ) in text
+    assert text.count("systemsSwept = true") == 1
+
+
+def test_m20_13_the_times_and_the_write_are_recorded() -> None:
+    flow = _core()
+    write = _body(flow, "ns.Write")
+    assert (
+        "db . gathered = gatheredList ( ) db . written_at = ns . Number ( time ( ) ) "
+        "db . written_by = ns . String ( by )"
+    ) in write
+    assert "gatheredAt [ section . key ] = ns . Number ( time ( ) )" in _body(flow, "gather")
+
+
+def test_m20_13_readme_and_plan_document_schema_5() -> None:
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    plan = " ".join(PLAN.read_text(encoding="utf-8").split("### 13.2")[0].split())
+    for phrase in ("Schema 5 (M20-13", "### Debug", "/wowlab debug on", "`announced`", "`dropped`"):
+        assert phrase in readme, phrase
+    for text in (readme, plan):
+        for word in ("`macros`", "`gathered`", "`written_at`", "`guid`", "`guild`"):
+            assert word in text, word
+    assert "*Schema 5, as built (2026-11-20, M20-13" in plan

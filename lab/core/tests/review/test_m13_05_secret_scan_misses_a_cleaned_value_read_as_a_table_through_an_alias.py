@@ -22,6 +22,12 @@ The implementer flagged assignment aliasing as worth testing. The same field
 read straight from `total` is rejected (control), which shows the rule is
 meant to cover it. Constructed inputs (boundary cases for the grader), not
 addon sources.
+
+Re-anchored in the review of m20/13-addon-own-account (2026-11-20): M20-13
+removed `local function command(value)`, the plain-command rule's helper and
+this probe's anchor for the new helper, with ADR-0026's note of 2026-11-20.
+The helper is now put just before the bindings section's header comment, the
+place `command` held; the rule the probe grades (the secret scan) is kept.
 """
 
 from __future__ import annotations
@@ -39,7 +45,8 @@ REPO = Path(__file__).resolve().parents[4]
 GRADER = REPO / "tests" / "addon" / "test_lab_addon.py"
 
 STORE = "        record.commands = commands\n"
-COMMAND_FN = "local function command(value)\n"
+# The bindings section's header comment in Actions.lua (M20-13 re-anchor).
+COMMAND_FN = "-- bindings " + "-" * 68 + "\n"
 
 # Each case: (text found exactly once in Actions.lua, its replacement), in order.
 Edits = list[tuple[str, str]]

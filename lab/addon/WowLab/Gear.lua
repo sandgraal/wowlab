@@ -6,11 +6,11 @@
 -- ranged slot in it is [verify]).
 --
 -- A crafted item's link can carry the crafter's player GUID
--- ("Player-<realm id>-<hex>"). ADR-0026 forbids storing any GUID, so every
--- such run is blanked before the link is stored, and the slot records
--- `crafter_removed = true` when one was found (whether Forever fills the
--- field is [verify]). tests/addon/test_lab_addon.py checks that the stored
--- link only ever comes from that step.
+-- ("Player-<realm id>-<hex>"). Since schema 5 (ADR-0026, note of
+-- 2026-11-20) the link is stored as the client gives it, the GUID included,
+-- and `crafter_removed` is no longer written. Whether Forever fills the
+-- field is [verify]. The capture tool replaces a GUID in a committed capture
+-- (another player's with an invented one).
 
 local _, ns = ...
 
@@ -53,11 +53,9 @@ ns.Section({
             local raw = GetInventoryItemLink("player", slot)
             if type(raw) == "string" then
                 local level, source = itemLevel(slot, raw)
-                local clean, removed = string.gsub(raw, "Player%-%d+%-%x+", "")
                 record.slots[#record.slots + 1] = {
                     slot = slot,
-                    link = clean,
-                    crafter_removed = removed > 0,
+                    link = raw,
                     item_level = level,
                     item_level_api = source,
                 }

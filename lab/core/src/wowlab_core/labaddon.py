@@ -62,6 +62,16 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   the reports' `CharIdentity`, deriving `sex` (`Enum.UnitSex`) from
   `sex_raw` by `UNIT_SEX_TO_ENUM`; a schema 1 to 3 record reports every
   value absent. Schema 1 to 3 files are read exactly as before.
+- Schema 5 (M20-13; ADR-0026, note of 2026-11-20) is schema 4 plus what
+  the owner's own account shows, as the client returns it: `macros` (each
+  macro's index, scope, name, icon and body), every binding command and
+  key as text, `identity`'s `guid`, `name`, `realm` and `guild`, gear
+  links that keep a crafter's GUID; and the quieter addon's top-level
+  `debug`, `announced`, `gathered`, `written_at` and `written_by`, with
+  `probes` only in a debug session and `dropped` in their place. That text
+  is accepted bounded, as UTF-8, and with no control character (a macro
+  body may hold line breaks and tabs). Schema 1 to 4 files are read
+  exactly as before.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -97,6 +107,7 @@ from __future__ import annotations
 import re
 import shlex
 from collections.abc import Callable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self, TypeVar
 
@@ -132,10 +143,12 @@ __all__ = [
     "LAB_FILE_NAME",
     "LINKED_FILE",
     "MAX_IMPORT_CHOICES",
+    "MAX_MACROS_PER_SCOPE",
     "MAX_SURVEY_BYTES",
     "NOT_FOLLOWED",
     "NOT_REGULAR",
     "OPEN_RECORD_NOTE",
+    "OWN_FIELDS",
     "PAID_CHANGE_NOTE",
     "REASON_LIMIT",
     "SECTION_KEYS",
@@ -145,6 +158,7 @@ __all__ = [
     "AbsentCurrency",
     "AbsentCustomizationV2",
     "AbsentProbedSection",
+    "AbsentProbedSectionV5",
     "AbsentRecord",
     "AbsentSection",
     "AccountDB",
@@ -152,17 +166,22 @@ __all__ = [
     "AccountDBV2",
     "AccountDBV3",
     "AccountDBV4",
+    "AccountDBV5",
     "ActionBars",
+    "ActionBarsV5",
     "ActionSlot",
     "AllCharacters",
     "ApiProbe",
     "Binding",
+    "BindingV5",
     "Bindings",
+    "BindingsV5",
     "CharDB",
     "CharDBV1",
     "CharDBV2",
     "CharDBV3",
     "CharDBV4",
+    "CharDBV5",
     "CharIdentity",
     "CharacterFile",
     "ClassTalents",
@@ -171,17 +190,24 @@ __all__ = [
     "CustomizationImport",
     "CustomizationV2",
     "FolderFacts",
+    "Gathered",
+    "GearSlotV5",
+    "GearV5",
     "Identity",
+    "IdentityV5",
     "LabAddonError",
     "LegacyConfig",
     "LegacyTalents",
     "LegacyTalentsV3",
+    "Macro",
+    "Macros",
     "NoCustomizationError",
     "NotLookedAt",
     "Place",
     "Spellbook",
     "SpellbookItem",
     "SpellbookLine",
+    "SpellbookV5",
     "TalentsV3",
     "choose_lab_file",
     "client_build",
@@ -190,6 +216,7 @@ __all__ = [
     "customization_loads_ago",
     "describe",
     "describe_account",
+    "dropped_of",
     "identity_of",
     "is_lab_file_name",
     "legacy_headline",
@@ -199,6 +226,7 @@ __all__ = [
     "older_client",
     "parse_account",
     "parse_char",
+    "quiet_words",
     "read_account",
     "read_all",
     "read_char",
@@ -231,6 +259,8 @@ SECTION_KEYS: tuple[str, ...] = (
     "bindings",
     # Schema 4 (M15-01).
     "identity",
+    # Schema 5 (M20-13).
+    "macros",
 )
 
 # The addon's absent reason for a section in the skip list (Core.lua).
@@ -1053,6 +1083,7 @@ ProbedApi = Literal[
     "C_SpellBook.GetSpellBookItemName",
     "GetActionInfo",
     "GetMacroInfo",
+    "GetNumMacros",  # schema 5
     "GetCurrentBindingSet",
     "GetNumBindings",
     "GetBinding",
@@ -1339,6 +1370,63 @@ class AccountDBV3(_Record):
     schema_: Literal[3] = Field(alias="schema")
 
 
+# ─── schema 5 text (M20-13) ──────────────────────────────────────────────────
+
+# Since schema 5 (ADR-0026, note of 2026-11-20) the addon keeps text the
+# owner typed, as the client returns it: macro names and bodies, binding
+# commands such as `MACRO <name>` or `CLICK <frame>:<button>`, the
+# character's name, realm and guild. Each is accepted as text of bounded
+# length that encodes as UTF-8 (a byte the file holds that is not UTF-8
+# comes back from `luadata` as a lone surrogate, which no JSON can carry);
+# names, keys and commands hold no control character, a macro body may hold
+# line breaks and tabs. What a report prints of it is escaped there.
+OWN_TEXT_LIMIT = 255
+MACRO_BODY_LIMIT = 4096
+BINDING_TEXT_LIMIT = 1024
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_BODY_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_OWN_GUID = re.compile(r"Player-[0-9]{1,10}-[0-9A-Fa-f]{1,32}")
+
+
+def _encodes(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _own_text_fits(value: str, limit: int) -> bool:
+    return 0 < len(value) <= limit and _encodes(value) and not _CONTROL.search(value)
+
+
+def _own_text(limit: int) -> Callable[[str], str]:
+    def check(value: str) -> str:
+        if not _own_text_fits(value, limit):
+            raise ValueError(
+                f"the text is not 1 to {limit} characters of UTF-8 with no control character"
+            )
+        return value
+
+    return check
+
+
+def _macro_body(value: str) -> str:
+    if len(value) > MACRO_BODY_LIMIT or not _encodes(value) or _BODY_CONTROL.search(value):
+        raise ValueError(
+            f"the body is not at most {MACRO_BODY_LIMIT} characters of UTF-8 with no control "
+            "character but a line break or tab"
+        )
+    return value
+
+
+# A macro's name, the character's name, realm or guild, a key as the client names it.
+OwnText = Annotated[str, AfterValidator(_own_text(OWN_TEXT_LIMIT))]
+# A binding command as the client returns it (schema 5).
+BindingText = Annotated[str, AfterValidator(_own_text(BINDING_TEXT_LIMIT))]
+MacroBody = Annotated[str, AfterValidator(_macro_body)]
+
+
 # ─── schema 4 (M15-01) ───────────────────────────────────────────────────────
 
 # The values of `identity`, each written as exactly one of `<field>` and
@@ -1356,6 +1444,11 @@ _IDENTITY_SHAPES: dict[str, str] = {
     "sex_raw": f"a whole number from {-INT_BOUND} to {INT_BOUND}",
     "class_id": f"a whole number from 1 to {ID_MAX}",
     "class_file": "1 to 32 capital letters or underscores",
+    # Schema 5 (M20-13).
+    "guid": "a player GUID (Player-<realm id>-<hex>)",
+    "name": "1 to 255 characters of text with no control character",
+    "realm": "1 to 255 characters of text with no control character",
+    "guild": "1 to 255 characters of text with no control character",
 }
 ClassFile = Annotated[str, StringConstraints(pattern=r"^[A-Z_]{1,32}$")]
 
@@ -1363,6 +1456,10 @@ ClassFile = Annotated[str, StringConstraints(pattern=r"^[A-Z_]{1,32}$")]
 def _identity_fits(name: str, value: object) -> bool:
     if name == "class_file":
         return isinstance(value, str) and _CLASS_FILE.fullmatch(value) is not None
+    if name == "guid":
+        return isinstance(value, str) and _OWN_GUID.fullmatch(value) is not None
+    if name in OWN_FIELDS:
+        return isinstance(value, str) and _own_text_fits(value, OWN_TEXT_LIMIT)
     if isinstance(value, bool) or not isinstance(value, int):
         return False
     if name == "sex_raw":
@@ -1392,6 +1489,8 @@ class Identity(_Section):
 
     reason_fields: ClassVar[tuple[str, ...]] = tuple(f"{f}_absent" for f in IDENTITY_FIELDS)
     reader_flags: ClassVar[tuple[str, ...]] = tuple(f + SET_ASIDE_SUFFIX for f in IDENTITY_FIELDS)
+    # The values this schema's record holds (IdentityV5 adds four).
+    value_fields: ClassVar[tuple[str, ...]] = IDENTITY_FIELDS
 
     race_id: Int | None = None
     race_id_absent: Reason | None = None
@@ -1413,7 +1512,7 @@ class Identity(_Section):
     @classmethod
     def _clip(cls, data: dict[Any, Any], from_file: bool) -> dict[Any, Any]:
         data = dict(data)
-        for name in IDENTITY_FIELDS:
+        for name in cls.value_fields:
             flag = name + SET_ASIDE_SUFFIX
             if from_file and flag in data:
                 raise ValueError(f"{flag} is written by this reader, never by the addon")
@@ -1457,23 +1556,249 @@ class CharDBV4(CharDBV3):
     ) = None
 
 
-# A character or account document of any schema this reader knows.
-CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4
-AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4
+# ─── schema 5 (M20-13) ───────────────────────────────────────────────────────
 
-CHAR_SCHEMAS: Mapping[int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4]] = {
+# A link as the client gives it since schema 5: a crafter's GUID
+# (`Player-<realm id>-<hex>`) may stay in the item string.
+ItemLinkV5 = Annotated[
+    str,
+    StringConstraints(
+        max_length=1024,
+        pattern=(
+            r"^\|c[0-9A-Za-z:]{1,16}\|Hitem:[0-9A-Za-z:\-]*"
+            r"\|h\[[^\x00-\x1f\x7f-\x9f\]\p{Cf}\p{Zl}\p{Zp}]*\]\|h\|r$"
+        ),
+    ),
+]
+
+
+class GearSlotV5(GearSlot):
+    """A gear slot in schema 5: the link as the client gives it, a crafter's
+    GUID included; `crafter_removed` is no longer written (False: nothing
+    was removed)."""
+
+    link: ItemLinkV5
+    crafter_removed: bool = False
+
+
+class GearV5(Gear):
+    slots: Lst[GearSlotV5]  # type: ignore[assignment]
+
+
+class _Quiet(_Record):
+    """Schema 5: `probes` only in a debug session (an empty list here when
+    the file holds none); outside one `dropped`, the calls that raised plus
+    the values dropped as secret or untestable over every probe but
+    issecretvalue's own."""
+
+    dropped: Count | None = None
+
+
+class SpellbookV5(Spellbook, _Quiet):
+    probes: Lst[ApiProbe] = Field(default_factory=list)
+
+
+class ActionBarsV5(ActionBars, _Quiet):
+    probes: Lst[ApiProbe] = Field(default_factory=list)
+
+
+class AbsentProbedSectionV5(AbsentProbedSection, _Quiet):
+    """A schema-5 section of `Actions.lua` absent with the addon's reason."""
+
+
+class BindingV5(Binding):
+    """A binding command as the client returns it (`MACRO <name>` and
+    `CLICK <frame>:<button>` included), and every key it has, as text."""
+
+    command: BindingText
+    keys: Lst[OwnText]
+
+
+class BindingsV5(Bindings, _Quiet):
+    """`bindings` in schema 5: every command `GetBinding` lists, as the
+    client returns it, with its keys (whether that list holds `MACRO`,
+    `SPELL`, `ITEM` and `CLICK` commands is [verify]). `commands_left_out` and
+    `keys_left_out` are not written any more; they read 0 (nothing is left
+    out)."""
+
+    commands_left_out: Count = 0
+    keys_left_out: Count = 0
+    list_: Lst[BindingV5] = Field(alias="list")  # type: ignore[assignment]
+    probes: Lst[ApiProbe] = Field(default_factory=list)
+
+
+class Macro(_Record):
+    """One macro as `GetMacroInfo` returns it: its index, account-wide or
+    this character's, its name, icon (a number, or `icon_text` when the
+    client gives text) and body."""
+
+    index: Int
+    scope: Literal["account", "character"]
+    name: OwnText
+    icon: Int | None = None
+    icon_text: OwnText | None = None
+    body: MacroBody | None = None
+
+
+# The addon walks at most this many macros per scope (Actions.lua).
+MAX_MACROS_PER_SCOPE = 256
+
+
+class Macros(_Section, _Quiet):
+    """`macros` (schema 5, M20-13): `account` and `character` are
+    `GetNumMacros`'s counts; the account macros are indices 1 to `account`,
+    this character's start at `first_character_index`
+    (`MAX_ACCOUNT_MACROS + 1`). A macro listed twice, or at an index the
+    counts do not reach, is refused: the addon cannot have written it."""
+
+    account: Count
+    character: Count
+    first_character_index: Int
+    list_: Lst[Macro] = Field(alias="list")
+    probes: Lst[ApiProbe] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _indices_in_range(self) -> Self:
+        seen: set[int] = set()
+        first = self.first_character_index
+        for macro in self.list_:
+            if macro.index in seen:
+                raise ValueError(f"macro index {macro.index} is listed more than once")
+            seen.add(macro.index)
+            if macro.scope == "account":
+                last = min(self.account, MAX_MACROS_PER_SCOPE)
+                ok = 1 <= macro.index <= last
+            else:
+                last = first + min(self.character, MAX_MACROS_PER_SCOPE) - 1
+                ok = first <= macro.index <= last
+            if not ok:
+                raise ValueError(f"macro index {macro.index} is outside its scope's range")
+        return self
+
+
+# The character's own values, schema 5 (Identity.lua), each one of the
+# value and `<field>_absent`.
+OWN_FIELDS: tuple[str, ...] = ("guid", "name", "realm", "guild")
+
+
+class IdentityV5(Identity):
+    """`identity` in schema 5: schema 4's values plus the character's own
+    `guid` (`UnitGUID("player")`), `name` (`UnitName("player")`), `realm`
+    (`GetRealmName()`) and `guild` (`GetGuildInfo("player")`), each one of
+    the value and `<field>_absent`. A value that does not fit is set aside
+    with a reason, as schema 4's are."""
+
+    value_fields: ClassVar[tuple[str, ...]] = IDENTITY_FIELDS + OWN_FIELDS
+    reason_fields: ClassVar[tuple[str, ...]] = tuple(
+        f"{f}_absent" for f in IDENTITY_FIELDS + OWN_FIELDS
+    )
+    reader_flags: ClassVar[tuple[str, ...]] = tuple(
+        f + SET_ASIDE_SUFFIX for f in IDENTITY_FIELDS + OWN_FIELDS
+    )
+
+    guid: OwnText | None = None
+    guid_absent: Reason | None = None
+    guid_absent_clipped: ClippedReason | None = None
+    guid_set_aside: Reason | None = None
+    name: OwnText | None = None
+    name_absent: Reason | None = None
+    name_absent_clipped: ClippedReason | None = None
+    name_set_aside: Reason | None = None
+    realm: OwnText | None = None
+    realm_absent: Reason | None = None
+    realm_absent_clipped: ClippedReason | None = None
+    realm_set_aside: Reason | None = None
+    guild: OwnText | None = None
+    guild_absent: Reason | None = None
+    guild_absent_clipped: ClippedReason | None = None
+    guild_set_aside: Reason | None = None
+
+
+class Gathered(_Record):
+    """One entry of `gathered`: a section key and `time()` at its last
+    gather in the session that wrote the file."""
+
+    section: SkipKey
+    at: Int
+
+
+class AccountDBV5(_Record):
+    """`WowLabDB`, schema 5: as schema 1, only the number differs."""
+
+    schema_: Literal[5] = Field(alias="schema")
+
+
+class CharDBV5(CharDBV4):
+    """`WowLabCharDB`, schema 5 (M20-13; ADR-0026, note of 2026-11-20):
+    schema 4 plus what the owner's own account shows, as the client returns
+    it (`macros`, every binding command, the character's GUID, name, realm
+    and guild, links with a crafter's GUID) and the quieter addon's keys
+    (`debug`, `announced`, `gathered`, `written_at`, `written_by`; `probes`
+    only in a debug session, `dropped` in their place). A schema-5 record
+    is a `CharDBV4` to every reader of the schema-4 sections."""
+
+    schema_: Literal[5] = Field(alias="schema")  # type: ignore[assignment]
+    debug: bool | None = None
+    announced: Int | None = None
+    gathered: Lst[Gathered] | None = None
+    written_at: Int | None = None
+    written_by: Literal["logout", "save"] | None = None
+    gear: (
+        Annotated[Annotated[GearV5, Tag(_P)] | Annotated[AbsentSection, Tag(_A)], _SPLIT] | None
+    ) = None
+    spellbook: (
+        Annotated[
+            Annotated[SpellbookV5, Tag(_P)] | Annotated[AbsentProbedSectionV5, Tag(_A)], _SPLIT
+        ]
+        | None
+    ) = None
+    actionbars: (
+        Annotated[
+            Annotated[ActionBarsV5, Tag(_P)] | Annotated[AbsentProbedSectionV5, Tag(_A)], _SPLIT
+        ]
+        | None
+    ) = None
+    bindings: (
+        Annotated[
+            Annotated[BindingsV5, Tag(_P)] | Annotated[AbsentProbedSectionV5, Tag(_A)], _SPLIT
+        ]
+        | None
+    ) = None
+    identity: (
+        Annotated[Annotated[IdentityV5, Tag(_P)] | Annotated[AbsentSection, Tag(_A)], _SPLIT] | None
+    ) = None
+    macros: (
+        Annotated[Annotated[Macros, Tag(_P)] | Annotated[AbsentProbedSectionV5, Tag(_A)], _SPLIT]
+        | None
+    ) = None
+
+
+# A character or account document of any schema this reader knows.
+CharDB = CharDBV1 | CharDBV2 | CharDBV3 | CharDBV4 | CharDBV5
+AccountDB = AccountDBV1 | AccountDBV2 | AccountDBV3 | AccountDBV4 | AccountDBV5
+
+CHAR_SCHEMAS: Mapping[
+    int, type[CharDBV1] | type[CharDBV2] | type[CharDBV3] | type[CharDBV4] | type[CharDBV5]
+] = {
     1: CharDBV1,
     2: CharDBV2,
     3: CharDBV3,
     4: CharDBV4,
+    5: CharDBV5,
 }
 ACCOUNT_SCHEMAS: Mapping[
-    int, type[AccountDBV1] | type[AccountDBV2] | type[AccountDBV3] | type[AccountDBV4]
+    int,
+    type[AccountDBV1]
+    | type[AccountDBV2]
+    | type[AccountDBV3]
+    | type[AccountDBV4]
+    | type[AccountDBV5],
 ] = {
     1: AccountDBV1,
     2: AccountDBV2,
     3: AccountDBV3,
     4: AccountDBV4,
+    5: AccountDBV5,
 }
 
 
@@ -3355,7 +3680,7 @@ def _spellbook(book: Spellbook) -> list[str]:
     if items:
         lines.append(f"  {_item_type_words(book)}; future (not yet learned) spells are items too")
     lines.extend(_skill_line(line) for line in book.skill_lines)
-    return lines + _probe_lines(book.probes) + _events(book)
+    return lines + _record_probes(book) + _events(book)
 
 
 def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[str]:
@@ -3379,7 +3704,7 @@ def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[s
                 "shows now [verify]); a macro's name and body are never recorded"
             )
         )
-    return lines + _probe_lines(bars.probes) + _events(bars)
+    return lines + _record_probes(bars) + _events(bars)
 
 
 def _binding_set_words(record: Bindings) -> str:
@@ -3409,6 +3734,21 @@ def _binding_set_words(record: Bindings) -> str:
 
 
 def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]:
+    if isinstance(record, BindingsV5):
+        typed = sum(1 for b in record.list_ if b.command.startswith(("MACRO ", "CLICK ")))
+        return [
+            f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
+            f"{record.commands} listed (commands and keys in --json); binding set "
+            f"{_binding_set_words(record)}; read out of combat",
+            "  every command the game's binding list gives: "
+            f"{_count(typed, 'macro or click command')} among those with a key",
+            render(
+                "  a key bound straight to a spell, macro, item or click may not be listed by "
+                "GetBinding at all [verify]"
+            ),
+            *_record_probes(record),
+            *_events(record),
+        ]
     lines = [
         f"Key bindings: {_count(len(record.list_), 'command')} with a key, of "
         f"{record.commands} listed (commands and keys in --json); binding set "
@@ -3421,7 +3761,76 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
             "GetBinding at all [verify]"
         ),
     ]
-    return lines + _probe_lines(record.probes) + _events(record)
+    return lines + _record_probes(record) + _events(record)
+
+
+def dropped_of(record: object) -> int | None:
+    """A schema-5 section's `dropped` (the calls that raised plus the values
+    dropped as secret or untestable, written outside a debug session in
+    place of `probes`), or None."""
+    value = getattr(record, "dropped", None)
+    return value if isinstance(value, int) else None
+
+
+def quiet_words(record: object) -> list[str]:
+    """What a schema-5 section's `dropped` says it may be missing, in the
+    words the readers of `probes` use; empty when it holds probes or drops
+    nothing."""
+    dropped = dropped_of(record)
+    if not dropped or getattr(record, "probes", None):
+        return []
+    return [f"{dropped} call(s) raised an error or value(s) were dropped as secret or untestable"]
+
+
+def _record_probes(record: Any) -> list[str]:
+    """`probes` when the record holds them; a schema-5 record written
+    outside a debug session holds `dropped` instead."""
+    dropped = dropped_of(record)
+    if dropped is not None and not record.probes:
+        return [
+            f"  dropped: {_count(dropped, 'value')} (calls that raised and values dropped as "
+            "secret; the per-call counts are written with /wowlab debug on)"
+        ]
+    return _probe_lines(record.probes)
+
+
+def _macros(record: Macros) -> list[str]:
+    return [
+        f"Macros: {_count(record.account, 'account-wide macro')} and "
+        f"{_count(record.character, 'macro')} of this character's (names and bodies in "
+        "--json); read out of combat",
+        *_record_probes(record),
+        *_events(record),
+    ]
+
+
+# The addon's reason for a nil guild (Identity.lua): no guild, or one the
+# client had not loaded yet.
+NO_GUILD_REASON = "the first return of GetGuildInfo was not a non-empty string"
+
+
+def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
+    """Schema 5: the character's own name, realm and guild, and when the
+    addon wrote the file."""
+    section = char.identity
+    lines: list[str] = []
+    if isinstance(section, IdentityV5):
+        parts = []
+        for name, label in (("name", "name"), ("realm", "realm"), ("guild", "guild")):
+            value = getattr(section, name)
+            if value is not None:
+                parts.append(f"{label} {value}")
+            elif name == "guild" and section.guild_absent == NO_GUILD_REASON:
+                parts.append(render("no guild, or the guild not loaded yet [verify]"))
+            else:
+                parts.append(f"{label} absent ({_identity_reason(section, name)})")
+        guid = "game ID kept" if section.guid is not None else "game ID absent"
+        lines.append(f"Character: {', '.join(parts)}; {guid} (in --json)")
+    if char.written_at is not None:
+        when = datetime.fromtimestamp(char.written_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+        by = {"logout": "at logout", "save": "by /wowlab save"}.get(char.written_by or "", "")
+        lines.append(f"Written: {when}{' ' + by if by else ''} (a crash keeps the write before it)")
+    return lines
 
 
 APPEARANCES_EVENTS_NOTE = (
@@ -3450,7 +3859,7 @@ def _section(label: str, record: object, present: Any) -> list[str]:
             note = ""
             if record.absent.startswith(COMBAT_REASON_PREFIXES):
                 note = f"{COMBAT_NOTE}: "
-            return [f"{label}: {note}{_absent(record)}", *_probe_lines(record.probes)]
+            return [f"{label}: {note}{_absent(record)}", *_record_probes(record)]
         return [f"{label}: {_absent(record)}"]
     lines: list[str] = present(record)
     return lines
@@ -3537,6 +3946,8 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
     lines += _section("Spec", char.spec, _spec)
     if isinstance(char, CharDBV4):
         lines += _section("Identity", char.identity, lambda _: [_identity_line(char, render)])
+    if isinstance(char, CharDBV5):
+        lines += _own_lines(char, render)
     talents = char.talents
     lines += _section("Class talents", talents.class_ if talents else None, _class_talents)
     class_config = _class_config(talents) if talents else None
@@ -3561,6 +3972,8 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
         lines += _section("Spellbook", char.spellbook, _spellbook)
         lines += _section("Action bars", char.actionbars, lambda bars: _action_bars(bars, render))
         lines += _section("Key bindings", char.bindings, lambda rec: _bindings(rec, render))
+    if isinstance(char, CharDBV5):
+        lines += _section("Macros", char.macros, _macros)
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")

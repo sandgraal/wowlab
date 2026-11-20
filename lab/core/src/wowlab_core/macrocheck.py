@@ -360,7 +360,7 @@ def _spellbook(record: labaddon.CharDB | None, no_record: str) -> labaddon.Spell
         return f"no spellbook record (the section is absent: {record.spellbook.absent})"
     book = record.spellbook
     flyout = (book.item_types or {}).get("Flyout")
-    why = _dropped(book.probes, _SPELLBOOK_NEEDS)
+    why = _dropped(book.probes, _SPELLBOOK_NEEDS) + labaddon.quiet_words(book)
     unnamed = sum(
         1 for i in book.list_ if i.spell_name is None and (flyout is None or i.type != flyout)
     )
@@ -384,7 +384,7 @@ def _actionbars(record: labaddon.CharDB | None, no_record: str) -> labaddon.Acti
     if isinstance(record.actionbars, labaddon.AbsentProbedSection):
         return f"no action-bar record (the section is absent: {record.actionbars.absent})"
     bars = record.actionbars
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS)
+    why = _dropped(bars.probes, _ACTIONBARS_NEEDS) + labaddon.quiet_words(bars)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -507,6 +507,81 @@ def _check_bars(
         )
     )
     return at_least
+
+
+def _stored_macros(record: labaddon.CharDB | None) -> labaddon.Macros | None:
+    """The record's own `macros` (schema 5, M20-13), when it holds them whole."""
+    if not isinstance(record, labaddon.CharDBV5) or not isinstance(record.macros, labaddon.Macros):
+        return None
+    macros = record.macros
+    if labaddon.quiet_words(macros) or any(p.secret or p.errors for p in macros.probes):
+        return None  # a macro may be one of those dropped
+    if len(macros.list_) != min(macros.account, labaddon.MAX_MACROS_PER_SCOPE) + min(
+        macros.character, labaddon.MAX_MACROS_PER_SCOPE
+    ):
+        return None
+    return macros
+
+
+def _stored_key(name: str, body: str) -> tuple[str, str]:
+    # The client's body may end with a line break the cache file does not
+    # keep as a line [verify]; both are compared without trailing breaks.
+    return name, body.rstrip("\n")
+
+
+def _joined_bars(
+    macros: Sequence[SourceMacro],
+    bars: labaddon.ActionBars,
+    stored: labaddon.Macros,
+    whose: str,
+    findings: list[Finding],
+    unjudged: list[CannotJudge],
+) -> bool:
+    """Schema 5 (M20-13): the record holds every macro with its index, so a
+    macro slot's index names a macro by its name and body. Judges
+    `not-on-action-bar` for each macro of the cache files that one stored
+    macro matches exactly; a macro no stored one matches (the file and the
+    record from different moments) is "cannot judge". False, judging
+    nothing, when a macro slot has a subtype (its id is then the spell or
+    item the macro shows, not its index [verify]) or two stored macros share
+    a name and body."""
+    slots = [s for s in bars.slots if s.type == "macro"]
+    if any(s.sub_type is not None for s in slots):
+        return False
+    by_key: dict[tuple[str, str], int] = {}
+    for kept in stored.list_:
+        key = _stored_key(kept.name, kept.body or "")
+        if key in by_key:
+            return False
+        by_key[key] = kept.index
+    on_bar = {s.id for s in slots if s.id is not None}
+    walked = f"{whose} action bars (slots {bars.first_slot} to {bars.last_slot})"
+    unmatched = 0
+    for m in macros:
+        index = by_key.get(_stored_key(m.macro.name, body_text(m.macro)))
+        if index is None:
+            unmatched += 1
+        elif index not in on_bar:
+            findings.append(
+                Finding(
+                    rule="not-on-action-bar",
+                    macro=_ref(m),
+                    name=m.macro.name,
+                    line=m.macro.header_index + 1,
+                    detail=f"on none of {walked} (macro {index} in the lab-addon's record)",
+                )
+            )
+    if unmatched:
+        unjudged.append(
+            CannotJudge(
+                rule="not-on-action-bar",
+                reason=(
+                    f"{unmatched} macro(s) match no macro in the lab-addon's record by name and "
+                    "body: the file and the record were written at different times"
+                ),
+            )
+        )
+    return True
 
 
 def _same_name(m: SourceMacro) -> bytes | None:
@@ -664,7 +739,11 @@ def check(
         unjudged.append(CannotJudge(rule="not-on-action-bar", reason=bars))
     else:
         whose = f"{character}'s" if character else "the character's"
-        at_least = _check_bars(macros, bars, whose, findings, unjudged)
+        stored = _stored_macros(record)
+        if stored is not None and _joined_bars(macros, bars, stored, whose, findings, unjudged):
+            at_least = sum(1 for f in findings if f.rule == "not-on-action-bar")
+        else:
+            at_least = _check_bars(macros, bars, whose, findings, unjudged)
     _check_duplicates(macros, findings)
     _check_lines(macros, findings)
     order = {rule: i for i, rule in enumerate(RULES)}

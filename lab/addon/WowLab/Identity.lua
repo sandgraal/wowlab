@@ -24,13 +24,50 @@
 -- All three ran on 70450 (M15-01 capture; lab/addon/README.md, API status;
 -- docs/LAB_FORMATS.md, amendment of 2026-10-19). UnitSex 3 and 1 are not
 -- yet seen: [verify].
+--
+-- Schema 5 (M20-13; ADR-0026, note of 2026-11-20): the character's own
+-- GUID, name, realm and guild, as the client gives them, each exactly one of
+-- the value and `<field>_absent`:
+-- - guid: UnitGUID("player");
+-- - name: the first return of UnitName("player");
+-- - realm: GetRealmName(), the realm's display name;
+-- - guild: the first return of GetGuildInfo("player"); nil means no guild,
+--   or a guild the client has not loaded yet [verify]. PLAYER_GUILD_UPDATE
+--   gathers the section again.
+-- Each value is tested with issecretvalue (`secret`) before it is compared
+-- or stored; one it calls secret, or cannot say about, is not kept. All four
+-- calls are [verify] on Forever until the owner's schema-5 capture.
 
 local _, ns = ...
+
+-- True when the client calls a value secret or cannot say; false when it has
+-- no issecretvalue (the values are then not tested, not known not secret).
+local function secret(value)
+    if type(issecretvalue) ~= "function" then
+        return false
+    end
+    local ok, hidden = pcall(issecretvalue, value)
+    return not ok or hidden == true
+end
+
+-- The text the client gave, or nil and the reason it is not kept.
+local function ownText(value, api)
+    if secret(value) then
+        return nil, api .. " was a value the client calls secret"
+    end
+    if type(value) == "string" and value ~= "" then
+        return value, nil
+    end
+    return nil, api .. " was not a non-empty string"
+end
 
 ns.Section({
     key = "identity",
     path = { "identity" },
-    events = { "BARBER_SHOP_APPEARANCE_APPLIED" },
+    -- PLAYER_GUILD_UPDATE (schema 5, [verify]): the guild is nil until the
+    -- client has its guild data, which may come after the first pass, and
+    -- joining or leaving a guild changes it.
+    events = { "BARBER_SHOP_APPEARANCE_APPLIED", "PLAYER_GUILD_UPDATE" },
     on_world = true,
     gather = function()
         local record = {}
@@ -69,6 +106,39 @@ ns.Section({
             else
                 record.class_file_absent = "the second return of UnitClass was not a non-empty string"
             end
+        end
+        -- Schema 5: the character's own GUID, name, realm and guild.
+        if type(UnitGUID) ~= "function" then
+            record.guid_absent = "the client has no UnitGUID function"
+        else
+            local guid = UnitGUID("player")
+            local keptGuid, whyGuid = ownText(guid, "the return of UnitGUID")
+            record.guid = ns.String(keptGuid)
+            record.guid_absent = ns.String(whyGuid)
+        end
+        if type(UnitName) ~= "function" then
+            record.name_absent = "the client has no UnitName function"
+        else
+            local name = UnitName("player")
+            local keptName, whyName = ownText(name, "the first return of UnitName")
+            record.name = ns.String(keptName)
+            record.name_absent = ns.String(whyName)
+        end
+        if type(GetRealmName) ~= "function" then
+            record.realm_absent = "the client has no GetRealmName function"
+        else
+            local realm = GetRealmName()
+            local keptRealm, whyRealm = ownText(realm, "the return of GetRealmName")
+            record.realm = ns.String(keptRealm)
+            record.realm_absent = ns.String(whyRealm)
+        end
+        if type(GetGuildInfo) ~= "function" then
+            record.guild_absent = "the client has no GetGuildInfo function"
+        else
+            local guild = GetGuildInfo("player")
+            local keptGuild, whyGuild = ownText(guild, "the first return of GetGuildInfo")
+            record.guild = ns.String(keptGuild)
+            record.guild_absent = ns.String(whyGuild)
         end
         return record
     end,

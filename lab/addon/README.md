@@ -11,14 +11,17 @@ wrote (M11-04).
 
 Records this character's equipped gear, spec, class talents, Legacy-tree candidates,
 barber-shop choices, collections, currencies, professions, spellbook, action
-bars, key bindings and the character's race, body type and class into
+bars, key bindings, macros, and the character's GUID, name, realm, guild,
+race, body type and class into
 `WowLabCharDB` (`## SavedVariablesPerCharacter`) as a versioned table
-(`schema = 4` since M15-01; 3 since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
+(`schema = 5` since M20-13; 4 since M15-01; 3 since M13-05; 2 since M11-29), written by the client at logout, `/reload` or a
 clean exit. `/wowlab save` refreshes the tables in memory only; a crash
 writes nothing.
 `/wowlab skip <section>` and `/wowlab unskip <section>` switch one section
-off and on ("Switching a section off" below).
-`WowLabDB` (`## SavedVariables`) holds only `{ schema = 4 }` until a capture
+off and on ("Switching a section off" below). `/wowlab debug on|off`
+switches the research probes on and off from the next `/reload` ("Debug"
+below).
+`WowLabDB` (`## SavedVariables`) holds only `{ schema = 5 }` until a capture
 shows which data is account-wide. The addon writes one schema number into
 both variables.
 
@@ -26,28 +29,41 @@ both variables.
   replaced at install time (`wowlab addon install lab`, M11-02) with the
   interface version discovered from the install (L6). The repository never
   holds a number.
-- No names, realms, GUIDs, guild or chat of anyone, no text the owner typed,
-  no Battle.net identity, no wall-clock time. Every unit token is `"player"`.
-  The one exception is the crew book (`Crew.lua`, below): off until the
-  player turns it on, it keeps the names, realms and guilds of the players
-  they group with, the time, and their own ratings and notes; never a GUID.
-  A crafted item's link can carry the crafter's player GUID
-  (`Player-<id>-<hex>`); every such run is blanked before the link is stored
-  and the slot records `crafter_removed = true`.
+- What the owner's own account shows is kept as the client gives it
+  (ADR-0026, note of 2026-11-20; schema 5): every macro's name, icon and
+  body, every binding command for every key, the character's own GUID,
+  name, realm and guild, a crafter's GUID left in an item link, and the
+  time of each gather and of the write. What stays out, in every file:
+  nothing is ever sent (no chat, whisper, addon message or mail); no
+  dynamic lookup or dynamic code; no BattleTag (`BNGetInfo`); nothing is
+  gathered in combat; and a value the client may make secret is tested with
+  `issecretvalue` before it is compared or stored (`Actions.lua`, and
+  `identity`'s schema-5 values). Every unit token outside `Crew.lua` is
+  `"player"`. The crew book (`Crew.lua`, below) is the one file that reads
+  other players, and only while the player has it on.
+- The repository is public, so `scripts/lab_capture.py` replaces the
+  owner's GUID before a capture is committed, and gives another player's
+  GUID (a crafter's in an item link) an invented one. Macro text, binding
+  commands, the guild and the times are not secret and are kept as captured
+  (ADR-0026, correction of 2026-11-20).
 - Availability is tested per API function, never by `WOW_PROJECT_ID`, the
   interface number or the flavor. A section the client cannot provide is
   `{ absent = "<reason>" }`.
 
-### Table layout (schema 4)
+### Table layout (schema 5)
 
 ```
 WowLabCharDB = {
-  schema = 4,
+  schema = 5,
   probe = { loads = <n>, lost = true? },      -- carried across sessions, with customization; lost: this load only
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
+  debug = true,                               -- schema 5: /wowlab debug on; left out when off
+  announced = <schema>,                       -- schema 5: the schema whose first-pass line was last printed in a session the addon wrote
+  gathered = { { section = "<key>", at = <time()> } },  -- schema 5: each section's last gather this session
+  written_at = <time()>, written_by = "logout"|"save",  -- schema 5: this write, and what made it
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },
-  gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed, item_level, item_level_api } },
+  gear = { first_slot, last_slot, slots = { { slot, link, crafter_removed (schema 1 to 4), item_level, item_level_api } },
           average = { overall (best items owned, bags included), equipped (GetAverageItemLevel's second value; Forever's character sheet shows none), pvp } },
   talents = {
     class = { config = <config>, export | export_absent, last_selected_config | last_selected_config_absent },
@@ -67,8 +83,12 @@ WowLabCharDB = {
                 list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes },
   actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
   bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
+  -- schema 5 (M20-13): bindings without commands_left_out and keys_left_out, every command and key as given;
+  -- probes only in a debug session, `dropped` (a whole number) in their place on spellbook, actionbars, bindings and macros;
+  macros = { account, character, first_character_index, list = { { index, scope = "account"|"character", name, icon | icon_text, body } }, probes | dropped },
   -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
-  identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent },
+  identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent,
+               guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent },  -- the last four: schema 5
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -103,6 +123,75 @@ current lab-addon (wowlab addon install lab updates it)" (worded so since
 M16-31), and refuses a schema it does not know. The first
 logout with the M15-01 addon rewrites the file as schema 4, and
 `probe.loads` keeps rising across that write.
+
+Schema 5 (M20-13; ADR-0026, note of 2026-11-20) is schema 4 with what the
+owner's own account shows, kept as the client gives it, and a quieter addon:
+
+- `macros`, a new section in `Actions.lua`: `GetNumMacros` gives the account
+  and character counts; the account macros are indices 1 to the account
+  count, this character's start at `MAX_ACCOUNT_MACROS + 1`
+  (`first_character_index`), each run walked to at most 256. Each entry is
+  the index, the scope, and `GetMacroInfo`'s name, icon (`icon` when a
+  number, `icon_text` when text) and body as the client returns them. Read
+  out of combat, every value cleaned with `issecretvalue` first, like the
+  other three sections there. That the character macros start after
+  `MAX_ACCOUNT_MACROS` on Forever, and the constant itself, are **[verify]**.
+- `bindings` keeps every command `GetBinding` lists, as the client
+  returns it, with every key `GetBindingKey` gives for it, as text.
+  `commands_left_out` and `keys_left_out` are no longer written. Whether
+  that list includes `MACRO`, `SPELL`, `ITEM` and `CLICK` commands is
+  **[verify]**: they are believed not to be in it, a key bound straight to
+  one being reached only through `GetBindingAction(key)` and
+  `bindings-cache.wtf`. No key-by-key walk is built. Override bindings
+  (set by bar addons such as ElvUI) are in neither `GetBinding` nor the
+  bindings file.
+- `macros` keeps the macro as the client holds it: an addon that writes
+  long macros (beyond the client's 255 characters) leaves only a short stub
+  there, and the stub is what is kept.
+- `identity` adds the character's `guid` (`UnitGUID("player")`), `name`
+  (the first return of `UnitName("player")`), `realm` (`GetRealmName()`)
+  and `guild` (the first return of `GetGuildInfo("player")`), each exactly
+  one of the value and `<field>_absent`. A guild nil means no guild or one
+  the client has not loaded yet **[verify]**. Each is tested with
+  `issecretvalue` before it is compared or stored.
+- `gear` keeps each link as the client gives it, a crafter's GUID included,
+  and no longer writes `crafter_removed`.
+- `gathered` lists `time()` at each section's last gather this session, and
+  `written_at` and `written_by` say when the addon wrote the tables and
+  whether a logout or `/wowlab save` did.
+- Quieter: the chat line "recording in 15 s" prints once per schema, after
+  a session the client saved without the addon's own write (`announced`
+  missing), or when the probe was lost. Once per schema, by choice, not
+  per addon version: `wowlab addon install` writes `## Version` into the
+  installed TOC, but the addon does not read it at run time (whether
+  `C_AddOns.GetAddOnMetadata` works on this client is **[verify]**), and
+  each change to what it writes bumps the schema. A crash is not seen: it writes nothing, so the file
+  still holds the last clean write. After the first pass a change event only marks its
+  section dirty; one pass gathers every dirty section at most once every
+  30 s, out of combat (a pass whose timer ends in combat waits for
+  `PLAYER_REGEN_ENABLED`), and at logout. Nothing is gathered in combat: a
+  logout or `/reload` in combat writes what earlier passes gathered, and
+  `/wowlab save` in combat says so and gathers nothing. The `Constants`
+  sweep of `talents.legacy` runs once per session; a later gather asks only
+  the system ids that answered then.
+- `probes` (spellbook, actionbars, bindings, macros) and the count-only
+  events of `customization` with their `events_received` are written only
+  in a debug session; outside one each of the four records carries
+  `dropped` instead: the calls that raised plus the values dropped as
+  secret, over every probe but `issecretvalue`'s own.
+
+The Lab reads schema 1 to 4 files exactly as before. The first logout with
+this addon rewrites the file as schema 5, and `probe.loads` keeps rising
+across that write.
+
+### Debug
+
+`/wowlab debug on` and `/wowlab debug off` take effect from the next
+`/reload` or login, and are saved per character as `debug = true` (left out
+when off). `/wowlab debug` alone says whether it is on this session and
+from the next one. In a debug session the four sections of `Actions.lua`
+write their `probes`, and `customization` registers its count-only events
+(the control event among them) and writes `events_received`.
 
 Notes on the fields:
 
@@ -161,8 +250,8 @@ Notes on the fields:
   on-world section) and again on `BARBER_SHOP_APPEARANCE_APPLIED`, since
   a body type can change in the barber shop. That the event fires is
   confirmed (70425, M11-29 capture: `events_received` 1); that `UnitSex`
-  already returns the new body type when the debounced gather runs 2 s
-  after it is **[verify]**, and not tested by the M15-01 capture. If that
+  already returns the new body type when the next pass runs after it (2 s
+  before schema 5; at most 30 s since) is **[verify]**, and not tested by the M15-01 capture. If that
   gather is too early, the logout write does not gather again (the section
   is no longer dirty), so the file keeps the old value until the next
   loading screen or `/reload` (each `PLAYER_ENTERING_WORLD` gathers it
@@ -498,7 +587,7 @@ hold several sections:
 - `Collections.lua`: `collections.mounts`, `collections.toys`, `collections.pets`, `collections.appearances`
 - `Currencies.lua`: `currencies`
 - `Professions.lua`: `professions`
-- `Actions.lua`: `spellbook`, `actionbars`, `bindings`
+- `Actions.lua`: `spellbook`, `actionbars`, `bindings`, `macros`
 - `Identity.lua`: `identity`
 - `Core.lua` holds no section: events, tables and the slash command.
 - `Crew.lua` holds no section: the crew book, switched by `/wowlab crew on`
@@ -522,14 +611,15 @@ loading screen clears (**[verify]**), so a little less than 15 s is left
 once the world is visible, less on a slow first login. The chat line is
 `WowLab: recording in 15 s. To switch a section off first: /wowlab skip <section>  (/wowlab skip lists them)`.
 Until that pass has run, change events gather nothing (what they would have
-gathered is taken by the pass); after it, change events keep the 2 s
-debounce. A `/wowlab skip` typed inside the 15 s takes effect for that pass.
+gathered is taken by the pass); after it, change events mark their
+section dirty and one pass gathers every dirty section at most once every
+30 s, out of combat (2 s before schema 5). A `/wowlab skip` typed inside the 15 s takes effect for that pass.
 A logout or `/reload` inside the 15 s still records: `PLAYER_LOGOUT` gathers
 every section still waiting, the crashing one included unless it was
 switched off first. `/wowlab save` inside the 15 s gathers at once, as
 always. If the client has no `C_Timer`, there is no window: the pass runs at
 once, as before. After the first pass, a section that crashes on a later
-change event (2 s debounce) gives no window; switch it off at the next
+change event (a pass at most every 30 s) gives no window; switch it off at the next
 login.
 
 What the switch does not do:
@@ -859,7 +949,7 @@ on from one, fails the test until someone lists it on purpose.
 | `SlashCmdList` | `/wowlab` | [verify] | n/a (table) |
 | `INVSLOT_FIRST_EQUIPPED` | gear: first slot (client constant) | [verify] | n/a (constant) |
 | `INVSLOT_LAST_EQUIPPED` | gear: last slot (ranged slot on Forever: [verify]) | [verify] | n/a (constant) |
-| `GetInventoryItemLink` | gear: item link per slot, crafter GUID blanked before storing (whether Forever fills it: [verify]) | [verify] | yes |
+| `GetInventoryItemLink` | gear: item link per slot, as the client gives it (schema 5: a crafter GUID is kept; before, blanked; whether Forever fills it: [verify]) | [verify] | yes |
 | `GetAverageItemLevel` | gear: overall (best items owned, bags included), equipped (character sheet), PvP | [verify] | yes |
 | `ItemLocation.CreateFromEquipmentSlot` | gear: slot location for item level | [verify] | n/a (FrameXML mixin) |
 | `C_Item.GetCurrentItemLevel` | gear: slot item level | [verify] | yes |
@@ -891,8 +981,8 @@ on from one, fails the test until someone lists it on purpose.
 | `C_CurrencyInfo.GetCurrencyFilter` | currencies: filter state, recorded | [verify] | yes |
 | `GetProfessions` | professions: indices | [verify] | yes |
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
-| `InCombatLockdown` | spellbook, actionbars, bindings: nothing is read in combat, or when this cannot say (schema 3); the crew book likewise | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
-| `issecretvalue` | spellbook, actionbars, bindings: each value is tested before it is used or stored; a secret one is dropped and counted; the crew book likewise (counted in `skipped`) | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | no |
+| `InCombatLockdown` | spellbook, actionbars, bindings, macros: nothing is read in combat, or when this cannot say (schema 3); since schema 5 also asked once as the world is entered, so a pass waits for the end of combat; the crew book likewise | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
+| `issecretvalue` | spellbook, actionbars, bindings, macros, and identity's schema-5 values: each value is tested before it is used or stored; a secret one is dropped and counted; the crew book likewise (counted in `skipped`) | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | no |
 | `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | present on 70425 (M13-05 capture); what it does: [verify] | no |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | ran on 70425 (M13-05 capture: `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4); a future-spell item not yet seen: [verify] | n/a (table) |
@@ -904,7 +994,9 @@ on from one, fails the test until someone lists it on purpose.
 | `C_SpellBook.GetSpellBookItemName` | spellbook: the spell's name and subtext (a rank where the client gives one) | ran on 70425 (M13-05 capture: 28 of 28 answered, ranks as `Rank n`); other builds: [verify] | yes |
 | `Enum.SpellBookSpellBank` | spellbook: the `Player` bank value, read, never assumed | ran on 70425 (M13-05 capture: the section was not absent for it); other builds: [verify] | n/a (table) |
 | `GetActionInfo` | actionbars: type, id and subtype per slot, 1 to 180 | ran on 70425 (M13-05 capture: 180 calls, 0 errors, 26 answered); a `#showtooltip` macro slot had no subtype; other builds: [verify] | yes |
-| `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype (name and body never stored) | ran on 70425 (M13-05 capture: 2 of 2 answered); index numbering: [verify] | yes |
+| `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype; macros (schema 5): each macro's name, icon and body | ran on 70425 (M13-05 capture: 2 of 2 answered); index numbering and the body's return: [verify] | yes |
+| `GetNumMacros` | macros (schema 5): the account and character counts | [verify] | yes |
+| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it | [verify] | n/a (constant) |
 | `GetCurrentBindingSet` | bindings: which binding set is active, raw | ran on 70425 (M13-05 capture: 2, with "Character Specific Key Bindings" ticked); other builds: [verify] | yes |
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
@@ -913,16 +1005,17 @@ on from one, fails the test until someone lists it on purpose.
 | `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise | [verify] | yes |
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player | [verify] | yes |
-| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own) | [verify] | yes |
+| `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
+| `GetRealmName` | identity (schema 5): the character's `realm`, as its display name | [verify] | yes |
 | `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty | [verify] | yes |
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
-| `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil | [verify] | yes |
+| `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
-| `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`) | [verify] | yes |
+| `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`); identity (schema 5): the character's `guid` | [verify] | yes |
 | `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
 | `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
 | `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
-| `time` | crew book: `started`, `first`, `last` | [verify] | yes |
+| `time` | crew book: `started`, `first`, `last`; schema 5: `gathered` and `written_at` | [verify] | yes |
 | `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |
 | `C_PvP.GetScoreInfo` | crew book: each scoreboard row once the match has a winner, every field whose value is a number, text or true/false copied as it is (the row's `name`, `guid`, `faction` as the side, `raceName`, `classToken`, `talentSpec`, `honorLevel` and the totals among them); the probe: whether it exists, the first row's field names and type names | [verify] | not checked |
 | `C_PvP.IsSoloShuffle` | crew book: a solo shuffle is kept as `kind = "shuffle"`, with no sides, result or counts | [verify] | not checked |
@@ -1090,7 +1183,8 @@ after each one you want to keep):
 - `/reload` while fighting a training dummy and keep fighting past the 15 s
   pass, then `/reload` again still in combat: that file shows the combat
   reason on all three sections (nothing was gathered in that session).
-- Then end combat, wait at least 3 s (the debounce is 2 s), pull the dummy
+- Then end combat, wait at least 35 s (a pass runs at most every 30 s
+  since schema 5; it was 2 s), pull the dummy
   again and `/reload` in combat. Records present means the retry ran; the
   combat reason means it did not. Don't use `/wowlab save` in between.
 - Separately: after a clean first pass out of combat, pull the dummy and
@@ -1149,7 +1243,8 @@ Items:
     `PLAYER_REGEN_ENABLED` are known.
 11. Combat, if those steps were done: the reason only in the file written
     while nothing had been gathered; the retry after combat: end combat,
-    wait at least 3 s (the debounce is 2 s), pull the dummy again and
+    wait at least 35 s (a pass runs at most every 30 s since schema 5; it
+    was 2 s), pull the dummy again and
     `/reload` in combat. Records present means the retry ran; the combat
     reason means it did not. Don't use `/wowlab save` in between. And the
     pre-fight records kept through a `/reload` in combat.

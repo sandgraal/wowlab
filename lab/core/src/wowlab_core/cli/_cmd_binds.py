@@ -352,7 +352,10 @@ def _first_name(name: str) -> str:
 
 def _caster_match(counts: combatlog.CastCounts, who: str | None) -> CasterMatch:
     """Whether the casts counted are by a character with `who`'s first name
-    (`who`: a character folder name)."""
+    (`who`: a character folder name). Picked by the character's own GUID
+    (M20-13), the casts counted are that character's by construction."""
+    if counts.by_guid:
+        return "matches" if counts.mine else "does not match"
     if who is None:
         return "no character"
     if not counts.mine:
@@ -382,8 +385,17 @@ def _namesakes(acct: layout.Account, folder: Folder) -> list[str]:
     return sorted(found)
 
 
-def _read_counts(path: Path) -> combatlog.CastCounts:
-    return combatlog.cast_counts(combatlog.read_log(path, events=combatlog.CAST_COUNT_EVENTS))
+def _read_counts(path: Path, own_guid: str | None = None) -> combatlog.CastCounts:
+    return combatlog.cast_counts(
+        combatlog.read_log(path, events=combatlog.CAST_COUNT_EVENTS), own_guid
+    )
+
+
+def _own_guid(record: labaddon.CharDB | None) -> str | None:
+    """The character's own GUID from a schema-5 record (M20-13), or None."""
+    if isinstance(record, labaddon.CharDBV5) and isinstance(record.identity, labaddon.IdentityV5):
+        return record.identity.guid
+    return None
 
 
 def _shared_warning(first: str, namesakes: Sequence[str]) -> str:
@@ -395,7 +407,11 @@ def _shared_warning(first: str, namesakes: Sequence[str]) -> str:
 
 
 def _coach_pick_log(
-    lay: layout.Layout, acct: layout.Account, name: str | None, who: Folder | None
+    lay: layout.Layout,
+    acct: layout.Account,
+    name: str | None,
+    who: Folder | None,
+    own_guid: str | None = None,
 ) -> CoachLog:
     """The combat log `binds coach` reads, and whether its casts are by the
     character judged (`who`, its folder). With --log, that log, with a
@@ -405,14 +421,17 @@ def _coach_pick_log(
     `_COACH_LOG_BUDGET` bytes in all, and one that cannot be read is skipped.
     When none has (or there is no character), the newest, with the warning.
     A match on a first name another of the account's characters shares is
-    "first name shared", with its own warning."""
+    "first name shared", with its own warning. With the character's own GUID
+    (a schema-5 record, M20-13) the casts are picked by it, and a first name
+    shared needs no warning."""
     folder_name = who[1] if who is not None else None
     first = folder_name.split("-", 1)[0] if folder_name is not None else None
     namesakes = _namesakes(acct, who) if who is not None else []
 
     def matched(counts: combatlog.CastCounts) -> CasterMatch:
         match = _caster_match(counts, folder_name)
-        return "first name shared" if match == "matches" and namesakes else match
+        shared = namesakes and not counts.by_guid
+        return "first name shared" if match == "matches" and shared else match
 
     def out(
         path: Path,
@@ -438,7 +457,7 @@ def _coach_pick_log(
     if name is not None:
         path = _coach_log(lay, name)
         assert path is not None
-        counts = _read_counts(path)
+        counts = _read_counts(path, own_guid)
         warning = None
         if matched(counts) == "does not match":
             warning = (
@@ -460,7 +479,7 @@ def _coach_pick_log(
             counts=None,
         )
     newest = logs[-1]
-    newest_counts = _read_counts(newest)  # the log read anyway: its errors stay errors
+    newest_counts = _read_counts(newest, own_guid)  # the log read anyway: its errors stay errors
     if who is None:
         return out(newest, "newest", newest_counts, None)
     if matched(newest_counts) in ("matches", "first name shared"):
@@ -474,7 +493,7 @@ def _coach_pick_log(
             if used + size > _COACH_LOG_BUDGET:
                 too_big.append(path.name)
                 continue
-            counts = _read_counts(path)
+            counts = _read_counts(path, own_guid)
         except OSError:
             skipped.append(path.name)
             continue
@@ -586,7 +605,7 @@ def binds_coach(
         costs = bindscoach.load_costs()
     except bindscoach.CostTableError as exc:
         raise CliError(f"the key-cost table cannot be used: {exc}") from exc
-    coach_log = _coach_pick_log(lay, acct, log, folder)
+    coach_log = _coach_pick_log(lay, acct, log, folder, _own_guid(record))
     counts = coach_log.counts
     if record_error is not None:
         no_record = f"no lab-addon record: {record_error}"
@@ -672,6 +691,12 @@ def _say_coach(
             f"  Your casts: {counts.mine} of {counts.cast_events} SPELL_CAST_SUCCESS record(s) "
             f"(picked by the source flags: yours, and a player); {counts.others} by other units"
         )
+        if counts.by_guid:
+            _say(
+                "  Picked by this character's own game ID from its lab-addon record: "
+                f"{counts.other_guid} of your cast(s) under another of your characters were "
+                "not counted"
+            )
         if counts.other_version:
             _say(
                 f"  {counts.other_version} cast(s) under a COMBAT_LOG_VERSION other than "

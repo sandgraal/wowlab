@@ -170,9 +170,8 @@ globals:
       - type: number
 
   # --- Spellbook, action bars, bindings (schema 3, M13-05) --------------------
-  # Each is asked only out of combat (InCombatLockdown first). GetMacroInfo is
-  # asked only whether an action slot's id names a macro: its name and body
-  # are never stored (tests/addon/test_lab_addon.py pins the one use).
+  # Each is asked only out of combat (InCombatLockdown first). Since schema 5
+  # (M20-13) `macros` keeps every macro's name, icon and body.
   InCombatLockdown:
     args: []
   # Where the client has it, every value the three sections read is tested
@@ -200,6 +199,10 @@ globals:
     property: read-only
   GetMacroInfo:
     property: read-only
+  GetNumMacros:
+    property: read-only
+  MAX_ACCOUNT_MACROS:
+    property: read-only
   GetCurrentBindingSet:
     property: read-only
   ACCOUNT_BINDINGS:
@@ -216,8 +219,8 @@ globals:
   # --- The crew book (Crew.lua only, docs/LAB_PLAN.md §20.1, M19-10) ---------
   # Every one is [verify] until the owner's in-game check (M19-07), tested for
   # before it is called, and called only while the book is on and out of
-  # combat. tests/addon/test_lab_addon.py lets no other file use the name
-  # calls (UnitName, GetNormalizedRealmName, GetGuildInfo).
+  # combat there. Since schema 5 (M20-13) Identity.lua also asks UnitGUID,
+  # UnitName and GetGuildInfo, for the player only.
   IsInGroup:
     args: []
   IsInRaid:
@@ -233,6 +236,9 @@ globals:
     args:
       - type: string
   GetNormalizedRealmName:
+    args: []
+  # Identity.lua (schema 5): the character's realm, as its display name.
+  GetRealmName:
     args: []
   UnitGroupRolesAssigned:
     args:

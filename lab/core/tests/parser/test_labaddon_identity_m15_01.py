@@ -231,7 +231,10 @@ def test_constructed_sex_is_derived_from_unitsex(
 
 def test_constructed_every_addon_reason_is_read_and_reported() -> None:
     reasons = _addon_reasons()
-    assert sorted(reasons) == sorted(labaddon.IDENTITY_FIELDS)
+    # M20-13: schema 5 adds the character's own values (OWN_FIELDS), read by
+    # IdentityV5 (test_labaddon_schema_5_constructed_m20_13.py).
+    assert sorted(reasons) == sorted(labaddon.IDENTITY_FIELDS + labaddon.OWN_FIELDS)
+    reasons = {k: v for k, v in reasons.items() if k in labaddon.IDENTITY_FIELDS}
     for field, texts in reasons.items():
         for text in texts:
             got = _identity(
