@@ -1484,16 +1484,7 @@ def _set(
         store=store,
         yes=yes,
         json_out=json_out,
-        database=crewdb.Marking(
-            folder,
-            acct,
-            key,
-            field,
-            value,
-            (value, player.note) if field == "rating" else (player.rating, value),
-        )
-        if db_has
-        else None,
+        database=crewdb.Marking(folder, acct, key, field, value) if db_has else None,
         unfinished=lambda record, exc: (
             f"{edit.rel} was changed and journaled as {record}, but wowlab's crew database "
             f"still holds the old {field}: {exc} `wowlab crew sync` brings the new one in."
@@ -1608,7 +1599,10 @@ def _set_database_only(
             field,
             value,
             expect=marks,
-            file_marks=(in_file.rating, in_file.note) if in_file is not None else None,
+            file_value=None
+            if in_file is None
+            else (in_file.rating if field == "rating" else in_file.note),
+            in_file=in_file is not None,
         )
     except crewdb.RowChanged as exc:
         raise CliError(str(exc), EXIT_REFUSED) from None

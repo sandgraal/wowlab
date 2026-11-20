@@ -64,7 +64,7 @@ from wowlab_core.errors import WowlabError
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 1
+SCHEMA = 2
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -108,7 +108,10 @@ _SQL_JOURNAL_MODE = "PRAGMA journal_mode = DELETE"
 _SQL_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 _SQL_TRUSTED_SCHEMA = "PRAGMA trusted_schema = OFF"
 _SQL_SET_APP_ID = "PRAGMA application_id = 1464615746"
-_SQL_SET_VERSION: dict[int, str] = {1: "PRAGMA user_version = 1"}
+_SQL_SET_VERSION: dict[int, str] = {
+    1: "PRAGMA user_version = 1",
+    2: "PRAGMA user_version = 2",
+}
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
 _SQL_ROLLBACK = "ROLLBACK"
@@ -143,7 +146,9 @@ _SQL_CREATE: tuple[str, ...] = (
     " faced_won_seen INTEGER NOT NULL DEFAULT 0,"
     " in_book INTEGER NOT NULL DEFAULT 0,"
     " marks_changed INTEGER NOT NULL,"
-    " marks_agreed INTEGER NOT NULL"
+    " marks_agreed INTEGER NOT NULL,"
+    " rating_own INTEGER NOT NULL DEFAULT 0 CHECK (rating_own IN (0, 1)),"
+    " note_own INTEGER NOT NULL DEFAULT 0 CHECK (note_own IN (0, 1))"
     ") STRICT",
     "CREATE INDEX players_last ON players (last_at)",
     "CREATE INDEX players_rating ON players (rating)",
@@ -169,9 +174,26 @@ _SQL_CREATE: tuple[str, ...] = (
     "CREATE TABLE meta (name TEXT PRIMARY KEY NOT NULL, value ANY) STRICT",
 )
 
-# Statements that move the database from schema n to n + 1. None yet: the
-# copy kept before a schema change (rule 6) is made by `_migrate`.
-_MIGRATIONS: dict[int, tuple[str, ...]] = {}
+# Statements that move the database from schema n to n + 1, after a copy of
+# it is kept beside it (rule 6, `_migrate`).
+#
+# 1 -> 2 (M20-02, fix round 2): whether the rating, and separately the note,
+# is the database's own (given at the desk, not yet agreed with the saved
+# file). Schema 1 knew it for the row only (`marks_changed > marks_agreed`):
+# such a row's two fields both start as its own, and the next sync gives up
+# each one that equals the saved file's value (`_merged`); a row that agreed
+# keeps neither.
+#
+# Keyed by (schema it starts from, order within the step); each value one
+# constant statement, so the static check reads every one.
+_MIGRATIONS: dict[tuple[int, int], str] = {
+    (1, 1): "ALTER TABLE players ADD COLUMN rating_own INTEGER NOT NULL DEFAULT 0"
+    " CHECK (rating_own IN (0, 1))",
+    (1, 2): "ALTER TABLE players ADD COLUMN note_own INTEGER NOT NULL DEFAULT 0"
+    " CHECK (note_own IN (0, 1))",
+    (1, 3): "UPDATE players SET rating_own = (marks_changed > marks_agreed),"
+    " note_own = (marks_changed > marks_agreed)",
+}
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
 _SQL_META_SET = (
@@ -180,18 +202,21 @@ _SQL_META_SET = (
 )
 _SQL_PLAYERS_ALL = (
     "SELECT player_key, name, realm, class, level, role, guild, met, first_at, last_at,"
-    " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed"
+    " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
+    " rating_own, note_own"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
     "INSERT INTO players (player_key, name, realm, class, level, role, guild, met, first_at,"
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
-    " marks_agreed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " marks_agreed, rating_own, note_own)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
     " met = ?, first_at = ?, last_at = ?, where_name = ?, where_id = ?, rating = ?,"
-    " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?"
+    " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?,"
+    " rating_own = ?, note_own = ?"
     " WHERE player_key = ?"
 )
 
@@ -469,8 +494,8 @@ def _migrate(conn: sqlite3.Connection, path: Path, version: int) -> None:
     _copy(conn, path.with_name(f"{path.name}.before-schema-{version}"))
     with _transaction(conn):
         for step in range(version, SCHEMA):
-            for statement in _MIGRATIONS[step]:
-                conn.execute(statement)
+            for name in sorted(k for k in _MIGRATIONS if k[0] == step):
+                conn.execute(_MIGRATIONS[name])
             conn.execute(_SQL_SET_VERSION[step + 1])
 
 
@@ -540,6 +565,12 @@ class _Row:
     in_book: int
     marks_changed: int
     marks_agreed: int
+    # Whether the rating, and the note, is the database's own: given at the
+    # desk to a player the game's list had dropped, not since agreed with the
+    # saved file (§21.3, decision 20). A field written through the saved
+    # file is never the database's own.
+    rating_own: int = 0
+    note_own: int = 0
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -560,6 +591,8 @@ class _Row:
             self.in_book,
             self.marks_changed,
             self.marks_agreed,
+            self.rating_own,
+            self.note_own,
         )
 
 
@@ -849,28 +882,28 @@ def _merged(row: _Row | None, p: crewbook.CrewPlayer, mode: Mode, now: int) -> _
             if value is not None:
                 setattr(new, field, value)
     marks = (p.rating, p.note)
-    own = row.marks_changed > row.marks_agreed
-    if mode != "normal" and own:
-        # From any held book (§21.3): a rating or note the database changed
-        # since it last agreed with the saved file is kept.
-        want = (row.rating, row.note)
-    elif own:
-        # Ruled 2026-11-20 (M20-02, §21.3): a rating or note given at the
-        # desk to a player only the database kept survives the player's
-        # return to the game's list, field by field, unless the saved file
-        # now has one of its own (rated or noted again in game).
-        want = (
-            row.rating if p.rating is None else p.rating,
-            row.note if p.note is None else p.note,
-        )
-    else:
-        want = marks
-    if want != (row.rating, row.note):
-        new.rating, new.note = want
+    new.rating, new.rating_own = _mark(row.rating, row.rating_own, p.rating, mode)
+    new.note, new.note_own = _mark(row.note, row.note_own, p.note, mode)
+    if (new.rating, new.note) != (row.rating, row.note):
         new.marks_changed = now
     if (new.rating, new.note) == marks:
         new.marks_agreed = now
     return new
+
+
+def _mark(kept: str | None, own: int, given: str | None, mode: Mode) -> tuple[str | None, int]:
+    """One field (the rating or the note) after a sync: its value and whether
+    it is still the database's own. Rule 2, the saved file's value (`given`),
+    except a field the database holds as its own (decision 20): that one
+    agrees again, and stops being its own, when the file says the same;
+    from a held book it is kept (§21.3); in a normal sync it is kept where
+    the file has none and gives way to the file's where it has one (rated or
+    noted again in game)."""
+    if own and given == kept:
+        return kept, 0
+    if own and (mode != "normal" or given is None):
+        return kept, 1
+    return given, 0
 
 
 def _kept_on_return(old: _Row, new: _Row, p: crewbook.CrewPlayer) -> tuple[bool, bool]:
@@ -879,8 +912,8 @@ def _kept_on_return(old: _Row, new: _Row, p: crewbook.CrewPlayer) -> tuple[bool,
     if old.in_book:
         return False, False
     return (
-        new.rating is not None and p.rating is None and new.rating == old.rating,
-        new.note is not None and p.note is None and new.note == old.note,
+        bool(new.rating_own) and new.rating is not None and p.rating is None,
+        bool(new.note_own) and new.note is not None and p.note is None,
     )
 
 
@@ -1678,15 +1711,10 @@ def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
 
 _SQL_PLAYER_MARKS = "SELECT rating, note FROM players WHERE player_key = ?"
 _SQL_SET_MARK: dict[str, str] = {
-    "rating": "UPDATE players SET rating = ?, marks_changed = ? WHERE player_key = ?",
-    "note": "UPDATE players SET note = ?, marks_changed = ? WHERE player_key = ?",
+    "rating": "UPDATE players SET rating = ?, rating_own = ?, marks_changed = ?"
+    " WHERE player_key = ?",
+    "note": "UPDATE players SET note = ?, note_own = ?, marks_changed = ? WHERE player_key = ?",
 }
-# After a write of the saved file and the row together: the row agrees with
-# the file when both its rating and its note are the file's.
-_SQL_MARKS_AGREE = (
-    "UPDATE players SET marks_agreed = marks_changed"
-    " WHERE player_key = ? AND rating IS ? AND note IS ?"
-)
 
 MarkField = Literal["rating", "note"]
 
@@ -1708,10 +1736,13 @@ def _mark_value(field: MarkField, value: str | None) -> str | None:
     return value
 
 
-def _set_mark(conn: sqlite3.Connection, key: str, field: MarkField, value: str | None) -> bool:
-    """Set the player's rating or note, and the time it changed: a held sync
-    then keeps it (§21.3). Whether the database holds the player."""
-    done = conn.execute(_SQL_SET_MARK[field], (value, time.time_ns(), key))
+def _set_mark(
+    conn: sqlite3.Connection, key: str, field: MarkField, value: str | None, *, own: bool
+) -> bool:
+    """Set the player's rating or note, whether it is the database's own
+    (a sync then keeps it, §21.3, decision 20), and the time it changed.
+    Whether the database holds the player."""
+    done = conn.execute(_SQL_SET_MARK[field], (value, int(own), time.time_ns(), key))
     return done.rowcount > 0
 
 
@@ -1721,11 +1752,10 @@ class Marking(_Holding):
     the database's write lock before the saved file is written; `finish()`
     sets the row's field under that lock (a player the database does not
     keep yet is added by the next sync, from the saved file); `release()`
-    lets go. `file_marks` is the player's rating and note in the saved file
-    as written: when the row then holds the same two, it is recorded as
-    agreeing with the file (a later sync of a book put back, an `undo` of
-    this write, takes the file's again); a rating or note only the database
-    keeps on the row keeps it its own (§21.3)."""
+    lets go. The field it sets was written through the saved file, so it is
+    never the database's own: a later sync of a book put back (an `undo` of
+    this write) takes the file's value again. The other field is left as it
+    is, its own or not (§21.3)."""
 
     def __init__(
         self,
@@ -1734,14 +1764,12 @@ class Marking(_Holding):
         key: str,
         field: MarkField,
         value: str | None,
-        file_marks: tuple[str | None, str | None],
     ) -> None:
         super().__init__(flavor_folder, account)
         self._verb = "rate" if field == "rating" else "note"
         self.key = key
         self.field: MarkField = field
         self.value = _mark_value(field, value)
-        self.file_marks = file_marks
 
     def finish(self) -> bool:
         """Set the field; whether the database held the player."""
@@ -1749,8 +1777,7 @@ class Marking(_Holding):
         if conn is None:
             return False
         try:
-            held = _set_mark(conn, self.key, self.field, self.value)
-            conn.execute(_SQL_MARKS_AGREE, (self.key, *self.file_marks))
+            held = _set_mark(conn, self.key, self.field, self.value, own=False)
             conn.execute(_SQL_COMMIT)
         except sqlite3.Error as exc:
             with contextlib.suppress(sqlite3.Error):
@@ -1788,14 +1815,16 @@ def mark_only(
     value: str | None,
     *,
     expect: tuple[str | None, str | None],
-    file_marks: tuple[str | None, str | None] | None = None,
+    file_value: str | None = None,
+    in_file: bool = False,
 ) -> None:
     """Set a rating or note on a player only wowlab's crew database keeps
     (the game's list dropped them): no game file is written and nothing is
     journaled, so it cannot be undone. Refused (`RowChanged`) when the row's
     rating and note are no longer `expect`, as the plan read them.
-    `file_marks`, for a player the saved file holds: its rating and note;
-    when the row then holds the same two, it agrees with the file again."""
+    The value is the database's own (a sync keeps it, decision 20) unless
+    the saved file holds the player (`in_file`) with the same value in that
+    field (`file_value`): it then agrees with the file again."""
     value = _mark_value(field, value)
     path = database_path(flavor_folder, account)
     try:
@@ -1819,9 +1848,7 @@ def mark_only(
                     "plan was made, or the player was forgotten, so nothing was written; run "
                     "the command again to see the new plan."
                 )
-            _set_mark(conn, key, field, value)
-            if file_marks is not None:
-                conn.execute(_SQL_MARKS_AGREE, (key, *file_marks))
+            _set_mark(conn, key, field, value, own=not (in_file and value == file_value))
     except sqlite3.OperationalError as exc:
         raise CrewDbError(
             f"The crew database {path} was not changed ({exc}); run the command again."

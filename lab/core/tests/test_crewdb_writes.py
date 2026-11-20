@@ -131,15 +131,16 @@ def _dropped(env: Env) -> None:
     assert not rows[KEY_B].in_game_list and not rows[KEY_C].in_game_list
 
 
-def _marks_times(env: Env, key: str) -> tuple[int, int]:
+def _own(env: Env, key: str) -> tuple[int, int]:
+    """Whether the row's rating, and its note, is the database's own."""
     conn = sqlite3.connect(env.db())
     try:
-        changed, agreed = conn.execute(
-            "SELECT marks_changed, marks_agreed FROM players WHERE player_key = ?", (key,)
+        rating, note = conn.execute(
+            "SELECT rating_own, note_own FROM players WHERE player_key = ?", (key,)
         ).fetchone()
     finally:
         conn.close()
-    return int(changed), int(agreed)
+    return int(rating), int(note)
 
 
 def _report(result: Any) -> cli.CrewEditReport:
@@ -163,10 +164,9 @@ def test_rate_and_note_reach_the_database_in_the_same_command_constructed(make: 
     assert report.written and report.database_updated and not report.database_only
     assert report.row_sha256 == "absent"
     assert env.rows()[KEY_C].rating == "bad"  # no sync in between
-    changed, agreed = _marks_times(env, KEY_C)
-    # Fix round 1: the file and the row were written together, so they agree
-    # (an undo of this write, synced by hand, takes the file's rating again).
-    assert changed == agreed
+    # Written through the file: never the database's own (an undo of this
+    # write, synced by hand, takes the file's rating again).
+    assert _own(env, KEY_C) == (0, 0)
     assert env.run("crew", "note", KEY_C, "invented: at the desk", "--yes").exit_code == 0
     assert env.rows()[KEY_C].note == "invented: at the desk"
     assert env.sync().state == "synced"
@@ -249,8 +249,7 @@ def test_a_write_to_the_database_alone_touches_nothing_in_the_install_constructe
     assert tree_state(env.root) == tree  # nothing in the install
     assert guard.history() == records  # no journal record
     assert [m.id for m in snapshot.SnapshotStore().list()] == snaps  # no snapshot
-    changed, agreed = _marks_times(env, KEY_B)
-    assert changed > agreed
+    assert _own(env, KEY_B) == (1, 0)  # the rating is the database's own
     report = _report(env.run("crew", "note", KEY_B, NOTE_B, "--yes", "--json"))
     assert report.database_only and report.written and report.database_updated
     assert report.transaction is None and report.written_sha256 == "absent"
@@ -396,8 +395,7 @@ def test_a_desk_rate_keeps_a_note_only_the_database_holds_its_own_constructed(
     env.save(book({KEY_A: player(met=4), KEY_B: player(met=10)}))
     assert env.sync().state == "synced"
     assert env.run("crew", "rate", KEY_B, "good", "--yes").exit_code == 0
-    changed, agreed = _marks_times(env, KEY_B)
-    assert changed > agreed
+    assert _own(env, KEY_B) == (0, 1)  # the rating through the file, the note its own
     env.save(book({KEY_A: player(met=5), KEY_B: player(rating="good", met=11)}))
     assert env.sync().state == "synced"
     row = env.rows()[KEY_B]
@@ -452,8 +450,7 @@ def test_a_desk_mark_survives_the_player_s_return_unless_given_again_in_game_con
         assert outcome.words.endswith(KEPT_BOTH)
     if kept == (0, 0):
         assert "It kept" not in outcome.words
-        changed, agreed = _marks_times(env, KEY_B)
-        assert agreed >= changed  # the row agrees with the file again
+        assert _own(env, KEY_B) == (0, 0)  # the row agrees with the file again
     # Kept for good, not for one sync: a later session leaves it as it is.
     env.save(book({KEY_A: player(met=6), KEY_B: player(met=3, **marks)}))
     later = env.sync()
@@ -635,3 +632,153 @@ def test_snap_export_says_it_does_not_include_the_database_constructed(
     assert (EXPORT_SENTENCE in flat) is synced
     for word in FORBIDDEN:
         assert word not in result.stdout
+
+
+# ─── fix round 2: the rating and the note are each the database's own ───────
+
+
+def test_an_undone_rating_on_a_player_with_a_kept_note_is_taken_back_constructed(
+    make: Any,
+) -> None:
+    """The security review's sequence: C drops out, gets a desk note,
+    returns (the note kept); a rating through the file, undone, synced by
+    hand: the file's (none) comes back, and stays."""
+    env = make(_three())
+    _dropped(env)
+    assert env.run("crew", "note", KEY_C, NOTE_B, "--yes").exit_code == 0
+    env.save(book({KEY_A: player(met=4), KEY_C: player(met=2)}))
+    assert env.sync().state == "synced"
+    assert (env.rows()[KEY_C].rating, env.rows()[KEY_C].note) == (None, NOTE_B)
+    assert env.run("crew", "rate", KEY_C, "bad", "--yes").exit_code == 0
+    assert _own(env, KEY_C) == (0, 1)
+    assert env.run_bare("undo", "--yes").exit_code == 0
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
+    assert (env.rows()[KEY_C].rating, env.rows()[KEY_C].note) == (None, NOTE_B)
+    env.save(book({KEY_A: player(met=5), KEY_C: player(met=3)}))
+    assert env.sync().state == "synced"
+    assert (env.rows()[KEY_C].rating, env.rows()[KEY_C].note) == (None, NOTE_B)
+
+
+def test_a_field_set_in_game_follows_the_file_beside_a_kept_one_constructed(
+    make: Any,
+) -> None:
+    """B returns with a note written in game beside a kept desk rating: the
+    note follows the file from then on (changed, then cleared), the rating
+    stays kept."""
+    env = make(_three())
+    _dropped(env)
+    assert env.run("crew", "rate", KEY_B, "bad", "--yes").exit_code == 0
+    for note in ("invented: game", "invented: game again", None):
+        marks = {"note": note} if note is not None else {}
+        env.save(book({KEY_A: player(met=4), KEY_B: player(met=10, **marks)}))
+        assert env.sync().state == "synced"
+        assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == ("bad", note)
+        assert _own(env, KEY_B) == (1, 0)
+
+
+def test_a_kept_field_given_the_same_value_in_game_agrees_again_constructed(
+    make: Any,
+) -> None:
+    env = make(_three())
+    _desk_marks(env)
+    _returns(env, rating="bad")  # rated the same in game
+    assert _own(env, KEY_B) == (0, 1)
+    _returns(env)  # the rating then cleared in game: the file's wins
+    assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == (None, NOTE_B)
+
+
+# A database as schema 1 (M20-01, on main before this change) made it: the
+# players table without the two per-field columns, at user_version 1.
+_SCHEMA_1_PLAYERS = (
+    "CREATE TABLE players ("
+    " player_key TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, realm TEXT NOT NULL,"
+    " class TEXT, level INTEGER, role TEXT, guild TEXT, met INTEGER NOT NULL DEFAULT 0,"
+    " first_at INTEGER, last_at INTEGER, where_name TEXT, where_id INTEGER,"
+    " rating TEXT CHECK (rating IN ('good', 'bad')), note TEXT,"
+    " allied INTEGER NOT NULL DEFAULT 0, faced INTEGER NOT NULL DEFAULT 0,"
+    " allied_won INTEGER NOT NULL DEFAULT 0, faced_won INTEGER NOT NULL DEFAULT 0,"
+    " pvp_last INTEGER, pvp_map TEXT,"
+    " pvp_side TEXT CHECK (pvp_side IN ('with', 'against')),"
+    " met_seen INTEGER NOT NULL DEFAULT 0, allied_seen INTEGER NOT NULL DEFAULT 0,"
+    " faced_seen INTEGER NOT NULL DEFAULT 0, allied_won_seen INTEGER NOT NULL DEFAULT 0,"
+    " faced_won_seen INTEGER NOT NULL DEFAULT 0, in_book INTEGER NOT NULL DEFAULT 0,"
+    " marks_changed INTEGER NOT NULL, marks_agreed INTEGER NOT NULL) STRICT"
+)
+
+
+def _as_schema_1(env: Env) -> None:
+    """Rewrite the database as schema 1 made it, rows kept: the players
+    table without the per-field columns, user_version 1."""
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        # As every wowlab opens it: the rewrite leaves no row's bytes in a
+        # free page (the dropped table's pages are zeroed).
+        conn.execute("PRAGMA secure_delete = ON")
+        cols = (
+            "player_key, name, realm, class, level, role, guild, met, first_at, last_at,"
+            " where_name, where_id, rating, note, allied, faced, allied_won, faced_won,"
+            " pvp_last, pvp_map, pvp_side, met_seen, allied_seen, faced_seen,"
+            " allied_won_seen, faced_won_seen, in_book, marks_changed, marks_agreed"
+        )
+        conn.execute("BEGIN")
+        conn.execute("ALTER TABLE players RENAME TO players_new")
+        conn.execute(_SCHEMA_1_PLAYERS)
+        conn.execute(f"INSERT INTO players ({cols}) SELECT {cols} FROM players_new")
+        conn.execute("DROP TABLE players_new")
+        for index in ("last_at", "rating", "faced", "allied"):
+            name = "last" if index == "last_at" else index
+            conn.execute(f"CREATE INDEX players_{name} ON players ({index})")
+        conn.execute("PRAGMA user_version = 1")
+        conn.execute("COMMIT")
+        names = [r[1] for r in conn.execute("PRAGMA table_info(players)")]
+    finally:
+        conn.close()
+    assert "rating_own" not in names and "note_own" not in names
+
+
+def test_a_schema_1_database_is_migrated_and_its_own_marks_survive_constructed(
+    make: Any,
+) -> None:
+    """A database made by M20-01 (schema 1): B, dropped, rated and noted at
+    the desk (the row its own, row-wide); A agrees. Opened by this wowlab:
+    a copy is kept, the columns are added, B's two fields start as its own
+    and A's as not. At the next sync B returns with the same note given in
+    game and no rating: the note agrees again (no longer its own) and the
+    rating is kept; A follows the file."""
+    env = make(_three())
+    _desk_marks(env)
+    _as_schema_1(env)
+    rows = env.rows()  # the first open migrates
+    assert (rows[KEY_B].rating, rows[KEY_B].note) == ("bad", NOTE_B)
+    pre = env.db().with_name(env.db().name + ".before-schema-1")
+    assert pre.exists()
+    conn = sqlite3.connect(pre)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+    conn = sqlite3.connect(env.db())
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 2
+    finally:
+        conn.close()
+    assert _own(env, KEY_B) == (1, 1) and _own(env, KEY_A) == (0, 0)
+    outcome = _returns(env, note=NOTE_B)
+    assert outcome.state == "synced" and outcome.plan is not None
+    assert (outcome.plan.ratings_kept, outcome.plan.notes_kept) == (1, 0)
+    assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == ("bad", NOTE_B)
+    assert _own(env, KEY_B) == (1, 0)
+
+
+def test_a_forget_reaches_a_schema_1_database_and_its_copy_constructed(make: Any) -> None:
+    env = make(_three())
+    _desk_marks(env)
+    _as_schema_1(env)
+    env.rows()  # migrates, keeping the schema 1 copy beside it
+    assert len(crewdb.copies(FLAVOR, ACCOUNT)) >= 2
+    done = env.run("crew", "forget", KEY_B, input="y\n")
+    assert done.exit_code == 0, done.output
+    folder = env.db().parent
+    for f in folder.iterdir():
+        assert KEY_B.encode() not in f.read_bytes(), f.name
+        assert not f.name.endswith("-journal"), f.name
