@@ -236,12 +236,26 @@ def test_a_link_in_a_manifests_place_is_refused_constructed(
     result = run("snap", "rm", a.id, "--break-undo", "--yes")
     assert result.exit_code == 1, (result.stdout, result.stderr)
     text = " ".join(result.stderr.split())
-    assert (
-        f"{a.id}: something other than a snapshot record (a link, or not a regular file) "
-        "stands in its place in the snapshot folder. snap rm does not remove it, and nothing "
-        "was removed." in text
+    said = (
+        "something other than a snapshot record (a link, or not a regular file) stands in "
+        f"the place of the record of {a.id} in wowlab's snapshot folder "
+        f"({user_data / 'store'}). wowlab leaves it alone and never removes it; you can "
+        "remove it by hand."
     )
-    _quotes_nothing(_said(result))
+    assert f"{said} Nothing was removed." in text
+    # snap gc says the same of it, and does not send the player to snap rm.
+    gc = run("snap", "gc", "--yes")
+    gc_json = run("snap", "gc", "--yes", "--json")
+    assert gc.exit_code == gc_json.exit_code == 1
+    gc_text = " ".join(gc.stderr.split())
+    assert (
+        f"{said} snap gc removes nothing while it is there, since wowlab cannot tell which "
+        "stored files that snapshot needs." in gc_text
+    )
+    assert "snap rm" not in gc_text
+    assert " ".join(json.loads(gc_json.stdout)["message"].split()) in gc_text
+    _quotes_nothing(_said(result, gc, gc_json))
+    assert _player_copy_problems(root, result.stderr, gc.stderr) == []
     assert path.is_symlink()
     if target != "dangling":
         assert elsewhere.is_file()

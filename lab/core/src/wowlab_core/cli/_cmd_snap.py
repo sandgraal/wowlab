@@ -587,6 +587,12 @@ def snap_gc(
                     )
                 _confirm("Remove them?", yes)
                 report = store.gc(dry_run=False, grace_seconds=GC_GRACE_SECONDS, keep=written)
+        except snapshot.ManifestNotAFileError as exc:
+            raise CliError(
+                _not_a_record(store, exc.name)
+                + " snap gc removes nothing while it is there, since wowlab cannot tell "
+                "which stored files that snapshot needs."
+            ) from None
         except snapshot.DamagedManifestError:
             # The loader's words quote part of the file (M19-12): the player
             # gets the fact, and the two commands that find and remove it.
@@ -629,6 +635,16 @@ _GC_DAMAGED = (
     "removes it."
 )
 """`snap gc`'s refusal while a manifest does not load (M19-12)."""
+
+
+def _not_a_record(store: snapshot.SnapshotStore, name: str) -> str:
+    """Said of a link, or anything not a regular file, in a snapshot
+    record's place (M19-12 review), by `snap gc` and `snap rm` alike."""
+    return _safe(
+        f"something other than a snapshot record (a link, or not a regular file) stands in "
+        f"the place of the record of {name} in wowlab's snapshot folder ({store.path}). "
+        "wowlab leaves it alone and never removes it; you can remove it by hand."
+    )
 
 
 def _kept_young_line(n: int) -> str:
@@ -709,11 +725,7 @@ def _check_damaged(store: snapshot.SnapshotStore, full: str) -> None:
     try:
         store.check_damaged(full)
     except snapshot.ManifestIntegrityError:
-        raise CliError(
-            f"{full}: something other than a snapshot record (a link, or not a regular file) "
-            "stands in its place in the snapshot folder. snap rm does not remove it, and "
-            "nothing was removed."
-        ) from None
+        raise CliError(_not_a_record(store, full) + " Nothing was removed.") from None
 
 
 def _damaged_refusal(

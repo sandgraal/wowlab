@@ -1320,7 +1320,11 @@ it. Several IDs stay all-or-nothing. `SnapRmItem` gains `damaged`; its
 still refuses while a manifest does not load (`DamagedManifestError`, a
 `ManifestIntegrityError`), now in the player's words, naming `wowlab snap
 verify` and `wowlab snap rm <full id> --break-undo`, never the loader's
-text, which quotes the file. Nothing else about `snap gc`, `undo`,
+text, which quotes the file. A link or anything not a regular file in a
+manifest's place is not damaged in this sense (`ManifestNotAFileError`):
+`snap gc` and `snap rm` both say something other than a snapshot record
+stands there, name the id, and say wowlab leaves it alone and it can be
+removed by hand. Nothing else about `snap gc`, `undo`,
 `doctor` or recovery changes (ADR-0037).
 
 ### 6.10 `guard` — the write gate and restore (M10-11) — load-bearing

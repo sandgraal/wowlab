@@ -65,6 +65,7 @@ __all__ = [
     "InvalidManifest",
     "Manifest",
     "ManifestIntegrityError",
+    "ManifestNotAFileError",
     "MissingObject",
     "ObjectCorruptError",
     "ObjectSource",
@@ -139,6 +140,18 @@ class ManifestIntegrityError(SnapshotError):
 class DamagedManifestError(ManifestIntegrityError):
     """`gc` met a manifest file that does not load (M19-12). Its message is
     the loader's, which may quote part of the file."""
+
+
+class ManifestNotAFileError(ManifestIntegrityError):
+    """`gc` met a link, or anything not a regular file, standing in a
+    manifest's place (M19-12 review). `name` is the entry's name without
+    `.json`; wowlab never removes or follows it."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            f"manifest {name}{_MANIFEST_SUFFIX} is a link or not a regular file; gc refuses"
+        )
+        self.name = name
 
 
 class ObjectCorruptError(SnapshotError):
@@ -3283,8 +3296,10 @@ class SnapshotStore:
         anything is listed or removed.
 
         Dry-run is the default. Refuses outright when any manifest fails to
-        load (`DamagedManifestError`, M19-12), because that manifest's
-        objects would look unreferenced.
+        load (`DamagedManifestError`, M19-12), or when a link or anything
+        not a regular file stands in a manifest's place
+        (`ManifestNotAFileError`), because that manifest's objects would
+        look unreferenced.
         Objects modified within the last `grace_seconds` are left alone and
         not reported. Only well-formed object files are ever candidates.
 
@@ -3320,6 +3335,13 @@ class SnapshotStore:
         if not dry_run:
             self._refuse_inside_any_install()
         self._refuse_gc_without_manifests()
+        for path in self._manifest_files():
+            try:
+                st = os.lstat(path)
+            except FileNotFoundError:
+                continue  # removed while we listed; `list` below decides
+            if _is_link_stat(st) or not stat.S_ISREG(st.st_mode):
+                raise ManifestNotAFileError(path.name.removesuffix(_MANIFEST_SUFFIX))
         try:
             manifests = self.list()
         except ManifestIntegrityError as exc:
