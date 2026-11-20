@@ -803,17 +803,22 @@ SHEATHED = "drawn sheathed, placement approximate (not yet confirmed)"
 
 SHEATH_POINTS: Mapping[int, tuple[int, int]] = {1: (26, 27), 2: (30, 31), 3: (32, 33), 4: (28, 28)}
 """`Item.SheatheType` → the body's attachment point for (the main hand, the
-off hand or a shield). Each is an assumption, **[verify]** (the community's
-names for the points, M15-24's note): 1 (two-hand weapons) the angled back
-points 26 and 27; 2 (staves, polearms) the large-weapon points 30 and 31; 3
-(one-hand weapons and off-hand items) the hip points 32 and 33; 4 (shields)
-the shield point 28. The first of a pair, the "left" one by the community's
-names, is the main hand's (a weapon worn on the left is drawn with the right
-hand), **[verify]**. Type 0 and any other number is not drawn sheathed."""
+off hand or a shield). The basis is the `SheatheType` values the recorded
+`Item` subset at 1.60.1.70959 gives the fixture items (staff 2, one-hand
+weapons and the off-hand item 3, shield 4, wand 0; §17.6, M15-24's note),
+not any enum's names (TrinityCore's contradict that data), with the
+community's names for points 26 to 33: 2 the large-weapon points 30 and
+31, 3 the hip points 32 and 33, 4 the shield point 28; 1 (two-hand weapons)
+the points 26 and 27, plausible and unchecked. The main hand takes 26, 30 or
+32, the off hand 27, 31 or 33, by the community's names; 30 and 32 lie on
+the character's left (cross-draw), 26 on the right. Every entry is
+**[verify]**. Type 0 and any other number is not drawn sheathed."""
 
 _HELD_SIDE: Mapping[int, int] = {1: 0, 2: 1, renderplan.SHIELD_ATTACHMENT: 1}
 """A held item's attachment (`renderplan.SLOT_ATTACHMENTS`: 1 the main
 hand, 2 the off hand, the shield point) → which point of a pair it takes."""
+
+_NO_PLACE = "the game's model file does not hold what wowlab needs to place it on the back or hip"
 
 
 class _Sheath(_Frozen):
@@ -822,41 +827,73 @@ class _Sheath(_Frozen):
     rotation: Quaternion  # Y-up
 
 
-def _sheath(item: renderplan.ItemModel, body: m2.M2Model, data: memoryview) -> _Sheath | str:
-    """Where a held item is drawn sheathed, or why it cannot be (plain words).
+class _NotSheathed(_Frozen):
+    """Why a held item is not drawn sheathed: `detail` for `--json`
+    (`sheath_reason`), `words` for the player."""
+
+    detail: str
+    words: str
+
+
+def _not(detail: str, words: str | None = None) -> _NotSheathed:
+    return _NotSheathed(detail=detail, words=detail if words is None else words)
+
+
+def _finite(*vectors: tuple[float, ...]) -> bool:
+    return all(math.isfinite(v) for vector in vectors for v in vector)
+
+
+def _sheath(
+    item: renderplan.ItemModel, body: m2.M2Model, data: memoryview
+) -> _Sheath | _NotSheathed:
+    """Where a held item is drawn sheathed, or why it cannot be.
     The assumptions, each **[verify]** (docs/LAB_PLAN.md §17.6, note of
     2026-11-19, M15-27): the point by `SHEATH_POINTS`; the sheath bone's
     first rotation key (on its global sequence) is its carried angle, decoded
-    by `m2.decode_quaternion`, applied about its pivot after its parents'
-    rest transforms (pivot only: no rotation, no translation, so the
-    identity); the item model is drawn in the point's axes as it is stored,
-    with no turn of its own (so no axis of the item is taken to be its
-    length, and its origin is taken as its grip); the Z-up to Y-up mapping
-    is `gltf.to_y_up`'s, signs **[verify]**."""
+    by `m2.decode_quaternion`, applied about its pivot; the parents'
+    rotations are ignored (a choice, not a fact about M2: the body is drawn
+    unposed, so the weapon matches the mesh, not the in-game Stand pose; it
+    may be off by the spine's Stand tilt); the item model is drawn in the
+    point's axes as it is stored, with no turn of its own (so no axis of the
+    item is taken to be its length, and its origin is taken as its grip);
+    the Z-up to Y-up mapping is `gltf.to_y_up`'s, signs **[verify]**. A pivot,
+    a position or a result that is not a finite number leaves the item
+    out."""
     side = _HELD_SIDE.get(item.attachment_id) if item.attachment_id is not None else None
     if side is None:
-        return "it is not a held item"
+        return _not("it is not a held item")
     if item.sheathe_type is None:
-        return "the game's tables give no sheathe type for this item"
+        return _not("the game's tables give no sheathe type for this item")
     pair = SHEATH_POINTS.get(item.sheathe_type)
     if pair is None:
-        return (
+        return _not(
             f"its sheathe type in the game's tables ({item.sheathe_type}) is not one wowlab places"
         )
     point_id = pair[side]
     point = body.attachment(point_id)
     if point is None:
-        return f"the body model has no sheath point {point_id}"
+        return _not(f"the body model has no sheath point {point_id}", _NO_PLACE)
     try:
         chain = m2.bone_chain(data, body, point.bone)
     except m2.M2Error as exc:
-        return f"the bone of sheath point {point_id} cannot be read: {exc}"
+        return _not(f"the bone of sheath point {point_id} cannot be read: {exc}", _NO_PLACE)
     first = chain[0]
     if first.rotation is None:
-        return f"the bone of sheath point {point_id} gives no angle ({first.rotation_why})"
+        return _not(
+            f"the bone of sheath point {point_id} gives no angle ({first.rotation_why})", _NO_PLACE
+        )
     length = math.sqrt(sum(v * v for v in first.rotation))
     if not math.isfinite(length) or abs(length - 1) > _UNIT:
-        return f"the bone of sheath point {point_id} gives no angle (its key is not a rotation)"
+        return _not(
+            f"the bone of sheath point {point_id} gives no angle (its key is not a rotation)",
+            _NO_PLACE,
+        )
+    if not _finite(point.position, *(b.pivot for b in chain)):
+        return _not(
+            f"the bone of sheath point {point_id}, or a bone above it, or the point, is stored "
+            "at a position that is not a finite number",
+            _NO_PLACE,
+        )
     q = (
         first.rotation[0] / length,
         first.rotation[1] / length,
@@ -869,6 +906,10 @@ def _sheath(item: renderplan.ItemModel, body: m2.M2Model, data: memoryview) -> _
     )
     world = chain_transform(poses)
     at = apply(world, point.position)
+    if not _finite(at, world[0]):
+        return _not(
+            f"sheath point {point_id} works out to a place that is not a finite number", _NO_PLACE
+        )
     return _Sheath(
         point=point_id,
         translation=gltf.to_y_up(*at),
@@ -896,10 +937,12 @@ def _item_node(
     body: m2.M2Model,
     files: _Files,
     scene: _Scene,
-    sheath: _Sheath | str | None = None,
+    sheath: _Sheath | _NotSheathed | None = None,
 ) -> tuple[ModelDrawn, gltf.GltfNode | None]:
     """`sheath`: where a held item is drawn sheathed (`_sheath`), or why it
-    is not (then the item is placed as before), or None: not asked."""
+    is not (then the item is placed as before, its `sheath_reason` the
+    detail and its `reason`, when it is not drawn, the player's words), or
+    None: not asked."""
     what = f"item {item.item_id}"
     if item.kind == "no attachment known":
         reason = (
@@ -908,7 +951,9 @@ def _item_node(
         return _item_drawn(item, placed=False, reason=reason), None
     translation = (0.0, 0.0, 0.0)
     rotation = gltf.IDENTITY
-    kept: dict[str, object] = {"sheath_reason": sheath} if isinstance(sheath, str) else {}
+    kept: dict[str, object] = (
+        {"sheath_reason": sheath.detail} if isinstance(sheath, _NotSheathed) else {}
+    )
     sheathed = kept
     if isinstance(sheath, _Sheath):
         translation, rotation = sheath.translation, sheath.rotation
@@ -933,9 +978,9 @@ def _item_node(
                 f"the body model stores attachment point {item.attachment_id} at its origin, so it "
                 "has no place in the rest pose; the item is not drawn"
             )
-            if isinstance(sheath, str):
+            if isinstance(sheath, _NotSheathed):
                 reason = (
-                    f"{sheath}, so it is not drawn sheathed, and in this pose the model keeps no "
+                    f"{sheath.words}, so it is not drawn sheathed, and in this pose the model keeps no "
                     "place for it in the hand"
                 )
             return _item_drawn(item, placed=False, at_origin=True, reason=reason, **kept), None

@@ -1294,15 +1294,15 @@ Dated entries, newest last. Each names the fixture that prompted it.
   translation or scale track is read. `char model` rests on these
   assumptions, every one **[verify]** until the owner's look in a viewer:
 
-  | assumption | taken as |
+  | assumption | taken as (each a choice, not an observation) |
   |---|---|
   | the decoding rule | `(s < 0 ? s + 32768 : s − 32767) / 32767`, (x, y, z, w); a key whose length is more than 0.01 from 1 is refused, others normalised |
   | the carried angle | the sheath bone's first rotation key on its global sequence |
-  | the transform | `T(pivot)·T(t)·R(q)·T(−pivot)` with t = 0, after the parents' rest transforms (pivot only, so the identity); the point's position is turned with it, its rotation is the item's |
+  | the transform | `T(pivot)·T(t)·R(q)·T(−pivot)` with t = 0; the parents' rotations are ignored (a choice: the body is drawn unposed, so the weapon matches the mesh, not the in-game Stand pose; it may be off by the spine's Stand tilt) **[verify]**; the point's position is turned with it, its rotation is the item's |
   | the item's axes | the item model drawn as stored in the point's axes: no axis is taken as its length, its origin is taken as its grip, and no per-`SheatheType` correction is added |
   | the axis signs | `gltf.to_y_up` for positions, the same mapping of the axis for the rotation |
-  | `SheatheType` → point | 1 → 26/27, 2 → 30/31, 3 → 32/33, 4 → 28; 0 and any other number not drawn sheathed |
-  | left and right | the first of a pair (the community's "left") for the main hand, the second for the off hand and a shield |
+  | `SheatheType` → point | 2 → 30/31, 3 → 32/33, 4 → 28, from the values the recorded 70959 `Item` subset gives the fixture items (staff 2, one-hander 3, shield 4, wand 0), not from any enum's names (TrinityCore's contradict that data); 1 → 26/27 plausible and unchecked; 0 and any other number not drawn sheathed |
+  | left and right | the main hand takes 26, 30 or 32, the off hand 27, 31 or 33, a shield 28, by the community's names; 30 and 32 lie on the character's left (cross-draw), 26 on the right **[verify]** |
 
   On the fixture characters this puts Sangraal-Sett's dagger (type 3) at 32
   and its off-hand item (type 3) at 33, and Dangling-Participle's staff

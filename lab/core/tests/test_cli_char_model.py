@@ -682,10 +682,7 @@ def test_the_fixture_weapons_are_drawn_sheathed_and_said_once(
     for line in lines:
         assert line in text
     assert text.count(cli._SHEATHED) == 1
-    assert cli._SHEATHED == (
-        "Weapons, shields and off-hand items are drawn sheathed, placement approximate "
-        "(not yet confirmed)."
-    )
+    assert cli._SHEATHED == "Items drawn sheathed: placement approximate (not yet confirmed)."
     assert text.count("(not yet confirmed)") == 1
     assert cli._HELD_ITEMS not in text and "Not drawn" not in text
     report = json.loads(derived.run("--character", label, "--json").stdout)

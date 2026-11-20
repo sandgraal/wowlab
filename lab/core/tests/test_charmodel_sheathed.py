@@ -294,6 +294,12 @@ def test_a_bone_without_an_angle_stays_not_drawn_constructed(
     (staff,) = [m for m in built.models if m.what == "item"]
     assert not staff.placed and staff.sheath_reason is not None
     assert staff.sheath_reason.startswith(why)
+    # The player reads plain words; the detail stays in `sheath_reason`.
+    assert staff.reason == (
+        "the game's model file does not hold what wowlab needs to place it on the back or hip, "
+        "so it is not drawn sheathed, and in this pose the model keeps no place for it in the hand"
+    )
+    assert "sequence" not in staff.reason and "bone" not in staff.reason
 
 
 def test_a_non_held_item_is_never_sheathed_constructed() -> None:

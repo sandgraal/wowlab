@@ -171,7 +171,7 @@ _ORIGIN_ITEMS = (
     "The game's model file keeps no place for these items in this pose (their points sit at the "
     "model's feet), so they are left out for now."
 )
-_SHEATHED = f"Weapons, shields and off-hand items are {charmodel.SHEATHED}."
+_SHEATHED = "Items drawn sheathed: placement approximate (not yet confirmed)."
 # The attachment points of held items: shield, main hand, off hand.
 _HELD_POINTS = frozenset({0, 1, 2})
 
