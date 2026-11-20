@@ -165,7 +165,6 @@ def test_the_latest_value_wins_and_a_field_left_out_keeps_the_row_constructed(
     "more",
     [
         {"honor_level": crewdb.HONOR_LEVEL_MAX + 1},
-        {"guid": "Player-" + "0" * crewdb.GUID_MAX_BYTES},
         {"race": "x" * (crewdb.TEXT_MAX_BYTES + 1)},
         {"score": _line(damageDone=crewdb.SCORE_NUMBER_MAX + 1)},
         {"score": _line(damageDone=-crewdb.SCORE_NUMBER_MAX - 1)},
@@ -176,7 +175,6 @@ def test_the_latest_value_wins_and_a_field_left_out_keeps_the_row_constructed(
     ],
     ids=[
         "honor_constructed",
-        "guid_constructed",
         "race_constructed",
         "score_number_constructed",
         "score_negative_constructed",
@@ -423,6 +421,7 @@ def test_forget_of_one_name_forgets_that_name_only_and_says_so_constructed(
     assert plan.exit_code != 0
     report = json.loads(plan.stdout)
     assert report["players"] == [KEY_B] and report["written"] is False
+    assert report["also_known_as"] == [KEY_A]
     assert sentence in plan.stderr
 
     result = env.run("crew", "forget", KEY_B, "--yes")
@@ -498,15 +497,26 @@ def test_a_forgotten_name_in_another_players_scoreboard_line_is_removed_construc
 def test_a_guid_not_in_the_game_shape_is_left_out_and_never_links_constructed(
     make: Any,
 ) -> None:
-    env = make(_book({KEY_A: player(guid="1"), KEY_B: player(guid="1"), KEY_C: player()}, []))
+    """Fix round 2 ruling: an unshaped GUID is dropped, the rest of the
+    player synced, and the sync says how many without quoting it."""
+    odd = "Player-1-ABC"
+    env = make(_book({KEY_A: player(guid=odd), KEY_B: player(guid=odd), KEY_C: player()}, []))
     out = env.sync()
-    assert out.left_out == 2, out.words
+    assert out.state == "synced" and out.left_out == 0 and out.ids_left_out == 2, out.words
+    assert out.words.endswith(
+        "The game's ids of 2 players were not in the game's shape and were not kept; the rest "
+        "was synced."
+    )
+    assert odd not in out.words
+    rows = env.rows()
+    assert set(rows) == {KEY_A, KEY_B, KEY_C}
+    assert rows[KEY_A].guid is None and rows[KEY_A].met == 3
+    assert all(r.also_known_as == [] for r in rows.values())
     listed = env.json("crew", "list")
-    assert sorted(u["key"] for u in listed["unread"]) == [KEY_A, KEY_B]
-    words = "the game's id of the character is not in the game's shape, so it is not synced"
-    assert all(u["reason"] == words for u in listed["unread"])
-    assert [p["also_known_as"] for p in listed["players"]] == [[]]
-    assert crewbook.guid_shaped(GUID_A) and not crewbook.guid_shaped("Player-1-ABC")
+    assert listed["unread"] == [] and odd not in json.dumps(listed)
+    for f in _every_file(crewdb.crew_root()):
+        assert odd.encode() not in f.read_bytes(), f.name
+    assert crewbook.guid_shaped(GUID_A) and not crewbook.guid_shaped(odd)
 
 
 # ─── shared output still counts only ─────────────────────────────────────────

@@ -97,6 +97,15 @@ would pin a row's `last` for good, so its entry is left out."""
 # What M20-11 records of each player (§21.2, as built; M20-12).
 GUID_MAX_BYTES = 128
 """The game's id of a character is about 20 characters of ASCII."""
+
+
+def guid_kept(guid: str | None) -> bool:
+    """Whether a GUID is one a sync keeps and links by: in the client's
+    shape (`crewbook.GUID_SHAPE`) and within `GUID_MAX_BYTES`. Any other is
+    dropped (the rest of the player synced) and counted (§21.3)."""
+    return crewbook.guid_shaped(guid) and guid is not None and len(guid) <= GUID_MAX_BYTES
+
+
 HONOR_LEVEL_MAX = 100_000
 SCORE_FIELDS_MAX = 64
 """At most this many fields in one player's scoreboard line (the client's
@@ -422,6 +431,9 @@ class SyncOutcome(_Model):
     matches_left_out: int = 0
     """Entries of the book's `matches` not synced because they could not be
     read or are outside what a sync takes; every other match is synced."""
+    ids_left_out: int = 0
+    """Synced players whose GUID was not in the client's shape: the GUID
+    was not kept (nor used to link names), the rest of the player was."""
 
 
 class AdoptOutcome(_Model):
@@ -800,7 +812,7 @@ def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
     player met under two names), in the order of the keys."""
     by_guid: dict[str, list[str]] = {}
     for r in sorted(rows, key=lambda r: r.key):
-        if crewbook.guid_shaped(r.guid):
+        if guid_kept(r.guid):
             assert r.guid is not None
             by_guid.setdefault(r.guid, []).append(r.key)
     out: dict[str, list[str]] = {}
@@ -975,7 +987,6 @@ _TEXTS = (
     ("guild", "guild", TEXT_MAX_BYTES),
     ("where", "instance name", TEXT_MAX_BYTES),
     ("note", "note", NOTE_MAX_BYTES),
-    ("guid", "game's id of the character", GUID_MAX_BYTES),
     ("race", "race", TEXT_MAX_BYTES),
     ("faction", "faction", TEXT_MAX_BYTES),
     ("spec", "specialization", TEXT_MAX_BYTES),
@@ -1075,8 +1086,6 @@ def _entry_problem(p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None = None) 
                 f"the {kind} is before 2004 or more than {TIME_AHEAD // 86_400} days after "
                 "this computer's clock, so it is not synced"
             )
-    if p.guid is not None and not crewbook.guid_shaped(p.guid):
-        return "the game's id of the character is not in the game's shape, so it is not synced"
     if p.honor_level is not None and not 0 <= p.honor_level <= HONOR_LEVEL_MAX:
         return f"the honor level is over {HONOR_LEVEL_MAX:,}, so it is not synced"
     return _pvp_problem(pvp) or _score_problem(p.score)
@@ -1178,14 +1187,19 @@ def _unsynced(book: crewbook.CrewBook) -> frozenset[str]:
     return frozenset([u.key for u in book.unread] + [u.key for u in entry_problems(book)])
 
 
-def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int]:
-    """The book with only the entries and matches a sync takes, and how
-    many of each it left out (the reader's unread ones included)."""
-    kept = [p for p in book.players if _entry_problem(p, book.pvp.get(p.key)) is None]
+def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int, int]:
+    """The book with only the entries and matches a sync takes, how many
+    of each it left out (the reader's unread ones included), and how many
+    synced players' GUIDs it dropped for being out of the client's shape
+    (the rest of each player is synced)."""
+    taken = [p for p in book.players if _entry_problem(p, book.pvp.get(p.key)) is None]
+    odd = {p.key for p in taken if p.guid is not None and not guid_kept(p.guid)}
+    kept = [p.model_copy(update={"guid": None}) if p.key in odd else p for p in taken]
     left_out = len(book.players) - len(kept) + len(book.unread)
     games = [m for m in book.matches if _match_problem(m) is None]
     games_out = len(book.matches) - len(games) + len(book.matches_unread)
-    return book.model_copy(update={"players": kept, "matches": games}), left_out, games_out
+    new = book.model_copy(update={"players": kept, "matches": games})
+    return new, left_out, games_out, len(odd)
 
 
 # ─── the hold ────────────────────────────────────────────────────────────────
@@ -1667,7 +1681,9 @@ def sync(
     if why is not None:
         return SyncOutcome(state="refused", words=why, database=str(path))
     unsynced = _unsynced(book)
-    book, left_out, matches_out = _usable(book)
+    # A GUID out of the client's shape is dropped and the player synced
+    # without it (§21.3, M20-12 fix round 2): counted, never quoted.
+    book, left_out, matches_out, ids_out = _usable(book)
     exists = os.path.lexists(path)
     if not exists:
         orphan = _orphans(target)
@@ -1695,9 +1711,19 @@ def sync(
             ident=ident,
             unsynced=unsynced,
         )
-        if not (left_out or matches_out) or outcome.state not in ("synced", "unchanged"):
+        if not (left_out or matches_out or ids_out) or outcome.state not in (
+            "synced",
+            "unchanged",
+        ):
             return outcome
         words = outcome.words
+        if ids_out:
+            ids = "id of 1 player was" if ids_out == 1 else f"ids of {ids_out} players were"
+            verb = "was" if ids_out == 1 else "were"
+            words += (
+                f" The game's {ids} not in the game's shape and {verb} not kept; the rest "
+                "was synced."
+            )
         if left_out:
             entries = "1 entry" if left_out == 1 else f"{left_out} entries"
             verb = "was" if left_out == 1 else "were"
@@ -1707,7 +1733,12 @@ def sync(
             verb = "was" if matches_out == 1 else "were"
             words += f" {games} of the book could not be read and {verb} not synced."
         return outcome.model_copy(
-            update={"left_out": left_out, "matches_left_out": matches_out, "words": words}
+            update={
+                "left_out": left_out,
+                "matches_left_out": matches_out,
+                "ids_left_out": ids_out,
+                "words": words,
+            }
         )
     except (_Replaced, FileNotFoundError):
         return SyncOutcome(

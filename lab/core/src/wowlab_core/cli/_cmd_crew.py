@@ -25,6 +25,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
+import pydantic
 import typer
 
 from wowlab_core import (
@@ -1090,7 +1091,11 @@ class CrewEditReport(_Out):
     as read from the database for such a player, else `absent`.
     `database_updated` is true once the database holds the new value (for a
     player it already kept; one it does not keep yet is added by the next
-    sync)."""
+    sync).
+
+    `also_known_as` (forget of one name): the other stored keys wowlab
+    keeps for the same character by the game's id, which the plan and the
+    result name; they are not forgotten with it."""
 
     command: CrewCommand
     flavor_folder: str
@@ -1115,6 +1120,10 @@ class CrewEditReport(_Out):
     database_only: bool = False
     row_sha256: str | None = None
     database_updated: bool = False
+    # `forget` of one name: the other stored keys wowlab keeps for the same
+    # character by the game's id (§21.3). Named in the plan and the result;
+    # never forgotten with it.
+    also_known_as: list[str] = pydantic.Field(default_factory=list)
 
 
 def _sha(data: bytes) -> str:
@@ -1270,16 +1279,18 @@ def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
 def _other_names(chosen: str, edit: _Edit) -> list[str]:
     """The other stored keys wowlab keeps for the same character as
     `chosen`, by the game's id in its shape (§21.3, one player met under
-    two names): in the saved file, the game's backup of it and wowlab's
-    crew database. For a sentence only: a forget never takes them."""
-    held: list[crewbook.CrewPlayer] = [*edit.book.players]
+    two names): in the saved file and the game's backup of it, read from
+    the entries as they are (one the reader could not read included), and
+    in wowlab's crew database. For a sentence only: a forget never takes
+    them."""
+    held: list[tuple[str, str | None]] = list(crewedit.guids_held(edit.data).items())
     if edit.backup_data is not None:
         # A backup wowlab cannot read was refused before the forget got here.
         with contextlib.suppress(*_READ_ERRORS):
-            held += crewbook.parse_book(edit.backup_data).players
-    held += crewdb.read(edit.place.flavor_folder, edit.place.account)
-    ids = {p.guid for p in held if p.key == chosen and crewbook.guid_shaped(p.guid)}
-    return sorted({p.key for p in held if p.key != chosen and p.guid in ids})
+            held += list(crewedit.guids_held(edit.backup_data).items())
+    held += [(r.key, r.guid) for r in crewdb.read(edit.place.flavor_folder, edit.place.account)]
+    ids = {g for k, g in held if k == chosen and crewdb.guid_kept(g)}
+    return sorted({k for k, g in held if k != chosen and g in ids})
 
 
 def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
@@ -1596,6 +1607,7 @@ def crew_forget(
             else None,
             notes=[],
             database_forgotten=(written and db_has) if database is None else database,
+            also_known_as=others,
         )
 
     # The same character under other names (§21.3): said, never taken.

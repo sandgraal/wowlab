@@ -6965,7 +6965,7 @@ leaves that player's entry unread, as before. Database schema 3, after the
 `guid`, and `matches.shuffle` (0 or 1; a shuffle is kept as an arena with
 the mark, since a CHECK cannot be widened in place and rebuilding `matches`
 would cascade into `match_players`). Bounds, each leaving that player's
-entry unread: the GUID 128 bytes and in the client's shape, race, faction and spec 256, honor level 0
+entry unread: race, faction and spec 256, honor level 0
 to 100,000; the scoreboard line at most 64 fields, each name 64 bytes, text
 256 bytes, a number within 10^15 either way, its time as the other times. A
 shuffle with a `foes` list or a `won` is left out. **Sync rule for these
@@ -6981,9 +6981,15 @@ key, not a new id). Rows are not merged: `crew list` adds "also seen as
 NAME-REALM" to each, `crew show` an "Also seen as" line, `--json` carries
 `also_known_as`, and the Crew tab puts the other names beside the stored
 key. A GUID is never the only link shown: the names are. Only a GUID in
-the client's shape (`Player-<digits>-<8 hex digits>`) is stored or used to
-link; an entry holding any other value is left out of the sync, with a
-reason that does not quote it.
+the client's shape (`Player-<digits>-<8 hex digits>`, at most 128 bytes) is
+stored or used to link. *Ruled 2026-11-20 (fix round 2, conductor):* any
+other value is dropped, the rest of the player synced, and the sync says
+how many in words that quote nothing ("The game's ids of N players were not
+in the game's shape and were not kept"), so a GUID the client writes in an
+unexpected shape never stops the book from syncing. The other names a
+forget's plan and result name come from the saved file's and the backup's
+entries as they are (unread ones included) and from the database; the
+forget's `--json` carries them as `also_known_as`.
 
 *Ruled 2026-11-20 (M20-12 fix round 1, conductor):* the link by GUID is for
 showing only. `crew forget KEY` forgets the name it was given and nothing
