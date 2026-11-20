@@ -1498,6 +1498,9 @@
     // The crew book is the new flavor's: what was shown of the old one goes.
     crew.report = null;
     crew.listSeq += 1;
+    crew.matchSeq += 1;
+    byId("crew-matches").hidden = true;
+    byId("crew-matches-lines").replaceChildren();
     closeCrewPlayer();
     if (tabShown === "crew") loadCrew();
     drawHomeStatus();
@@ -3553,12 +3556,18 @@
     listSeq: 0, // the latest list read; an earlier one draws nothing
     showSeq: 0, // the latest player opened
     actSeq: 0, // the latest plan or confirmed run
+    matchSeq: 0, // the latest match history read
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
   };
   const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
-  const CREW_SORT = [["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"]];
+  const CREW_SORT = [
+    ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
+    ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+  ];
+  // `crew list --faced` and `--allied` (M20-09): players met in a match.
+  const CREW_PVP = [["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"]];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
   const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
 
@@ -3573,6 +3582,7 @@
   }
   fillSelect(byId("crew-rated"), CREW_RATED);
   fillSelect(byId("crew-sort"), CREW_SORT);
+  fillSelect(byId("crew-pvp"), CREW_PVP);
   fillSelect(byId("crew-rate-value"), CREW_RATE);
 
   function crewSay(text, isError) {
@@ -3701,6 +3711,15 @@
     const rated = byId("crew-rated").value;
     if (rated) params.rated = rated;
     params.sort = byId("crew-sort").value || "last";
+    // The match filters (M20-09): each the command's own option, sent only
+    // when set, so the matching is Python's.
+    const pvp = byId("crew-pvp").value;
+    if (pvp === "faced") params.faced = true;
+    if (pvp === "allied") params.allied = true;
+    const map = byId("crew-map").value;
+    if (map.trim() !== "") params.map_text = map;
+    const since = byId("crew-since").value;
+    if (since) params.since = since;
     return params;
   }
 
@@ -3722,6 +3741,8 @@
     }
     crew.report = report;
     drawCrew();
+    // A history on show is read again: a forget or a sync may have changed it.
+    if (!byId("crew-matches").hidden) showCrewMatches(false);
     // The player shown is gone from the list (forgotten, or filtered out):
     // the panel goes too.
     if (crew.key !== null && !(report.players || []).some((p) => p && p.key === crew.key)) closeCrewPlayer();
@@ -3736,6 +3757,62 @@
   });
   byId("crew-rated").addEventListener("change", () => loadCrew());
   byId("crew-sort").addEventListener("change", () => loadCrew());
+  byId("crew-pvp").addEventListener("change", () => loadCrew());
+  byId("crew-since").addEventListener("change", () => loadCrew());
+  byId("crew-map").addEventListener("input", () => {
+    if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);
+    crew.searchTimer = setTimeout(() => {
+      crew.searchTimer = null;
+      loadCrew();
+    }, 300);
+  });
+
+  // The match history (M20-09): what `crew matches` prints, line by line,
+  // for the whole book (`key` null) or for one player by stored key, sent as
+  // it is. Each line is the command's own text, shown through `visible()`.
+  async function readCrewMatches(key) {
+    const params = key === null ? crewParams({}) : crewParams({ name: key });
+    const reply = await runJson(["crew", "matches"], params);
+    const report = reply.data;
+    const lines = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
+    if (!lines || typeof report.words !== "string") {
+      return { error: reply.error ? shown(reply.error) : "The match history came back in a shape this page does not know." };
+    }
+    return { words: visible(report.words), lines: lines.map((line) => make("li", visible(line.trim()))) };
+  }
+
+  async function showCrewMatches(focus) {
+    const seq = ++crew.matchSeq;
+    const box = byId("crew-matches");
+    box.hidden = false;
+    byId("crew-matches-words").textContent = "Reading the match history…";
+    byId("crew-matches-lines").replaceChildren();
+    const got = await readCrewMatches(null);
+    if (seq !== crew.matchSeq) return;
+    byId("crew-matches-words").textContent = got.error || got.words;
+    byId("crew-matches-lines").replaceChildren(...(got.lines || []));
+    if (focus) byId("crew-matches-title").focus();
+  }
+
+  async function showPlayerMatches() {
+    const key = crew.key;
+    if (key === null) return;
+    const seq = crew.showSeq;
+    const words = byId("crew-player-matches-words");
+    const list = byId("crew-player-matches");
+    words.hidden = false;
+    words.textContent = "Reading their matches…";
+    list.replaceChildren();
+    list.hidden = true;
+    const got = await readCrewMatches(key);
+    if (seq !== crew.showSeq || crew.key !== key) return;
+    words.textContent = got.error || got.words;
+    list.replaceChildren(...(got.lines || []));
+    list.hidden = !got.lines || got.lines.length === 0;
+  }
+
+  byId("crew-matches-show").addEventListener("click", () => showCrewMatches(true));
+  byId("crew-player-matches-show").addEventListener("click", () => showPlayerMatches());
 
   function clearCrewConfirm() {
     crew.pending = null;
@@ -3760,6 +3837,14 @@
     crewActSay("", false);
     byId("crew-player").hidden = true;
     byId("crew-player-lines").replaceChildren();
+    clearPlayerMatches();
+  }
+
+  function clearPlayerMatches() {
+    byId("crew-player-matches-words").textContent = "";
+    byId("crew-player-matches-words").hidden = true;
+    byId("crew-player-matches").replaceChildren();
+    byId("crew-player-matches").hidden = true;
   }
 
   // Opens one player: what `crew show` prints, line by line, then the three
@@ -3773,6 +3858,7 @@
     byId("crew-player").hidden = false;
     byId("crew-actions").hidden = true;
     byId("crew-note-codes").hidden = true;
+    clearPlayerMatches();
     byId("crew-player-title").textContent = visible(key);
     const lines = byId("crew-player-lines");
     lines.replaceChildren(make("li", "Reading…"));

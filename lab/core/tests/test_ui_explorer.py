@@ -544,6 +544,8 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         # writes go through the confirm step (graded in test_ui_crew.py).
         ("crew", "list"),
         ("crew", "show"),
+        # M20-09: and its match history with `crew matches`.
+        ("crew", "matches"),
     }, used
     for path in used:
         assert path in offered, path

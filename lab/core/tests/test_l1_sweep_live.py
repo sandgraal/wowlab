@@ -643,7 +643,8 @@ def _offline_tables(f: install.Flavor, sweep: Sweep) -> None:
 
 def _crew(sweep: Sweep, ac: tuple[str, ...], where: str) -> None:
     """`crew list` for one account and `crew show` of its first player, the
-    key hidden as `player#N` in everything the sweep prints (M19-02)."""
+    key hidden as `player#N` in everything the sweep prints (M19-02); and
+    `crew matches`, whole and for that player (M20-09)."""
     listed = _report(sweep.cli("crew", "list", *ac, "--json"))
     keys = [
         str(p.get("key"))
@@ -652,8 +653,10 @@ def _crew(sweep: Sweep, ac: tuple[str, ...], where: str) -> None:
     ]
     for key in keys:
         sweep.hide("player", key)
+    sweep.cli("crew", "matches", *ac, "--json")
     if keys:
         sweep.cli("crew", "show", *ac, "--json", "--", keys[0])
+        sweep.cli("crew", "matches", *ac, "--json", "--", keys[0])
     else:
         sweep.skipped.append(f"crew show: {where} has no player in a crew book")
 
@@ -1373,6 +1376,7 @@ def test_sweep_on_a_captured_install_changes_nothing_constructed(
         "wowlab db2 head ",
         "wowlab crew list ",
         "wowlab crew show ",
+        "wowlab crew matches ",
         "ui POST /api/run char list",
         "ui POST /api/run crew list",
     ):

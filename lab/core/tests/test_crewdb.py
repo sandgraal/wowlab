@@ -636,7 +636,10 @@ def test_one_field_out_of_range_syncs_nothing_constructed(
     rows = env.rows()
     assert rows[KEY_D].met == 4  # every other entry synced
     if KEY_A in players:  # the bad entry did not change what the database kept
-        assert rows[KEY_A] == before_rows[KEY_A].model_copy(update={"in_game_list": False})
+        # M20-09 fix round 1: an entry the saved file holds but a sync does
+        # not take is still in the game's list, so its row is as it was
+        # (marking it gone reset its last shown counts, counted twice later).
+        assert rows[KEY_A] == before_rows[KEY_A]
     listed = env.run("crew", "list")
     assert listed.exit_code == 0 and "1 entry could not be read:" in listed.stdout
     report = cli.CrewReport.model_validate_json(env.run("crew", "list", "--json").stdout)

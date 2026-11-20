@@ -6866,6 +6866,29 @@ temporary copies a killed run leaves are deleted when the database is next
 opened and by every forget; any held book keeps a rating or note the
 database changed.
 
+*As built (2026-11-20, M20-09).* The four counters are bounded as `met` (0
+to 10,000,000), `pvp_last` as the other times and `pvp_map` as the other
+names (256 bytes); one out of bounds leaves that player's entry unread.
+More than 500 matches syncs nothing; a match is left out, counted and
+said, when its time is out of range, it has no `map_id`, its map is over
+256 bytes, a side lists more than 100 keys (the largest battleground side
+is 40), or a key in it is not Name-Realm or is listed twice (or on both
+sides). Matches are copied under the sync's write lock, once each by (`at`,
+`map_id`); a match the database already keeps takes no player from a later
+book. A match it has not yet kept can bring a forgotten player back: a
+forget, then a restore of a file holding a match saved before the last sync
+saw it, then `crew sync` confirmed by hand adds the player through that
+match, as forget's own sentence on a sync by hand warns. A player not in
+the saved file keeps 0 as each counter's last shown value; an entry the
+saved file holds but a sync does not take (unread, or out of bounds) leaves
+its row as it was, still in the game's list (fix round 1). `crew forget`
+also reaches a key only a match holds. `crew list --since DATE` takes the
+later of the latest group and the latest match, in this computer's time
+zone; `--map` matches a kept match's map name. `crew matches` prints each
+match with both teams by stored key, the same lines its `--json` carries.
+The Crew tab reads the history only when asked (a button), so opening the
+tab still runs `crew list` alone.
+
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest
 daily copies beside it and `doctor` says where it is and how large.

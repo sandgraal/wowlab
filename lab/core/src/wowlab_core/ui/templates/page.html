@@ -171,13 +171,25 @@
 <label>Find <input id="crew-search" type="search" placeholder="part of a name, realm, guild or note" autocomplete="off" spellcheck="false"></label>
 <label>Rating <select id="crew-rated"></select></label>
 <label>Order <select id="crew-sort"></select></label>
+<label>Matches <select id="crew-pvp"></select></label>
+<label>Map <input id="crew-map" type="search" placeholder="part of a map's name" autocomplete="off" spellcheck="false"></label>
+<label>Since <input id="crew-since" type="date"></label>
+<button id="crew-matches-show" type="button">Show the match history</button>
 </div>
 <p id="crew-status" role="status"></p>
 <div id="crew-table" class="panel hub-table" role="region" aria-label="Crew" tabindex="0"></div>
 <ul id="crew-unread" class="crew-unread" hidden></ul>
+<section id="crew-matches" class="panel crew-player" aria-labelledby="crew-matches-title" hidden>
+<h3 id="crew-matches-title" tabindex="-1">Match history</h3>
+<p id="crew-matches-words" class="crew-words"></p>
+<ul id="crew-matches-lines" class="crew-lines"></ul>
+</section>
 <section id="crew-player" class="panel crew-player" aria-labelledby="crew-player-title" hidden>
 <h3 id="crew-player-title" tabindex="-1"></h3>
 <ul id="crew-player-lines" class="crew-lines"></ul>
+<div class="crew-actions"><button id="crew-player-matches-show" type="button">Show their matches</button></div>
+<p id="crew-player-matches-words" class="crew-words" hidden></p>
+<ul id="crew-player-matches" class="crew-lines" hidden></ul>
 <div id="crew-actions" class="crew-actions" hidden>
 <div class="crew-action"><label>Your rating <select id="crew-rate-value"></select></label><button id="crew-rate" type="button">Show the plan</button></div>
 <div class="crew-action"><label>Your note <input id="crew-note-text" type="text" autocomplete="off" spellcheck="false"></label><button id="crew-note" type="button">Show the plan</button></div>
@@ -196,7 +208,7 @@
 <pre id="crew-act-said" class="plan-lines" hidden></pre>
 </section>
 <details class="about"><summary>About this data</summary>
-<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints. Names, guilds, notes and instance names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written.</p>
+<p class="intro">The crew book is the lab-addon's list of the players you grouped with, read with <code>wowlab crew list</code>; picking a player shows what <code>wowlab crew show</code> prints, and the match history is what <code>wowlab crew matches</code> prints. Names, guilds, notes, instance and map names are other people's text and are shown exactly as text, never as a link. Changing a rating or a note, or forgetting a player, runs <code>wowlab crew rate</code>, <code>wowlab crew note</code> or <code>wowlab crew forget</code>: each shows its plan first and changes nothing until you press Confirm; the game must be closed, a snapshot is taken first, and <code>wowlab undo</code> puts back what was there. Confirm runs only the plan shown: if the crew book's files changed after the plan, it is refused and nothing is written. For a player only wowlab's crew database keeps (the game's list dropped them), a rating or note changes that database alone: the plan says so, it cannot be undone, and Confirm is refused if their rating or note there changed after the plan.</p>
 <div id="crew-about" class="crew-about">
 <p id="crew-keeps"></p>
 <ul id="crew-notes" class="crew-notes"></ul>

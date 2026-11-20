@@ -1023,6 +1023,9 @@ if TYPE_CHECKING:
         CrewEditReport as CrewEditReport,
     )
     from wowlab_core.cli._cmd_crew import (
+        CrewMatchesReport as CrewMatchesReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
         CrewPlace as CrewPlace,
     )
     from wowlab_core.cli._cmd_crew import (
