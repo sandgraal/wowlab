@@ -1,7 +1,9 @@
 """`wowlab snap create`, `list`, `show`, `diff`, `verify`, `gc`, `rm` (M19-09),
 `export` and `import` (M16-111)."""
 
-from collections.abc import Sequence
+import os
+import stat
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -269,9 +271,11 @@ def snap_list(json_out: JsonOpt = False) -> None:
 
     \f
     JSON: SnapListReport."""
-    listing = snapshot.SnapshotStore().list_lenient()
+    store = snapshot.SnapshotStore()
+    listing = store.list_lenient()
     report = SnapListReport(
-        snapshots=[_summary(m) for m in listing.manifests], damaged=list(listing.invalid)
+        snapshots=[_summary(m) for m in listing.manifests],
+        damaged=_damaged_records(store, listing.invalid),
     )
     if json_out:
         _emit(report)
@@ -306,7 +310,7 @@ def snap_show(
     \f
     JSON: the manifest (snapshot.Manifest), with its kind."""
     store = snapshot.SnapshotStore()
-    manifest = store.show(_resolve_ref(store, snapshot_id))
+    manifest = _read_snapshot(store, snapshot_id)
     # The effective kind, in the text and the JSON alike: one written before
     # kinds existed is what the journal tells, and an imported one is said
     # to be so whatever kind its manifest claims (M16-04).
@@ -418,9 +422,10 @@ def snap_diff(
     \f
     JSON: DiffReport."""
     store = snapshot.SnapshotStore()
-    diff = store.diff(_resolve_ref(store, a), _resolve_ref(store, b))
-    a_version = store.show(diff.a).flavor_version
-    b_version = store.show(diff.b).flavor_version
+    older, newer = _read_snapshot(store, a), _read_snapshot(store, b)
+    diff = store.diff(older.id, newer.id)
+    a_version = older.flavor_version
+    b_version = newer.flavor_version
     changed = []
     for c in diff.changed:
         lua, note = _lua_diff(store, c)
@@ -501,7 +506,11 @@ def snap_verify(json_out: JsonOpt = False, notes_out: NotesOpt = False) -> None:
 
     \f
     JSON: snapshot.VerifyReport."""
-    report = snapshot.SnapshotStore().verify()
+    store = snapshot.SnapshotStore()
+    report = store.verify()
+    report = report.model_copy(
+        update={"invalid_manifests": tuple(_damaged_records(store, report.invalid_manifests))}
+    )
     if json_out:
         _emit(report)
     else:
@@ -628,13 +637,67 @@ def snap_gc(
         _say(_kept_young_line(report.kept_young))
 
 
+_RM_DAMAGED = "`wowlab snap rm {} --break-undo` removes it."
+"""How a damaged snapshot is removed, said by `snap gc` (with `<full id>`)
+and by `snap list`, `show` and `verify` (with the id) alike."""
+
 _GC_DAMAGED = (
     "a snapshot in wowlab's snapshot folder is damaged: its record cannot be read, so "
     "wowlab cannot tell which stored files it needs, and snap gc removes nothing while it "
-    "is there. `wowlab snap verify` names it; `wowlab snap rm <full id> --break-undo` "
-    "removes it."
+    "is there. `wowlab snap verify` names it; " + _RM_DAMAGED.format("<full id>")
 )
 """`snap gc`'s refusal while a manifest does not load (M19-12)."""
+
+
+def _damaged_words(store: snapshot.SnapshotStore, name: str) -> str:
+    """What is said of a manifest file `name` (`<id>.json`) that does not
+    load (M19-13): its id, that its record cannot be read, and how it is
+    removed; for a link or anything not a regular file in its place,
+    `_not_a_record`. Never the loader's words, which quote the file. Text
+    and `--json` carry the same sentence."""
+    sid = name.removesuffix(".json")
+    try:
+        st: os.stat_result | None = os.lstat(store.manifests_dir / name)
+    except (OSError, ValueError):
+        st = None
+    if st is not None and (snapshot._is_link_stat(st) or not stat.S_ISREG(st.st_mode)):
+        return _not_a_record(store, sid)
+    if not snapshot._ID_RE.match(sid):
+        return _safe(
+            f"{name} in wowlab's snapshot folder cannot be read as a snapshot record, and its "
+            "name is not a snapshot id. wowlab leaves it alone; you can remove it by hand."
+        )
+    return _safe(
+        f"snapshot {sid} is damaged: its record in wowlab's snapshot folder cannot be read. "
+        + _RM_DAMAGED.format(sid)
+    )
+
+
+def _damaged_records(
+    store: snapshot.SnapshotStore, invalid: Iterable[snapshot.InvalidManifest]
+) -> list[snapshot.InvalidManifest]:
+    """`invalid` with each reason replaced by `_damaged_words` (M19-13)."""
+    return [
+        snapshot.InvalidManifest(name=bad.name, reason=_damaged_words(store, bad.name))
+        for bad in invalid
+    ]
+
+
+def _read_snapshot(store: snapshot.SnapshotStore, reference: str) -> snapshot.Manifest:
+    """The snapshot `reference` names, loaded; a record that cannot be read
+    is refused in `_damaged_words`'s words, never the loader's (M19-13)."""
+    try:
+        full = _resolve_ref(store, reference)
+    except snapshot.ManifestIntegrityError:
+        # `latest`, `latest-user` and `~N` read every record to order them.
+        raise CliError(
+            "to tell which snapshot that is, wowlab reads every snapshot's record, and one or "
+            "more cannot be read. `wowlab snap verify` names each, and how to remove it."
+        ) from None
+    try:
+        return store.show(full)
+    except snapshot.ManifestIntegrityError:
+        raise CliError(_damaged_words(store, full + ".json")) from None
 
 
 def _not_a_record(store: snapshot.SnapshotStore, name: str) -> str:
@@ -1008,7 +1071,7 @@ def snap_export(
     \f
     JSON: snaparchive.ExportReport."""
     store = snapshot.SnapshotStore()
-    report = snaparchive.export_snapshot(store, _resolve_ref(store, snapshot_id), file)
+    report = snaparchive.export_snapshot(store, _read_snapshot(store, snapshot_id).id, file)
     if json_out:
         _emit(report)
         return
