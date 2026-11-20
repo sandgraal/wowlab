@@ -8988,12 +8988,36 @@ def test_m20_13_core_gathers_nothing_in_combat() -> None:
 _M20_13_IMMEDIATE = ("Customization.lua", "customization")
 
 
+def _m20_13_immediate_keys(path: Path) -> list[str]:
+    """The key of every immediate section spec in `path` (a literal, or a
+    file-level `local KEY = "..."`)."""
+    t = _tokens(path)
+    flow = _Flow(path, t)
+    constants = dict(
+        re.findall(r'^local ([A-Z_]+) = "([^"]+)"$', path.read_text(encoding="utf-8"), re.M)
+    )
+    keys = []
+    for k in range(len(t) - 4):
+        if [x.text for x in t[k : k + 5]] != ["ns", ".", "Section", "(", "{"]:
+            continue
+        entries = {key: (a, b) for key, a, b in flow.entries(k + 4)}
+        if "{immediate}" not in entries:
+            continue
+        at = t[entries["{key}"][0]] if "{key}" in entries else None
+        if at is None:
+            keys.append("?")
+        elif at.kind == "string":
+            keys.append(at.text)
+        else:
+            keys.append(constants.get(at.text, "?"))
+    return keys
+
+
 def _m20_13_immediate_problems(path: Path) -> list[str]:
-    flow = _Flow(path, _tokens(path))
     return [
         f"{path.name}: section {key} is immediate; only the barber-shop section may be"
-        for key, entries in _m13_05_sections(flow)
-        if "{immediate}" in entries and (path.name, key) != _M20_13_IMMEDIATE
+        for key in _m20_13_immediate_keys(path)
+        if (path.name, key) != _M20_13_IMMEDIATE
     ]
 
 
@@ -9004,8 +9028,7 @@ def test_m20_13_only_the_barber_shop_gathers_on_its_event(path: Path) -> None:
 
 def test_m20_13_the_barber_shop_section_is_the_immediate_one() -> None:
     """Control: the exemption names a section that exists and is immediate."""
-    flow = _Flow(ADDON / "Customization.lua", _tokens(ADDON / "Customization.lua"))
-    assert [k for k, e in _m13_05_sections(flow) if "{immediate}" in e] == ["customization"]
+    assert _m20_13_immediate_keys(ADDON / "Customization.lua") == ["customization"]
 
 
 _SEND = '    SendChatMessage("constructed", "SAY")\n'
