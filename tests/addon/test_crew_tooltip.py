@@ -39,6 +39,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import test_crew_book
 import test_lab_addon as g
 
 CREW = g.ADDON / g.CREW_FILE
@@ -58,6 +59,10 @@ HOOK_HANDLER = (
     "if tooltip ~= GameTooltip then return end pcall ( tipShow ) end"
 )
 HOOK_INSTALL = "pcall ( TooltipDataProcessor . AddTooltipPostCall , unitType , onTooltip )"
+# Fix round 1 (code review of #673): the hook is for unit tooltips. Its type
+# is the one local, bound once in hookTooltip to exactly this, never assigned
+# again, and `Enum.TooltipDataType` is read nowhere else but its type() test.
+HOOK_TYPE = "local unitType = Enum . TooltipDataType . Unit"
 HOOK_TESTS = (
     'type ( TooltipDataProcessor ) ~= "table" or '
     'type ( TooltipDataProcessor . AddTooltipPostCall ) ~= "function"',
@@ -139,6 +144,23 @@ def tooltip_problems(text: str) -> list[str]:
         problems.append("the hook is installed before the client is tested for it")
     if "if tipHooked then return end tipHooked = true" not in install:
         problems.append("the hook is not installed once per session")
+    type_reads = [
+        k
+        for k in range(len(t) - 2)
+        if g._render(t[k : k + 3]) == "Enum . TooltipDataType" and not g._is_field(t, k)
+    ]
+    bound = [k for k in type_reads if g._render(t[k - 3 : k + 5]) == HOOK_TYPE]
+    tested = [
+        k for k in type_reads if g._render(t[k - 2 : k + 4]) == "type ( Enum . TooltipDataType )"
+    ]
+    if (
+        HOOK_TYPE not in install
+        or len(bound) != 1
+        or len(type_reads) != len(bound) + len(tested)
+        or len(flow.decls.get("unitType", [])) != 1
+        or any(r.rstrip(".") == "unitType" for r, _ in flow.rebound)
+    ):
+        problems.append("the hook is for a tooltip type other than Unit")
     if rendered.count("hookTooltip (") < 2 or any(
         not g._crew_gated(flow, fn.head)
         for k in range(len(t) - 1)
@@ -211,6 +233,10 @@ def _crew(text: str) -> list[str]:
 
 def _forbidden(text: str) -> list[str]:
     return g._forbidden_api_problems(CREW, g.tokenize(text))
+
+
+def _cuts(text: str) -> list[str]:
+    return test_crew_book._cuts_outside_note_start(_flow(text))
 
 
 def _unit(text: str) -> list[str]:
@@ -394,6 +420,47 @@ _KEPT: dict[str, tuple[list[tuple[str, str]], Callable[[str], list[str]], str]] 
         [("    if tipHooked then\n        return\n    end\n", "")],
         tooltip_problems,
         "the hook is not installed once per session",
+    ),
+    "the tooltip: the hook on item tooltips": (
+        [
+            (
+                "    local unitType = Enum.TooltipDataType.Unit\n",
+                "    local unitType = Enum.TooltipDataType.Item\n",
+            )
+        ],
+        tooltip_problems,
+        "the hook is for a tooltip type other than Unit",
+    ),
+    "the tooltip: the type rebound after its test": (
+        [
+            (
+                "    if not pcall(TooltipDataProcessor.AddTooltipPostCall, unitType, onTooltip) then\n",
+                "    unitType = Enum.TooltipDataType.Item\n"
+                "    if not pcall(TooltipDataProcessor.AddTooltipPostCall, unitType, onTooltip) then\n",
+            )
+        ],
+        tooltip_problems,
+        "the hook is for a tooltip type other than Unit",
+    ),
+    "the note: cut by a method call before the refusal": (
+        [
+            (
+                "    local tidy = cleanNote(text)\n",
+                "    local tidy = cleanNote(text)\n    tidy = tidy:sub(1, NOTE_MAX_BYTES)\n",
+            )
+        ],
+        _cuts,
+        "'sub' outside noteStart",
+    ),
+    "the note: cut by a format precision": (
+        [
+            (
+                "    local tidy = cleanNote(text)\n",
+                '    local tidy = cleanNote(text)\n    tidy = string.format("%.2000s", tidy)\n',
+            )
+        ],
+        _cuts,
+        "outside noteStart",
     ),
     "the key: built other than as the roster's": (
         [

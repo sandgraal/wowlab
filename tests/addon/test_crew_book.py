@@ -164,6 +164,29 @@ def test_crew_book_source_scan_the_book_is_created_and_turned_on_only_by_crew_on
 # --- The note rule (§20.1 "Limits") -------------------------------------------
 
 
+# Every name that takes part of a string: Lua's `sub` (as `string.sub`,
+# `s:sub` or a local alias's field), the client's `strsub`, and `format` /
+# `strformat`, whose `%.Ns` keeps the first N bytes.
+_CUT_NAMES = frozenset({"sub", "strsub", "format", "strformat"})
+_PRECISION = re.compile(r"%[-+ #0]*\d*\.\d*s")
+
+
+def _cuts_outside_note_start(flow: g._Flow) -> list[str]:
+    """Each substring call or `%.Ns` precision in Crew.lua outside the one
+    noteStart (labelled source scan; M20-14 fix round 1)."""
+    t = flow.tokens
+    heads = [h for h, lab in flow.labels.items() if lab == "noteStart"]
+    inside = flow.functions[heads[0]] if len(heads) == 1 else None
+    bad = []
+    for k, x in enumerate(t):
+        cut = (x.kind == "name" and x.text in _CUT_NAMES) or (
+            x.kind == "string" and _PRECISION.search(x.text) is not None
+        )
+        if cut and (inside is None or flow.function_at(k) is not inside):
+            bad.append(f"line {x.line}: {x.text!r} outside noteStart")
+    return bad
+
+
 def test_crew_book_source_scan_the_note_rule_is_named_and_refuses_not_cuts() -> None:
     """Labelled source scan: NOTE_MAX_BYTES is 2,000 (M20-14; it was 200); cleanNote removes control
     characters and `|` byte by byte (`%c` is the bytes 0 to 31 and 127, so a
@@ -188,6 +211,10 @@ def test_crew_book_source_scan_the_note_rule_is_named_and_refuses_not_cuts() -> 
     rendered = g._render(flow.tokens)
     start = _text(flow, "noteStart")
     assert rendered.count(" . sub (") == start.count(" . sub (") == 2
+    # Fix round 1 (code review of #673): no substring call in any form
+    # (`string.sub`, `:sub`, `.sub`, `strsub`, a `format` and its `%.Ns`
+    # precision) outside noteStart, whose result is only shown.
+    assert not _cuts_outside_note_start(flow), _cuts_outside_note_start(flow)
     assert rendered.count("noteStart (") == 2  # its definition, and one call
     assert "shown ( noteStart ( entry . note ) )" in _text(flow, "tipText")
     # The two stores below, nothing else (`. note ==` is a comparison).

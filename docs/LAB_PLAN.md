@@ -6184,8 +6184,8 @@ must come from the repository test's fixed list of constructed names.)
   all of it. In `Crew.lua` each name call sits behind the `on` test.
   `UnitGUID` stays refused everywhere. Behaviour a source scan cannot
   prove (the drop order, the note rule) is pinned as named constants and
-  short functions whose text the scans grade; the 200-byte measure is
-  mirrored in Python, where M19-03 tests it (the character rule differs
+  short functions whose text the scans grade; the byte measure (2,000
+  bytes since 2026-11-20, M20-14; 200 before) is mirrored in Python, where M19-03 tests it (the character rule differs
   on purpose: the game removes, the desk refuses).
   *Note (2026-11-19, M19-01, conductor decisions):* `Crew.lua` is not
   section code, and `/wowlab skip` does not reach it; its switch is `on`.
@@ -6342,7 +6342,8 @@ root of guard's allowlist covers `WowLab.lua` and `WowLab.lua.bak`.
   nothing.
 - `crew rate NAME-REALM good|bad|none` and `crew note NAME-REALM TEXT`:
   the same edits the slash commands make, for a player who would rather
-  type a note at the desk. A note over 200 bytes, or holding a control
+  type a note at the desk. A note over 2,000 bytes (200 until
+  2026-11-20, M20-14), or holding a control
   character or `|`, is refused. The edit is a targeted change to the one
   entry, its string written with `svmerge`'s quoting helper (private
   on 2026-11-18; M19-03 makes it shared): every other byte of `WowLab.lua` is kept (L4).

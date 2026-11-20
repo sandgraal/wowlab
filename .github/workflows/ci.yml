@@ -137,6 +137,7 @@ jobs:
               - 'lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py'
               - 'lab/core/tests/review/test_m20_11_hollow_once_and_limit_rules.py'
               - 'lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py'
+              - 'lab/core/tests/review/test_m20_14_kept_rules_miss_a_method_cut_note_and_a_non_unit_tooltip_hook.py'
 
   quality:
     name: Lint, typecheck, tests

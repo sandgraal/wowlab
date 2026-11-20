@@ -181,6 +181,8 @@ ADDON_MUTATION_FILES: frozenset[str] = frozenset(
         "lab/core/tests/review/test_m20_11_hollow_once_and_limit_rules.py",
         # M20-13 code review (#669): a new gather path, an own value outside Identity.lua.
         "lab/core/tests/review/test_m20_13_kept_rules_miss_a_new_gather_path_and_an_own_value_outside_identity.py",
+        # M20-14 code review (#673): a note cut through :sub, the hook off unit tooltips.
+        "lab/core/tests/review/test_m20_14_kept_rules_miss_a_method_cut_note_and_a_non_unit_tooltip_hook.py",
     }
 )
 
