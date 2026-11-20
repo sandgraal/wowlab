@@ -3592,7 +3592,7 @@ Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while an
 
 ---
 
-## [ ] M19-13 — `snap list`, `snap show` and `snap verify` do not quote a damaged snapshot
+## [x] M19-13 — `snap list`, `snap show` and `snap verify` do not quote a damaged snapshot
 **Size:** S · **Depends on:** M19-12 · **Sources:** the security review of #642 (2026-11-19); ADR-0036 term 4; `.claude/rules/player-copy.md`
 
 On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `snap verify` (text and `--json`) pass on the validator's text, which quotes a fragment of the file: a constructed name-realm key and a U+202E planted in a wrong-typed manifest appeared in all six outputs. Give them the fixed wording `snap gc` and `snap rm` have since M19-12: the snapshot's id, that its record cannot be read, and that `wowlab snap rm <full id> --break-undo` removes it. Also: `snap gc`'s refusal for a manifest that is a link points at `snap rm`, which refuses links; say instead that a link stands in the record's place and wowlab leaves it alone.
@@ -3610,6 +3610,15 @@ On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `
 
 ---
 
+## [ ] M19-15 — `undo`, `doctor` and the first-run check do not quote a damaged snapshot
+**Size:** S · **Depends on:** M19-13 · **Sources:** the security review of #646 (2026-11-20); ADR-0037 and its note of 2026-11-20 (owner: "yes, fix the wording")
+
+Three places still show the validator's text for a damaged snapshot record, which quotes a fragment of the file: `wowlab undo --yes` when the snapshot behind the change is damaged (the message comes from `guard.py`), plain `wowlab doctor` in text and `--json` (`cli/_cmd_doctor.py`), and `doctor`'s first-run check (`firstrun.py`). `doctor --redact` already withholds it. Give each M19-13's fixed sentence. For `undo`, do it in the command's handler, when the error's cause is a damaged record: `guard.py` is not changed. For `doctor` and the first-run check, reuse what the redacted path already does. Recovery behaviour does not change: which cases refuse, their exit codes, what `doctor` advises and every other sentence stay as ADR-0037 froze them.
+
+**Acceptance:** constructed tests: a marker planted in a wrong-typed and a non-UTF-8 manifest is in no text, `--json` or stderr output of the three; exit codes and every other line unchanged (the frozen-case tests untouched and green); `guard.py` and `luadata.py` not changed. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: one changed error sentence in each of `undo` and `doctor`.
+
+---
+
 ## [ ] M19-08 — Crew book wave review
 **Size:** S · **Depends on:** M19-01, M19-02, M19-03, M19-04, M19-05, M19-06, M19-07, M19-10, M19-11
 
@@ -3621,7 +3630,7 @@ On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `
 
 # Milestone M20 — the PvP book
 
-Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Owner decision of the same day: M20-01 may start once M19-10 and M19-06 have merged; nothing else here is dispatched before M19-08 merges.
+Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Owner decision of the same day: M20-01 may start once M19-10 and M19-06 have merged. Owner decision, 2026-11-20: M20-02, M20-03, M20-09, M20-04 and M20-05 may start before M19-08 too; M20-06 onward waits for the owner.
 
 ## [x] M20-01 — `crewdb`: the database and the sync
 **Size:** M · **Depends on:** M19-10, M19-06 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
@@ -3651,7 +3660,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ---
 
 ## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
-**Size:** M · **Depends on:** M19-08 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
+**Size:** M · **Depends on:** M19-10 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
 
 Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends #631's pins and says so: `crewLoaded` may call it, the head of `ns.CrewCommand` lets `on` through for a schema 1 book and migrates it before the schema refusal is tested, and it is one more function allowed to store; the limit constants; the near-full line, its seven days and the `warned` field; and the probe, gated, out of combat and only in an instance of type `pvp` or `arena`, twice per match (after entry, and after a winner is reported), which may record exactly what §21.2 lists: whether each candidate call exists, type names by position or a returned table's field names and their type names, the row count, the event counts, three whole numbers (the first row's side, the player's own, the winner) and three yes-or-no answers for the first row. It never indexes a row's GUID field. No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
 

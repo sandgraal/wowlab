@@ -49,6 +49,9 @@ from wowlab_core.cli._cmd_macros import (
     _MACROS_LIMIT,
     _macro_notes,
 )
+from wowlab_core.cli._cmd_snap import (
+    _damaged_records,
+)
 from wowlab_core.cli._common import (
     _BLOCKED_PLACE,
     _SAVED_AT,
@@ -2396,8 +2399,9 @@ def char_history(
             raise exc.changed_while_read(lay.flavor_path) from exc
 
     spec_name, currency_name = _history_names(chosen.version)
+    store = snapshot.SnapshotStore()
     found = charhistory.collect(
-        snapshot.SnapshotStore(),
+        store,
         f"{chosen.folder}/{target.path}",
         live=(live_ns, read_live),
         table=table.table,
@@ -2413,7 +2417,7 @@ def char_history(
         names_build=chosen.version,
         rows=found.rows,
         unreadable=found.unreadable,
-        damaged_snapshots=found.damaged_snapshots,
+        damaged_snapshots=_damaged_records(store, found.damaged_snapshots),
         snapshots_searched=found.snapshots_searched,
         snapshots_holding=found.snapshots_holding,
         notes=_HISTORY_NOTES,
@@ -2688,8 +2692,9 @@ def char_kept(
             notes=list(_CHAR_NOTES),
         )
         spec_name, currency_name = _history_names(row.version)
+        history_store = snapshot.SnapshotStore()
         found_history = charhistory.collect(
-            snapshot.SnapshotStore(),
+            history_store,
             copy.path,
             table=table.table,
             spec_name=spec_name,
@@ -2706,7 +2711,7 @@ def char_kept(
             names_build=row.version,
             rows=found_history.rows,
             unreadable=found_history.unreadable,
-            damaged_snapshots=found_history.damaged_snapshots,
+            damaged_snapshots=_damaged_records(history_store, found_history.damaged_snapshots),
             snapshots_searched=found_history.snapshots_searched,
             snapshots_holding=found_history.snapshots_holding,
             notes=_HISTORY_NOTES,
