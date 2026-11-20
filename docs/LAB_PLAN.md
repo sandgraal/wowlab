@@ -6725,8 +6725,8 @@ call between, for the desk (M20-12) to read:
 
 Group members also get `guid`, `race` (`UnitRace`, first return),
 `faction` (`UnitFactionGroup`) and `honor_level`. Not kept: a member's
-spec (it needs an inspect). The desk on main lists a `"shuffle"` match as
-unread until M20-12. Every row field, `faction`, the winner and
+spec (it needs an inspect). The desk reads a `"shuffle"` match from M20-12
+on (§21.3, its note); in a shuffle `pvp_side` is not written. Every row field, `faction`, the winner and
 `IsSoloShuffle` are **[verify]** until M20-06.
 
 What is believed, each **[verify]**:
@@ -6952,6 +6952,60 @@ zone; `--map` matches a kept match's map name. `crew matches` prints each
 match with both teams by stored key, the same lines its `--json` carries.
 The Crew tab reads the history only when asked (a button), so opening the
 tab still runs `crew list` alone.
+
+*As built (2026-11-20, M20-12).* The reader takes what M20-11 records (§21.2,
+"Opponents, as built", read against `Crew.lua`): at schema 2 each player's
+`guid`, `race`, `faction`, `spec`, `honor_level` and `score` (kept as its
+time and its plain fields; the row's `name` and `guid`, should a line hold
+them, are left out of it), `kind = "shuffle"`, and a match key with no
+player entry; none of these is unread any more. A field of the wrong type
+leaves that player's entry unread, as before. Database schema 3, after the
+`.before-schema-2` copy: seven player columns (`guid`, `race`, `faction`,
+`spec`, `honor_level`, `score` as JSON text, `score_at`), an index on
+`guid`, and `matches.shuffle` (0 or 1; a shuffle is kept as an arena with
+the mark, since a CHECK cannot be widened in place and rebuilding `matches`
+would cascade into `match_players`). Bounds, each leaving that player's
+entry unread: race, faction and spec 256, honor level 0
+to 100,000; the scoreboard line at most 64 fields, each name 64 bytes, text
+256 bytes, a number within 10^15 either way, its time as the other times. A
+shuffle with a `foes` list or a `won` is left out. **Sync rule for these
+fields: the latest value wins.** The GUID, race, faction, spec and honor
+level come from the saved file where it holds them and its entry is not
+older than the row (by the later of `last` and `pvp_last`); the scoreboard
+line where its time is not older than the row's; a field the saved file
+leaves out keeps the row's value.
+
+**One player, two names (M20-12, conductor's preference).** Two stored keys
+with the same GUID are one character (a rename or a realm move gives a new
+key, not a new id). Rows are not merged: `crew list` adds "also seen as
+NAME-REALM" to each, `crew show` an "Also seen as" line, `--json` carries
+`also_known_as`, and the Crew tab puts the other names beside the stored
+key. A GUID is never the only link shown: the names are. Only a GUID in
+the client's shape (`Player-<digits>-<8 hex digits>`, at most 128 bytes) is
+stored or used to link. *Ruled 2026-11-20 (fix round 2, conductor):* any
+other value is dropped, the rest of the player synced, and the sync says
+how many in words that quote nothing ("The game's ids of N players were not
+in the game's shape and were not kept"), so a GUID the client writes in an
+unexpected shape never stops the book from syncing. The other names a
+forget's plan and result name come from the saved file's and the backup's
+entries as they are (unread ones included) and from the database; the
+forget's `--json` carries them as `also_known_as`.
+
+*Ruled 2026-11-20 (M20-12 fix round 1, conductor):* the link by GUID is for
+showing only. `crew forget KEY` forgets the name it was given and nothing
+else: no key is added because of a shared GUID, and no row is deleted by
+GUID, in the saved file, the backup, the database or any copy. When the
+same character is also kept under other names, the plan and the result say
+so in one sentence naming them ("wowlab also keeps the same character, by
+the game's id, as …; forgetting those names too removes the character").
+**What a forget makes complete:** the forgotten key's entry, with its GUID
+and every other field on it, is gone from the saved file, the backup, the
+database and every copy; and a scoreboard line another player keeps in the
+database or a copy whose text holds the forgotten name is removed (the line,
+not the row), as the saved file's own refusal covers a name left in it.
+Another name of the same character is a separate entry and keeps its own
+fields, GUID included, until it is forgotten too. `doctor` and
+`doctor --redact` still print counts only.
 
 **It is the only copy** of whatever the game's list has dropped, so it is
 not a cache and deleting it loses history. wowlab keeps the three newest

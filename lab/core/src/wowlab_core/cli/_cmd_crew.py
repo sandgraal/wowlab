@@ -15,6 +15,7 @@ through the player-copy rewriting wowlab's own sentences go through; `--json`
 is ASCII-escaped as everywhere.
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
+import pydantic
 import typer
 
 from wowlab_core import (
@@ -393,7 +395,8 @@ def _header(opened: _Opened, kept: int) -> str:
 
 def _row(p: crewbook.CrewPlayer) -> str:
     """One player's line in `crew list`."""
-    who = " ".join(x for x in (p.class_token, str(p.level) if p.level is not None else None) if x)
+    level = str(p.level) if p.level is not None else None
+    who = " ".join(x for x in (p.class_token, level, p.spec) if x)
     parts = [who or "class not recorded"]
     if p.met is not None:
         parts.append(f"grouped {p.met} {'time' if p.met == 1 else 'times'}")
@@ -409,7 +412,15 @@ def _row(p: crewbook.CrewPlayer) -> str:
             parts.append(f"in matches with you {p.allied}, against you {p.faced}")
         if not p.in_game_list:
             parts.append(_NOT_LISTED)
+        if p.also_known_as:
+            parts.append(_also_seen(p.also_known_as))
     return f"  {p.key}: " + "; ".join(parts)
+
+
+def _also_seen(keys: Sequence[str]) -> str:
+    """One player met under other names (the same character by the game's
+    id): the names, never the id alone."""
+    return "also seen as " + ", ".join(keys)
 
 
 def _unread(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
@@ -621,7 +632,20 @@ def _record_lines(p: crewdb.CrewRow) -> list[str]:
         side = {"with": ", with you", "against": ", against you"}.get(p.pvp_side or "", "")
         where = f" on {p.pvp_map}" if p.pvp_map else ""
         lines.append(f"  Latest match: {_date(p.pvp_last)}{where}{side}")
+    if p.score is not None and p.score.values:
+        lines.append(
+            f"  Their scoreboard line in that match ({_date(p.score.at)}, the game's own field "
+            "names): " + ", ".join(f"{k} {_score_value(v)}" for k, v in p.score.values.items())
+        )
     return lines
+
+
+def _score_value(value: crewbook.ScoreValue) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _field_lines(p: crewbook.CrewPlayer) -> list[str]:
@@ -646,6 +670,11 @@ def _field_lines(p: crewbook.CrewPlayer) -> list[str]:
         f"  Your rating: {p.rating or 'none'}",
         f"  Your note: {p.note or 'none'}",
         f"  Counted in the group you were in at the last save: {counted}",
+        f"  Race: {said(p.race)}",
+        f"  Faction: {said(p.faction)}",
+        f"  Specialization in their latest match: {said(p.spec)}",
+        f"  Honor level: {said(p.honor_level)}",
+        f"  The game's id for the character: {said(p.guid)}",
     ]
 
 
@@ -700,6 +729,12 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
+        if player.also_known_as:
+            lines.append(
+                "  Also seen as: "
+                + ", ".join(player.also_known_as)
+                + " (the same character by the game's id: renamed or moved realm)"
+            )
         lines += _record_lines(player)
         if not player.in_game_list:
             lines.append(
@@ -742,9 +777,11 @@ class CrewMatchesReport(_Out):
     (`sync`, as in `CrewReport`). With a player named, only the matches
     they were in: `typed` is the name as typed and `player` their stored
     key (both None without one). Each match has its time (`at`), map name
-    and id, `kind` (`bg` or `arena`), `won` (whether your side won; null
-    when the game gave no winner), and the stored keys `team` (with you)
-    and `foes` (against you). `total` counts the matches listed. `lines`
+    and id, `kind` (`bg`, `arena` or `shuffle`), `won` (whether your side
+    won; null when the game gave no winner, and always for a shuffle), and
+    the stored keys `team` (with you) and `foes` (against you); a solo
+    shuffle has no sides, so everyone in it is in `team` and `foes` is
+    empty. `total` counts the matches listed. `lines`
     are the lines the text output prints, `words` the one it opens with."""
 
     flavor_folder: str | None
@@ -762,16 +799,23 @@ class CrewMatchesReport(_Out):
     sync: crewdb.SyncOutcome | None = None
 
 
-_MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena"}
+_MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena", "shuffle": "solo shuffle"}
 
 
 def _match_lines(m: crewdb.CrewMatchRow) -> list[str]:
     """One match as `crew matches` prints it: when, where, the result, and
-    the players on each side by stored key."""
+    the players on each side by stored key. A solo shuffle has no sides and
+    no result: its players change sides each round."""
+    where = m.map if m.map else "map not recorded"
+    if m.kind == "shuffle":
+        return [
+            f"  {_date(m.at)} {where} ({_MATCH_KIND_WORDS[m.kind]}): sides change each round, "
+            "so there is no one result",
+            "    In it with you: " + (", ".join(m.team) if m.team else "none kept"),
+        ]
     result = (
         "no winner recorded" if m.won is None else "your side won" if m.won else "your side lost"
     )
-    where = m.map if m.map else "map not recorded"
     return [
         f"  {_date(m.at)} {where} ({_MATCH_KIND_WORDS[m.kind]}): {result}",
         "    With you: " + (", ".join(m.team) if m.team else "none kept"),
@@ -1047,7 +1091,11 @@ class CrewEditReport(_Out):
     as read from the database for such a player, else `absent`.
     `database_updated` is true once the database holds the new value (for a
     player it already kept; one it does not keep yet is added by the next
-    sync)."""
+    sync).
+
+    `also_known_as` (forget of one name): the other stored keys wowlab
+    keeps for the same character by the game's id, which the plan and the
+    result name; they are not forgotten with it."""
 
     command: CrewCommand
     flavor_folder: str
@@ -1072,6 +1120,10 @@ class CrewEditReport(_Out):
     database_only: bool = False
     row_sha256: str | None = None
     database_updated: bool = False
+    # `forget` of one name: the other stored keys wowlab keeps for the same
+    # character by the game's id (§21.3). Named in the plan and the result;
+    # never forgotten with it.
+    also_known_as: list[str] = pydantic.Field(default_factory=list)
 
 
 def _sha(data: bytes) -> str:
@@ -1222,6 +1274,23 @@ def _one_key(keys: Sequence[str], typed: str, edit: _Edit) -> str:
             EXIT_USAGE,
         )
     return found[0]
+
+
+def _other_names(chosen: str, edit: _Edit) -> list[str]:
+    """The other stored keys wowlab keeps for the same character as
+    `chosen`, by the game's id in its shape (§21.3, one player met under
+    two names): in the saved file and the game's backup of it, read from
+    the entries as they are (one the reader could not read included), and
+    in wowlab's crew database. For a sentence only: a forget never takes
+    them."""
+    held: list[tuple[str, str | None]] = list(crewedit.guids_held(edit.data).items())
+    if edit.backup_data is not None:
+        # A backup wowlab cannot read was refused before the forget got here.
+        with contextlib.suppress(*_READ_ERRORS):
+            held += list(crewedit.guids_held(edit.backup_data).items())
+    held += [(r.key, r.guid) for r in crewdb.read(edit.place.flavor_folder, edit.place.account)]
+    ids = {g for k, g in held if k == chosen and crewdb.guid_kept(g)}
+    return sorted({k for k, g in held if k != chosen and g in ids})
 
 
 def _not_reached(store: snapshot.SnapshotStore, n: int, *, done: bool, one: bool) -> str:
@@ -1470,6 +1539,7 @@ def crew_forget(
     backup_keys = crewedit.keys_held(edit.backup_data) if edit.backup_data is not None else []
     in_db = crewdb.holds(edit.place.flavor_folder, edit.place.account)
     known = list(dict.fromkeys([*live_keys, *backup_keys, *in_db]))
+    others: list[str] = []
     try:
         if name is None:
             keys = known
@@ -1479,6 +1549,7 @@ def crew_forget(
             )
         else:
             keys = [_one_key(known, name, edit)]
+            others = _other_names(keys[0], edit)
             new = crewedit.forget(edit.data, keys)
             new_backup = (
                 crewedit.forget(edit.backup_data, keys) if edit.backup_data is not None else None
@@ -1536,14 +1607,24 @@ def crew_forget(
             else None,
             notes=[],
             database_forgotten=(written and db_has) if database is None else database,
+            also_known_as=others,
         )
+
+    # The same character under other names (§21.3): said, never taken.
+    also_seen = (
+        f"wowlab also keeps the same character, by the game's id, as {', '.join(others)}; "
+        "forgetting those names too removes the character."
+        if others
+        else None
+    )
+    named = ", ".join(keys)
 
     if not changed and db_has and (name is None or keys[0] in in_db):
         # Only wowlab's crew database (and its copies) hold them: no file of
         # the game is written, and nothing of this can be undone.
         _check_pin(pin, [target_sha, None, backup_sha, None], edit.rel)
         show = _say if not json_out else _say_err
-        who = keys[0] if name is not None else "every player"
+        who = named if name is not None else "every player"
         show(
             f"Forget {who} from wowlab's crew database for {edit.words()}: neither "
             f"{labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME} holds them. The database and every "
@@ -1551,6 +1632,8 @@ def crew_forget(
             "system made of wowlab's folder (Time Machine, File History, a cloud-synced "
             "folder) keep theirs."
         )
+        if also_seen is not None:
+            show(also_seen)
         try:
             _confirm("Forget this player?" if name is not None else "Forget every player?", yes)
         except typer.Exit:
@@ -1562,6 +1645,8 @@ def crew_forget(
             _emit(report(written=True))
             return
         _say(f"Forgot {who}: wowlab's crew database and its copies no longer hold them.")
+        if also_seen is not None:
+            _say(also_seen)
         return
 
     if not changed:
@@ -1573,7 +1658,7 @@ def crew_forget(
         return
 
     def plan(show: Callable[[str], None]) -> None:
-        who = keys[0] if name is not None else f"every player ({len(keys)})"
+        who = named if name is not None else f"every player ({len(keys)})"
         them = "this player" if name is not None else "any player"
         show(f"Forget {who} from the crew book of {edit.words()} ({_AS_OF}):")
         if new != edit.data:
@@ -1589,16 +1674,20 @@ def crew_forget(
             show(f"  There is no {_BACKUP_NAME} beside it.")
         if db_has:
             show("  remove them from wowlab's crew database and every copy it keeps")
+        if also_seen is not None:
+            show(also_seen)
         show(_not_reached(store, count, done=False, one=name is not None))
 
     def done(finished: CrewEditReport) -> None:
-        who = keys[0] if name is not None else _plural(len(keys), "player")
+        who = named if name is not None else _plural(len(keys), "player")
         names = "the name" if name is not None else "their names"
         also = ", nor wowlab's crew database or its copies," if db_has else ""
         _say(
             f"Forgot {who}: neither {labaddon.LAB_FILE_NAME} nor {_BACKUP_NAME}{also} holds "
             f"{names} now."
         )
+        if also_seen is not None:
+            _say(also_seen)
         assert finished.not_reached is not None
         _say(finished.not_reached)
 

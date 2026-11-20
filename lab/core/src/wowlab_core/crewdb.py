@@ -48,6 +48,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import json
+import math
 import os
 import re
 import sqlite3
@@ -64,7 +66,7 @@ from wowlab_core.errors import WowlabError
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 2
+SCHEMA = 3
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -92,6 +94,26 @@ TIME_MAX = 4_102_444_800  # 2100-01-01 00:00 UTC
 TIME_AHEAD = 30 * 86_400
 """How far past this computer's clock a time in a book may be: a later one
 would pin a row's `last` for good, so its entry is left out."""
+# What M20-11 records of each player (§21.2, as built; M20-12).
+GUID_MAX_BYTES = 128
+"""The game's id of a character is about 20 characters of ASCII."""
+
+
+def guid_kept(guid: str | None) -> bool:
+    """Whether a GUID is one a sync keeps and links by: in the client's
+    shape (`crewbook.GUID_SHAPE`) and within `GUID_MAX_BYTES`. Any other is
+    dropped (the rest of the player synced) and counted (§21.3)."""
+    return crewbook.guid_shaped(guid) and guid is not None and len(guid) <= GUID_MAX_BYTES
+
+
+HONOR_LEVEL_MAX = 100_000
+SCORE_FIELDS_MAX = 64
+"""At most this many fields in one player's scoreboard line (the client's
+row has about 20)."""
+SCORE_NAME_MAX_BYTES = 64
+SCORE_NUMBER_MAX = 10**15
+"""The largest number, either sign, a scoreboard field may hold (damage
+done in one long match stays far below it)."""
 
 _PRIVATE_MODES = os.name == "posix"
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -115,6 +137,7 @@ _SQL_SET_APP_ID = "PRAGMA application_id = 1464615746"
 _SQL_SET_VERSION: dict[int, str] = {
     1: "PRAGMA user_version = 1",
     2: "PRAGMA user_version = 2",
+    3: "PRAGMA user_version = 3",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -152,19 +175,28 @@ _SQL_CREATE: tuple[str, ...] = (
     " marks_changed INTEGER NOT NULL,"
     " marks_agreed INTEGER NOT NULL,"
     " rating_own INTEGER NOT NULL DEFAULT 0 CHECK (rating_own IN (0, 1)),"
-    " note_own INTEGER NOT NULL DEFAULT 0 CHECK (note_own IN (0, 1))"
+    " note_own INTEGER NOT NULL DEFAULT 0 CHECK (note_own IN (0, 1)),"
+    " guid TEXT,"
+    " race TEXT,"
+    " faction TEXT,"
+    " spec TEXT,"
+    " honor_level INTEGER,"
+    " score TEXT,"
+    " score_at INTEGER"
     ") STRICT",
     "CREATE INDEX players_last ON players (last_at)",
     "CREATE INDEX players_rating ON players (rating)",
     "CREATE INDEX players_faced ON players (faced)",
     "CREATE INDEX players_allied ON players (allied)",
+    "CREATE INDEX players_guid ON players (guid)",
     "CREATE TABLE matches ("
     " match_id INTEGER PRIMARY KEY,"
     " at INTEGER NOT NULL,"
     " map TEXT,"
     " map_id INTEGER NOT NULL,"
     " kind TEXT NOT NULL CHECK (kind IN ('bg', 'arena')),"
-    " won INTEGER CHECK (won IN (0, 1))"
+    " won INTEGER CHECK (won IN (0, 1)),"
+    " shuffle INTEGER NOT NULL DEFAULT 0 CHECK (shuffle IN (0, 1))"
     ") STRICT",
     "CREATE UNIQUE INDEX matches_at_map ON matches (at, map_id)",
     "CREATE TABLE match_players ("
@@ -188,6 +220,15 @@ _SQL_CREATE: tuple[str, ...] = (
 # each one that equals the saved file's value (`_merged`); a row that agreed
 # keeps neither.
 #
+#
+# 2 -> 3 (M20-12): what M20-11 records of each player (the GUID, race,
+# faction, spec, honor level and the latest scoreboard line, kept as JSON
+# text with its time), an index on the GUID (one player met under two
+# names, §21.3), and whether a match is a solo shuffle. A shuffle is an
+# arena, so it is kept as `kind` `arena` with `shuffle` 1: a CHECK cannot be
+# widened in place, and rebuilding `matches` would cascade into
+# `match_players`. Every new column starts empty (0 for `shuffle`).
+#
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
 _MIGRATIONS: dict[tuple[int, int], str] = {
@@ -197,6 +238,16 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     " CHECK (note_own IN (0, 1))",
     (1, 3): "UPDATE players SET rating_own = (marks_changed > marks_agreed),"
     " note_own = (marks_changed > marks_agreed)",
+    (2, 1): "ALTER TABLE players ADD COLUMN guid TEXT",
+    (2, 2): "ALTER TABLE players ADD COLUMN race TEXT",
+    (2, 3): "ALTER TABLE players ADD COLUMN faction TEXT",
+    (2, 4): "ALTER TABLE players ADD COLUMN spec TEXT",
+    (2, 5): "ALTER TABLE players ADD COLUMN honor_level INTEGER",
+    (2, 6): "ALTER TABLE players ADD COLUMN score TEXT",
+    (2, 7): "ALTER TABLE players ADD COLUMN score_at INTEGER",
+    (2, 8): "CREATE INDEX players_guid ON players (guid)",
+    (2, 9): "ALTER TABLE matches ADD COLUMN shuffle INTEGER NOT NULL DEFAULT 0"
+    " CHECK (shuffle IN (0, 1))",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -208,16 +259,18 @@ _SQL_PLAYERS_ALL = (
     "SELECT player_key, name, realm, class, level, role, guild, met, first_at, last_at,"
     " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
     " rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last, pvp_map,"
-    " pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen"
+    " pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid, race,"
+    " faction, spec, honor_level, score, score_at"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
     "INSERT INTO players (player_key, name, realm, class, level, role, guild, met, first_at,"
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
     " marks_agreed, rating_own, note_own, allied, faced, allied_won, faced_won, pvp_last,"
-    " pvp_map, pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen)"
+    " pvp_map, pvp_side, allied_seen, faced_seen, allied_won_seen, faced_won_seen, guid,"
+    " race, faction, spec, honor_level, score, score_at)"
     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-    " ?, ?, ?, ?, ?)"
+    " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
@@ -225,19 +278,23 @@ _SQL_PLAYER_UPDATE = (
     " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?,"
     " rating_own = ?, note_own = ?, allied = ?, faced = ?, allied_won = ?, faced_won = ?,"
     " pvp_last = ?, pvp_map = ?, pvp_side = ?, allied_seen = ?, faced_seen = ?,"
-    " allied_won_seen = ?, faced_won_seen = ?"
+    " allied_won_seen = ?, faced_won_seen = ?, guid = ?, race = ?, faction = ?, spec = ?,"
+    " honor_level = ?, score = ?, score_at = ?"
     " WHERE player_key = ?"
 )
 # Matches (§21.3 rule 3, M20-09): one row per match, told apart by `at` and
 # `map_id` (a unique index), and one row per player in it.
 _SQL_MATCH_IDS = "SELECT at, map_id FROM matches"
-_SQL_MATCH_INSERT = "INSERT INTO matches (at, map, map_id, kind, won) VALUES (?, ?, ?, ?, ?)"
+_SQL_MATCH_INSERT = (
+    "INSERT INTO matches (at, map, map_id, kind, won, shuffle) VALUES (?, ?, ?, ?, ?, ?)"
+)
 _SQL_MATCH_PLAYER_INSERT = "INSERT INTO match_players (match_id, player_key, side) VALUES (?, ?, ?)"
 _SQL_MATCHES_ALL = (
-    "SELECT match_id, at, map, map_id, kind, won FROM matches ORDER BY at DESC, match_id DESC"
+    "SELECT match_id, at, map, map_id, kind, won, shuffle FROM matches"
+    " ORDER BY at DESC, match_id DESC"
 )
 _SQL_MATCHES_OF = (
-    "SELECT match_id, at, map, map_id, kind, won FROM matches WHERE match_id IN"
+    "SELECT match_id, at, map, map_id, kind, won, shuffle FROM matches WHERE match_id IN"
     " (SELECT match_id FROM match_players WHERE player_key = ?)"
     " ORDER BY at DESC, match_id DESC"
 )
@@ -291,6 +348,11 @@ class CrewRow(crewbook.CrewPlayer):
     and only the database keeps them)."""
 
     in_game_list: bool = True
+    # One player met under two names (§21.3, M20-12): the other stored keys
+    # the database keeps with the same GUID, the game's id of a character
+    # (a rename or a realm move gives a new key, not a new id). Rows are not
+    # merged; each lists the others.
+    also_known_as: list[str] = Field(default_factory=list)
     # The record with and against (§21.2, §21.3): matches on your side and
     # against you, and of each the ones your side won, as the database adds
     # them up across syncs; and the latest match the saved file named.
@@ -306,9 +368,11 @@ class CrewRow(crewbook.CrewPlayer):
 class CrewMatchRow(_Model):
     """One match wowlab's crew database keeps (§21.3): `at` (time() of the
     game's read), the map's name and id as the client gave them, `kind`
-    (`bg` or `arena`), `won` (whether your side won; None when the client
-    gave no winner), and the stored keys on your side (`team`) and against
-    you (`foes`) that the database still holds."""
+    (`bg`, `arena` or `shuffle`), `won` (whether your side won; None when
+    the client gave no winner, and always for a shuffle), and the stored
+    keys on your side (`team`) and against you (`foes`) that the database
+    still holds. A solo shuffle has no sides: everyone in it is in `team`
+    and `foes` is empty."""
 
     at: int
     map: str | None
@@ -367,6 +431,9 @@ class SyncOutcome(_Model):
     matches_left_out: int = 0
     """Entries of the book's `matches` not synced because they could not be
     read or are outside what a sync takes; every other match is synced."""
+    ids_left_out: int = 0
+    """Synced players whose GUID was not in the client's shape: the GUID
+    was not kept (nor used to link names), the rest of the player was."""
 
 
 class AdoptOutcome(_Model):
@@ -652,6 +719,16 @@ class _Row:
     faced_seen: int = 0
     allied_won_seen: int = 0
     faced_won_seen: int = 0
+    # What M20-11 records (M20-12): each as of the latest group or match
+    # that gave it, and the latest scoreboard line as JSON text with its
+    # time.
+    guid: str | None = None
+    race: str | None = None
+    faction: str | None = None
+    spec: str | None = None
+    honor_level: int | None = None
+    score: str | None = None
+    score_at: int | None = None
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -685,6 +762,13 @@ class _Row:
             self.faced_seen,
             self.allied_won_seen,
             self.faced_won_seen,
+            self.guid,
+            self.race,
+            self.faction,
+            self.spec,
+            self.honor_level,
+            self.score,
+            self.score_at,
         )
 
 
@@ -696,7 +780,51 @@ def _meta(conn: sqlite3.Connection) -> dict[str, object]:
     return {str(name): value for name, value in conn.execute(_SQL_META_ALL)}
 
 
-def _public(row: _Row, book: crewbook.CrewBook | None) -> CrewRow:
+def _score_text(score: crewbook.CrewScore | None) -> str | None:
+    """A scoreboard line's fields as the database keeps them: JSON text, in
+    the order the client gave them; None for no line."""
+    if score is None:
+        return None
+    return json.dumps(score.values, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _score_of(text: str | None, at: int | None) -> crewbook.CrewScore | None:
+    """The line a row keeps, read back; None for none, and for text that is
+    not the JSON object a sync wrote (never raised: a row stays readable)."""
+    if text is None:
+        return None
+    try:
+        loaded = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    values = {
+        str(k): v
+        for k, v in loaded.items()
+        if isinstance(v, (bool, int, str)) or (isinstance(v, float) and math.isfinite(v))
+    }
+    return crewbook.CrewScore(at=at, values=values)
+
+
+def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
+    """For each stored key, the other keys with the same GUID (§21.3: one
+    player met under two names), in the order of the keys."""
+    by_guid: dict[str, list[str]] = {}
+    for r in sorted(rows, key=lambda r: r.key):
+        if guid_kept(r.guid):
+            assert r.guid is not None
+            by_guid.setdefault(r.guid, []).append(r.key)
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        if r.guid is not None and r.guid in by_guid:
+            out[r.key] = [k for k in by_guid[r.guid] if k != r.key]
+    return out
+
+
+def _public(
+    row: _Row, book: crewbook.CrewBook | None, aliases: dict[str, list[str]] | None = None
+) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
     return CrewRow(
@@ -712,9 +840,16 @@ def _public(row: _Row, book: crewbook.CrewBook | None) -> CrewRow:
         where_id=row.where_id,
         rating="good" if row.rating == "good" else "bad" if row.rating == "bad" else None,
         note=row.note,
+        guid=row.guid,
+        race=row.race,
+        faction=row.faction,
+        spec=row.spec,
+        honor_level=row.honor_level,
+        score=_score_of(row.score, row.score_at),
         in_current_group=held.in_current_group if held is not None else False,
         other_keys=list(held.other_keys) if held is not None else [],
         in_game_list=bool(row.in_book),
+        also_known_as=list((aliases or {}).get(row.key, [])),
         allied=row.allied,
         faced=row.faced,
         allied_won=row.allied_won,
@@ -743,7 +878,9 @@ def read(flavor_folder: str, account: str, book: crewbook.CrewBook | None = None
     if conn is None:
         return []
     try:
-        return [_public(r, book) for r in _rows(conn).values()]
+        rows = list(_rows(conn).values())
+        aliases = _aliases(rows)
+        return [_public(r, book, aliases) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -795,12 +932,12 @@ def matches(flavor_folder: str, account: str, key: str | None = None) -> list[Cr
                 at=int(at),
                 map=_text(map_name),
                 map_id=int(map_id),
-                kind="arena" if kind == "arena" else "bg",
-                won=None if won is None else bool(won),
+                kind="shuffle" if shuffle else "arena" if kind == "arena" else "bg",
+                won=None if won is None or shuffle else bool(won),
                 team=sides[match_id][0],
                 foes=sides[match_id][1],
             )
-            for match_id, at, map_name, map_id, kind, won in found
+            for match_id, at, map_name, map_id, kind, won, shuffle in found
         ]
 
     got = _read_with(flavor_folder, account, use)
@@ -850,6 +987,9 @@ _TEXTS = (
     ("guild", "guild", TEXT_MAX_BYTES),
     ("where", "instance name", TEXT_MAX_BYTES),
     ("note", "note", NOTE_MAX_BYTES),
+    ("race", "race", TEXT_MAX_BYTES),
+    ("faction", "faction", TEXT_MAX_BYTES),
+    ("spec", "specialization", TEXT_MAX_BYTES),
 )
 _TIMES = (("first", "first-grouped time"), ("last", "last-grouped time"))
 
@@ -946,7 +1086,44 @@ def _entry_problem(p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None = None) 
                 f"the {kind} is before 2004 or more than {TIME_AHEAD // 86_400} days after "
                 "this computer's clock, so it is not synced"
             )
-    return _pvp_problem(pvp)
+    if p.honor_level is not None and not 0 <= p.honor_level <= HONOR_LEVEL_MAX:
+        return f"the honor level is over {HONOR_LEVEL_MAX:,}, so it is not synced"
+    return _pvp_problem(pvp) or _score_problem(p.score)
+
+
+def _score_problem(score: crewbook.CrewScore | None) -> str | None:
+    """Why a player's scoreboard line is outside what a sync takes (its
+    time, how many fields, each field's name, text and number), never
+    quoting it."""
+    if score is None:
+        return None
+    if score.at is not None and not TIME_MIN <= score.at <= _latest():
+        return (
+            f"the scoreboard line's time is before 2004 or more than {TIME_AHEAD // 86_400} "
+            "days after this computer's clock, so it is not synced"
+        )
+    if len(score.values) > SCORE_FIELDS_MAX:
+        return f"the scoreboard line holds more than {SCORE_FIELDS_MAX} fields, so it is not synced"
+    for name, value in score.values.items():
+        size = _bytes_of(name)
+        if size is None or size > SCORE_NAME_MAX_BYTES:
+            return (
+                f"a scoreboard field's name is not text of at most {SCORE_NAME_MAX_BYTES} "
+                "bytes, so it is not synced"
+            )
+        if isinstance(value, str):
+            size = _bytes_of(value)
+            if size is None or size > TEXT_MAX_BYTES:
+                return (
+                    f"a scoreboard field is not text of at most {TEXT_MAX_BYTES} bytes, so it "
+                    "is not synced"
+                )
+        elif not isinstance(value, bool) and not -SCORE_NUMBER_MAX <= value <= SCORE_NUMBER_MAX:
+            return (
+                f"a scoreboard number is beyond {SCORE_NUMBER_MAX:,} either way, so it is not "
+                "synced"
+            )
+    return None
 
 
 def entry_problems(book: crewbook.CrewBook) -> list[crewbook.UnreadEntry]:
@@ -987,6 +1164,8 @@ def _match_problem(m: crewbook.CrewMatch) -> str | None:
         )
     if len(set(keys)) != len(keys):
         return "a name in it is listed twice, so it is not synced"
+    if m.kind == "shuffle" and (m.foes or m.won is not None):
+        return "it is a solo shuffle with sides or a result, so it is not synced"
     return None
 
 
@@ -1008,14 +1187,19 @@ def _unsynced(book: crewbook.CrewBook) -> frozenset[str]:
     return frozenset([u.key for u in book.unread] + [u.key for u in entry_problems(book)])
 
 
-def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int]:
-    """The book with only the entries and matches a sync takes, and how
-    many of each it left out (the reader's unread ones included)."""
-    kept = [p for p in book.players if _entry_problem(p, book.pvp.get(p.key)) is None]
+def _usable(book: crewbook.CrewBook) -> tuple[crewbook.CrewBook, int, int, int]:
+    """The book with only the entries and matches a sync takes, how many
+    of each it left out (the reader's unread ones included), and how many
+    synced players' GUIDs it dropped for being out of the client's shape
+    (the rest of each player is synced)."""
+    taken = [p for p in book.players if _entry_problem(p, book.pvp.get(p.key)) is None]
+    odd = {p.key for p in taken if p.guid is not None and not guid_kept(p.guid)}
+    kept = [p.model_copy(update={"guid": None}) if p.key in odd else p for p in taken]
     left_out = len(book.players) - len(kept) + len(book.unread)
     games = [m for m in book.matches if _match_problem(m) is None]
     games_out = len(book.matches) - len(games) + len(book.matches_unread)
-    return book.model_copy(update={"players": kept, "matches": games}), left_out, games_out
+    new = book.model_copy(update={"players": kept, "matches": games})
+    return new, left_out, games_out, len(odd)
 
 
 # ─── the hold ────────────────────────────────────────────────────────────────
@@ -1135,6 +1319,43 @@ def _with_pvp(new: _Row, row: _Row | None, pvp: crewbook.CrewPvp | None, mode: M
     return new
 
 
+_SEEN_FIELDS = ("guid", "race", "faction", "spec", "honor_level")
+
+
+def _newest(*times: int | None) -> int | None:
+    found = [t for t in times if t is not None]
+    return max(found) if found else None
+
+
+def _with_seen(
+    new: _Row, row: _Row | None, p: crewbook.CrewPlayer, pvp: crewbook.CrewPvp | None
+) -> _Row:
+    """`new` with what M20-11 records of the player (§21.3, as built by
+    M20-12): the latest value wins. The GUID, race, faction, spec and honor
+    level come from the saved file where it holds them and its entry is not
+    older than the row (by the later of its latest group and latest match);
+    the scoreboard line where its time is not older than the row's. A field
+    the saved file leaves out keeps the row's value."""
+    pvp_last = pvp.pvp_last if pvp is not None else None
+    file_newest = _newest(p.last, pvp_last)
+    row_newest = _newest(row.last, row.pvp_last) if row is not None else None
+    if row is None or row_newest is None or (file_newest is not None and file_newest >= row_newest):
+        for field in _SEEN_FIELDS:
+            value = getattr(p, field)
+            if value is not None:
+                setattr(new, field, value)
+    score = p.score
+    if score is not None and (
+        row is None
+        or row.score is None
+        or row.score_at is None
+        or (score.at is not None and score.at >= row.score_at)
+    ):
+        new.score = _score_text(score)
+        new.score_at = score.at
+    return new
+
+
 def _merged(
     row: _Row | None,
     p: crewbook.CrewPlayer,
@@ -1167,8 +1388,9 @@ def _merged(
             now,
             now,
         )
-        return _with_pvp(first, None, pvp, mode)
+        return _with_seen(_with_pvp(first, None, pvp, mode), None, p, pvp)
     new = dataclasses.replace(row, in_book=1, met_seen=seen)
+    new = _with_seen(new, row, p, pvp)
     # Rule 2: counters are added to, never replaced.
     new.met = _added(row.met, row.met_seen, seen, mode)
     new = _with_pvp(new, row, pvp, mode)
@@ -1376,7 +1598,10 @@ def _write(
     conn.executemany(_SQL_PLAYER_UPDATE, [(*r.values(), r.key) for r in updated])
     for m in games:
         won = None if m.won is None else int(m.won)
-        cursor = conn.execute(_SQL_MATCH_INSERT, (m.at, m.map, m.map_id, m.kind, won))
+        # A solo shuffle is an arena, marked as one (schema 3, `_MIGRATIONS`).
+        shuffle = m.kind == "shuffle"
+        kind = "arena" if shuffle else m.kind
+        cursor = conn.execute(_SQL_MATCH_INSERT, (m.at, m.map, m.map_id, kind, won, int(shuffle)))
         match_id = cursor.lastrowid
         conn.executemany(
             _SQL_MATCH_PLAYER_INSERT,
@@ -1456,7 +1681,9 @@ def sync(
     if why is not None:
         return SyncOutcome(state="refused", words=why, database=str(path))
     unsynced = _unsynced(book)
-    book, left_out, matches_out = _usable(book)
+    # A GUID out of the client's shape is dropped and the player synced
+    # without it (§21.3, M20-12 fix round 2): counted, never quoted.
+    book, left_out, matches_out, ids_out = _usable(book)
     exists = os.path.lexists(path)
     if not exists:
         orphan = _orphans(target)
@@ -1484,9 +1711,19 @@ def sync(
             ident=ident,
             unsynced=unsynced,
         )
-        if not (left_out or matches_out) or outcome.state not in ("synced", "unchanged"):
+        if not (left_out or matches_out or ids_out) or outcome.state not in (
+            "synced",
+            "unchanged",
+        ):
             return outcome
         words = outcome.words
+        if ids_out:
+            ids = "id of 1 player was" if ids_out == 1 else f"ids of {ids_out} players were"
+            verb = "was" if ids_out == 1 else "were"
+            words += (
+                f" The game's {ids} not in the game's shape and {verb} not kept; the rest "
+                "was synced."
+            )
         if left_out:
             entries = "1 entry" if left_out == 1 else f"{left_out} entries"
             verb = "was" if left_out == 1 else "were"
@@ -1496,7 +1733,12 @@ def sync(
             verb = "was" if matches_out == 1 else "were"
             words += f" {games} of the book could not be read and {verb} not synced."
         return outcome.model_copy(
-            update={"left_out": left_out, "matches_left_out": matches_out, "words": words}
+            update={
+                "left_out": left_out,
+                "matches_left_out": matches_out,
+                "ids_left_out": ids_out,
+                "words": words,
+            }
         )
     except (_Replaced, FileNotFoundError):
         return SyncOutcome(
@@ -1915,6 +2157,9 @@ def copies(flavor_folder: str, account: str) -> list[Path]:
 
 _SQL_FORGET_PLAYER = "DELETE FROM players WHERE player_key = ?"
 _SQL_FORGET_IN_MATCHES = "DELETE FROM match_players WHERE player_key = ?"
+_SQL_PLAYER_COLUMNS = "PRAGMA table_info(players)"
+_SQL_SCORES = "SELECT player_key, score FROM players WHERE score IS NOT NULL"
+_SQL_DROP_SCORE = "UPDATE players SET score = NULL, score_at = NULL WHERE player_key = ?"
 
 
 def _gone(path: Path) -> None:
@@ -1924,10 +2169,47 @@ def _gone(path: Path) -> None:
             f.unlink()
 
 
+def _has_score(conn: sqlite3.Connection) -> bool:
+    """Whether this file's players table has the scoreboard line (a copy
+    kept before schema 3 does not)."""
+    return any(r[1] == "score" for r in conn.execute(_SQL_PLAYER_COLUMNS))
+
+
 def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
+    """Delete the players `keys` (those keys only: a GUID never adds one,
+    §21.3) and take them out of every match; then drop, from every other
+    player, a kept scoreboard line whose text holds one of them (the line,
+    not the row), so no copy of the name stays in another player's data."""
     for key in keys:
         conn.execute(_SQL_FORGET_PLAYER, (key,))
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+    if not _has_score(conn):
+        return
+    wanted = [crewbook.fold(k) for k in keys if crewbook.fold(k)]
+    held = [(str(k), s) for k, s in conn.execute(_SQL_SCORES).fetchall()]
+    for key, score in held:
+        if any(w in text for w in wanted for text in _score_texts(score)):
+            conn.execute(_SQL_DROP_SCORE, (key,))
+
+
+def _score_texts(score: object) -> list[str]:
+    """A kept scoreboard line as the texts a name could hide in, folded as
+    names are compared (§20.2): the stored JSON as it is, and each field
+    name and text value it decodes to (an escaped spelling included). Text
+    that is not JSON is searched as it is."""
+    if not isinstance(score, str):
+        return []
+    out = [crewbook.fold(score)]
+    try:
+        loaded = json.loads(score)
+    except ValueError:
+        return out
+    if isinstance(loaded, dict):
+        for k, v in loaded.items():
+            out.append(crewbook.fold(str(k)))
+            if isinstance(v, str):
+                out.append(crewbook.fold(v))
+    return out
 
 
 def _forget_in(path: Path, keys: Sequence[str]) -> None:

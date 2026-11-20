@@ -3623,7 +3623,9 @@
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
-    const who = [klass, level === null ? null : "level " + level].filter(Boolean).join(", ");
+    // The specialization of their latest match (M20-12), when a scoreboard gave one.
+    const spec = hubStr(p.spec) ? visible(p.spec) : null;
+    const who = [klass, level === null ? null : "level " + level, spec].filter(Boolean).join(", ");
     const met = hubNum(p.met);
     return [
       who || NOT_RECORDED,
@@ -3641,7 +3643,11 @@
     const name = make("td");
     // The name is a button, so a keyboard reaches the row; a click anywhere
     // on the row opens the player too.
-    const open = make("button", visible(p.key));
+    // The same character under other names (M20-12): the names, as text,
+    // after the stored key the button opens.
+    const others = Array.isArray(p.also_known_as) ? p.also_known_as.filter((k) => typeof k === "string") : [];
+    const also = others.length > 0 ? " (also seen as " + others.map((k) => visible(k)).join(", ") + ")" : "";
+    const open = make("button", visible(p.key) + also);
     open.type = "button";
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";

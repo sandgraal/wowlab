@@ -996,3 +996,51 @@ def test_a_rating_of_a_player_only_the_database_keeps_goes_through_the_step_cons
     assert crew.report(SHOW, {"name": KEY_C})["player"]["rating"] == "bad"
     assert crew.live.read_bytes() == before  # nothing written into the install
     assert crew.history() == records  # nothing journaled
+
+
+# ─── what M20-11 records, on the page (M20-12) ───────────────────────────────
+
+_GUID = "Player-0000-0000000A"  # obviously invented, in the game's shape
+
+
+def test_the_new_fields_two_names_and_a_shuffle_show_as_text_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    """The tab, through the endpoints it already has: the spec in the class
+    cell, the other names of the same character beside the stored key, the
+    new lines of `crew show`, and a solo shuffle in the history, each set as
+    text."""
+    shuffle = match([KEY_A, KEY_C], [], at=T2 + 60, kind="shuffle", won=None)
+    crew = crew_at(
+        book(
+            {
+                KEY_A: player(guid=_GUID, spec="Frost", race="Gnome", allied=1),
+                KEY_B: player(guid=_GUID, met=1),
+                KEY_C: player(),
+            },
+            schema=2,
+            matches=[match([KEY_A], [KEY_C]), shuffle],
+        )
+    )
+    at = [p["key"] for p in crew.report(LIST, {"sort": "last"})["players"]]
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_click": "crew-matches-show"},
+        {"crew_open": at.index(KEY_A)},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    tab, history, opened = out["steps"]
+    for view in out["steps"]:
+        _inert(view)
+    row_a = next(r for r in tab["rows"] if r[0].startswith(KEY_A))
+    assert row_a[0] == f"{KEY_A} (also seen as {KEY_B})"
+    assert row_a[1] == "Mage, level 60, Frost"
+    shown = crew.report(SHOW, {"name": KEY_A})
+    for line in shown["lines"][1:]:
+        assert line.strip() in opened["player"]["lines"], line
+    assert "Race: Gnome" in opened["player"]["lines"]
+    assert any(line.startswith(f"Also seen as: {KEY_B}") for line in opened["player"]["lines"])
+    report = crew.report(MATCHES, {})
+    assert history["matches"]["lines"] == [line.strip() for line in report["lines"]]
+    assert any("(solo shuffle)" in line for line in history["matches"]["lines"])
+    assert f"In it with you: {KEY_A}, {KEY_C}" in history["matches"]["lines"]
