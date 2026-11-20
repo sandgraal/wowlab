@@ -94,6 +94,13 @@ def test_constructed_a_book_that_is_on_reads_every_field(
         "where_id": 2291,
         "rating": "bad",
         "note": NOTE,
+        # What M20-11 records (M20-12): none in this book.
+        "guid": None,
+        "race": None,
+        "faction": None,
+        "spec": None,
+        "honor_level": None,
+        "score": None,
         "in_current_group": True,
         "other_keys": [],
     }

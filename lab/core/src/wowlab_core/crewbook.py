@@ -20,7 +20,10 @@ The four outcomes §20.2 states:
   with its key and a reason in wowlab's words (never the value it holds);
   every other entry is read.
 
-Schema 1 (§20.1) and schema 2 (§21.2, M20-03) are read. Schema 2 adds the
+Schema 1 (§20.1) and schema 2 (§21.2, M20-03) are read; at schema 2 also
+what M20-11 records (M20-12): each player's GUID, race, faction, spec,
+honor level and latest scoreboard line (`CrewScore`), and a solo shuffle's
+`kind`. Schema 2 adds the
 per-player match counters (`CrewBook.pvp`, by key), `matches` (an entry that does
 not fit is listed in `matches_unread` with its place and a reason, the rest
 read), `matched`, `warned`, and the scoreboard probe's `probe.pvp`, which is
@@ -119,6 +122,22 @@ class CrewPvp(_Model):
     pvp_side: PvpSide | None = None
 
 
+ScoreValue = bool | int | float | str
+
+
+class CrewScore(_Model):
+    """The latest match's scoreboard line of one player (§21.2, as built by
+    M20-11): `at`, the time of the match, and every other field of the row
+    the addon kept, by the client's own field name (`values`: a number, text
+    or true/false). The row's `name` and `guid` are never among them (the
+    player's entry holds both); a field this reader does not keep (not
+    plain, or one of those two) is named in `other_keys`."""
+
+    at: int | None = None
+    values: dict[str, ScoreValue] = Field(default_factory=dict)
+    other_keys: list[str] = Field(default_factory=list)
+
+
 class CrewPlayer(_Model):
     """One player the book keeps, as stored (§20.1). `key` is the stored
     `Name-Realm` key, unchanged. A field the entry does not hold is None."""
@@ -135,6 +154,16 @@ class CrewPlayer(_Model):
     where_id: int | None = None
     rating: Rating | None = None
     note: str | None = None
+    # Schema 2, as built by M20-11 (§21.2): what the client gives of the
+    # player, each as of the latest group or match that gave it. `guid` is
+    # the game's id of the character; `faction` is the faction's name as a
+    # group member's unit gives it (a scoreboard's side is in `score`).
+    guid: str | None = None
+    race: str | None = None
+    faction: str | None = None
+    spec: str | None = None
+    honor_level: int | None = None
+    score: CrewScore | None = None
     # Whether the key is in the book's saved `current` set: counted in the
     # group the player was in at the last save.
     in_current_group: bool = False
@@ -150,13 +179,16 @@ class UnreadEntry(_Model):
     reason: str
 
 
-MatchKind = Literal["bg", "arena"]
+MatchKind = Literal["bg", "arena", "shuffle"]
 
 
 class CrewMatch(_Model):
     """One entry of a schema 2 book's `matches` (§21.2): `at` (time() of
     the read), the map's name and id, `kind`, `won` (None when the client
-    gave no winner) and the keys of `team` and `foes`, as stored."""
+    gave no winner) and the keys of `team` and `foes`, as stored. A solo
+    shuffle (`kind` `shuffle`) lists everyone in `team` and has no `won`.
+    A key in a match may have no player entry (the book, full of rated and
+    noted players, refused it)."""
 
     position: int  # its place in the list, from 1
     at: int
@@ -304,6 +336,62 @@ def _pvp_field(name: str, item: object, pvp: dict[str, Any]) -> str | None:
 
 _PVP_FIELDS = frozenset({*_PVP_NUMBERS, "pvp_map", "pvp_side"})
 
+# What M20-11 keeps of each player (§21.2, as built): four texts, a whole
+# number and the latest scoreboard line.
+_M20_11_TEXTS = ("guid", "race", "faction", "spec")
+# The row's own fields the line never holds: the entry keeps them.
+_SCORE_LEFT_OUT = frozenset({"name", "guid"})
+
+
+def _plain(value: object) -> bool:
+    """A number, text or true/false (a float only when finite)."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, (bool, int, str))
+
+
+def _score(item: object) -> CrewScore | str:
+    """`score` as read, or why it cannot be (never quoting it)."""
+    if isinstance(item, list):  # a table with no named field
+        return CrewScore(other_keys=[f"[{i}]" for i in range(1, len(item) + 1)])
+    if not isinstance(item, dict):
+        return "score is not a table"
+    at: int | None = None
+    values: dict[str, ScoreValue] = {}
+    other: list[str] = []
+    for name, value in item.items():
+        if name == "at":
+            at = _whole(value, 0, TIME_MAX)
+            if at is None:
+                return "the time of score is not a time"
+        elif isinstance(name, str) and name not in _SCORE_LEFT_OUT and _plain(value):
+            values[name] = cast(ScoreValue, value)
+        else:
+            other.append(_key_text(name))
+    return CrewScore(at=at, values=values, other_keys=other)
+
+
+def _m20_11_field(name: str, item: object, fields: dict[str, Any]) -> str | None:
+    """Read one field M20-11 adds into `fields`; why it cannot be, else None."""
+    if name in _M20_11_TEXTS:
+        if not isinstance(item, str):
+            return f"{name} is not text"
+        fields[name] = item
+    elif name == "honor_level":
+        number = _whole(item, 0, _INT_MAX)
+        if number is None:
+            return "honor_level is not a whole number of 0 or more"
+        fields[name] = number
+    else:
+        score = _score(item)
+        if isinstance(score, str):
+            return score
+        fields[name] = score
+    return None
+
+
+_M20_11_FIELDS = frozenset({*_M20_11_TEXTS, "honor_level", "score"})
+
 
 def _player(
     key: str,
@@ -325,6 +413,10 @@ def _player(
     for name, item in value.items():
         if schema >= 2 and name in _PVP_FIELDS:
             why = _pvp_field(name, item, pvp)
+            if why is not None:
+                return UnreadEntry(key=key, reason=why)
+        elif schema >= 2 and name in _M20_11_FIELDS:
+            why = _m20_11_field(name, item, fields)
             if why is not None:
                 return UnreadEntry(key=key, reason=why)
         elif name in _TEXT_FIELDS:
@@ -478,7 +570,7 @@ def _schema_2(value: dict[Any, Any], probe: dict[Any, Any] | None) -> dict[str, 
     }
 
 
-_MATCH_KINDS = ("bg", "arena")
+_MATCH_KINDS = ("bg", "arena", "shuffle")
 
 
 def _keys_of(value: object) -> list[str] | None:
@@ -520,7 +612,7 @@ def _match(position: int, key: object, value: object) -> CrewMatch | UnreadMatch
                 return bad("map_id is not a whole number")
         elif name == "kind":
             if item not in _MATCH_KINDS:
-                return bad('kind is neither "bg" nor "arena"')
+                return bad('kind is not "bg", "arena" or "shuffle"')
             fields["kind"] = item
         elif name == "won":
             if not isinstance(item, bool):

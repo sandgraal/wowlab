@@ -611,6 +611,21 @@ def names_left(data: bytes, keys: Collection[str]) -> list[NameSpot]:
     return spots
 
 
+def ids_left(data: bytes, ids: Collection[str]) -> bool:
+    """Whether any of `ids` (the game's id of a character, M20-11's `guid`)
+    is still in `data`: in any string the file loads as (keys and values,
+    an escaped spelling included), or in its bytes (a comment). An id is
+    compared as it is: the game writes it in one spelling."""
+    wanted = [i for i in ids if i]
+    if not wanted:
+        return False
+    loaded = luadata.parse(data).to_python()
+    if any(i in text for _, text in _strings(loaded, ()) for i in wanted):
+        return True
+    whole = data.decode("utf-8", "surrogateescape")
+    return any(i in whole for i in wanted)
+
+
 def _spot(path: tuple[object, ...]) -> NameSpot:
     """The player and field a loaded string's path names, when it is inside
     the book's player list."""
