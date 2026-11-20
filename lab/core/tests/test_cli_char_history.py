@@ -430,6 +430,31 @@ def test_constructed_damaged_manifest_is_listed_by_name(
     assert "1 snapshot did not load, so wowlab cannot tell whether they hold" in out
 
 
+def test_constructed_damaged_manifest_content_is_never_quoted(
+    history: dict[str, Any],
+) -> None:
+    """M19-13: the reason names the id and how to remove it, never a
+    fragment of the file (a planted name-realm key, ESC, U+202E)."""
+    sid = "20261106T000000.000000Z-deadbeef"
+    planted = "Zarqwyn-Silvermoonx PLANTEDM1913WORD \x1b[31m \u202e"
+    store = snapshot.SnapshotStore()
+    (store.manifests_dir / f"{sid}.json").write_bytes(
+        json.dumps({"format": 1, "id": sid, "entries": planted}, ensure_ascii=False).encode()
+    )
+    said = (
+        f"snapshot {sid} is damaged: its record in wowlab's snapshot folder cannot be read. "
+        f"`wowlab snap rm {sid} --break-undo` removes it."
+    )
+    result = _run("--json")
+    [damaged] = json.loads(result.stdout)["damaged_snapshots"]
+    assert damaged == {"name": f"{sid}.json", "reason": said}
+    text = _run()
+    assert f"  snapshot file {sid}.json does not load: {said}" in text.stdout.splitlines()
+    for out in (result.stdout, result.stderr, text.stdout, text.stderr):
+        for raw in ("Zarqwyn", "PLANTEDM1913WORD", "\x1b", "\\u001b", "\u202e", "\\u202e"):
+            assert raw not in out, (raw, out)
+
+
 def test_constructed_live_file_unreadable_and_no_snapshots_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

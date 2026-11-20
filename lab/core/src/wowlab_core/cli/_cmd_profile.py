@@ -30,6 +30,7 @@ from wowlab_core.cli._cmd_restore import (
 )
 from wowlab_core.cli._cmd_snap import (
     SnapshotSummary,
+    _damaged_records,
     _plan_line,
     _summary,
     _version,
@@ -267,9 +268,11 @@ def profile_list(json_out: JsonOpt = False) -> None:
 
     \f
     JSON: ProfileListReport."""
-    found = profiles.listing(snapshot.SnapshotStore())
+    store = snapshot.SnapshotStore()
+    found = profiles.listing(store)
     report = ProfileListReport(
-        profiles=[_profile_summary(p) for p in found.profiles], damaged=list(found.invalid)
+        profiles=[_profile_summary(p) for p in found.profiles],
+        damaged=_damaged_records(store, found.invalid),
     )
     if json_out:
         _emit(report)
