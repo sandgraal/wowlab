@@ -147,6 +147,27 @@ FIELD_KEYS = frozenset(
         "where_id",
         "rating",
         "note",
+        # Schema 2 (§21.2; M20-04): the per-player counters and fields, the
+        # match list and its entries' fields, the once-per-match marker, the
+        # near-full time and the scoreboard probe's block.
+        "allied",
+        "faced",
+        "allied_won",
+        "faced_won",
+        "pvp_last",
+        "pvp_map",
+        "pvp_side",
+        "matches",
+        "at",
+        "map",
+        "map_id",
+        "kind",
+        "won",
+        "team",
+        "foes",
+        "matched",
+        "warned",
+        "pvp",
     }
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.

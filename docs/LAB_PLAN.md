@@ -6713,6 +6713,20 @@ no warning about an opponent at the start, and the README says so.
 **World PvP is out** (owner, 2026-11-19): no target reading beyond §20.1's
 rating of your own target, no nameplates, no combat log.
 
+*Note (2026-11-20, M20-04, the checks M20-05 inherits).* `tests/addon/test_lab_addon.py`
+grades a file declaring `local CREW_SCHEMA = 2` with `CREW_PINS_2`; one declaring `= 1`
+keeps M19's pins unchanged, and a strict xfail in `TestM2005Activation`, which M20-05
+deletes, holds the real file to schema 2. #631's pins changed: `crewLoaded` calls the pinned
+`crewMigrate` for a book that is on and raises `probe.loads` in place, so `probe.pvp`
+survives a load; the head of `ns.CrewCommand` migrates for the word `on` alone, before
+the unchanged schema refusal; `crewMigrate` may store. Also pinned: `MAX_PLAYERS = 20000`,
+`MAX_MATCHES = 500`, `NEAR_FULL_PERCENT = 90`, `NEAR_FULL_SECONDS = 604800`; `warned`
+stored once, right before the line, under a seven-day and 90% test; `pvpInstance`,
+`pvpWon`, `pvpSnapshot` whole; `probe.pvp` written only as `{ pvpSnapshot() }` after
+`pvpInstance()` and `[2] = pvpSnapshot()` under `pvpWon()`; `"arena"` only as a comparand;
+the two scoreboard events beside the roster's. Refused until M20-07 and M20-08: writing
+the per-player counters, `matched`, or a `matches` entry.
+
 ### 21.3 The database (ADR-0039)
 
 One file per book: `<user data>/wowlab/crew/<flavor folder>/<account
