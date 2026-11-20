@@ -3601,7 +3601,7 @@ On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `
 
 ---
 
-## [ ] M19-14 — `sv merge --from` does not quote a damaged snapshot
+## [x] M19-14 — `sv merge --from` does not quote a damaged snapshot
 **Size:** XS · **Depends on:** M19-13 · **Sources:** the code and security reviews of #646 (2026-11-20); `.claude/rules/player-copy.md`
 
 `sv merge --from <id>` on a damaged snapshot still passes on the validator's text, which quotes a fragment of the snapshot's record (`cli/_cmd_sv.py`, `_snapshot_sv`: `store.show` raises and the raw error reaches the player). An import cycle keeps M19-13's shared helper out of that module, so catch the error where it is raised and say M19-13's sentence from a place both modules can import. Nothing else about `sv merge` changes. Not in this ticket: `undo --yes`, `doctor` and its first-run check quote the same text; ADR-0037 freezes their wording, and whether to change them is the owner's ruling. `doctor --redact` already withholds it.
@@ -3641,7 +3641,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 
 ---
 
-## [ ] M20-02 — The write commands, `doctor` and the repository keep the terms for the database
+## [x] M20-02 — The write commands, `doctor` and the repository keep the terms for the database
 **Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.3 ("Writing"), §21.4; ADR-0036 terms 3 to 5
 
 `crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it (asked first, pinned by `--expect` on the row's rating and note, joined to `cli.EXPECT_FIELDS`, and said not to be undoable); (`crew forget`'s reach into the database and its copies, with its sentences, was built in M20-01, #640, on the conductor's ruling of 2026-11-19: without it a forgotten player stayed listed.) The repository test refuses any tracked SQLite file outside the listed `db2lake` test paths; the capture tool refuses any SQLite file; `doctor --redact` redacts the home-path login and never prints `meta`'s install root; the bug-report template says not to attach the database; the plans of `snap restore`, `undo` and `sv merge` gain the sync sentence. `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
@@ -3659,7 +3659,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 
 ---
 
-## [ ] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
+## [x] M20-04 — Static checks for the schema 2 addon and the scoreboard probe
 **Size:** M · **Depends on:** M19-10 · **Sources:** `docs/LAB_PLAN.md` §21.2; the M19-01 checks
 
 Tests only, before any addon code, by a session that does not write M20-05: the schema constant becomes 2; the pinned migration function (schema 1 to 2, nothing added but the number and an empty `matches`, only for a book that is on), which amends #631's pins and says so: `crewLoaded` may call it, the head of `ns.CrewCommand` lets `on` through for a schema 1 book and migrates it before the schema refusal is tested, and it is one more function allowed to store; the limit constants; the near-full line, its seven days and the `warned` field; and the probe, gated, out of combat and only in an instance of type `pvp` or `arena`, twice per match (after entry, and after a winner is reported), which may record exactly what §21.2 lists: whether each candidate call exists, type names by position or a returned table's field names and their type names, the row count, the event counts, three whole numbers (the first row's side, the player's own, the winner) and three yes-or-no answers for the first row. It never indexes a row's GUID field. No other scoreboard value may be stored, printed or compared. `UnitGUID` and the combat log stay refused.
@@ -3692,6 +3692,15 @@ With the conductor's runbook: install the addon from `main`, play one battlegrou
 Tests only, by a session that does not write M20-08: the scoreboard calls M20-06 confirmed, gated as the roster calls are, read only after the match has ended and out of combat, each value through the secret-value test; keys built only from a row's name and realm; `matches` entries of the fixed shape; the `matched` marker written before the counters are raised, so a repeated event or a `/reload` counts a match once; nothing from a scoreboard row read, stored, printed or compared but name, realm, class and side: a read of any other field of a row fails, stored or not (ADR-0036's amendment).
 
 **Acceptance:** as M20-04's, on a constructed source doing all of §21.2. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: none.
+
+*Carried from M20-04's security review (#651, 2026-11-20), left open there on
+purpose:* a later field written through a local string key passes the schema 2
+checks (`local f = "allied"`, then `entry[f] = …`). This ticket's checks refuse
+a non-literal index store on a player entry, or any string constant equal to a
+counted field outside the pinned writers. *Also for the domain review of
+M20-05 or of this ticket:* the pinned `pvpSnapshot` reads a scoreboard field
+named `faction` as the side, and ADR-0036's amendment of 2026-11-19 lists
+what is never read; the two are to be checked against each other.
 
 ---
 
