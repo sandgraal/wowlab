@@ -443,6 +443,7 @@ ns.Section({
             return { absent = "GetNumBindings gave no number", probes = list }
         end
         local commands = 0
+        local notPlain = 0
         for index = 1, math.min(total, MAX_BINDINGS) do
             -- First return only: the command. The header, category and keys
             -- GetBinding also returns are not bound.
@@ -458,6 +459,14 @@ ns.Section({
                 -- left out (whether GetBinding lists a `MACRO <name>` or a
                 -- `CLICK <frame>:<button>` at all is [verify]).
                 commands = commands + 1
+                -- M20-16: how many listed commands are not a plain
+                -- upper-case name (`MACRO x`, `CLICK f:b`, other
+                -- characters), keyed or not, so a reader can say whether
+                -- the list holds any.
+                local named = ns.String(found)
+                if named and not string.find(named, "^[%u%d_]+$") then
+                    notPlain = notPlain + 1
+                end
                 local keys = ns.Pack(pcall(getKey, found))
                 local kept, any = {}, false
                 for i = 2, keys[1] and keys.n or 1 do
@@ -476,6 +485,7 @@ ns.Section({
             end
         end
         record.commands = commands
+        record.commands_not_plain = notPlain
         return record
     end,
 })
@@ -485,11 +495,16 @@ ns.Section({
 -- Schema 5 (M20-13; ADR-0026, note of 2026-11-20): every macro, account-wide
 -- and this character's, as GetMacroInfo returns it. GetNumMacros gives the
 -- two counts; account macros are indices 1 to the account count, and this
--- character's start after MAX_ACCOUNT_MACROS, the client's constant (both
+-- character's start after MAX_ACCOUNT_MACROS, the client's constant, or
+-- after ACCOUNT_MACRO_SLOTS when that constant is not loaded (M20-16; both
 -- [verify] on Forever). Only those indices are asked: an out-of-range index
 -- into a C API is the crash class in docs/DATA_SOURCES.md (2026-09-28). A
 -- count is walked to at most MAX_MACROS_PER_SCOPE, the addon's own bound.
 local MAX_MACROS_PER_SCOPE = 256
+-- The account's macro slots when MAX_ACCOUNT_MACROS is nil (M20-16): 120, the
+-- community value, not yet confirmed on this client [verify]
+-- (docs/LAB_FORMATS.md, macros-cache.txt).
+local ACCOUNT_MACRO_SLOTS = 120
 
 ns.Section({
     key = "macros",
@@ -514,9 +529,16 @@ ns.Section({
         if missing then
             return { absent = ns.String(missing .. " missing"), probes = list }
         end
+        -- M20-16: MAX_ACCOUNT_MACROS is defined by the macro window's own
+        -- Lua, which loads on demand, so it is nil until the player opens
+        -- that window (the owner's run on 71037, 2026-11-20). The window is
+        -- never loaded for it: without the constant the addon takes
+        -- ACCOUNT_MACRO_SLOTS and says so in `account_slots_from`.
         local perAccount = ns.Number(MAX_ACCOUNT_MACROS)
+        local slotsFrom = "MAX_ACCOUNT_MACROS"
         if not perAccount then
-            return { absent = "MAX_ACCOUNT_MACROS is not a number", probes = list }
+            perAccount = ACCOUNT_MACRO_SLOTS
+            slotsFrom = "fallback"
         end
         local okCount, accountCount, characterCount = pcall(getCount)
         if okCount then
@@ -533,6 +555,7 @@ ns.Section({
             account = ns.Number(accountCount),
             character = ns.Number(characterCount),
             first_character_index = perAccount + 1,
+            account_slots_from = slotsFrom,
             list = {},
             probes = list,
         }

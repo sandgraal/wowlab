@@ -2588,6 +2588,38 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     per addon version: the addon does not read its version at run time);
     one gathering pass at most every 30 s, out of combat, and at logout (none in combat); the `Constants` sweep once per session.
 
+  *The owner's first schema-5 run (2026-11-20, Forever 71037; M20-16).*
+  After one login and logout `wowlab char show` printed `Macros: absent
+  (MAX_ACCOUNT_MACROS is not a number)`, `Character: name …, realm absent
+  (the return of GetRealmName was not a non-empty string), guild …`, the
+  action-bar line's old "a macro's name and body are never recorded", and
+  "128 commands with a key, of 303 listed … 0 macro or click commands among
+  those with a key". Under the schema-4 addon the same character's file
+  had said 309 listed and "1 command of those listed not a plain upper-case
+  name", so the binding list holds at least one command that is not a plain
+  name, with no key bound through it. Fixed in M20-16:
+  - `MAX_ACCOUNT_MACROS` is defined by the macro window's Lua, which loads
+    on demand, so it is nil until the player opens that window. The
+    `macros` section no longer depends on it: without it the character
+    macros are asked from index 121 (120 account slots, the community
+    value, **[verify]** on this client), and `account_slots_from` records
+    `"MAX_ACCOUNT_MACROS"` or `"fallback"`. The macro window is never
+    loaded to get the constant.
+  - `identity.realm` is the first non-empty, non-secret answer of
+    `GetRealmName()`, `GetNormalizedRealmName()` and the second return of
+    `UnitFullName("player")`, each tested with `issecretvalue`; `realm_from`
+    names it and `realm_normalized = true` marks the form without spaces.
+    A record with no realm keeps the section due for another gather, so a
+    realm found later (at logout at the latest) replaces the absent one.
+  - `bindings.commands_not_plain` counts the listed commands, keyed or not,
+    that are not a plain upper-case name; `char show` prints that count with
+    and without a key, so the next run says what the list holds. Whether
+    those commands are `MACRO`, `SPELL`, `ITEM` or `CLICK` stays
+    **[verify]**.
+  - `char show`'s action-bar line says, for a schema-5 record, that the
+    Macros section holds each macro's name and body, or why it is absent;
+    a schema-3 or schema-4 record keeps the old words.
+
   The reader reads schema 1 to 4 files as before and refuses a schema it
   does not know. The desk uses the stored text: `char show` prints the
   character's name, realm and guild, the macro counts and when the file was

@@ -254,6 +254,8 @@ end)
 --   on_world = true,               -- gather on entering the world
 --   heavy = true,                  -- on entering the world, only the first time
 --   immediate = true,              -- gather on the event itself, not debounced
+--   again_without = "field",       -- M20-16: a record without this field leaves the
+--                                  -- section dirty, so the next pass gathers it again
 --   not_gathered = "reason",       -- absent reason if never gathered this session
 --   carry = function(saved) ... end,   -- at ADDON_LOADED: a record to keep from
 --                                      -- the loaded WowLabCharDB, or nil
@@ -325,6 +327,12 @@ local function gather(section, event)
         section.gathered = true
         section.dirty = false
         gatheredAt[section.key] = ns.Number(time())
+        -- M20-16: a record its section calls incomplete leaves it dirty, so
+        -- the next pass (PLAYER_LOGOUT at the latest) gathers it again and
+        -- its record replaces this one.
+        if section.again_without and record[section.again_without] == nil then
+            section.dirty = true
+        end
     end
 end
 
