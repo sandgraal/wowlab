@@ -49,9 +49,6 @@ from wowlab_core.cli._cmd_macros import (
     _MACROS_LIMIT,
     _macro_notes,
 )
-from wowlab_core.cli._cmd_snap import (
-    _damaged_records,
-)
 from wowlab_core.cli._common import (
     _BLOCKED_PLACE,
     _SAVED_AT,
@@ -65,6 +62,7 @@ from wowlab_core.cli._common import (
     NotesOpt,
     RootOpt,
     _account_words,
+    _damaged_records,
     _discover,
     _emit,
     _first_name_folder,

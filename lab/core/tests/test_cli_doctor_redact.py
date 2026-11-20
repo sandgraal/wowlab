@@ -495,11 +495,22 @@ def damaged_records(root: Path) -> Path:
 def test_constructed_damaged_records_quote_names_without_redact(damaged_records: Path) -> None:
     text = _text()
     raw, report = _json()
+    # The journal's error still quotes its record without --redact. A damaged
+    # manifest is said in one fixed sentence since M19-15, so the names only
+    # the manifests hold reach the loader's words, which --redact withholds
+    # from, and not plain doctor's output.
+    loader = "\n".join(bad.reason for bad in snapshot.SnapshotStore().list_lenient().invalid)
     for name in RECORD_NAMES:
-        assert name in text, name
-        assert name in raw, name
+        if name in (OTHER_ACCOUNT, OLD_CHARACTER):
+            assert name in loader, name
+            assert name not in text, name
+            assert name not in raw, name
+        else:
+            assert name in text, name
+            assert name in raw, name
     assert report.store.journal_error is not None
     assert len(report.store.damaged) == 2
+    assert all("is damaged: its record" in d.reason for d in report.store.damaged)
 
 
 @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])

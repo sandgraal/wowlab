@@ -72,6 +72,7 @@ from wowlab_core.cli._common import (
     YesOpt,
     _confirm,
     _crew_plan_line,
+    _damaged_words,
     _discover,
     _emit,
     _flavor_list,
@@ -577,6 +578,22 @@ def _undone_unlisted(written: Sequence[guard.PathChange], listed: Sequence[str])
     return lines
 
 
+def _damaged_snapshot_refusal(
+    exc: guard.GuardError, last: guard.HistoryRecord
+) -> guard.GuardError | None:
+    """The write gate's refusal of an undo whose pre-write snapshot has a
+    damaged record, with the loader's words, which quote the file, replaced
+    by the one fixed sentence (M19-15); still a `GuardError`, so the exit
+    code and the error's kind do not change. None for any other refusal,
+    which is reported as the gate words it."""
+    lead = f"cannot read the pre-write snapshot {last.snapshot_id!r}: "
+    damaged = isinstance(exc.__cause__, snapshot.ManifestIntegrityError)
+    if type(exc) is not guard.GuardError or not damaged or not str(exc).startswith(lead):
+        return None
+    store = snapshot.SnapshotStore()
+    return guard.GuardError(lead + _damaged_words(store, f"{last.snapshot_id}.json"))
+
+
 @app.command(short_help="Undo the last change wowlab made to your game files.")
 @_handled
 def undo(
@@ -702,7 +719,13 @@ def undo(
             EXIT_ERROR if expect is None else EXIT_REFUSED,
         )
     # With --expect, `last.id` is `expect` (checked above).
-    guard.undo(expected_id=last.id)
+    try:
+        guard.undo(expected_id=last.id)
+    except guard.GuardError as exc:
+        plain = _damaged_snapshot_refusal(exc, last)
+        if plain is None:
+            raise
+        raise plain from None
     after = guard.history()
     if len(after) == len(now):
         # Closed in place: the change stopped before it changed any file, so

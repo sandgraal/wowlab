@@ -48,6 +48,8 @@ from wowlab_core.cli._common import (
     RootOpt,
     _client_names,
     _client_running,
+    _damaged_records,
+    _damaged_words,
     _discover,
     _emit,
     _given_flavor,
@@ -2067,6 +2069,7 @@ def _first_run(
         choose=_choose_flavor if asking else None,
         confirm=_ask if asking else None,
         clients=names,
+        damaged_words=lambda name: _damaged_words(store, name),
     )
 
 
@@ -2198,6 +2201,13 @@ def doctor(
             say("")
 
     report = _doctor(root, check_builds, on_found)
+    # A damaged snapshot record is said in the one fixed sentence, never the
+    # loader's words, which quote the file (M19-15). `--redact`, above, keeps
+    # its own withholding of those words.
+    plain = report.store.model_copy(
+        update={"damaged": _damaged_records(store, report.store.damaged)}
+    )
+    report = report.model_copy(update={"store": plain})
     if not json_out:
         _print_doctor(report, notes)
         if first and found[0] is None:
