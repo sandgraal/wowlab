@@ -237,6 +237,15 @@ globals:
   UnitGroupRolesAssigned:
     args:
       - type: string
+  UnitGUID:
+    args:
+      - type: string
+  UnitFactionGroup:
+    args:
+      - type: string
+  UnitHonorLevel:
+    args:
+      - type: string
   GetGuildInfo:
     args:
       - type: string

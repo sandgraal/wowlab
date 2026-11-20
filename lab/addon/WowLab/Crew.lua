@@ -25,13 +25,17 @@
 -- was, and each skip adds one to `skipped`. Each member is read inside its
 -- own pcall, so one bad value cannot end the pass. A name that is nil or the
 -- client's UNKNOWNOBJECT text is skipped without counting and tried again on
--- the next pass. No GUID is read or stored.
+-- the next pass. Since M20-11 (owner decision, 2026-11-20, ADR-0036's second
+-- note of that date) a member's GUID, race, faction and honor level are kept
+-- too, each through the same test.
 --
 -- Schema 2 (§21.2): the larger list, the near-full line, the migration of a
--- schema 1 book that is on, and the scoreboard probe (`probe.pvp`), which
--- stores only the shape of what the client gives in a battleground or arena:
--- which calls exist, type names, counts and three whole numbers, never a
--- name or any other scoreboard value. No opponent is recorded yet.
+-- schema 1 book that is on, the scoreboard probe (`probe.pvp`), and, from
+-- M20-11, the matches: once a battleground or arena reports a winner and the
+-- player is out of combat, the scoreboard is read once (recordMatch), each
+-- row copied as plain values (scoreRows), and one `matches` entry written,
+-- after the `matched` marker, so a repeated event or a /reload counts it once.
+-- Every scoreboard call is made through pcall, after a test that it exists.
 --
 -- API status: every client API used is listed in lab/addon/README.md; all of
 -- them are [verify] for this file until the owner's in-game checks (M19-07,
@@ -50,9 +54,11 @@ local CREW_SCHEMA = 2
 -- when every kept player is rated or noted, new members and new ratings are
 -- refused and the owner is told once per session.
 local MAX_PLAYERS = 20000
--- At most MAX_MATCHES matches (§21.2); nothing adds one until M20-07, so the
--- list stays empty in this version and only counts toward the near-full line.
+-- At most MAX_MATCHES matches (§21.2), the oldest dropped first (recordMatch).
 local MAX_MATCHES = 500
+-- At most MAX_ROWS scoreboard rows are read (40 a side is the largest
+-- battleground).
+local MAX_ROWS = 80
 -- The near-full line (§21.1): when either list holds NEAR_FULL_PERCENT of
 -- its limit, at most once in NEAR_FULL_SECONDS (seven days), by `warned`.
 local NEAR_FULL_PERCENT = 90
@@ -72,10 +78,12 @@ local MAX_PARTY = 4
 -- The sentence of ADR-0036 term 2 (§20.5), printed when the book is turned on.
 -- Changed for M19-10's domain review: battleground and arena teams count
 -- (owner decision, 2026-11-19), and the backup "probably" holds it ([verify]).
-local TERMS = "The crew book keeps, for each player in your party or raid, including your own side in a "
-    .. "battleground or arena (never your opponents), their name, "
-    .. "realm, guild, class, level and role, when you first and last grouped, how many times and in which instance, "
-    .. "and your own rating and note. "
+-- Changed for M20-11: both teams, and what the game shows of each player.
+local TERMS = "The crew book keeps, for each player in your party or raid and on either team in a "
+    .. "battleground or arena, what the game shows of them: name, realm, guild, class, race, faction, spec, "
+    .. "level, role, honor level and the game's ID for the character, when you first and last grouped, "
+    .. "how many times and in which instance, how many matches with and against you and how they ended, "
+    .. "their scoreboard line from the latest match, the teams of each match, and your own rating and note. "
     .. "It keeps them in WowLab.lua (and probably the game's backup of it, WowLab.lua.bak) in this game account's "
     .. "SavedVariables folder, in wowlab's snapshots of it, and in wowlab's own crew database on this computer, "
     .. "which keeps them after the game's list drops them. Nothing is sent anywhere. "
@@ -176,10 +184,10 @@ local function pvpWon()
         return false
     end
     local ok, winner = pcall(GetBattlefieldWinner)
-    if not ok or secret(winner) then
-        return false
+    if ok and not secret(winner) then
+        return winner ~= nil
     end
-    return winner ~= nil
+    return false
 end
 
 -- One probe run: whether each candidate call exists; the first row's field
@@ -220,7 +228,7 @@ local function pvpSnapshot()
         local okRow, row = pcall(C_PvP.GetScoreInfo, 1)
         if okRow and not secret(row) and type(row) == "table" then
             for field, value in pairs(row) do
-                if type(field) == "string" then
+                if not secret(field) and type(field) == "string" then
                     snap.fields[field] = type(value)
                 end
             end
@@ -653,6 +661,44 @@ local function readMember(unit)
             entry.guild = ns.String(guild)
         end
     end
+    -- M20-11: the GUID, race (the client's localized name, as a scoreboard
+    -- row gives it), faction (the English name) and honor level.
+    if type(UnitGUID) == "function" then
+        local guid = UnitGUID(unit)
+        if secret(guid) then
+            addSkipped()
+        end
+        if not secret(guid) and type(guid) == "string" and guid ~= "" then
+            entry.guid = ns.String(guid)
+        end
+    end
+    if type(UnitRace) == "function" then
+        local race = UnitRace(unit)
+        if secret(race) then
+            addSkipped()
+        end
+        if not secret(race) and type(race) == "string" and race ~= "" then
+            entry.race = ns.String(race)
+        end
+    end
+    if type(UnitFactionGroup) == "function" then
+        local faction = UnitFactionGroup(unit)
+        if secret(faction) then
+            addSkipped()
+        end
+        if not secret(faction) and type(faction) == "string" and faction ~= "" then
+            entry.faction = ns.String(faction)
+        end
+    end
+    if type(UnitHonorLevel) == "function" then
+        local honor = UnitHonorLevel(unit)
+        if secret(honor) then
+            addSkipped()
+        end
+        if not secret(honor) and type(honor) == "number" and honor > 0 then
+            entry.honor_level = ns.Number(honor)
+        end
+    end
 end
 
 -- One pass over the group.
@@ -772,6 +818,210 @@ local function onRoster()
     kick()
 end
 
+-- The scoreboard as the client gives it now (§21.2, as built by M20-11): one
+-- plain copy per row, at most MAX_ROWS, of each field whose name is a string
+-- and whose value is a number, a string or true/false and not a secret value.
+-- A table in a row (the client's per-battleground `stats` is believed to be
+-- one) is not copied. Empty when the newer score call is missing or there are
+-- no rows yet. [verify] every field name, in M20-06.
+local function scoreRows()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local rows = {}
+    if type(C_PvP) ~= "table" or type(C_PvP.GetScoreInfo) ~= "function" then
+        return rows
+    end
+    if type(GetNumBattlefieldScores) ~= "function" then
+        return rows
+    end
+    local okCount, counted = pcall(GetNumBattlefieldScores)
+    local count = 0
+    if okCount and not secret(counted) and type(counted) == "number" then
+        count = ns.Number(counted) or 0
+    end
+    if count > MAX_ROWS then
+        count = MAX_ROWS
+    end
+    for i = 1, count do
+        local okRow, row = pcall(C_PvP.GetScoreInfo, i)
+        if okRow and not secret(row) and type(row) == "table" then
+            local copy = {}
+            for field, value in pairs(row) do
+                if not secret(field) and not secret(value) and type(field) == "string" then
+                    if type(value) == "number" then
+                        copy[field] = ns.Number(value)
+                    elseif type(value) == "string" then
+                        copy[field] = ns.String(value)
+                    elseif type(value) == "boolean" then
+                        copy[field] = ns.Bool(value)
+                    end
+                end
+            end
+            rows[#rows + 1] = copy
+        end
+    end
+    return rows
+end
+
+-- One finished match (§21.2, as built by M20-11): read once a winner is
+-- reported and the player is out of combat. The `matched` marker (the
+-- instance id and the time) is written before any counter is raised, so a
+-- repeated score event or a /reload in the same instance counts the match
+-- once; a pass outside a battleground or arena empties it (pvpPass). Nothing
+-- is written when the scoreboard has no rows yet, when the player's own row
+-- or side cannot be found, or when the instance cannot be read: a later
+-- score event tries again. Each row's player is added or updated as a group
+-- member is (the drop order applies), with the row's plain values as
+-- `score`, and the match lands in `matches`, the oldest dropped at
+-- MAX_MATCHES. [verify] in M20-06: that a row's `name` holds "Name-Realm" for
+-- another realm and the bare name for the player's own; that `faction` is
+-- the team number (0 or 1) and GetBattlefieldWinner's value the winning
+-- team's; that `guid`, `raceName`, `classToken`, `talentSpec` and
+-- `honorLevel` are what their names say.
+local function recordMatch()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if type(GetInstanceInfo) ~= "function" or type(time) ~= "function" or type(UnitGUID) ~= "function" then
+        return
+    end
+    local where, kind, _, _, _, _, _, whereId = GetInstanceInfo()
+    if secret(where) or secret(kind) or secret(whereId) then
+        addSkipped()
+        return
+    end
+    local mapId = ns.Number(whereId)
+    local marker = WowLabCrewDB.matched
+    if type(marker) == "table" and marker.map_id == mapId then
+        return
+    end
+    local mine = nil
+    local own = UnitGUID("player")
+    if not secret(own) and type(own) == "string" and own ~= "" then
+        mine = own
+    end
+    if mine == nil then
+        return
+    end
+    local rows = scoreRows()
+    if type(rows) ~= "table" or #rows == 0 then
+        return
+    end
+    local ownSide = nil
+    for i = 1, #rows do
+        local score = rows[i]
+        if score.guid == mine then
+            ownSide = ns.Number(score.faction)
+        end
+    end
+    if ownSide == nil and type(GetBattlefieldArenaFaction) == "function" then
+        local okSide, side = pcall(GetBattlefieldArenaFaction)
+        if okSide and not secret(side) and type(side) == "number" then
+            ownSide = ns.Number(side)
+        end
+    end
+    if ownSide == nil then
+        return
+    end
+    local winner = nil
+    if type(GetBattlefieldWinner) == "function" then
+        local okWinner, won = pcall(GetBattlefieldWinner)
+        if okWinner and not secret(won) and type(won) == "number" then
+            winner = ns.Number(won)
+        end
+    end
+    local home = nil
+    if type(GetNormalizedRealmName) == "function" then
+        local realm = GetNormalizedRealmName()
+        if not secret(realm) and type(realm) == "string" and realm ~= "" then
+            home = realm
+        end
+    end
+    local now = ns.Number(time())
+    -- The marker first: everything below is counted once per match.
+    WowLabCrewDB.matched = { map_id = mapId, at = now }
+    local mapName = nil
+    if type(where) == "string" then
+        mapName = string.gsub(where, "|", "")
+    end
+    local matchKind = "bg"
+    if kind == "arena" then
+        matchKind = ns.String(kind)
+    end
+    local result = nil
+    if winner == 0 or winner == 1 then
+        result = winner == ownSide
+    end
+    local team = {}
+    local foes = {}
+    local players = WowLabCrewDB.players
+    for i = 1, #rows do
+        local score = rows[i]
+        local name = score.name
+        local key = nil
+        if type(name) == "string" and name ~= "" and name ~= UNKNOWNOBJECT and score.guid ~= mine then
+            if string.find(name, "-", 1, true) ~= nil then
+                key = name
+            elseif home ~= nil then
+                key = name .. "-" .. home
+            end
+        end
+        if key ~= nil and players[key] == nil and makeRoom() then
+            players[key] = { met = 0 }
+        end
+        local entry = nil
+        if key ~= nil then
+            entry = players[key]
+        end
+        if type(entry) == "table" then
+            local with = ns.Number(score.faction) == ownSide
+            if with then
+                team[#team + 1] = ns.String(key)
+                entry.allied = (ns.Number(entry.allied) or 0) + 1
+                if result == true then
+                    entry.allied_won = (ns.Number(entry.allied_won) or 0) + 1
+                end
+                entry.pvp_side = "with"
+            else
+                foes[#foes + 1] = ns.String(key)
+                entry.faced = (ns.Number(entry.faced) or 0) + 1
+                if result == true then
+                    entry.faced_won = (ns.Number(entry.faced_won) or 0) + 1
+                end
+                entry.pvp_side = "against"
+            end
+            entry.pvp_last = now
+            entry.pvp_map = ns.String(mapName)
+            entry.first = ns.Number(entry.first) or now
+            entry.guid = ns.String(score.guid) or ns.String(entry.guid)
+            entry.race = ns.String(score.raceName) or ns.String(entry.race)
+            entry.class = ns.String(score.classToken) or ns.String(entry.class)
+            entry.spec = ns.String(score.talentSpec) or ns.String(entry.spec)
+            entry.honor_level = ns.Number(score.honorLevel) or ns.Number(entry.honor_level)
+            score.at = now
+            entry.score = score
+        end
+    end
+    local record = { at = now, map = ns.String(mapName), map_id = mapId, kind = matchKind, team = team, foes = foes }
+    if result ~= nil then
+        record.won = result
+    end
+    if type(WowLabCrewDB.matches) ~= "table" then
+        WowLabCrewDB.matches = {}
+    end
+    local list = WowLabCrewDB.matches
+    while #list >= MAX_MATCHES do
+        table.remove(list, 1)
+    end
+    list[#list + 1] = record
+end
 
 -- The scoreboard probe's schedule (§21.2): in a battleground or arena, one
 -- snapshot after entry and a second once a winner is reported; again in the
@@ -787,6 +1037,10 @@ local function pvpPass()
     if not pvpInstance() then
         pvpEntered = false
         pvpWinnerRead = false
+        -- Outside a battleground or arena: the next match is a new one.
+        if pvpInstance() == false then
+            WowLabCrewDB.matched = nil
+        end
         return
     end
     if type(WowLabCrewDB.probe) ~= "table" then
@@ -806,6 +1060,11 @@ local function pvpPass()
     if not pvpWinnerRead and pvpWon() then
         pvpWinnerRead = true
         WowLabCrewDB.probe.pvp[2] = pvpSnapshot()
+    end
+    -- The match, once a winner is reported: tried at each pass until the
+    -- scoreboard has rows, then held off by the `matched` marker.
+    if pvpWon() then
+        pcall(recordMatch)
     end
 end
 

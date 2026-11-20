@@ -898,15 +898,18 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
+| `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out | [verify] | yes |
+| `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
+| `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
 | `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
 | `time` | crew book: `started`, `first`, `last` | [verify] | yes |
 | `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |
-| `C_PvP.GetScoreInfo` | crew book's scoreboard probe: whether it exists; for the first row, the field names and each field's type name, the name tested three ways (a string, holds a `-`, secret) and never kept, and the side (`faction`) as a whole number | [verify] | not checked |
-| `GetNumBattlefieldScores` | crew book's scoreboard probe: whether it exists, and the row count | [verify] | not checked |
+| `C_PvP.GetScoreInfo` | crew book: each scoreboard row once the match has a winner, every field whose value is a number, text or true/false copied as it is (the row's `name`, `guid`, `faction` as the side, `raceName`, `classToken`, `talentSpec`, `honorLevel` and the totals among them); the probe: whether it exists, the first row's field names and type names | [verify] | not checked |
+| `GetNumBattlefieldScores` | crew book: how many rows to read (at most 80); the probe: the row count | [verify] | not checked |
 | `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | not checked |
 | `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept | [verify] | not checked |
-| `GetBattlefieldWinner` | crew book's scoreboard probe: whether it exists, when the second snapshot is taken, and the winner as a whole number | [verify] | not checked |
-| `GetBattlefieldArenaFaction` | crew book's scoreboard probe: whether it exists, and the player's own side as a whole number | [verify] | not checked |
+| `GetBattlefieldWinner` | crew book: a match is read once it gives a winner; `won` when it is 0 or 1; the probe: the winner as a whole number | [verify] | not checked |
+| `GetBattlefieldArenaFaction` | crew book: the player's own side when the own row is not found; the probe: the same as a whole number | [verify] | not checked |
 | `IsActiveBattlefieldArena` | crew book's scoreboard probe: whether it exists (not called) | [verify] | not checked |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.

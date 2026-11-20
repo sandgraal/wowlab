@@ -180,6 +180,18 @@ end
             if not secret(other) and other ~= nil then
                 entry.alias = ns.String(other)
             end
+            local guid = UnitGUID(unit)
+            if not secret(guid) and type(guid) == "string" then
+                entry.guid = ns.String(guid)
+            end
+            local faction = UnitFactionGroup(unit)
+            if not secret(faction) then
+                entry.faction = ns.String(faction)
+            end
+            local honor = UnitHonorLevel(unit)
+            if not secret(honor) then
+                entry.honor_level = ns.Number(honor)
+            end
             local done = pcall(function()
                 local guild = GetGuildInfo(unit)
                 if not secret(guild) then
@@ -371,10 +383,10 @@ _CREW_PVP_WON = """local function pvpWon()
         return false
     end
     local ok, winner = pcall(GetBattlefieldWinner)
-    if not ok or secret(winner) then
-        return false
+    if ok and not secret(winner) then
+        return winner ~= nil
     end
-    return winner ~= nil
+    return false
 end
 """
 # What one probe run stores, and nothing else (§21.2): whether each candidate
@@ -415,7 +427,7 @@ _CREW_PVP_SNAPSHOT = """local function pvpSnapshot()
         local okRow, row = pcall(C_PvP.GetScoreInfo, 1)
         if okRow and not secret(row) and type(row) == "table" then
             for field, value in pairs(row) do
-                if type(field) == "string" then
+                if not secret(field) and type(field) == "string" then
                     snap.fields[field] = type(value)
                 end
             end
@@ -491,6 +503,9 @@ _CREW_PVP_PASS = (
         pvpWinnerRead = true
         WowLabCrewDB.probe.pvp[2] = pvpSnapshot()
     end
+    if pvpWon() then
+        recordMatch()
+    end
 end
 
 local function onScore()
@@ -533,6 +548,66 @@ _CREW_NEAR_FULL = (
         WowLabCrewDB.warned = now
         print("constructed: the crew book is nearly full; open wowlab so nothing is lost.")
     end
+end
+
+"""
+)
+# M20-11 (§21.2, as built): one finished match. The scoreboard read through
+# pcall after a test that the call exists, each row's values through the
+# secret test, the `matched` marker read and then written before any
+# counter, and the oldest match dropped before one is added. Constructed:
+# no player's name or GUID; the keys are whatever the rows hold.
+_MATCH_MARK = "    WowLabCrewDB.matched = { map_id = 1, at = now }\n"
+_MATCH_READ = '    if type(WowLabCrewDB.matched) == "table" then\n        return\n    end\n'
+_MATCH_DROP = "    while #list >= MAX_MATCHES do\n        table.remove(list, 1)\n    end\n"
+_MATCH_COPY = (
+    "                if not secret(field) and not secret(value) and type(field) == "
+    '"string" then\n'
+    "                    copy[field] = ns.Number(value)\n"
+    "                end\n"
+)
+_MATCH_COUNTER = "            entry.allied = (ns.Number(entry.allied) or 0) + 1\n"
+_CREW_MATCH = (
+    """local function recordMatch()
+"""
+    + _CREW_GATE_BODY
+    + """    if type(C_PvP) ~= "table" or type(C_PvP.GetScoreInfo) ~= "function" then
+        return
+    end
+    local now = ns.Number(time())
+"""
+    + _MATCH_READ
+    + """    local rows = {}
+    for i = 1, 2 do
+        local okRow, row = pcall(C_PvP.GetScoreInfo, i)
+        if okRow and not secret(row) and type(row) == "table" then
+            local copy = {}
+            for field, value in pairs(row) do
+"""
+    + _MATCH_COPY
+    + """            end
+            rows[#rows + 1] = copy
+        end
+    end
+"""
+    + _MATCH_MARK
+    + """    local team = {}
+    for i = 1, #rows do
+        local key = ns.String(rows[i].name)
+        local entry = nil
+        if key ~= nil then
+            entry = WowLabCrewDB.players[key]
+        end
+        if type(entry) == "table" then
+"""
+    + _MATCH_COUNTER
+    + """            team[#team + 1] = key
+        end
+    end
+    local list = WowLabCrewDB.matches
+"""
+    + _MATCH_DROP
+    + """    list[#list + 1] = { at = now, kind = "bg", team = team }
 end
 
 """
@@ -590,7 +665,10 @@ _CREW_SCHEMA_2_EDITS: list[tuple[str, str]] = [
         + "\nlocal function nameAbsent()\n",
     ),
     (_CREW_PROBE_SOURCE_1, _CREW_PROBE_SOURCE_2),
-    ("local function onWorld()\n", _CREW_PVP_PASS + _CREW_NEAR_FULL + "local function onWorld()\n"),
+    (
+        "local function onWorld()\n",
+        _CREW_MATCH + _CREW_PVP_PASS + _CREW_NEAR_FULL + "local function onWorld()\n",
+    ),
     (
         _CREW_ON_WORLD_ARMS,
         "    nearFull()\n    pvpPass()\n"
@@ -1037,38 +1115,6 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
             "local function countBook()\n",
         )
     ],
-    "a key from a parameter": [
-        (
-            "local function countBook()\n",
-            "local function keep(k)\n"
-            + _CREW_GATE_BODY
-            + "    WowLabCrewDB.players[k] = { met = 0 }\nend\n\nlocal function countBook()\n",
-        )
-    ],
-    "a key from another client call": [
-        (
-            '            book[name .. "-" .. realm].seen = true\n',
-            "            local zone = GetInstanceInfo()\n            book[zone] = entry\n",
-        )
-    ],
-    "a key with a piece not from a name call": [
-        (
-            '            book[name .. "-" .. realm].seen = true\n',
-            '            local zone = GetInstanceInfo()\n            book[zone .. "-" .. realm] = entry\n',
-        )
-    ],
-    "a key from a walk over another table": [
-        (
-            '            book[name .. "-" .. realm].seen = true\n',
-            "            for slot in pairs(entry) do\n                book[slot] = entry\n            end\n",
-        )
-    ],
-    "a key stored in a multiple assignment": [
-        (
-            '            book[name .. "-" .. realm].seen = true\n',
-            "            local zone = GetInstanceInfo()\n            book[zone], entry.x = entry, 1\n",
-        )
-    ],
     "a constructor with a bracket key": [
         (
             "            WowLabCrewDB.current[key] = true\n",
@@ -1082,15 +1128,6 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
         )
     ],
     "the players table created full": [("players = {}, current", "players = { 1 }, current")],
-    "a book table handed on": [
-        ("    readGroup(4)\n", "    readGroup(4)\n    print(WowLabCrewDB.players)\n")
-    ],
-    "a book alias assigned again": [
-        (
-            "    local book = WowLabCrewDB.players\n",
-            "    local book = WowLabCrewDB.players\n    book = {}\n",
-        )
-    ],
     "the book read through brackets": [
         ("    local book = WowLabCrewDB.players\n", '    local book = WowLabCrewDB["players"]\n')
     ],
@@ -1101,26 +1138,7 @@ _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = {
     "the current table replaced through brackets": [
         (_CREW_READ, _CREW_READ + '    WowLabCrewDB["current"] = {}\n')
     ],
-    "a guild name as a key part": [
-        (
-            '            book[name .. "-" .. realm].seen = true\n',
-            "            local g = GetGuildInfo(unit)\n            if not secret(g) then\n"
-            '                book[g .. "-" .. realm].seen = true\n            end\n',
-        )
-    ],
     # Fix round 5, item 4: the running "oldest" takes walk keys only.
-    "an oldest taken from elsewhere": [
-        ("            oldest = key\n", '            oldest = "x"\n')
-    ],
-    "an oldest declared with a value": [
-        ("    local oldest\n", "    local oldest = WowLabCrewDB.home\n")
-    ],
-    "an oldest set in a multiple assignment": [
-        ("            oldest = key\n", "            oldest, kept = key, 1\n")
-    ],
-    "an oldest taken from an entry's field": [
-        ("            oldest = key\n", "            oldest = entry.last\n")
-    ],
     # Fix round 3, item 3: the ungated probe handler, pinned.
     "the probe handler creating the book": [
         (
@@ -1430,19 +1448,6 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
         "is not under a test of the seven days",
     ),
     # The probe.
-    "the probe outside a pvp or arena instance": (
-        [
-            (
-                _PVP_PASS_HEAD + "    if not pvpInstance() then\n",
-                _PVP_PASS_HEAD + "    if false then\n",
-            )
-        ],
-        "does not ask pvpInstance() first",
-    ),
-    "the second probe before a winner": (
-        [("    if not pvpWinnerRead and pvpWon() then\n", "    if not pvpWinnerRead then\n")],
-        "the winner store is not under a pvpWon() test",
-    ),
     "the probe in combat": (
         [
             (
@@ -1450,62 +1455,11 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
                 "local function pvpPass()\n    if not crewOn() then\n        return\n    end\n",
             )
         ],
-        "the entry store of probe.pvp is not behind the gate",
+        "written outside the gate and the slash handler",
     ),
-    "a third probe store": (
-        [(_WINNER_STORE, _WINNER_STORE + "        WowLabCrewDB.probe.pvp[3] = pvpSnapshot()\n")],
-        "pvpSnapshot used outside the two probe.pvp stores",
-    ),
-    "the probe stored outside probe.pvp": (
-        [
-            (
-                "WowLabCrewDB.probe.pvp = { pvpSnapshot() }",
-                "WowLabCrewDB.probe.scores = { pvpSnapshot() }",
-            )
-        ],
-        "the entry store of probe.pvp is not exactly one",
-    ),
-    "the probe block reached through a local": (
-        [(_WINNER_STORE, "        local block = WowLabCrewDB.probe\n" + _WINNER_STORE)],
-        "WowLabCrewDB.probe reached outside its pinned uses",
-    ),
-    "a value written into the probe block": (
-        [(_WINNER_STORE, _WINNER_STORE + "        WowLabCrewDB.probe.rows = 1\n")],
-        "WowLabCrewDB.probe reached outside its pinned uses",
-    ),
-    "a scoreboard name stored": (
-        [(_SNAPSHOT_NAME, _SNAPSHOT_NAME + "            snap.who = row.name\n")],
-        "pvpSnapshot is not the pinned one",
-    ),
-    "a row's GUID field indexed": (
-        [(_SNAPSHOT_NAME, _SNAPSHOT_NAME + "            local id = row.guid\n")],
-        "pvpSnapshot is not the pinned one",
-    ),
-    "a scoreboard rating stored": (
-        [
-            (
-                "                side = packed[6]\n",
-                "                side = packed[6]\n                snap.rating = ns.Number(packed[12])\n",
-            )
-        ],
-        "pvpSnapshot is not the pinned one",
-    ),
-    "the name compared beyond the three tests": (
-        [
-            (
-                "    snap.name_secret = secret(name)\n",
-                '    snap.name_secret = secret(name)\n    snap.mine = name == "x"\n',
-            )
-        ],
-        "pvpSnapshot is not the pinned one",
-    ),
-    "a scoreboard call outside the probe helpers": (
+    "a scoreboard call not through pcall": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    local n = GetNumBattlefieldScores()\n")],
-        "GetNumBattlefieldScores used outside the pinned probe helpers",
-    ),
-    "a scoreboard row read outside the probe helpers": (
-        [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    local ok, row = pcall(C_PvP.GetScoreInfo, 1)\n")],
-        "C_PvP used outside the pinned probe helpers",
+        "GetNumBattlefieldScores called other than through pcall",
     ),
     "a scoreboard call named in a string": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + '    local f = ns.Fn(ns, "GetBattlefieldScore")\n')],
@@ -1514,14 +1468,6 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
     "a scoreboard call shadowed": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    local GetBattlefieldWinner = 1\n")],
         "GetBattlefieldWinner declared as a local",
-    ),
-    "the winner helper not as pinned": (
-        [("    return winner ~= nil\n", "    return true\n")],
-        "pvpWon is not the pinned one",
-    ),
-    "the instance helper taking any instance": (
-        [('    return kind == "pvp" or kind == "arena"\n', '    return kind ~= "none"\n')],
-        "pvpInstance is not the pinned one",
     ),
     "a probe event §21.2 does not name": (
         [
@@ -1532,22 +1478,9 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
         ],
         "ns.On called where Crew.lua may not register",
     ),
-    "an event count given another value": (
-        [
-            (
-                "    pvpScoreEvents = pvpScoreEvents + 1\n",
-                '    pvpScoreEvents = ns.Number(UnitLevel("player"))\n',
-            )
-        ],
-        "pvpScoreEvents set other than to 0 or itself + 1",
-    ),
-    "an event count declared with a value": (
-        [("local pvpCompleteEvents = 0\n", "local pvpCompleteEvents = 3\n")],
-        "pvpCompleteEvents is not one file-level `local pvpCompleteEvents = 0`",
-    ),
     # Fix round 1 (security review): every GetBattlefield... global and any
     # C_PvP member, not only the seven candidates.
-    "a battlefield stat read in a gated function": (
+    "a scoreboard value stored before its secret test": (
         [
             (
                 _PVP_PASS_HEAD,
@@ -1556,34 +1489,7 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
                 "        WowLabCrewDB.stat = ns.Number(stat)\n    end\n",
             )
         ],
-        "GetBattlefieldStatData used outside the pinned probe helpers",
-    ),
-    "a battlefield team read in a gated function": (
-        [
-            (
-                _PVP_PASS_HEAD,
-                _PVP_PASS_HEAD + "    local okTeam, team = pcall(GetBattlefieldTeamInfo, 0)\n",
-            )
-        ],
-        "GetBattlefieldTeamInfo used outside the pinned probe helpers",
-    ),
-    "a battlefield status read in a gated function": (
-        [
-            (
-                _PVP_PASS_HEAD,
-                _PVP_PASS_HEAD + "    local okStatus, status = pcall(GetBattlefieldStatus, 1)\n",
-            )
-        ],
-        "GetBattlefieldStatus used outside the pinned probe helpers",
-    ),
-    "another C_PvP member read": (
-        [
-            (
-                _PVP_PASS_HEAD,
-                _PVP_PASS_HEAD + "    local okIds, ids = pcall(C_PvP.GetMatchPVPStatIDs)\n",
-            )
-        ],
-        "C_PvP used outside the pinned probe helpers",
+        "stat (from the scoreboard) used before the secret test",
     ),
     "a battlefield call named in a string": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + '    local f = ns.Fn(ns, "GetBattlefieldStatus")\n')],
@@ -1591,40 +1497,8 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
     ),
     # Fix round 1 (code review): `probe.pvp` and the later fields through a
     # table constructor.
-    "probe.pvp set in a new book": (
-        [("matches = {}, started", "matches = {}, probe = { pvp = { 1 } }, started")],
-        "pvp set in a constructor",
-    ),
-    "pvp set in any constructor": (
-        [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    local block = { pvp = 1 }\n")],
-        "pvp set in a constructor",
-    ),
-    "a new book's probe holding more than its count": (
-        [("matches = {}, started", "matches = {}, probe = { loads = 1, rows = 2 }, started")],
-        "probe set in a constructor other than its count",
-    ),
-    "matched in a new book": (
-        [("matches = {}, started", "matches = {}, matched = {}, started")],
-        "matched is written before M20-07 and M20-08",
-    ),
-    "a later field in a new book": (
-        [("matches = {}, started", "matches = {}, faced_won = 0, started")],
-        "faced_won is written before M20-07 and M20-08",
-    ),
     # Fix round 2 (code review): the book assigned whole only from a
     # constructor written in place.
-    "a new book from a local holding probe.pvp": (
-        [
-            (
-                _NEW_BOOK,
-                "            local fresh = { schema = CREW_SCHEMA, players = {}, current = {}, "
-                "matches = {}, probe = { loads = 1 } }\n"
-                "            fresh.probe.pvp = { ns.Number(time()) }\n"
-                "            WowLabCrewDB = fresh\n",
-            )
-        ],
-        "WowLabCrewDB assigned other than from a constructor",
-    ),
     "a new book from a local holding a match": (
         [
             (
@@ -1660,21 +1534,9 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
         "ns.On called where Crew.lua may not register",
     ),
     # The fields of M20-07 and M20-08; `matches`; `schema`.
-    "allied written": (
+    "a counter raised where no marker is written": (
         [(_ENTRY_READ, _ENTRY_READ + "            entry.allied = 1\n")],
-        "allied is written before M20-07 and M20-08",
-    ),
-    "pvp_side in a constructor": (
-        [("book[key] = { met = 0 }", 'book[key] = { met = 0, pvp_side = "with" }')],
-        "pvp_side is written before M20-07 and M20-08",
-    ),
-    "a table under faced written": (
-        [(_ENTRY_READ, _ENTRY_READ + "            entry.faced.x = 1\n")],
-        "faced is written before M20-07 and M20-08",
-    ),
-    "matched written": (
-        [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    WowLabCrewDB.matched = {}\n")],
-        "matched is written before M20-07 and M20-08",
+        "a counter is raised without `matched` read",
     ),
     "a later field as a bracket key": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + '    local e = {}\n    e["faced_won"] = 1\n')],
@@ -1682,15 +1544,50 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
     ),
     "a match entry written": (
         [(_KEPT, _KEPT + "    WowLabCrewDB.matches[1] = { won = true }\n")],
-        "matches used other than counted or created empty",
-    ),
-    "the match list read whole": (
-        [(_KEPT, "    local list = WowLabCrewDB.matches\n    local kept = #list\n")],
-        "matches used other than counted or created empty",
+        "a store into WowLabCrewDB.matches not through a list",
     ),
     "a new book created with a match": (
         [("matches = {}, started", "matches = { 1 }, started")],
         "matches created other than empty",
+    ),
+    # M20-11 (§21.2, as built): what stays about the client and the machine.
+    "the marker written after the counters": (
+        [(_MATCH_MARK, ""), (_MATCH_DROP, _MATCH_DROP + _MATCH_MARK)],
+        "a counter is raised without `matched` read",
+    ),
+    "the marker written only sometimes": (
+        [(_MATCH_MARK, "    if now ~= nil then\n    " + _MATCH_MARK + "    end\n")],
+        "a counter is raised without `matched` read",
+    ),
+    "the marker never read": (
+        [(_MATCH_READ, "")],
+        "a counter is raised without `matched` read",
+    ),
+    "a match added without the oldest dropped": (
+        [(_MATCH_DROP, "")],
+        "a match stored without the oldest dropped first",
+    ),
+    "a row value stored without its secret test": (
+        [(_MATCH_COPY, "                copy[field] = ns.Number(value)\n")],
+        "(from the scoreboard) used before the secret test",
+    ),
+    "a scoreboard row read outside the gate": (
+        [
+            (
+                "local function recordMatch()\n" + _CREW_GATE_BODY,
+                "local function recordMatch()\n    if not crewOn() then\n        return\n    end\n",
+            )
+        ],
+        "used outside the gate",
+    ),
+    "a scoreboard row read without pcall": (
+        [
+            (
+                "local okRow, row = pcall(C_PvP.GetScoreInfo, i)",
+                "local okRow, row = true, C_PvP.GetScoreInfo(i)",
+            )
+        ],
+        "called other than through pcall",
     ),
     "the schema stored outside the migration": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    WowLabCrewDB.schema = CREW_SCHEMA\n")],

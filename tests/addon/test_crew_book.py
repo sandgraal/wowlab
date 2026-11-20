@@ -413,13 +413,15 @@ def test_crew_book_source_scan_the_instance_is_secret_tested_first() -> None:
         and t[k + 1].text == "("
         and flow.label_at(k) != "pvpInstance"
     ]
-    assert len(calls) == 1
-    k = calls[0]
-    assert g._render(t[k - 17 : k + 3]) == (
-        "local where , kind , _ , _ , _ , _ , _ , whereId = GetInstanceInfo ( )"
-    )
+    # M20-11: two such calls, the roster pass's (readWhere) and the match's
+    # (recordMatch), each in the same form.
+    assert len(calls) == 2
     test = "if secret ( where ) or secret ( kind ) or secret ( whereId ) then addSkipped ( ) return end"
-    assert g._render(t[k + 3 : k + 3 + len(test.split(" "))]) == test
+    for k in calls:
+        assert g._render(t[k - 17 : k + 3]) == (
+            "local where , kind , _ , _ , _ , _ , _ , whereId = GetInstanceInfo ( )"
+        )
+        assert g._render(t[k + 3 : k + 3 + len(test.split(" "))]) == test
 
 
 # --- Ratings land on the player named (§20.1 "Rating and note in game") --------
