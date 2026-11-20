@@ -3592,7 +3592,7 @@ Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while an
 
 ---
 
-## [ ] M19-13 — `snap list`, `snap show` and `snap verify` do not quote a damaged snapshot
+## [x] M19-13 — `snap list`, `snap show` and `snap verify` do not quote a damaged snapshot
 **Size:** S · **Depends on:** M19-12 · **Sources:** the security review of #642 (2026-11-19); ADR-0036 term 4; `.claude/rules/player-copy.md`
 
 On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `snap verify` (text and `--json`) pass on the validator's text, which quotes a fragment of the file: a constructed name-realm key and a U+202E planted in a wrong-typed manifest appeared in all six outputs. Give them the fixed wording `snap gc` and `snap rm` have since M19-12: the snapshot's id, that its record cannot be read, and that `wowlab snap rm <full id> --break-undo` removes it. Also: `snap gc`'s refusal for a manifest that is a link points at `snap rm`, which refuses links; say instead that a link stands in the record's place and wowlab leaves it alone.
