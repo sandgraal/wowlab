@@ -1020,7 +1020,12 @@ def snap_export(
     crew = _crew_export_line(report.crew_book)
     if crew is not None:
         _say(f"  {crew}")
-    if _has_crew_database(store.show(report.id)):
+    try:
+        has_database = _has_crew_database(store.show(report.id))
+    except (snapshot.SnapshotError, OSError):
+        # The archive is written either way; the sentence is left out.
+        has_database = False
+    if has_database:
         _say(
             "  It does not include wowlab's crew database for this game account, which stays "
             "on this computer only."
