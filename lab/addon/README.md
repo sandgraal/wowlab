@@ -161,10 +161,11 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   whether a logout or `/wowlab save` did.
 - Quieter: the chat line "recording in 15 s" prints once per schema, after
   a session the client saved without the addon's own write (`announced`
-  missing), or when the probe was lost. Not once per addon version, which
-  the ticket asked for: the addon carries no version of its own (the
-  installed TOC has no `## Version` yet), and each change to what it writes
-  bumps the schema. A crash is not seen: it writes nothing, so the file
+  missing), or when the probe was lost. Once per schema, by choice, not
+  per addon version: `wowlab addon install` writes `## Version` into the
+  installed TOC, but the addon does not read it at run time (whether
+  `C_AddOns.GetAddOnMetadata` works on this client is **[verify]**), and
+  each change to what it writes bumps the schema. A crash is not seen: it writes nothing, so the file
   still holds the last clean write. After the first pass a change event only marks its
   section dirty; one pass gathers every dirty section at most once every
   30 s, out of combat (a pass whose timer ends in combat waits for

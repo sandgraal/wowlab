@@ -2584,8 +2584,9 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     a debug session each `Actions.lua` record carries `dropped`, one whole
     number;
   - quieter: the chat line once per schema or after a session whose write
-    did not run; one gathering pass at most every 30 s, out of combat, and
-    at logout (none in combat); the `Constants` sweep once per session.
+    did not run (once per schema by choice, where §18.1 item 9 says once
+    per addon version: the addon does not read its version at run time);
+    one gathering pass at most every 30 s, out of combat, and at logout (none in combat); the `Constants` sweep once per session.
 
   The reader reads schema 1 to 4 files as before and refuses a schema it
   does not know. The desk uses the stored text: `char show` prints the

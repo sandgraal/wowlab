@@ -8980,6 +8980,34 @@ def test_m20_13_core_gathers_nothing_in_combat() -> None:
     assert _m20_13_core_combat(ADDON / "Core.lua") == []
 
 
+# Fix round 2 (code review of #669): `onEvent`'s exemption for an immediate
+# gather holds only for the barber shop, which is not reachable in combat.
+# `immediate` is a key of exactly one section spec: `customization`, in
+# Customization.lua. Anywhere else (Gear.lua's section would gather on
+# PLAYER_EQUIPMENT_CHANGED, which fires in combat on a weapon swap) fails.
+_M20_13_IMMEDIATE = ("Customization.lua", "customization")
+
+
+def _m20_13_immediate_problems(path: Path) -> list[str]:
+    flow = _Flow(path, _tokens(path))
+    return [
+        f"{path.name}: section {key} is immediate; only the barber-shop section may be"
+        for key, entries in _m13_05_sections(flow)
+        if "{immediate}" in entries and (path.name, key) != _M20_13_IMMEDIATE
+    ]
+
+
+@pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)
+def test_m20_13_only_the_barber_shop_gathers_on_its_event(path: Path) -> None:
+    assert _m20_13_immediate_problems(path) == []
+
+
+def test_m20_13_the_barber_shop_section_is_the_immediate_one() -> None:
+    """Control: the exemption names a section that exists and is immediate."""
+    flow = _Flow(ADDON / "Customization.lua", _tokens(ADDON / "Customization.lua"))
+    assert [k for k, e in _m13_05_sections(flow) if "{immediate}" in e] == ["customization"]
+
+
 _SEND = '    SendChatMessage("constructed", "SAY")\n'
 # Each kept rule: (the file, its edits, the check, a word the check's report
 # must hold, so the edit fails for that rule's own reason).
@@ -9121,6 +9149,12 @@ _M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list
         [("local _, ns = ...\n", "local _, ns = ...\nlocal body = GetMacroBody(1)\n")],
         _m20_13_gear_own_values,
         "GetMacroBody outside Actions.lua",
+    ),
+    "nothing in combat: another section gathers on its event": (
+        ADDON / "Gear.lua",
+        [('    key = "gear",\n', '    key = "gear",\n    immediate = true,\n')],
+        _m20_13_immediate_problems,
+        "section gear is immediate",
     ),
     "nothing in combat: a gather added to the debug branch": (
         ADDON / "Core.lua",

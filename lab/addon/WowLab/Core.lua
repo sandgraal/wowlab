@@ -84,8 +84,10 @@ local debugNext = false
 -- by this session's own write, so a session the client saved without that
 -- write prints the line again next time. A crash is not seen: it writes
 -- nothing, so the file still holds the last clean write and its
--- `announced`. Once per schema, not per addon version: the addon carries no
--- version of its own (the installed TOC has no `## Version` yet), and the
+-- `announced`. Once per schema, by choice, not per addon version: the
+-- installed TOC carries `## Version` (`wowlab addon install` writes it), but
+-- the addon does not read its version at run time (whether
+-- C_AddOns.GetAddOnMetadata works on this client is [verify]), and the
 -- schema is bumped with every change to what the addon writes.
 ns.announced = nil
 -- time() of each section's last gather this session, by section key.
