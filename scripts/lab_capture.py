@@ -82,6 +82,11 @@ empty shape of `docs/LAB_PLAN.md` §20.5 (CREW_BOOK_NAME, crew_book_problems).
 There is no flag that empties a book or skips the check; the refusal gives the
 reason, never a key.
 
+SQLite files (M20-02, `docs/LAB_PLAN.md` §21.4 term 3): any file, whatever its
+name or kind, holding the SQLite database header, or starting with a rollback
+journal's header, is refused with one fixed reason (SQLITE_LABEL,
+sqlite_problems); wowlab's crew database is one. Nothing in it is quoted.
+
 `Identity` still accepts realms, characters and second names; since M13-49
 discovery passes none, and the inputs are kept for the unit tests that grade
 the scrub engine through them. The own-realm partner checks and the
@@ -2979,6 +2984,42 @@ def _global_write_in_code(data: bytes) -> bool:
     return False
 
 
+# An SQLite database is never captured (docs/LAB_PLAN.md §21.4 term 3,
+# M20-02): wowlab's crew database keeps other players' names and the
+# player's notes, and no SQLite file is a format the Lab's fixtures need.
+# Decided by content, never by name: the database header anywhere (a
+# journal or a write-ahead log may hold a copy of the database's first
+# page), or a rollback journal's own header at the start.
+# The reason is fixed; the file is named by the refusal line, nothing in it
+# is quoted.
+SQLITE_SIGNATURE = b"SQLite format 3\x00"
+SQLITE_JOURNAL_SIGNATURE = b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"
+SQLITE_LABEL = "an SQLite database or journal, which is never captured"
+
+
+def _sqlite_page_size(n: int) -> bool:
+    return 512 <= n <= 65536 and n & (n - 1) == 0
+
+
+def _sqlite_journal(data: bytes) -> bool:
+    """A rollback journal's header: its signature, or the eight zero bytes it
+    holds until first synced, then a sector size and a page size that are
+    powers of two from 512 to 65536, with room for one sector and one page
+    record. A journal written before a commit began holds no database header."""
+    if len(data) < 28 or data[:8] not in (SQLITE_JOURNAL_SIGNATURE, bytes(8)):
+        return False
+    sector = int.from_bytes(data[20:24], "big")
+    page = int.from_bytes(data[24:28], "big")
+    return _sqlite_page_size(sector) and _sqlite_page_size(page) and len(data) >= sector + page + 8
+
+
+def sqlite_problems(data: bytes) -> list[str]:
+    """Why `data` may not be captured as an SQLite file; empty if it may."""
+    if SQLITE_SIGNATURE in data or _sqlite_journal(data):
+        return [SQLITE_LABEL]
+    return []
+
+
 def crew_book_problems(data: bytes) -> list[str]:
     """Why `data` may not be captured because of the crew book; empty if it may.
 
@@ -3410,6 +3451,10 @@ def process(
         path_problems.append(LOG_NAME_UNSHIFTABLE_LABEL)
     else:
         dest = moved
+    if sqlite := sqlite_problems(original):
+        # By content, for every file kind and name: no SQLite file is captured
+        # (wowlab's crew database, its copies and journals among them).
+        return Outcome(item, dest, ScrubResult(b"", (), tuple(sqlite)), [*sqlite, *path_problems])
     if crew := crew_book_problems(original):
         # By content, for every file kind and name: nothing below runs on a crew book.
         return Outcome(item, dest, ScrubResult(b"", (), tuple(crew)), [*crew, *path_problems])
@@ -3501,7 +3546,13 @@ def process(
         )
     # The bytes that would be written, checked again: the scrub only replaces
     # identity, but the gate holds on what leaves, not on what came in.
-    problems = [*result.problems, *kept_whole, *crew_book_problems(result.data), *path_problems]
+    problems = [
+        *result.problems,
+        *kept_whole,
+        *sqlite_problems(result.data),
+        *crew_book_problems(result.data),
+        *path_problems,
+    ]
     other_players = len(units.guids) if units is not None else 0
     return Outcome(
         item, dest, result, problems, path_rewritten, review, other_players, stamped is not None

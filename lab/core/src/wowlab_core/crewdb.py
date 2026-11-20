@@ -59,12 +59,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wowlab_core import crewbook, guard, snapshot
+from wowlab_core import crewbook, crewedit, guard, snapshot
 from wowlab_core.errors import WowlabError
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 1
+SCHEMA = 2
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -108,7 +108,10 @@ _SQL_JOURNAL_MODE = "PRAGMA journal_mode = DELETE"
 _SQL_FOREIGN_KEYS = "PRAGMA foreign_keys = ON"
 _SQL_TRUSTED_SCHEMA = "PRAGMA trusted_schema = OFF"
 _SQL_SET_APP_ID = "PRAGMA application_id = 1464615746"
-_SQL_SET_VERSION: dict[int, str] = {1: "PRAGMA user_version = 1"}
+_SQL_SET_VERSION: dict[int, str] = {
+    1: "PRAGMA user_version = 1",
+    2: "PRAGMA user_version = 2",
+}
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
 _SQL_ROLLBACK = "ROLLBACK"
@@ -143,7 +146,9 @@ _SQL_CREATE: tuple[str, ...] = (
     " faced_won_seen INTEGER NOT NULL DEFAULT 0,"
     " in_book INTEGER NOT NULL DEFAULT 0,"
     " marks_changed INTEGER NOT NULL,"
-    " marks_agreed INTEGER NOT NULL"
+    " marks_agreed INTEGER NOT NULL,"
+    " rating_own INTEGER NOT NULL DEFAULT 0 CHECK (rating_own IN (0, 1)),"
+    " note_own INTEGER NOT NULL DEFAULT 0 CHECK (note_own IN (0, 1))"
     ") STRICT",
     "CREATE INDEX players_last ON players (last_at)",
     "CREATE INDEX players_rating ON players (rating)",
@@ -169,9 +174,26 @@ _SQL_CREATE: tuple[str, ...] = (
     "CREATE TABLE meta (name TEXT PRIMARY KEY NOT NULL, value ANY) STRICT",
 )
 
-# Statements that move the database from schema n to n + 1. None yet: the
-# copy kept before a schema change (rule 6) is made by `_migrate`.
-_MIGRATIONS: dict[int, tuple[str, ...]] = {}
+# Statements that move the database from schema n to n + 1, after a copy of
+# it is kept beside it (rule 6, `_migrate`).
+#
+# 1 -> 2 (M20-02, fix round 2): whether the rating, and separately the note,
+# is the database's own (given at the desk, not yet agreed with the saved
+# file). Schema 1 knew it for the row only (`marks_changed > marks_agreed`):
+# such a row's two fields both start as its own, and the next sync gives up
+# each one that equals the saved file's value (`_merged`); a row that agreed
+# keeps neither.
+#
+# Keyed by (schema it starts from, order within the step); each value one
+# constant statement, so the static check reads every one.
+_MIGRATIONS: dict[tuple[int, int], str] = {
+    (1, 1): "ALTER TABLE players ADD COLUMN rating_own INTEGER NOT NULL DEFAULT 0"
+    " CHECK (rating_own IN (0, 1))",
+    (1, 2): "ALTER TABLE players ADD COLUMN note_own INTEGER NOT NULL DEFAULT 0"
+    " CHECK (note_own IN (0, 1))",
+    (1, 3): "UPDATE players SET rating_own = (marks_changed > marks_agreed),"
+    " note_own = (marks_changed > marks_agreed)",
+}
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
 _SQL_META_SET = (
@@ -180,18 +202,21 @@ _SQL_META_SET = (
 )
 _SQL_PLAYERS_ALL = (
     "SELECT player_key, name, realm, class, level, role, guild, met, first_at, last_at,"
-    " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed"
+    " where_name, where_id, rating, note, met_seen, in_book, marks_changed, marks_agreed,"
+    " rating_own, note_own"
     " FROM players"
 )
 _SQL_PLAYER_INSERT = (
     "INSERT INTO players (player_key, name, realm, class, level, role, guild, met, first_at,"
     " last_at, where_name, where_id, rating, note, met_seen, in_book, marks_changed,"
-    " marks_agreed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " marks_agreed, rating_own, note_own)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 _SQL_PLAYER_UPDATE = (
     "UPDATE players SET name = ?, realm = ?, class = ?, level = ?, role = ?, guild = ?,"
     " met = ?, first_at = ?, last_at = ?, where_name = ?, where_id = ?, rating = ?,"
-    " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?"
+    " note = ?, met_seen = ?, in_book = ?, marks_changed = ?, marks_agreed = ?,"
+    " rating_own = ?, note_own = ?"
     " WHERE player_key = ?"
 )
 
@@ -240,7 +265,10 @@ class SyncPlan(_Model):
     """What a sync would change: players added and updated, ratings and
     notes changed on players the database already keeps (of those, the ones
     removed: `ratings_removed`, `notes_removed`), players the game's list no
-    longer holds, and matches added (none from a schema 1 book)."""
+    longer holds, and matches added (none from a schema 1 book).
+    `ratings_kept` and `notes_kept` count the players the game's list had
+    dropped and holds again whose rating (note) given at the desk the
+    database kept, the saved file having none (M20-02)."""
 
     players_added: int
     players_updated: int
@@ -250,6 +278,8 @@ class SyncPlan(_Model):
     matches_added: int = 0
     ratings_removed: int = 0
     notes_removed: int = 0
+    ratings_kept: int = 0
+    notes_kept: int = 0
 
 
 class SyncOutcome(_Model):
@@ -464,8 +494,8 @@ def _migrate(conn: sqlite3.Connection, path: Path, version: int) -> None:
     _copy(conn, path.with_name(f"{path.name}.before-schema-{version}"))
     with _transaction(conn):
         for step in range(version, SCHEMA):
-            for statement in _MIGRATIONS[step]:
-                conn.execute(statement)
+            for name in sorted(k for k in _MIGRATIONS if k[0] == step):
+                conn.execute(_MIGRATIONS[name])
             conn.execute(_SQL_SET_VERSION[step + 1])
 
 
@@ -535,6 +565,12 @@ class _Row:
     in_book: int
     marks_changed: int
     marks_agreed: int
+    # Whether the rating, and the note, is the database's own: given at the
+    # desk to a player the game's list had dropped, not since agreed with the
+    # saved file (§21.3, decision 20). A field written through the saved
+    # file is never the database's own.
+    rating_own: int = 0
+    note_own: int = 0
 
     def values(self) -> tuple[object, ...]:
         return (
@@ -555,6 +591,8 @@ class _Row:
             self.in_book,
             self.marks_changed,
             self.marks_agreed,
+            self.rating_own,
+            self.note_own,
         )
 
 
@@ -844,15 +882,39 @@ def _merged(row: _Row | None, p: crewbook.CrewPlayer, mode: Mode, now: int) -> _
             if value is not None:
                 setattr(new, field, value)
     marks = (p.rating, p.note)
-    # From any held book (§21.3): a rating or note the database changed
-    # since it last agreed with the saved file is kept.
-    kept = mode != "normal" and row.marks_changed > row.marks_agreed
-    if not kept and marks != (row.rating, row.note):
-        new.rating, new.note = marks
+    new.rating, new.rating_own = _mark(row.rating, row.rating_own, p.rating, mode)
+    new.note, new.note_own = _mark(row.note, row.note_own, p.note, mode)
+    if (new.rating, new.note) != (row.rating, row.note):
         new.marks_changed = now
     if (new.rating, new.note) == marks:
         new.marks_agreed = now
     return new
+
+
+def _mark(kept: str | None, own: int, given: str | None, mode: Mode) -> tuple[str | None, int]:
+    """One field (the rating or the note) after a sync: its value and whether
+    it is still the database's own. Rule 2, the saved file's value (`given`),
+    except a field the database holds as its own (decision 20): that one
+    agrees again, and stops being its own, when the file says the same;
+    from a held book it is kept (§21.3); in a normal sync it is kept where
+    the file has none and gives way to the file's where it has one (rated or
+    noted again in game)."""
+    if own and given == kept:
+        return kept, 0
+    if own and (mode != "normal" or given is None):
+        return kept, 1
+    return given, 0
+
+
+def _kept_on_return(old: _Row, new: _Row, p: crewbook.CrewPlayer) -> tuple[bool, bool]:
+    """Whether a sync kept the database's own rating, and its own note, for
+    a player the game's list had dropped and now holds again."""
+    if old.in_book:
+        return False, False
+    return (
+        bool(new.rating_own) and new.rating is not None and p.rating is None,
+        bool(new.note_own) and new.note is not None and p.note is None,
+    )
 
 
 def _left(row: _Row) -> _Row:
@@ -866,7 +928,7 @@ def _changes(
     """(rows to insert, rows to update, the plan)."""
     added: list[_Row] = []
     updated: list[_Row] = []
-    ratings = notes = left = ratings_gone = notes_gone = 0
+    ratings = notes = left = ratings_gone = notes_gone = ratings_kept = notes_kept = 0
     keys = set()
     for p in book.players:
         keys.add(p.key)
@@ -875,6 +937,9 @@ def _changes(
         if old is None:
             added.append(new)
             continue
+        rating_kept, note_kept = _kept_on_return(old, new, p)
+        ratings_kept += rating_kept
+        notes_kept += note_kept
         if _same(old, new):
             continue
         updated.append(new)
@@ -894,8 +959,31 @@ def _changes(
         ratings_removed=ratings_gone,
         notes_removed=notes_gone,
         left_game_list=left,
+        ratings_kept=ratings_kept,
+        notes_kept=notes_kept,
     )
     return added, updated, plan
+
+
+def kept_words(plan: SyncPlan) -> str:
+    """The sentence a sync adds when it kept ratings or notes given at the
+    desk to players the game's list had dropped and holds again (with a
+    leading space; empty when it kept none). Counts only, never a name."""
+
+    def players(n: int) -> str:
+        return f"{n} player" if n == 1 else f"{n} players"
+
+    parts = []
+    if plan.ratings_kept:
+        parts.append(f"your rating for {players(plan.ratings_kept)}")
+    if plan.notes_kept:
+        parts.append(f"your note for {players(plan.notes_kept)}")
+    if not parts:
+        return ""
+    return (
+        f" It kept {' and '.join(parts)} the game's list had dropped and holds again, "
+        "which the game itself does not show."
+    )
 
 
 def _same(a: _Row, b: _Row) -> bool:
@@ -1202,7 +1290,7 @@ def _sync_open(
         words=(
             f"Synced the crew book into wowlab's crew database: {plan.players_added} added, "
             f"{plan.players_updated} updated; it keeps {total:,} "
-            f"{'player' if total == 1 else 'players'}."
+            f"{'player' if total == 1 else 'players'}.{kept_words(plan)}"
         ),
         held=reasons,
         plan=plan,
@@ -1378,6 +1466,85 @@ def _clear_temps(path: Path) -> None:
             f.unlink()
 
 
+_SQL_COUNT_PLAYERS = "SELECT count(*), coalesce(sum(in_book), 0) FROM players"
+_SQL_COUNT_MATCHES = "SELECT count(*) FROM matches"
+
+
+class DatabaseSummary(_Model):
+    """One crew database as `doctor` reports it (ADR-0036 term 4, §21.4):
+    the game account folder it is for, its path, its size in bytes, how
+    many copies wowlab keeps beside it, and how many players and matches it
+    keeps (None, with `reason`, when it cannot be read). Never a row, and
+    never `meta`'s install root."""
+
+    account: str
+    path: str
+    size: int
+    copies: int
+    players: int | None
+    not_in_game_list: int | None
+    matches: int | None
+    reason: str | None = None
+
+
+def _counts(path: Path) -> tuple[int, int, int] | str:
+    """(players, of them not in the game's list, matches), read-only; or
+    why they could not be read, in wowlab's words."""
+    try:
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=LOCK_WAIT_SECONDS)
+    except sqlite3.Error:
+        return "wowlab could not open it"
+    try:
+        if conn.execute(_SQL_READ_APP_ID).fetchone()[0] != APPLICATION_ID:
+            return "it is not a crew database wowlab made"
+        version = conn.execute(_SQL_READ_VERSION).fetchone()[0]
+        if version > SCHEMA:
+            return "a newer wowlab wrote it; update wowlab to read it"
+        players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
+        (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
+    except sqlite3.Error:
+        return "wowlab could not read it now"
+    finally:
+        conn.close()
+    return int(players), int(players) - int(in_book), int(matches)
+
+
+def summaries(flavor_folder: str) -> list[DatabaseSummary]:
+    """Every crew database wowlab keeps for this flavor folder, one per game
+    account, as `doctor` reports them: read-only, never a row (§21.3, "It is
+    the only copy"). Empty when there is none."""
+    try:
+        folder = _under_crew(crew_root() / _component(flavor_folder, "flavor"), depth=1)
+        entries = sorted(folder.iterdir())
+    except (CrewDbError, OSError):
+        return []
+    out: list[DatabaseSummary] = []
+    for f in entries:
+        if not f.name.endswith(SUFFIX) or f.name.startswith("."):
+            continue
+        try:
+            st = os.lstat(f)
+        except OSError:
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        counts = _counts(f)
+        read = not isinstance(counts, str)
+        out.append(
+            DatabaseSummary(
+                account=f.name[: -len(SUFFIX)],
+                path=str(f),
+                size=st.st_size,
+                copies=len(_copies_of(f)),
+                players=counts[0] if not isinstance(counts, str) else None,
+                not_in_game_list=counts[1] if not isinstance(counts, str) else None,
+                matches=counts[2] if not isinstance(counts, str) else None,
+                reason=None if read else str(counts),
+            )
+        )
+    return out
+
+
 def copies(flavor_folder: str, account: str) -> list[Path]:
     """The copies wowlab keeps beside the database: daily ones and the one
     kept before a schema change."""
@@ -1425,19 +1592,17 @@ def holds(flavor_folder: str, account: str) -> list[str]:
     return [r.key for r in read(flavor_folder, account)]
 
 
-class Forgetting:
-    """A forget of players (`keys`; None: every one) from wowlab's crew
-    database and every copy it keeps. `hold()` takes the database's write
+class _Holding:
+    """A change to wowlab's crew database made in the same command as a
+    write of the saved file: `hold()` opens the database and takes its write
     lock before the saved file is written, so no sync can commit what it
-    read before that write; `finish()` removes the players under that lock
-    (or, for every player, deletes the database and its copies) and then
-    rewrites each copy, listed only now, after the database was opened (and
-    so after any copy a schema change made); `release()` lets go. Not
-    undoable: snapshots do not cover the database."""
+    read before that write; `release()` lets go of it. Without a database
+    there is nothing to hold."""
 
-    def __init__(self, flavor_folder: str, account: str, keys: Sequence[str] | None) -> None:
+    _verb = "change"
+
+    def __init__(self, flavor_folder: str, account: str) -> None:
         self.path = database_path(flavor_folder, account)
-        self.keys = None if keys is None else list(keys)
         self._conn: sqlite3.Connection | None = None
 
     def hold(self) -> None:
@@ -1458,9 +1623,33 @@ class Forgetting:
 
     def _busy(self, exc: Exception) -> CrewDbError:
         return CrewDbError(
-            f"Another wowlab is using the crew database {self.path} ({exc}), so the forget did "
-            "not start. Nothing was changed; run it again."
+            f"Another wowlab is using the crew database {self.path} ({exc}), so the "
+            f"{self._verb} did not start. Nothing was changed; run it again."
         )
+
+    def release(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(_SQL_ROLLBACK)
+            conn.close()
+
+
+class Forgetting(_Holding):
+    """A forget of players (`keys`; None: every one) from wowlab's crew
+    database and every copy it keeps. `hold()` takes the database's write
+    lock before the saved file is written, so no sync can commit what it
+    read before that write; `finish()` removes the players under that lock
+    (or, for every player, deletes the database and its copies) and then
+    rewrites each copy, listed only now, after the database was opened (and
+    so after any copy a schema change made); `release()` lets go. Not
+    undoable: snapshots do not cover the database."""
+
+    _verb = "forget"
+
+    def __init__(self, flavor_folder: str, account: str, keys: Sequence[str] | None) -> None:
+        super().__init__(flavor_folder, account)
+        self.keys = None if keys is None else list(keys)
 
     def finish(self) -> int:
         """Remove the players (or everything) and return how many files
@@ -1507,13 +1696,6 @@ class Forgetting:
                 conn.close()
         return done
 
-    def release(self) -> None:
-        conn, self._conn = self._conn, None
-        if conn is not None:
-            with contextlib.suppress(sqlite3.Error):
-                conn.execute(_SQL_ROLLBACK)
-            conn.close()
-
 
 def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
     """`Forgetting` in one step, for a forget that writes no game file."""
@@ -1523,6 +1705,156 @@ def forget(flavor_folder: str, account: str, keys: Sequence[str] | None) -> int:
         return forgetting.finish()
     finally:
         forgetting.release()
+
+
+# ─── rate and note (§21.3, "Writing"; M20-02) ────────────────────────────────
+
+_SQL_PLAYER_MARKS = "SELECT rating, note FROM players WHERE player_key = ?"
+_SQL_SET_MARK: dict[str, str] = {
+    "rating": "UPDATE players SET rating = ?, rating_own = ?, marks_changed = ?"
+    " WHERE player_key = ?",
+    "note": "UPDATE players SET note = ?, note_own = ?, marks_changed = ? WHERE player_key = ?",
+}
+
+MarkField = Literal["rating", "note"]
+
+
+class RowChanged(CrewDbError):  # noqa: N818 - the player's words: the row changed
+    """The player's row is not as the plan read it: nothing was written."""
+
+
+def _mark_value(field: MarkField, value: str | None) -> str | None:
+    """`value`, refused unless it is what the desk may store in `field`:
+    good, bad or none for a rating; for a note, text that passes the same
+    rule as a note in the saved file (`crewedit.check_note`)."""
+    if field == "rating":
+        if value not in (None, "good", "bad"):
+            raise CrewDbError("A rating is good, bad or none. Nothing was changed.")
+        return value
+    if value is not None and crewedit.check_note(value) != value:
+        raise CrewDbError("The note is not one wowlab stores as it is. Nothing was changed.")
+    return value
+
+
+def _set_mark(
+    conn: sqlite3.Connection, key: str, field: MarkField, value: str | None, *, own: bool
+) -> bool:
+    """Set the player's rating or note, whether it is the database's own
+    (a sync then keeps it, §21.3, decision 20), and the time it changed.
+    Whether the database holds the player."""
+    done = conn.execute(_SQL_SET_MARK[field], (value, int(own), time.time_ns(), key))
+    return done.rowcount > 0
+
+
+class Marking(_Holding):
+    """A rating or note (`field`, `value`) on one player, written to wowlab's
+    crew database after the saved file, in the same command. `hold()` takes
+    the database's write lock before the saved file is written; `finish()`
+    sets the row's field under that lock (a player the database does not
+    keep yet is added by the next sync, from the saved file); `release()`
+    lets go. The field it sets was written through the saved file, so it is
+    never the database's own: a later sync of a book put back (an `undo` of
+    this write) takes the file's value again. The other field is left as it
+    is, its own or not (§21.3)."""
+
+    def __init__(
+        self,
+        flavor_folder: str,
+        account: str,
+        key: str,
+        field: MarkField,
+        value: str | None,
+    ) -> None:
+        super().__init__(flavor_folder, account)
+        self._verb = "rate" if field == "rating" else "note"
+        self.key = key
+        self.field: MarkField = field
+        self.value = _mark_value(field, value)
+
+    def finish(self) -> bool:
+        """Set the field; whether the database held the player."""
+        conn, self._conn = self._conn, None
+        if conn is None:
+            return False
+        try:
+            held = _set_mark(conn, self.key, self.field, self.value, own=False)
+            conn.execute(_SQL_COMMIT)
+        except sqlite3.Error as exc:
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(_SQL_ROLLBACK)
+            raise CrewDbError(f"The crew database {self.path} was not changed ({exc}).") from exc
+        finally:
+            conn.close()
+        return held
+
+
+def marks(flavor_folder: str, account: str, key: str) -> tuple[str | None, str | None] | None:
+    """The player's rating and note as wowlab's crew database keeps them;
+    None when it does not keep the player (or there is no database)."""
+    path = database_path(flavor_folder, account)
+    try:
+        conn = _open(path, create=False)
+    except sqlite3.OperationalError as exc:
+        raise CrewDbError(f"The crew database {path} cannot be read now ({exc}).") from exc
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(_SQL_PLAYER_MARKS, (key,)).fetchone()
+    except sqlite3.Error as exc:
+        raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
+    finally:
+        conn.close()
+    return None if row is None else (_text(row[0]), _text(row[1]))
+
+
+def mark_only(
+    flavor_folder: str,
+    account: str,
+    key: str,
+    field: MarkField,
+    value: str | None,
+    *,
+    expect: tuple[str | None, str | None],
+    file_value: str | None = None,
+    in_file: bool = False,
+) -> None:
+    """Set a rating or note on a player only wowlab's crew database keeps
+    (the game's list dropped them): no game file is written and nothing is
+    journaled, so it cannot be undone. Refused (`RowChanged`) when the row's
+    rating and note are no longer `expect`, as the plan read them.
+    The value is the database's own (a sync keeps it, decision 20) unless
+    the saved file holds the player (`in_file`) with the same value in that
+    field (`file_value`): it then agrees with the file again."""
+    value = _mark_value(field, value)
+    path = database_path(flavor_folder, account)
+    try:
+        conn = _open(path, create=False)
+    except sqlite3.OperationalError as exc:
+        raise CrewDbError(
+            f"Another wowlab is using the crew database {path} ({exc}). Nothing was changed; "
+            "run it again."
+        ) from exc
+    if conn is None:
+        raise RowChanged(
+            f"wowlab keeps no crew database at {path} now, so nothing was changed; run the "
+            "command again to see the new plan."
+        )
+    try:
+        with _transaction(conn):
+            row = conn.execute(_SQL_PLAYER_MARKS, (key,)).fetchone()
+            if row is None or (_text(row[0]), _text(row[1])) != expect:
+                raise RowChanged(
+                    "The player's rating or note in wowlab's crew database changed after the "
+                    "plan was made, or the player was forgotten, so nothing was written; run "
+                    "the command again to see the new plan."
+                )
+            _set_mark(conn, key, field, value, own=not (in_file and value == file_value))
+    except sqlite3.OperationalError as exc:
+        raise CrewDbError(
+            f"The crew database {path} was not changed ({exc}); run the command again."
+        ) from exc
+    finally:
+        conn.close()
 
 
 __all__ = [
@@ -1535,7 +1867,11 @@ __all__ = [
     "AdoptOutcome",
     "CrewDbError",
     "CrewRow",
+    "DatabaseSummary",
     "Forgetting",
+    "MarkField",
+    "Marking",
+    "RowChanged",
     "SyncOutcome",
     "SyncPlan",
     "Target",
@@ -1547,6 +1883,10 @@ __all__ = [
     "entry_problems",
     "forget",
     "holds",
+    "kept_words",
+    "mark_only",
+    "marks",
     "read",
+    "summaries",
     "sync",
 ]

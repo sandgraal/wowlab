@@ -15,6 +15,7 @@ is ASCII-escaped as everywhere.
 """
 
 import hashlib
+import json
 import os
 import re
 import time
@@ -326,7 +327,11 @@ def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
 
 
 def _sync_caveat(outcome: crewdb.SyncOutcome | None) -> str | None:
-    """The one line a list or show adds when its sync did not run."""
+    """The one line a list or show adds when its sync did not run, or when
+    it kept ratings or notes given at the desk to players the game's list
+    holds again."""
+    if outcome is not None and outcome.state == "synced" and outcome.plan is not None:
+        return crewdb.kept_words(outcome.plan).strip() or None
     if outcome is None or outcome.state in ("synced", "unchanged", "not_run"):
         return None
     return outcome.words
@@ -767,7 +772,17 @@ class CrewEditReport(_Out):
 
     `database_forgotten` (forget only) is true once the players were removed
     from wowlab's crew database and every copy it keeps (with `--all`: the
-    database and its copies deleted)."""
+    database and its copies deleted).
+
+    For `rate` and `note`, `database_only` is true for a player only wowlab's
+    crew database keeps (the game's list dropped them): the change is made
+    to the database alone, no file is written (`written_sha256` is `absent`,
+    `transaction` None) and it cannot be undone. `row_sha256` is the third
+    part of their pin: the SHA-256 of the player's row (key, rating and note)
+    as read from the database for such a player, else `absent`.
+    `database_updated` is true once the database holds the new value (for a
+    player it already kept; one it does not keep yet is added by the next
+    sync)."""
 
     command: CrewCommand
     flavor_folder: str
@@ -789,6 +804,9 @@ class CrewEditReport(_Out):
     not_reached: str | None
     notes: list[str]
     database_forgotten: bool = False
+    database_only: bool = False
+    row_sha256: str | None = None
+    database_updated: bool = False
 
 
 def _sha(data: bytes) -> str:
@@ -797,9 +815,11 @@ def _sha(data: bytes) -> str:
 
 _EXPECT_FIELDS_OF: dict[str, tuple[str, ...]] = {
     "forget": ("target_sha256", "written_sha256", "backup_sha256", "backup_written_sha256"),
-    "rate": ("target_sha256", "written_sha256"),
-    "note": ("target_sha256", "written_sha256"),
+    "rate": ("target_sha256", "written_sha256", "row_sha256"),
+    "note": ("target_sha256", "written_sha256", "row_sha256"),
 }
+# From which part on a pin part may be `absent` rather than a SHA-256.
+_ABSENT_FROM = {"forget": 2, "rate": 1, "note": 1}
 
 
 def _pin(expect: str | None, command: str) -> list[str] | None:
@@ -810,7 +830,8 @@ def _pin(expect: str | None, command: str) -> list[str] | None:
     fields = _EXPECT_FIELDS_OF[command]
     got = expect.split(":")
     ok = len(got) == len(fields) and all(
-        _SHA256_TEXT.fullmatch(p) or (i >= 2 and p == ABSENT) for i, p in enumerate(got)
+        _SHA256_TEXT.fullmatch(p) or (i >= _ABSENT_FROM[command] and p == ABSENT)
+        for i, p in enumerate(got)
     )
     if not ok:
         raise CliError(
@@ -1070,11 +1091,15 @@ def _apply(
     store: snapshot.SnapshotStore,
     yes: bool,
     json_out: bool,
-    database: crewdb.Forgetting | None = None,
+    database: crewdb.Forgetting | crewdb.Marking | None = None,
+    unfinished: Callable[[str, WowlabError], str] | None = None,
 ) -> None:
     """Show the plan, ask, write through the gate, say what was done. With
-    `database` (a forget), wowlab's crew database is locked before the write
-    and the players are removed from it after, under the same lock."""
+    `database` (a forget, a rating, a note), wowlab's crew database is
+    locked before the write and changed after it, under the same lock; when
+    that step fails after the file was written, `unfinished(record, error)`
+    is the sentence that says so, and the report says the database was not
+    changed (`report(database=False)`)."""
     _check_pin(pin, got, edit.rel)
     show = _say if not json_out else _say_err
     if not yes:
@@ -1085,24 +1110,23 @@ def _apply(
         if json_out:
             _emit(report(written=False))
         raise
+    reached: bool | None = None
     if database is not None:
         database.hold()  # before the write: no sync commits what it read before it
     try:
         record = _write(edit, new=new, new_backup=new_backup, pin=pin, label=label, store=store)
         if database is not None:
             try:
-                database.finish()
+                reached = bool(database.finish())
             except WowlabError as exc:
                 if json_out:
-                    _emit(report(written=True, transaction=record, forgotten=False))
-                raise CliError(
-                    f"{edit.rel} was changed and journaled as {record}, but wowlab's crew "
-                    f"database still holds them: {exc} Run the forget again to finish it."
-                ) from None
+                    _emit(report(written=True, transaction=record, database=False))
+                assert unfinished is not None
+                raise CliError(unfinished(record, exc)) from None
     finally:
         if database is not None:
             database.release()
-    finished = report(written=True, transaction=record)
+    finished = report(written=True, transaction=record, database=reached)
     if json_out:
         _emit(finished)
         return
@@ -1222,7 +1246,7 @@ def crew_forget(
         )
 
     def report(
-        *, written: bool = False, transaction: str | None = None, forgotten: bool | None = None
+        *, written: bool = False, transaction: str | None = None, database: bool | None = None
     ) -> CrewEditReport:
         return CrewEditReport(
             command="forget",
@@ -1246,7 +1270,7 @@ def crew_forget(
             if changed
             else None,
             notes=[],
-            database_forgotten=(written and db_has) if forgotten is None else forgotten,
+            database_forgotten=(written and db_has) if database is None else database,
         )
 
     if not changed and db_has and (name is None or keys[0] in in_db):
@@ -1332,6 +1356,10 @@ def crew_forget(
         )
         if db_has
         else None,
+        unfinished=lambda record, exc: (
+            f"{edit.rel} was changed and journaled as {record}, but wowlab's crew database "
+            f"still holds them: {exc} Run the forget again to finish it."
+        ),
     )
 
 
@@ -1348,13 +1376,21 @@ def _set(
     flavor: str | None,
     json_out: bool,
 ) -> None:
-    """`crew rate` and `crew note`: one field of one player's entry."""
+    """`crew rate` and `crew note`: one field of one player's entry, in the
+    saved file through the write gate and then in wowlab's crew database
+    (§21.3, "Writing"); for a player only the database keeps, the database
+    alone (`_set_database_only`)."""
     pin = _pin(expect, command)
     store = snapshot.SnapshotStore()
     edit = _Edit(_open_book(root, flavor, account), command)
     readable = [p.key for p in edit.book.players]
     unread = [u.key for u in edit.book.unread]
-    key = _one_key(list(dict.fromkeys([*readable, *unread])), name, edit)
+    folder, acct = edit.place.flavor_folder, edit.place.account
+    in_db = crewdb.holds(folder, acct)
+    key = _one_key(list(dict.fromkeys([*readable, *unread, *in_db])), name, edit)
+    if key not in readable and key not in unread:
+        _set_database_only(edit, command, field, key, value, pin=pin, yes=yes, json_out=json_out)
+        return
     if key not in readable:
         raise CliError(
             f"the entry of {key!r} in the crew book of {edit.words()} could not be read, so "
@@ -1370,7 +1406,13 @@ def _set(
     target_sha = _sha(edit.data)
     written_sha = _sha(new) if changed else None
 
-    def report(*, written: bool = False, transaction: str | None = None) -> CrewEditReport:
+    # Whenever wowlab keeps a crew database for this book, the change goes
+    # through it too, its lock taken before the file is written.
+    db_has = crewdb.database_path(folder, acct).exists()
+
+    def report(
+        *, written: bool = False, transaction: str | None = None, database: bool | None = None
+    ) -> CrewEditReport:
         return CrewEditReport(
             command=command,
             flavor_folder=edit.flavor.folder,
@@ -1391,15 +1433,25 @@ def _set(
             backup_written_sha256=None,
             not_reached=None,
             notes=[],
+            row_sha256=ABSENT,
+            database_updated=bool(database),
         )
 
     def said(text: str | None) -> str:
-        if text is None:
-            return "none"
-        return f'"{text}"' if field == "note" else text
+        return _said(field, text)
 
+    if not changed and db_has:
+        # The saved file already says it, but the database keeps a rating or
+        # note of its own (given at the desk while the game's list had
+        # dropped the player, kept on their return): the database alone.
+        kept = crewdb.marks(folder, acct, key)
+        if kept is not None and (kept[0] if field == "rating" else kept[1]) != value:
+            _set_database_only(
+                edit, command, field, key, value, pin=pin, yes=yes, json_out=json_out, listed=True
+            )
+            return
     if not changed:
-        _check_pin(pin, [target_sha, None], edit.rel)
+        _check_pin(pin, [target_sha, None, ABSENT], edit.rel)
         if json_out:
             _emit(report())
             return
@@ -1412,6 +1464,8 @@ def _set(
             f"{said(before)} -> {said(value)}"
         )
         show(f"  replace  {edit.rel}  ({_bytes(len(new))})")
+        if db_has:
+            show("  set it in wowlab's crew database too")
 
     def done(finished: CrewEditReport) -> None:
         _say(f"Changed {key}'s {field} to {said(value)}. `wowlab undo` puts back what was there.")
@@ -1422,7 +1476,7 @@ def _set(
         new=new,
         new_backup=None,
         pin=pin,
-        got=[target_sha, written_sha],
+        got=[target_sha, written_sha, ABSENT],
         label=f"crew {command} (1 player)",
         question=f"Write the {field}?",
         plan=plan,
@@ -1430,7 +1484,153 @@ def _set(
         store=store,
         yes=yes,
         json_out=json_out,
+        database=crewdb.Marking(folder, acct, key, field, value) if db_has else None,
+        unfinished=lambda record, exc: (
+            f"{edit.rel} was changed and journaled as {record}, but wowlab's crew database "
+            f"still holds the old {field}: {exc} `wowlab crew sync` brings the new one in."
+        ),
     )
+
+
+def _said(field: crewedit.Field, text: str | None) -> str:
+    """A rating or note as a plan shows it: "none" for none, a note quoted."""
+    if text is None:
+        return "none"
+    return f'"{text}"' if field == "note" else text
+
+
+def _row_sha(key: str, marks: tuple[str | None, str | None]) -> str:
+    """The pin part of a player's row in wowlab's crew database: the SHA-256
+    of its key, rating and note as read."""
+    return _sha(json.dumps([key, *marks], ensure_ascii=True).encode("ascii"))
+
+
+def _set_database_only(
+    edit: _Edit,
+    command: Literal["rate", "note"],
+    field: crewedit.Field,
+    key: str,
+    value: str | None,
+    *,
+    pin: list[str] | None,
+    yes: bool,
+    json_out: bool,
+    listed: bool = False,
+) -> None:
+    """A rating or note on a player only wowlab's crew database keeps: the
+    database alone is changed, after the plan and a yes; no game file is
+    written and nothing is journaled, so it cannot be undone (§21.3,
+    "Writing"). Pinned by the file as read (it must still not hold them)
+    and the row's rating and note as read; refused, exit 3, when either
+    changed. `listed`: the game's list holds the player, and the saved file
+    already says `value`, but the database keeps a rating or note of its own
+    from when the list had dropped them (§21.3, ruled 2026-11-20)."""
+    folder, acct = edit.place.flavor_folder, edit.place.account
+    marks = crewdb.marks(folder, acct, key)
+    if marks is None:
+        raise CliError(
+            f"wowlab's crew database no longer keeps {key!r}, so there is nothing to {command}. "
+            "Nothing was changed."
+        )
+    before = marks[0] if field == "rating" else marks[1]
+    changed = before != value
+    target_sha = _sha(edit.data)
+    row_sha = _row_sha(key, marks)
+    got: list[str | None] = [target_sha, ABSENT if changed else None, row_sha]
+
+    def report(*, written: bool = False) -> CrewEditReport:
+        return CrewEditReport(
+            command=command,
+            flavor_folder=edit.flavor.folder,
+            account=acct,
+            file=edit.rel,
+            backup_file=None,
+            players=[key],
+            field=field,
+            before=before,
+            after=value,
+            backup=None,
+            changed=changed,
+            written=written,
+            transaction=None,
+            target_sha256=target_sha,
+            written_sha256=got[1],
+            backup_sha256=None,
+            backup_written_sha256=None,
+            not_reached=None,
+            notes=[],
+            database_only=True,
+            row_sha256=row_sha,
+            database_updated=written,
+        )
+
+    if pin is not None and list(pin) != got:
+        raise CliError(
+            f"{edit.rel}, or the player's rating and note in wowlab's crew database, is not as "
+            "the plan read it: it changed after the plan was made, so nothing was written; run "
+            "the command again to see the new plan",
+            EXIT_REFUSED,
+        )
+    if not changed:
+        if json_out:
+            _emit(report())
+            return
+        _say(f"{key}'s {field} is already {_said(field, value)}: nothing was changed.")
+        return
+    show = _say if not json_out else _say_err
+    if not yes:
+        show(
+            f"Change {key}'s {field} in wowlab's crew database for {edit.words()}: "
+            f"{_said(field, before)} -> {_said(field, value)}"
+        )
+        show(_ONLY_IN_DATABASE if not listed else _KEPT_IN_DATABASE)
+    try:
+        _confirm(f"Write the {field}?", yes)
+    except typer.Exit:
+        if json_out:
+            _emit(report())
+        raise
+    try:
+        in_file = next((p for p in edit.book.players if p.key == key), None) if listed else None
+        crewdb.mark_only(
+            folder,
+            acct,
+            key,
+            field,
+            value,
+            expect=marks,
+            file_value=None
+            if in_file is None
+            else (in_file.rating if field == "rating" else in_file.note),
+            in_file=in_file is not None,
+        )
+    except crewdb.RowChanged as exc:
+        raise CliError(str(exc), EXIT_REFUSED) from None
+    if json_out:
+        _emit(report(written=True))
+        return
+    if yes:
+        _say(
+            f"Change {key}'s {field} in wowlab's crew database for {edit.words()}: "
+            f"{_said(field, before)} -> {_said(field, value)}"
+        )
+        _say(_ONLY_IN_DATABASE if not listed else _KEPT_IN_DATABASE)
+    _say(
+        f"Changed {key}'s {field} to {_said(field, value)} in wowlab's crew database. "
+        "This cannot be undone."
+    )
+
+
+_KEPT_IN_DATABASE = (
+    "  The game's list holds this player again, but the rating or note you gave them while it "
+    "had dropped them is kept only in wowlab's crew database, so only the database is "
+    "changed: no game file is written, and this cannot be undone."
+)
+_ONLY_IN_DATABASE = (
+    "  The game's list no longer holds this player, so only wowlab's crew database is changed: "
+    "no game file is written, and this cannot be undone. The game will not warn you about a "
+    "player it no longer lists."
+)
 
 
 @crew_app.command("rate", short_help="Rate one player good or bad, or clear it (asks first).")
@@ -1454,7 +1654,9 @@ def crew_rate(
 
     Shows the plan and asks first, then writes through the write gate: the
     game must be closed, a snapshot is taken first, and `wowlab undo` puts
-    the old rating back.
+    the old rating back. wowlab's crew database gets the new rating in the
+    same command. For a player the game's list no longer holds, only the
+    database is changed, after the plan and a yes, and that cannot be undone.
 
     \f
     JSON: CrewEditReport."""
@@ -1500,7 +1702,9 @@ def crew_note(
 
     Shows the plan and asks first, then writes through the write gate: the
     game must be closed, a snapshot is taken first, and `wowlab undo` puts
-    the old note back.
+    the old note back. wowlab's crew database gets the new note in the same
+    command. For a player the game's list no longer holds, only the
+    database is changed, after the plan and a yes, and that cannot be undone.
 
     \f
     JSON: CrewEditReport."""

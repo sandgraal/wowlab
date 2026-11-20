@@ -1194,6 +1194,9 @@ if TYPE_CHECKING:
         CrewBookSummary as CrewBookSummary,
     )
     from wowlab_core.cli._cmd_doctor import (
+        CrewDatabaseSummary as CrewDatabaseSummary,
+    )
+    from wowlab_core.cli._cmd_doctor import (
         DoctorFlavor as DoctorFlavor,
     )
     from wowlab_core.cli._cmd_doctor import (

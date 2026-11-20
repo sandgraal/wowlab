@@ -6778,7 +6778,8 @@ it is, saying the sync was skipped.
 **Sync rules.** (1) A player in the saved file is added or updated; a
 player only in the database stays. (2) Rating and note come from the saved
 file whenever the player is in it, since the player may have changed them
-in game. `first` takes the earlier date and `last` the later. Each counter
+in game, except a field the database holds as its own (§21.7, decision 20).
+`first` takes the earlier date and `last` the later. Each counter
 (`met` and the four of §21.2) is added to, not replaced: the database
 keeps, beside its own total, the value the saved file showed at the last
 sync, and adds the difference; when the saved file's value is lower than
@@ -6898,6 +6899,25 @@ command shows the old and new value and asks first, and its `--expect`
 pin is the row's rating and note as read, which the Crew tab checks
 before it writes. The sentence on older snapshots is unchanged.
 
+*Ruled 2026-11-20 (M20-02, conductor, for the owner to overturn; §21.7,
+decision 20):* the database holds the rating, and separately the note, as
+its own or not. A field given at the desk to a player only the database
+keeps is its own; a field written through the saved file (`crew rate` and
+`crew note` on a player in it, which write the file and the row together)
+never is, so an `undo` of such a write, synced by hand, takes the file's
+value again. An own field survives the player's return to the game's list:
+in a normal sync it is kept where the saved file's entry has none, and the
+saved file's wins where it has one (rated or noted again in game), and the
+field is then no longer the database's own; so is a field the file gives
+the same value. The sync says how many it kept, never whom. Clearing a kept
+rating or note in game cannot win: the game never held it, and an empty
+field in the saved file reads as nothing new. The way to clear or change
+one is at the desk (`crew rate NAME none`, `crew note NAME ""`: the
+database alone, asked first, not undoable). Database schema 2 adds the two
+flags; a schema 1 database is copied and migrated on its first open, a row
+that was its own row-wide starting with both fields its own, each given up
+at the next sync where it equals the saved file's value.
+
 A forgotten player can come back: `snap restore`, `undo`, `sv merge` or
 an import can put an older book in place. M19-11's sentence in those
 plans ("This brings back the crew book") gains "and a sync by hand would
@@ -6995,6 +7015,9 @@ text is what M20-07 is built from.
     large book fails to load.
 19. One saved marker per match, so a repeated event or a `/reload` never
     counts a match twice.
+20. *2026-11-20, M20-02:* a rating or note given at the desk to a player
+    the game had dropped survives that player's return, unless they are
+    rated or noted again in game.
 
 ## Appendix A. §6.10's earlier text and its dated amendments
 

@@ -1373,8 +1373,8 @@ EXPECT_FIELDS: dict[tuple[str, ...], tuple[str, ...]] = {
         "backup_sha256",
         "backup_written_sha256",
     ),
-    ("crew", "rate"): ("target_sha256", "written_sha256"),
-    ("crew", "note"): ("target_sha256", "written_sha256"),
+    ("crew", "rate"): ("target_sha256", "written_sha256", "row_sha256"),
+    ("crew", "note"): ("target_sha256", "written_sha256", "row_sha256"),
 }
 """For each command that confirms through `_confirm` and declares `--expect`:
 the fields of its `--json` report whose values, joined by `:` and passed
@@ -2221,13 +2221,16 @@ def _crew_plan_line(carried: crewcount.CrewBookCarried | None) -> str | None:
     when it brings none back."""
     if carried is None:
         return None
+    # §21.3 (M20-02): players a readable book brings back are added to
+    # wowlab's crew database only by a sync run by hand (such a book is held).
+    sync = ", and a sync by hand would add them to wowlab's database" if carried.players else ""
     if carried.readable and carried.unreadable:
         return (
             f"  This brings back the crew book ({_crew_state_words(carried)}) and "
-            f"{_crew_unread_words(carried)} of it wowlab cannot read."
+            f"{_crew_unread_words(carried)} of it wowlab cannot read{sync}."
         )
     if carried.readable:
-        return f"  This brings back the crew book: {_crew_state_words(carried)}."
+        return f"  This brings back the crew book: {_crew_state_words(carried)}{sync}."
     return (
         "  This brings back a crew book wowlab cannot read, so it cannot say whether it is on "
         "or how many players it keeps."

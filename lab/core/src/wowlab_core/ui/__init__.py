@@ -1190,10 +1190,13 @@ _PIN_CHECKS: Mapping[tuple[str, ...], str] = {
         "write other bytes than this plan, it is refused (exit 3) and nothing is written"
     ),
     # `crew rate` and `crew note` (§20.3, M19-06): the crew book's file as
-    # read, and the bytes the change would write.
-    ("target_sha256", "written_sha256"): (
+    # read, and the bytes the change would write; since M20-02 also the
+    # player's row in wowlab's crew database as read, for a player only it
+    # keeps (§21.3, "Writing").
+    ("target_sha256", "written_sha256", "row_sha256"): (
         "if the crew book's file has changed by then, or the change would write other bytes "
-        "than this plan, it is refused (exit 3) and nothing is written"
+        "than this plan, or the player's rating or note in wowlab's crew database has changed, "
+        "it is refused (exit 3) and nothing is written"
     ),
     # `crew forget`: the same for the file and for the game's backup of it,
     # pinned even when the backup is left alone or there is none.

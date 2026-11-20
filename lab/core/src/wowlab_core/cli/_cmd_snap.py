@@ -1046,6 +1046,40 @@ def snap_export(
     crew = _crew_export_line(report.crew_book)
     if crew is not None:
         _say(f"  {crew}")
+    try:
+        has_database = _has_crew_database(store.show(report.id))
+    except (snapshot.SnapshotError, OSError):
+        # The archive is written either way; the sentence is left out.
+        has_database = False
+    if has_database:
+        _say(
+            "  It does not include wowlab's crew database for this game account, which stays "
+            "on this computer only."
+        )
+
+
+def _has_crew_database(manifest: snapshot.Manifest) -> bool:
+    """Whether wowlab keeps a crew database for a game account folder the
+    snapshot's files are in (`<flavor folder>/WTF/Account/<account>/...`),
+    the one `snap export` never puts in the archive (M20-02, ADR-0036 term
+    4). Looks for the file only; never opens it. `crewdb` is imported only
+    here, so no other snap command loads it."""
+    from wowlab_core import crewdb
+
+    pairs: set[tuple[str, str]] = set()
+    for entry in manifest.entries:
+        parts = entry.path.split("/")
+        folded = [p.casefold() for p in parts]
+        for i in range(len(parts) - 3):
+            if folded[i + 1 : i + 3] == ["wtf", "account"]:
+                pairs.add((parts[i], parts[i + 3]))
+    for flavor_folder, account in sorted(pairs):
+        try:
+            if crewdb.database_path(flavor_folder, account).exists():
+                return True
+        except (crewdb.CrewDbError, OSError):
+            continue
+    return False
 
 
 @snap_app.command("import", short_help="Add a snapshot from a file snap export wrote.")
