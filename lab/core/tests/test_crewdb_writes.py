@@ -55,6 +55,7 @@ from _crew_build import (
     KEY_C,
     KEY_D,
     NOTE,
+    T1,
     WHERE,
     account_file,
     book,
@@ -339,6 +340,23 @@ def test_a_held_sync_keeps_a_database_only_rating_constructed(make: Any) -> None
     assert env.sync().state == "held"
     assert env.run("crew", "sync", input="y\n").exit_code == 0
     assert env.rows()[KEY_B].rating == "bad"  # the database's own change is kept
+
+
+def test_another_book_held_keeps_a_database_only_rating_and_note_constructed(
+    make: Any,
+) -> None:
+    """The other hold (another book: a new `started`), confirmed by hand: a
+    rating and note the database holds as its own are kept even where the
+    other book has its own, as from a book put back (§21.3)."""
+    env = make(_three())
+    _dropped(env)
+    assert env.run("crew", "rate", KEY_B, "bad", "--yes").exit_code == 0
+    assert env.run("crew", "note", KEY_B, NOTE_B, "--yes").exit_code == 0
+    other = {KEY_A: player(met=1), KEY_B: player(rating="good", note="invented: other", met=2)}
+    env.save(book(other, started=T1))
+    assert env.sync().held == ["other_book"]
+    assert env.run("crew", "sync", input="y\n").exit_code == 0
+    assert (env.rows()[KEY_B].rating, env.rows()[KEY_B].note) == ("bad", NOTE_B)
 
 
 def test_the_ui_offers_confirm_on_a_database_only_plan_with_its_pin_constructed(
