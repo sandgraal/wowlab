@@ -2162,7 +2162,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
+## [x] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
 **Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10) · **owner** (parked until M15 closes; then one in-game capture)
 *Owner decision, 2026-11-20 (ADR-0026's note of that date): the limits this ticket's `CLICK` rules served are lifted. M20-13 builds schema 5 on the simpler rule (every binding command and every macro stored as the client returns it) and takes this ticket's "quieter" items with it; what is written below about `CLICK`, the allowlist and the left-out counts is history. This ticket stays open only as the name the blocked tickets below point at, and is ticked with M20-13.*
 *Owner decision, 2026-11-18 (in session): parked until the character-model wave (M15) is done. The conductor then asks the owner for the schema-5 capture and rebuilds this on current `main`; PR #379 is closed; its branch `m16/45-addon-schema5` (27 files, built to 2026-11-13) stays on GitHub as the starting point.*
@@ -3764,7 +3764,7 @@ The reader accepts the new fields; the sync keeps them in the crew database (a s
 
 ---
 
-## [ ] M20-13 — The lab-addon keeps what the owner's own account shows: macros, bindings, the GUID, names, times (schema 5)
+## [x] M20-13 — The lab-addon keeps what the owner's own account shows: macros, bindings, the GUID, names, times (schema 5)
 **Size:** L · **Depends on:** M20-11 · **Sources:** ADR-0026 with its note of 2026-11-20; M16-45 (the "quieter" items; branch `m16/45-addon-schema5` as a starting point where it still applies); `docs/LAB_PLAN.md` §13, §16, §18.1 item 9
 
 Owner decision, 2026-11-20 ("Yes, all of them"). One session changes the addon and the static checks that grade it.
@@ -3776,6 +3776,15 @@ Owner decision, 2026-11-20 ("Yes, all of them"). One session changes the addon a
 - **The capture tool** (`scripts/lab_capture.py`): the owner's GUID replaced as now, and another player's GUID (a crafter's in an item link) given the invented form the tool already gives one in a combat log, by byte-level replacement. *Corrected 2026-11-20 (owner: "Yes, not secret"; ADR-0026's Correction of that date):* macro names and bodies, binding commands, guild names and times are committed as captured; no scrub of them is built.
 
 **Acceptance:** the static Lua tests and selene pass; constructed files for the reader's hostile and boundary cases; the real-capture fixture at schema 5 is the owner's one capture, taken after this merges (the ticket is done without it and says so; the capture and its provenance row are a follow-up the conductor files). `make ci` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the capture tool). User-facing: in-game chat, `/wowlab debug`, `char show`, `binds coach`, the keybind views.
+
+---
+
+## [ ] M20-15 — Owner: one capture at schema 5
+**Size:** S · **Depends on:** M20-13 · **owner** (one in-game session, then the capture tool)
+
+M20-13 (#669) was merged graded on constructed files and the real schema 4 fixtures; the real schema 5 fixture and its provenance row are owed (L8). Before: 2 account and 2 character macros (one plain `/say` text, one `#showtooltip` with a spell, one about 250 characters over several lines), both kinds on bars; a spell dragged onto a key, a macro on a key and a normal action button bound, with character-specific bindings on; no bar addon; in a guild; one crafted item worn; `/wowlab debug on`, then `/reload`. In game: wait 20 s, change a macro, fight once, log out normally. Then the capture, and these settled, dated, in the plan: whether `GetBinding` lists `MACRO`, `SPELL`, `ITEM` and `CLICK` commands; macro indices and whether a body ends in a line break; a plain macro's bar slot id against its index; `identity.guild` present; a `Player-` GUID in a gear link; whether `written_at` moves when the client is closed with Alt-F4.
+
+**Acceptance:** the capture committed through `scripts/lab_capture.py` with its provenance row; each not-yet-confirmed fact of M20-13 resolved or kept with what was seen; the conductor files what the capture shows wrong.
 
 ---
 
