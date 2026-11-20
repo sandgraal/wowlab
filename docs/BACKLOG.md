@@ -1535,7 +1535,7 @@ A probe only, as M15-24 was. M15-24 found points 26 to 33 of both fixture body m
 
 ---
 
-## [ ] M15-27 — `char model` draws held items sheathed, labelled approximate
+## [x] M15-27 — `char model` draws held items sheathed, labelled approximate
 **Size:** M · **Depends on:** M15-26 · **Sources:** `docs/LAB_PLAN.md` §17.6 (the M15-24 and M15-26 notes), `docs/LAB_FORMATS.md` §12 (amendment of 2026-11-19); owner decision, 2026-11-19 ("draw them now, labelled")
 
 `char model` places a main-hand, off-hand and shield item at a sheath point (26 to 28, 30 to 33), using the sheath bone's first rotation key applied about its pivot after its parent chain's rest transforms, and the item's `SheatheType` to pick the point. Every fact this rests on is unconfirmed (M15-26's list: the decoding rule, how the rotation combines with the parent, which axis of an item is its length, the axis signs, the `SheatheType` mapping, the item's grip origin), so the text output, `--json` and the report say for each such item "drawn sheathed, placement approximate (not yet confirmed)" once per report, and a `--no-held` option leaves them out as today. An item whose point, bone or sheathe type cannot be resolved stays not drawn, with the reason. No animation is played and the rest pose is unchanged.
@@ -3583,7 +3583,7 @@ Install the addon from `main`, then, with the conductor's runbook beside you (`d
 
 ---
 
-## [ ] M19-12 — `snap rm` removes a damaged snapshot named by its full id
+## [x] M19-12 — `snap rm` removes a damaged snapshot named by its full id
 **Size:** S · **Depends on:** M19-09 · **Sources:** the code and security reviews of #639 (2026-11-19); ADR-0036 term 5; ADR-0037; owner decision, 2026-11-19 ("allow by full id")
 
 Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while any manifest is damaged, so one broken snapshot that holds a forgotten player's copy can never be cleared by wowlab. `snap rm <full id>` removes a manifest that cannot be read when the id typed is the complete id (never a prefix, never among several ids unless each is complete), after a plan that says the snapshot is damaged, that wowlab cannot tell what it held or whether a change needs it, and that `--break-undo` is required; `snap gc` then runs. Also, `snap gc`'s own refusal on a damaged manifest (on `main` since before M19-09) passes on the validator's text, which quotes a fragment of the file: it is put in the player's words, as `snap rm`'s is. Nothing else about `snap gc`, `undo` or recovery changes (ADR-0037).
@@ -3598,6 +3598,15 @@ Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while an
 On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `snap verify` (text and `--json`) pass on the validator's text, which quotes a fragment of the file: a constructed name-realm key and a U+202E planted in a wrong-typed manifest appeared in all six outputs. Give them the fixed wording `snap gc` and `snap rm` have since M19-12: the snapshot's id, that its record cannot be read, and that `wowlab snap rm <full id> --break-undo` removes it. Also: `snap gc`'s refusal for a manifest that is a link points at `snap rm`, which refuses links; say instead that a link stands in the record's place and wowlab leaves it alone.
 
 **Acceptance:** constructed tests: a marker planted in a truncated, a wrong-typed, an empty, a wrong-version and a non-UTF-8 manifest is in no text or `--json` output of the three commands; the link case's sentence; nothing else about what the commands report changes. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed error sentences of three commands.
+
+---
+
+## [ ] M19-14 — `sv merge --from` does not quote a damaged snapshot
+**Size:** XS · **Depends on:** M19-13 · **Sources:** the code and security reviews of #646 (2026-11-20); `.claude/rules/player-copy.md`
+
+`sv merge --from <id>` on a damaged snapshot still passes on the validator's text, which quotes a fragment of the snapshot's record (`cli/_cmd_sv.py`, `_snapshot_sv`: `store.show` raises and the raw error reaches the player). An import cycle keeps M19-13's shared helper out of that module, so catch the error where it is raised and say M19-13's sentence from a place both modules can import. Nothing else about `sv merge` changes. Not in this ticket: `undo --yes`, `doctor` and its first-run check quote the same text; ADR-0037 freezes their wording, and whether to change them is the owner's ruling. `doctor --redact` already withholds it.
+
+**Acceptance:** a constructed test: a marker planted in a wrong-typed and a non-UTF-8 manifest is in no text, `--json` or stderr output of `sv merge --from <id>`; the sentence is M19-13's, written once; a healthy snapshot merges as before. Reviewed by `code-reviewer`. User-facing: one changed error sentence.
 
 ---
 
