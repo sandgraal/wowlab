@@ -55,14 +55,24 @@ def _load_constructed() -> ModuleType:
 _CONSTRUCTED = _load_constructed()
 BOOK: str = _CONSTRUCTED.BOOK
 CREW_ON: str = _CONSTRUCTED.CREW_ON
-CREW_PROBE: str = _CONSTRUCTED.CREW_PROBE
+CREW_PROBE_1: str = _CONSTRUCTED.CREW_PROBE_1
+CREW_PROBE: str = _CONSTRUCTED.CREW_PROBE_2  # M20-04: schema 2
+CREW_MIGRATE: str = _CONSTRUCTED.CREW_MIGRATE
+CREW_PVP_ENTRY_STORE: str = _CONSTRUCTED.CREW_PVP_ENTRY_STORE
+CREW_PVP_WINNER_STORE: str = _CONSTRUCTED.CREW_PVP_WINNER_STORE
 _CREW_READ: str = _CONSTRUCTED._CREW_READ
 _CREW_MEMBER: str = _CONSTRUCTED._CREW_MEMBER
 _CREW_COMMAND_HEAD: str = _CONSTRUCTED._CREW_COMMAND_HEAD
 _CREW_SOURCE: str = _CONSTRUCTED._CREW_SOURCE
+_CREW_SOURCE_1: str = _CONSTRUCTED._CREW_SOURCE_1
 _CREW_TAIL: str = _CONSTRUCTED._CREW_TAIL
 _CREW_GATE_BODY: str = _CONSTRUCTED._CREW_GATE_BODY
 _CREW_GATE_CASES: dict[str, list[tuple[str, str]]] = _CONSTRUCTED._CREW_GATE_CASES
+_CREW_GATE_CASES_1: dict[str, list[tuple[str, str]]] = _CONSTRUCTED._CREW_GATE_CASES_1
+_CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = (
+    _CONSTRUCTED._CREW_SCHEMA_2_CASES
+)
+_CREW_SCHEMA_2_CONTROLS: dict[str, list[tuple[str, str]]] = _CONSTRUCTED._CREW_SCHEMA_2_CONTROLS
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON_ROOT = ROOT / "lab" / "addon"
@@ -290,11 +300,18 @@ CREW_ON_CALLS = "<Crew.lua's ns.On calls, as _crew_on_call_ok allows them>"
 # Fix round 4: the events §20.1 "When it records" names for the book, the
 # only ones Crew.lua may register inside a function (the roster, a name
 # arriving, the end of combat); at file level only Core.lua's own.
-CREW_EVENTS = frozenset({"GROUP_ROSTER_UPDATE", "UNIT_NAME_UPDATE", "PLAYER_REGEN_ENABLED"})
+CREW_EVENTS_1 = frozenset({"GROUP_ROSTER_UPDATE", "UNIT_NAME_UPDATE", "PLAYER_REGEN_ENABLED"})
+# M20-04 (§21.2, "What is believed"): the scoreboard probe's candidate events,
+# counted since entry; registered only where the roster events may be.
+CREW_PVP_EVENTS = frozenset({"UPDATE_BATTLEFIELD_SCORE", "PVP_MATCH_COMPLETE"})
+CREW_EVENTS = CREW_EVENTS_1 | CREW_PVP_EVENTS
 # Fix round 3: "NONE" (UnitGroupRolesAssigned's no-role answer) and "none"
 # (GetInstanceInfo's open-world type) look like unit tokens; in Crew.lua they
 # may be compared with `==` / `~=`, nothing else.
 CREW_COMPARANDS = frozenset({"NONE", "none"})
+# M20-04: at schema 2 also "arena" (GetInstanceInfo's arena type; §21.2: the
+# probe runs only in an instance of type `pvp` or `arena`), on the same terms.
+CREW_COMPARANDS_2 = frozenset({"arena"})
 # The one handler that needs no gate: at ADDON_LOADED for this addon it
 # raises the book's probe, only when a book already exists (whether or not it
 # is on: §20.1 "A failed load" raises it "like §13.1's", at every load), and
@@ -305,15 +322,28 @@ CREW_PROBE_EVENT = "ADDON_LOADED"
 # nothing happens, so the argument can carry no table or function in or out.
 # Follow-up (M19-10 security review): then, before anything else, a book of
 # another schema is left alone (CREW_BOOK_SCHEMA_TEST).
-CREW_COMMAND_HEAD = (
+CREW_COMMAND_HEAD_1 = (
     'function ns . CrewCommand ( word ) if type ( word ) ~= "string" then return end '
     + _CONSTRUCTED.CREW_BOOK_SCHEMA_TEST
 )
+# M20-04 (§21.2, "Migration", amending #631): at schema 2 the head lets the
+# word `on` through for a schema 1 book, which is migrated (CREW_MIGRATE)
+# before the schema refusal is tested; every other word and every other
+# schema still meets the one fixed print. The word is the typed text's second
+# word (Core.lua hands on the whole `crew on`), lowercased, alone.
+CREW_COMMAND_HEAD = (
+    'function ns . CrewCommand ( word ) if type ( word ) ~= "string" then return end '
+    'if string . match ( string . lower ( word ) , "^%s*%S+%s+on%s*$" ) ~= nil then '
+    "crewMigrate ( ) end " + _CONSTRUCTED.CREW_BOOK_SCHEMA_TEST
+)
 # The file's own schema, pinned: one file-level local, the number literal 1,
 # never assigned again, declared nowhere else (§20.1: `schema = 1`). A local
-# number literal is a value the M11-13 stored-value check accepts.
+# number literal is a value the M11-13 stored-value check accepts. M20-04:
+# the literal is 2 (§21.2); a source declaring `local CREW_SCHEMA = 1` is
+# graded with CREW_PINS_1, M19's pins unchanged, until M20-05.
 CREW_SCHEMA_NAME = "CREW_SCHEMA"
-CREW_SCHEMA_DECL = "local CREW_SCHEMA = 1"
+CREW_SCHEMA_DECL_1 = "local CREW_SCHEMA = 1"
+CREW_SCHEMA_DECL = "local CREW_SCHEMA = 2"
 # Core.lua's one call of it: in its slash handler, a statement of its own,
 # handing on exactly the typed text.
 CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
@@ -329,8 +359,11 @@ CREW_RELAXED: dict[str, frozenset[str]] = {
     "SECTION_SCAN": frozenset(
         {GATED, "crewBlocked", "secret", "crewLoaded", CREW_COMMAND, CREW_ON_CALLS}
     ),
-    "PAIRS": frozenset({f"{CREW_DB}.players", f"{CREW_DB}.current"}),
+    # M20-04: and, at schema 2, the one walk of the first scoreboard row in
+    # the pinned pvpSnapshot (its field names, each value handed to `type`).
+    "PAIRS": frozenset({f"{CREW_DB}.players", f"{CREW_DB}.current", "<the row walk>"}),
 }
+CREW_ROW_WALK = "<the row walk>"
 # What Crew.lua may hand to or take from the rest of the addon: the slash
 # handler Core.lua calls for `/wowlab crew ...`, and Core's helpers that keep
 # nothing (no ns.Section, ns.state, ns.Write or ns.probe: they reach
@@ -381,7 +414,103 @@ CREW_SECRET = (
     "local ok , hidden = pcall ( issecretvalue , value ) "
     "return not ok or hidden == true end"
 )
-CREW_PINNED = {"crewOn": CREW_ON, "crewBlocked": CREW_BLOCKED, "secret": CREW_SECRET}
+CREW_PINNED_1 = {"crewOn": CREW_ON, "crewBlocked": CREW_BLOCKED, "secret": CREW_SECRET}
+
+# --- M20-04: schema 2 (docs/LAB_PLAN.md §21.1, §21.2) ---------------------------
+#
+# The pinned helpers of the scoreboard probe, rendered from the constructed
+# source's own text (tests/addon/_crew_constructed.py), each behind the gate:
+# - pvpInstance: true only in an instance whose GetInstanceInfo type is `pvp`
+#   or `arena` (nil while off or in combat, false when it cannot say);
+# - pvpWon: true once GetBattlefieldWinner reports a winner;
+# - pvpSnapshot: one probe run, a fresh table holding exactly what §21.2
+#   lists, nothing read from a row but its field names and their type names,
+#   the type at each position, the name (for three yes-or-no tests only) and
+#   the side; a row's GUID field is never indexed.
+# The migration (CREW_MIGRATE) is pinned with them; it holds no client name.
+CREW_PVP_CALLS = frozenset(
+    {
+        "C_PvP",
+        "GetNumBattlefieldScores",
+        "GetBattlefieldScore",
+        "RequestBattlefieldScoreData",
+        "GetBattlefieldWinner",
+        "GetBattlefieldArenaFaction",
+        "IsActiveBattlefieldArena",
+    }
+)
+# pvpInstance, pvpWon and pvpSnapshot are added below `_render`.
+CREW_PINNED = {**CREW_PINNED_1, "crewMigrate": CREW_MIGRATE}
+# The limits and the near-full line (§21.1, §21.2): each a named file-level
+# constant holding a number literal, declared once and never assigned again.
+CREW_LIMITS = {
+    "MAX_PLAYERS": "local MAX_PLAYERS = 20000",
+    "MAX_MATCHES": "local MAX_MATCHES = 500",
+    "NEAR_FULL_PERCENT": "local NEAR_FULL_PERCENT = 90",
+    "NEAR_FULL_SECONDS": "local NEAR_FULL_SECONDS = 604800",
+}
+
+
+# §21.2's fields that the addon of M20-07 and M20-08 writes, not this wave's
+# M20-05: no store into any of them (as a field, a constructor key or a
+# written-out bracket key) is accepted yet. `matches` is written only by the
+# migration and in a new book's constructor, empty; elsewhere it is only
+# counted (`#`) or type()-tested.
+def _crew_scoreboard_name(name: str) -> bool:
+    """Fix round 1 (security review): a candidate call, or any global named
+    `GetBattlefield...` (GetBattlefieldStatData, GetBattlefieldTeamInfo,
+    GetBattlefieldStatus, ...), or `C_PvP` (so any member of it): at schema 2
+    only in the pinned probe helpers or a `type()` test."""
+    return name in CREW_PVP_CALLS or name.startswith("GetBattlefield")
+
+
+# The probe's two event counts (session locals pvpSnapshot stores).
+CREW_PVP_COUNTERS = frozenset({"pvpScoreEvents", "pvpCompleteEvents"})
+CREW_LATER_FIELDS = frozenset(
+    {"allied", "faced", "allied_won", "faced_won", "pvp_last", "pvp_map", "pvp_side", "matched"}
+)
+
+
+@dataclass(frozen=True)
+class _CrewPins:
+    """What Crew.lua is pinned to at one schema. CREW_PINS_1 is M19's, unchanged;
+    a source is graded with it only while it declares `local CREW_SCHEMA = 1`
+    (the real file until M20-05). Every other source, every constructed one
+    included, is graded with CREW_PINS_2, and
+    TestM20_05Activation pins the real file to it once M20-05 deletes the
+    marker."""
+
+    schema: int
+    decl: str
+    probe: str
+    command_head: str
+    pinned: dict[str, str]
+    events: frozenset[str]
+    comparands: frozenset[str]
+
+
+CREW_PINS_1 = _CrewPins(
+    1,
+    CREW_SCHEMA_DECL_1,
+    CREW_PROBE_1,
+    CREW_COMMAND_HEAD_1,
+    CREW_PINNED_1,
+    CREW_EVENTS_1,
+    frozenset(),
+)
+CREW_PINS_2 = _CrewPins(
+    2, CREW_SCHEMA_DECL, CREW_PROBE, CREW_COMMAND_HEAD, CREW_PINNED, CREW_EVENTS, CREW_COMPARANDS_2
+)
+
+
+def _crew_pins(tokens: list[Token]) -> _CrewPins:
+    """CREW_PINS_1 for a source that declares `local CREW_SCHEMA = 1` and not
+    `= 2`; CREW_PINS_2 for every other."""
+    n = len(CREW_SCHEMA_DECL_1.split(" "))
+    rendered = {_render(tokens[k : k + n]) for k in range(len(tokens) - n + 1)}
+    if CREW_SCHEMA_DECL_1 in rendered and CREW_SCHEMA_DECL not in rendered:
+        return CREW_PINS_1
+    return CREW_PINS_2
 
 
 def _relaxed(path: Path, rule: str) -> frozenset[str]:
@@ -741,7 +870,7 @@ def _unit_argument_ok(path: Path, args: list[Token]) -> bool:
     Crew.lua one of its literals or a plain local name?"""
     if len(args) != 2 or args[1].text not in {",", ")"}:
         return False
-    relaxed = _relaxed(path, "UNIT_ARGUMENT") - CREW_COMPARANDS
+    relaxed = _relaxed(path, "UNIT_ARGUMENT") - CREW_COMPARANDS - CREW_COMPARANDS_2
     if args[0].kind == "string":
         return args[0].text == "player" or args[0].text in relaxed
     return (
@@ -760,13 +889,18 @@ def test_every_unit_token_argument_is_player(path: Path) -> None:
 
 def _unit_argument_problems(path: Path, tokens: list[Token]) -> list[str]:
     literals = _relaxed(path, "UNIT_ARGUMENT")
+    comparands = CREW_COMPARANDS
+    if literals:
+        # M20-04: "arena" too, in a schema 2 Crew.lua only.
+        comparands = comparands | _crew_pins(tokens).comparands
+        literals = literals | comparands
     bad = []
     for i, t in enumerate(tokens):
         # Crew.lua: "NONE" (a role) and "none" (an instance type) only as a
         # comparand of == or ~=, never anywhere a unit could be read from.
         comparand = (
             t.kind == "string"
-            and t.text in literals & CREW_COMPARANDS
+            and t.text in literals & comparands
             and (
                 tokens[i - 1].text in {"==", "~="}
                 or (i + 1 < len(tokens) and tokens[i + 1].text in {"==", "~="})
@@ -775,7 +909,7 @@ def _unit_argument_problems(path: Path, tokens: list[Token]) -> list[str]:
         if (
             t.kind == "string"
             and t.text != "player"
-            and (t.text not in literals or t.text in CREW_COMPARANDS)
+            and (t.text not in literals or t.text in comparands)
             and not comparand
             and UNIT_TOKEN.match(t.text)
         ):
@@ -810,6 +944,20 @@ def _unit_argument_problems(path: Path, tokens: list[Token]) -> list[str]:
 
 def _render(tokens: list[Token]) -> str:
     return " ".join(f'"{t.text}"' if t.kind == "string" else t.text for t in tokens)
+
+
+# M20-04: the scoreboard probe's pinned helpers, rendered from the constructed
+# source's text (see CREW_PINNED); filled here, once the lexer exists.
+CREW_PINNED.update(
+    {
+        name: _render(tokenize(text))
+        for name, text in (
+            ("pvpInstance", _CONSTRUCTED._CREW_PVP_INSTANCE),
+            ("pvpWon", _CONSTRUCTED._CREW_PVP_WON),
+            ("pvpSnapshot", _CONSTRUCTED._CREW_PVP_SNAPSHOT),
+        )
+    }
+)
 
 
 def _statement_at(tokens: list[Token], start: int, length: int) -> str:
@@ -1196,6 +1344,22 @@ def test_pairs_and_next_never_walk_an_api_result(path: Path) -> None:
     assert not problems, problems
 
 
+def _crew_row_walk(path: Path, tokens: list[Token], i: int) -> bool:
+    """M20-04: is the `pairs` at i the `pairs ( row )` of a schema 2
+    Crew.lua's pinned pvpSnapshot, as pinned?"""
+    if CREW_ROW_WALK not in _relaxed(path, "PAIRS") or _crew_pins(tokens).schema != 2:
+        return False
+    if _render(tokens[i : i + 4]) != "pairs ( row )":
+        return False
+    flow = _Flow(path, tokens)
+    fn = flow.function_at(i)
+    return (
+        fn is not None
+        and flow.labels.get(fn.head) == "pvpSnapshot"
+        and _render(tokens[fn.head - 1 : flow.block_end(fn.head) + 1]) == CREW_PINNED["pvpSnapshot"]
+    )
+
+
 def _crew_book_walk(path: Path, tokens: list[Token], i: int) -> bool:
     """Crew.lua: is the `pairs` at i a walk of one of the book's two tables,
     written out or through a local bound once and directly to one?"""
@@ -1259,7 +1423,7 @@ def _pairs_problems(path: Path, tokens: list[Token]) -> list[str]:
     for i, t in enumerate(tokens):
         if t.kind != "name" or t.text not in {"pairs", "next"} or _is_field(tokens, i):
             continue
-        if _crew_book_walk(path, tokens, i):
+        if _crew_book_walk(path, tokens, i) or _crew_row_walk(path, tokens, i):
             continue
         arg, close = tokens[i + 2], tokens[i + 3]
         if tokens[i + 1].text != "(" or arg.kind != "name" or close.text != ")":
@@ -4740,7 +4904,8 @@ class _SectionScan:
             # The pinned probe handler: its `name` is the loaded addon's.
             flow = self.flows[ref.file]
             head = ref.head
-            return _render(flow.tokens[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
+            pinned = _crew_pins(flow.tokens).probe
+            return _render(flow.tokens[head - 1 : flow.block_end(head) + 1]) == pinned
         if ref.function == CREW_COMMAND and CREW_COMMAND in allowed:
             return ref.given or ref.api in {"time", "date"}
         return GATED in allowed and _crew_gated(self.flows[ref.file], ref.head)
@@ -6932,11 +7097,13 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
     if not shape:
         return False
     fn = flow.function_at(k)
+    pins = _crew_pins(t)
     if fn is not None:
         # Fix round 4: inside, only the events §20.1 names for the book.
+        # M20-04: at schema 2 also the probe's two (CREW_PVP_EVENTS).
         return (
             (flow.labels.get(fn.head) == CREW_COMMAND or _crew_gated(flow, fn.head))
-            and t[k + 4].text in CREW_EVENTS
+            and t[k + 4].text in pins.events
             and _crew_handler_ok(flow, k + 6, gated=True)
         )
     # Fix round 3: at most one file-level call per event, each for an event
@@ -6960,7 +7127,7 @@ def _crew_on_call_ok(flow: _Flow, s: int, core_events: set[str]) -> bool:
     return (
         t[k + 4].text == CREW_PROBE_EVENT
         and t[k + 6].text == "crewLoaded"
-        and _render(t[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
+        and _render(t[head - 1 : flow.block_end(head) + 1]) == pins.probe
     )
 
 
@@ -7234,15 +7401,17 @@ def _crew_for_variable(flow: _Flow, n: str, p: int) -> bool:
     return False
 
 
-def _crew_problems(path: Path, text: str) -> list[str]:
+def _crew_problems(path: Path, text: str, pins: _CrewPins | None = None) -> list[str]:
     """Crew.lua's own rules, in exchange for its relaxations (see
     CREW_RELAXED): the gate, the secret test, the pinned helpers, the unit
     locals, what it may share with the rest of the addon, and who may turn
-    the book on. Nothing for any other file."""
+    the book on. Nothing for any other file. M20-04: graded with `pins`, or
+    else with the pins of the schema the source declares (`_crew_pins`)."""
     if path.name != CREW_FILE:
         return []
     t = tokenize(text)
     flow = _Flow(path, t)
+    pins = pins or _crew_pins(t)
     problems: list[str] = []
     calls = _crew_relaxed_calls(t)
 
@@ -7272,7 +7441,7 @@ def _crew_problems(path: Path, text: str) -> list[str]:
         problems += _crew_unit_problems(flow, u)
     # The pinned helpers: defined once as the pinned `local function`, and
     # otherwise only ever called.
-    for name, pinned in CREW_PINNED.items():
+    for name, pinned in pins.pinned.items():
         defs = [
             k
             for k in range(2, len(t))
@@ -7362,18 +7531,19 @@ def _crew_problems(path: Path, text: str) -> list[str]:
             key, after = inner[0].text, close + 1
         if key == "on" and t[after].text in {"=", ","} and not in_command(ts):
             problems.append(f"line {t[ts].line}: {CREW_DB}.on set outside the slash handler")
-    problems += _crew_parameter_problems(flow)
+    problems += _crew_parameter_problems(flow, pins)
     problems += _crew_book_key_problems(flow)
     # The slash handler's first statement, pinned (fix round 2, item 1).
     # Then the schema branch: one `print("<a plain string literal>")` (the
     # wording is the addon's) and `return`, nothing else (follow-up, #631).
-    n_head = len(CREW_COMMAND_HEAD.split(" "))
+    # M20-04: at schema 2 the migration's test sits between the two.
+    n_head = len(pins.command_head.split(" "))
     for head, label in flow.labels.items():
         if label != CREW_COMMAND:
             continue
         branch = t[head + n_head : head + n_head + 6]
         ok = (
-            _render(t[head : head + n_head]) == CREW_COMMAND_HEAD
+            _render(t[head : head + n_head]) == pins.command_head
             and [x.text for x in branch[:2]] == ["print", "("]
             and len(branch) == 6
             and branch[2].kind == "string"
@@ -7384,8 +7554,10 @@ def _crew_problems(path: Path, text: str) -> list[str]:
             problems.append(
                 f"{CREW_COMMAND} does not start with the pinned string and schema tests"
             )
-    problems += _crew_schema_problems(flow)
-    problems += _crew_write_problems(flow)
+    problems += _crew_schema_problems(flow, pins)
+    problems += _crew_write_problems(flow, pins)
+    if pins.schema == 2:
+        problems += _crew_schema_2_problems(flow)
     # ns.On, only where _crew_on_call_ok allows it (item 4).
     events = _core_events_on_disk()
     for k in range(len(t) - 3):
@@ -7615,33 +7787,43 @@ def _crew_book_key_problems(flow: _Flow) -> list[str]:
     return problems
 
 
-def _crew_schema_problems(flow: _Flow) -> list[str]:
-    """Follow-up (M19-10 security review): the file's schema constant is
-    exactly one file-level CREW_SCHEMA_DECL, never assigned again, declared
-    nowhere else (no local, parameter or loop variable of that name)."""
+def _crew_constant_problems(flow: _Flow, name: str, decl: str) -> list[str]:
+    """`name` is exactly one file-level `decl`, never assigned again,
+    declared nowhere else (no local, parameter or loop variable of that
+    name)."""
     t = flow.tokens
-    n = len(CREW_SCHEMA_DECL.split(" "))
-    at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == CREW_SCHEMA_DECL]
+    n = len(decl.split(" "))
+    at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == decl]
     problems = []
     if len(at) != 1 or flow.function_at(at[0]) is not None or not _ends_expression(t, at[0] + n):
-        problems.append(f"{CREW_SCHEMA_NAME} is not one file-level `{CREW_SCHEMA_DECL}`")
-    if len(flow.decls.get(CREW_SCHEMA_NAME, [])) != 1:
-        problems.append(f"{CREW_SCHEMA_NAME} is declared more than once")
-    if any(r.rstrip(".") == CREW_SCHEMA_NAME for r, _ in flow.rebound):
-        problems.append(f"{CREW_SCHEMA_NAME} is assigned again")
+        problems.append(f"{name} is not one file-level `{decl}`")
+    if len(flow.decls.get(name, [])) != 1:
+        problems.append(f"{name} is declared more than once")
+    if any(r.rstrip(".") == name for r, _ in flow.rebound):
+        problems.append(f"{name} is assigned again")
     return problems
 
 
-def _crew_write_problems(flow: _Flow) -> list[str]:
+def _crew_schema_problems(flow: _Flow, pins: _CrewPins) -> list[str]:
+    """Follow-up (M19-10 security review): the file's schema constant is
+    exactly one file-level `local CREW_SCHEMA = <n>` (CREW_SCHEMA_DECL at
+    schema 2), never assigned again, declared nowhere else."""
+    return _crew_constant_problems(flow, CREW_SCHEMA_NAME, pins.decl)
+
+
+def _crew_write_problems(flow: _Flow, pins: _CrewPins) -> list[str]:
     """Follow-up (M19-10 security review): every store into a table field
     or index (`x.f = ...`, `x[k] = ...`, the book's included) is made behind
     the gate (whose `crewOn` tests the schema), in `ns.CrewCommand` (whose
     pinned head refuses a book of another schema), in the pinned
     `crewLoaded`, or into a table built by a constructor in the same
     function. So no other function can write into a book, of any schema.
+    M20-04: at schema 2 also in the pinned migration (CREW_MIGRATE), which
+    stores the new number and an empty `matches` into a schema 1 book only.
     Globals and `ns` are already refused elsewhere."""
     t = flow.tokens
     problems = []
+    ungated = {pins.probe} | ({CREW_MIGRATE} if pins.schema == 2 else set())
     for root, ts in flow.rebound:
         if not root.endswith("."):
             continue
@@ -7651,7 +7833,7 @@ def _crew_write_problems(flow: _Flow) -> list[str]:
         if head is not None and (
             _crew_gated(flow, head)
             or flow.labels.get(head) == CREW_COMMAND
-            or _render(t[head - 1 : flow.block_end(head) + 1]) == CREW_PROBE
+            or _render(t[head - 1 : flow.block_end(head) + 1]) in ungated
         ):
             continue
         decl = flow.resolve(base, ts)
@@ -7674,7 +7856,286 @@ def _crew_write_problems(flow: _Flow) -> list[str]:
     return problems
 
 
-def _crew_parameter_problems(flow: _Flow) -> list[str]:
+def _crew_schema_2_problems(flow: _Flow) -> list[str]:
+    """M20-04 (docs/LAB_PLAN.md §21.1, §21.2): what a schema 2 Crew.lua keeps,
+    beside M19's rules and the pins of CREW_PINS_2:
+    - the limits: CREW_LIMITS, each one file-level constant;
+    - the migration: `crewMigrate` called only where its two pins call it
+      (in `crewLoaded`, for a book that is on, and in the slash handler's
+      head, for the word `on`);
+    - the probe: `probe.pvp` written only by the two pinned stores
+      (CREW_PVP_ENTRY_STORE, CREW_PVP_WINNER_STORE), each once, in a gated
+      function whose next statement asks `pvpInstance()`, the second only
+      under a condition holding `pvpWon()`; the book's `probe` reached
+      nowhere else but in `crewLoaded` and in a `type()` test;
+      `pvpSnapshot` used only in those two stores; the candidate calls
+      (CREW_PVP_CALLS) named only in the pinned helpers or in a `type()`
+      test;
+    - the near-full line: `warned` stored once, as `<book>.warned = <local>`
+      right before the line is printed, in a gated function, under an `if`
+      whose condition compares with NEAR_FULL_SECONDS and holds
+      NEAR_FULL_PERCENT, MAX_PLAYERS and MAX_MATCHES;
+    - the fields of M20-07 and M20-08 (CREW_LATER_FIELDS) never written;
+      `matches` written only empty, by the migration or in a new book's
+      constructor, and otherwise only counted or type()-tested; `schema`
+      stored only by the migration, or as `schema = CREW_SCHEMA` in a
+      constructor."""
+    t = flow.tokens
+    problems: list[str] = []
+    for name, decl in CREW_LIMITS.items():
+        problems += _crew_constant_problems(flow, name, decl)
+
+    pinned_texts = {**CREW_PINNED, "crewLoaded": CREW_PROBE}
+
+    def pinned_function(k: int, names: set[str]) -> bool:
+        """Is token k inside one of the named pinned functions, as pinned (a
+        function literal handed to `pcall(` stands for the one holding it)?"""
+        fn = flow.function_at(k)
+        while fn is not None and _pcall_literal(t, fn.head):
+            fn = flow.function_at(fn.head - 1)
+        name = flow.labels.get(fn.head) if fn is not None else None
+        if fn is None or name not in names:
+            return False
+        return _render(t[fn.head - 1 : flow.block_end(fn.head) + 1]) == pinned_texts[name]
+
+    def type_test(k: int) -> bool:
+        """Is the name at token k the whole argument of `type(...)`, possibly
+        with one `.field`?"""
+        if k < 2 or t[k - 1].text != "(" or t[k - 2].text != "type":
+            return False
+        close = flow.pair.get(k - 1)
+        return close == k + 1 or (close == k + 3 and t[k + 1].text == ".")
+
+    head_end: dict[int, int] = {
+        h: h + len(CREW_COMMAND_HEAD.split(" "))
+        for h, lab in flow.labels.items()
+        if lab == CREW_COMMAND
+    }
+
+    def in_head(k: int) -> bool:
+        return any(h <= k < e for h, e in head_end.items())
+
+    # The migration's callers.
+    for k, x in enumerate(t):
+        if x.kind != "name" or x.text != "crewMigrate" or _is_field(t, k):
+            continue
+        if t[k - 1].text == "function" and t[k - 2].text == "local":
+            continue
+        if not (pinned_function(k, {"crewLoaded"}) or in_head(k)):
+            problems.append(f"line {x.line}: crewMigrate used outside its two pinned calls")
+
+    # The probe's two stores, and the book's `probe` reached nowhere else.
+    stores = {"entry": CREW_PVP_ENTRY_STORE, "winner": CREW_PVP_WINNER_STORE}
+    at: dict[str, list[int]] = {}
+    for tag, text in stores.items():
+        n = len(text.split(" "))
+        at[tag] = [
+            k
+            for k in range(len(t) - n + 1)
+            if _render(t[k : k + n]) == text
+            and not _is_field(t, k)
+            and flow.statement_level(k)
+            and _ends_expression(t, k + n)
+        ]
+        if len(at[tag]) != 1:
+            problems.append(f"the {tag} store of probe.pvp is not exactly one `{text}`")
+            continue
+        k = at[tag][0]
+        fn = flow.function_at(k)
+        while fn is not None and _pcall_literal(t, fn.head):
+            fn = flow.function_at(fn.head - 1)
+        if fn is None or not _crew_gated(flow, fn.head):
+            problems.append(
+                f"line {t[k].line}: the {tag} store of probe.pvp is not behind the gate"
+            )
+            continue
+        asks = fn.start + _CREW_GATE_LEN
+        if _render(t[asks : asks + 6]) != "if not pvpInstance ( ) then":
+            problems.append(
+                f"line {t[k].line}: the {tag} store's function does not ask pvpInstance() first"
+            )
+        if tag == "winner" and not any(
+            b.kind in {"if", "elseif"}
+            and b.cond is not None
+            and b.start <= k < b.stop
+            and "pvpWon ( )" in _render(t[b.cond[0] : b.cond[1]])
+            for b in flow.blocks
+        ):
+            problems.append(f"line {t[k].line}: the winner store is not under a pvpWon() test")
+    starts = {k for ks in at.values() for k in ks}
+    for k in range(len(t) - 2):
+        if t[k].text != CREW_DB or _is_field(t, k) or t[k + 1].text != ".":
+            continue
+        if t[k + 2].text != "probe":
+            continue
+        if k in starts or pinned_function(k, {"crewLoaded"}) or type_test(k):
+            continue
+        problems.append(f"line {t[k].line}: {CREW_DB}.probe reached outside its pinned uses")
+    snapshot_uses = {k + stores[tag].split(" ").index("pvpSnapshot") for tag in at for k in at[tag]}
+    for k, x in enumerate(t):
+        if x.kind != "name" or x.text != "pvpSnapshot" or _is_field(t, k):
+            continue
+        if t[k - 1].text == "function" and t[k - 2].text == "local":
+            continue
+        if k not in snapshot_uses:
+            problems.append(f"line {x.line}: pvpSnapshot used outside the two probe.pvp stores")
+
+    # The candidate calls: in the pinned helpers, or presence tests.
+    # The two event counts pvpSnapshot stores: file-level `local X = 0`,
+    # and otherwise only `X = 0` or `X = X + 1`, so they hold nothing else.
+    for name in sorted(CREW_PVP_COUNTERS):
+        decl = f"local {name} = 0"
+        n = len(decl.split(" "))
+        at = [k for k in range(len(t) - n + 1) if _render(t[k : k + n]) == decl]
+        if (
+            len(at) != 1
+            or flow.function_at(at[0]) is not None
+            or not _ends_expression(t, at[0] + n)
+            or len(flow.decls.get(name, [])) != 1
+        ):
+            problems.append(f"{name} is not one file-level `{decl}`")
+    for root, ts in flow.rebound:
+        if root not in CREW_PVP_COUNTERS:
+            continue
+        value = _render(t[ts + 2 : ts + 5])
+        if (
+            t[ts + 1].text != "="
+            or t[ts - 1].text == ","
+            or (
+                not (t[ts + 2].text == "0" and _ends_expression(t, ts + 3))
+                and not (value == f"{root} + 1" and _ends_expression(t, ts + 5))
+            )
+        ):
+            problems.append(f"line {t[ts].line}: {root} set other than to 0 or itself + 1")
+    helpers = {"pvpInstance", "pvpWon", "pvpSnapshot"}
+    for name in sorted(n for n in flow.decls if _crew_scoreboard_name(n)):
+        problems.append(f"{name} declared as a local")
+    for k, x in enumerate(t):
+        if x.kind == "string" and _crew_scoreboard_name(x.text):
+            problems.append(f"line {x.line}: a scoreboard call named in a string")
+        if x.kind != "name" or not _crew_scoreboard_name(x.text) or _is_field(t, k):
+            continue
+        if flow.resolve(x.text, k) is None and not (pinned_function(k, helpers) or type_test(k)):
+            problems.append(f"line {x.line}: {x.text} used outside the pinned probe helpers")
+
+    # The near-full line and `warned`.
+    warned = [
+        k
+        for k in range(1, len(t) - 2)
+        if t[k].text == "warned" and t[k - 1].text == "." and t[k + 1].text in {"=", ","}
+    ]
+    if len(warned) != 1:
+        problems.append(f"warned is stored {len(warned)} times, not once")
+    for w in warned:
+        k = w - 2
+        shape = (
+            t[k].text == CREW_DB
+            and not _is_field(t, k)
+            and t[w + 1].text == "="
+            and t[w + 2].kind == "name"
+            and t[w + 3].text in {"say", "print"}
+            and t[w + 4].text == "("
+            and flow.statement_level(k)
+        )
+        fn = flow.function_at(w)
+        if not shape or fn is None or not _crew_gated(flow, fn.head):
+            problems.append(
+                f"line {t[w].line}: warned is not stored as `{CREW_DB}.warned = <local>` "
+                "right before the line is printed, behind the gate"
+            )
+            continue
+        conds = [
+            b
+            for b in flow.blocks
+            if b.kind in {"if", "elseif"} and b.cond is not None and b.start <= w < b.stop
+        ]
+        cond = max(conds, key=lambda b: b.start).cond if conds else None
+        words = [x.text for x in t[cond[0] : cond[1]]] if cond else []
+        compared = any(
+            words[i] == "NEAR_FULL_SECONDS"
+            and (
+                (i > 0 and words[i - 1] in {">=", ">", "<", "<="})
+                or (i + 1 < len(words) and words[i + 1] in {">=", ">", "<", "<="})
+            )
+            for i in range(len(words))
+        )
+        rendered = _render(t[cond[0] : cond[1]]) if cond else ""
+        shares = all(
+            f"{limit} * NEAR_FULL_PERCENT" in rendered for limit in ("MAX_PLAYERS", "MAX_MATCHES")
+        )
+        if not compared or not shares:
+            problems.append(
+                f"line {t[w].line}: the near-full line is not under a test of the seven days "
+                "and of 90% of either limit"
+            )
+
+    # Fix round 2 (code review): the book assigned whole only from a table
+    # constructor written in place, so every key a new book holds is one the
+    # constructor-key rules below see (no local book, call or expression).
+    for k in range(len(t) - 2):
+        if t[k].text != CREW_DB or _is_field(t, k) or t[k + 1].text != "=":
+            continue
+        if (
+            t[k - 1].text == ","
+            or t[k + 2].text != "{"
+            or not _ends_expression(t, flow.pair[k + 2] + 1)
+        ):
+            problems.append(f"line {t[k].line}: {CREW_DB} assigned other than from a constructor")
+    # Fields: the later ones never written; `matches`, `warned`, `schema`.
+    for k, x in enumerate(t):
+        if x.kind == "string" and t[k - 1].text == "[" and t[k + 1].text == "]":
+            if x.text in CREW_LATER_FIELDS | {"matches", "warned", "schema", "pvp"}:
+                problems.append(f"line {x.line}: {x.text!r} as a bracket key")
+            continue
+        if x.kind != "name" or k + 4 >= len(t):
+            continue  # the last tokens of a file are `... end`
+        field = t[k - 1].text == "."
+        key = t[k - 1].text in {"{", ","} and t[k + 1].text == "=" and t[k + 2].text != "="
+        if key and flow.opener[k] is not None and t[flow.opener[k]].text != "{":
+            key = False  # a multiple assignment's name, not a constructor key
+        stored = field and t[k + 1].text in {"=", ","} and flow.statement_level(k)
+        j = k + 1  # a store into the field's own table counts too (`e.allied.x = 1`)
+        while j < len(t) and t[j].text in {".", "["}:
+            j = flow.pair[j] + 1 if t[j].text == "[" else j + 2
+        into = field and j < len(t) and t[j].text in {"=", ","} and flow.statement_level(k)
+        if x.text in CREW_LATER_FIELDS and (into or key):
+            problems.append(f"line {x.line}: {x.text} is written before M20-07 and M20-08")
+        elif x.text == "matches" and field:
+            ok = (
+                (pinned_function(k, {"crewMigrate"}))
+                or (k >= 3 and t[k - 3].text == "#" and t[k - 2].text == CREW_DB)
+                or (t[k - 2].text == CREW_DB and type_test(k - 2))
+            )
+            if not ok:
+                problems.append(f"line {x.line}: matches used other than counted or created empty")
+        elif x.text == "matches" and key:
+            if _render(t[k + 2 : k + 4]) != "{ }" or t[k + 4].text not in {",", "}"}:
+                problems.append(f"line {x.line}: matches created other than empty")
+        elif x.text == "warned" and key:
+            problems.append(f"line {x.line}: warned set in a constructor")
+        elif x.text == "pvp" and key:
+            # Fix round 1 (code review): `probe.pvp` only by the two stores.
+            problems.append(f"line {x.line}: pvp set in a constructor")
+        elif (
+            x.text == "probe"
+            and key
+            and _render(t[k + 2 : k + 7]) != "{ loads = 1 }"
+            and _render(t[k + 2 : k + 11]) != "{ loads = 1 , lost = true }"
+        ):
+            # A new book's probe, or crewLoaded's, holds only its count.
+            problems.append(f"line {x.line}: probe set in a constructor other than its count")
+        elif x.text == "schema" and stored and not pinned_function(k, {"crewMigrate"}):
+            problems.append(f"line {x.line}: schema stored outside the migration")
+        elif (
+            x.text == "schema"
+            and key
+            and (t[k + 2].text != CREW_SCHEMA_NAME or t[k + 3].text not in {",", "}"})
+        ):
+            problems.append(f"line {x.line}: schema set other than to {CREW_SCHEMA_NAME}")
+    return problems
+
+
+def _crew_parameter_problems(flow: _Flow, pins: _CrewPins) -> list[str]:
     """No function parameter in Crew.lua is indexed, called, assigned,
     stored in a table or a local, returned, or handed to `pcall`, `xpcall` or
     `ns.Call`: a table or function from another file (or the client) can
@@ -7683,7 +8144,7 @@ def _crew_parameter_problems(flow: _Flow) -> list[str]:
     t = flow.tokens
     problems: list[str] = []
     for head, fn in flow.functions.items():
-        if flow.labels.get(head) in CREW_PINNED:
+        if flow.labels.get(head) in pins.pinned:
             continue
         opening = next(p for p in range(head, len(t)) if t[p].text == "(")
         params = [
@@ -8235,6 +8696,7 @@ _CREW_INSTALLED_SKIP = frozenset(
         "test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails",
         "test_m19_01_the_installed_run_drops_names_only_a_real_crew_lua_uses",
         "test_m19_01_the_installed_run_keeps_a_name_nothing_uses",
+        "test_m20_04_the_schema_1_source_passes_the_whole_grader_when_installed",
     }
 )
 
@@ -8251,15 +8713,13 @@ def test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed(
 def test_m19_01_an_installed_crew_lua_that_breaks_a_whole_addon_rule_fails() -> None:
     """Control for the test above: a Crew.lua storing an unchecked client
     value fails the installed run."""
-    bad = _crew_edited(
-        [
-            (
-                f"    {CREW_DB}.probe = probe\n",
-                f"    {CREW_DB}.probe = probe\n    {CREW_DB}.raw = GetInstanceInfo()\n",
-            )
-        ]
-    )
-    assert _crew_installed_failures(bad)
+    # M20-04: the store sits in the gated readGroup (the schema 2 probe
+    # handler no longer holds `<book>.probe = probe`), so only the
+    # whole-addon check refuses it.
+    bad = _crew_edited([(_CREW_READ, f"{_CREW_READ}    {CREW_DB}.raw = GetInstanceInfo()\n")])
+    assert _crew_problems(_CREW_PATH, bad) == []
+    failed = _crew_installed_failures(bad)
+    assert any(f.startswith("test_every_stored_value_is_type_checked") for f in failed), failed
 
 
 def _pretend_tree(tmp: str, crew_extra: str, name: str) -> Path:
@@ -8406,3 +8866,207 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
             if bool(rules[rule.removesuffix("_CONTROL")](text)) == control:
                 missed.append((rule, line.strip()))
     assert not missed, missed
+
+
+# M20-04: schema 2 (docs/LAB_PLAN.md §21.1, §21.2) ------------------------------
+#
+# Source scans; nothing here runs Lua (L3). `_CREW_SOURCE` is now a constructed
+# schema 2 Crew.lua (built from `_CREW_SOURCE_1`, M19-01's, by the edits in
+# _crew_constructed.py), and every M19-01 test above grades it. The real
+# Crew.lua is at schema 1 until M20-05: it declares `local CREW_SCHEMA = 1`, so
+# `_crew_pins` grades it with CREW_PINS_1, M19's pins unchanged, and the tests
+# below show those still refuse what they refused. TestM2005Activation holds
+# the real file to schema 2 behind a strict xfail marker that M20-05 deletes.
+
+
+def _crew_schema_2_edited(edits: list[tuple[str, str]], base: str = _CREW_SOURCE) -> str:
+    text = base
+    for found, replacement in edits:
+        assert text.count(found) >= 1, found
+        text = text.replace(found, replacement, 1)
+    return text
+
+
+def test_m20_04_the_constructed_source_is_schema_2_and_passes() -> None:
+    """Control: the constructed schema 2 source is graded with CREW_PINS_2
+    and passes Crew.lua's rules and every relaxed rule (the whole-grader run
+    is test_m19_01_the_constructed_crew_lua_passes_the_whole_grader_when_installed)."""
+    assert _crew_pins(tokenize(_CREW_SOURCE)) is CREW_PINS_2
+    assert _crew_problems(_CREW_PATH, _CREW_SOURCE, CREW_PINS_2) == []
+    failing = {rule: bad for rule, bad in _crew_rules(_CREW_PATH, _CREW_SOURCE).items() if bad}
+    assert not failing, failing
+
+
+def test_m20_04_each_schema_2_rule_refuses_its_edit_for_its_own_reason() -> None:
+    """Constructed: each edit in _CREW_SCHEMA_2_CASES breaks one rule and is
+    refused with that rule's problem."""
+    missed = {}
+    for tag, (edits, reason) in sorted(_CREW_SCHEMA_2_CASES.items()):
+        problems = _crew_problems(_CREW_PATH, _crew_schema_2_edited(edits), CREW_PINS_2)
+        if not any(reason in p for p in problems):
+            missed[tag] = problems[:4]
+    assert not missed, missed
+
+
+def test_m20_04_schema_2_controls_pass() -> None:
+    """Controls: what the rules leave alone (a type() test of `matches` or
+    of the probe block, a later field read but not written, the winner store
+    inside a pcall literal) passes Crew.lua's rules and the M11-37 scan."""
+    failing = {}
+    for tag, edits in sorted(_CREW_SCHEMA_2_CONTROLS.items()):
+        text = _crew_schema_2_edited(edits)
+        bad = _crew_problems(_CREW_PATH, text) + _crew_section_failures(_CREW_PATH, text)
+        if bad:
+            failing[tag] = bad
+    assert not failing, failing
+
+
+def test_m20_04_the_schema_1_source_keeps_m19_s_rules() -> None:
+    """Control (the real file's state until M20-05): M19-01's constructed
+    schema 1 source is graded with CREW_PINS_1 and passes, as before."""
+    assert _crew_pins(tokenize(_CREW_SOURCE_1)) is CREW_PINS_1
+    assert _crew_problems(_CREW_PATH, _CREW_SOURCE_1) == []
+    failing = {rule: bad for rule, bad in _crew_rules(_CREW_PATH, _CREW_SOURCE_1).items() if bad}
+    assert not failing, failing
+
+
+def test_m20_04_m19_s_edits_still_fail_at_schema_1() -> None:
+    """Every M19-01 edit case, in its schema 1 form where the text differs
+    (_CREW_GATE_CASES_1), is still refused on the schema 1 source: M19's
+    checks are unchanged for what they covered."""
+    cases = {**_CREW_GATE_CASES, **_CREW_GATE_CASES_1}
+    assert set(cases) == set(_CREW_GATE_CASES)
+    missed = [
+        tag
+        for tag, edits in sorted(cases.items())
+        if not _crew_problems(_CREW_PATH, _crew_schema_2_edited(edits, _CREW_SOURCE_1))
+    ]
+    assert not missed, missed
+
+
+def test_m20_04_the_schema_1_pins_refuse_a_schema_2_book_s_forms() -> None:
+    """Constructed: what schema 2 adds is refused while a source declares
+    schema 1 (no migration call in the probe handler or the slash handler's
+    head, no scoreboard event, no `arena` comparand)."""
+    probe = _CONSTRUCTED._CREW_PROBE_SOURCE_1
+    cases = {
+        "the schema 2 probe handler": [(probe, _CONSTRUCTED._CREW_PROBE_SOURCE_2)],
+        "the schema 2 head": [
+            (
+                _CONSTRUCTED._CREW_HEAD_STRING_TEST,
+                _CONSTRUCTED._CREW_HEAD_STRING_TEST + _CONSTRUCTED._CREW_HEAD_MIGRATE,
+            ),
+            (
+                "local function nameAbsent()\n",
+                CREW_MIGRATE_SOURCE + "\nlocal function nameAbsent()\n",
+            ),
+        ],
+        "a scoreboard event": [
+            (
+                '    ns.On("GROUP_ROSTER_UPDATE", onRoster)\nend\n',
+                '    ns.On("PVP_MATCH_COMPLETE", onRoster)\nend\n',
+            )
+        ],
+    }
+    missed = [
+        tag
+        for tag, edits in cases.items()
+        if not _crew_problems(_CREW_PATH, _crew_schema_2_edited(edits, _CREW_SOURCE_1))
+    ]
+    arena = _CREW_SOURCE_1.replace(_CREW_READ, _CREW_READ + '    local x = kind == "arena"\n')
+    if not _unit_argument_problems(_CREW_PATH, tokenize(arena)):
+        missed.append("an arena comparand")
+    assert not missed, missed
+
+
+CREW_MIGRATE_SOURCE: str = _CONSTRUCTED._CREW_MIGRATE_SOURCE
+
+
+def test_m20_04_the_schema_is_read_from_the_declaration() -> None:
+    """`_crew_pins`: schema 1 pins only for `local CREW_SCHEMA = 1` without
+    `= 2`; every other source, one declaring both or neither included, gets
+    the schema 2 pins."""
+    one = tokenize("local CREW_SCHEMA = 1\n")
+    both = tokenize("local CREW_SCHEMA = 1\nlocal CREW_SCHEMA = 2\n")
+    assert _crew_pins(one) is CREW_PINS_1
+    assert _crew_pins(both) is CREW_PINS_2
+    assert _crew_pins(tokenize("local CREW_SCHEMA = 3\n")) is CREW_PINS_2
+    assert _crew_pins([]) is CREW_PINS_2
+    assert CREW_PINS_1.pinned == CREW_PINNED_1 and CREW_PINS_1.events == CREW_EVENTS_1
+    assert set(CREW_PINS_2.pinned) == set(CREW_PINNED_1) | {
+        "crewMigrate",
+        "pvpInstance",
+        "pvpWon",
+        "pvpSnapshot",
+    }
+
+
+def test_m20_04_arena_is_only_a_comparand_at_schema_2() -> None:
+    """Constructed: in a schema 2 Crew.lua "arena" may be compared with == or
+    ~=, nothing else; no unit call takes it, and no other file may use it."""
+    lines = {
+        '    local x = kind == "arena"\n': True,
+        '    local x = "arena" ~= kind\n': True,
+        '    local x = "arena"\n': False,
+        '    local x = UnitLevel("arena")\n': False,
+        '    local x = { "arena" }\n': False,
+    }
+    missed = []
+    for line, passes in lines.items():
+        text = _CREW_SOURCE.replace(_CREW_READ, _CREW_READ + line)
+        if bool(_unit_argument_problems(_CREW_PATH, tokenize(text))) == passes:
+            missed.append(line.strip())
+        if not _unit_argument_problems(Path("Core.lua"), tokenize(line)):
+            missed.append(f"Core.lua: {line.strip()}")
+    assert not missed, missed
+
+
+def test_m20_04_the_row_walk_is_only_the_pinned_one() -> None:
+    """Constructed: `pairs(row)` passes only inside the pinned pvpSnapshot of
+    a schema 2 Crew.lua; edited, in another function, at schema 1 or in
+    another file it is refused by the PAIRS rule."""
+    assert _pairs_problems(_CREW_PATH, tokenize(_CREW_SOURCE)) == []
+    walk = "            for field, value in pairs(row) do\n"
+    edited = _CREW_SOURCE.replace(walk, walk + "                print(field)\n")
+    elsewhere = _CREW_SOURCE.replace(
+        "local function pvpPass()\n",
+        "local function peek(row)\n    for k in pairs(row) do\n    end\nend\n\n"
+        "local function pvpPass()\n",
+    )
+    at_one = _CREW_SOURCE.replace("local CREW_SCHEMA = 2\n", "local CREW_SCHEMA = 1\n")
+    refused = {
+        "the snapshot edited": (_CREW_PATH, edited),
+        "another function": (_CREW_PATH, elsewhere),
+        "at schema 1": (_CREW_PATH, at_one),
+        "another file": (Path("Core.lua"), _CREW_SOURCE),
+    }
+    missed = [
+        tag for tag, (path, text) in refused.items() if not _pairs_problems(path, tokenize(text))
+    ]
+    assert not missed, missed
+
+
+def test_m20_04_the_schema_1_source_passes_the_whole_grader_when_installed() -> None:
+    """Control: M19-01's schema 1 source, installed as the real file is until
+    M20-05, still passes every test in this file (the schema 1 pins are
+    whole, not only Crew.lua's own rules)."""
+    failed = _crew_installed_failures(_CREW_SOURCE_1)
+    assert not failed, failed
+
+
+class TestM2005Activation:
+    """M20-05 activates this by deleting the marker line only (AGENTS.md):
+    then the real Crew.lua must declare `local CREW_SCHEMA = 2` and keep every
+    schema 2 rule, and the module-level tests grade it with CREW_PINS_2. It is
+    a method, not a module-level test, because the review probes under
+    lab/core/tests/review/ and the installed run call every module-level
+    `test_` function bare, without its marker, and would read the expected
+    failure as a real one."""
+
+    @pytest.mark.xfail(strict=True, reason="M20-05 not implemented")
+    def test_the_real_crew_lua_keeps_the_schema_2_rules(self) -> None:
+        crew = ADDON / CREW_FILE
+        text = crew.read_text(encoding="utf-8")
+        assert _crew_pins(tokenize(text)) is CREW_PINS_2
+        bad = _crew_problems(crew, text, CREW_PINS_2)
+        assert not bad, bad

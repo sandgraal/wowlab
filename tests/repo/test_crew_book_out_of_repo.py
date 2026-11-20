@@ -111,6 +111,8 @@ CONSTRUCTED_TEST_FILES = frozenset(
         "lab/core/tests/parser/_crew_build.py",
         "lab/core/tests/parser/test_crewbook_constructed.py",
         "lab/core/tests/test_cli_crew.py",
+        # M20-04 review: the probe that writes probe.pvp through a constructor.
+        "lab/core/tests/review/test_m20_04_probe_pvp_written_through_the_book_constructor.py",
     }
 )
 FIXTURES = "lab/core/tests/fixtures/"
@@ -147,6 +149,27 @@ FIELD_KEYS = frozenset(
         "where_id",
         "rating",
         "note",
+        # Schema 2 (§21.2; M20-04): the per-player counters and fields, the
+        # match list and its entries' fields, the once-per-match marker, the
+        # near-full time and the scoreboard probe's block.
+        "allied",
+        "faced",
+        "allied_won",
+        "faced_won",
+        "pvp_last",
+        "pvp_map",
+        "pvp_side",
+        "matches",
+        "at",
+        "map",
+        "map_id",
+        "kind",
+        "won",
+        "team",
+        "foes",
+        "matched",
+        "warned",
+        "pvp",
     }
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.

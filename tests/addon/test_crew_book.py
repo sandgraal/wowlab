@@ -157,7 +157,8 @@ def test_crew_book_source_scan_the_book_is_created_and_turned_on_only_by_crew_on
     assert len(turned_on) == 1 and on_start < turned_on[0] < on_end
     assert "local " + _text(flow, "crewOn") == g.CREW_ON
     head, end = _function(flow, "crewLoaded")
-    assert g._render(t[head - 1 : end + 1]) == g.CREW_PROBE
+    # M20-04: the probe handler pinned for the schema the file declares.
+    assert g._render(t[head - 1 : end + 1]) == g._crew_pins(t).probe
 
 
 # --- The note rule (§20.1 "Limits") -------------------------------------------
@@ -207,7 +208,9 @@ def test_crew_book_source_scan_the_drop_order_is_named() -> None:
     after makeRoom said yes."""
     flow = _flow()
     text = CREW.read_text(encoding="utf-8")
-    assert re.search(r"^local MAX_PLAYERS = 5000$", text, re.MULTILINE)
+    # M20-04: 20,000 at schema 2 (§21.2), which the grader pins (CREW_LIMITS).
+    limit = 5000 if g._crew_pins(flow.tokens) is g.CREW_PINS_1 else 20000
+    assert re.search(rf"^local MAX_PLAYERS = {limit}$", text, re.MULTILINE)
     room = _text(flow, "makeRoom")
     pinned = [
         f"for key , entry in pairs ( {BOOK} . players ) do kept = kept + 1 "
@@ -402,7 +405,14 @@ def test_crew_book_source_scan_the_instance_is_secret_tested_first() -> None:
     secret, so nothing from it is compared or kept before the test."""
     flow = _flow()
     t = flow.tokens
-    calls = [k for k, x in enumerate(t) if x.text == "GetInstanceInfo" and t[k + 1].text == "("]
+    # M20-04: the grader pins the scoreboard probe's own call (pvpInstance).
+    calls = [
+        k
+        for k, x in enumerate(t)
+        if x.text == "GetInstanceInfo"
+        and t[k + 1].text == "("
+        and flow.label_at(k) != "pvpInstance"
+    ]
     assert len(calls) == 1
     k = calls[0]
     assert g._render(t[k - 17 : k + 3]) == (
