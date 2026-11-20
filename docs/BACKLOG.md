@@ -3713,7 +3713,7 @@ what is never read; the two are to be checked against each other.
 
 ---
 
-## [ ] M20-09 — Matches at the desk
+## [x] M20-09 — Matches at the desk
 **Size:** M · **Depends on:** M20-02, M20-03 · **Sources:** `docs/LAB_PLAN.md` §21.3
 
 The sync copies `matches` into the database once each; `crew matches [NAME-REALM]`; `crew list --faced`, `--allied`, `--map`, `--since` and the two sorts; `crew show` with the record with and against; `crew forget` clears a player from every match; the Crew tab shows the same, and a database-only rating or note from the tab goes through the existing token check and Confirm step with the row's `--expect` pin, covered by the parity tests.
