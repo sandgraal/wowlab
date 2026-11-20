@@ -21,7 +21,7 @@ The four outcomes §20.2 states:
   every other entry is read.
 
 Schema 1 (§20.1) and schema 2 (§21.2, M20-03) are read. Schema 2 adds the
-per-player match counters (`CrewPlayer.pvp`), `matches` (an entry that does
+per-player match counters (`CrewBook.pvp`, by key), `matches` (an entry that does
 not fit is listed in `matches_unread` with its place and a reason, the rest
 read), `matched`, `warned`, and the scoreboard probe's `probe.pvp`, which is
 given only as fixed names and values (`ProbeItem`) and never refuses the
@@ -140,11 +140,6 @@ class CrewPlayer(_Model):
     in_current_group: bool = False
     # Keys of the entry this reader does not know, kept by name (L4 spirit).
     other_keys: list[str] = Field(default_factory=list)
-    # A schema 2 entry's match counters (§21.2); None for a schema 1 book,
-    # whose entries keep any such key in `other_keys`, and for an entry with
-    # none of them. Not part of `--json` until the desk shows them: wowlab's
-    # crew database, not the book, holds the totals (§21.3, rule 2).
-    pvp: CrewPvp | None = Field(default=None, exclude=True)
 
 
 class UnreadEntry(_Model):
@@ -214,6 +209,10 @@ class CrewBook(_Model):
     players: list[CrewPlayer] = Field(default_factory=list)
     unread: list[UnreadEntry] = Field(default_factory=list)
     # Schema 2 only (§21.2); empty, None or false for a schema 1 book.
+    # The match counters of each read player that holds any, by stored key
+    # (kept beside `players`, so the record of §20.1 and its `--json` stay
+    # as they were; a schema 1 entry keeps such a key in `other_keys`).
+    pvp: dict[str, CrewPvp] = Field(default_factory=dict)
     matches: list[CrewMatch] = Field(default_factory=list)
     matches_unread: list[UnreadMatch] = Field(default_factory=list)
     warned: int | None = None  # time() of the last nearly-full line
@@ -307,10 +306,15 @@ _PVP_FIELDS = frozenset({*_PVP_NUMBERS, "pvp_map", "pvp_side"})
 
 
 def _player(
-    key: str, value: object, current: frozenset[str], schema: int = 1
+    key: str,
+    value: object,
+    current: frozenset[str],
+    schema: int = 1,
+    counters: dict[str, CrewPvp] | None = None,
 ) -> CrewPlayer | UnreadEntry:
-    """One entry of `players`, or why it cannot be read. At schema 1 the
-    fields of §21.2 are keys this reader does not know, as they were."""
+    """One entry of `players`, or why it cannot be read; a schema 2 entry's
+    match counters go into `counters` by key. At schema 1 the fields of
+    §21.2 are keys this reader does not know, as they were."""
     if not key:
         return UnreadEntry(key=key, reason="the key is empty")
     if not isinstance(value, dict):
@@ -344,8 +348,8 @@ def _player(
         else:
             other.append(_key_text(name))
     fields["other_keys"] = other
-    if pvp:
-        fields["pvp"] = CrewPvp(**pvp)
+    if pvp and counters is not None:
+        counters[key] = CrewPvp(**pvp)
     return CrewPlayer(**fields)
 
 
@@ -421,11 +425,12 @@ def load_book(value: object) -> CrewBook:
     current = frozenset(k for k, v in _keyed(value.get("current"), "current") if isinstance(k, str))
     players: list[CrewPlayer] = []
     unread: list[UnreadEntry] = []
+    counters: dict[str, CrewPvp] = {}
     for key, entry in _keyed(value.get("players"), "players"):
         if not isinstance(key, str):
             unread.append(UnreadEntry(key=_key_text(key), reason="the key is not a name"))
             continue
-        read = _player(key, entry, current, schema)
+        read = _player(key, entry, current, schema, counters)
         if isinstance(read, CrewPlayer):
             players.append(read)
         else:
@@ -433,6 +438,7 @@ def load_book(value: object) -> CrewBook:
     more: dict[str, Any] = {}
     if schema >= 2:
         more = _schema_2(value, probe if isinstance(probe, dict) else None)
+        more["pvp"] = counters
     return CrewBook(
         state="on" if on is True else "off",
         schema_number=schema,
