@@ -111,6 +111,8 @@ CONSTRUCTED_TEST_FILES = frozenset(
         "lab/core/tests/parser/_crew_build.py",
         "lab/core/tests/parser/test_crewbook_constructed.py",
         "lab/core/tests/test_cli_crew.py",
+        # M20-03: schema 2's constructed books and the tests that read and edit them.
+        "lab/core/tests/parser/test_crewbook_schema_2_constructed.py",
         # M20-04 review: the probe that writes probe.pvp through a constructor.
         "lab/core/tests/review/test_m20_04_probe_pvp_written_through_the_book_constructor.py",
     }
@@ -170,6 +172,29 @@ FIELD_KEYS = frozenset(
         "matched",
         "warned",
         "pvp",
+        # M20-03: one run of the scoreboard probe (`probe.pvp`), as M20-04
+        # pinned `pvpSnapshot`: its own fields, and the candidate calls it
+        # records as present or not (the game's names, nobody's data).
+        "calls",
+        "positions",
+        "fields",
+        "requested",
+        "score_events",
+        "complete_events",
+        "rows",
+        "name_string",
+        "name_secret",
+        "name_dash",
+        "first_side",
+        "own_side",
+        "winner",
+        "GetScoreInfo",
+        "GetNumBattlefieldScores",
+        "GetBattlefieldScore",
+        "RequestBattlefieldScoreData",
+        "GetBattlefieldWinner",
+        "GetBattlefieldArenaFaction",
+        "IsActiveBattlefieldArena",
     }
 )
 # A player key as the client writes it: name, hyphen, realm, both capitalised.

@@ -8,7 +8,7 @@ account `WowLab.lua` of the captured install `fixtures/macos-70888/` (real
 bytes, holding `WowLabDB` only) with one constructed `WowLabCrewDB`
 assignment appended in the client's own style: bracketed string keys, one
 entry per line, `{` and `}` on lines of their own, the file's CRLF line
-breaks. The record's shape is §20.1's.
+breaks. The record's shape is §20.1's; at schema 2 (M20-03), §21.2's.
 
 Every player key used anywhere is one of the four invented keys below
 (the fixed list of the repository test of M19-04). Hostile and generated
@@ -20,11 +20,14 @@ Nothing here is ever written into the tree: the tests write to `tmp_path`.
 from __future__ import annotations
 
 import shutil
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from wowlab_core import crewbook
+import pytest
+
+from wowlab_core import crewbook, luadata
 
 assert crewbook.CREW_VARIABLE == "WowLabCrewDB"
 
@@ -78,7 +81,14 @@ def _value(value: Any) -> bytes:
         return _q(value)
     if isinstance(value, Mapping):
         return _table(value)
+    if isinstance(value, (list, tuple)):
+        return _list(value)
     raise TypeError(type(value))
+
+
+def lua_value(value: Any) -> bytes:
+    """`value` written as the builder writes any value of a book."""
+    return _value(value)
 
 
 def _table(entries: Mapping[Any, Any]) -> bytes:
@@ -87,6 +97,16 @@ def _table(entries: Mapping[Any, Any]) -> bytes:
     for key, value in entries.items():
         k = _q(key) if isinstance(key, str) else str(key).encode("ascii")
         lines.append(b"".join((b"[", k, b"] = ", _value(value), b",")))
+    lines.append(b"}")
+    return NL.join(lines)
+
+
+def _list(values: Sequence[Any]) -> bytes:
+    """A list as the client writes its array part (LAB_FORMATS §4.2): one
+    positional entry per line, each with its `-- [n]` comment."""
+    lines = [b"{"]
+    for n, value in enumerate(values, 1):
+        lines.append(_value(value) + b", -- [" + str(n).encode("ascii") + b"]")
     lines.append(b"}")
     return NL.join(lines)
 
@@ -117,16 +137,96 @@ def player(
     return entry
 
 
+# The schema `book` writes when none is given, and the one `account_file`
+# and `install` bring a schema 1 book to (M20-03): every M19 test of the
+# reader, the writers and the commands runs on a schema 1 and a schema 2
+# book through the `book_schema` fixture below.
+SCHEMA = 1
+
+# Schema 2's fields (docs/LAB_PLAN.md §21.2), invented values.
+MAP = "Invented Test Valley"
+MAP_ID = 489
+T2 = 1_795_650_000  # a match's time, after T1
+SIDES_SHOWN = 4  # the keys a default match names, at most
+
+
+@pytest.fixture(autouse=True, params=[1, 2], ids=["schema_1", "schema_2"])
+def book_schema(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Run the test once per saved-file schema (M20-03): every book built or
+    appended while it runs is at this schema. Imported by name into each
+    test module of the crew book's M19 tests."""
+    schema = int(request.param)
+    monkeypatch.setattr(sys.modules[__name__], "SCHEMA", schema)
+    return schema
+
+
+def match(
+    team: Sequence[str] = (),
+    foes: Sequence[str] = (),
+    *,
+    at: int = T2,
+    won: bool | None = True,
+    **more: Any,
+) -> dict[str, Any]:
+    """One entry of a schema 2 book's `matches` (§21.2); `won=None` leaves
+    it out (the client gave no winner)."""
+    entry: dict[str, Any] = {"at": at, "map": MAP, "map_id": MAP_ID, "kind": "bg"}
+    if won is not None:
+        entry["won"] = won
+    entry["team"] = list(team)
+    entry["foes"] = list(foes)
+    entry.update(more)
+    return entry
+
+
+def probe_run(**more: Any) -> dict[str, Any]:
+    """One run of the scoreboard probe (`probe.pvp`), in the shape of the
+    `pvpSnapshot` M20-04 pinned: which calls exist, the first row's field
+    names and type names, the type at each position, the counts, three
+    whole numbers and three yes-or-no answers. Invented values."""
+    run: dict[str, Any] = {
+        "calls": {
+            "GetScoreInfo": True,
+            "GetNumBattlefieldScores": True,
+            "GetBattlefieldScore": False,
+        },
+        "positions": ["string", "number", "nil"],
+        "fields": {"name": "string", "faction": "number", "guid": "string"},
+        "requested": True,
+        "score_events": 3,
+        "complete_events": 0,
+        "rows": 20,
+        "name_string": True,
+        "name_secret": False,
+        "name_dash": True,
+        "first_side": 0,
+        "own_side": 1,
+    }
+    run.update(more)
+    return run
+
+
+def default_matches(keys: Sequence[str]) -> list[dict[str, Any]]:
+    """What a schema 2 book built here holds in `matches` when the test
+    gives none: one match naming the book's first keys, the first on the
+    player's team and the rest against (none when the book is empty)."""
+    shown = list(keys)[:SIDES_SHOWN]
+    return [match(shown[:1], shown[1:])] if shown else []
+
+
 def book(
     players: Mapping[str, Any] | int | None = None,
     *,
     on: bool | None = True,
-    schema: Any = 1,
+    schema: Any = None,
     current: Sequence[str] = (),
     **more: Any,
 ) -> bytes:
     """The crew book's top-level assignment, in the client's style;
-    `on=None` leaves `on` out."""
+    `on=None` leaves `on` out. `schema` None: `SCHEMA`. A schema 2 book
+    also holds `matches` (`default_matches` unless given) and `warned`."""
+    if schema is None:
+        schema = SCHEMA
     table: dict[str, Any] = {"schema": schema}
     if on is not None:
         table["on"] = on
@@ -134,13 +234,51 @@ def book(
     table["current"] = dict.fromkeys(current, True)
     # Anything but a mapping goes in as it is: a malformed `players`.
     table["players"] = dict(players) if isinstance(players, Mapping) else (players or {})
+    if schema == 2:
+        keys = list(players) if isinstance(players, Mapping) else []
+        table["matches"] = default_matches(keys)
+        table["warned"] = T1
     table.update(more)
+    # A field given as None is left out (`warned=None`: never warned yet).
+    table = {k: v for k, v in table.items() if v is not None}
     return crewbook.CREW_VARIABLE.encode("ascii") + b" = " + _table(table) + NL
 
 
+_HEAD_1 = crewbook.CREW_VARIABLE.encode("ascii") + b" = {" + NL + b'["schema"] = 1,' + NL
+_TAIL = NL + b"}" + NL
+
+
+def at_schema(crew: bytes | None) -> bytes | None:
+    """`crew` at `SCHEMA`: a book this module built at schema 1 is brought
+    to schema 2 as the addon's migration leaves it plus what schema 2 adds
+    (the number, `matches` naming its first keys, `warned`); anything else,
+    and any book while `SCHEMA` is 1, as it is."""
+    if (
+        crew is None
+        or SCHEMA != 2
+        or len(crew) < len(_HEAD_1) + len(_TAIL)
+        or not crew.startswith(_HEAD_1)
+        or not crew.endswith(_TAIL)
+    ):
+        return crew
+    # The keys only, to name them in the match; the bytes are this module's.
+    loaded = luadata.parse(crew).to_python()[crewbook.CREW_VARIABLE]
+    held = loaded.get("players") if isinstance(loaded, dict) else None
+    keys = [k for k in held if isinstance(k, str)] if isinstance(held, dict) else []
+    extra = b"".join(
+        b"".join((b"[", _q(name), b"] = ", _value(value), b",", NL))
+        for name, value in (("matches", default_matches(keys)), ("warned", T1))
+    )
+    body = crew[len(_HEAD_1) : -len(_TAIL)]
+    head = _HEAD_1.replace(b'["schema"] = 1,', b'["schema"] = 2,')
+    return head + body + NL + extra + b"}" + NL
+
+
 def account_file(crew: bytes | None) -> bytes:
-    """The captured account `WowLab.lua`, with `crew` appended when given."""
+    """The captured account `WowLab.lua`, with `crew` appended when given
+    (at `SCHEMA`, `at_schema`)."""
     data = ACCOUNT_FILE.read_bytes()
+    crew = at_schema(crew)
     return data if crew is None else data + crew
 
 

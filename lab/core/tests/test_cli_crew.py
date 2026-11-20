@@ -38,6 +38,7 @@ from _crew_build import (
     T1,
     account_file,
     book,
+    book_schema,  # noqa: F401  (autouse: each test at schema 1 and 2, M20-03)
     install,
     player,
 )
@@ -158,13 +159,13 @@ def test_an_unknown_schema_is_refused_with_its_number_constructed(make: Any) -> 
     assert result.exit_code == 1
     assert result.stderr == (
         "wowlab: This crew book was written by another version of the lab-addon (book version "
-        "7; this wowlab reads version 1). Nothing was read; updating wowlab may read it.\n"
+        "7; this wowlab reads versions 1 and 2). Nothing was read; updating wowlab may read it.\n"
     )
     # `--json` keeps the field it is about.
     as_json = env.run("crew", "list", "--json")
     assert as_json.exit_code == 1
     message = cli.ErrorReport.model_validate_json(as_json.stdout).message
-    assert message.endswith("(WowLabCrewDB is schema 7; this reader knows schema 1 only)")
+    assert message.endswith("(WowLabCrewDB is schema 7; this reader knows schema 1, 2 only)")
 
 
 def test_a_malformed_entry_is_listed_as_unread_constructed(make: Any) -> None:

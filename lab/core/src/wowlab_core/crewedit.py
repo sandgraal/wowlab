@@ -13,6 +13,12 @@ book whose `schema` this wowlab does not know (`crewbook.parse_book` refuses
 it first). Every result is checked before it is returned: parsed again, it
 must hold exactly the change asked for and nothing else (every other
 top-level variable, and every other field of the book, as it was).
+
+Schema 1 and schema 2 (§21.2, M20-03) are both edited, and each is written
+back at the schema it was read at: no edit changes `schema`. At schema 2 a
+forget also takes the key out of every match's `team` and `foes`, and a
+forget of every player empties `matches`; `probe`, `warned`, `matched` and
+any field this wowlab does not know keep their bytes.
 """
 
 from __future__ import annotations
@@ -35,6 +41,9 @@ Field = Literal["rating", "note"]
 
 _PLAYERS = "players"
 _CURRENT = "current"
+# Schema 2 (§21.2): the match list, and the two lists of keys in each entry.
+_MATCHES = "matches"
+_SIDES = ("team", "foes")
 
 
 class CrewEditError(WowlabError, ValueError):
@@ -221,21 +230,43 @@ class _Book:
 
 def keys_held(data: bytes) -> list[str]:
     """Every player key the book in `data` holds, as stored, in `players`
-    (read or not) and in `current`, once each in file order; empty when the
-    file holds no book. Refuses an unknown schema (`crewbook.CrewBookError`)."""
+    (read or not) and in `current`, and, at schema 2, in any match's `team`
+    or `foes`, once each in file order; empty when the file holds no book.
+    Refuses an unknown schema (`crewbook.CrewBookError`)."""
     return _keys(_Book(data))
+
+
+def _entry_key(entry: Entry) -> str | None:
+    """A keyed entry's key, or a positional entry's string value: how a
+    player key is held in `players`, `current`, `team` and `foes`."""
+    key = _key_text(entry)
+    if key is None and entry.style == KeyStyle.POSITIONAL:
+        key = entry.value.value if isinstance(entry.value, LuaString) else None
+    return key
+
+
+def _side_tables(book: _Book) -> list[LuaTable]:
+    """Every `team` and `foes` table of the book's matches (schema 2)."""
+    if book.read.schema_number is None or book.read.schema_number < 2:
+        return []
+    matches = book.field(_MATCHES)
+    out: list[LuaTable] = []
+    for match in matches.entries if matches is not None else ():
+        if isinstance(match.value, LuaTable):
+            for entry in match.value.entries:
+                if _key_text(entry) in _SIDES and isinstance(entry.value, LuaTable):
+                    out.append(entry.value)
+    return out
 
 
 def _keys(book: _Book) -> list[str]:
     if book.index is None:
         return []
     out: dict[str, None] = {}
-    for name in (_PLAYERS, _CURRENT):
-        table = book.field(name)
-        for entry in table.entries if table is not None else ():
-            key = _key_text(entry)
-            if key is None and entry.style == KeyStyle.POSITIONAL:
-                key = entry.value.value if isinstance(entry.value, LuaString) else None
+    tables = [book.field(name) for name in (_PLAYERS, _CURRENT)]
+    for table in [*(t for t in tables if t is not None), *_side_tables(book)]:
+        for entry in table.entries:
+            key = _entry_key(entry)
             if key is not None:
                 out.setdefault(key, None)
     return list(out)
@@ -276,16 +307,40 @@ def _checked(
     return after
 
 
-def _drop_keys(keys: Collection[str]) -> Callable[[dict[str, object]], None]:
+def _named(value: object, keys: Collection[str]) -> bool:
+    """Whether `value` is a string `keys` holds. Only a string can be a
+    player key: a nested table, a number or a boolean in a list is never
+    compared (a table cannot be hashed, and is not a key)."""
+    return isinstance(value, str) and value in keys
+
+
+def _dropped(value: object, keys: Collection[str]) -> object:
+    """A loaded table without the entries `keys` name (as string keys, or
+    as the string values of a list), as `forget` takes them out of the
+    document (`_entry_key`); an emptied table loads as `{}`. Anything else
+    stays, a key inside a nested table included: `names_left` finds such a
+    name, so the command refuses with nothing written."""
+    if isinstance(value, dict):
+        return {k: v for k, v in value.items() if not _named(k, keys)}
+    if isinstance(value, list):
+        kept = [v for v in value if not _named(v, keys)]
+        return kept if kept else {}
+    return value
+
+
+def _drop_keys(keys: Collection[str], schema: int | None) -> Callable[[dict[str, object]], None]:
     def change(book: dict[str, object]) -> None:
         for name in (_PLAYERS, _CURRENT):
-            value = book.get(name)
-            if isinstance(value, dict):
-                book[name] = {k: v for k, v in value.items() if k not in keys}
-            elif isinstance(value, list):
-                book[name] = [v for v in value if v not in keys]
-                if not book[name]:
-                    book[name] = {}
+            if name in book:
+                book[name] = _dropped(book[name], keys)
+        matches = book.get(_MATCHES)
+        if schema is None or schema < 2 or not isinstance(matches, (dict, list)):
+            return
+        for match in matches.values() if isinstance(matches, dict) else matches:
+            if isinstance(match, dict):
+                for side in _SIDES:
+                    if side in match:
+                        match[side] = _dropped(match[side], keys)
 
     return change
 
@@ -293,50 +348,86 @@ def _drop_keys(keys: Collection[str]) -> Callable[[dict[str, object]], None]:
 # ─── the edits ───────────────────────────────────────────────────────────────
 
 
+def _matches_without(book: _Book, drop: Callable[[int, Entry], bool]) -> LuaTable | None:
+    """The book's `matches` with every key `drop` picks taken out of each
+    entry's `team` and `foes` (schema 2), the entries themselves kept; None
+    when no match names any of them."""
+    if book.read.schema_number is None or book.read.schema_number < 2:
+        return None
+    matches = book.field(_MATCHES)
+    if matches is None:
+        return None
+    changed = False
+    out: list[Entry] = []
+    for match in matches.entries:
+        record = match.value
+        if isinstance(record, LuaTable):
+            inner = list(record.entries)
+            for j, entry in enumerate(inner):
+                side = entry.value
+                if (
+                    _key_text(entry) in _SIDES
+                    and isinstance(side, LuaTable)
+                    and any(drop(i, e) for i, e in enumerate(side.entries))
+                ):
+                    inner[j] = entry._replace(value=_without(side, drop))
+                    changed = True
+            match = match._replace(value=record._replace(entries=tuple(inner)))
+        out.append(match)
+    return matches._replace(entries=tuple(out)) if changed else None
+
+
 def forget(data: bytes, keys: Collection[str]) -> bytes:
     """`data` with every player in `keys` (stored keys) removed from the
     book's `players` and `current`: their entries, and an entry of `current`
-    that is the key itself in a list. The same bytes when the book holds none
-    of them, or the file holds no book (never created)."""
+    that is the key itself in a list; at schema 2, also from every match's
+    `team` and `foes` (§21.2), each match kept. The same bytes when the book
+    holds none of them, or the file holds no book (never created)."""
     book = _Book(data)
     if book.index is None:
         return data
     wanted = set(keys)
 
     def drop(_: int, entry: Entry) -> bool:
-        key = _key_text(entry)
-        if key is None and entry.style == KeyStyle.POSITIONAL:
-            key = entry.value.value if isinstance(entry.value, LuaString) else None
-        return key in wanted
+        return _entry_key(entry) in wanted
 
     new: dict[str, LuaTable] = {}
     for name in (_PLAYERS, _CURRENT):
         table = book.field(name)
         if table is not None and any(drop(i, e) for i, e in enumerate(table.entries)):
             new[name] = _without(table, drop)
+    matches = _matches_without(book, drop)
+    if matches is not None:
+        new[_MATCHES] = matches
     if not new:
         return data
     out = book.replaced(new)
-    return _checked(book.loaded, out, _drop_keys(wanted))
+    return _checked(book.loaded, out, _drop_keys(wanted, book.read.schema_number))
 
 
 def forget_all(data: bytes) -> bytes:
-    """`data` with the book's `players` and `current` emptied; `schema`, `on`,
-    `started`, `probe`, `skipped` and anything else in the book as they
-    were (§20.3). The same bytes when both are already empty, or the file
-    holds no book."""
+    """`data` with the book's `players` and `current` emptied, and at schema
+    2 its `matches` (§21.2); `schema`, `on`, `started`, `probe`, `skipped`,
+    `warned`, `matched` (a map and a time, no player) and anything else in
+    the book as they were (§20.3). The same bytes when all are already
+    empty, or the file holds no book."""
     book = _Book(data)
-    if book.index is None or not _keys(book):
+    if book.index is None:
         return data
+    names = [_PLAYERS, _CURRENT]
+    if book.read.schema_number is not None and book.read.schema_number >= 2:
+        names.append(_MATCHES)
     new: dict[str, LuaTable] = {}
-    for name in (_PLAYERS, _CURRENT):
+    for name in names:
         table = book.field(name)
         if table is not None and table.entries:
             new[name] = table._replace(entries=(), close_lead=None)
+    if not new:
+        return data
     out = book.replaced(new)
 
     def change(value: dict[str, object]) -> None:
-        for name in (_PLAYERS, _CURRENT):
+        for name in names:
             if isinstance(value.get(name), (dict, list)):
                 value[name] = {}
 

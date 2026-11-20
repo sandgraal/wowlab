@@ -114,6 +114,23 @@ class SyncCVar(_Out):
     value: str | None
 
 
+class CrewProbeItem(_Out):
+    """One value of a crew book's scoreboard probe block, as `crewbook`
+    gives it (`crewbook.ProbeItem`): a name from fixed lists, with `?` for
+    anything else, and a whole number, true or false, one of Lua's type
+    names, or `?`. Spelled here so `doctor`'s model does not load the
+    reader."""
+
+    name: str
+    value: (
+        bool
+        | int
+        | Literal[
+            "nil", "boolean", "number", "string", "table", "function", "userdata", "thread", "?"
+        ]
+    )
+
+
 class CrewBookSummary(_Out):
     """A game account's crew book as `doctor` sees it (M19-05, ADR-0036
     term 4): on or off, how many players it keeps, or that it could not be
@@ -130,6 +147,11 @@ class CrewBookSummary(_Out):
     # Of `players`, the entries that could not be read.
     unread: int | None
     reason: str | None
+    # The scoreboard probe's block (`probe.pvp`, schema 2, M20-03): one list
+    # per run (after entry, after the winner), each value a whole number,
+    # true or false, or one of Lua's type names, and each name from a fixed
+    # list; anything else is `?`. Nothing in it is text from the file.
+    probe_pvp: list[list[CrewProbeItem]] = Field(default_factory=list)
 
 
 class CrewDatabaseSummary(_Out):
@@ -490,6 +512,10 @@ def _crew_books(lay: layout.Layout) -> list[CrewBookSummary]:
                 players=len(book.players) + len(book.unread),
                 unread=len(book.unread),
                 reason=None,
+                probe_pvp=[
+                    [CrewProbeItem(name=i.name, value=i.value) for i in run]
+                    for run in book.probe_pvp
+                ],
             )
         )
     return out
@@ -507,6 +533,31 @@ def _crew_book_line(book: CrewBookSummary) -> str:
     if book.state == "on":
         return f"  {where}: on, {kept}{unread} (as of your last logout or /reload)"
     return f"  {where}: off (not recording), {kept} kept{unread}"
+
+
+# The two runs of the scoreboard probe, in the order the addon stores them.
+_PROBE_RUN_WORDS = ("after entering the match", "after the winner was reported")
+
+
+def _crew_probe_lines(book: CrewBookSummary) -> list[str]:
+    """The crew book's scoreboard probe block (M20-03), one line per run:
+    each name and value as `crewbook` gives them (fixed names, whole
+    numbers, true or false, Lua's type names; `?` for anything else).
+    Nothing else from the file is printed."""
+
+    def shown(value: bool | int | str) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    out: list[str] = []
+    for n, run in enumerate(book.probe_pvp):
+        when = _PROBE_RUN_WORDS[n] if n < len(_PROBE_RUN_WORDS) else "later"
+        values = ", ".join(f"{i.name} {shown(i.value)}" for i in run) or "nothing recorded"
+        out.append(
+            f"    Battleground scoreboard check (game account {book.account}), {when}: {values}"
+        )
+    return out
 
 
 def _crew_databases(flavor_folder: str) -> list[CrewDatabaseSummary]:
@@ -1913,6 +1964,8 @@ def _print_doctor(report: DoctorReport, show_notes: bool = False) -> None:
                 _say(f"    {sync.file}: {sync.name} {value}")
         for book in f.crew_books:
             _say_prose(_crew_book_line(book), hang="    ")
+            for line in _crew_probe_lines(book):
+                _say_prose(line, hang="      ")
         for db in f.crew_databases:
             _say_prose(_crew_database_line(db), hang="    ", keep=[db.path])
     if any(f.sync_cvars for f in report.flavors):

@@ -42,7 +42,19 @@ from wowlab_core.snapshot import Manifest, SnapshotStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 
-from _crew_build import GUILD, KEY_A, KEY_B, KEY_C, KEY_D, NOTE, WHERE, book, player
+from _crew_build import (
+    GUILD,
+    KEY_A,
+    KEY_B,
+    KEY_C,
+    KEY_D,
+    NOTE,
+    WHERE,
+    at_schema,
+    book,
+    book_schema,  # noqa: F401  (autouse: each test at schema 1 and 2, M20-03)
+    player,
+)
 
 LAB_FILE = f"{SV_DIR}/WowLab.lua"
 OTHER_FILE = f"{SV_DIR}/Syndicator.lua"  # another addon's file, to carry a book by content
@@ -92,6 +104,7 @@ def _with(flavor: Path, rel: str, crew: bytes | None, extra: bytes = b"") -> Non
     """The captured file at `rel` with `crew` appended (constructed)."""
     path = flavor / rel
     base = path.read_bytes().split(b"\r\n-- constructed", 1)[0]
+    crew = at_schema(crew)
     tail = b"" if crew is None else crew
     path.write_bytes(base + b"\r\n-- constructed\r\n" + extra + tail)
 

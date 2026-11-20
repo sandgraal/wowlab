@@ -31,6 +31,7 @@ from _crew_build import (
     WHERE,
     account_file,
     book,
+    book_schema,  # noqa: F401  (autouse: each test at schema 1 and 2, M20-03)
     install,
     many_keys,
     player,
@@ -66,7 +67,9 @@ def test_constructed_on_false_or_absent_is_turned_off_with_what_it_keeps(on: boo
     assert [p.key for p in read.players] == [KEY_A, KEY_B]
 
 
-def test_constructed_a_book_that_is_on_reads_every_field() -> None:
+def test_constructed_a_book_that_is_on_reads_every_field(
+    book_schema: int,  # noqa: F811  (the fixture, requested by name)
+) -> None:
     data = account_file(
         book(
             {KEY_A: player(rating="bad", note=NOTE), KEY_B: player(where=None, guild=None)},
@@ -75,7 +78,7 @@ def test_constructed_a_book_that_is_on_reads_every_field() -> None:
         )
     )
     read = crewbook.parse_book(data)
-    assert read.state == "on" and read.schema_number == 1
+    assert read.state == "on" and read.schema_number == book_schema
     assert (read.started, read.probe_loads, read.skipped, read.current_count) == (T0, 12, 4, 1)
     a, b = read.players
     assert a.model_dump() == {
@@ -103,17 +106,20 @@ def test_constructed_an_empty_book_reads_with_no_player() -> None:
     assert read.state == "on" and read.players == [] and read.unread == []
 
 
-@pytest.mark.parametrize("schema", [2, 0, 9999])
+# M20-03: schema 2 is read now; schema 3 is the next one refused.
+@pytest.mark.parametrize("schema", [3, 0, 9999])
 def test_constructed_an_unknown_schema_is_refused_with_its_number(schema: int) -> None:
     data = account_file(book({KEY_A: player()}, schema=schema))
     with pytest.raises(crewbook.CrewBookError) as caught:
         crewbook.parse_book(data)
     assert str(caught.value) == (
         "This crew book was written by another version of the lab-addon (book version "
-        f"{schema}; this wowlab reads version 1). Nothing was read; updating wowlab may read it."
+        f"{schema}; this wowlab reads versions 1 and 2). Nothing was read; updating wowlab may "
+        "read it."
     )
     assert (
-        caught.value.detail == f"WowLabCrewDB is schema {schema}; this reader knows schema 1 only"
+        caught.value.detail
+        == f"WowLabCrewDB is schema {schema}; this reader knows schema 1, 2 only"
     )
 
 

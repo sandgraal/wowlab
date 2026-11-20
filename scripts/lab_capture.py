@@ -2819,9 +2819,11 @@ def sv_stats(data: bytes) -> SvStats:
 # ends with `,`, an empty table is `{` and `}` on two lines). Leading blanks
 # are allowed on a line; nothing else is. Keys are bracketed strings, each at
 # most once, in any order, and only these: `schema`, `on`, `started`,
-# `probe`, `skipped`, `players`, `current`. `players` and `current` are
-# empty; `probe` holds at most `["loads"]` and `["lost"]`; every other value
-# is a number or a boolean, never a string. One `WowLabCrewDB = nil` line is
+# `probe`, `skipped`, `players`, `current`, and schema 2's `matches`,
+# `matched` and `warned` (§21.2, M20-03). `players`, `current`, `matches`
+# and `matched` are empty; `probe` holds at most `["loads"]` and `["lost"]`
+# (so a book with the scoreboard probe's `pvp` block refuses); every other
+# value is a number or a boolean, never a string. One `WowLabCrewDB = nil` line is
 # accepted in place of the table. `CrewDB` anywhere else, in any casing, and
 # `CrewDB` in UTF-16 refuse. Nothing is parsed or rewritten: the scan only
 # skips strings and comments, and the shape is matched entry by entry on the
@@ -2856,6 +2858,13 @@ _CREW_VALUE_RE = {
     b"on": re.compile(rb"true|false"),
     b"players": re.compile(_CREW_EMPTY),
     b"current": re.compile(_CREW_EMPTY),
+    # Schema 2 (docs/LAB_PLAN.md §21.2, M20-03): the match list and the
+    # once-per-match marker, both empty, and the near-full line's time. A
+    # match names players, so a book whose `matches` holds one refuses; the
+    # scoreboard probe's `probe.pvp` is not part of the empty shape either.
+    b"matches": re.compile(_CREW_EMPTY),
+    b"matched": re.compile(_CREW_EMPTY),
+    b"warned": re.compile(_CREW_NUMBER),
 }
 # `probe` is §13.1's probe: `loads`, a number, and `lost`, a boolean (the
 # addon sets it true for one load). Each at most once, in any order.
