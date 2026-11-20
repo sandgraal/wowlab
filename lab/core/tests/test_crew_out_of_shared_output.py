@@ -50,8 +50,10 @@ from _crew_build import (
     WHERE,
     account_file,
     book,
+    book_schema,  # noqa: F401  (autouse: each test at schema 1 and 2, M20-03)
     install,
     player,
+    probe_run,
 )
 from _user_dirs import redirect_user_dirs
 from test_cli import FakeProcess, _plain, _use_table
@@ -113,6 +115,27 @@ def _malformed() -> bytes:
     quoted = b'"' + GUILD.encode() + b'"'
     assert quoted in data
     return data.replace(quoted, REFUSED_NAME.encode(), 1)
+
+
+def _planted_probe() -> bytes:
+    """A schema 2 book (M20-03) whose scoreboard probe block holds every
+    constructed name in every place a name could be put: as a call's name,
+    a field's name and a value, a position, a run field, a value of a field
+    the run does not have, and a run that is not a table."""
+    run = probe_run(
+        calls={KEY_A: True, "GetScoreInfo": True},
+        fields={KEY_B: "string", "name": GUILD, "faction": "number"},
+        positions={KEY_C: "string"},
+        rows=NOTE,
+        winner=1,
+    )
+    run[KEY_D] = WHERE
+    return book(
+        _players(),
+        schema=2,
+        current=[KEY_A],
+        probe={"loads": 3, "pvp": [run, NOTE_C]},
+    )
 
 
 def _with_unread_entry() -> bytes:
@@ -215,6 +238,8 @@ CASES: dict[str, tuple[Callable[[], bytes | None], Callable[[], bytes | None], s
     "only-in-bak": (lambda: None, _full, None),
     "in-both": (_full, lambda: _full(on=False), "on"),
     "malformed-bak": (_full, _malformed, "on"),
+    # M20-03: the probe block, names planted in it.
+    "schema-2-planted-probe": (_planted_probe, lambda: None, "on"),
 }
 
 
@@ -254,6 +279,45 @@ def test_constructed_doctor_says_on_and_a_count(
     (summary,) = _books(report)
     assert (summary.state, summary.players, summary.unread, summary.reason) == ("on", 4, 0, None)
     assert summary.account == account
+
+
+@pytest.mark.parametrize("mode", MODES, ids=MODE_IDS)
+def test_constructed_doctor_prints_the_probe_block_as_fixed_names_and_values(
+    make: Callable[..., Env], mode: tuple[str, ...]
+) -> None:
+    """M20-03 (§21.2): the block's names from fixed lists, its values whole
+    numbers, true or false and Lua's type names; `?` for anything else. A
+    name planted anywhere in it is printed nowhere, text or `--json`."""
+    env = make(_planted_probe())
+    text = _doctor(env, *mode)
+    assert not _leaks(text), _leaks(text)
+    account = "<ACCOUNT>" if mode else ACCOUNT
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    joined = " ".join(lines)
+    start = f"Battleground scoreboard check (game account {account}), after entering the match: "
+    assert start in joined, text
+    for shown in (
+        "calls.? true",
+        "calls.GetScoreInfo true",
+        "fields.? string",
+        "fields.name ?",
+        "fields.faction number",
+        "positions.? string",
+        "rows ?",
+        "winner 1",
+        "requested true",
+        "score_events 3",
+        "first_side 0",
+    ):
+        assert shown in joined, shown
+    second = f"check (game account {account}), after the winner was reported: ? ?"
+    assert second in joined, text
+    raw = _doctor(env, *mode, "--json")
+    assert not _leaks(raw)
+    (summary,) = _books(_report(raw))
+    first, last = summary.probe_pvp
+    assert {(i.name, i.value) for i in first} >= {("calls.?", True), ("rows", "?"), ("?", "?")}
+    assert [(i.name, i.value) for i in last] == [("?", "?")]
 
 
 def test_constructed_doctor_says_off_with_the_count_kept(make: Callable[..., Env]) -> None:
@@ -310,7 +374,11 @@ def test_constructed_doctor_redact_json_carries_no_record_field() -> None:
         "players",
         "unread",
         "reason",
+        # M20-03: the scoreboard probe's block, whose items hold a name built
+        # from fixed lists and a number, true or false, or a Lua type name.
+        "probe_pvp",
     }
+    assert set(cli.CrewProbeItem.model_fields) == {"name", "value"}
 
 
 # ─── profiles never carry the account WowLab.lua or its .bak ──────────────────

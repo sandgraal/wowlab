@@ -1231,6 +1231,32 @@ Dated entries, newest last. Each names the fixture that prompted it.
   writes this table (key order, bracketed keys, CRLF) is expected to follow
   §4.2 as amended, like `WowLabDB`; no capture shows it yet **[verify]**.
   The empty shape the capture tool accepts is §20.5's "As built" note.
+- **2026-11-20, §4, schema 2 of the crew book (M20-03; no fixture, as
+  above: the reader is graded on constructed books and the owner's `@live`
+  test).** `docs/LAB_PLAN.md` §21.2: `WowLabCrewDB.schema` 2 is the same
+  table as schema 1 plus, at the top level, `matches` (a list, at most 500
+  in game, oldest first; each entry a table of `at` and `map_id`, whole
+  numbers, `map`, text, `kind`, `"bg"` or `"arena"`, `won`, true or false or
+  left out, and `team` and `foes`, lists of player keys), `matched` (a table
+  holding the map id and the time a finished match was first seen, emptied
+  outside that instance; its field names are the addon's, not yet written),
+  and `warned` (`time()` of the last near-full line, left out until the
+  first). Each player entry may add `allied`, `faced`, `allied_won` and
+  `faced_won` (whole numbers of 0 or more), `pvp_last` (a time), `pvp_map`
+  (text) and `pvp_side` (`"with"` or `"against"`), all left out until the
+  player's first match. `probe` may hold `pvp`, a list of one or two runs
+  of the scoreboard probe, each a table of `calls` (call name to true or
+  false), `positions` (a list of Lua type names), `fields` (field name to
+  Lua type name), `requested`, `name_string`, `name_secret` and `name_dash`
+  (true or false), and `score_events`, `complete_events`, `rows`,
+  `first_side`, `own_side` and `winner` (whole numbers, each left out when
+  not read); the shape is the one M20-04 pinned for the addon. The player
+  limit is 20,000. The addon's migration of a schema 1 book that is on
+  writes only the number and an empty `matches`. `wowlab` reads schema 1
+  and 2 and writes back the schema it read; any other number is refused
+  with it. How the client writes the lists (positional entries with
+  `-- [n]` comments, §4.2) is expected and not yet seen in a capture
+  **[verify]**, as is every field the addon of M20-05 and M20-08 writes.
 - **2026-11-19, §12, bone tracks and their keys (M15-26,
   `macos-70959/derived/charmodel.json`, rows `sheath_rotation_keys` and
   `hand_bone_keys`; read by `scripts/charmodel_facts.py`, the library

@@ -43,7 +43,9 @@ from _crew_build import (
     NOTE,
     account_file,
     book,
+    book_schema,  # noqa: F401  (autouse: each test at schema 1 and 2, M20-03)
     install,
+    match,
     player,
 )
 from _user_dirs import redirect_user_dirs
@@ -194,11 +196,17 @@ def test_forget_plan_writes_nothing_and_says_what_it_does_not_reach_constructed(
 
 def test_forget_removes_the_player_from_both_files_and_keeps_every_other_byte_constructed(
     make: Any,
+    book_schema: int,  # noqa: F811  (the fixture, requested by name)
 ) -> None:
     data = _three(rating="bad", note=NOTE)
     env = make(data, backup=data)
     rep = env.report("crew", "forget", KEY_A, "--yes")
-    expected = account_file(book({KEY_B: player(note=NOTE_B), KEY_C: player()}, current=[KEY_B]))
+    # At schema 2 the book's one match named KEY_A on the team: the match
+    # stays, with KEY_A gone from it (M20-03).
+    more = {"matches": [match([], [KEY_B, KEY_C])]} if book_schema == 2 else {}
+    expected = account_file(
+        book({KEY_B: player(note=NOTE_B), KEY_C: player()}, current=[KEY_B], **more)
+    )
     # The whole file, byte for byte: the captured part, and the book with
     # only the one entry and its place in `current` gone (L4).
     assert env.live() == expected and env.bak().read_bytes() == expected
@@ -474,12 +482,13 @@ def test_two_matching_keys_refuse_and_list_the_stored_keys_constructed(
 
 @pytest.mark.parametrize("command", ["forget", "rate", "note"])
 def test_an_unknown_schema_is_refused_constructed(make: Any, command: str) -> None:
-    data = account_file(book({KEY_A: player()}, schema=2))
+    # Schema 3: this wowlab reads 1 and 2 (M20-03; it was 2 before).
+    data = account_file(book({KEY_A: player()}, schema=3))
     env = make(data)
     extra = {"forget": (), "rate": ("good",), "note": (NOTE,)}[command]
     result = env.run("crew", command, KEY_A, *extra, "--yes")
     assert result.exit_code == 1, (result.stdout, result.stderr)
-    assert "book version 2" in result.stderr
+    assert "book version 3" in result.stderr
     assert env.live() == data and guard.history() == ()
 
 

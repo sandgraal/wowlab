@@ -6453,6 +6453,11 @@ on the next line, a table hand-written after an accepted empty book, a
 comment or line break between the name and a field path, a field
 assignment written behind `_G.` (found at the last security check of #624).
 
+*Note (2026-11-20, M20-03).* At schema 2 (§21.2) the empty shape also takes
+`matches` and `matched`, each empty, and `warned`, a number. A book whose
+`matches` holds an entry is refused, and so is one whose `probe` holds the
+scoreboard probe's `pvp` block: it is not part of the empty shape.
+
 ### 20.6 What is not known
 
 Every **[verify]** in §20.1 is open until the owner's check (M19-07); the

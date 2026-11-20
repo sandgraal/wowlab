@@ -1140,6 +1140,9 @@ if TYPE_CHECKING:
         _PRE_RE as _PRE_RE,
     )
     from wowlab_core.cli._cmd_doctor import (
+        _PROBE_RUN_WORDS as _PROBE_RUN_WORDS,
+    )
+    from wowlab_core.cli._cmd_doctor import (
         _RECORD_HOW as _RECORD_HOW,
     )
     from wowlab_core.cli._cmd_doctor import (
@@ -1195,6 +1198,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_doctor import (
         CrewDatabaseSummary as CrewDatabaseSummary,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        CrewProbeItem as CrewProbeItem,
     )
     from wowlab_core.cli._cmd_doctor import (
         DoctorFlavor as DoctorFlavor,
@@ -1288,6 +1294,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_doctor import (
         _crew_books as _crew_books,
+    )
+    from wowlab_core.cli._cmd_doctor import (
+        _crew_probe_lines as _crew_probe_lines,
     )
     from wowlab_core.cli._cmd_doctor import (
         _crew_unreadable_reason as _crew_unreadable_reason,

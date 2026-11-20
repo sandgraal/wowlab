@@ -231,6 +231,97 @@ def test_constructed_empty_crew_book_is_accepted(case: str) -> None:
     assert lab_capture.crew_book_problems(ACCEPTED[case]) == []
 
 
+# ─── schema 2 (docs/LAB_PLAN.md §21.2, M20-03) ───────────────────────────────
+
+
+def _schema_2(data: bytes) -> bytes:
+    """`data` with every schema 1 empty book in it made a schema 2 one: the
+    number, and an empty `matches`, an empty `matched` and `warned` after
+    `skipped`, in the same line breaks. Bytes without the shape (UTF-16, a
+    name written another way) stay as they are."""
+    for eol in (b"\r\n", b"\n"):
+        data = data.replace(
+            b'["skipped"] = 0,' + eol,
+            b'["skipped"] = 0,'
+            + eol
+            + b'["matches"] = {'
+            + eol
+            + b"},"
+            + eol
+            + b'["matched"] = {'
+            + eol
+            + b"},"
+            + eol
+            + b'["warned"] = 1795640000,'
+            + eol,
+        )
+    return data.replace(b'["schema"] = 1,', b'["schema"] = 2,')
+
+
+EMPTY_2 = _schema_2(EMPTY)
+EMPTY_2_LINES = tuple(EMPTY_2.decode().strip("\r\n").split("\r\n"))
+MATCH = (
+    "{",
+    '["at"] = 1795650000,',
+    '["kind"] = "bg",',
+    '["team"] = {',
+    f'"{KEY_A}", -- [1]',
+    "},",
+    '["foes"] = {',
+    "},",
+    "}, -- [1]",
+)
+WITH_A_MATCH = _lua(*_with(EMPTY_2_LINES, '["matches"] = {', MATCH))
+REFUSED_2 = {
+    "a match in the list": (WITH_A_MATCH, lab_capture.CREW_BOOK_NOT_EMPTY_LABEL),
+    "a match with no player": (
+        _lua(*_with(EMPTY_2_LINES, '["matches"] = {', ("{", '["at"] = 1795650000,', "},"))),
+        lab_capture.CREW_BOOK_NOT_EMPTY_LABEL,
+    ),
+    "a marker that holds a match": (
+        _lua(*_with(EMPTY_2_LINES, '["matched"] = {', ('["map_id"] = 489,',))),
+        lab_capture.CREW_BOOK_NOT_EMPTY_LABEL,
+    ),
+    "the scoreboard probe's block": (
+        _lua(*_with(EMPTY_2_LINES, '["loads"] = 12,', ('["pvp"] = {', "},"))),
+        lab_capture.CREW_BOOK_NOT_EMPTY_LABEL,
+    ),
+    "warned as a string": (
+        _lua(*(line.replace("1795640000", f'"{KEY_A}"') for line in EMPTY_2_LINES)),
+        lab_capture.CREW_BOOK_NOT_EMPTY_LABEL,
+    ),
+    "matches twice": (
+        _lua(*_with(EMPTY_2_LINES, '["warned"] = 1795640000,', ('["matches"] = {', "},"))),
+        lab_capture.CREW_BOOK_NOT_EMPTY_LABEL,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED))
+def test_constructed_crew_book_refusals_at_schema_2(case: str) -> None:
+    """Every M19-04 refusal holds for a schema 2 book as well."""
+    data, label = REFUSED[case]
+    assert lab_capture.crew_book_problems(_schema_2(data)) == [label]
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED_2))
+def test_constructed_a_schema_2_book_that_is_not_empty_is_refused(case: str) -> None:
+    data, label = REFUSED_2[case]
+    assert lab_capture.crew_book_problems(data) == [label]
+
+
+@pytest.mark.parametrize("case", sorted(ACCEPTED))
+def test_constructed_empty_crew_book_is_accepted_at_schema_2(case: str) -> None:
+    data = _schema_2(ACCEPTED[case])
+    assert lab_capture.crew_book_problems(data) == []
+
+
+def test_constructed_the_schema_2_empty_shape_holds_its_new_fields() -> None:
+    assert b'["schema"] = 2,' in EMPTY_2 and b'["matches"] = {\r\n},' in EMPTY_2
+    assert b'["matched"] = {\r\n},' in EMPTY_2 and b'["warned"] = 1795640000,' in EMPTY_2
+    assert lab_capture.crew_book_problems(EMPTY_2) == []
+
+
 def test_constructed_a_file_without_the_name_is_untouched() -> None:
     assert lab_capture.crew_book_problems(_lua("WowLabDB = {", '["schema"] = 4,', "}")) == []
 
@@ -276,6 +367,8 @@ def _assert_no_key(printed: str) -> None:
         ("Renamed.lua.bak", IN_LONG_STRING_FILLED),
         ("WowLab.lua", SECOND_ASSIGNMENT),
         ("WowLab.lua", OTHER_CASING),
+        # M20-03: a schema 2 book whose `matches` is not empty.
+        ("WowLab.lua", WITH_A_MATCH),
     ],
 )
 def test_constructed_sv_of_a_crew_book_is_refused(

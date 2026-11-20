@@ -374,6 +374,12 @@ DOCTOR_FIELDS: dict[str, Treatment] = {
     "flavors.crew_books.file": REDACT,
     "flavors.crew_books.state": AS_IS,
     "flavors.crew_books.reason": REDACT,
+    # The book's scoreboard probe block (M20-03): each name is built from
+    # fixed lists only (`?` for anything else), redacted like any text; each
+    # value is a number, true or false, or a closed literal (Lua's type
+    # names and `?`).
+    "flavors.crew_books.probe_pvp.name": REDACT,
+    "flavors.crew_books.probe_pvp.value": AS_IS,
     # wowlab's crew database of a game account (M20-02, ADR-0036 term 4):
     # the account folder, and the path, which names it and the home folder
     # (the login in it), redacted; the reason is wowlab's own words. The

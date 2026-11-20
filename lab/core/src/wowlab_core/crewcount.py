@@ -52,7 +52,7 @@ class CrewBookCarried(BaseModel):
     """Files whose book was read (turned on or off)."""
     players: int
     """Distinct players those books keep, entries that could not be read
-    included."""
+    included, and at schema 2 the players named only in a match."""
     unreadable: int
     """Files that hold a book wowlab cannot read (an unknown version, a
     damaged table or file)."""
@@ -99,7 +99,11 @@ def _read_found(data: bytes) -> _Found | None:
         return _Found("unreadable", frozenset(), value)
     if book.state == "not_turned_on":
         return None
-    keys = frozenset([p.key for p in book.players] + [u.key for u in book.unread])
+    # Schema 2 (§21.2): a player named only in a match's `team` or `foes` is
+    # kept by the file too.
+    keys = frozenset(
+        [p.key for p in book.players] + [u.key for u in book.unread] + book.match_keys()
+    )
     return _Found(book.state, keys, value)
 
 

@@ -20,6 +20,14 @@ The four outcomes §20.2 states:
   with its key and a reason in wowlab's words (never the value it holds);
   every other entry is read.
 
+Schema 1 (§20.1) and schema 2 (§21.2, M20-03) are read. Schema 2 adds the
+per-player match counters (`CrewPlayer.pvp`), `matches` (an entry that does
+not fit is listed in `matches_unread` with its place and a reason, the rest
+read), `matched`, `warned`, and the scoreboard probe's `probe.pvp`, which is
+given only as fixed names and values (`ProbeItem`) and never refuses the
+book. A schema 1 book is read exactly as before: a schema 2 field in it is
+a key this reader does not know.
+
 Everything read from the file other than numbers is other people's text
 (names, realms, guilds, instance names) or the player's own (notes). Nothing
 here prints it; the CLI shows it only through its control-character
@@ -33,7 +41,7 @@ import math
 import unicodedata
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,8 +50,10 @@ from wowlab_core.errors import WowlabError
 
 CREW_VARIABLE = "WowLabCrewDB"
 # The `schema` numbers this reader knows (§20.1: the book has its own,
-# separate from the per-character record's).
-KNOWN_SCHEMAS: tuple[int, ...] = (1,)
+# separate from the per-character record's). Schema 2 (§21.2) adds the
+# per-player match counters, `matches`, `matched`, `warned` and the
+# scoreboard probe's `probe.pvp`; a schema 1 book is read exactly as before.
+KNOWN_SCHEMAS: tuple[int, ...] = (1, 2)
 # The largest time this reader accepts: the last second of the year 9999, so
 # a date can always be formatted.
 TIME_MAX = 253_402_300_799
@@ -77,6 +87,9 @@ _FIELD_WORDS = {
     "current": "list of the players counted in the group you were in at the last save",
     "probe": "load record",
     "on": "on/off setting",
+    "matches": "match list",
+    "matched": "record of the match last counted",
+    "warned": "time of the last nearly-full line",
 }
 
 
@@ -88,6 +101,22 @@ def _unreadable(field: str, detail: str) -> CrewBookError:
 
 class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+PvpSide = Literal["with", "against"]
+
+
+class CrewPvp(_Model):
+    """A schema 2 player's match counters and latest match (§21.2), each
+    None when the entry does not hold it (left out until the first match)."""
+
+    allied: int | None = None  # matches on your side
+    faced: int | None = None  # matches against you
+    allied_won: int | None = None  # of `allied`, the ones your side won
+    faced_won: int | None = None  # of `faced`, the ones your side won
+    pvp_last: int | None = None  # time() of the latest match
+    pvp_map: str | None = None  # the map's name, as the client gave it
+    pvp_side: PvpSide | None = None
 
 
 class CrewPlayer(_Model):
@@ -111,6 +140,11 @@ class CrewPlayer(_Model):
     in_current_group: bool = False
     # Keys of the entry this reader does not know, kept by name (L4 spirit).
     other_keys: list[str] = Field(default_factory=list)
+    # A schema 2 entry's match counters (§21.2); None for a schema 1 book,
+    # whose entries keep any such key in `other_keys`, and for an entry with
+    # none of them. Not part of `--json` until the desk shows them: wowlab's
+    # crew database, not the book, holds the totals (§21.3, rule 2).
+    pvp: CrewPvp | None = Field(default=None, exclude=True)
 
 
 class UnreadEntry(_Model):
@@ -121,8 +155,55 @@ class UnreadEntry(_Model):
     reason: str
 
 
+MatchKind = Literal["bg", "arena"]
+
+
+class CrewMatch(_Model):
+    """One entry of a schema 2 book's `matches` (§21.2): `at` (time() of
+    the read), the map's name and id, `kind`, `won` (None when the client
+    gave no winner) and the keys of `team` and `foes`, as stored."""
+
+    position: int  # its place in the list, from 1
+    at: int
+    map: str | None = None
+    map_id: int | None = None
+    kind: MatchKind
+    won: bool | None = None
+    team: list[str] = Field(default_factory=list)
+    foes: list[str] = Field(default_factory=list)
+    other_keys: list[str] = Field(default_factory=list)
+
+
+class UnreadMatch(_Model):
+    """An entry of `matches` that does not fit §21.2: its place in the list
+    and why, in wowlab's words. The value it holds is never quoted."""
+
+    position: int
+    reason: str
+
+
+# Lua's fixed set of type names (`type`), the only text the scoreboard
+# probe stores as a value (§21.2).
+LUA_TYPE_NAMES = ("nil", "boolean", "number", "string", "table", "function", "userdata", "thread")
+ProbeWord = Literal[
+    "nil", "boolean", "number", "string", "table", "function", "userdata", "thread", "?"
+]
+
+
+class ProbeItem(_Model):
+    """One value of the scoreboard probe's block (`probe.pvp`, §21.2), as
+    `doctor` may print it: `name` is built only from fixed lists
+    (`PROBE_CALLS`, `PROBE_SCORE_FIELDS`, `PROBE_RUN_FIELDS`, a position
+    number) with `?` in place of anything else; `value` is a whole number,
+    true or false, or one of Lua's type names, and `?` for anything else.
+    Nothing here is text from the file."""
+
+    name: str
+    value: bool | int | ProbeWord
+
+
 class CrewBook(_Model):
-    """`WowLabCrewDB` as read (§20.2)."""
+    """`WowLabCrewDB` as read (§20.2; schema 2, §21.2)."""
 
     state: State
     schema_number: int | None = None
@@ -132,6 +213,23 @@ class CrewBook(_Model):
     current_count: int = 0  # keys in the saved `current` set
     players: list[CrewPlayer] = Field(default_factory=list)
     unread: list[UnreadEntry] = Field(default_factory=list)
+    # Schema 2 only (§21.2); empty, None or false for a schema 1 book.
+    matches: list[CrewMatch] = Field(default_factory=list)
+    matches_unread: list[UnreadMatch] = Field(default_factory=list)
+    warned: int | None = None  # time() of the last nearly-full line
+    matched: bool = False  # whether the once-per-match marker holds anything
+    # The scoreboard probe's runs (after entry, after the winner), each as
+    # `doctor` may print it.
+    probe_pvp: list[list[ProbeItem]] = Field(default_factory=list)
+
+    def match_keys(self) -> list[str]:
+        """Every key the read matches name in `team` or `foes`, once each, in
+        file order."""
+        out: dict[str, None] = {}
+        for m in self.matches:
+            for key in (*m.team, *m.foes):
+                out.setdefault(key, None)
+        return list(out)
 
 
 # ─── reading ─────────────────────────────────────────────────────────────────
@@ -175,16 +273,57 @@ _NUMBER_WORDS = {
 }
 
 
-def _player(key: str, value: object, current: frozenset[str]) -> CrewPlayer | UnreadEntry:
-    """One entry of `players`, or why it cannot be read."""
+# Schema 2's per-player fields (§21.2): four counters, a time, a map's name
+# and a side.
+_PVP_NUMBERS: dict[str, tuple[int, int, str]] = {
+    "allied": (0, _INT_MAX, "a whole number of 0 or more"),
+    "faced": (0, _INT_MAX, "a whole number of 0 or more"),
+    "allied_won": (0, _INT_MAX, "a whole number of 0 or more"),
+    "faced_won": (0, _INT_MAX, "a whole number of 0 or more"),
+    "pvp_last": (0, TIME_MAX, "a time"),
+}
+
+
+def _pvp_field(name: str, item: object, pvp: dict[str, Any]) -> str | None:
+    """Read one schema 2 player field into `pvp`; why it cannot be, else None."""
+    if name in _PVP_NUMBERS:
+        low, high, words = _PVP_NUMBERS[name]
+        number = _whole(item, low, high)
+        if number is None:
+            return f"{name} is not {words}"
+        pvp[name] = number
+    elif name == "pvp_map":
+        if not isinstance(item, str):
+            return "pvp_map is not text"
+        pvp[name] = item
+    else:
+        if item not in ("with", "against"):
+            return 'pvp_side is neither "with" nor "against"'
+        pvp[name] = item
+    return None
+
+
+_PVP_FIELDS = frozenset({*_PVP_NUMBERS, "pvp_map", "pvp_side"})
+
+
+def _player(
+    key: str, value: object, current: frozenset[str], schema: int = 1
+) -> CrewPlayer | UnreadEntry:
+    """One entry of `players`, or why it cannot be read. At schema 1 the
+    fields of §21.2 are keys this reader does not know, as they were."""
     if not key:
         return UnreadEntry(key=key, reason="the key is empty")
     if not isinstance(value, dict):
         return UnreadEntry(key=key, reason="the entry is not a table")
     fields: dict[str, Any] = {"key": key, "in_current_group": key in current}
     other: list[str] = []
+    pvp: dict[str, Any] = {}
     for name, item in value.items():
-        if name in _TEXT_FIELDS:
+        if schema >= 2 and name in _PVP_FIELDS:
+            why = _pvp_field(name, item, pvp)
+            if why is not None:
+                return UnreadEntry(key=key, reason=why)
+        elif name in _TEXT_FIELDS:
             if not isinstance(item, str):
                 return UnreadEntry(key=key, reason=f"{name} is not text")
             fields[_TEXT_FIELDS[name]] = item
@@ -205,6 +344,8 @@ def _player(key: str, value: object, current: frozenset[str]) -> CrewPlayer | Un
         else:
             other.append(_key_text(name))
     fields["other_keys"] = other
+    if pvp:
+        fields["pvp"] = CrewPvp(**pvp)
     return CrewPlayer(**fields)
 
 
@@ -234,9 +375,11 @@ def _schema(table: dict[Any, Any]) -> int:
             f"this reader knows schema {known}",
         )
     if number not in KNOWN_SCHEMAS:
+        *head, last = (str(s) for s in KNOWN_SCHEMAS)
+        reads = f"versions {', '.join(head)} and {last}" if head else f"version {last}"
         raise CrewBookError(
             "This crew book was written by another version of the lab-addon (book version "
-            f"{number}; this wowlab reads version {known}). Nothing was read; updating wowlab "
+            f"{number}; this wowlab reads {reads}). Nothing was read; updating wowlab "
             "may read it.",
             f"{CREW_VARIABLE} is schema {number}; this reader knows schema {known} only",
         )
@@ -282,11 +425,14 @@ def load_book(value: object) -> CrewBook:
         if not isinstance(key, str):
             unread.append(UnreadEntry(key=_key_text(key), reason="the key is not a name"))
             continue
-        read = _player(key, entry, current)
+        read = _player(key, entry, current, schema)
         if isinstance(read, CrewPlayer):
             players.append(read)
         else:
             unread.append(read)
+    more: dict[str, Any] = {}
+    if schema >= 2:
+        more = _schema_2(value, probe if isinstance(probe, dict) else None)
     return CrewBook(
         state="on" if on is True else "off",
         schema_number=schema,
@@ -296,7 +442,210 @@ def load_book(value: object) -> CrewBook:
         current_count=len(current),
         players=players,
         unread=unread,
+        **more,
     )
+
+
+# ─── schema 2 (§21.2) ────────────────────────────────────────────────────────
+
+
+def _schema_2(value: dict[Any, Any], probe: dict[Any, Any] | None) -> dict[str, Any]:
+    """The top-level fields schema 2 adds, as `CrewBook` fields."""
+    matched = value.get("matched")
+    if matched is not None and not isinstance(matched, (dict, list)):
+        raise _unreadable("matched", f"{CREW_VARIABLE}.matched is not a table")
+    matches: list[CrewMatch] = []
+    unread: list[UnreadMatch] = []
+    for position, (key, entry) in enumerate(_keyed(value.get("matches"), "matches"), 1):
+        read = _match(position, key, entry)
+        if isinstance(read, CrewMatch):
+            matches.append(read)
+        else:
+            unread.append(read)
+    pvp = probe.get("pvp") if probe is not None else None
+    return {
+        "matches": matches,
+        "matches_unread": unread,
+        "warned": _top_number(value, "warned", TIME_MAX),
+        "matched": bool(matched),
+        "probe_pvp": probe_runs(pvp),
+    }
+
+
+_MATCH_KINDS = ("bg", "arena")
+
+
+def _keys_of(value: object) -> list[str] | None:
+    """A list of keys (`team`, `foes`) as stored; None when it is not a list
+    of non-empty text. An empty table is an empty list."""
+    if isinstance(value, dict) and not value:
+        return []
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(k, str) and k for k in value):
+        return None
+    return list(value)
+
+
+def _match(position: int, key: object, value: object) -> CrewMatch | UnreadMatch:
+    """One entry of `matches`, or why it cannot be read (never quoting it)."""
+
+    def bad(reason: str) -> UnreadMatch:
+        return UnreadMatch(position=position, reason=reason)
+
+    if key != position:
+        return bad("the entry is not in the list's order")
+    if not isinstance(value, dict):
+        return bad("the entry is not a table")
+    fields: dict[str, Any] = {"position": position}
+    other: list[str] = []
+    for name, item in value.items():
+        if name == "at":
+            fields["at"] = _whole(item, 0, TIME_MAX)
+            if fields["at"] is None:
+                return bad("at is not a time")
+        elif name == "map":
+            if not isinstance(item, str):
+                return bad("map is not text")
+            fields["map"] = item
+        elif name == "map_id":
+            fields["map_id"] = _whole(item, -(2**31), 2**31 - 1)
+            if fields["map_id"] is None:
+                return bad("map_id is not a whole number")
+        elif name == "kind":
+            if item not in _MATCH_KINDS:
+                return bad('kind is neither "bg" nor "arena"')
+            fields["kind"] = item
+        elif name == "won":
+            if not isinstance(item, bool):
+                return bad("won is neither true nor false")
+            fields["won"] = item
+        elif name in ("team", "foes"):
+            keys = _keys_of(item)
+            if keys is None:
+                return bad(f"{name} is not a list of names")
+            fields[name] = keys
+        else:
+            other.append(_key_text(name))
+    if "at" not in fields:
+        return bad("the entry has no time")
+    if "kind" not in fields:
+        return bad("the entry has no kind")
+    fields["other_keys"] = other
+    return CrewMatch(**fields)
+
+
+# The probe's fixed lists (§21.2, as M20-04 pinned `pvpSnapshot`): the
+# candidate calls it records as present or not, the names of one run's own
+# fields, and the game's scoreboard row fields `doctor` may name. Any other
+# name in the block is shown as `?`.
+PROBE_CALLS = (
+    "GetScoreInfo",
+    "GetNumBattlefieldScores",
+    "GetBattlefieldScore",
+    "RequestBattlefieldScoreData",
+    "GetBattlefieldWinner",
+    "GetBattlefieldArenaFaction",
+    "IsActiveBattlefieldArena",
+)
+PROBE_RUN_FIELDS = (
+    "requested",
+    "score_events",
+    "complete_events",
+    "rows",
+    "name_string",
+    "name_secret",
+    "name_dash",
+    "first_side",
+    "own_side",
+    "winner",
+)
+# The fields a scoreboard row table is believed to hold (§21.2, [verify]
+# until the owner's battleground): the game's own vocabulary, not anyone's
+# data.
+PROBE_SCORE_FIELDS = (
+    "name",
+    "guid",
+    "killingBlows",
+    "honorableKills",
+    "deaths",
+    "honorGained",
+    "faction",
+    "raceName",
+    "className",
+    "classToken",
+    "damageDone",
+    "healingDone",
+    "rating",
+    "ratingChange",
+    "prematchMMR",
+    "mmrChange",
+    "postmatchMMR",
+    "talentSpec",
+    "honorLevel",
+    "roleAssigned",
+    "stats",
+)
+# At most this many runs (the probe stores two) and this many values per
+# run are given; the rest of a larger block is not.
+PROBE_RUNS_MAX = 2
+PROBE_ITEMS_MAX = 128
+_PROBE_POSITIONS_MAX = 64
+_UNKNOWN: Final = "?"
+
+
+def _probe_value(value: object) -> bool | int | ProbeWord:
+    """A value of the block as `doctor` may print it: true or false, a
+    whole number, one of Lua's type names, else `?`."""
+    if isinstance(value, bool):
+        return value
+    number = _whole(value, -_INT_MAX, _INT_MAX)
+    if number is not None:
+        return number
+    if isinstance(value, str) and value in LUA_TYPE_NAMES:
+        return cast(ProbeWord, value)  # one of ProbeWord's names
+    return _UNKNOWN
+
+
+def _probe_name(group: str, name: object, known: tuple[str, ...]) -> str:
+    return f"{group}.{name}" if isinstance(name, str) and name in known else f"{group}.?"
+
+
+def _probe_run(run: object) -> list[ProbeItem]:
+    """One run of the probe as fixed names and values (`ProbeItem`)."""
+    if not isinstance(run, dict):
+        return [ProbeItem(name=_UNKNOWN, value=_UNKNOWN)]
+    items: list[ProbeItem] = []
+    for name, value in run.items():
+        if name in ("calls", "fields") and isinstance(value, (dict, list)):
+            known = PROBE_CALLS if name == "calls" else PROBE_SCORE_FIELDS
+            for inner, item in _keyed(value, name):
+                items.append(
+                    ProbeItem(name=_probe_name(name, inner, known), value=_probe_value(item))
+                )
+        elif name == "positions" and isinstance(value, (dict, list)):
+            for at, item in _keyed(value, name):
+                index = _whole(at, 1, _PROBE_POSITIONS_MAX)
+                label = f"positions.{index}" if index is not None else "positions.?"
+                items.append(ProbeItem(name=label, value=_probe_value(item)))
+        elif isinstance(name, str) and name in PROBE_RUN_FIELDS:
+            items.append(ProbeItem(name=name, value=_probe_value(value)))
+        else:
+            items.append(ProbeItem(name=_UNKNOWN, value=_probe_value(value)))
+    return items[:PROBE_ITEMS_MAX]
+
+
+def probe_runs(value: object) -> list[list[ProbeItem]]:
+    """`probe.pvp` (§21.2: a list of the run after entry and the run after a
+    winner was reported) as `doctor` may print it. Never refuses: a block
+    that does not fit is shown as `?`, since it is a diagnostic, not the
+    book's records."""
+    if value is None:
+        return []
+    if not isinstance(value, (dict, list)):
+        return [[ProbeItem(name=_UNKNOWN, value=_UNKNOWN)]]
+    entries = list(value.items()) if isinstance(value, dict) else list(enumerate(value, 1))
+    return [_probe_run(run) for _, run in entries[:PROBE_RUNS_MAX]]
 
 
 def parse_book(data: bytes) -> CrewBook:
