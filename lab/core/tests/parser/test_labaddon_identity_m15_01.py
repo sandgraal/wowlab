@@ -72,6 +72,9 @@ def _addon_reasons() -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for field, reason in re.findall(r'record\.(\w+)_absent = "([^"]+)"', text):
         found.setdefault(field, []).append(reason)
+    # M20-16: the realm's reasons are joined from its three sources.
+    for reason in re.findall(r'realmWhy = realmWhy \.\. "; ([^"]+)"', text):
+        found.setdefault("realm", []).append(reason)
     return found
 
 

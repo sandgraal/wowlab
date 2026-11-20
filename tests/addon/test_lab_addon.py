@@ -6068,6 +6068,15 @@ def test_m20_13_macros_walk_only_the_client_s_own_indices() -> None:
         "last = perAccount + math . min ( characterCount , MAX_MACROS_PER_SCOPE ) ,"
     ) in text
     assert "local perAccount = ns . Number ( MAX_ACCOUNT_MACROS )" in text
+    # M20-16: the constant is nil until the macro window loads; the addon's
+    # own 120 is used then, and the record says which.
+    assert "local ACCOUNT_MACRO_SLOTS = 120" in text
+    assert (
+        'local slotsFrom = "MAX_ACCOUNT_MACROS" if not perAccount then '
+        'perAccount = ACCOUNT_MACRO_SLOTS slotsFrom = "fallback" end'
+    ) in text
+    assert "account_slots_from = slotsFrom ," in text
+    assert "is not a number" not in text
     assert "local okMacro , name , icon , body = pcall ( getInfo , index )" in text
     assert text.count("pcall ( getInfo ,") == 1
     for value in ("name", "icon", "body"):
@@ -6105,7 +6114,11 @@ def test_m13_05_a_blocked_gather_keeps_the_record_and_stays_dirty() -> None:
         "if blocked then section . dirty = true "
         "else section . gathered = true section . dirty = false "
         # M20-13 (schema 5): the time of the gather.
-        "gatheredAt [ section . key ] = ns . Number ( time ( ) ) end end"
+        "gatheredAt [ section . key ] = ns . Number ( time ( ) ) "
+        # M20-16: a record without its section's `again_without` field
+        # leaves the section dirty, so a later pass gathers it again.
+        "if section . again_without and record [ section . again_without ] == nil then "
+        "section . dirty = true end end end"
     )
     # `gathered` is set in `gather` only, so a carried record does not count.
     sets = [
@@ -8782,7 +8795,16 @@ TALENTS = ADDON / "Talents.lua"
 # Identity.lua's schema-5 values: each call is bound to a local that is only
 # ever handed, first, to `ownText`, which tests it with `secret` before any
 # compare or store (both pinned whole).
-_M20_13_OWN_CALLS = ("UnitGUID", "UnitName", "GetRealmName", "GetGuildInfo")
+_M20_13_OWN_CALLS = (
+    "UnitGUID",
+    "UnitName",
+    "GetRealmName",
+    "GetGuildInfo",
+    # M20-16: the realm's two fallbacks, under the same rule (and, through
+    # _M20_13_OWN_HOME, only in Identity.lua outside Crew.lua).
+    "GetNormalizedRealmName",
+    "UnitFullName",
+)
 _M20_13_OWN_TEXT = (
     "local function ownText ( value , api ) "
     'if secret ( value ) then return nil , api .. " was a value the client calls secret" end '
@@ -8809,6 +8831,21 @@ def _m20_13_identity_problems(path: Path) -> list[str]:
         if x.kind != "name" or x.text not in _M20_13_OWN_CALLS or _is_field(t, k):
             continue
         if _render(t[k - 2 : k + 2]) == f"type ( {x.text} )":
+            continue
+        # M20-16: `local v = select ( N , Call ( ... ) )`, one return bound.
+        if (
+            t[k + 1].text == "("
+            and [y.text for y in t[k - 4 : k - 2]] == ["select", "("]
+            and t[k - 2].kind == "number"
+            and t[k - 1].text == ","
+            and t[k - 5].text == "="
+            and t[k - 7].text == "local"
+            and flow.pair[k + 1] + 1 == flow.pair[k - 3]
+        ):
+            v = t[k - 6].text
+            uses = _m13_05_uses(flow, v, flow.pair[k - 3] + 1)
+            if len(uses) != 1 or _render(t[uses[0] - 2 : uses[0] + 2]) != f"ownText ( {v} ,":
+                problems.append(f"line {x.line}: {v} is used other than handed once to ownText")
             continue
         if t[k - 1].text != "=" or t[k - 3].text != "local" or t[k + 1].text != "(":
             problems.append(f"line {x.line}: {x.text} is not bound to a local of its own")
@@ -9185,6 +9222,56 @@ _M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list
         _m20_13_core_combat,
         "no combat guard pinned",
     ),
+    # M20-16: the realm's two fallbacks are under the same rule.
+    "secret test: the normalized realm stored before the test": (
+        IDENTITY,
+        [
+            (
+                "                local normalized = GetNormalizedRealmName()\n",
+                "                record.realm = ns.String(GetNormalizedRealmName())\n"
+                "                local normalized = nil\n",
+            )
+        ],
+        _m20_13_identity_problems,
+        "GetNormalizedRealmName is not bound to a local of its own",
+    ),
+    "secret test: UnitFullName's realm stored before the test": (
+        IDENTITY,
+        [
+            (
+                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
+                'of UnitFullName")\n',
+                "                local keptFull, whyFull = fullRealm, nil\n",
+            )
+        ],
+        _m20_13_identity_problems,
+        "fullRealm is used other than handed once to ownText",
+    ),
+    "secret test: UnitFullName's realm compared before the test": (
+        IDENTITY,
+        [
+            (
+                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
+                'of UnitFullName")\n',
+                '                local keptFull, whyFull = ownText(fullRealm, "the second return '
+                'of UnitFullName")\n                if fullRealm == "" then return record end\n',
+            )
+        ],
+        _m20_13_identity_problems,
+        "fullRealm is used other than handed once to ownText",
+    ),
+    "secret test: the normalized realm read outside Identity.lua": (
+        ADDON / "Gear.lua",
+        [("local _, ns = ...\n", "local _, ns = ...\nlocal home = GetNormalizedRealmName()\n")],
+        _m20_13_gear_own_values,
+        "GetNormalizedRealmName outside Identity.lua",
+    ),
+    "secret test: UnitFullName read outside Identity.lua": (
+        ADDON / "Talents.lua",
+        [("local _, ns = ...\n", 'local _, ns = ...\nlocal _, home = UnitFullName("player")\n')],
+        _m20_13_gear_own_values,
+        "UnitFullName outside Identity.lua",
+    ),
 }
 
 
@@ -9198,6 +9285,65 @@ def test_m20_13_each_kept_rule_fails_its_own_edit() -> None:
         if not any(word in problem for problem in problems):
             missed.append((tag, problems))
     assert not missed, missed
+
+
+# M20-16 (the owner's first schema-5 run, 71037, 2026-11-20) ------------------
+
+
+def test_m20_16_the_realm_comes_from_the_first_of_three_sources() -> None:
+    """GetRealmName, then GetNormalizedRealmName, then UnitFullName's second
+    return, each asked only while no realm was kept, each source named in
+    `realm_from`; the last two mark the realm normalized. With none,
+    `realm_absent` joins the three reasons."""
+    text = _render(_tokens(IDENTITY))
+    order = [
+        text.index("local realm = GetRealmName ( )"),
+        text.index("if not record . realm then if type ( GetNormalizedRealmName ) ~="),
+        text.index("local normalized = GetNormalizedRealmName ( )"),
+        text.index("if not record . realm then if type ( UnitFullName ) ~="),
+        text.index('local fullRealm = select ( 2 , UnitFullName ( "player" ) )'),
+        text.index("if not record . realm then record . realm_absent ="),
+    ]
+    assert order == sorted(order)
+    for kept, source, normalized in (
+        ("keptRealm", "realm_name", ""),
+        ("keptNormalized", "normalized_realm_name", " record . realm_normalized = true"),
+        ("keptFull", "full_name", " record . realm_normalized = true"),
+    ):
+        assert (
+            f"if {kept} then record . realm = ns . String ( {kept} ) "
+            f'record . realm_from = "{source}"{normalized} else'
+        ) in text, source
+    assert text.count("record . realm_from =") == 3
+    assert text.count("record . realm =") == 3
+
+
+def test_m20_16_a_record_without_a_realm_is_gathered_again() -> None:
+    """`again_without` is a key of the identity spec only, naming `realm`:
+    a record without one leaves the section dirty, so the next pass (at
+    logout at the latest) gathers it again and replaces the record."""
+    found = []
+    for path in SOURCES:
+        t = _tokens(path)
+        found += [
+            (path.name, t[k + 2].text)
+            for k in range(len(t) - 2)
+            if t[k].text == "again_without" and t[k + 1].text == "=" and not _is_field(t, k)
+        ]
+    assert found == [("Identity.lua", "realm")]
+
+
+def test_m20_16_bindings_count_the_commands_that_are_not_plain() -> None:
+    """Every listed command, keyed or not, that is not a plain upper-case
+    name is counted in `commands_not_plain` (the stored, cleaned text is
+    tested, never the raw return)."""
+    text = _render(_tokens(ACTIONS))
+    assert (
+        "local named = ns . String ( found ) "
+        'if named and not string . find ( named , "^[%u%d_]+$" ) then '
+        "notPlain = notPlain + 1 end"
+    ) in text
+    assert "record . commands_not_plain = notPlain" in text
 
 
 def test_m20_13_the_chat_line_prints_once_per_schema() -> None:

@@ -240,6 +240,11 @@ globals:
   # Identity.lua (schema 5): the character's realm, as its display name.
   GetRealmName:
     args: []
+  # Identity.lua (M20-16): the realm's normalized form, the third source
+  # after GetRealmName and GetNormalizedRealmName.
+  UnitFullName:
+    args:
+      - type: string
   UnitGroupRolesAssigned:
     args:
       - type: string

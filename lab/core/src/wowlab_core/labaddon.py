@@ -150,6 +150,7 @@ __all__ = [
     "OPEN_RECORD_NOTE",
     "OWN_FIELDS",
     "PAID_CHANGE_NOTE",
+    "PLAIN_COMMAND",
     "REASON_LIMIT",
     "SECTION_KEYS",
     "SWITCHED_OFF",
@@ -219,6 +220,7 @@ __all__ = [
     "dropped_of",
     "identity_of",
     "is_lab_file_name",
+    "keyed_not_plain",
     "legacy_headline",
     "level_absent_of",
     "load_account",
@@ -1614,17 +1616,42 @@ class BindingV5(Binding):
     keys: Lst[OwnText]
 
 
+# A binding command that is a plain upper-case name (Actions.lua's test,
+# `^[%u%d_]+$`); `MACRO x`, `CLICK f:b` and the like are not.
+PLAIN_COMMAND = re.compile(r"[A-Z0-9_]+")
+
+
+def keyed_not_plain(record: Bindings) -> int:
+    """The commands with a key in `record` that are not a plain upper-case
+    name (M20-16)."""
+    return sum(1 for b in record.list_ if PLAIN_COMMAND.fullmatch(b.command) is None)
+
+
 class BindingsV5(Bindings, _Quiet):
     """`bindings` in schema 5: every command `GetBinding` lists, as the
     client returns it, with its keys (whether that list holds `MACRO`,
     `SPELL`, `ITEM` and `CLICK` commands is [verify]). `commands_left_out` and
     `keys_left_out` are not written any more; they read 0 (nothing is left
-    out)."""
+    out). `commands_not_plain` (M20-16; absent from a file the M20-13 addon
+    wrote) counts the listed commands, keyed or not, that are not a plain
+    upper-case name; the keyed ones are in `list`, so it is at least their
+    number and at most `commands`."""
 
     commands_left_out: Count = 0
     keys_left_out: Count = 0
+    commands_not_plain: Count | None = None
     list_: Lst[BindingV5] = Field(alias="list")  # type: ignore[assignment]
     probes: Lst[ApiProbe] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _not_plain_fits(self) -> Self:
+        count = self.commands_not_plain
+        if count is not None and not keyed_not_plain(self) <= count <= self.commands:
+            raise ValueError(
+                "commands_not_plain is below the listed commands that are not plain, "
+                "or above the commands counted"
+            )
+        return self
 
 
 class Macro(_Record):
@@ -1648,12 +1675,17 @@ class Macros(_Section, _Quiet):
     """`macros` (schema 5, M20-13): `account` and `character` are
     `GetNumMacros`'s counts; the account macros are indices 1 to `account`,
     this character's start at `first_character_index`
-    (`MAX_ACCOUNT_MACROS + 1`). A macro listed twice, or at an index the
-    counts do not reach, is refused: the addon cannot have written it."""
+    (`MAX_ACCOUNT_MACROS + 1`). `account_slots_from` (M20-16; absent from a
+    file the M20-13 addon wrote) says where the account's slot count came
+    from: `MAX_ACCOUNT_MACROS`, or `fallback`, the addon's own 120 (not yet
+    confirmed on this client) when the constant was not loaded. A macro
+    listed twice, or at an index the counts do not reach, is refused: the
+    addon cannot have written it."""
 
     account: Count
     character: Count
     first_character_index: Int
+    account_slots_from: Literal["MAX_ACCOUNT_MACROS", "fallback"] | None = None
     list_: Lst[Macro] = Field(alias="list")
     probes: Lst[ApiProbe] = Field(default_factory=list)
 
@@ -1684,8 +1716,10 @@ OWN_FIELDS: tuple[str, ...] = ("guid", "name", "realm", "guild")
 class IdentityV5(Identity):
     """`identity` in schema 5: schema 4's values plus the character's own
     `guid` (`UnitGUID("player")`), `name` (`UnitName("player")`), `realm`
-    (`GetRealmName()`) and `guild` (`GetGuildInfo("player")`), each one of
-    the value and `<field>_absent`. A value that does not fit is set aside
+    (`GetRealmName()`; since M20-16 `GetNormalizedRealmName()` or the second
+    return of `UnitFullName("player")` when it gives none, named by
+    `realm_from`, with `realm_normalized`) and `guild`
+    (`GetGuildInfo("player")`), each one of the value and `<field>_absent`. A value that does not fit is set aside
     with a reason, as schema 4's are."""
 
     value_fields: ClassVar[tuple[str, ...]] = IDENTITY_FIELDS + OWN_FIELDS
@@ -1708,6 +1742,11 @@ class IdentityV5(Identity):
     realm_absent: Reason | None = None
     realm_absent_clipped: ClippedReason | None = None
     realm_set_aside: Reason | None = None
+    # M20-16: which source gave the realm (absent from a file the M20-13
+    # addon wrote: GetRealmName), and True when only the normalized form
+    # (no spaces) was available.
+    realm_from: Literal["realm_name", "normalized_realm_name", "full_name"] | None = None
+    realm_normalized: bool | None = None
     guild: OwnText | None = None
     guild_absent: Reason | None = None
     guild_absent_clipped: ClippedReason | None = None
@@ -3683,7 +3722,30 @@ def _spellbook(book: Spellbook) -> list[str]:
     return lines + _record_probes(book) + _events(book)
 
 
-def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[str]:
+# What a schema-3 or schema-4 record's action-bar line says of macro text.
+MACRO_TEXT_NEVER = "a macro's name and body are never recorded"
+
+
+def _macro_text_words(char: CharDB, render: Callable[[str], str] = str) -> str:
+    """Where a macro's name and body are, for the action-bar line, its own
+    words rendered: never recorded before schema 5; in a schema-5 record,
+    the Macros section, or why that section holds none (M20-16)."""
+    if not isinstance(char, CharDBV5):
+        return render(MACRO_TEXT_NEVER)
+    record = char.macros
+    if record is None:
+        return render(f"a macro's name and body would be in the Macros section: {NOT_IN_FILE}")
+    if isinstance(record, _Absent):
+        head = render("a macro's name and body would be in the Macros section, which is ")
+        return f"{head}{_absent(record)}"
+    return render("each macro's name and body are in the Macros section below")
+
+
+def _action_bars(
+    bars: ActionBars, render: Callable[[str], str] = str, macro_text: str | None = None
+) -> list[str]:
+    """`macro_text`: `_macro_text_words`, already rendered (the schema-3
+    words when None)."""
     kinds: dict[str, int] = {}
     for slot in bars.slots:
         kind = slot.type if slot.type is not None else "type not kept"
@@ -3701,8 +3763,9 @@ def _action_bars(bars: ActionBars, render: Callable[[str], str] = str) -> list[s
                 f"  macro slots: {index} with no subtype recorded (the id is the macro index "
                 "[verify]), "
                 f"{len(macros) - index} with one (the id is the spell or item id the macro "
-                "shows now [verify]); a macro's name and body are never recorded"
+                "shows now [verify]); "
             )
+            + (render(MACRO_TEXT_NEVER) if macro_text is None else macro_text)
         )
     return lines + _record_probes(bars) + _events(bars)
 
@@ -3742,6 +3805,7 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
             f"{_binding_set_words(record)}; read out of combat",
             "  every command the game's binding list gives: "
             f"{_count(typed, 'macro or click command')} among those with a key",
+            _not_plain_words(record),
             render(
                 "  a key bound straight to a spell, macro, item or click may not be listed by "
                 "GetBinding at all [verify]"
@@ -3762,6 +3826,23 @@ def _bindings(record: Bindings, render: Callable[[str], str] = str) -> list[str]
         ),
     ]
     return lines + _record_probes(record) + _events(record)
+
+
+def _not_plain_words(record: BindingsV5) -> str:
+    """M20-16: how many listed commands are not a plain upper-case name,
+    with and without a key; a file the M20-13 addon wrote holds only the
+    keyed ones."""
+    keyed = keyed_not_plain(record)
+    count = record.commands_not_plain
+    if count is None:
+        return (
+            f"  not a plain upper-case name (as in MACRO x): {keyed} with a key; how many "
+            "without one is not in this record (written by an older lab-addon)"
+        )
+    return (
+        f"  not a plain upper-case name (as in MACRO x): {_count(count, 'command')} of those "
+        f"listed, {keyed} with a key and {count - keyed} without"
+    )
 
 
 def dropped_of(record: object) -> int | None:
@@ -3794,19 +3875,37 @@ def _record_probes(record: Any) -> list[str]:
     return _probe_lines(record.probes)
 
 
-def _macros(record: Macros) -> list[str]:
-    return [
+def _macros(record: Macros, render: Callable[[str], str] = str) -> list[str]:
+    lines = [
         f"Macros: {_count(record.account, 'account-wide macro')} and "
         f"{_count(record.character, 'macro')} of this character's (names and bodies in "
         "--json); read out of combat",
-        *_record_probes(record),
-        *_events(record),
     ]
+    first = record.first_character_index
+    if record.account_slots_from == "MAX_ACCOUNT_MACROS":
+        lines.append(
+            f"  this character's macros asked from index {first}, after the game's own "
+            "count of account macro slots"
+        )
+    elif record.account_slots_from == "fallback":
+        lines.append(
+            render(
+                f"  this character's macros asked from index {first}: the game's count of "
+                "account macro slots is loaded only once the macro window has been opened, so "
+                f"the addon assumed {first - 1} [verify]"
+            )
+        )
+    return [*lines, *_record_probes(record), *_events(record)]
 
 
 # The addon's reason for a nil guild (Identity.lua): no guild, or one the
 # client had not loaded yet.
 NO_GUILD_REASON = "the first return of GetGuildInfo was not a non-empty string"
+# Where a normalized realm came from (Identity.lua, `realm_from`; M20-16).
+REALM_SOURCE_WORDS = {
+    "normalized_realm_name": "the game gave no realm name with spaces",
+    "full_name": "taken from the character's full name; the game gave no realm name",
+}
 
 
 def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
@@ -3818,7 +3917,10 @@ def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
         parts = []
         for name, label in (("name", "name"), ("realm", "realm"), ("guild", "guild")):
             value = getattr(section, name)
-            if value is not None:
+            if name == "realm" and value is not None and section.realm_normalized:
+                where = REALM_SOURCE_WORDS.get(section.realm_from or "", "source not recorded")
+                parts.append(f"{label} {value} (written without spaces: {where})")
+            elif value is not None:
                 parts.append(f"{label} {value}")
             elif name == "guild" and section.guild_absent == NO_GUILD_REASON:
                 parts.append(render("no guild, or the guild not loaded yet [verify]"))
@@ -3970,10 +4072,13 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
     lines += _section("Professions", char.professions, _professions)
     if isinstance(char, CharDBV3):
         lines += _section("Spellbook", char.spellbook, _spellbook)
-        lines += _section("Action bars", char.actionbars, lambda bars: _action_bars(bars, render))
+        macro_text = _macro_text_words(char, render)
+        lines += _section(
+            "Action bars", char.actionbars, lambda bars: _action_bars(bars, render, macro_text)
+        )
         lines += _section("Key bindings", char.bindings, lambda rec: _bindings(rec, render))
     if isinstance(char, CharDBV5):
-        lines += _section("Macros", char.macros, _macros)
+        lines += _section("Macros", char.macros, lambda rec: _macros(rec, render))
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")

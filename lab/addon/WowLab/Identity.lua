@@ -30,12 +30,17 @@
 -- the value and `<field>_absent`:
 -- - guid: UnitGUID("player");
 -- - name: the first return of UnitName("player");
--- - realm: GetRealmName(), the realm's display name;
+-- - realm: GetRealmName(), the realm's display name; since M20-16, when it
+--   gives nothing usable, GetNormalizedRealmName() and then the second
+--   return of UnitFullName("player"), with `realm_from` naming the source
+--   and `realm_normalized` set for the last two. A record with no realm
+--   keeps the section dirty (`again_without`), so a later pass, at logout at
+--   the latest, asks again and its record replaces this one;
 -- - guild: the first return of GetGuildInfo("player"); nil means no guild,
 --   or a guild the client has not loaded yet [verify]. PLAYER_GUILD_UPDATE
 --   gathers the section again.
 -- Each value is tested with issecretvalue (`secret`) before it is compared
--- or stored; one it calls secret, or cannot say about, is not kept. All four
+-- or stored; one it calls secret, or cannot say about, is not kept. All six
 -- calls are [verify] on Forever until the owner's schema-5 capture.
 
 local _, ns = ...
@@ -69,6 +74,10 @@ ns.Section({
     -- joining or leaving a guild changes it.
     events = { "BARBER_SHOP_APPEARANCE_APPLIED", "PLAYER_GUILD_UPDATE" },
     on_world = true,
+    -- M20-16: a record with no realm (none of the three sources gave one at
+    -- this gather) keeps the section dirty, so the next pass, at logout at
+    -- the latest, asks again; a realm found then replaces the absent one.
+    again_without = "realm",
     gather = function()
         local record = {}
         if type(UnitRace) ~= "function" then
@@ -124,13 +133,61 @@ ns.Section({
             record.name = ns.String(keptName)
             record.name_absent = ns.String(whyName)
         end
+        -- The realm (M20-16): the first of three sources that gives a
+        -- non-empty text the client does not call secret, and which one it
+        -- was in `realm_from`: "realm_name" (GetRealmName, the display
+        -- name), "normalized_realm_name" (GetNormalizedRealmName) or
+        -- "full_name" (the second return of UnitFullName("player")). The last
+        -- two give the normalized form, with no spaces ([verify]), and
+        -- `realm_normalized` says so. None: `realm_absent` holds each
+        -- source's reason. On the owner's run on 71037 (2026-11-20),
+        -- GetRealmName gave nothing usable at the first pass.
+        local realmWhy = ""
         if type(GetRealmName) ~= "function" then
-            record.realm_absent = "the client has no GetRealmName function"
+            realmWhy = realmWhy .. "; the client has no GetRealmName function"
         else
             local realm = GetRealmName()
             local keptRealm, whyRealm = ownText(realm, "the return of GetRealmName")
-            record.realm = ns.String(keptRealm)
-            record.realm_absent = ns.String(whyRealm)
+            if keptRealm then
+                record.realm = ns.String(keptRealm)
+                record.realm_from = "realm_name"
+            else
+                realmWhy = realmWhy .. "; " .. ns.String(whyRealm)
+            end
+        end
+        if not record.realm then
+            if type(GetNormalizedRealmName) ~= "function" then
+                realmWhy = realmWhy .. "; the client has no GetNormalizedRealmName function"
+            else
+                local normalized = GetNormalizedRealmName()
+                local keptNormalized, whyNormalized =
+                    ownText(normalized, "the return of GetNormalizedRealmName")
+                if keptNormalized then
+                    record.realm = ns.String(keptNormalized)
+                    record.realm_from = "normalized_realm_name"
+                    record.realm_normalized = true
+                else
+                    realmWhy = realmWhy .. "; " .. ns.String(whyNormalized)
+                end
+            end
+        end
+        if not record.realm then
+            if type(UnitFullName) ~= "function" then
+                realmWhy = realmWhy .. "; the client has no UnitFullName function"
+            else
+                local fullRealm = select(2, UnitFullName("player"))
+                local keptFull, whyFull = ownText(fullRealm, "the second return of UnitFullName")
+                if keptFull then
+                    record.realm = ns.String(keptFull)
+                    record.realm_from = "full_name"
+                    record.realm_normalized = true
+                else
+                    realmWhy = realmWhy .. "; " .. ns.String(whyFull)
+                end
+            end
+        end
+        if not record.realm then
+            record.realm_absent = ns.String(string.sub(realmWhy, 3))
         end
         if type(GetGuildInfo) ~= "function" then
             record.guild_absent = "the client has no GetGuildInfo function"

@@ -83,12 +83,14 @@ WowLabCharDB = {
                 list = { { slot, skill_line, type, action_id, spell_id, spell_name, subtext, passive, off_spec } }, probes },
   actionbars = { first_slot, last_slot, slots = { { slot, type, id, sub_type } }, probes },
   bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
-  -- schema 5 (M20-13): bindings without commands_left_out and keys_left_out, every command and key as given;
+  -- schema 5 (M20-13): bindings without commands_left_out and keys_left_out, every command and key as given,
+  -- and (M20-16) commands_not_plain, the listed commands, keyed or not, that are not a plain upper-case name;
   -- probes only in a debug session, `dropped` (a whole number) in their place on spellbook, actionbars, bindings and macros;
-  macros = { account, character, first_character_index, list = { { index, scope = "account"|"character", name, icon | icon_text, body } }, probes | dropped },
+  macros = { account, character, first_character_index, account_slots_from = "MAX_ACCOUNT_MACROS"|"fallback", list = { { index, scope = "account"|"character", name, icon | icon_text, body } }, probes | dropped },
   -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
   identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent,
-               guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent },  -- the last four: schema 5
+               guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent,  -- the last four: schema 5
+               realm_from, realm_normalized },  -- M20-16: the realm's source, and true when only its form without spaces was given
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -136,6 +138,13 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   out of combat, every value cleaned with `issecretvalue` first, like the
   other three sections there. That the character macros start after
   `MAX_ACCOUNT_MACROS` on Forever, and the constant itself, are **[verify]**.
+  Since M20-16 a nil `MAX_ACCOUNT_MACROS` no longer leaves the section
+  absent: the constant is defined by the macro window's own Lua, which
+  loads on demand, so it was nil at every gather of the owner's first run
+  (71037, 2026-11-20). The addon then takes its own 120 account slots
+  (**[verify]**, the community value) and writes `account_slots_from =
+  "fallback"`; `"MAX_ACCOUNT_MACROS"` when the constant was a number. The
+  macro window is never loaded for it.
 - `bindings` keeps every command `GetBinding` lists, as the client
   returns it, with every key `GetBindingKey` gives for it, as text.
   `commands_left_out` and `keys_left_out` are no longer written. Whether
@@ -153,7 +162,15 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   and `guild` (the first return of `GetGuildInfo("player")`), each exactly
   one of the value and `<field>_absent`. A guild nil means no guild or one
   the client has not loaded yet **[verify]**. Each is tested with
-  `issecretvalue` before it is compared or stored.
+  `issecretvalue` before it is compared or stored. Since M20-16 the realm
+  is the first non-empty, non-secret answer of `GetRealmName()`,
+  `GetNormalizedRealmName()` and the second return of
+  `UnitFullName("player")`, named in `realm_from` (`realm_name`,
+  `normalized_realm_name`, `full_name`); the last two give the form without
+  spaces **[verify]** and set `realm_normalized = true`. With none,
+  `realm_absent` joins the three reasons, and the section stays due for
+  another gather (Core.lua's `again_without`), so the next pass, at logout
+  at the latest, asks again and its record replaces the one without a realm.
 - `gear` keeps each link as the client gives it, a crafter's GUID included,
   and no longer writes `crafter_removed`.
 - `gathered` lists `time()` at each section's last gather this session, and
@@ -996,7 +1013,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetActionInfo` | actionbars: type, id and subtype per slot, 1 to 180 | ran on 70425 (M13-05 capture: 180 calls, 0 errors, 26 answered); a `#showtooltip` macro slot had no subtype; other builds: [verify] | yes |
 | `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype; macros (schema 5): each macro's name, icon and body | ran on 70425 (M13-05 capture: 2 of 2 answered); index numbering and the body's return: [verify] | yes |
 | `GetNumMacros` | macros (schema 5): the account and character counts | [verify] | yes |
-| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it | [verify] | n/a (constant) |
+| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it; nil on 71037 until the macro window is opened (the owner's run, 2026-11-20), and then the addon's own 120 is used (`account_slots_from = "fallback"`, M20-16) | [verify] | n/a (constant) |
 | `GetCurrentBindingSet` | bindings: which binding set is active, raw | ran on 70425 (M13-05 capture: 2, with "Character Specific Key Bindings" ticked); other builds: [verify] | yes |
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
@@ -1006,8 +1023,9 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player | [verify] | yes |
 | `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
-| `GetRealmName` | identity (schema 5): the character's `realm`, as its display name | [verify] | yes |
-| `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty | [verify] | yes |
+| `GetRealmName` | identity (schema 5): the character's `realm`, as its display name; gave nothing usable at the first pass on the owner's run on 71037 (2026-11-20), so two fallbacks follow it (M20-16) | [verify] | yes |
+| `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty; identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
+| `UnitFullName` | identity (M20-16): the character's `realm` from its second return, for the player only, when neither realm call gives one (`realm_from = "full_name"`) | [verify] | yes |
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
