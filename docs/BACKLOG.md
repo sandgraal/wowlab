@@ -1526,7 +1526,7 @@ After the typer 0.29.1 bump (#606), `lab/core/tests/test_cli_explain_detail.py:2
 
 ---
 
-## [ ] M15-26 — Held items in `char model`: the sheath bones' rotation
+## [x] M15-26 — Held items in `char model`: the sheath bones' rotation
 **Size:** S · **Depends on:** M15-24 · **Sources:** `docs/LAB_PLAN.md` §17.6, the M15-24 note; `docs/handoffs/M15-review.md` ("Not done"); owner decision, 2026-11-19 ("probe the rotation first")
 
 A probe only, as M15-24 was. M15-24 found points 26 to 33 of both fixture body models stored away from the origin, on bones with a stored rotation. With `scripts/charmodel_facts.py`, record for each of those bones its first rotation key (and how many it has), and the one stored position of the hand points' bones, as derived fixture rows, and report whether the rotation would give a carry angle. No drawing code. If it does, the conductor asks the owner whether to draw held items sheathed, and the drawing is its own ticket.
@@ -3574,7 +3574,7 @@ Install the addon from `main`, then, with the conductor's runbook beside you (`d
 
 ---
 
-## [ ] M19-09 — `wowlab snap rm`
+## [x] M19-09 — `wowlab snap rm`
 **Size:** M · **Depends on:** M19-11 · **Sources:** `docs/LAB_PLAN.md` §20.3, §20.8 decision 9; ADR-0036 term 5; ADR-0037; the security and code reviews of #613 (2026-11-18)
 
 *Owner decision, 2026-11-19:* build it, on the command line only; `wowlab ui` does not offer it. ADR-0036's term 5 has the player remove snapshots to drop the copies they hold, and wowlab has no command that removes one. `wowlab snap rm ID [ID…]` removes a snapshot's manifest under the store lock, with a plan first and a confirmation; `snap gc` then drops the objects nothing references. It refuses a snapshot a journal record needs unless `--break-undo` is given; the plan then says what is lost (*corrected 2026-11-19, M19-09's code review: not "`undo` of that change and of every earlier one", which was untrue; for the most recent change's snapshot, `undo` can no longer reverse it; for an older change's, `undo` is unaffected and `snap restore` from it is no longer possible*). `undo` of such a record refuses and changes nothing, with the message it gives on `main` for an unreadable snapshot: no new recovery wording (ADR-0037). It never touches the install. §6's snapshot section gains the command with a dated note.
@@ -3592,6 +3592,15 @@ Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while an
 
 ---
 
+## [ ] M19-13 — `snap list`, `snap show` and `snap verify` do not quote a damaged snapshot
+**Size:** S · **Depends on:** M19-12 · **Sources:** the security review of #642 (2026-11-19); ADR-0036 term 4; `.claude/rules/player-copy.md`
+
+On `main`, when a snapshot's manifest is damaged, `snap list`, `snap show` and `snap verify` (text and `--json`) pass on the validator's text, which quotes a fragment of the file: a constructed name-realm key and a U+202E planted in a wrong-typed manifest appeared in all six outputs. Give them the fixed wording `snap gc` and `snap rm` have since M19-12: the snapshot's id, that its record cannot be read, and that `wowlab snap rm <full id> --break-undo` removes it. Also: `snap gc`'s refusal for a manifest that is a link points at `snap rm`, which refuses links; say instead that a link stands in the record's place and wowlab leaves it alone.
+
+**Acceptance:** constructed tests: a marker planted in a truncated, a wrong-typed, an empty, a wrong-version and a non-UTF-8 manifest is in no text or `--json` output of the three commands; the link case's sentence; nothing else about what the commands report changes. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed error sentences of three commands.
+
+---
+
 ## [ ] M19-08 — Crew book wave review
 **Size:** S · **Depends on:** M19-01, M19-02, M19-03, M19-04, M19-05, M19-06, M19-07, M19-10, M19-11
 
@@ -3605,7 +3614,7 @@ Today `snap rm` refuses a damaged manifest and `snap gc` refuses to run while an
 
 Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: `docs/LAB_PLAN.md` §21; ADR-0036's amendment of 2026-11-19 and ADR-0039, both accepted by the owner on 2026-11-19. Owner decision of the same day: M20-01 may start once M19-10 and M19-06 have merged; nothing else here is dispatched before M19-08 merges.
 
-## [ ] M20-01 — `crewdb`: the database and the sync
+## [x] M20-01 — `crewdb`: the database and the sync
 **Size:** M · **Depends on:** M19-10, M19-06 · **Sources:** `docs/LAB_PLAN.md` §21.1, §21.3; ADR-0039; ADR-0036
 
 `wowlab_core.crewdb`: the SQLite file of §21.3 (path, `STRICT` tables, indexes, the fixed `application_id`, `meta`, `secure_delete`, no write-ahead log), and the sync from a schema 1 book by rules 1 to 6, counters added by rule 2. `wowlab crew sync`, and `--adopt` for a database from a renamed flavor folder or another install root; `crew list` and `crew show` sync first and answer from the database, marking a player the game no longer lists; `--json` gains fields and renames none. The three daily copies. A database newer than this wowlab is refused. The two guards of §21.3 "What a sync will not take": the book checked whole before the transaction, and a book of another identity, or one that `guard`'s journal shows was put back by a restore, undo, merge or import since the last sync, synced only by `crew sync` run by hand, after a plan and a yes, never lowering a counter, replacing a rating or note only where the database's row has not changed since (a changed-at time per row), and recording the new identity and journal record when confirmed. Files 0600 in a 0700 folder; the path checked to resolve under wowlab's `crew/` folder; every SQL statement a constant with bound parameters, with a static test. The L1 sweep allows the crew database, and nothing else under the data directory, to change during `crew` reads. §20.5's term-2 sentence, `crew --help` and their test name wowlab's own database. No network import; nothing written into the install.
@@ -3617,7 +3626,7 @@ Picked by the owner on 2026-11-19 (`docs/handoffs/pvp-book-proposal.md`); spec: 
 ## [ ] M20-02 — The write commands, `doctor` and the repository keep the terms for the database
 **Size:** M · **Depends on:** M20-01 · **Sources:** `docs/LAB_PLAN.md` §21.3 ("Writing"), §21.4; ADR-0036 terms 3 to 5
 
-`crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it (asked first, pinned by `--expect` on the row's rating and note, joined to `cli.EXPECT_FIELDS`, and said not to be undoable); `crew forget` removes the player from the saved file, its backup, the database and its copies, and `--all` deletes the database and its copies. The forget plan and result say what `undo` brings back and what it cannot, and that system backups keep theirs (§21.3). Forget rewrites every copy wowlab keeps and leaves no rollback journal. The repository test refuses any tracked SQLite file outside the listed `db2lake` test paths; the capture tool refuses any SQLite file; `doctor --redact` redacts the home-path login and never prints `meta`'s install root; the bug-report template says not to attach the database; the plans of `snap restore`, `undo` and `sv merge` gain the sync sentence. `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
+`crew rate` and `crew note` update the database after the saved file, and the database alone for a player only in it (asked first, pinned by `--expect` on the row's rating and note, joined to `cli.EXPECT_FIELDS`, and said not to be undoable); (`crew forget`'s reach into the database and its copies, with its sentences, was built in M20-01, #640, on the conductor's ruling of 2026-11-19: without it a forgotten player stayed listed.) The repository test refuses any tracked SQLite file outside the listed `db2lake` test paths; the capture tool refuses any SQLite file; `doctor --redact` redacts the home-path login and never prints `meta`'s install root; the bug-report template says not to attach the database; the plans of `snap restore`, `undo` and `sv merge` gain the sync sentence. `doctor` gives the database's path (account folder redacted under `--redact`), size and row counts, never a row. `snap export` says it does not include the database. A repository test refuses any tracked file carrying the `application_id`.
 
 **Acceptance:** tests on constructed rows: after a forget the key's bytes are in no database file, free page or copy, every copy wowlab keeps was rewritten and no rollback journal is left; a planted journal and a renamed copy of a database refused by the repository test; the home-path login absent from `doctor --redact`; the sync sentence present in the plans of `snap restore`, `undo` and `sv merge`; the bug-report template's line; a write to the database alone touches nothing in the install and is refused when the row changed between plan and confirm; the repository test green and shown failing on a planted file; `doctor --redact` searched for every constructed name, guild and note. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: changed sentences of `crew forget`, `crew rate`, `crew note`, `doctor` and `snap export`.
 
