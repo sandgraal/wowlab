@@ -259,6 +259,15 @@ globals:
     args: []
   UNKNOWNOBJECT:
     property: read-only
+  # The crew book's tooltip line (Crew.lua only, M20-14): the hook is
+  # installed only while the book is on and out of combat, tested for first.
+  # [verify] on the Forever client.
+  TooltipDataProcessor.AddTooltipPostCall:
+    property: read-only
+  Enum.TooltipDataType:
+    any: true
+  GameTooltip:
+    any: true
   # The scoreboard probe (Crew.lua only, docs/LAB_PLAN.md §21.2, M20-05): each
   # tested for before it is called, called only in a battleground or arena,
   # while the book is on and out of combat. [verify] until M20-06.

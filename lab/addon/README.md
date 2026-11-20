@@ -698,6 +698,25 @@ records nothing.
   they were last seen in), your rating, how many groups and the date of the last, and your
   note. `|` is doubled and line breaks are removed in every field as it is
   printed. Nothing is ever sent: no chat message, whisper or addon message.
+- The tooltip line (M20-14, owner decision 2026-11-20). Out of combat, while
+  the book is on, the game's tooltip for a player the book holds gains one
+  line: "Crew book: You rated good. In matches with you 3, against you 1.
+  Your note: ..." (each part only when there is one; no line when there is
+  none of the three). The note shows its first 60 characters, cut before a
+  character, never inside one, with `...` after; the stored note is not
+  shortened. The player is the unit under the mouse (`mouseover`), found by
+  one lookup of the same `Name-Realm` key the group pass builds; nothing is
+  shown when the name or realm is a secret value. The hook
+  (`TooltipDataProcessor.AddTooltipPostCall` for unit tooltips) is installed
+  once per session, at the first loading screen or end of combat the book
+  is on, and never while it is off; once installed it stays for the
+  session, so it starts with the on and combat tests and does nothing after
+  `/wowlab crew off` or in combat. It adds its line only to the game's own
+  tooltip, and runs inside `pcall`. A client without the hook gets no line,
+  and `/wowlab crew` says so. **[verify]** in game: that the Forever client
+  has the hook, that the tooltip's unit is `mouseover` (in the world and on
+  unit frames), that adding a line taints nothing and needs no redraw, and
+  whether a name is a secret value in an instance.
 
 What it keeps: the account-wide `WowLabCrewDB` in the account's
 `WowLab.lua` (`## SavedVariables: WowLabDB, WowLabCrewDB`), with its own
@@ -787,8 +806,18 @@ Limits, held in named constants and short functions of `Crew.lua` that
 dropped (`makeRoom`); rated and noted players never are, and when all are,
 new members and new ratings are refused, said once per session. A note has
 control characters and `|` removed byte by byte and spaces trimmed
-(`cleanNote`); over `NOTE_MAX_BYTES` (200) bytes after that it is refused,
-never cut (`noteFits`).
+(`cleanNote`); over `NOTE_MAX_BYTES` (2,000 bytes since M20-14; 200 before)
+after that it is refused, never cut (`noteFits`). The chat box is believed
+to cap a typed command near 255 bytes, so a note typed in game stays far
+below the limit; a longer one comes from `wowlab crew note` or the Crew tab.
+What this does to the saved file: about 280 bytes a player (5,000 players
+was about 1.4 MB when measured), so 20,000 players is about 5.6 MB, as the
+limit was set. Notes come on top, and only on noted players: 20,000 players
+each with a 2,000-byte note would add about 40 MB (about 46 MB in all), and
+with notes as long as the chat box allows, about 5 MB. Nobody has loaded a
+saved file of either size on this client; the 20,000-player limit was set
+for the 5.6 MB figure, and long notes written at the desk can take the file
+well past it.
 
 What is confirmed and what is not. Only `UnitClass("player")`, `UnitLevel`
 on the player, `C_Timer.After`, `InCombatLockdown` out of combat and that
@@ -1004,7 +1033,7 @@ on from one, fails the test until someone lists it on purpose.
 | `IsInGroup` | crew book: whether a pass reads the group at all (not in a group: `current` is emptied) | [verify] | yes |
 | `IsInRaid` | crew book: `raidN` units in a raid, `partyN` otherwise | [verify] | yes |
 | `UnitIsUnit` | crew book: the owner skipped (`raidN` includes the owner), never by comparing names; the target is not the owner | [verify] | yes |
-| `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player | [verify] | yes |
+| `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player; the tooltip line is shown only for a player (`mouseover`) | [verify] | yes |
 | `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
 | `GetRealmName` | identity (schema 5): the character's `realm`, as its display name | [verify] | yes |
 | `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty | [verify] | yes |
@@ -1014,6 +1043,9 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`); identity (schema 5): the character's `guid` | [verify] | yes |
 | `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
 | `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
+| `TooltipDataProcessor.AddTooltipPostCall` | crew book: the tooltip line's hook, installed once per session while the book is on and out of combat, for tooltips that show a unit | [verify] | yes |
+| `Enum.TooltipDataType` | crew book: its `Unit` value, the kind of tooltip the hook is for | [verify] | n/a (table) |
+| `GameTooltip` | crew book: the game's tooltip, the only one the line is added to (`AddLine`) | [verify] | n/a (frame) |
 | `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
 | `time` | crew book: `started`, `first`, `last`; schema 5: `gathered` and `written_at` | [verify] | yes |
 | `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |

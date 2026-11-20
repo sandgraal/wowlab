@@ -291,8 +291,14 @@ CREW_SCHEMA_DECL = "local CREW_SCHEMA = 2"
 # handing on exactly the typed text.
 CREW_COMMAND_CALLER = "SlashCmdList.WOWLAB"
 CREW_COMMAND_CALL = "ns . CrewCommand ( message )"
+# M20-14 (owner decision, 2026-11-20): the tooltip line reads the player
+# under the mouse, as the literal "mouseover", only ever written as the first
+# argument of a unit call (never a local, a value or a table entry).
+CREW_CALL_UNITS = frozenset({"mouseover"})
 CREW_RELAXED: dict[str, frozenset[str]] = {
-    "UNIT_ARGUMENT": frozenset({"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS}),
+    "UNIT_ARGUMENT": frozenset(
+        {"party", "raid", "target", NON_LITERAL_UNIT, *CREW_COMPARANDS, *CREW_CALL_UNITS}
+    ),
     "CONCAT_INDEX": frozenset({"-"}),
     "SAVED_VARIABLES": frozenset({CREW_DB}),
     "SECTION_SCAN": frozenset(
@@ -771,11 +777,23 @@ def _unit_argument_problems(path: Path, tokens: list[Token]) -> list[str]:
                 or (i + 1 < len(tokens) and tokens[i + 1].text in {"==", "~="})
             )
         )
+        # M20-14: "mouseover" only as the whole first argument of a unit call.
+        call_unit = (
+            t.kind == "string"
+            and t.text in literals & CREW_CALL_UNITS
+            and i >= 2
+            and tokens[i - 1].text == "("
+            and tokens[i - 2].kind == "name"
+            and _is_unit_api(tokens[i - 2].text)
+            and i + 1 < len(tokens)
+            and tokens[i + 1].text in {",", ")"}
+        )
         if (
             t.kind == "string"
             and t.text != "player"
-            and (t.text not in literals or t.text in comparands)
+            and (t.text not in literals or t.text in comparands or t.text in CREW_CALL_UNITS)
             and not comparand
+            and not call_unit
             and UNIT_TOKEN.match(t.text)
         ):
             bad.append(f"{_where(path, t)} unit-token literal {t.text!r}")
@@ -8447,14 +8465,30 @@ def _pretend_tree(tmp: str, crew_extra: str, name: str) -> Path:
 
     source = Path(tmp) / "source" / "addon"
     shutil.copytree(ADDON_ROOT, source)
+    # M20-14: the names only the real Crew.lua uses (the tooltip hook's, say)
+    # leave with it, as `_crew_installed_failures` takes them out of a tree
+    # whose Crew.lua is the real one.
+    real = _tokens(ADDON / CREW_FILE)
+    others: set[str] = set()
+    for path in sorted(ADDON.glob("*.lua")):
+        if path.name != CREW_FILE:
+            tokens = _tokens(path)
+            others |= _fn_lookups(tokens) | _dotted_references(tokens)
+    real_only = (_std_globals() & (_fn_lookups(real) | _dotted_references(real))) - others
+    constructed = tokenize(_CREW_SOURCE)
+    real_only -= _fn_lookups(constructed) | _dotted_references(constructed) | OWN_GLOBALS
     (source / "WowLab" / CREW_FILE).write_text(_CREW_SOURCE + crew_extra, encoding="utf-8")
     std = source / "wow_client.yml"
     std.write_text(
-        std.read_text("utf-8").rstrip("\n") + f"\n  {name}:\n    property: read-only\n", "utf-8"
+        _std_without(std.read_text("utf-8"), real_only).rstrip("\n")
+        + f"\n  {name}:\n    property: read-only\n",
+        "utf-8",
     )
     readme = source / "README.md"
     readme.write_text(
-        readme.read_text("utf-8").rstrip("\n") + f"\n\n| `{name}` | {VERIFY_STATUS} |\n", "utf-8"
+        _readme_without(readme.read_text("utf-8"), real_only).rstrip("\n")
+        + f"\n\n| `{name}` | {VERIFY_STATUS} |\n",
+        "utf-8",
     )
     return source
 
@@ -8525,10 +8559,16 @@ def test_m19_01_constructed_relaxations_stay_narrow_in_crew_lua() -> None:
             f'    {CREW_DB}.role = "NONE"\n',
             '    local x = f("none", 1)\n',
             '    local x = { "NONE" }\n',
+            # M20-14: "mouseover" only as a unit call's whole first argument.
+            '    local x = { "mouseover" }\n',
+            '    local x = f("mouseover")\n',
+            '    local x = UnitClass("mouseover" .. "target")\n',
+            '    local x = UnitClass("mouseovertarget")\n',
         ],
         "UNIT_ARGUMENT_CONTROL": [
             '    local x = role == "NONE"\n',
             '    local x = "none" ~= kind\n',
+            '    local x = UnitClass("mouseover")\n',
         ],
         "CONCAT_INDEX": [
             '    local x = book["Unit" .. "Name"]\n',

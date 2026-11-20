@@ -6134,6 +6134,10 @@ must come from the repository test's fixed list of constructed names.)
   note holding either is refused (§20.3). The 5,000 drop
   order cannot be exercised in game and is proven only by reading the
   code.
+  *Amended 2026-11-20 (M20-14; owner decision, ADR-0036's second note of
+  that date):* a note is at most 2,000 bytes, in game and at the desk, and
+  still refused rather than cut. The chat box's cap (believed near 255
+  bytes) keeps a note typed in game well below it.
 - **Rating and note in game.** `/wowlab crew good [Name-Realm]`,
   `/wowlab crew bad [Name-Realm]`, `/wowlab crew clear [Name-Realm]` (drops
   the rating), `/wowlab crew note [Name-Realm] <text>` (empty text drops
@@ -6593,6 +6597,20 @@ Each is the smallest thing that does the job; say so and it changes.
     rules out for the per-character record.
 11. The instance is kept by name, as the client gives it, so no game
     table is added to anyone's download.
+
+*Overturned by the owner on 2026-11-20 ("Yes, all of them"; M20-14):
+decisions 2 and 8.* The tooltip line is built: out of combat, while the
+book is on, the game's tooltip for a player the book holds gains one line
+with the rating, the matches with and against you, and the first 60
+characters of the note (cut before a character, never inside one); nothing
+when the name or realm is a secret value, nothing in combat, and no line
+when the book holds none of the three. The hook is
+`TooltipDataProcessor.AddTooltipPostCall` for unit tooltips, tested for and
+installed through `pcall` once per session while the book is on; the unit
+is `mouseover`; the key is built as the roster pass builds it, and found by
+one lookup. A note may be 2,000 bytes. All of it is **[verify]** in game:
+the hook, the unit, that adding a line taints nothing, and secret names in
+instances. No nameplate check is built.
 
 ## 21. M20: the PvP book
 
@@ -7126,7 +7144,9 @@ on a scoreboard are secret values after a match; whether a premade group
 is counted twice; whether arenas exist on Forever at all; and the 20,000
 limit itself. 20,000 players is about 5.6 MB of saved file by ADR-0039's
 figures, with about 1 MB of matches, and nobody has loaded one that size
-on this client: how long a login takes, and whether the client loads it
+on this client (*2026-11-20, M20-14:* notes of up to 2,000 bytes come on
+top, on noted players only: about 40 MB more if every one of 20,000 held
+the longest, about 5 MB with notes as long as the chat box allows): how long a login takes, and whether the client loads it
 at all (older clients are said to have failed on very large saved files),
 is not known. M20-06 times a login at the book's real size, which will be
 small (§21.7, decision 18).

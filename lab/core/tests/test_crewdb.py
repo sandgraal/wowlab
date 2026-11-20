@@ -592,7 +592,7 @@ _PLANTED = "Inventedplanted"  # a value the refusal must never quote
         ("role_too_long", {KEY_A: player(role=_PLANTED + _over(256))}, {}, "role"),
         ("guild_too_long", {KEY_A: player(guild=_PLANTED + _over(256))}, {}, "guild"),
         ("where_too_long", {KEY_A: player(where=_PLANTED + _over(256))}, {}, "instance name"),
-        ("note_too_long", {KEY_A: player(note=_PLANTED + _over(200))}, {}, "note"),
+        ("note_too_long", {KEY_A: player(note=_PLANTED + _over(2000))}, {}, "note"),
         ("met_too_large", {KEY_A: player(met=crewdb.COUNTER_MAX + 1)}, {}, "count of groups"),
         ("met_negative", {KEY_A: player(met=-1)}, {}, "a player's entry"),
         ("met_fraction", {KEY_A: player(met=1.5)}, {}, "a player's entry"),
@@ -647,6 +647,18 @@ def test_one_field_out_of_range_syncs_nothing_constructed(
     (unread,) = report.unread
     assert report.total == len(rows) + 1 and _PLANTED not in unread.reason
     assert f"  {unread.key}: {unread.reason}" in listed.stdout or unread.key != unread.key.strip()
+
+
+def test_a_note_of_2000_bytes_syncs_whole_constructed(make: Any) -> None:
+    """M20-14 (owner decision, 2026-11-20): a note may be 2,000 bytes (it was
+    200). One of exactly 2,000 bytes, multi-byte text, syncs whole; one byte
+    more is the `note_too_long` case above."""
+    assert crewdb.NOTE_MAX_BYTES == 2000
+    text = "漢" * 666 + "xy"  # 1,998 + 2 bytes
+    env = make(book({KEY_A: player(note=text), KEY_B: player()}))
+    outcome = env.sync()
+    assert outcome.state == "synced" and outcome.left_out == 0, outcome.words
+    assert env.rows()[KEY_A].note == text
 
 
 def test_more_than_20000_players_syncs_nothing_constructed(make: Any) -> None:

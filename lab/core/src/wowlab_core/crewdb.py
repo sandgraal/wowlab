@@ -86,7 +86,7 @@ MATCH_SIDE_MAX = 100
 battleground side is 40 players, with room to spare."""
 KEY_MAX_BYTES = 256
 TEXT_MAX_BYTES = 256  # class, role, guild, instance name
-NOTE_MAX_BYTES = 200  # §20.1, as `crewedit.NOTE_MAX_BYTES`
+NOTE_MAX_BYTES = 2000  # §20.1 (2,000 since 2026-11-20), as `crewedit.NOTE_MAX_BYTES`
 COUNTER_MAX = 10_000_000
 LEVEL_MAX = 1_000
 TIME_MIN = 1_072_915_200  # 2004-01-01 00:00 UTC

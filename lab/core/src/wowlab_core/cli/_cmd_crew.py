@@ -2051,7 +2051,7 @@ def crew_note(
 ) -> None:
     """Write your note about a player in the crew book, or take it away with
     empty text: the same change /wowlab crew note makes in game. A note over
-    200 bytes, or holding a control character or |, is refused rather than
+    2,000 bytes, or holding a control character or |, is refused rather than
     cut. Nothing else in the file changes.
 
     Shows the plan and asks first, then writes through the write gate: the
