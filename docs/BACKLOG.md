@@ -3753,10 +3753,12 @@ Owner decision, 2026-11-20: the limits on what the crew book records are lifted.
 
 ---
 
-## [ ] M20-12 — The desk keeps and shows what M20-11 records
+## [x] M20-12 — The desk keeps and shows what M20-11 records
 **Size:** L · **Depends on:** M20-11 · **Sources:** `docs/LAB_PLAN.md` §21.2 as built by M20-11, §21.3; ADR-0039
 
 The reader accepts the new fields; the sync keeps them in the crew database (a schema step, with the copy taken first, as M20-02's); `crew show`, `crew matches` and the Crew tab show them; `crew forget` reaches every place a player's key or GUID is held, in the file and the database. One player met under two names (same GUID) is shown as one, with the other names listed.
+
+*As built (conductor ruling during review of #668, 2026-11-20):* `crew forget` forgets the name it is given and nothing else; no row is deleted because of a shared GUID. The link by GUID is for showing only ("also seen as", `also_known_as`), and the forget's plan and result name the other names kept for the same character. The acceptance line below about "no GUID of the player" holds for the forgotten name's own entry. Four separate defects were found in forget-by-GUID before it was withdrawn.
 
 **Acceptance:** tests on constructed books and databases; forget leaves no key and no GUID of the player in any file under the crew folder or in the saved file; `doctor` and `doctor --redact` still print counts only; text and `--json` say the same. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the new lines and columns; the wiki's crew pages.
 
