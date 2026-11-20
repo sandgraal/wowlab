@@ -665,11 +665,14 @@ Your own side in a battleground or arena counts as a group.
 Matches. When a battleground or arena reports a winner and you are out of
 combat, the book reads the scoreboard once: for each player on either team
 it raises how many matches they were with or against you and how many your
-side won, keeps their GUID, race, class, spec and honor level as the
-scoreboard gives them, and keeps their scoreboard line from that match
-(damage, healing, kills, deaths, honor, rating and its change, and the
-rest the game lists). The match itself is kept with its map, its kind, the
-result and both teams, at most 500, the oldest dropped first. A `/reload`
+side won, keeps their GUID, race, class, and spec and honor level in their
+latest match, and keeps their scoreboard line from that match (damage,
+healing, kills, deaths, honor, rating and its change; not the
+battleground's own columns, such as flags captured or bases). The match
+itself is kept with its map, its kind, the result and both teams, at most
+500, the oldest dropped first. A solo shuffle is kept as one match with
+everyone in it, no result and no count with or against you, since sides
+change each round. A `/reload`
 or a repeated scoreboard update counts a match once. A match you leave
 before it ends, or before you are out of combat after it, is not
 recorded. Which scoreboard fields the game gives, and that its side and
@@ -915,16 +918,17 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
-| `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out | [verify] | yes |
+| `UnitGUID` | crew book: a member's `guid`, and the player's own, to find the own scoreboard row and leave it out (also left out by its name-realm, from `UnitName("player")`) | [verify] | yes |
 | `UnitFactionGroup` | crew book: a member's `faction` (first return, the English name) | [verify] | yes |
 | `UnitHonorLevel` | crew book: a member's `honor_level` | [verify] | yes |
 | `UNKNOWNOBJECT` | crew book: a member whose name is still the client's "unknown" text is skipped without counting and read again later | [verify] | n/a (constant) |
 | `time` | crew book: `started`, `first`, `last` | [verify] | yes |
 | `date` | crew book: the date printed in the warning and by `/wowlab crew` | [verify] | yes |
 | `C_PvP.GetScoreInfo` | crew book: each scoreboard row once the match has a winner, every field whose value is a number, text or true/false copied as it is (the row's `name`, `guid`, `faction` as the side, `raceName`, `classToken`, `talentSpec`, `honorLevel` and the totals among them); the probe: whether it exists, the first row's field names and type names | [verify] | not checked |
+| `C_PvP.IsSoloShuffle` | crew book: a solo shuffle is kept as `kind = "shuffle"`, with no sides, result or counts | [verify] | not checked |
 | `GetNumBattlefieldScores` | crew book: how many rows to read (at most 80); the probe: the row count | [verify] | not checked |
 | `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | not checked |
-| `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept | [verify] | not checked |
+| `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept; asked once more when a winner is reported and the scoreboard has no rows | [verify] | not checked |
 | `GetBattlefieldWinner` | crew book: a match is read once it gives a winner; `won` when it is 0 or 1; the probe: the winner as a whole number | [verify] | not checked |
 | `GetBattlefieldArenaFaction` | crew book: the player's own side when the own row is not found; the probe: the same as a whole number | [verify] | not checked |
 | `IsActiveBattlefieldArena` | crew book's scoreboard probe: whether it exists (not called) | [verify] | not checked |

@@ -57,7 +57,7 @@ def _files_loading_the_grader() -> set[str]:
 
 def test_the_list_is_every_file_that_loads_the_grader() -> None:
     listed = set(_root_conftest().ADDON_MUTATION_FILES)
-    assert len(listed) == 17, "the seventeen probes of M15-21"
+    assert len(listed) == 18, "the seventeen probes of M15-21 and the one of M20-11"
     found = _files_loading_the_grader()
     assert found - listed == set(), "load the addon grader but are not in ADDON_MUTATION_FILES"
     assert listed - found == set(), "in ADDON_MUTATION_FILES but do not load the addon grader"

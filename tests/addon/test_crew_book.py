@@ -214,8 +214,12 @@ def test_crew_book_source_scan_the_drop_order_is_named() -> None:
     room = _text(flow, "makeRoom")
     pinned = [
         f"for key , entry in pairs ( {BOOK} . players ) do kept = kept + 1 "
-        'if type ( entry ) == "table" and entry . rating == nil and entry . note == nil then '
-        "local last = ns . Number ( entry . last ) or 0 "
+        # M20-11 fix round 1: never a player of the match being written, and
+        # `pvp_last` for a player met only on a scoreboard.
+        'local held = type ( roomKeep ) == "table" and roomKeep [ key ] == true '
+        'if type ( entry ) == "table" and entry . rating == nil and entry . note == nil '
+        "and not held then "
+        "local last = ns . Number ( entry . last ) or ns . Number ( entry . pvp_last ) or 0 "
         "if oldest == nil or last < oldestLast then oldest = key oldestLast = last end end end",
         "if kept < MAX_PLAYERS then return true end",
         "if oldest == nil then if not fullSaid then fullSaid = true",

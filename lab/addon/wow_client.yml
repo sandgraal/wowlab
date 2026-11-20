@@ -258,6 +258,8 @@ globals:
   # while the book is on and out of combat. [verify] until M20-06.
   C_PvP.GetScoreInfo:
     property: read-only
+  C_PvP.IsSoloShuffle:
+    property: read-only
   GetNumBattlefieldScores:
     property: read-only
   GetBattlefieldScore:

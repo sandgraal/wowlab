@@ -6404,7 +6404,7 @@ moves realm appears as a new entry, and someone else may later take a name
 you rated."
 
 (Changed 2026-11-19, owner decision: your own side in a battleground or
-arena counts, never your opponents, so the sentence says so; and whether the game's backup holds the book
+arena counts (from 2026-11-20 both teams do, below); and whether the game's backup holds the book
 is **[verify]** (§20.6), hence "probably". The in-game notice and
 `wowlab crew --help` carry this wording, M19-10.)
 
@@ -6685,39 +6685,48 @@ The key, the secret-value rule, the combat block, the gate, the note
 rules, the warning's flattening and "the book knows names, not people" are
 §20.1's, unchanged. The combat log stays unread.
 
-**Opponents, as built (2026-11-20, M20-11).** `recordMatch`, run by the
-probe's pass once `GetBattlefieldWinner` gives a value, out of combat and
-book on, writes, for the desk (M20-12) to read:
+**Opponents, as built (2026-11-20, M20-11; fix round 1).** `recordMatch`,
+run by the probe's pass once `GetBattlefieldWinner` gives a value, out of
+combat and book on, reads everything first, then writes, with no client
+call between, for the desk (M20-12) to read:
 
-- `matched = { map_id = <instance id>, at = <time()> }`, read first (same
-  `map_id`: nothing more) and written before any counter; emptied by a pass
-  outside a `pvp` or `arena` instance. Nothing is written while the
-  scoreboard has no rows, or the own row (by `UnitGUID("player")`) or side
-  cannot be found; a later score event tries again.
+- `matched = { map_id, at }`: `map_id` is `GetInstanceInfo`'s eighth
+  return, the map's id (the same for every match on that map), `at` the
+  `time()`. Read first: the same `map_id` returns at once. Written before
+  any counter; emptied by a pass outside a `pvp` or `arena` instance.
+  Nothing is written while the scoreboard has no rows (the data is asked
+  for once more, `RequestBattlefieldScoreData`, and read at the next score
+  event) or while the own side is unknown: the own row's `faction`, the
+  own row found by `UnitGUID("player")` or by the own key
+  (`UnitName("player")`-home realm); without it, `GetBattlefieldArenaFaction`.
 - one `matches` entry `{ at, map, map_id, kind, won, team, foes }`: `kind`
-  `"bg"` or `"arena"` (the instance type); `won` only when the winner is 0
-  or 1, true when it equals the own row's `faction` (else
-  `GetBattlefieldArenaFaction`); `team` and `foes` lists of keys, the own
-  row left out. Oldest dropped at 500 (`table.remove(list, 1)`).
+  `"bg"`, `"arena"` or `"shuffle"` (when `C_PvP.IsSoloShuffle()` is true:
+  everyone in `team`, `foes` empty, no `won`, no counter raised); `won`
+  only when the winner is 0 or 1, true when it is the own side; `team` and
+  `foes` lists of keys, the own row and any row with no `faction` left out.
+  Oldest dropped at 500.
 - per row player, keyed `name` when it holds a `-`, else
-  `name-<GetNormalizedRealmName()>`, added as §20.1 adds (`{ met = 0 }`,
-  drop order): `allied` or `faced` +1; `allied_won` or `faced_won` +1 when
-  your side won; `pvp_side`, `pvp_last` (= the match's `at`), `pvp_map`;
-  `first` if unset; and, from the row, `guid` (`guid`), `race`
-  (`raceName`), `class` (`classToken`), `spec` (`talentSpec`) and
-  `honor_level` (`honorLevel`), each kept as it was when the row lacks it.
-- `score` on that player's entry: the row of the latest match, every field
-  whose key is text and value a number, text or boolean, not secret (tables
-  such as `stats` left out), plus `at`. It sits in the player's entry, not
-  the match, so `crew forget` on main removes it with the entry; a name
-  stored inside `matches` outside `team`/`foes`, or in `probe.pvp`, would
-  make forget refuse, so the probe still keeps no name.
+  `name-<GetNormalizedRealmName()>`, added as §20.1 adds (`{ met = 0 }`;
+  the drop order uses `pvp_last` when `last` is unset and never drops a
+  player of the match being written; the book is counted once per match):
+  `allied` or `faced` +1; `allied_won` or `faced_won` +1 when your side
+  won; `pvp_side`, `pvp_last` (= `at`), `pvp_map`; `first` if unset; from
+  the row `guid`, `race` (`raceName`), `class` (`classToken`), `spec`
+  (`talentSpec`) and `honor_level` (`honorLevel`), each kept as it was when
+  the row lacks it, and so as of the latest match.
+- `score` on that player's entry: the latest match's row, every field
+  whose key is text and value a number, text or boolean, not secret, but
+  `name` and `guid` (on the entry already); tables, such as the
+  battleground's own columns in `stats`, are not kept; plus `at`. It sits
+  in the player's entry so `crew forget` on main removes it; a name in
+  `matches` outside `team`/`foes`, or in `probe.pvp`, would make forget
+  refuse, so the probe keeps no name.
 
-Group members also get `guid` (`UnitGUID`), `race` (`UnitRace`, first
-return), `faction` (`UnitFactionGroup`, first return) and `honor_level`
-(`UnitHonorLevel`). Not kept: a member's spec (it needs an inspect), a
-row's `stats`. Every row field name and the meaning of `faction` and the
-winner are **[verify]** until M20-06.
+Group members also get `guid`, `race` (`UnitRace`, first return),
+`faction` (`UnitFactionGroup`) and `honor_level`. Not kept: a member's
+spec (it needs an inspect). The desk on main lists a `"shuffle"` match as
+unread until M20-12. Every row field, `faction`, the winner and
+`IsSoloShuffle` are **[verify]** until M20-06.
 
 What is believed, each **[verify]**:
 

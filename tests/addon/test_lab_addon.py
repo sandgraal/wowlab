@@ -7839,6 +7839,7 @@ def _crew_schema_2_problems(flow: _Flow) -> list[str]:
         ):
             problems.append(f"line {x.line}: schema set other than to {CREW_SCHEMA_NAME}")
     problems += _crew_match_problems(flow)
+    problems += _crew_limit_problems(flow)
     return problems
 
 
@@ -7892,7 +7893,9 @@ def _crew_match_problems(flow: _Flow) -> list[str]:
         reads = [
             k
             for k in range(fn.start, marks[0] if marks else first)
-            if _render(t[k : k + 3]) == f"{CREW_DB} . matched" and t[k + 3].text != "="
+            if _render(t[k : k + 3]) == f"{CREW_DB} . matched"
+            and t[k + 3].text != "="
+            and _crew_marker_decides(flow, fn, k, marks[0] if marks else first)
         ]
         if not marks or not reads:
             problems.append(
@@ -7932,6 +7935,133 @@ def _crew_match_problems(flow: _Flow) -> list[str]:
         held = fn is not None and any(_render(t[k : k + n]) == drop for k in range(fn.start, ts))
         if not held:
             problems.append(f"line {t[ts].line}: a match stored without the oldest dropped first")
+    return problems
+
+
+def _crew_marker_decides(flow: _Flow, fn: _Block, k: int, before: int) -> bool:
+    """Fix round 1 (code review, #664): the `matched` read at token k decides
+    whether the match is counted: it sits, directly or through a local bound
+    once to it (`local m = <book>.matched`), in the condition of an `if`
+    of fn, before `before`, whose whole body is `return`."""
+    t = flow.tokens
+    names: set[int] = set()
+    if t[k - 1].text == "=" and t[k - 2].kind == "name" and t[k - 3].text == "local":
+        decl = flow.resolve(t[k - 2].text, k + 3)
+        if decl is not None and not any(
+            r.rstrip(".") == t[k - 2].text and flow.resolve(t[k - 2].text, ts) is decl
+            for r, ts in flow.rebound
+        ):
+            names.add(id(decl))
+    for b in flow.blocks:
+        if b.kind != "if" or b.cond is None or not fn.start <= b.head < before:
+            continue
+        if flow.function_at(b.head) is not fn or _render(t[b.start : b.stop]) != "return":
+            continue
+        cs, ce = b.cond
+        if cs <= k < ce:
+            return True
+        if any(
+            t[q].kind == "name" and id(flow.resolve(t[q].text, q)) in names for q in range(cs, ce)
+        ):
+            return True
+    return False
+
+
+def _crew_limit_problems(flow: _Flow) -> list[str]:
+    """Fix round 1 (code review, #664), the 20,000 limit:
+    - a new player entry (`<players>[K] = {`, the book's `players` written
+      out or through a local bound to it) is stored only inside an `if`
+      whose condition calls `makeRoom ( )`;
+    - a player dropped (`<players>[X] = nil`) is named by a local X declared
+      bare or as nil and assigned only nil or the key of a
+      `for K ... in pairs(<players>)` loop around the assignment, so the drop
+      takes a real entry."""
+    t = flow.tokens
+    problems: list[str] = []
+    alias: set[int] = set()
+    for q in range(len(t) - 5):
+        if (
+            t[q].text == "local"
+            and t[q + 2].text == "="
+            and _render(t[q + 3 : q + 6]) == f"{CREW_DB} . players"
+            and _ends_expression(t, q + 6)
+        ):
+            decl = flow.resolve(t[q + 1].text, q + 6)
+            if decl is not None:
+                alias.add(id(decl))
+
+    def players_at(k: int) -> int | None:
+        """If the book's players table starts at token k, the index after it."""
+        x = t[k]
+        if x.kind != "name" or _is_field(t, k):
+            return None
+        if x.text == CREW_DB and _render(t[k + 1 : k + 3]) == ". players":
+            return k + 3
+        if id(flow.resolve(x.text, k)) in alias:
+            return k + 1
+        return None
+
+    def walk_key(name: str, at: int) -> bool:
+        for b in flow.blocks:
+            if b.kind != "loop" or t[b.head].text != "for" or not b.head < at < b.stop:
+                continue
+            rest = next((q for q in range(b.head, b.start) if t[q].text == "in"), None)
+            if rest is None or t[b.head + 1].text != name or t[rest + 1].text != "pairs":
+                continue
+            after = players_at(rest + 3)
+            if after is not None and t[after].text == ")":
+                return True
+        return False
+
+    for k in range(len(t) - 3):
+        after = players_at(k)
+        if after is None or t[after].text != "[":
+            continue
+        close = flow.pair[after]
+        if t[close + 1].text != "=" or not flow.statement_level(k):
+            continue
+        value = t[close + 2]
+        if value.text == "{":
+            guarded = any(
+                b.kind in {"if", "elseif"}
+                and b.cond is not None
+                and b.start <= k < b.stop
+                and "makeRoom ( )" in _render(t[b.cond[0] : b.cond[1]])
+                for b in flow.blocks
+            )
+            if not guarded:
+                problems.append(f"line {t[k].line}: a new player added without makeRoom()")
+        elif value.text == "nil":
+            inner = t[after + 1 : close]
+            name = inner[0].text if len(inner) == 1 and inner[0].kind == "name" else None
+            decl = flow.resolve(name, after + 1) if name else None
+            ok = decl is not None and name is not None
+            if ok:
+                for r, ts in flow.rebound:
+                    if r != name or flow.resolve(name, ts) is not decl:
+                        continue
+                    v = t[ts + 2]
+                    if not (
+                        (v.text == "nil" or (v.kind == "name" and walk_key(v.text, ts)))
+                        and _ends_expression(t, ts + 3)
+                    ):
+                        ok = False
+                declared = [
+                    q
+                    for q in range(len(t) - 2)
+                    if t[q].text == "local"
+                    and t[q + 1].text == name
+                    and any(d is decl for d in flow.decls.get(name, []) if q < d.start <= q + 4)
+                ]
+                if len(declared) != 1 or not (
+                    t[declared[0] + 2].text != "="
+                    or (t[declared[0] + 3].text == "nil" and _ends_expression(t, declared[0] + 4))
+                ):
+                    ok = False
+            if not ok:
+                problems.append(
+                    f"line {t[k].line}: a player dropped who is not an entry of the book"
+                )
     return problems
 
 

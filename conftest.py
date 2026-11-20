@@ -178,6 +178,8 @@ ADDON_MUTATION_FILES: frozenset[str] = frozenset(
         "lab/core/tests/review/test_m13_05_secret_scan_misses_a_cleaned_value_read_as_a_table_through_an_alias.py",
         "lab/core/tests/review/test_m13_05_secret_scan_misses_a_raw_value_not_from_a_named_handle.py",
         "lab/core/tests/review/test_m13_05_secret_scan_misses_a_rebound_is_secret.py",
+        # M20-11 code review (#664): the once-per-match and 20,000 rules.
+        "lab/core/tests/review/test_m20_11_hollow_once_and_limit_rules.py",
     }
 )
 

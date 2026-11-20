@@ -133,6 +133,20 @@ local function nameAbsent()
     return nil
 end
 
+local function makeRoom()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    local kept = 0
+    for _ in pairs(WowLabCrewDB.players) do
+        kept = kept + 1
+    end
+    return kept < 5000
+end
+
 local function levelOf(member)
     if not crewOn() then
         return
@@ -158,7 +172,7 @@ end
         local name, realm = UnitFullName(unit)
         if not secret(me) and not me and not secret(name) and not secret(realm) then
             local key = name .. "-" .. realm
-            if book[key] == nil then
+            if book[key] == nil and makeRoom() then
                 book[key] = { met = 0 }
             end
             local entry = book[key]
@@ -573,6 +587,9 @@ _CREW_MATCH = (
     + _CREW_GATE_BODY
     + """    if type(C_PvP) ~= "table" or type(C_PvP.GetScoreInfo) ~= "function" then
         return
+    end
+    if type(C_PvP.IsSoloShuffle) == "function" then
+        print("constructed: a solo shuffle may be asked about")
     end
     local now = ns.Number(time())
 """
@@ -1588,6 +1605,26 @@ _CREW_SCHEMA_2_CASES: dict[str, tuple[list[tuple[str, str]], str]] = {
             )
         ],
         "called other than through pcall",
+    ),
+    # Fix round 1 (code review, #664): the read decides; the 20,000 limit.
+    "the marker read but deciding nothing": (
+        [(_MATCH_READ, "    local seen = WowLabCrewDB.matched\n")],
+        "a counter is raised without `matched` read",
+    ),
+    "a new player added without makeRoom": (
+        [("if book[key] == nil and makeRoom() then", "if book[key] == nil then")],
+        "a new player added without makeRoom()",
+    ),
+    "a drop of a key that is not an entry": (
+        [
+            (
+                "        if oldest == nil or entry.last < players[oldest].last then\n"
+                "            oldest = key\n",
+                "        if oldest == nil or entry.last < players[oldest].last then\n"
+                '            oldest = "x"\n',
+            )
+        ],
+        "a player dropped who is not an entry of the book",
     ),
     "the schema stored outside the migration": (
         [(_PVP_PASS_HEAD, _PVP_PASS_HEAD + "    WowLabCrewDB.schema = CREW_SCHEMA\n")],
