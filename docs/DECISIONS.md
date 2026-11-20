@@ -633,6 +633,8 @@ The owner asked whether `Data/` could also be edited. The conductor recommended 
   - it is graded once, against a damaged-journal and a missing-manifest case (constructed, L8 boundary);
   - its wording follows the existing `doctor` rules: no ticket or module ids, and the command last.
 
+**Note (2026-11-20, M19-15; owner decision in session: "yes, fix the wording"):** when a snapshot's record is damaged, `wowlab undo`, plain `wowlab doctor` and `doctor`'s first-run check passed on the loader's text, which quotes a fragment of the damaged file (found by the security review of #646; `doctor --redact` already withheld it). The owner ruled that replacing that text with the fixed sentence the other snapshot commands use is a privacy fix to an error's wording, not a new recovery rule, so this ADR does not forbid it. Nothing else is unfrozen: which cases refuse, their exit codes, what `doctor` advises and every other sentence stay as decided here, and `guard.py` is not changed for it.
+
 ---
 
 ## ADR-0038 — The double-click builds are made with PyInstaller, in one-folder mode, from the released wheel
