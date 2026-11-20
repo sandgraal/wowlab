@@ -2164,6 +2164,7 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ## [ ] M16-45 — lab-addon schema 5: quieter, with `CLICK` binds
 **Size:** M · **Depends on:** M16-01 (ADR-0026) · **Sources:** addon-author:F6, F7, F8, F9, F10, raider:F4, F7 (EV-46; owner Q9, Q10) · **owner** (parked until M15 closes; then one in-game capture)
+*Owner decision, 2026-11-20 (ADR-0026's note of that date): the limits this ticket's `CLICK` rules served are lifted. M20-13 builds schema 5 on the simpler rule (every binding command and every macro stored as the client returns it) and takes this ticket's "quieter" items with it; what is written below about `CLICK`, the allowlist and the left-out counts is history. This ticket stays open only as the name the blocked tickets below point at, and is ticked with M20-13.*
 *Owner decision, 2026-11-18 (in session): parked until the character-model wave (M15) is done. The conductor then asks the owner for the schema-5 capture and rebuilds this on current `main`; PR #379 is closed; its branch `m16/45-addon-schema5` (27 files, built to 2026-11-13) stays on GitHub as the starting point.*
 
 §18.1 item 9.
@@ -2199,7 +2200,8 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 
 ---
 
-## [ ] M16-48 — The salted macro join key, if the launch session needs it
+## [x] M16-48 — The salted macro join key, if the launch session needs it (dropped)
+*Dropped 2026-11-20 (owner decision, ADR-0026's note of that date): the salted macro join key is not needed once the macro's own text is stored.*
 **Size:** S · **Depends on:** M16-04, M16-05, M16-46 · **Sources:** raider:F7 (owner Q9; ADR-0026 amendments of 2026-10-21)
 
 Built only if M16-05's macro-place answer cannot place macros without a join key; otherwise the conductor closes it with that answer cited. The work:
@@ -2380,7 +2382,8 @@ Each Dependabot bump of a GitHub Action breaks `tests/repo/test_workflows_use_no
 
 **Acceptance:** `uv run pytest --co tests/scripts/test_lab_capture_followup5.py lab/core/tests/review/test_m10_04_bare_value_error_names_a_later_token.py`, which fails with `ImportError` before the fix, collects after it; `uv run pytest -n 4 lab/core/tests/review tests/scripts` passes; reviewed by `code-reviewer`.
 
-## [ ] M16-58 — The lab-addon static checks refuse a raw command string stored with `ns.String`
+## [x] M16-58 — The lab-addon static checks refuse a raw command string stored with `ns.String` (dropped)
+*Dropped 2026-11-20 (owner decision, ADR-0026's note of that date): the check refused a raw command string, which is now stored on purpose.*
 **Size:** S · **Depends on:** M16-45 · **Sources:** the M16-45 code review (2026-11-05)
 
 `tests/addon/test_lab_addon.py` (`_m13_05_sink_problems` and the store checks) accepts `record.x = ns.String(found)`, which stores a raw `GetBinding` command string, possibly player text; reproduced on `main` with 210 passed. Extend the store checks so a client value reaches a record only through the sanitizers already pinned (`clean`, `clickCommand`, the plain-command test), with mutation tests for the hole.
@@ -3756,6 +3759,30 @@ Owner decision, 2026-11-20: the limits on what the crew book records are lifted.
 The reader accepts the new fields; the sync keeps them in the crew database (a schema step, with the copy taken first, as M20-02's); `crew show`, `crew matches` and the Crew tab show them; `crew forget` reaches every place a player's key or GUID is held, in the file and the database. One player met under two names (same GUID) is shown as one, with the other names listed.
 
 **Acceptance:** tests on constructed books and databases; forget leaves no key and no GUID of the player in any file under the crew folder or in the saved file; `doctor` and `doctor --redact` still print counts only; text and `--json` say the same. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the new lines and columns; the wiki's crew pages.
+
+---
+
+## [ ] M20-13 — The lab-addon keeps what the owner's own account shows: macros, bindings, the GUID, names, times (schema 5)
+**Size:** L · **Depends on:** M20-11 · **Sources:** ADR-0026 with its note of 2026-11-20; M16-45 (the "quieter" items; branch `m16/45-addon-schema5` as a starting point where it still applies); `docs/LAB_PLAN.md` §13, §16, §18.1 item 9
+
+Owner decision, 2026-11-20 ("Yes, all of them"). One session changes the addon and the static checks that grade it.
+
+- **Stored as the client returns it:** every macro's name, icon and body, account and character; every binding command for every key (`CLICK`, `MACRO`, `SPELL`, `ITEM` included); the character's own GUID, name, realm and guild; a crafter's GUID inside an item link (no more `crafter_removed`); `time()` at each gather and at logout.
+- **The checks** lose the addon-wide privacy list (`UnitName`, `GetRealmName`, `UnitGUID`, `GetGuildInfo`, `GetMacroBody` and the rest), the `CLICK` rules and the left-out counts. They keep: no send of any kind, no dynamic lookup or code, `BNGetInfo` refused, nothing gathered in combat, the secret-value test before any compare or store.
+- **Quieter (from M16-45):** the chat line once per addon version or after an unclean session; probes behind `/wowlab debug`; the `Constants` sweep once per session; change events mark sections dirty and gathering runs out of combat at most once every 30 to 60 s and at logout.
+- **The desk:** `labaddon` reads schema 5 and still reads 4; `char show`, `binds coach`, `macros` and the keybind views use the stored text where they guessed or joined before; the combat-log reader picks the owner's casts by the stored GUID when it is there.
+- **The capture tool** (`scripts/lab_capture.py`), because the repository is public: the owner's GUID replaced as now; macro bodies and names, typed button names in binding commands and guild names replaced by invented text of the same shape, by byte-level replacement, never by parsing and re-serializing; the new times shifted. A capture that still holds any of them is refused.
+
+**Acceptance:** the static Lua tests and selene pass; constructed files for the reader's hostile and boundary cases; the real-capture fixture at schema 5 is the owner's one capture, taken after this merges (the ticket is done without it and says so; the capture and its provenance row are a follow-up the conductor files). `make ci` green. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer` (the capture tool). User-facing: in-game chat, `/wowlab debug`, `char show`, `binds coach`, the keybind views.
+
+---
+
+## [ ] M20-14 — The crew book speaks up in the tooltip, and a note may be longer
+**Size:** M · **Depends on:** M20-13 · **Sources:** `docs/LAB_PLAN.md` §20.8 decisions 2 and 8; ADR-0036's second note of 2026-11-20
+
+Owner decision, 2026-11-20. Out of combat, a player's tooltip gains one line when the crew book holds them: the rating, the start of the note, and "with you N, against you M" when there are matches; each client value secret-tested, nothing shown in combat or when the name is a secret value. A note may be up to 2,000 bytes (it was 200), in game and at the desk, still refused rather than cut when longer. The checks, the reader's bound, `crew note`, the Crew tab's field and the README follow.
+
+**Acceptance:** static checks for the tooltip hook (gate, combat block, secret test, no taint of the default tooltip: [verify] in game); tests at the desk for the new bound on constructed books. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the tooltip line; longer notes; the wiki's crew page.
 
 ---
 
