@@ -59,7 +59,7 @@ WowLabCharDB = {
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
   debug = true,                               -- schema 5: /wowlab debug on; left out when off
   announced = <schema>,                       -- schema 5: the schema whose first-pass line was last printed in a session the addon wrote
-  gathered = { { section = "<key>", at = <time()> } },  -- schema 5: each section's last gather this session
+  gathered = { { section = "<key>", at = <time()>, at_logout = true? } },  -- schema 5: each section's last gather this session; at_logout (M20-17): gathered by the pass at logout
   written_at = <time()>, written_by = "logout"|"save",  -- schema 5: this write, and what made it
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },
@@ -90,7 +90,8 @@ WowLabCharDB = {
   -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
   identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent,
                guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent,  -- the last four: schema 5
-               realm_from, realm_normalized },  -- M20-16: the realm's source, and true when only its form without spaces was given
+               realm_from, realm_normalized,  -- M20-16: the realm's source, and true when only its form without spaces was given
+               realm_tried },  -- M20-17: what the sources asked before realm_from gave
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
 <config> = { id, type, trees = { { id, system_id, currencies = { { id, quantity, max_quantity, spent } }, nodes = { { id, ranks_purchased, active_rank, current_rank, max_ranks, is_visible, entries, sub_tree, active_entry, active_entry_rank } } } } }
@@ -1054,7 +1055,7 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
 | `GetRealmName` | identity (schema 5): the character's `realm`, as its display name; gave nothing usable at the first pass on the owner's run on 71037 (2026-11-20), so two fallbacks follow it (M20-16) | [verify] | yes |
 | `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty; identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
-| `UnitFullName` | identity (M20-16): the character's `realm` from its second return, for the player only, when neither realm call gives one (`realm_from = "full_name"`) | [verify] | yes |
+| `UnitFullName` | identity (M20-16): the character's `realm` from its second return, for the player only, when neither realm call gives one (`realm_from = "full_name"`); crew book (M20-17): the owner's realm when `GetNormalizedRealmName` gives none, spaces and hyphens removed from either answer | [verify] | yes |
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |

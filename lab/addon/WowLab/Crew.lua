@@ -390,6 +390,56 @@ local function featureMissing()
     return nil
 end
 
+-- The owner's home realm, the realm part of a same-realm player's key
+-- (M20-17), or nil; and true when a source gave a value the client calls
+-- secret. GetNormalizedRealmName(), else the second return of
+-- UnitFullName("player"): on the owner's run on 71037 (2026-11-20) the
+-- identity gather got a realm only from the second. Either answer is kept
+-- with every space and hyphen removed, the way the client is believed to
+-- normalize a realm name ([verify], not yet confirmed), so a player's key is
+-- the same whichever source answered. Read when a key needs it; kept for the
+-- session once found, never while no source gave one.
+local homeFound = nil
+local function homeRealm()
+    if not crewOn() then
+        return
+    end
+    if crewBlocked() then
+        return
+    end
+    if homeFound ~= nil then
+        return homeFound, false
+    end
+    local hidden = false
+    if type(GetNormalizedRealmName) == "function" then
+        local normalized = GetNormalizedRealmName()
+        if secret(normalized) then
+            hidden = true
+        end
+        if not secret(normalized) and type(normalized) == "string" then
+            local bare = string.gsub(normalized, "[%s%-]", "")
+            if bare ~= "" then
+                homeFound = bare
+                return homeFound, false
+            end
+        end
+    end
+    if type(UnitFullName) == "function" then
+        local _, fullRealm = UnitFullName("player")
+        if secret(fullRealm) then
+            hidden = true
+        end
+        if not secret(fullRealm) and type(fullRealm) == "string" then
+            local bare = string.gsub(fullRealm, "[%s%-]", "")
+            if bare ~= "" then
+                homeFound = bare
+                return homeFound, false
+            end
+        end
+    end
+    return nil, hidden
+end
+
 -- Why a field is never filled, or nil.
 local function fieldsMissing()
     if not crewOn() then
@@ -399,8 +449,10 @@ local function fieldsMissing()
         return
     end
     local missing = ""
-    if type(GetNormalizedRealmName) ~= "function" then
-        missing = missing .. " Same-realm players are skipped: the client has no GetNormalizedRealmName function."
+    if homeRealm() == nil then
+        missing = missing
+            .. " Players from your own realm are skipped: no home realm could be found"
+            .. " (neither GetNormalizedRealmName nor your full name gave one)."
     end
     if type(UnitClass) ~= "function" then
         missing = missing .. " No class: the client has no UnitClass function."
@@ -627,9 +679,9 @@ local function hoverKey()
         if type(realm) == "string" and realm ~= "" then
             local key = name .. "-" .. realm
             return key
-        elseif type(GetNormalizedRealmName) == "function" then
-            local home = GetNormalizedRealmName()
-            if not secret(home) and type(home) == "string" and home ~= "" then
+        else
+            local home = homeRealm()
+            if type(home) == "string" then
                 local key = name .. "-" .. home
                 return key
             end
@@ -783,14 +835,14 @@ local function readMember(unit)
                 current[key] = true
             end
             label = key
-        elseif type(GetNormalizedRealmName) == "function" then
-            -- A nil or empty realm is the owner's own realm.
-            local home = GetNormalizedRealmName()
-            if secret(home) then
+        else
+            -- A nil or empty realm is the owner's own realm (homeRealm).
+            local home, hidden = homeRealm()
+            if home == nil and hidden then
                 addSkipped()
                 return
             end
-            if not secret(home) and type(home) == "string" and home ~= "" then
+            if type(home) == "string" then
                 local key = name .. "-" .. home
                 entry = admit(key)
                 counted = current[key] == true
@@ -1114,13 +1166,7 @@ local function recordMatch()
     if not secret(own) and type(own) == "string" and own ~= "" then
         mine = own
     end
-    local home = nil
-    if type(GetNormalizedRealmName) == "function" then
-        local realm = GetNormalizedRealmName()
-        if not secret(realm) and type(realm) == "string" and realm ~= "" then
-            home = realm
-        end
-    end
+    local home = homeRealm()
     local ownKey = nil
     if type(UnitName) == "function" then
         local myName = UnitName("player")
@@ -1485,9 +1531,9 @@ local function targetKey(create)
                 admit(key)
             end
             return key
-        elseif type(GetNormalizedRealmName) == "function" then
-            local home = GetNormalizedRealmName()
-            if not secret(home) and type(home) == "string" and home ~= "" then
+        else
+            local home = homeRealm()
+            if type(home) == "string" then
                 local key = name .. "-" .. home
                 if create then
                     admit(key)

@@ -102,6 +102,14 @@ _CHAR_NOTES = [
 ]
 
 
+def _char_notes(record: labaddon.CharDB) -> list[str]:
+    """The notes for one record: the no-time note only when the record holds
+    no time of its own (M20-17: a schema-5 record carries `written_at`)."""
+    if isinstance(record, labaddon.CharDBV5) and record.written_at is not None:
+        return [_CHAR_NOTES[0]]
+    return list(_CHAR_NOTES)
+
+
 class CharShowReport(_Out):
     """`wowlab char show --json`: the character's `WowLabCharDB` as the model
     for its schema reads it (unknown keys kept), and the account `WowLabDB`."""
@@ -185,7 +193,7 @@ def char_show(
         skip_ignored=ignored,
         customization_loads_ago=labaddon.customization_loads_ago(record),
         unknown_keys=labaddon.unknown_keys(record),
-        notes=_CHAR_NOTES,
+        notes=_char_notes(record),
         installed_version=chosen.version,
         older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
         lab_addon=addoninstall.lab_addon_state(chosen),
@@ -210,7 +218,7 @@ def char_show(
     else:
         for line in labaddon.describe_account(account_record):
             _say(line)
-    for note in _CHAR_NOTES:
+    for note in report.notes:
         _say_note(note)
 
 
@@ -297,9 +305,11 @@ class CharListReport(_Out):
 
 _CHAR_LIST_NOTES = [
     _CHAR_NOTES[0],
-    "The addon records no time; the time shown is the file's modification time: the "
-    "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
-    "or sv merge, or a copy).",
+    # M20-17: a schema-5 record holds its own time, so the list no longer
+    # says the addon records none.
+    "The time shown is the file's modification time: the client's last save, unless "
+    "something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy); "
+    "wowlab char show also prints the time a current lab-addon recorded.",
     "One row per folder: a renamed or transferred character (and a deleted one "
     "[verify]) keeps its old folder and last save here.",
 ]
@@ -1491,7 +1501,7 @@ def char_gear(
     if missing is not None:
         raise CliError(missing)
     table = _slot_table()
-    notes = list(_CHAR_NOTES)
+    notes = _char_notes(record)
     if how == "latest":
         notes.append(
             "The character is the one whose WowLab.lua has the newest modification time; "
@@ -1569,7 +1579,7 @@ def char_gear(
         f"{_home_words(table.user_file)} (create the folder if it is missing); a value there "
         "replaces the shipped one."
     )
-    _say_notes([*standing, *_CHAR_NOTES], notes_out, keep=[_home_words(table.user_file)])
+    _say_notes([*standing, *_char_notes(record)], notes_out, keep=[_home_words(table.user_file)])
 
 
 class CharBindsFile(_Out):

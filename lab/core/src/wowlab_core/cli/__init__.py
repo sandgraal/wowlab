@@ -780,6 +780,9 @@ if TYPE_CHECKING:
         _char_names as _char_names,
     )
     from wowlab_core.cli._cmd_char import (
+        _char_notes as _char_notes,
+    )
+    from wowlab_core.cli._cmd_char import (
         _currency_value as _currency_value,
     )
     from wowlab_core.cli._cmd_char import (

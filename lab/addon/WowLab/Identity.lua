@@ -35,7 +35,11 @@
 --   return of UnitFullName("player"), with `realm_from` naming the source
 --   and `realm_normalized` set for the last two. A record with no realm
 --   keeps the section dirty (`again_without`), so a later pass, at logout at
---   the latest, asks again and its record replaces this one;
+--   the latest, asks again; at logout its record replaces this one only when
+--   it has a realm (Core.lua, M20-17). Since M20-17 `realm_tried` holds what
+--   each source asked before the answering one gave (nil, an empty string,
+--   another type, or a secret value), and `realm_absent` the same for all
+--   three;
 -- - guild: the first return of GetGuildInfo("player"); nil means no guild,
 --   or a guild the client has not loaded yet [verify]. PLAYER_GUILD_UPDATE
 --   gathers the section again.
@@ -55,7 +59,9 @@ local function secret(value)
     return not ok or hidden == true
 end
 
--- The text the client gave, or nil and the reason it is not kept.
+-- The text the client gave, or nil and the reason it is not kept. M20-17:
+-- the reason names the kind of nothing (a secret value, an empty string, or
+-- the type it was: nil, a number, ...); `type` reads only the value's kind.
 local function ownText(value, api)
     if secret(value) then
         return nil, api .. " was a value the client calls secret"
@@ -63,7 +69,10 @@ local function ownText(value, api)
     if type(value) == "string" and value ~= "" then
         return value, nil
     end
-    return nil, api .. " was not a non-empty string"
+    if type(value) == "string" then
+        return nil, api .. " was an empty string"
+    end
+    return nil, api .. " was " .. type(value) .. ", not a non-empty string"
 end
 
 ns.Section({
@@ -188,6 +197,9 @@ ns.Section({
         end
         if not record.realm then
             record.realm_absent = ns.String(string.sub(realmWhy, 3))
+        elseif realmWhy ~= "" then
+            -- M20-17: what each source asked before `realm_from` gave.
+            record.realm_tried = ns.String(string.sub(realmWhy, 3))
         end
         if type(GetGuildInfo) ~= "function" then
             record.guild_absent = "the client has no GetGuildInfo function"

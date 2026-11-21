@@ -182,9 +182,9 @@ def test_char_list_lists_each_captured_character_once(flavor: Path) -> None:
     assert result.stdout.count(NO_ADDON) == 1
     assert lines[5:] == [
         cli._CHAR_NOTES[0],
-        "The addon records no time; the time shown is the file's modification time: the "
-        "client's last save, unless something wrote the file since (a wowlab snap restore, "
-        "undo or sv merge, or a copy).",
+        "The time shown is the file's modification time: the client's last save, unless "
+        "something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy); "
+        "wowlab char show also prints the time a current lab-addon recorded.",
         # The twin row above already showed the run's first marker, so this
         # one is left out.
         "One row per folder: a renamed or transferred character (and a deleted one) "
