@@ -638,7 +638,8 @@ local function tipText(key)
     local allied = ns.Number(entry.allied) or 0
     local faced = ns.Number(entry.faced) or 0
     if allied > 0 or faced > 0 then
-        text = text .. " In matches with you " .. allied .. ", against you " .. faced .. "."
+        -- The owner's wording (2026-11-21).
+        text = text .. " Battlegrounds: " .. allied .. " with you, " .. faced .. " against."
     end
     if type(entry.note) == "string" and entry.note ~= "" then
         text = text .. " Your note: " .. shown(noteStart(entry.note))

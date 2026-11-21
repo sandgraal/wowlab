@@ -521,7 +521,7 @@ def test_m20_14_each_kept_rule_fails_its_own_edit() -> None:
 def test_m20_14_the_tooltip_line_uses_the_warning_s_words() -> None:
     """The line says what the warning says, in its words: the rating as
     "you rated", the note as "Your note:", flattened as every printed field
-    is (`shown`), and the matches as the desk words them."""
+    is (`shown`), and the matches as the owner worded them (2026-11-21)."""
     flow = _flow(CREW.read_text(encoding="utf-8"))
     (head,) = _functions(flow, "tipText")
     tip = _text(flow, head)
@@ -529,7 +529,8 @@ def test_m20_14_the_tooltip_line_uses_the_warning_s_words() -> None:
     warning = _text(flow, warn)
     for words in ("you rated", "rated good", "rated bad", '" Your note: "'):
         assert words.lower() in tip.lower() and words.lower() in warning.lower(), words
-    assert '" In matches with you " .. allied .. ", against you " .. faced' in tip
+    # The matches in the owner's wording (decision of 2026-11-21).
+    assert '" Battlegrounds: " .. allied .. " with you, " .. faced .. " against."' in tip
     assert (
         "ns . Number ( entry . allied ) or 0" in tip and "ns . Number ( entry . faced ) or 0" in tip
     )

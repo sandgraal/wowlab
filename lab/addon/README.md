@@ -718,9 +718,9 @@ records nothing.
   printed. Nothing is ever sent: no chat message, whisper or addon message.
 - The tooltip line (M20-14, owner decision 2026-11-20). Out of combat, while
   the book is on, the game's tooltip for a player the book holds gains one
-  line: "Crew book: You rated good. In matches with you 3, against you 1.
+  line: "Crew book: You rated good. Battlegrounds: 3 with you, 1 against.
   Your note: ..." (each part only when there is one; no line when there is
-  none of the three). The note shows its first 60 characters, cut before a
+  none of the three; the matches worded so by the owner, 2026-11-21). The note shows its first 60 characters, cut before a
   character, never inside one, with `...` after; the stored note is not
   shortened. The player is the unit under the mouse (`mouseover`), found by
   one lookup of the same `Name-Realm` key the group pass builds; nothing is

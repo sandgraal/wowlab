@@ -6685,7 +6685,8 @@ Each is the smallest thing that does the job; say so and it changes.
 *Overturned by the owner on 2026-11-20 ("Yes, all of them"; M20-14):
 decisions 2 and 8.* The tooltip line is built: out of combat, while the
 book is on, the game's tooltip for a player the book holds gains one line
-with the rating, the matches with and against you, and the first 60
+with the rating, the matches with and against you ("Battlegrounds: 3 with
+you, 1 against.", the owner's wording of 2026-11-21), and the first 60
 characters of the note (cut before a character, never inside one); nothing
 when the name or realm is a secret value, nothing in combat, and no line
 when the book holds none of the three. The hook is
