@@ -3815,7 +3815,7 @@ Owner decision, 2026-11-20. Out of combat, a player's tooltip gains one line whe
 
 ---
 
-## [ ] M20-18 — World PvP: opponents from the combat log
+## [x] M20-18 — World PvP: opponents from the combat log
 **Size:** L · **Depends on:** M20-12, M20-13 · **Sources:** `docs/LAB_PLAN.md` §6.8 (the combat-log reader), §21.3; ADR-0036 with its notes of 2026-11-20; ADR-0039; owner decision of 2026-11-21
 
 The owner writes a combat log in game (`/combatlog`). The desk reads it (read-only, L1) and finds the players who fought the owner outside a battleground or arena, and keeps them in the crew database as opponents. No addon change.
