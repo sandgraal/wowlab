@@ -6857,6 +6857,8 @@ now with "with you N times, against you M". Whether the client lists the
 other team before the match ends is **[verify]**; if it does not, there is
 no warning about an opponent at the start, and the README says so.
 
+*Owner decision, 2026-11-21 (in session, to "what should the next piece of new work be": "World PvP from the combat log"): world PvP is in, read at the desk from the client's own combat-log file, with no addon change. M20-18 builds it; what it builds is written below that ticket's as-built note. The paragraph that follows is history.*
+
 **World PvP is out** (owner, 2026-11-19): no target reading beyond §20.1's
 rating of your own target, no nameplates, no combat log.
 
