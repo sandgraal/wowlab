@@ -121,6 +121,8 @@ EXCLUDED: dict[str, str] = {
     "crew rate": "writes into the install",
     "crew note": "writes into the install",
     "crew sync": "writes into wowlab's crew database, and with --adopt moves one",
+    # M20-18: reads a combat log read-only; test_crew_world.py grades it.
+    "crew scan-log": "writes into wowlab's crew database",
     "snap restore": "writes into the install",
     "profile apply": "writes into the install",
     "addon install": "writes into the install",

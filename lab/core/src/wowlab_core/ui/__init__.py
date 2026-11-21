@@ -279,6 +279,11 @@ MAX_PENDING_CONFIRMS: int = 32
 _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
+    # M20-18: `crew scan-log PATH` reads any file it is named; from the UI it
+    # reads only the newest combat log in the flavor's Logs folder.
+    ("crew", "scan-log"): {
+        "path": (False, "from the UI only the newest log in the game's Logs folder is read")
+    },
     # M15-06 (§17.1 "In the UI"): from the UI an extracted file goes only to
     # its default place under the user data directory; `--out` names another
     # file there or, as `-`, sends the file's bytes to the output.

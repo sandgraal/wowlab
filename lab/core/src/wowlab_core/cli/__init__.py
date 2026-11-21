@@ -1047,6 +1047,9 @@ if TYPE_CHECKING:
         CrewReport as CrewReport,
     )
     from wowlab_core.cli._cmd_crew import (
+        CrewScanLogReport as CrewScanLogReport,
+    )
+    from wowlab_core.cli._cmd_crew import (
         CrewShowReport as CrewShowReport,
     )
     from wowlab_core.cli._cmd_crew import (

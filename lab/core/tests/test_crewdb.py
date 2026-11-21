@@ -197,7 +197,7 @@ def test_the_first_sync_makes_the_database_of_section_21_3_constructed(make: Any
     conn = sqlite3.connect(path)
     try:
         assert conn.execute("PRAGMA application_id").fetchone()[0] == crewdb.APPLICATION_ID
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 4
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         objects = dict(conn.execute("SELECT name, sql FROM sqlite_master").fetchall())
     finally:
@@ -219,7 +219,7 @@ def test_the_first_sync_makes_the_database_of_section_21_3_constructed(make: Any
     meta = _meta(path)
     assert meta["account"] == ACCOUNT and meta["flavor_folder"] == FLAVOR
     assert meta["install_root"] == os.path.realpath(env.root)
-    assert meta["book_started"] == T0 and meta["schema"] == 3
+    assert meta["book_started"] == T0 and meta["schema"] == 4
     assert meta["book_sha256"] == hashlib.sha256(env.data()).hexdigest()
 
 
@@ -301,15 +301,15 @@ def test_a_copy_is_kept_before_a_schema_change_constructed(
     env = make(_three())
     env.sync()
     before = env.db().read_bytes()
-    # One schema past this wowlab's (M20-12 made it 3).
-    monkeypatch.setattr(crewdb, "SCHEMA", 4)
-    monkeypatch.setitem(crewdb._MIGRATIONS, (3, 1), "CREATE TABLE later (x INTEGER) STRICT")
-    monkeypatch.setitem(crewdb._SQL_SET_VERSION, 4, "PRAGMA user_version = 4")
+    # One schema past this wowlab's (M20-12 made it 3, M20-18 4).
+    monkeypatch.setattr(crewdb, "SCHEMA", 5)
+    monkeypatch.setitem(crewdb._MIGRATIONS, (4, 1), "CREATE TABLE later (x INTEGER) STRICT")
+    monkeypatch.setitem(crewdb._SQL_SET_VERSION, 5, "PRAGMA user_version = 5")
     assert len(env.rows()) == 3
-    copy = env.db().with_name(env.db().name + ".before-schema-3")
+    copy = env.db().with_name(env.db().name + ".before-schema-4")
     conn = sqlite3.connect(copy)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
     finally:
         conn.close()
     assert len(copy.read_bytes()) == len(before)
@@ -317,7 +317,7 @@ def test_a_copy_is_kept_before_a_schema_change_constructed(
         assert stat.S_IMODE(os.lstat(copy).st_mode) == 0o600
     conn = sqlite3.connect(env.db())
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     finally:
         conn.close()
 
@@ -1487,13 +1487,13 @@ def test_a_forget_cleans_the_copy_a_schema_change_makes_on_its_open_constructed(
 ) -> None:
     env = make(_three())
     env.sync()
-    monkeypatch.setattr(crewdb, "SCHEMA", 4)  # one past this wowlab's
-    monkeypatch.setitem(crewdb._MIGRATIONS, (3, 1), "CREATE TABLE later (x INTEGER) STRICT")
-    monkeypatch.setitem(crewdb._SQL_SET_VERSION, 4, "PRAGMA user_version = 4")
+    monkeypatch.setattr(crewdb, "SCHEMA", 5)  # one past this wowlab's
+    monkeypatch.setitem(crewdb._MIGRATIONS, (4, 1), "CREATE TABLE later (x INTEGER) STRICT")
+    monkeypatch.setitem(crewdb._SQL_SET_VERSION, 5, "PRAGMA user_version = 5")
     monkeypatch.setattr(crewdb, "read", lambda *a, **k: [])  # the forget's first open migrates
     monkeypatch.setattr(crewdb, "holds", lambda *a, **k: [KEY_A, KEY_B, KEY_C])
     assert env.run("crew", "forget", KEY_C, "--yes").exit_code == 0
-    pre = env.db().with_name(env.db().name + ".before-schema-3")
+    pre = env.db().with_name(env.db().name + ".before-schema-4")
     assert pre.exists() and KEY_C.encode() not in pre.read_bytes()
 
 

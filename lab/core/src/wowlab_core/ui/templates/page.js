@@ -3557,6 +3557,8 @@
     showSeq: 0, // the latest player opened
     actSeq: 0, // the latest plan or confirmed run
     matchSeq: 0, // the latest match history read
+    world: false, // whether the history on show is the open-world fights (M20-18)
+    scanSeq: 0, // the latest combat-log read (M20-18)
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
@@ -3567,7 +3569,11 @@
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
-  const CREW_PVP = [["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"]];
+  // `crew list --world` (M20-18): players met in the open world, from a combat log.
+  const CREW_PVP = [
+    ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
+    ["world", "Met in the open world"],
+  ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
   const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
 
@@ -3722,6 +3728,7 @@
     const pvp = byId("crew-pvp").value;
     if (pvp === "faced") params.faced = true;
     if (pvp === "allied") params.allied = true;
+    if (pvp === "world") params.world = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;
@@ -3748,7 +3755,7 @@
     crew.report = report;
     drawCrew();
     // A history on show is read again: a forget or a sync may have changed it.
-    if (!byId("crew-matches").hidden) showCrewMatches(false);
+    if (!byId("crew-matches").hidden) showCrewMatches(false, crew.world);
     // The player shown is gone from the list (forgotten, or filtered out):
     // the panel goes too.
     if (crew.key !== null && !(report.players || []).some((p) => p && p.key === crew.key)) closeCrewPlayer();
@@ -3776,9 +3783,11 @@
   // The match history (M20-09): what `crew matches` prints, line by line,
   // for the whole book (`key` null) or for one player by stored key, sent as
   // it is. Each line is the command's own text, shown through `visible()`.
-  async function readCrewMatches(key) {
-    const params = key === null ? crewParams({}) : crewParams({ name: key });
-    const reply = await runJson(["crew", "matches"], params);
+  // With `world`, `crew matches --world` (M20-18): the open-world fights.
+  async function readCrewMatches(key, world) {
+    const extra = key === null ? {} : { name: key };
+    if (world) extra.world = true;
+    const reply = await runJson(["crew", "matches"], crewParams(extra));
     const report = reply.data;
     const lines = report && Array.isArray(report.lines) ? report.lines.filter((l) => typeof l === "string") : null;
     if (!lines || typeof report.words !== "string") {
@@ -3787,13 +3796,15 @@
     return { words: visible(report.words), lines: lines.map((line) => make("li", visible(line.trim()))) };
   }
 
-  async function showCrewMatches(focus) {
+  async function showCrewMatches(focus, world) {
     const seq = ++crew.matchSeq;
+    crew.world = Boolean(world);
     const box = byId("crew-matches");
     box.hidden = false;
-    byId("crew-matches-words").textContent = "Reading the match history…";
+    byId("crew-matches-title").textContent = crew.world ? "Open-world fights" : "Match history";
+    byId("crew-matches-words").textContent = crew.world ? "Reading the open-world fights…" : "Reading the match history…";
     byId("crew-matches-lines").replaceChildren();
-    const got = await readCrewMatches(null);
+    const got = await readCrewMatches(null, crew.world);
     if (seq !== crew.matchSeq) return;
     byId("crew-matches-words").textContent = got.error || got.words;
     byId("crew-matches-lines").replaceChildren(...(got.lines || []));
@@ -3810,14 +3821,35 @@
     words.textContent = "Reading their matches…";
     list.replaceChildren();
     list.hidden = true;
-    const got = await readCrewMatches(key);
+    const got = await readCrewMatches(key, false);
     if (seq !== crew.showSeq || crew.key !== key) return;
     words.textContent = got.error || got.words;
     list.replaceChildren(...(got.lines || []));
     list.hidden = !got.lines || got.lines.length === 0;
   }
 
-  byId("crew-matches-show").addEventListener("click", () => showCrewMatches(true));
+  byId("crew-matches-show").addEventListener("click", () => showCrewMatches(true, false));
+  byId("crew-world-show").addEventListener("click", () => showCrewMatches(true, true));
+
+  // `crew scan-log` (M20-18): the newest combat log read into wowlab's own
+  // crew database (nothing in the game folder changes), then the list again.
+  async function scanCrewLog() {
+    const seq = ++crew.scanSeq;
+    const button = byId("crew-scan-log");
+    button.disabled = true;
+    crewSay("Reading the newest combat log…", false);
+    const reply = await runJson(["crew", "scan-log"], crewParams({}));
+    button.disabled = false;
+    if (seq !== crew.scanSeq) return;
+    const report = reply.data;
+    if (!report || typeof report.words !== "string") {
+      crewSay(reply.error ? shown(reply.error) : "The combat log's read came back in a shape this page does not know.", true);
+      return;
+    }
+    await loadCrew();
+    crewSay(visible(report.words), false);
+  }
+  byId("crew-scan-log").addEventListener("click", () => scanCrewLog());
   byId("crew-player-matches-show").addEventListener("click", () => showPlayerMatches());
 
   function clearCrewConfirm() {

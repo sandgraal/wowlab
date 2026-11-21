@@ -546,6 +546,9 @@ def test_the_explorer_runs_only_listed_read_commands(server: Any) -> None:
         ("crew", "show"),
         # M20-09: and its match history with `crew matches`.
         ("crew", "matches"),
+        # M20-18: its "Read the newest combat log" runs `crew scan-log`, which
+        # writes only into wowlab's crew database (graded in test_ui_crew.py).
+        ("crew", "scan-log"),
     }, used
     for path in used:
         assert path in offered, path
