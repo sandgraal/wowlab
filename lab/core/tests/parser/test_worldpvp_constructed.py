@@ -23,9 +23,12 @@ from _world_lines import (
     REAL,
     ZONE,
     ally_hits,
+    enemy_pet_hits_you,
     hits_you,
     log,
+    npc_hits_you,
     pet_hits,
+    pet_spell,
     you_die,
     you_hit,
     you_kill,
@@ -123,10 +126,37 @@ def test_constructed_your_death_goes_to_the_last_player_who_hit_you() -> None:
 
 
 @pytest.mark.parser
-def test_constructed_a_death_long_after_the_last_hit_is_nobodys_kill() -> None:
+def test_constructed_a_death_long_after_the_last_hit_is_not_the_encounters() -> None:
     late = 10 + worldpvp.DEATH_WINDOW_SECONDS + 1
     [e] = _scan(log(hits_you(FOE_A, 10), you_die(late))).encounters
+    assert not e.died and not any(p.killed_you for p in e.players)
+
+
+@pytest.mark.parser
+def test_constructed_the_killing_hit_credits_exactly_whoever_dealt_it() -> None:
+    """B hits you last, but A's earlier hit had overkill 0: the real log
+    writes 0 on the killing hit and -1 on every other."""
+    scan = _scan(log(hits_you(FOE_A, 10, overkill=0), hits_you(FOE_B, 10), you_die(11)))
+    [e] = scan.encounters
+    assert e.died
+    assert {p.key: p.killed_you for p in e.players} == {
+        "Inventeda-Fakerealm": True,
+        "Inventedb-Fakerealm": False,
+    }
+
+
+@pytest.mark.parser
+def test_constructed_a_killing_hit_from_an_npc_credits_no_player() -> None:
+    scan = _scan(log(hits_you(FOE_A, 10), npc_hits_you(11, overkill=0), you_die(11)))
+    [e] = scan.encounters
     assert e.died and not any(p.killed_you for p in e.players)
+
+
+@pytest.mark.parser
+def test_constructed_a_killing_hit_from_an_npc_minutes_later_is_no_death_of_the_encounter() -> None:
+    scan = _scan(log(hits_you(FOE_A, 10), npc_hits_you(250, overkill=0), you_die(250)))
+    [e] = scan.encounters
+    assert not e.died and not any(p.killed_you for p in e.players)
 
 
 @pytest.mark.parser
@@ -218,6 +248,9 @@ def test_constructed_another_characters_guid_is_not_you() -> None:
     [
         ("Inventeda-Fakerealm-", None, "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm-EU", None, "Inventeda-Fakerealm"),
+        ("Inventeda-Fake realm-", None, "Inventeda-Fakerealm"),
+        ("Inventeda-Fake-realm-EU", None, "Inventeda-Fakerealm"),
+        ("Inventeda", "Fake-real m", "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm", None, "Inventeda-Fakerealm"),
         ("Inventeda", "Fakerealm", "Inventeda-Fakerealm"),
         ("Inventeda--", "Fakerealm", "Inventeda-Fakerealm"),
@@ -228,6 +261,9 @@ def test_constructed_another_characters_guid_is_not_you() -> None:
     ids=[
         "three-parts",
         "region",
+        "realm-space",
+        "realm-hyphen",
+        "home-normalized",
         "two-parts",
         "no-realm",
         "empty-realm",
@@ -275,10 +311,14 @@ def test_constructed_the_byte_test_leaves_out_no_fight(tmp_path: Path) -> None:
     are tokenized; on every case above it finds what a full read finds."""
     lines = [
         *REAL[2:-1],
+        pet_spell(FOE_B, 99),  # your pet's spell: known by its flags only
         you_hit(FOE_A, 100),
         pet_hits(FOE_B, 101),
         ally_hits(ALLY_C, FOE_A, 102),
-        hits_you(FOE_D, 103),
+        enemy_pet_hits_you(FOE_A[0], 103),  # A's pet: A was named above
+        enemy_pet_hits_you("Player-9998-000000EE", 103),  # an owner never named
+        hits_you(FOE_D, 103, overkill=0),
+        npc_hits_you(104),
         you_kill(FOE_A, 104),
         you_die(105),
     ]
@@ -289,4 +329,104 @@ def test_constructed_the_byte_test_leaves_out_no_fight(tmp_path: Path) -> None:
     full = worldpvp.scan_entries(combatlog.read_log(path), OWNERS)
     assert fast.model_dump(exclude={"unparsed"}) == full.model_dump(exclude={"unparsed"})
     [e] = fast.encounters
-    assert len(e.players) == 4 and e.died
+    assert len(e.players) == 4 and e.died and fast.pet_hits_no_owner == 1
+    hits = {p.key: (p.hits, p.killed_you) for p in e.players}
+    assert hits["Inventedb-Fakerealm"] == (2, False)  # the pet's spell and swing
+    assert hits["Inventeda-Fakerealm"] == (2, False)  # your hit and A's pet's
+    assert hits["Inventedd-Otherfakerealm"] == (1, True)  # the killing swing
+    # From every offset, a read that continues with the state read so far
+    # finds the rest as a read of every line does.
+    offsets = [x.offset for x in combatlog.read_log(path)]
+    for at in offsets[70:]:
+        head = worldpvp.scan_entries((x for x in combatlog.read_log(path) if x.offset < at), OWNERS)
+        rest_fast = worldpvp.read_world(path, OWNERS, start=head.end, state=head.state)
+        rest_full = worldpvp.scan_entries(
+            combatlog.read_log(path, start=head.end), OWNERS, start=head.end, state=head.state
+        )
+        assert rest_fast.model_dump(exclude={"unparsed"}) == rest_full.model_dump(
+            exclude={"unparsed"}
+        ), at
+
+
+@pytest.mark.parser
+def test_constructed_a_continued_read_knows_who_logs(tmp_path: Path) -> None:
+    """A read from an offset after your own lines still knows your pet."""
+    data = log(you_hit(("Creature-0-1-0-2-1554-0000000000", "x"), 5), pet_spell(FOE_B, 10))
+    path = tmp_path / "WoWCombatLog-040126_021630.txt"
+    path.write_bytes(data)
+    cut = len(log(you_hit(("Creature-0-1-0-2-1554-0000000000", "x"), 5)))
+    first = worldpvp.scan_entries(combatlog.read_log(path), OWNERS)
+    head = worldpvp.scan_entries((x for x in combatlog.read_log(path) if x.offset < cut), OWNERS)
+    assert head.state.logging == OWNER_GUID and head.end == cut
+    rest = worldpvp.read_world(path, OWNERS, start=cut, state=head.state)
+    assert rest.fights == first.fights == 1
+    without = worldpvp.read_world(path, OWNERS, start=cut)  # control: no state, no owner
+    assert without.fights == 0
+
+
+@pytest.mark.parser
+def test_constructed_a_member_of_your_group_is_no_foe() -> None:
+    for flags in ("0x542", "0x544"):  # party, raid; hostile (charmed), player
+        assert _scan(log(you_hit(FOE_A, 10, flags=flags))).fights == 0, flags
+
+
+@pytest.mark.parser
+@pytest.mark.parametrize(
+    "line",
+    [
+        'ZONE_CHANGE,--5,"Tirisfal Glades",0',
+        "ZONE_CHANGE," + chr(0x0663) + ',"Tirisfal Glades",0',
+        'ZONE_CHANGE,0,"Tirisfal Glades",' + chr(0x0660),
+        'ZONE_CHANGE,99999999999999999999,"Tirisfal Glades",0',
+        "ZONE_CHANGE",
+        "ZONE_CHANGE,0",
+        "UNIT_DIED,0000000000000000,nil,0x80000000,0x80000000,Player-9999-00000001",
+        "SWING_DAMAGE,Player-9998-0000000A,x,0x548,0x0,Player-9999-00000001,y,0x511,0x0",
+        'SPELL_DAMAGE,Player-9998-0000000A,"x",0xZZ,0x0,Player-9999-00000001,"y",0x511',
+        "PARTY_KILL,(a,b),[c],0x511",
+    ],
+    ids=[
+        "double-minus",
+        "arabic-digit",
+        "arabic-difficulty",
+        "too-long",
+        "no-fields",
+        "one-field",
+        "short-death",
+        "unquoted-names",
+        "bad-flags",
+        "groups",
+    ],
+)
+def test_constructed_a_damaged_line_never_stops_a_read(line: str, tmp_path: Path) -> None:
+    """HOSTILE INPUT: each line is read as unread or as nothing, and the read
+    goes on to the fight after it."""
+    data = log(f"4/1/2026 02:16:31.000-4  {line}", zone(2), you_hit(FOE_A, 10))
+    path = tmp_path / "WoWCombatLog-040126_021630.txt"
+    path.write_bytes(data)
+    for scan in (_scan(data), worldpvp.read_world(path, OWNERS)):
+        assert scan.end == len(data) and scan.fights == 1
+
+
+@pytest.mark.parser
+def test_constructed_a_read_stops_at_its_bound_and_goes_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(worldpvp, "MAX_READ_PLAYERS", 3)
+    gap = worldpvp.ENCOUNTER_GAP_SECONDS + 1
+    lines = [
+        you_hit((f"Player-9998-{n:08X}", "Inventeda-Fakerealm-"), 10 + n * gap) for n in range(7)
+    ]
+    data = log(*lines)
+    path = tmp_path / "WoWCombatLog-040126_021630.txt"
+    path.write_bytes(data)
+    found = 0
+    start, state, parts = 0, None, 0
+    while True:
+        scan = worldpvp.read_world(path, OWNERS, start=start, state=state)
+        found += len(scan.encounters)
+        parts += 1
+        if not scan.more:
+            break
+        start, state = scan.end, scan.state
+    assert (found, parts) == (7, 3)

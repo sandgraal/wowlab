@@ -1106,12 +1106,19 @@ def crew_sync(
 # ─── the open world, from the combat log (§21.3, M20-18) ─────────────────────
 
 _WORLD_NOTES = [
-    "Only fights outside battlegrounds, arenas and dungeons count: the log names the zone, and a "
-    "map wowlab keeps a battleground or arena match on is left out.",
+    "The log holds only what the game wrote while /combatlog was on, and only what it showed "
+    "you: your own hits always, other players' only near you. The game writes it in chunks, so "
+    "a read while you play lags behind.",
+    "Only damage counts: a player who only stunned, feared or missed you is not counted yet.",
+    "Fights in battlegrounds, arenas and dungeons are left out by the zone the log names; that a "
+    "battleground's zone line differs from the open world's is not yet confirmed, and a map "
+    "wowlab keeps a battleground or arena match on is always left out.",
     "A duel cannot be told from the log, so one fought in the open world counts as a fight.",
-    "Which flags the game writes for a hostile player, a pet and a guardian is not yet confirmed.",
-    "A player's name is kept as the log writes it, Name-Realm; the game's id links them to "
-    "the same character under another name.",
+    "Which flags the game writes for a hostile player, a group member, a pet and a guardian is "
+    "not yet confirmed.",
+    "A player's name is kept as Name-Realm, the realm without spaces or hyphens as the crew "
+    "book keeps players of your own realm; how the book keeps another realm's names is not yet "
+    "confirmed, and the game's id links the same character under another name.",
     "Times are in this computer's time zone.",
 ]
 _NO_OWNER = (
@@ -1119,6 +1126,9 @@ _NO_OWNER = (
     "has its game id in the lab-addon's saved file yet. Log in once on each character with the "
     "lab-addon on, then log out or /reload, and run this again."
 )
+_MAX_PARTS = 10_000
+"""A log is read and kept a bounded part at a time (`worldpvp.MAX_READ_PLAYERS`);
+at most this many parts in one run."""
 
 
 class CrewScanLogReport(_Out):
@@ -1126,9 +1136,11 @@ class CrewScanLogReport(_Out):
     who fought you in the open world, into one game account's crew
     database. `log` is the file read (relative to the flavor folder when it
     is in it), `characters` how many of the account's characters wowlab
-    knows by their game id (the lab-addon's), `scan` what the read found
-    and kept (`state`, offsets, counts; never a name), `words` the
-    sentence the text output opens with and `lines` the lines after it."""
+    knows by their game id (the lab-addon's) and `characters_without_id`
+    how many it has a lab-addon record of with no game id (their fights
+    are not read), `scan` what the read found and kept (`state`, offsets,
+    counts; never a name), `words` the sentence the text output opens with
+    and `lines` the lines after it."""
 
     flavor_folder: str
     account: str
@@ -1138,21 +1150,28 @@ class CrewScanLogReport(_Out):
     words: str
     lines: list[str]
     notes: list[str]
+    characters_without_id: int = 0
 
 
-def _owner_guids(lay: layout.Layout, account: str) -> dict[str, str | None]:
+def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
     """Your characters' game ids (the lab-addon's schema 5 record), each
-    with its realm as stored; the GUID is the only way a log names you."""
+    with its realm as stored, and how many characters have a record with no
+    game id; the GUID is the only way a log names you."""
     owners: dict[str, str | None] = {}
+    without = 0
     for c in labaddon.read_all(lay, account=account):
         record = c.record
+        guid = None
         if isinstance(record, labaddon.CharDBV5) and isinstance(
             record.identity, labaddon.IdentityV5
         ):
             guid = record.identity.guid
             if isinstance(guid, str) and crewbook.guid_shaped(guid):
                 owners[guid] = record.identity.realm
-    return owners
+                continue
+        if record is not None:
+            without += 1
+    return owners, without
 
 
 def _log_label(lay: layout.Layout, path: Path) -> str:
@@ -1162,31 +1181,102 @@ def _log_label(lay: layout.Layout, path: Path) -> str:
         return str(path)
 
 
-def _scan_lines(out: crewdb.WorldOutcome) -> list[str]:
+def _scan_lines(out: crewdb.WorldOutcome, without: int) -> list[str]:
     how = {
         "new": "the whole log",
         "continued": "from where the last read stopped",
         "moved": "from where a read of the same log under another name stopped",
-        "restarted": "from its start: the file was shorter or began differently, so it is a new log",
+        "restarted": "from its start: the file began differently, so it is a new log",
+        "already_read": "nothing: it is an earlier copy of a log already read",
     }[out.how]
-    lines = [f"  Read {how} (bytes {out.read_from:,} to {out.read_to:,})."]
+    parts = f", in {out.parts:,} parts" if out.parts > 1 else ""
+    lines = [f"  Read {how} (bytes {out.read_from:,} to {out.read_to:,}{parts})."]
     lines.append(
         f"  Fights with players in the open world: {out.fights:,}; in a battleground, arena "
         f"or dungeon, not counted: {out.outside_world:,}."
     )
-    if out.no_zone or out.no_time:
+    if out.no_zone or out.no_time or out.bad_lines or out.pet_hits_no_owner:
         lines.append(
             f"  Not counted: {out.no_zone:,} before the log named a zone, {out.no_time:,} with a "
-            "time wowlab could not read."
+            f"time wowlab could not read, {out.bad_lines:,} lines wowlab could not read, "
+            f"{out.pet_hits_no_owner:,} hits from pets with no owner in the log."
         )
     if out.encounters_left_out or out.players_left_out:
         lines.append(
             f"  Not kept: {out.encounters_left_out:,} encounters (past "
             f"{crewdb.MAX_WORLD_ENCOUNTERS:,} or at an impossible time) and "
-            f"{out.players_left_out:,} players (a name not Name-Realm, or more than "
-            f"{crewdb.MATCH_SIDE_MAX} on one side)."
+            f"{out.players_left_out:,} players (a name not Name-Realm, more than "
+            f"{crewdb.MATCH_SIDE_MAX} on one side, or past {crewdb.MAX_PLAYERS:,} in the "
+            "database)."
+        )
+    if without:
+        lines.append(
+            f"  {_plural(without, 'character')} of this game account "
+            f"{'has' if without == 1 else 'have'} no game id stored yet, so "
+            f"{'its' if without == 1 else 'their'} fights were not read: log in once on each "
+            "with the lab-addon on."
         )
     return lines
+
+
+_SUMMED = (
+    "fights",
+    "outside_world",
+    "no_zone",
+    "no_time",
+    "bad_lines",
+    "pet_hits_no_owner",
+    "encounters_added",
+    "encounters_left_out",
+    "opponents",
+    "allies",
+    "players_added",
+    "players_left_out",
+)
+
+
+def _joined(first: crewdb.WorldOutcome, later: crewdb.WorldOutcome) -> crewdb.WorldOutcome:
+    """Two parts of one read as one outcome: counts added up, from the
+    first part's start to the later part's end."""
+    update: dict[str, object] = {k: getattr(first, k) + getattr(later, k) for k in _SUMMED}
+    state = later.state
+    if state == "unchanged" and first.state == "scanned":
+        state = "scanned"
+    update.update(read_to=later.read_to, parts=first.parts + later.parts, state=state)
+    return first.model_copy(update=update)
+
+
+def _read_log_parts(
+    target: crewdb.Target,
+    path: Path,
+    owners: dict[str, str | None],
+) -> crewdb.WorldOutcome:
+    """Read the log and keep what it holds, a bounded part at a time: each
+    part is read from where the last stopped and kept in its own write."""
+    key = os.path.realpath(path)
+    outcome: crewdb.WorldOutcome | None = None
+    for _ in range(_MAX_PARTS):
+        try:
+            size, head = combatlog.head(path)
+        except OSError as exc:
+            raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
+        head_sha = hashlib.sha256(head).hexdigest()
+        maps = crewdb.world_maps(target.flavor_folder, target.account)
+        resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
+        try:
+            scan = worldpvp.read_world(
+                path, owners, start=resume.start, state=resume.state, pvp_maps=maps
+            )
+        except OSError as exc:
+            raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
+        part = crewdb.record_world(target, key, size, head_sha, resume, scan)
+        outcome = part if outcome is None else _joined(outcome, part)
+        if not scan.more or part.state != "scanned":
+            break
+    assert outcome is not None
+    if outcome.parts > 1 and outcome.state == "scanned":
+        outcome = outcome.model_copy(update={"words": crewdb.scanned_words(outcome)})
+    return outcome
 
 
 @crew_app.command(
@@ -1212,8 +1302,9 @@ def crew_scan_log(
     """Read a combat log (turn it on in game with /combatlog) for the players
     who fought you outside battlegrounds and arenas, and keep them in
     wowlab's own crew database with who fought beside you and how each
-    fight ended. Each log is read once; a log that grew is read on from
-    where the last read stopped. Nothing in the game folder is changed.
+    fight ended. The log holds only what the game showed you while logging
+    was on. Each log is read once; a log that grew is read on from where
+    the last read stopped. Nothing in the game folder is changed.
 
     \f
     JSON: CrewScanLogReport."""
@@ -1225,7 +1316,7 @@ def crew_scan_log(
             EXIT_USAGE,
         )
     _, lay = opened.where
-    owners = _owner_guids(lay, target.account)
+    owners, without = _owner_guids(lay, target.account)
     if not owners:
         raise CliError(_NO_OWNER.format(account=target.account))
     if path is None:
@@ -1240,30 +1331,17 @@ def crew_scan_log(
                 "fight, then run this again"
             )
         path = newest
-    try:
-        size, head = combatlog.head(path)
-    except OSError as exc:
-        raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
-    key = os.path.realpath(path)
-    head_sha = hashlib.sha256(head).hexdigest()
-    maps = crewdb.world_maps(target.flavor_folder, target.account)
-    resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
-    try:
-        scan = worldpvp.read_world(
-            path, owners, start=resume.start, state=resume.state, pvp_maps=maps
-        )
-    except OSError as exc:
-        raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
-    outcome = crewdb.record_world(target, key, size, head_sha, resume, scan)
+    outcome = _read_log_parts(target, path, owners)
     label = _log_label(lay, path)
     assert opened.place is not None
     words = f"{outcome.words} ({_place_words(opened.place)}, {label})"
-    lines = _scan_lines(outcome) if outcome.state in ("scanned", "unchanged") else []
+    lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
         log=label,
         characters=len(owners),
+        characters_without_id=without,
         scan=outcome,
         words=words,
         lines=lines,

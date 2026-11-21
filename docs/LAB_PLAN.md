@@ -7271,6 +7271,46 @@ real log's lines repeated, four PvP lines in every 81), the target being
 damage line naming no other player's GUID is skipped before it is
 tokenized (`skip=`), which more than halved the time.
 
+*Fix round 1 (2026-11-21, M20-18; supersedes the note above where they
+differ).* **What the log sees:** only what the client wrote while
+`/combatlog` was on and showed you (your own hits always, others' within
+range); it writes in chunks, so a scan while playing lags; only damage is
+read (stuns, fears and misses are not counted yet); duels count. That a
+battleground's zone line differs from the open world's is not yet
+confirmed. **Who logs** (the latest of your GUIDs with "mine" and "player")
+is learned before the byte skip and kept with the offset, with the realm
+each of your unit names gave, so your pet's spells count on a resumed read;
+the skip reads every hit on you and every line that changes who logs, and a
+test checks the skipping and the full read agree from every offset. **Their
+pets:** a hostile pet or guardian hitting you or your pet is a fight with
+its owner when a swing's advanced block names the owner and the log named
+that player elsewhere; else counted as "hits from pets with no owner in the
+log". **Group members** (affiliation party `0x2` or raid `0x4`) are never
+foes. **Death:** the killing hit is the hit on you whose overkill field
+(third after the advanced block; the real log writes 0 on the killing
+swing, -1 otherwise) is 0 or more within 5 s before `UNIT_DIED`; it credits
+an opponent in the encounter, a non-player's credits no one; with no
+killing hit, the last hostile player within 30 s; a death later than that
+is not the encounter's. **Keys:** the realm part has spaces and hyphens
+removed in one place (`normalize_realm`), as Crew.lua's `homeRealm` keys
+your own realm's players; how the book keys another realm (the client's
+`UnitName` realm as given) is not yet confirmed. **A log** with a known
+first line (it holds the session's start to the millisecond) is that log:
+longer than what was read, it continues; shorter, at any path, it is a part
+already read and adds nothing; another first line at a known path is a new
+log. **Bounds:** a line whose fields cannot be read is counted and skipped,
+never raised; numbers are read as `-?[0-9]{1,12}` ASCII. A read stops at the
+first line with no encounter open once it holds 20,000 encounters or 20,000
+players (at twice that, before the next new one), and `crew scan-log` keeps
+each part in its own write and reads on, so no encounter is cut and memory
+stays bounded. Players only a log names are not added past the database's
+20,000. From the UI `crew scan-log` takes no path. `--json` gains
+`characters_without_id`, `bad_lines`, `pet_hits_no_owner` and `parts`.
+Measured (`test_worldpvp_bench_constructed.py`, the real lines with a new
+encounter every block): 1 GB, 45,159 encounters in 2 parts,
+read in 26.0 s, Python's allocations peaking at 120 MB (target 120 s and
+200 MB; the default suite reads 16 MB, 708 encounters, in 2.2 s, peak 9 MB).
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

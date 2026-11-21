@@ -29,8 +29,9 @@ def test_every_command_the_page_refuses_is_named() -> None:
     text = _help()
     sentence = (
         "ui itself, log tail --follow, looks page --out, casc cat --out, char model --out, "
-        "snap export and snap rm are not offered, so casc cat and char model write only to "
-        "their default places."
+        "crew scan-log PATH, snap export and snap rm are not offered, so casc cat and char "
+        "model write only to their default places and crew scan-log reads only the newest "
+        "combat log."
     )
     assert sentence in text
     # Each leaf the server refuses whole is in the sentence.
@@ -38,6 +39,9 @@ def test_every_command_the_page_refuses_is_named() -> None:
         words = "ui itself" if path == ("ui",) else " ".join(path)
         assert words in sentence, path
     # And each parameter it refuses (M15-06: casc cat --out; M15-11: char model --out).
+    # M20-18: crew scan-log's PATH argument, named as its help names it.
     for path, names in ui._REFUSED_PARAMS.items():
         for name in names:
-            assert f"{' '.join(path)} --{name.replace('_', '-')}" in sentence, (path, name)
+            option = f"{' '.join(path)} --{name.replace('_', '-')}"
+            argument = f"{' '.join(path)} {name.upper()}"
+            assert option in sentence or argument in sentence, (path, name)

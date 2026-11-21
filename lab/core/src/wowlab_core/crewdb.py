@@ -2744,7 +2744,7 @@ def _world_parts(conn: sqlite3.Connection) -> dict[str, _WorldPart]:
     return out
 
 
-Resume = Literal["new", "continued", "moved", "restarted"]
+Resume = Literal["new", "continued", "moved", "restarted", "already_read"]
 
 
 class WorldResume(_Model):
@@ -2752,8 +2752,10 @@ class WorldResume(_Model):
     read to before, and `state`, where the log was there. `how`: `new` (a
     log not read before), `continued` (the same log, grown or not), `moved`
     (a log read before under another path: the same first line, and at
-    least as long), `restarted` (a log at a path read before, now shorter
-    or with another first line: a new log, read from its start). `log_id`
+    least as long), `restarted` (a log at a path read before, now with
+    another first line: a new log, read from its start), `already_read` (a
+    file with a known first line, shorter than what was read of it: an
+    earlier copy of that log, so nothing is read or kept). `log_id`
     is the database's row of the log, None for a new one."""
 
     start: int
@@ -2773,8 +2775,13 @@ class WorldOutcome(_Model):
     (`no_zone`) or with a time that could not be read (`no_time`); the
     encounters kept and left out (past the cap, or a time out of range);
     the opponents and allies in them, the players added to the database,
-    and players not kept (past an encounter's side limit, or a name that
-    is not Name-Realm)."""
+    and players not kept (past an encounter's side limit, a name that is
+    not Name-Realm, or past `MAX_PLAYERS` in the database); lines whose
+    fields could not be read (`bad_lines`), hits from a hostile pet whose
+    owner the log does not name (`pet_hits_no_owner`), and how many parts
+    the read was kept in (`parts`: a long log is read and kept a bounded
+    part at a time). The opponents and allies of a read in parts are
+    counted per part."""
 
     state: Literal["scanned", "unchanged", "skipped", "elsewhere"]
     words: str
@@ -2786,6 +2793,9 @@ class WorldOutcome(_Model):
     outside_world: int = 0
     no_zone: int = 0
     no_time: int = 0
+    bad_lines: int = 0
+    pet_hits_no_owner: int = 0
+    parts: int = 1
     encounters_added: int = 0
     encounters_left_out: int = 0
     opponents: int = 0
@@ -2840,13 +2850,22 @@ def _resume(conn: sqlite3.Connection, log: str, size: int, head: str) -> WorldRe
         log_id, _, was_head, _, read_to, state = by_path
         if was_head == head and size >= read_to:
             return WorldResume(start=read_to, state=state, how="continued", log_id=log_id)
+        if was_head == head:  # the same session's log, shorter: a part already read
+            return WorldResume(start=size, state=state, how="already_read", log_id=log_id)
         return WorldResume(start=0, how="restarted", log_id=log_id)
-    for row in conn.execute(_SQL_WORLD_LOG_BY_HEAD, (head,)).fetchall():
-        moved = _log_row(row)
+    # The first line holds the session's start to the millisecond, so a file
+    # elsewhere with a known first line is that log: moved, or a copy. One
+    # shorter than what was read is a part already read, and adds nothing.
+    known = [_log_row(r) for r in conn.execute(_SQL_WORLD_LOG_BY_HEAD, (head,)).fetchall()]
+    for moved in known:
         assert moved is not None
         log_id, _, _, _, read_to, state = moved
         if size >= read_to:
             return WorldResume(start=read_to, state=state, how="moved", log_id=log_id)
+    if known:
+        first = known[0]
+        assert first is not None
+        return WorldResume(start=size, state=first[5], how="already_read", log_id=first[0])
     return WorldResume(start=0, how="new")
 
 
@@ -2909,7 +2928,7 @@ def _time_ok(t: int) -> bool:
     return TIME_MIN <= t <= int(time.time()) + TIME_AHEAD
 
 
-def _scanned_words(outcome: WorldOutcome) -> str:
+def scanned_words(outcome: WorldOutcome) -> str:
     def n(count: int, one: str, many: str) -> str:
         return f"{count:,} {one if count == 1 else many}"
 
@@ -2955,6 +2974,8 @@ def record_world(
         "outside_world": scan.outside_world,
         "no_zone": scan.no_zone,
         "no_time": scan.no_time,
+        "bad_lines": scan.bad_lines,
+        "pet_hits_no_owner": scan.pet_hits_no_owner,
     }
     exists = os.path.lexists(path)
     if not exists:
@@ -2977,6 +2998,13 @@ def record_world(
                 path, meta.get("install_root"), meta.get("flavor_folder"), target.account
             ).words
             return _world_outcome("elsewhere", words, base)
+        if resume.how == "already_read":
+            return _world_outcome(
+                "unchanged",
+                "This combat log is an earlier copy of one wowlab has already read, so nothing "
+                "was added.",
+                base,
+            )
         if not scan.encounters and scan.end == resume.start and resume.how == "continued":
             return _world_outcome(
                 "unchanged",
@@ -3053,6 +3081,11 @@ def _record_open(
             kept += 1
             added += 1
             for p in players:
+                if p.key not in rows and len(rows) >= MAX_PLAYERS:
+                    # A player only the log names counts against the
+                    # database's bound as a sync's do: past it, not kept.
+                    players_left_out += 1
+                    continue
                 guid = p.guid if guid_kept(p.guid) else None
                 conn.execute(
                     _SQL_WORLD_PLAYER_INSERT,
@@ -3090,7 +3123,7 @@ def _record_open(
             "players_left_out": players_left_out,
         }
     )
-    return outcome.model_copy(update={"words": _scanned_words(outcome)})
+    return outcome.model_copy(update={"words": scanned_words(outcome)})
 
 
 def world_encounters(
@@ -3184,6 +3217,7 @@ __all__ = [
     "matches",
     "read",
     "record_world",
+    "scanned_words",
     "summaries",
     "sync",
     "world_encounters",

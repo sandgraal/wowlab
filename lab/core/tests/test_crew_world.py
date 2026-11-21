@@ -56,7 +56,7 @@ LOG_NAME = "WoWCombatLog-040126_021630.txt"
 @pytest.fixture
 def owner(monkeypatch: pytest.MonkeyPatch) -> dict[str, str | None]:
     owners: dict[str, str | None] = {OWNER_GUID: None}
-    monkeypatch.setattr(cli, "_owner_guids", lambda lay, account: dict(owners))
+    monkeypatch.setattr(cli, "_owner_guids", lambda lay, account: (dict(owners), 0))
     return owners
 
 
@@ -82,6 +82,12 @@ def _fight() -> bytes:
         hits_you(FOE_B, 14),
         you_die(15),
     )
+
+
+def _second_log() -> bytes:
+    """Another session's log (its first line a day later): a fight with D."""
+    later = HEADER.replace("4/1/2026", "4/2/2026")
+    return ("\r\n".join([later, zone(0), you_hit(FOE_D, 5000)]) + "\r\n").encode()
 
 
 def _scan(env: Env, *args: str) -> Any:
@@ -254,7 +260,25 @@ def test_a_log_copied_elsewhere_is_the_same_log_constructed(
     assert len(crewdb.world_encounters(FLAVOR, ACCOUNT)) == 1
 
 
-def test_a_shrunk_or_rewritten_log_is_a_new_log_constructed(make: Any, owner: Any) -> None:
+def test_a_log_put_back_shorter_under_its_name_is_a_part_already_read_constructed(
+    make: Any, owner: Any
+) -> None:
+    """The first line holds the session's start to the millisecond: the
+    same first line, shorter, is an earlier copy of the same log."""
+    env = make(_book())
+    whole = _fight() + (you_hit(FOE_D, 2000) + "\r\n").encode()
+    path = _write_log(env, whole)
+    _json(_scan(env, "--json"))
+    path.write_bytes(_fight())
+    again = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json"))).scan
+    assert (again.state, again.how, again.encounters_added) == ("unchanged", "already_read", 0)
+    assert len(crewdb.world_encounters(FLAVOR, ACCOUNT)) == 2
+    path.write_bytes(whole)  # and back again: nothing new
+    third = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json"))).scan
+    assert (third.how, third.encounters_added) == ("continued", 0)
+
+
+def test_a_rewritten_log_is_a_new_log_constructed(make: Any, owner: Any) -> None:
     env = make(_book())
     path = _write_log(env, _fight())
     _json(_scan(env, "--json"))
@@ -343,7 +367,7 @@ def test_forget_leaves_no_key_and_no_game_id_in_the_database_or_its_copies_const
     env.sync()  # a database, so the scan makes today's copy first
     _write_log(env, _fight())
     _json(_scan(env, "--json"))
-    _write_log(env, log(you_hit(FOE_D, 5000)), name="WoWCombatLog-040226_000000.txt")
+    _write_log(env, _second_log(), name="WoWCombatLog-040226_000000.txt")
     _json(_scan(env, "--json"))  # a second write: today's copy holds the first scan
     assert crewdb.copies(FLAVOR, ACCOUNT)
     assert any(ALLY_C[0].encode() in data for _, data in _all_bytes(env))
@@ -464,13 +488,66 @@ def test_the_owner_is_every_character_with_a_stored_game_id_constructed(
     import test_m20_13_schema_5_views as v5
 
     record = v5._v5()
+    older = types.SimpleNamespace(identity=None)  # an older addon's record: no game id
     files = [
         types.SimpleNamespace(record=record),
-        types.SimpleNamespace(record=None),  # unreadable: no id
+        types.SimpleNamespace(record=older),  # a record with no game id
+        types.SimpleNamespace(record=None),  # unreadable: not counted
     ]
     monkeypatch.setattr(labaddon, "read_all", lambda lay, account=None: files)
     got = cli._owner_guids(None, ACCOUNT)  # type: ignore[arg-type]
-    assert got == {v5.GUID: "Invented Realm"}
+    assert got == ({v5.GUID: "Invented Realm"}, 1)
+
+
+def test_characters_with_no_game_id_are_named_in_text_and_json_constructed(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_owner_guids", lambda lay, account: ({OWNER_GUID: None}, 2))
+    env = make(_book())
+    _write_log(env, _fight())
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert (report.characters, report.characters_without_id) == (1, 2)
+    line = (
+        "  2 characters of this game account have no game id stored yet, so their fights were "
+        "not read: log in once on each with the lab-addon on."
+    )
+    assert line in report.lines
+    gone = env.run("crew", "forget", "--all", "--yes")
+    assert gone.exit_code == 0, gone.output
+    text = _scan(env)
+    assert line in text.stdout.splitlines()
+
+
+def test_players_only_a_log_names_count_against_the_database_bound_constructed(
+    make: Any, owner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(crewdb, "MAX_PLAYERS", 3)  # the book's A and B, and one more
+    env = make(_book())
+    _write_log(env, _fight())  # A, B, C (ally): C fits
+    _write_log(env, _second_log(), name="WoWCombatLog-040226_000000.txt")
+    first = cli.CrewScanLogReport.model_validate(
+        _json(_scan(env, str(env.flavor / "Logs" / LOG_NAME), "--json"))
+    ).scan
+    assert first.players_left_out == 0
+    second = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json"))).scan
+    assert (second.players_added, second.players_left_out) == (0, 1)
+    assert KEY_D not in env.rows() and len(env.rows()) == 3
+
+
+def test_a_long_log_is_kept_a_bounded_part_at_a_time_constructed(
+    make: Any, owner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worldpvp, "MAX_READ_PLAYERS", 1)
+    gap = worldpvp.ENCOUNTER_GAP_SECONDS + 1
+    env = make(_book())
+    _write_log(env, log(*(you_hit(FOE_A, 10 + n * gap) for n in range(4))))
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    s = report.scan
+    assert (s.state, s.parts, s.encounters_added, s.read_from) == ("scanned", 4, 4, 0)
+    assert len(crewdb.world_encounters(FLAVOR, ACCOUNT)) == 4
+    assert "in 4 parts" in report.lines[0]
+    again = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json"))).scan
+    assert (again.state, again.encounters_added) == ("unchanged", 0)
 
 
 def test_the_reader_uses_the_owners_realm_for_a_name_without_one_constructed() -> None:

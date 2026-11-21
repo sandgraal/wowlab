@@ -29,7 +29,13 @@ def test_the_real_log_holds_no_encounter_and_every_line_is_read() -> None:
     assert (scan.outside_world, scan.no_zone, scan.no_time, scan.left_out) == (0, 0, 0, 0)
     assert scan.end == FOREVER_LOG.stat().st_size
     assert scan.state == worldpvp.ZoneState(
-        zone="Tirisfal Glades", instance_id=0, difficulty=0, arena=False
+        zone="Tirisfal Glades",
+        instance_id=0,
+        difficulty=0,
+        arena=False,
+        # Who wrote the log, and the realm its own unit name gives.
+        logging=OWNER,
+        homes={OWNER: "LabrealmbPartbPartcPartd"},
     )
 
 

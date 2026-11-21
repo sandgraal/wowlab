@@ -114,6 +114,10 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     ("char", "model"): {
         "out": "from the UI the model goes only to its default place in wowlab's data folder"
     },
+    # M20-18: `crew scan-log` reads only the newest log from the UI.
+    ("crew", "scan-log"): {
+        "path": "from the UI only the newest log in the game's Logs folder is read"
+    },
 }
 """Parameters the UI refuses on a leaf that otherwise runs."""
 
@@ -937,6 +941,12 @@ def test_a_run_reaches_every_offered_parameter_when_click_parses_it_back(
         want.update({str(p.name): True for p in cmd.params if "--dry-run" in _opts(p)})
     # A flag the server always gives (M16-42) is on in every run.
     want.update(dict.fromkeys(FORCED_FLAGS.get(path, {}), True))
+    # A refused argument (M20-18: crew scan-log's PATH) is never sent, and
+    # Click parses an absent optional argument as None.
+    for p in cmd.params:
+        name = str(p.name)
+        if name in REFUSED_PARAMS.get(path, {}) and getattr(p, "param_type_name", "") == "argument":
+            want[name] = None
     assert {k: v for k, v in got.items() if k not in json_names} == want, argv
     assert [got.get(n) for n in json_names] == [True] * len(json_names), argv
 

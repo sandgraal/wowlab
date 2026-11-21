@@ -1217,6 +1217,21 @@ def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> N
     assert len(recorder.calls()) == 2
 
 
+@pytest.mark.parametrize(
+    "path", ["/etc/passwd", "Logs/WoWCombatLog-040126_021630.txt", "../../x.txt", "-", ""]
+)
+def test_crew_scan_log_path_is_refused(real: Any, recorder: Recorder, path: str) -> None:
+    """M20-18: `crew scan-log PATH` reads any file it is named; from the UI
+    only the newest combat log in the game's Logs folder is read, so a path
+    is refused whatever its value, and the leaf without one runs."""
+    reply = _run(real, ["crew", "scan-log"], {"path": path})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    assert recorder.calls() == []
+    argv = _argv_of(_run(real, ["crew", "scan-log"], {}))
+    assert _parsed(_real_tree(), ["crew", "scan-log"], argv)["path"] is None, argv
+    assert len(recorder.calls()) == 1
+
+
 @pytest.mark.parametrize("out", ["files/x.bin", "-", "../../x.bin", "/tmp/x.bin", ""])
 def test_casc_cat_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
     """M15-06 (§17.1 "In the UI"): `casc cat --out` names another file or,

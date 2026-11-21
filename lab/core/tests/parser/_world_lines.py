@@ -103,9 +103,56 @@ def you_hit(foe: tuple[str, str], seconds: int, flags: str = HOSTILE) -> str:
     return _at(_as_player(SPELL_DAMAGE_YOU_TO_NPC, foe, flags), seconds)
 
 
-def hits_you(foe: tuple[str, str], seconds: int, flags: str = HOSTILE) -> str:
-    """`foe` swings at you (the real SWING_DAMAGE, NPC swapped)."""
-    return _at(_as_player(SWING_NPC_TO_YOU, foe, flags), seconds)
+_SWING_OVERKILL = 29  # the third field after a swing's 19-field advanced block
+
+
+def _overkill(line: str, value: int | None) -> str:
+    """`line` (a real swing) with its overkill field set: the real log writes
+    0 on the killing swing and -1 on every other."""
+    if value is None:
+        return line
+    head, rest = line.split(",", 1)
+    fields = rest.split(",")
+    assert fields[_SWING_OVERKILL] == "-1"
+    fields[_SWING_OVERKILL] = str(value)
+    return head + "," + ",".join(fields)
+
+
+def hits_you(
+    foe: tuple[str, str], seconds: int, flags: str = HOSTILE, overkill: int | None = None
+) -> str:
+    """`foe` swings at you (the real SWING_DAMAGE, NPC swapped); with
+    `overkill`, the killing swing."""
+    return _at(_overkill(_as_player(SWING_NPC_TO_YOU, foe, flags), overkill), seconds)
+
+
+def npc_hits_you(seconds: int, overkill: int | None = None) -> str:
+    """The real NPC swing at you, as it is; with `overkill`, the killing one."""
+    return _at(_overkill(SWING_NPC_TO_YOU, overkill), seconds)
+
+
+ENEMY_PET = "Pet-0-1-0-2-417-0200000002"
+
+
+def enemy_pet_hits_you(owner: str, seconds: int, kind: str = "0x1148") -> str:
+    """A hostile pet (flags outsider, hostile, controlled by a player, pet;
+    `0x2148` a guardian) swings at you: the real swing, the NPC swapped for
+    the pet, its advanced block naming `owner` as the pet's owner."""
+    fields = SWING_NPC_TO_YOU.split(",", 1)[1].split(",")
+    fields[0:4] = [ENEMY_PET, '"Invented Hound"', kind, "0x80000000"]
+    fields[8:10] = [ENEMY_PET, owner]
+    return f"{stamp(seconds)}  SWING_DAMAGE," + ",".join(fields)
+
+
+def pet_spell(foe: tuple[str, str], seconds: int) -> str:
+    """Your pet's spell on `foe`: the real SPELL_DAMAGE, source your pet
+    (flags mine and pet), target the foe; on a spell line the advanced
+    block describes the target, so it does not name the pet's owner."""
+    pet = "Pet-0-1-0-2-416-0100000001"
+    line = SPELL_DAMAGE_YOU_TO_NPC.replace(
+        f'{OWNER_GUID},"{OWNER_NAME}",{OWNER_FLAGS}', f'{pet},"Invented Imp",0x1111'
+    )
+    return _at(_as_player(line, foe, HOSTILE), seconds)
 
 
 def ally_hits(ally: tuple[str, str], foe: tuple[str, str], seconds: int) -> str:
