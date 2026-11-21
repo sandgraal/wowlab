@@ -7209,7 +7209,11 @@ fixture shows them): the hostile, pet and guardian flag bits; `RANGE_DAMAGE`;
 `PARTY_KILL` for a player; the arena lines; that a battleground's or
 dungeon's difficulty is not 0; a name without a realm or region part;
 realms with a hyphen or apostrophe. Measured on a constructed log (the
-real log's lines repeated, four PvP lines in every 81): TIMING.
+real log's lines repeated, four PvP lines in every 81), the target being
+1 GB in under 120 s and under 200 MB: 1,000 MB, 3.34 million lines, read in
+15.0 s with a peak resident size of 47 MB (Apple silicon, 2026-11-21); a
+damage line naming no other player's GUID is skipped before it is
+tokenized (`skip=`), which more than halved the time.
 
 ### 21.4 The terms of ADR-0036, for the new store
 
