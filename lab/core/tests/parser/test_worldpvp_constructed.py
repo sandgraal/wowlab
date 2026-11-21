@@ -430,3 +430,93 @@ def test_constructed_a_read_stops_at_its_bound_and_goes_on(
             break
         start, state = scan.end, scan.state
     assert (found, parts) == (7, 3)
+
+
+_COUNTS = (
+    "lines",
+    "unparsed",
+    "bad_lines",
+    "fights",
+    "outside_world",
+    "no_zone",
+    "no_time",
+    "pet_hits_no_owner",
+    "left_out",
+)
+
+
+def _in_parts(path: Path) -> tuple[dict[str, int], list[worldpvp.WorldEncounter], int]:
+    totals = dict.fromkeys(_COUNTS, 0)
+    found: list[worldpvp.WorldEncounter] = []
+    start, state, parts = 0, None, 0
+    while True:
+        scan = worldpvp.read_world(path, OWNERS, start=start, state=state)
+        for k in _COUNTS:
+            totals[k] += getattr(scan, k)
+        found += scan.encounters
+        parts += 1
+        if not scan.more:
+            return totals, found, parts
+        start, state = scan.end, scan.state
+
+
+@pytest.mark.parser
+def test_constructed_a_read_in_parts_counts_every_line_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every count of a read in parts equals the one-part read's: each kind
+    of line sits near a seam in turn (a fight, one outside the open world,
+    a pet with no named owner, a damaged line, a pet whose owner was named
+    in an earlier part)."""
+    gap = worldpvp.ENCOUNTER_GAP_SECONDS + 1
+    lines: list[str] = []
+    for n in range(6):
+        at = 10 + n * (gap + 10)  # each encounter closed before the next starts
+        foe = (f"Player-9998-{n:08X}", "Inventeda-Fakerealm-")
+        stamp_of = you_hit(foe, at + 2).split("  ")[0]
+        lines += [
+            zone(at, instance=489, name="Invented Gulch", difficulty=34),
+            you_hit(foe, at),  # outside the open world
+            zone(at),
+            you_hit(foe, at + 1),
+            enemy_pet_hits_you(foe[0], at + 2),  # owner named: a fight
+            enemy_pet_hits_you("Player-9998-000000EE", at + 2),  # never named
+            stamp_of + '  ZONE_CHANGE,--5,"x",0',  # damaged: no zone after it
+            zone(at + 3),
+        ]
+    path = tmp_path / "WoWCombatLog-040126_021630.txt"
+    path.write_bytes(log(*lines))
+    whole, one, single = _in_parts(path)
+    assert single == 1 and whole["fights"] == 12 and len(one) == 6
+    assert whole["pet_hits_no_owner"] == 6 and whole["outside_world"] == 6
+    for bound in (1, 2, 3):
+        monkeypatch.setattr(worldpvp, "MAX_READ_PLAYERS", bound)
+        parted, found, parts = _in_parts(path)
+        assert parts > 1, bound
+        assert parted == whole, bound
+        assert [e.model_dump() for e in found] == [e.model_dump() for e in one], bound
+
+
+@pytest.mark.parser
+def test_constructed_a_pets_owner_named_before_the_offset_is_still_known(
+    tmp_path: Path,
+) -> None:
+    data = log(you_hit(FOE_A, 10), enemy_pet_hits_you(FOE_A[0], 400))
+    path = tmp_path / "WoWCombatLog-040126_021630.txt"
+    path.write_bytes(data)
+    cut = len(log(you_hit(FOE_A, 10)))
+    head = worldpvp.scan_entries((x for x in combatlog.read_log(path) if x.offset < cut), OWNERS)
+    assert head.state.names == {FOE_A[0]: FOE_A[1]}
+    rest = worldpvp.read_world(path, OWNERS, start=cut, state=head.state)
+    assert (rest.fights, rest.pet_hits_no_owner) == (1, 0)
+    assert [p.key for e in rest.encounters for p in e.players] == ["Inventeda-Fakerealm"]
+
+
+@pytest.mark.parser
+def test_constructed_the_names_kept_with_the_offset_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worldpvp, "SAVED_NAMES", 2)
+    lines = [you_hit((f"Player-9998-{n:08X}", "Inventeda-Fakerealm-"), 10 + n) for n in range(5)]
+    scan = _scan(log(*lines))
+    assert list(scan.state.names) == ["Player-9998-00000003", "Player-9998-00000004"]

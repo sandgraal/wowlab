@@ -7310,6 +7310,12 @@ Measured (`test_worldpvp_bench_constructed.py`, the real lines with a new
 encounter every block): 1 GB, 45,159 encounters in 2 parts,
 read in 26.0 s, Python's allocations peaking at 120 MB (target 120 s and
 200 MB; the default suite reads 16 MB, 708 encounters, in 2.2 s, peak 9 MB).
+*Fix round 2:* a fight is counted only once its encounter is taken, so the
+line that starts the next part is counted once; a test checks every count
+of a read in parts equals the one-part read's. The latest 2,000 other
+players' names, by GUID, are kept with the offset (`ZoneState.names`), so a
+pet's owner named before a part's seam or an earlier scan is still known;
+`crew forget` drops the forgotten player's name and GUID from them too.
 
 ### 21.4 The terms of ADR-0036, for the new store
 

@@ -91,7 +91,8 @@ encounter open (`more`), so a caller keeps them and reads on from `end`
 and no encounter is cut in two; at twice either bound (encounters going on
 without a pause) it stops before the next line that would start one; memory is bounded
 by those whatever the log's size. At most `MAX_NAMES` player names are
-remembered for naming a pet's owner.
+remembered for naming a pet's owner, and the latest `SAVED_NAMES` of them
+are kept with the offset (`ZoneState.names`).
 """
 
 from __future__ import annotations
@@ -119,6 +120,7 @@ __all__ = [
     "MAX_NAMES",
     "MAX_OPEN",
     "MAX_READ_PLAYERS",
+    "SAVED_NAMES",
     "SIDE_MAX",
     "WORLD_EVENTS",
     "Side",
@@ -149,6 +151,9 @@ MAX_READ_PLAYERS = 20_000
 """A read stops when its encounters hold this many players (one per player
 per encounter); the caller keeps them and reads on."""
 MAX_NAMES = 50_000
+SAVED_NAMES = 2_000
+"""At most this many other players' names (the latest seen) are kept with a
+log's offset, for naming a pet's owner on a read that continues."""
 SIDE_MAX = 100
 """At most this many players on each side of one encounter (as a match's)."""
 KEY_MAX_BYTES = 256
@@ -203,8 +208,10 @@ class ZoneState(_Model):
     `ZONE_CHANGE`'s zone name, instance id and difficulty (None before any),
     whether an arena match is under way, which of your GUIDs is writing the
     log (`logging`, as the reader compares them: upper case), and the realm
-    each of your characters' own unit names gave (`homes`). Kept with a
-    log's offset, so a read that continues knows where the log was."""
+    each of your characters' own unit names gave (`homes`), and the latest
+    `SAVED_NAMES` other players' unit names by GUID (`names`), so a pet's
+    owner named before the offset is still known. Kept with a log's offset,
+    so a read that continues knows where the log was."""
 
     zone: str | None = None
     instance_id: int | None = None
@@ -212,6 +219,7 @@ class ZoneState(_Model):
     arena: bool = False
     logging: str | None = None
     homes: dict[str, str] = Field(default_factory=dict)
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 class WorldPlayer(_Model):
@@ -321,6 +329,12 @@ def _bytes(text: str) -> int | None:
         return len(text.encode("utf-8"))
     except UnicodeEncodeError:
         return None
+
+
+def _name_ok(text: str) -> bool:
+    """A unit name worth remembering: valid UTF-8 within a key's length."""
+    size = _bytes(text)
+    return size is not None and size <= KEY_MAX_BYTES
 
 
 def normalize_realm(text: str) -> str:
@@ -443,7 +457,10 @@ class _Reader:
         self.homes: dict[str, str] = {
             g.upper(): r for g, r in start.homes.items() if g.upper() in self.owners
         }
-        self.names: dict[str, str] = {}  # another player's GUID -> unit name, for a pet's owner
+        # Another player's GUID -> unit name, for a pet's owner; latest last.
+        self.names: dict[str, str] = {
+            g: n for g, n in start.names.items() if _PLAYER_GUID.fullmatch(g) and _name_ok(n)
+        }
         self.open: list[_Open] = []
         self.out: list[WorldEncounter] = []
         self.held = 0  # players in the encounters kept and open
@@ -469,6 +486,7 @@ class _Reader:
             update={
                 "logging": spelled(self.logging, self.logging) if self.logging else None,
                 "homes": {spelled(g, g): r for g, r in self.homes.items()},
+                "names": dict(list(self.names.items())[-SAVED_NAMES:]),
             }
         )
 
@@ -559,8 +577,10 @@ class _Reader:
             if (
                 isinstance(name, Quoted)
                 and _PLAYER_GUID.fullmatch(guid)
+                and _name_ok(name.text)
                 and (guid in self.names or len(self.names) < MAX_NAMES)
             ):
+                self.names.pop(guid, None)  # the latest seen goes last
                 self.names[guid] = name.text
             return
         if (
@@ -684,9 +704,9 @@ class _Reader:
         if not world:
             self.outside += 1
             return
-        self.fights += 1
         self.close_before(now)
-        e = self.encounter(owner, foe, now)
+        e = self.encounter(owner, foe, now)  # may stop the part: count after it
+        self.fights += 1
         e.last = max(e.last, now)
         p = self.add(e, foe, who, "foe")
         if p is not None:

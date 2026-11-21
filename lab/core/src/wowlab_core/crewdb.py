@@ -2300,6 +2300,8 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
         if world:  # M20-18: their part in every open-world encounter
             conn.execute(_SQL_FORGET_IN_WORLD, (key,))
+    if world:
+        _forget_in_log_states(conn, keys)
     if not _has_score(conn):
         return
     wanted = [crewbook.fold(k) for k in keys if crewbook.fold(k)]
@@ -2307,6 +2309,32 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
     for key, score in held:
         if any(w in text for w in wanted for text in _score_texts(score)):
             conn.execute(_SQL_DROP_SCORE, (key,))
+
+
+def _forget_in_log_states(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
+    """Drop the forgotten keys' names and GUIDs from what each read log
+    keeps with its offset (`ZoneState.names`, for naming a pet's owner): a
+    name is theirs when it makes their key on any realm the state knows, or
+    folds to it."""
+    wanted = {crewbook.fold(k) for k in keys}
+    for log_id, text in conn.execute(_SQL_WORLD_LOG_STATES).fetchall():
+        if not isinstance(text, str):
+            continue
+        try:
+            state = worldpvp.ZoneState.model_validate_json(text)
+        except ValueError:
+            conn.execute(_SQL_WORLD_LOG_SET_STATE, (None, log_id))  # unreadable: dropped
+            continue
+        homes: list[str | None] = [None, *state.homes.values()]
+        kept = {}
+        for guid, name in state.names.items():
+            made = {worldpvp.player_key(name, home) for home in homes}
+            if any(m is not None and crewbook.fold(m[0]) in wanted for m in made):
+                continue
+            kept[guid] = name
+        if len(kept) != len(state.names):
+            new = state.model_copy(update={"names": kept}).model_dump_json()
+            conn.execute(_SQL_WORLD_LOG_SET_STATE, (new, log_id))
 
 
 def _score_texts(score: object) -> list[str]:
@@ -2694,6 +2722,8 @@ _SQL_WORLD_PLAYERS_ALL = (
 )
 _SQL_WORLD_KEYS = "SELECT DISTINCT player_key FROM world_encounter_players"
 _SQL_FORGET_IN_WORLD = "DELETE FROM world_encounter_players WHERE player_key = ?"
+_SQL_WORLD_LOG_STATES = "SELECT log_id, state FROM world_logs WHERE state IS NOT NULL"
+_SQL_WORLD_LOG_SET_STATE = "UPDATE world_logs SET state = ? WHERE log_id = ?"
 _SQL_COUNT_WORLD = (
     "SELECT"
     " (SELECT count(*) FROM world_encounters"
