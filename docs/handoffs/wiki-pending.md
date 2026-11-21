@@ -26,3 +26,4 @@ condition is kept.
 
 | Merged | Ticket | What changed for the player | Wiki pages (from the PR) |
 |---|---|---|---|
+| 2026-11-21 | M20-17 (#677) | `char show` prints when each part of the record was read and which parts were read only at logout; a logout no longer empties the action bars or any other part; the crew book's tooltip line says "Battlegrounds: 3 with you, 1 against."; `/wowlab crew` says when it cannot find your home realm | Lab-Addon-and-Characters, CLI-Reference (regenerate) |
