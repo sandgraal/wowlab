@@ -1767,6 +1767,10 @@ class Gathered(_Record):
     section: SkipKey
     at: Int
     at_logout: bool | None = None
+    # M20-17 round 1: the field (identity: "realm") that a read at logout
+    # supplied, with the keys that belong to it, into the record gathered
+    # at `at`; the rest of the record is from that earlier gather.
+    again_at_logout: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,32}$")] | None = None
 
 
 class AccountDBV5(_Record):
@@ -3971,6 +3975,13 @@ def _gathered_lines(char: CharDBV5) -> list[str]:
             f"  Gathered at logout (nothing earlier that session; may be emptier than the "
             f"game was): {', '.join(late)}"
         )
+    for entry in char.gathered:
+        if entry.again_at_logout and not entry.at_logout:
+            at = datetime.fromtimestamp(entry.at, tz=UTC).strftime("%H:%M:%S")
+            lines.append(
+                f"  {entry.section}: the {entry.again_at_logout.replace('_', ' ')} was read at "
+                f"logout; the rest as gathered at {at}"
+            )
     return lines
 
 

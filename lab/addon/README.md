@@ -59,7 +59,7 @@ WowLabCharDB = {
   skip = { "<section key>", ... },            -- sections the owner switched off; left out when none (M11-21)
   debug = true,                               -- schema 5: /wowlab debug on; left out when off
   announced = <schema>,                       -- schema 5: the schema whose first-pass line was last printed in a session the addon wrote
-  gathered = { { section = "<key>", at = <time()>, at_logout = true? } },  -- schema 5: each section's last gather this session; at_logout (M20-17): gathered by the pass at logout
+  gathered = { { section = "<key>", at = <time()>, at_logout = true?, again_at_logout = "realm"? } },  -- schema 5: each section's last gather this session; at_logout (M20-17): gathered by the pass at logout; again_at_logout: only that field's keys came from a read at logout
   written_at = <time()>, written_by = "logout"|"save",  -- schema 5: this write, and what made it
   client = { version, build, interface },     -- GetBuildInfo(); its date is not kept
   spec = { index, id?, api } | { absent },

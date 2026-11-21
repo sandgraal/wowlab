@@ -95,6 +95,9 @@ local gatheredAt = {}
 -- M20-17: true for a section whose record was gathered by the logout pass
 -- (a last resort: nothing earlier this session), by section key.
 local gatheredAtLogout = {}
+-- M20-17 round 1: true for a section whose `again_fields` came from the
+-- logout read while the rest of its record is the session's, by key.
+local againAtLogout = {}
 
 -- The absent reason of a switched-off section.
 local SWITCHED_OFF = "switched off by the owner"
@@ -259,6 +262,8 @@ end)
 --   immediate = true,              -- gather on the event itself, not debounced
 --   again_without = "field",       -- M20-16: a record without this field leaves the
 --                                  -- section dirty, so the next pass gathers it again
+--   again_fields = { "field", ... },  -- M20-17: what a logout read of such a record
+--                                     -- supplies; the rest stays the session's
 --   not_gathered = "reason",       -- absent reason if never gathered this session
 --   carry = function(saved) ... end,   -- at ADDON_LOADED: a record to keep from
 --                                      -- the loaded WowLabCharDB, or nil
@@ -359,8 +364,9 @@ end
 -- record. So at logout only a dirty section with no record from this
 -- session is gathered, as a last resort (`at_logout` in `gathered`). A
 -- section whose record lacks its `again_without` field (identity's realm,
--- M20-16) is read again, and the new record is kept only when it has that
--- field; otherwise the session's record and its time are put back. Every
+-- M20-16) is read again; the session's record and its time are always put
+-- back, and only its `again_fields` are taken from the new read, when it has
+-- the field (`again_at_logout` in `gathered`). Every
 -- other section is written as this session's passes gathered it, with its
 -- own time in `gathered`; a change in the last GATHER_INTERVAL seconds
 -- before logout is not recorded (`/wowlab save` before logging out takes it).
@@ -370,6 +376,25 @@ end
 local function lacksAgain(section)
     local held = ns.state[section.key]
     return section.again_without ~= nil and type(held) == "table" and held[section.again_without] == nil
+end
+
+-- Copies the section's `again_fields` (identity: the realm and the keys that
+-- belong to it) from the logout read `fresh` into the session's record
+-- `held`; a field the logout read has not written is cleared, so the
+-- session's `realm_absent` goes. Nothing else of the logout read is kept: a
+-- read as the world is torn down may be emptier in every other field.
+local function takeAgain(section, held, fresh)
+    for _, field in ipairs(section.again_fields or {}) do
+        if type(field) == "string" then
+            -- Text or true/false (realm_normalized); anything else clears it.
+            local value = fresh[field]
+            if type(value) == "boolean" then
+                held[field] = ns.Bool(value)
+            else
+                held[field] = ns.String(value)
+            end
+        end
+    end
 end
 
 local function gatherAtLogout()
@@ -382,11 +407,12 @@ local function gatherAtLogout()
         elseif section.dirty and lacksAgain(section) then
             local held, heldAt = ns.state[section.key], gatheredAt[section.key]
             gather(section)
-            if lacksAgain(section) then
-                ns.state[section.key] = held
-                gatheredAt[section.key] = heldAt
-            else
-                gatheredAtLogout[section.key] = true
+            local fresh = ns.state[section.key]
+            ns.state[section.key] = held
+            gatheredAt[section.key] = heldAt
+            if type(fresh) == "table" and fresh[section.again_without] ~= nil then
+                takeAgain(section, held, fresh)
+                againAtLogout[section.key] = true
             end
         end
     end
@@ -652,6 +678,11 @@ local function gatheredList()
             local entry = { section = ns.String(section.key), at = at }
             if gatheredAtLogout[section.key] then
                 entry.at_logout = true
+            end
+            -- Round 1: the field the logout read supplied (identity:
+            -- "realm"); `at` stays the time of the session's record.
+            if againAtLogout[section.key] then
+                entry.again_at_logout = ns.String(section.again_without)
             end
             list[#list + 1] = entry
         end

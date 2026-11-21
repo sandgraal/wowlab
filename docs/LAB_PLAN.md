@@ -2646,8 +2646,12 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     logout gathers only a dirty section with no record from this session,
     as a last resort, marked `at_logout = true` in its `gathered` entry. A
     section whose record lacks its `again_without` field (identity without
-    a realm) is read once more and the new record kept only when it has a
-    realm; otherwise the session's record and time are put back. Every
+    a realm) is read once more; the session's record and time always stay,
+    and only the realm's own keys (`realm`, `realm_absent`, `realm_from`,
+    `realm_normalized`, `realm_tried`; the section's `again_fields`) are
+    taken from that read when it has a realm, marked `again_at_logout =
+    "realm"` in the section's `gathered` entry (fix round 1: a read at
+    logout may be emptier in the guild, name or GUID). Every
     other section is written as the session's passes gathered it, with its
     own time in `gathered`. A change in the last 30 s before logout is
     therefore not recorded; `/wowlab save` before logging out takes it.

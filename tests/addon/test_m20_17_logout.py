@@ -25,17 +25,36 @@ LOGOUT_HANDLER = (
 )
 # The logout pass, pinned whole: a dirty section with no record from this
 # session is gathered and marked; one whose record lacks its `again_without`
-# field is read again and the session's record and time put back unless the
-# new record has the field. No other section is read at logout.
+# field is read again, the session's record and time are always put back,
+# and (round 1) only the section's `again_fields` are copied from the new
+# read, when it has the field. No other section is read at logout.
 LOGOUT_PASS = (
     "function gatherAtLogout ( ) for _ , section in ipairs ( ns . sections ) do "
     "if section . dirty and not section . gathered then gather ( section ) "
     "if section . gathered then gatheredAtLogout [ section . key ] = true end "
     "elseif section . dirty and lacksAgain ( section ) then "
     "local held , heldAt = ns . state [ section . key ] , gatheredAt [ section . key ] "
-    "gather ( section ) if lacksAgain ( section ) then "
+    "gather ( section ) local fresh = ns . state [ section . key ] "
     "ns . state [ section . key ] = held gatheredAt [ section . key ] = heldAt "
-    "else gatheredAtLogout [ section . key ] = true end end end end"
+    'if type ( fresh ) == "table" and fresh [ section . again_without ] ~= nil then '
+    "takeAgain ( section , held , fresh ) againAtLogout [ section . key ] = true "
+    "end end end end"
+)
+TAKE_AGAIN = (
+    "function takeAgain ( section , held , fresh ) "
+    "for _ , field in ipairs ( section . again_fields or { } ) do "
+    'if type ( field ) == "string" then local value = fresh [ field ] '
+    'if type ( value ) == "boolean" then held [ field ] = ns . Bool ( value ) '
+    "else held [ field ] = ns . String ( value ) end end end end"
+)
+# Identity's fields a logout read supplies: the realm and its own keys only.
+AGAIN_FIELDS = (
+    'again_fields = { "realm" , "realm_absent" , "realm_from" , '
+    '"realm_normalized" , "realm_tried" }'
+)
+AGAIN_ENTRY = (
+    "if againAtLogout [ section . key ] then "
+    "entry . again_at_logout = ns . String ( section . again_without ) end"
 )
 LACKS_AGAIN = (
     "function lacksAgain ( section ) local held = ns . state [ section . key ] "
@@ -62,9 +81,29 @@ def logout_problems(path: Path) -> list[str]:
         problems.append("the logout pass is called other than once, by the logout handler")
     if AT_LOGOUT_ENTRY not in g._body(flow, "gatheredList"):
         problems.append("`gathered` does not mark a section the logout pass gathered")
-    if rendered.count("gatheredAtLogout [ section . key ] = true") != 2:
+    if rendered.count("gatheredAtLogout [ section . key ] = true") != 1:
         problems.append("gatheredAtLogout is set other than by the logout pass")
+    # Round 1: a re-read at logout supplies only the listed fields.
+    if g._body(flow, "takeAgain") != TAKE_AGAIN or rendered.count("takeAgain (") != 2:
+        problems.append("takeAgain is not the pinned one: a re-read may replace the whole record")
+    if AGAIN_ENTRY not in g._body(flow, "gatheredList"):
+        problems.append("`gathered` does not mark the fields a re-read at logout supplied")
+    if rendered.count("againAtLogout [ section . key ] = true") != 1:
+        problems.append("againAtLogout is set other than by the logout pass")
     return problems
+
+
+def again_fields_problems(path: Path) -> list[str]:
+    """Identity.lua (or an edited copy) lists only the realm's keys as what a
+    re-read at logout supplies, once."""
+    text = g._render(g._tokens(path))
+    if text.count("again_fields =") != 1 or AGAIN_FIELDS not in text:
+        return ["identity's again_fields are not the realm's keys: a re-read may replace more"]
+    return []
+
+
+def test_m20_17_a_re_read_at_logout_supplies_only_the_realm() -> None:
+    assert again_fields_problems(IDENTITY) == []
 
 
 def test_m20_17_the_logout_pass_never_replaces_a_gathered_section() -> None:
@@ -102,9 +141,44 @@ EDITS: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list[str]],
     ),
     "logout: the session's record is not put back": (
         CORE,
-        [("                ns.state[section.key] = held\n", "")],
+        [("            ns.state[section.key] = held\n", "")],
         logout_problems,
         "may replace a gathered section",
+    ),
+    # Round 1: a re-read at logout replaces the whole record.
+    "logout: the re-read replaces the whole record": (
+        CORE,
+        [
+            (
+                "                takeAgain(section, held, fresh)\n",
+                "                ns.state[section.key] = fresh\n",
+            )
+        ],
+        logout_problems,
+        "may replace a gathered section",
+    ),
+    "logout: takeAgain copies every field of the re-read": (
+        CORE,
+        [
+            (
+                "    for _, field in ipairs(section.again_fields or {}) do\n",
+                "    for field in pairs(fresh) do\n",
+            )
+        ],
+        logout_problems,
+        "takeAgain is not the pinned one",
+    ),
+    "logout: identity's re-read supplies the guild too": (
+        IDENTITY,
+        [('"realm_tried" },', '"realm_tried", "guild" },')],
+        again_fields_problems,
+        "again_fields are not the realm's keys",
+    ),
+    "logout: gathered no longer marks the re-read's fields": (
+        CORE,
+        [("                entry.again_at_logout = ns.String(section.again_without)\n", "")],
+        logout_problems,
+        "does not mark the fields",
     ),
     "logout: lacksAgain always says the record lacks the field": (
         CORE,

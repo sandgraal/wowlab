@@ -87,6 +87,9 @@ ns.Section({
     -- this gather) keeps the section dirty, so the next pass, at logout at
     -- the latest, asks again; a realm found then replaces the absent one.
     again_without = "realm",
+    -- M20-17 round 1: at logout only these are taken from that read; the
+    -- rest of the record stays the session's.
+    again_fields = { "realm", "realm_absent", "realm_from", "realm_normalized", "realm_tried" },
     gather = function()
         local record = {}
         if type(UnitRace) ~= "function" then

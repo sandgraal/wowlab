@@ -687,6 +687,9 @@ if TYPE_CHECKING:
         _NAME_TABLES as _NAME_TABLES,
     )
     from wowlab_core.cli._cmd_char import (
+        _OWN_TIME_SCHEMA as _OWN_TIME_SCHEMA,
+    )
+    from wowlab_core.cli._cmd_char import (
         _SUMMARY_ADVICE as _SUMMARY_ADVICE,
     )
     from wowlab_core.cli._cmd_char import (
@@ -819,6 +822,9 @@ if TYPE_CHECKING:
         _history_names as _history_names,
     )
     from wowlab_core.cli._cmd_char import (
+        _history_notes as _history_notes,
+    )
+    from wowlab_core.cli._cmd_char import (
         _history_summary as _history_summary,
     )
     from wowlab_core.cli._cmd_char import (
@@ -847,6 +853,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _older_record_line as _older_record_line,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _own_time as _own_time,
     )
     from wowlab_core.cli._cmd_char import (
         _patch_line as _patch_line,
@@ -922,6 +931,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         _summary_value as _summary_value,
+    )
+    from wowlab_core.cli._cmd_char import (
+        _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
         _unseen_words as _unseen_words,

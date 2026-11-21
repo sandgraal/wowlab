@@ -98,3 +98,40 @@ def test_constructed_no_time_note_only_without_a_time_of_its_own() -> None:
     assert _cmd_char._char_notes(m16._char(raw)) == list(_cmd_char._CHAR_NOTES)
     v4 = labaddon.load_char(m16._v4())
     assert _cmd_char._char_notes(v4) == list(_cmd_char._CHAR_NOTES)
+
+
+# Fix round 1 -----------------------------------------------------------------
+
+
+def test_constructed_realm_read_again_at_logout_says_so() -> None:
+    """Identity kept from the session's gather, its realm from a read at
+    logout: the desk says that, never "nothing earlier that session"."""
+    raw = _raw()
+    raw["gathered"].append({"section": "identity", "at": NOON, "again_at_logout": "realm"})
+    lines = labaddon.describe(m16._char(raw))
+    assert "  identity: the realm was read at logout; the rest as gathered at 12:00:00" in lines
+    late = next(line for line in lines if "Gathered at logout" in line)
+    assert "identity" not in late
+
+
+@pytest.mark.parametrize("value", ["Realm", "", True, "x" * 33])
+def test_constructed_re_read_field_that_cannot_be_is_refused(value: object) -> None:
+    raw = _raw()
+    raw["gathered"].append({"section": "identity", "at": NOON, "again_at_logout": value})
+    with pytest.raises(labaddon.LabAddonError):
+        m16._char(raw)
+
+
+class _Row:
+    def __init__(self, schema: int) -> None:
+        self.record_schema = schema
+
+
+def test_the_no_time_note_is_one_decision() -> None:
+    """char show, gear, history, kept and model all go through _time_notes."""
+    both = list(_cmd_char._CHAR_NOTES)
+    assert _cmd_char._time_notes([True, True]) == [both[0]]
+    assert _cmd_char._time_notes([True, False]) == both
+    rest = _cmd_char._HISTORY_NOTES[len(both) :]
+    assert _cmd_char._history_notes([_Row(5), _Row(5)]) == [both[0], *rest]  # type: ignore[list-item]
+    assert _cmd_char._history_notes([_Row(5), _Row(4)]) == [*both, *rest]  # type: ignore[list-item]
