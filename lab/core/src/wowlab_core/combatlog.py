@@ -116,6 +116,7 @@ __all__ = [
     "CAST_LAYOUT_VERSION",
     "CONTROL_MASK",
     "CONTROL_PLAYER",
+    "HEAD_MAX_BYTES",
     "MAX_DEPTH",
     "MAX_LINE_BYTES",
     "SOURCE_NAMES_KEPT",
@@ -137,6 +138,7 @@ __all__ = [
     "cast_counts",
     "find_logs",
     "follow",
+    "head",
     "is_log_name",
     "newest_log",
     "read_log",
@@ -458,7 +460,9 @@ _TIMESTAMP_BYTES = re.compile(_TIMESTAMP.pattern.encode("ascii"))
 _EVENT_BYTES = re.compile(_EVENT.pattern.encode("ascii"))
 
 
-def _selecting(events: Iterable[str]) -> Callable[[bytes, int, Ending], Entry | Skipped]:
+def _selecting(
+    events: Iterable[str], skip: Callable[[bytes, bytes], bool] | None = None
+) -> Callable[[bytes, int, Ending], Entry | Skipped]:
     """A line reader that tokenizes a line only when its event is in ``events``.
 
     The event is the first comma-separated field after the two spaces that
@@ -471,6 +475,13 @@ def _selecting(events: Iterable[str]) -> Callable[[bytes, int, Ending], Entry | 
     comma, a non-ASCII byte in the name) goes to the tokenizer, whose result
     is the one it gives without the filter. The over-long-line rule comes
     first, unchanged.
+
+    ``skip`` (M20-18): called with the event name and the line's bytes for a
+    line of an event asked for that would otherwise be skipped had its event
+    not been asked for (a timestamp and a bare event name); when it returns
+    True the line is a :class:`Skipped` too. A caller uses it to leave out,
+    by a byte test that can only say no to lines it does not need, lines of
+    an event it reads.
     """
     if isinstance(events, str):  # a str is an iterable of one-letter names
         raise TypeError("events is a collection of event names, not one name")
@@ -487,7 +498,7 @@ def _selecting(events: Iterable[str]) -> Callable[[bytes, int, Ending], Entry | 
                 comma = data.find(b",", start)
                 event = data[start:] if comma == -1 else data[start:comma]
                 if (
-                    event not in wanted
+                    (event not in wanted or (skip is not None and skip(event, data)))
                     and _EVENT_BYTES.fullmatch(event)
                     and _TIMESTAMP_BYTES.fullmatch(data, 0, sep)
                 ):
@@ -667,23 +678,60 @@ def tokenize(
 
 
 @overload
-def read_log(path: Path | str, *, events: None = None) -> Iterator[Entry]: ...
+def read_log(path: Path | str, *, events: None = None, start: int = 0) -> Iterator[Entry]: ...
 @overload
-def read_log(path: Path | str, *, events: Iterable[str]) -> Iterator[Entry | Skipped]: ...
-def read_log(path: Path | str, *, events: Iterable[str] | None = None) -> Iterator[Entry | Skipped]:
+def read_log(
+    path: Path | str,
+    *,
+    events: Iterable[str],
+    start: int = 0,
+    skip: Callable[[bytes, bytes], bool] | None = None,
+) -> Iterator[Entry | Skipped]: ...
+def read_log(
+    path: Path | str,
+    *,
+    events: Iterable[str] | None = None,
+    start: int = 0,
+    skip: Callable[[bytes, bytes], bool] | None = None,
+) -> Iterator[Entry | Skipped]:
     """Every line of a combat log file, read in chunks (a log can be large).
 
     ``events`` as on :func:`tokenize`: a caller that reads a few events of a
     large log asks for them, and the lines of every other event are not
     tokenized.
+
+    ``start`` (M20-18): the byte offset to read from, which the caller knows
+    to be the start of a line (where an earlier read stopped); every offset
+    yielded is still the line's offset in the file. 0 reads the whole file,
+    exactly as before. ``skip`` as on :func:`_selecting`, with ``events``.
     """
+    if start < 0:
+        raise ValueError("start must be zero or more")
     splitter: _Splitter[Entry | Skipped] = _Splitter(
-        line=_line if events is None else _selecting(events)
+        start, line=_line if events is None else _selecting(events, skip)
     )
     with _open_log(Path(path)) as f:
+        if start:
+            f.seek(start)
         while chunk := f.read(_CHUNK):
             yield from splitter.feed(chunk)
     yield from splitter.end()
+
+
+HEAD_MAX_BYTES = 4096
+"""At most this many bytes of a log's first line are read by :func:`head`."""
+
+
+def head(path: Path | str) -> tuple[int, bytes]:
+    """A log's size in bytes and its first line's bytes (without its line
+    break, at most :data:`HEAD_MAX_BYTES`), read-only (M20-18): what tells
+    one log from another when a reader resumes where it stopped."""
+    with _open_log(Path(path)) as f:
+        size = os.fstat(f.fileno()).st_size
+        block = f.read(HEAD_MAX_BYTES)
+    nl = block.find(b"\n")
+    line = block if nl == -1 else block[:nl]
+    return size, line.removesuffix(b"\r")
 
 
 def _newlines_before(f: BinaryIO, end: int, want: int) -> tuple[list[int], int]:
