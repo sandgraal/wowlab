@@ -80,8 +80,9 @@ CONTROLS: dict[str, Edits] = {
     "control-logout-gathers-in-combat": [
         (
             "Core.lua",
-            "    if not inCombat then\n        gatherDirty()\n    end\n",
-            "    gatherDirty()\n",
+            # M20-17: the logout handler runs gatherAtLogout.
+            "    if not inCombat then\n        gatherAtLogout()\n    end\n",
+            "    gatherAtLogout()\n",
         ),
     ],
     "control-own-guid-stored-untested-in-identity": [

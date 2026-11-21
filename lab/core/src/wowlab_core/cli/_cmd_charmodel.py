@@ -28,7 +28,7 @@ import typer
 from wowlab_core import cascfiles, charmodel, gamedata, gltf, labaddon, renderplan
 from wowlab_core.casc import CascError
 from wowlab_core.cli._cmd_casc import _casc_open
-from wowlab_core.cli._cmd_char import _CHAR_NOTES, _picked_words, _slot_table
+from wowlab_core.cli._cmd_char import _char_notes, _picked_words, _slot_table
 from wowlab_core.cli._cmd_doctor import _open_gamedata
 from wowlab_core.cli._common import (
     EXIT_USAGE,
@@ -499,7 +499,7 @@ def char_model(
         how_words=_picked_words(how, tie),
         slots=_slot_names(),
     )
-    _say_notes([*report.notes, *_CHAR_MODEL_NOTES, *_CHAR_NOTES], notes_out)
+    _say_notes([*report.notes, *_CHAR_MODEL_NOTES, *_char_notes(record)], notes_out)
 
 
 def _say_char_model(

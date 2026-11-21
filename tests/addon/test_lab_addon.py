@@ -2880,15 +2880,19 @@ def test_skip_before_the_first_pass_takes_effect() -> None:
     """A skip typed during the 15 s: switchOff clears `dirty`, the first pass
     gathers only dirty sections (gatherDirty), and gather refuses an off
     section anyway. A logout inside the window still records (PLAYER_LOGOUT
-    runs gatherDirty)."""
+    runs gatherAtLogout, which gathers a dirty section never gathered this
+    session: every on-world section, before the first pass; M20-17)."""
     flow = _core()
     assert "section . dirty = false" in _body(flow, "switchOff")
     dirty = _body(flow, "gatherDirty")
     assert "if section . dirty then gather ( section ) end" in dirty
     assert _body(flow, "gather").startswith(f"function gather ( section , event ) {OFF_GUARD}")
     # M20-13: out of combat only (nothing is gathered in combat).
-    assert 'if not inCombat then gatherDirty ( ) end ns . Write ( "logout" )' in _body(
+    assert 'if not inCombat then gatherAtLogout ( ) end ns . Write ( "logout" )' in _body(
         flow, 'ns.On("PLAYER_LOGOUT")'
+    )
+    assert "if section . dirty and not section . gathered then gather ( section )" in _body(
+        flow, "gatherAtLogout"
     )
 
 
@@ -3661,6 +3665,9 @@ SECTIONLESS_CALLERS: dict[tuple[str, str], dict[tuple[str, str], int]] = {
     # M20-13: `gather` and `ns.Write` read the clock (SECTIONLESS_API).
     ("Core.lua", "gather"): {
         ("Core.lua", "gatherDirty"): 1,
+        # M20-17: a section never gathered this session, and one whose
+        # record lacks its `again_without` field
+        ("Core.lua", "gatherAtLogout"): 2,
         ("Core.lua", "onEvent"): 1,  # an immediate section's change event
         ("Core.lua", "ns.Refresh"): 1,
     },
@@ -5123,6 +5130,10 @@ def test_m11_37_the_race_check_calls_the_client_only_for_a_carried_record() -> N
         [
             ("Core.lua", _TOP, "ns . state = { }"),
             ("Core.lua", "gather", "ns . state [ section . key ] = record"),
+            # M20-17: the logout pass puts back the section's own record from
+            # this session; an off section is never dirty (switchOff) and its
+            # entry is nil, so it never reaches the store.
+            ("Core.lua", "gatherAtLogout", "ns . state [ section . key ] = held"),
             ("Core.lua", "switchOff", "ns . state [ section . key ] = nil"),
             ("Core.lua", 'ns.On("ADDON_LOADED")', "ns . state [ section . key ] = record"),
             (
@@ -8849,7 +8860,9 @@ _M20_13_OWN_TEXT = (
     "local function ownText ( value , api ) "
     'if secret ( value ) then return nil , api .. " was a value the client calls secret" end '
     'if type ( value ) == "string" and value ~= "" then return value , nil end '
-    'return nil , api .. " was not a non-empty string" end'
+    # M20-17: the kind of nothing, by `type` only, after the secret test.
+    'if type ( value ) == "string" then return nil , api .. " was an empty string" end '
+    'return nil , api .. " was " .. type ( value ) .. ", not a non-empty string" end'
 )
 
 
@@ -8969,7 +8982,9 @@ def _m20_13_core_combat(path: Path) -> list[str]:
     rendered = _render(flow.tokens)
     problems = []
     pins = {
-        'ns.On("PLAYER_LOGOUT")': 'if not inCombat then gatherDirty ( ) end ns . Write ( "logout" )',
+        'ns.On("PLAYER_LOGOUT")': (
+            'if not inCombat then gatherAtLogout ( ) end ns . Write ( "logout" )'
+        ),
         "ns.Refresh": "function ns . Refresh ( ) if inCombat then return false end",
         "schedule": (
             "timerAfter ( GATHER_INTERVAL , function ( ) "
@@ -9019,7 +9034,7 @@ def _m20_13_core_combat(path: Path) -> list[str]:
     return problems
 
 
-_M20_13_GATHERS = frozenset({"gather", "gatherDirty"})
+_M20_13_GATHERS = frozenset({"gather", "gatherDirty", "gatherAtLogout"})
 
 
 def _m20_13_named_function(flow: _Flow, k: int) -> str | None:
@@ -9035,7 +9050,14 @@ def _m20_13_named_function(flow: _Flow, k: int) -> str | None:
 
 # (function, callee) -> the tokens that must stand right before each call.
 _M20_13_GATHER_GUARDS: dict[tuple[str | None, str], tuple[str, ...]] = {
-    ('ns.On("PLAYER_LOGOUT")', "gatherDirty"): ("if not inCombat then",),
+    # M20-17: the logout pass, gatherAtLogout, and its two calls of gather,
+    # reached only from the guarded call in the PLAYER_LOGOUT handler.
+    ('ns.On("PLAYER_LOGOUT")', "gatherAtLogout"): ("if not inCombat then",),
+    ("gatherAtLogout", "gather"): (
+        "if section . dirty and not section . gathered then",
+        "elseif section . dirty and lacksAgain ( section ) then "
+        "local held , heldAt = ns . state [ section . key ] , gatheredAt [ section . key ]",
+    ),
     ("schedule", "gatherDirty"): (
         "if inCombat then waitingForCombat = true else",
         "pending = false if firstPassDone then",
@@ -9164,7 +9186,12 @@ _M20_13_KEPT: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list
     ),
     "nothing in combat: the logout gathers in combat": (
         ADDON / "Core.lua",
-        [("    if not inCombat then\n        gatherDirty()\n    end\n", "    gatherDirty()\n")],
+        [
+            (
+                "    if not inCombat then\n        gatherAtLogout()\n    end\n",
+                "    gatherAtLogout()\n",
+            )
+        ],
         _m20_13_core_combat,
         "PLAYER_LOGOUT",
     ),

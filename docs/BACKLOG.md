@@ -3788,6 +3788,15 @@ Filed and built the same day (#674). `wowlab char show` said `Macros: absent (MA
 
 ---
 
+## [x] M20-17 — A logout does not overwrite what the session gathered; the crew book finds its home realm
+**Size:** M · **Depends on:** M20-16 · **Sources:** the owner's second run of the schema 5 addon, 2026-11-20, build 71037
+
+Filed and built from the run (#677). `wowlab char show` said `Action bars: 0 of slots 1 to 180 filled` where the session before had 27, and the realm line said the game gave no realm name. Cause, inferred from the code and not yet seen on the client: a change event marked the section dirty, the logout came inside the 30 s pass, and a read in which the client answered nothing for every slot replaced the record. Fixed: a logout re-reads nothing the session already read; each section keeps its own read time; a section read only at logout is marked; identity without a realm is asked once more at logout and only the realm is taken. The crew book takes its home realm from the character's full name when the usual call gives nothing. The tooltip line reads "Battlegrounds: 3 with you, 1 against." (owner, 2026-11-21).
+
+**Acceptance:** met in #677 on constructed input, `code-reviewer` CLEAN after one round. The owner's next login and logout settles the cause on the client: `char show` prints when each section was read.
+
+---
+
 ## [ ] M20-15 — Owner: one capture at schema 5
 **Size:** S · **Depends on:** M20-13 · **owner** (one in-game session, then the capture tool)
 

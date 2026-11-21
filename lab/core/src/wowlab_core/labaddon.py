@@ -1723,8 +1723,9 @@ class IdentityV5(Identity):
     with a reason, as schema 4's are."""
 
     value_fields: ClassVar[tuple[str, ...]] = IDENTITY_FIELDS + OWN_FIELDS
-    reason_fields: ClassVar[tuple[str, ...]] = tuple(
-        f"{f}_absent" for f in IDENTITY_FIELDS + OWN_FIELDS
+    reason_fields: ClassVar[tuple[str, ...]] = (
+        *(f"{f}_absent" for f in IDENTITY_FIELDS + OWN_FIELDS),
+        "realm_tried",
     )
     reader_flags: ClassVar[tuple[str, ...]] = tuple(
         f + SET_ASIDE_SUFFIX for f in IDENTITY_FIELDS + OWN_FIELDS
@@ -1747,6 +1748,10 @@ class IdentityV5(Identity):
     # (no spaces) was available.
     realm_from: Literal["realm_name", "normalized_realm_name", "full_name"] | None = None
     realm_normalized: bool | None = None
+    # M20-17: what each source asked before `realm_from` gave (nil, an empty
+    # string, another type, or a secret value), as the addon words it.
+    realm_tried: Reason | None = None
+    realm_tried_clipped: ClippedReason | None = None
     guild: OwnText | None = None
     guild_absent: Reason | None = None
     guild_absent_clipped: ClippedReason | None = None
@@ -1755,10 +1760,17 @@ class IdentityV5(Identity):
 
 class Gathered(_Record):
     """One entry of `gathered`: a section key and `time()` at its last
-    gather in the session that wrote the file."""
+    gather in the session that wrote the file. `at_logout` (M20-17): True
+    when the pass at logout gathered it (nothing earlier in that session, or
+    the first identity record with a realm); left out otherwise."""
 
     section: SkipKey
     at: Int
+    at_logout: bool | None = None
+    # M20-17 round 1: the field (identity: "realm") that a read at logout
+    # supplied, with the keys that belong to it, into the record gathered
+    # at `at`; the rest of the record is from that earlier gather.
+    again_at_logout: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,32}$")] | None = None
 
 
 class AccountDBV5(_Record):
@@ -3901,6 +3913,11 @@ def _macros(record: Macros, render: Callable[[str], str] = str) -> list[str]:
 # The addon's reason for a nil guild (Identity.lua): no guild, or one the
 # client had not loaded yet.
 NO_GUILD_REASON = "the first return of GetGuildInfo was not a non-empty string"
+# M20-17: the addon names the kind of nothing; a nil guild reads so now.
+NO_GUILD_REASONS = (
+    NO_GUILD_REASON,
+    "the first return of GetGuildInfo was nil, not a non-empty string",
+)
 # Where a normalized realm came from (Identity.lua, `realm_from`; M20-16).
 REALM_SOURCE_WORDS = {
     "normalized_realm_name": "the game gave no realm name with spaces",
@@ -3919,10 +3936,12 @@ def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
             value = getattr(section, name)
             if name == "realm" and value is not None and section.realm_normalized:
                 where = REALM_SOURCE_WORDS.get(section.realm_from or "", "source not recorded")
+                if section.realm_tried is not None:
+                    where = f"{where}: {section.realm_tried}"
                 parts.append(f"{label} {value} (written without spaces: {where})")
             elif value is not None:
                 parts.append(f"{label} {value}")
-            elif name == "guild" and section.guild_absent == NO_GUILD_REASON:
+            elif name == "guild" and section.guild_absent in NO_GUILD_REASONS:
                 parts.append(render("no guild, or the guild not loaded yet [verify]"))
             else:
                 parts.append(f"{label} absent ({_identity_reason(section, name)})")
@@ -3932,6 +3951,37 @@ def _own_lines(char: CharDBV5, render: Callable[[str], str] = str) -> list[str]:
         when = datetime.fromtimestamp(char.written_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
         by = {"logout": "at logout", "save": "by /wowlab save"}.get(char.written_by or "", "")
         lines.append(f"Written: {when}{' ' + by if by else ''} (a crash keeps the write before it)")
+    lines += _gathered_lines(char)
+    return lines
+
+
+def _gathered_lines(char: CharDBV5) -> list[str]:
+    """Schema 5: when each section was last gathered in the session that
+    wrote the file (UTC), and (M20-17) which the pass at logout gathered:
+    nothing earlier in that session, so a read as the character left the
+    world, which may be emptier than the world was."""
+    if not char.gathered:
+        return []
+    times = []
+    late = []
+    for entry in char.gathered:
+        at = datetime.fromtimestamp(entry.at, tz=UTC).strftime("%H:%M:%S")
+        times.append(f"{entry.section} {at}")
+        if entry.at_logout:
+            late.append(entry.section)
+    lines = [f"Gathered (UTC): {', '.join(times)}"]
+    if late:
+        lines.append(
+            f"  Gathered at logout (nothing earlier that session; may be emptier than the "
+            f"game was): {', '.join(late)}"
+        )
+    for entry in char.gathered:
+        if entry.again_at_logout and not entry.at_logout:
+            at = datetime.fromtimestamp(entry.at, tz=UTC).strftime("%H:%M:%S")
+            lines.append(
+                f"  {entry.section}: the {entry.again_at_logout.replace('_', ' ')} was read at "
+                f"logout; the rest as gathered at {at}"
+            )
     return lines
 
 
