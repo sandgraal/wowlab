@@ -586,3 +586,38 @@ def test_the_open_world_text_is_player_copy_constructed(make: Any, owner: Any) -
         assert result.exit_code == 0, result.output
         problems += [f"{' '.join(args)}: {h}" for h in hits(result.stdout + result.stderr, says)]
     assert problems == []
+
+
+def test_a_hostile_bystander_kept_in_a_log_state_is_forgotten_cleanly_constructed(
+    make: Any, owner: Any
+) -> None:
+    """A hostile player who only hit an NPC (never you) is kept by name and
+    GUID in the log's saved state, to name a pet's owner later; no players
+    row holds them, and `crew forget` reaches them all the same."""
+    from _world_lines import HOSTILE, SPELL_DAMAGE_YOU_TO_NPC, _at, _owner_as
+
+    env = make(_book())
+    env.sync()  # a database first, so the scan also makes today's copy
+    line = _at(_owner_as(SPELL_DAMAGE_YOU_TO_NPC, FOE_D, HOSTILE), 20)
+    _write_log(env, log(line))
+    _json(_scan(env, "--json"))
+    _write_log(env, _second_log(), name="WoWCombatLog-040226_000000.txt")
+    assert KEY_D not in env.rows()
+    held = [n for n, data in _all_bytes(env) if FOE_D[0].encode() in data]
+    assert held  # the saved state names them
+    assert KEY_D in crewdb.holds(FLAVOR, ACCOUNT)
+    done = env.run("crew", "forget", KEY_D, "--yes")
+    assert done.exit_code == 0, done.output
+    for name, data in _all_bytes(env):
+        assert FOE_D[0].encode() not in data, name
+        assert b"Inventedd" not in data, name
+    assert KEY_D not in crewdb.holds(FLAVOR, ACCOUNT)
+
+
+def test_a_friendly_bystander_is_not_kept_in_a_log_state_constructed(make: Any, owner: Any) -> None:
+    from _world_lines import FRIENDLY, SPELL_DAMAGE_YOU_TO_NPC, _at, _owner_as
+
+    env = make(_book())
+    _write_log(env, log(_at(_owner_as(SPELL_DAMAGE_YOU_TO_NPC, ALLY_C, FRIENDLY), 20)))
+    _json(_scan(env, "--json"))
+    assert not [n for n, data in _all_bytes(env) if ALLY_C[0].encode() in data]

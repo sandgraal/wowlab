@@ -209,8 +209,9 @@ class ZoneState(_Model):
     whether an arena match is under way, which of your GUIDs is writing the
     log (`logging`, as the reader compares them: upper case), and the realm
     each of your characters' own unit names gave (`homes`), and the latest
-    `SAVED_NAMES` other players' unit names by GUID (`names`), so a pet's
-    owner named before the offset is still known. Kept with a log's offset,
+    `SAVED_NAMES` hostile players' unit names by GUID (`names`; a line's
+    flags said hostile), so a pet's owner named before the offset is still
+    known. Kept with a log's offset,
     so a read that continues knows where the log was."""
 
     zone: str | None = None
@@ -574,8 +575,12 @@ class _Reader:
             return
         up = guid.upper()
         if up not in self.owners:
+            # Only a hostile player's pet can be an opponent, so only hostile
+            # players' names are remembered (and kept with the offset).
             if (
                 isinstance(name, Quoted)
+                and flags is not None
+                and flags & _REACTION_MASK == _REACTION_HOSTILE
                 and _PLAYER_GUID.fullmatch(guid)
                 and _name_ok(name.text)
                 and (guid in self.names or len(self.names) < MAX_NAMES)

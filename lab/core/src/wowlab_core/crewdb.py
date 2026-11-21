@@ -2311,6 +2311,26 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
             conn.execute(_SQL_DROP_SCORE, (key,))
 
 
+def _state_of(text: object) -> worldpvp.ZoneState | None:
+    if not isinstance(text, str):
+        return None
+    try:
+        return worldpvp.ZoneState.model_validate_json(text)
+    except ValueError:
+        return None
+
+
+def _state_keys(state: worldpvp.ZoneState) -> dict[str, set[str]]:
+    """Each saved name's keys, by GUID: the key it makes on any realm the
+    state knows (a name with no realm part is on yours)."""
+    homes: list[str | None] = [None, *state.homes.values()]
+    out: dict[str, set[str]] = {}
+    for guid, name in state.names.items():
+        made = (worldpvp.player_key(name, home) for home in homes)
+        out[guid] = {m[0] for m in made if m is not None}
+    return out
+
+
 def _forget_in_log_states(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
     """Drop the forgotten keys' names and GUIDs from what each read log
     keeps with its offset (`ZoneState.names`, for naming a pet's owner): a
@@ -2325,13 +2345,12 @@ def _forget_in_log_states(conn: sqlite3.Connection, keys: Sequence[str]) -> None
         except ValueError:
             conn.execute(_SQL_WORLD_LOG_SET_STATE, (None, log_id))  # unreadable: dropped
             continue
-        homes: list[str | None] = [None, *state.homes.values()]
-        kept = {}
-        for guid, name in state.names.items():
-            made = {worldpvp.player_key(name, home) for home in homes}
-            if any(m is not None and crewbook.fold(m[0]) in wanted for m in made):
-                continue
-            kept[guid] = name
+        made = _state_keys(state)
+        kept = {
+            guid: name
+            for guid, name in state.names.items()
+            if not any(crewbook.fold(k) in wanted for k in made.get(guid, ()))
+        }
         if len(kept) != len(state.names):
             new = state.model_copy(update={"names": kept}).model_dump_json()
             conn.execute(_SQL_WORLD_LOG_SET_STATE, (new, log_id))
@@ -2376,14 +2395,20 @@ def _forget_in(path: Path, keys: Sequence[str]) -> None:
 
 def holds(flavor_folder: str, account: str) -> list[str]:
     """The keys of every player wowlab's crew database keeps for this book:
-    its players, and any key a match it keeps names (a player the game's
-    list dropped before a sync saw them may be in a match only)."""
+    its players, any key a match it keeps names (a player the game's list
+    dropped before a sync saw them may be in a match only), any key in an
+    open-world encounter, and any key a read log's saved state names
+    (M20-18: a hostile player kept to name a pet's owner)."""
     keys = [r.key for r in read(flavor_folder, account)]
 
     def use(conn: sqlite3.Connection) -> list[str]:
         held = [str(r[0]) for r in conn.execute(_SQL_MATCH_KEYS)]
         if _has_world(conn):
             held += [str(r[0]) for r in conn.execute(_SQL_WORLD_KEYS)]
+            for _, text in conn.execute(_SQL_WORLD_LOG_STATES).fetchall():
+                state = _state_of(text)
+                if state is not None:
+                    held += sorted({k for ks in _state_keys(state).values() for k in ks})
         return held
 
     in_matches = _read_with(flavor_folder, account, use)

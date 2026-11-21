@@ -7312,10 +7312,14 @@ read in 26.0 s, Python's allocations peaking at 120 MB (target 120 s and
 200 MB; the default suite reads 16 MB, 708 encounters, in 2.2 s, peak 9 MB).
 *Fix round 2:* a fight is counted only once its encounter is taken, so the
 line that starts the next part is counted once; a test checks every count
-of a read in parts equals the one-part read's. The latest 2,000 other
-players' names, by GUID, are kept with the offset (`ZoneState.names`), so a
-pet's owner named before a part's seam or an earlier scan is still known;
-`crew forget` drops the forgotten player's name and GUID from them too.
+of a read in parts equals the one-part read's. The latest 2,000 hostile
+players' names (a line's flags said hostile), by GUID, are kept with the
+offset (`ZoneState.names`), so a pet's owner named before a part's seam or
+an earlier scan is still known (fix round 3: no friendly or neutral
+player's). A key such a state names counts as held, so `crew forget KEY`
+reaches a player kept only there, with no players row, and drops their name
+and GUID from every state in the database and every copy; `--all` deletes
+them with the database.
 
 ### 21.4 The terms of ADR-0036, for the new store
 
