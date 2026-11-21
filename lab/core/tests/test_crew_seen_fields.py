@@ -321,7 +321,7 @@ def test_a_schema_2_database_main_built_is_copied_and_migrated_constructed(
         conn.close()
     conn = sqlite3.connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == crewdb.SCHEMA == 4
         names = {r[1] for r in conn.execute("PRAGMA table_info(players)")}
         assert {"guid", "race", "faction", "spec", "honor_level", "score", "score_at"} <= names
         assert conn.execute("SELECT shuffle FROM matches").fetchall() == [(0,)]

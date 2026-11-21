@@ -7162,6 +7162,55 @@ plans ("This brings back the crew book") gains "and a sync by hand would
 add them to wowlab's database". Because such a book is older than the
 database, it is never synced without that step (above).
 
+*As built (2026-11-21, M20-18): world PvP from the combat log.* `worldpvp`
+reads a log read-only (`combatlog.read_log`, which gains `start=` and
+`skip=`; `combatlog.head`), pure, no database. **You** are the GUIDs the
+lab-addon stored (schema 5) for every character of the account; with none,
+`crew scan-log` refuses and says to log in once with the addon. **A fight**
+is a `SWING_DAMAGE`, `RANGE_DAMAGE`, `SPELL_DAMAGE` or
+`SPELL_PERIODIC_DAMAGE` line between you (or your pet or guardian: flags
+"mine" and pet or guardian while one of your characters logs, or the
+advanced block's owner field naming your GUID) and a `Player-` GUID whose
+flags say hostile (`& 0xF0` = `0x40`) and player (`& 0xFC00` = `0x400`).
+**Where:** after a `ZONE_CHANGE` whose third field (difficulty) is 0, as the
+real log's open-world `ZONE_CHANGE,0,"Tirisfal Glades",0` shows; not between
+`ARENA_MATCH_START` and `ARENA_MATCH_END`; not on an instance id (the zone
+line's first field) that the database keeps a match on, applied when read,
+so a battleground synced later drops what was taken for the open world.
+Before any zone line, not counted. A duel cannot be told apart and counts.
+**Encounter:** a fight joins your open encounter that holds the same player
+if its last fight was at most 5 minutes before, else one whose last fight
+was at most 60 s before, else starts one; at most 64 open, 20,000 per read,
+100 players a side. Allies: friendly players damaging an opponent of an
+open encounter. Your death (`UNIT_DIED` of your GUID) goes to the hostile
+player who last damaged you within 30 s; your killing blow is a `PARTY_KILL`
+by you or your pet. **Keys:** `"Name-Realm-Region"` gives `Name-Realm` (the
+crew book's key: the realm without spaces, as the addon builds it); two
+parts are taken as Name-Realm, one part as on your own realm (your unit
+name's realm, else the stored one); the GUID is kept for linking. **Store:**
+schema 4 after the `.before-schema-3` copy: `world_logs` (path, SHA-256 of
+the first line, size, offset read to, the zone state there), and
+`world_encounters` with `world_encounter_players` (side `foe` or `ally`,
+damage lines, killing blows); never `matches` or the four counters; at most
+20,000 encounters. A player only the log names gets a players row (not in
+the game's list, no group, no match). **A log** is found by path; the same
+first line and at least the offset read continues from there; a shorter
+file or another first line is a new log; an unknown path whose first line
+is known is that log moved; a last line with no break waits. An encounter
+open when a read ends is closed there, so a fight across two reads is two
+encounters. A scan writes no `meta` row, so the next sync is not held.
+`crew forget` deletes the key's rows in `world_encounter_players` too, in
+the database and every copy. Commands: `crew scan-log [PATH]` (no
+question, as `crew sync`), `crew list --world`, `crew show`'s open-world
+lines, `crew matches --world`; `doctor` counts encounters, opponents and
+logs. The Crew tab: a "Met in the open world" filter and two buttons that
+run `crew matches --world` and `crew scan-log`. Not yet confirmed (no
+fixture shows them): the hostile, pet and guardian flag bits; `RANGE_DAMAGE`;
+`PARTY_KILL` for a player; the arena lines; that a battleground's or
+dungeon's difficulty is not 0; a name without a realm or region part;
+realms with a hyphen or apostrophe. Measured on a constructed log (the
+real log's lines repeated, four PvP lines in every 81): TIMING.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

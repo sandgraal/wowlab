@@ -453,6 +453,12 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         # M20-09: likewise; test_crew_matches.py runs it on constructed books.
         ["crew", "matches"],
         ["crew", "matches", "--notes"],
+        # M20-18: the captures' records hold no game id, so scan-log ends in
+        # its refusal, which is player copy too; test_crew_world.py runs all
+        # three on constructed logs and lints their text.
+        ["crew", "scan-log"],
+        ["crew", "list", "--world"],
+        ["crew", "matches", "--world", "--notes"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],

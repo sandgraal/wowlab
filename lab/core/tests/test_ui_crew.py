@@ -1044,3 +1044,45 @@ def test_the_new_fields_two_names_and_a_shuffle_show_as_text_constructed(
     assert history["matches"]["lines"] == [line.strip() for line in report["lines"]]
     assert any("(solo shuffle)" in line for line in history["matches"]["lines"])
     assert f"In it with you: {KEY_A}, {KEY_C}" in history["matches"]["lines"]
+
+
+# ─── the open world (M20-18) ─────────────────────────────────────────────────
+
+
+def test_the_open_world_buttons_and_filter_go_through_the_command_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    """The open-world filter, the fights and the combat-log read are the
+    commands' own runs (`crew list --world`, `crew matches --world`, `crew
+    scan-log`) and show their own words. The captured install holds no
+    combat log and no game id, so the read ends in its refusal, shown as
+    the command's own error."""
+    crew = crew_at(_pvp_book())
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_set": "crew-pvp", "value": "world"},
+        {"crew_set": "crew-pvp", "value": ""},
+        {"crew_click": "crew-world-show"},
+        {"crew_click": "crew-scan-log"},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    _, world, _, fights, scanned = out["steps"]
+    assert _bodies(world) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "world": True}}
+    ]
+    assert world["rows"] == []
+    assert _bodies(fights) == [
+        {
+            "command": ["crew", "matches"],
+            "params": {"account": ACCOUNT, "flavor": FLAVOR, "world": True},
+        }
+    ]
+    report = crew.report(MATCHES, {"world": True})
+    assert report["world"] is True and report["encounters"] == []
+    assert fights["matches"]["hidden"] is False
+    assert fights["matches"]["words"] == report["words"]
+    assert report["words"].endswith("newest first: 0 encounters.")
+    assert _bodies(scanned) == [
+        {"command": ["crew", "scan-log"], "params": {"account": ACCOUNT, "flavor": FLAVOR}}
+    ]
+    assert "wowlab does not know which characters are yours" in " ".join(scanned["status"].split())

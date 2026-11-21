@@ -170,6 +170,11 @@ class CrewDatabaseSummary(_Out):
     not_in_game_list: int | None
     matches: int | None
     reason: str | None
+    # M20-18: the open-world encounters, the opponents in them and the
+    # combat logs read (None for a database from before them); counts only.
+    world_encounters: int | None = None
+    world_opponents: int | None = None
+    world_logs: int | None = None
 
 
 class DoctorFlavor(_Out):
@@ -586,10 +591,18 @@ def _crew_database_line(db: CrewDatabaseSummary) -> str:
         else ""
     )
     matches = db.matches or 0
+    world = ""
+    if db.world_logs:
+        encounters = db.world_encounters or 0
+        world = (
+            f", {encounters:,} open-world {'encounter' if encounters == 1 else 'encounters'} "
+            f"with {_plural(db.world_opponents or 0, 'opponent')} from "
+            f"{_plural(db.world_logs, 'combat log')} read"
+        )
     return (
         f"  {where}: {_plural(db.players, 'player')}{gone}, "
-        f"{matches} {'match' if matches == 1 else 'matches'}; {at}. It is the only copy of "
-        "what the game's list has dropped."
+        f"{matches} {'match' if matches == 1 else 'matches'}{world}; {at}. It is the only "
+        "copy of what the game's list has dropped."
     )
 
 

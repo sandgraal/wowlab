@@ -61,12 +61,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wowlab_core import crewbook, crewedit, guard, snapshot
+from wowlab_core import crewbook, crewedit, guard, snapshot, worldpvp
 from wowlab_core.errors import WowlabError
 
 # ─── constants ───────────────────────────────────────────────────────────────
 
-SCHEMA = 3
+SCHEMA = 4
 """The database's own schema (`PRAGMA user_version`)."""
 APPLICATION_ID = 0x574C4342  # "WLCB": wowlab crew book
 """`PRAGMA application_id` of every crew database; `_SQL_SET_APP_ID` holds
@@ -138,6 +138,7 @@ _SQL_SET_VERSION: dict[int, str] = {
     1: "PRAGMA user_version = 1",
     2: "PRAGMA user_version = 2",
     3: "PRAGMA user_version = 3",
+    4: "PRAGMA user_version = 4",
 }
 _SQL_BEGIN = "BEGIN IMMEDIATE"
 _SQL_COMMIT = "COMMIT"
@@ -208,6 +209,40 @@ _SQL_CREATE: tuple[str, ...] = (
     "CREATE INDEX match_players_match ON match_players (match_id)",
     "CREATE INDEX match_players_key ON match_players (player_key)",
     "CREATE TABLE meta (name TEXT PRIMARY KEY NOT NULL, value ANY) STRICT",
+    "CREATE TABLE world_logs ("
+    " log_id INTEGER PRIMARY KEY,"
+    " path TEXT NOT NULL,"
+    " head_sha256 TEXT NOT NULL,"
+    " size INTEGER NOT NULL,"
+    " read_to INTEGER NOT NULL,"
+    " state TEXT,"
+    " scanned_at INTEGER NOT NULL"
+    ") STRICT",
+    "CREATE UNIQUE INDEX world_logs_path ON world_logs (path)",
+    "CREATE INDEX world_logs_head ON world_logs (head_sha256)",
+    "CREATE TABLE world_encounters ("
+    " encounter_id INTEGER PRIMARY KEY,"
+    " log_id INTEGER,"
+    " owner_guid TEXT NOT NULL,"
+    " start_at INTEGER NOT NULL,"
+    " end_at INTEGER NOT NULL,"
+    " zone TEXT,"
+    " instance_id INTEGER,"
+    " died INTEGER NOT NULL CHECK (died IN (0, 1))"
+    ") STRICT",
+    "CREATE INDEX world_encounters_start ON world_encounters (start_at)",
+    "CREATE TABLE world_encounter_players ("
+    " encounter_id INTEGER NOT NULL"
+    " REFERENCES world_encounters (encounter_id) ON DELETE CASCADE,"
+    " player_key TEXT NOT NULL,"
+    " guid TEXT,"
+    " side TEXT NOT NULL CHECK (side IN ('foe', 'ally')),"
+    " hits INTEGER NOT NULL,"
+    " killed_by_you INTEGER NOT NULL CHECK (killed_by_you IN (0, 1)),"
+    " killed_you INTEGER NOT NULL CHECK (killed_you IN (0, 1)),"
+    " PRIMARY KEY (encounter_id, player_key)"
+    ") STRICT",
+    "CREATE INDEX world_encounter_players_key ON world_encounter_players (player_key)",
 )
 
 # Statements that move the database from schema n to n + 1, after a copy of
@@ -229,6 +264,12 @@ _SQL_CREATE: tuple[str, ...] = (
 # widened in place, and rebuilding `matches` would cascade into
 # `match_players`. Every new column starts empty (0 for `shuffle`).
 #
+# 3 -> 4 (M20-18): world PvP from the combat log, in tables of its own,
+# never in `matches` or the four counters: the logs read (by path, the hash
+# of the first line, the size, and the offset read to, with where the log
+# was at that offset), the encounters, and each player's part in one. The
+# statements are `_SQL_CREATE`'s own, which a test checks.
+#
 # Keyed by (schema it starts from, order within the step); each value one
 # constant statement, so the static check reads every one.
 _MIGRATIONS: dict[tuple[int, int], str] = {
@@ -248,6 +289,40 @@ _MIGRATIONS: dict[tuple[int, int], str] = {
     (2, 8): "CREATE INDEX players_guid ON players (guid)",
     (2, 9): "ALTER TABLE matches ADD COLUMN shuffle INTEGER NOT NULL DEFAULT 0"
     " CHECK (shuffle IN (0, 1))",
+    (3, 1): "CREATE TABLE world_logs ("
+    " log_id INTEGER PRIMARY KEY,"
+    " path TEXT NOT NULL,"
+    " head_sha256 TEXT NOT NULL,"
+    " size INTEGER NOT NULL,"
+    " read_to INTEGER NOT NULL,"
+    " state TEXT,"
+    " scanned_at INTEGER NOT NULL"
+    ") STRICT",
+    (3, 2): "CREATE UNIQUE INDEX world_logs_path ON world_logs (path)",
+    (3, 3): "CREATE INDEX world_logs_head ON world_logs (head_sha256)",
+    (3, 4): "CREATE TABLE world_encounters ("
+    " encounter_id INTEGER PRIMARY KEY,"
+    " log_id INTEGER,"
+    " owner_guid TEXT NOT NULL,"
+    " start_at INTEGER NOT NULL,"
+    " end_at INTEGER NOT NULL,"
+    " zone TEXT,"
+    " instance_id INTEGER,"
+    " died INTEGER NOT NULL CHECK (died IN (0, 1))"
+    ") STRICT",
+    (3, 5): "CREATE INDEX world_encounters_start ON world_encounters (start_at)",
+    (3, 6): "CREATE TABLE world_encounter_players ("
+    " encounter_id INTEGER NOT NULL"
+    " REFERENCES world_encounters (encounter_id) ON DELETE CASCADE,"
+    " player_key TEXT NOT NULL,"
+    " guid TEXT,"
+    " side TEXT NOT NULL CHECK (side IN ('foe', 'ally')),"
+    " hits INTEGER NOT NULL,"
+    " killed_by_you INTEGER NOT NULL CHECK (killed_by_you IN (0, 1)),"
+    " killed_you INTEGER NOT NULL CHECK (killed_you IN (0, 1)),"
+    " PRIMARY KEY (encounter_id, player_key)"
+    ") STRICT",
+    (3, 7): "CREATE INDEX world_encounter_players_key ON world_encounter_players (player_key)",
 }
 
 _SQL_META_ALL = "SELECT name, value FROM meta"
@@ -363,6 +438,19 @@ class CrewRow(crewbook.CrewPlayer):
     pvp_last: int | None = None
     pvp_map: str | None = None
     pvp_side: crewbook.PvpSide | None = None
+    # The open world (§21.3, M20-18), from the combat log and never in the
+    # counts above: the encounters they fought you in (`world_faced`) and
+    # fought beside you in (`world_allied`), your killing blows on them and
+    # theirs on you, the first and latest of those encounters and the
+    # latest one's zone. An encounter on a map wowlab keeps a battleground
+    # or arena match on is left out.
+    world_faced: int = 0
+    world_allied: int = 0
+    world_kills: int = 0
+    world_deaths: int = 0
+    world_first: int | None = None
+    world_last: int | None = None
+    world_zone: str | None = None
 
 
 class CrewMatchRow(_Model):
@@ -823,10 +911,14 @@ def _aliases(rows: Sequence[_Row]) -> dict[str, list[str]]:
 
 
 def _public(
-    row: _Row, book: crewbook.CrewBook | None, aliases: dict[str, list[str]] | None = None
+    row: _Row,
+    book: crewbook.CrewBook | None,
+    aliases: dict[str, list[str]] | None = None,
+    world: dict[str, _WorldPart] | None = None,
 ) -> CrewRow:
     kept = {p.key: p for p in book.players} if book is not None else {}
     held = kept.get(row.key)
+    part = (world or {}).get(row.key) or _WorldPart()
     return CrewRow(
         key=row.key,
         class_token=row.class_token,
@@ -861,6 +953,13 @@ def _public(
         else "against"
         if row.pvp_side == "against"
         else None,
+        world_faced=part.faced,
+        world_allied=part.allied,
+        world_kills=part.kills,
+        world_deaths=part.deaths,
+        world_first=part.first,
+        world_last=part.last,
+        world_zone=part.zone,
     )
 
 
@@ -880,7 +979,8 @@ def read(flavor_folder: str, account: str, book: crewbook.CrewBook | None = None
     try:
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
-        return [_public(r, book, aliases) for r in rows]
+        world = _world_parts(conn)
+        return [_public(r, book, aliases, world) for r in rows]
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -2087,11 +2187,17 @@ class DatabaseSummary(_Model):
     not_in_game_list: int | None
     matches: int | None
     reason: str | None = None
+    # M20-18: open-world encounters, the opponents in them and the combat
+    # logs read; counts only.
+    world_encounters: int | None = None
+    world_opponents: int | None = None
+    world_logs: int | None = None
 
 
-def _counts(path: Path) -> tuple[int, int, int] | str:
-    """(players, of them not in the game's list, matches), read-only; or
-    why they could not be read, in wowlab's words."""
+def _counts(path: Path) -> tuple[int, int, int, tuple[int, int, int] | None] | str:
+    """(players, of them not in the game's list, matches, and the world
+    counts or None before schema 4), read-only; or why they could not be
+    read, in wowlab's words."""
     try:
         conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=LOCK_WAIT_SECONDS)
     except sqlite3.Error:
@@ -2104,11 +2210,15 @@ def _counts(path: Path) -> tuple[int, int, int] | str:
             return "a newer wowlab wrote it; update wowlab to read it"
         players, in_book = conn.execute(_SQL_COUNT_PLAYERS).fetchone()
         (matches,) = conn.execute(_SQL_COUNT_MATCHES).fetchone()
+        world: tuple[int, int, int] | None = None
+        if _has_world(conn):
+            encounters, opponents, logs = conn.execute(_SQL_COUNT_WORLD).fetchone()
+            world = (int(encounters), int(opponents), int(logs))
     except sqlite3.Error:
         return "wowlab could not read it now"
     finally:
         conn.close()
-    return int(players), int(players) - int(in_book), int(matches)
+    return int(players), int(players) - int(in_book), int(matches), world
 
 
 def summaries(flavor_folder: str) -> list[DatabaseSummary]:
@@ -2132,6 +2242,7 @@ def summaries(flavor_folder: str) -> list[DatabaseSummary]:
             continue
         counts = _counts(f)
         read = not isinstance(counts, str)
+        world = counts[3] if not isinstance(counts, str) else None
         out.append(
             DatabaseSummary(
                 account=f.name[: -len(SUFFIX)],
@@ -2142,6 +2253,9 @@ def summaries(flavor_folder: str) -> list[DatabaseSummary]:
                 not_in_game_list=counts[1] if not isinstance(counts, str) else None,
                 matches=counts[2] if not isinstance(counts, str) else None,
                 reason=None if read else str(counts),
+                world_encounters=world[0] if world else None,
+                world_opponents=world[1] if world else None,
+                world_logs=world[2] if world else None,
             )
         )
     return out
@@ -2180,9 +2294,12 @@ def _forget_rows(conn: sqlite3.Connection, keys: Sequence[str]) -> None:
     §21.3) and take them out of every match; then drop, from every other
     player, a kept scoreboard line whose text holds one of them (the line,
     not the row), so no copy of the name stays in another player's data."""
+    world = _has_world(conn)
     for key in keys:
         conn.execute(_SQL_FORGET_PLAYER, (key,))
         conn.execute(_SQL_FORGET_IN_MATCHES, (key,))
+        if world:  # M20-18: their part in every open-world encounter
+            conn.execute(_SQL_FORGET_IN_WORLD, (key,))
     if not _has_score(conn):
         return
     wanted = [crewbook.fold(k) for k in keys if crewbook.fold(k)]
@@ -2236,7 +2353,10 @@ def holds(flavor_folder: str, account: str) -> list[str]:
     keys = [r.key for r in read(flavor_folder, account)]
 
     def use(conn: sqlite3.Connection) -> list[str]:
-        return [str(r[0]) for r in conn.execute(_SQL_MATCH_KEYS)]
+        held = [str(r[0]) for r in conn.execute(_SQL_MATCH_KEYS)]
+        if _has_world(conn):
+            held += [str(r[0]) for r in conn.execute(_SQL_WORLD_KEYS)]
+        return held
 
     in_matches = _read_with(flavor_folder, account, use)
     more = in_matches if isinstance(in_matches, list) else []
@@ -2508,6 +2628,521 @@ def mark_only(
         conn.close()
 
 
+# ─── the open world, from the combat log (§21.3, M20-18) ─────────────────────
+
+MAX_WORLD_ENCOUNTERS = 20_000
+"""At most this many open-world encounters are kept; a scan past it keeps
+none of the rest, and says how many."""
+
+_SQL_HAS_WORLD = (
+    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'world_encounter_players'"
+)
+# An encounter on a map the database keeps a battleground or arena match on
+# is not the open world, whenever that match was synced (`map_id` is the
+# client's instance id, as `ZONE_CHANGE`'s first field is).
+_SQL_WORLD_PARTS = (
+    "SELECT p.player_key, p.side, p.killed_by_you, p.killed_you, e.start_at, e.end_at, e.zone"
+    " FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches)"
+    " ORDER BY e.end_at, e.encounter_id"
+)
+_SQL_WORLD_LOG_BY_PATH = (
+    "SELECT log_id, path, head_sha256, size, read_to, state FROM world_logs WHERE path = ?"
+)
+_SQL_WORLD_LOG_BY_HEAD = (
+    "SELECT log_id, path, head_sha256, size, read_to, state FROM world_logs"
+    " WHERE head_sha256 = ? ORDER BY read_to DESC, log_id"
+)
+_SQL_WORLD_LOG_INSERT = (
+    "INSERT INTO world_logs (path, head_sha256, size, read_to, state, scanned_at)"
+    " VALUES (?, ?, ?, ?, ?, ?)"
+)
+_SQL_WORLD_LOG_UPDATE = (
+    "UPDATE world_logs SET path = ?, head_sha256 = ?, size = ?, read_to = ?, state = ?,"
+    " scanned_at = ? WHERE log_id = ?"
+)
+_SQL_WORLD_LOG_DROP = "DELETE FROM world_logs WHERE path = ? AND log_id != ?"
+_SQL_WORLD_COUNT = "SELECT count(*) FROM world_encounters"
+_SQL_WORLD_INSERT = (
+    "INSERT INTO world_encounters (log_id, owner_guid, start_at, end_at, zone, instance_id, died)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+_SQL_WORLD_PLAYER_INSERT = (
+    "INSERT INTO world_encounter_players"
+    " (encounter_id, player_key, guid, side, hits, killed_by_you, killed_you)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+_SQL_SET_GUID_IF_NONE = "UPDATE players SET guid = ? WHERE player_key = ? AND guid IS NULL"
+_SQL_WORLD_ENCOUNTERS_ALL = (
+    "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
+    " FROM world_encounters"
+    " WHERE instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches)"
+    " ORDER BY start_at DESC, encounter_id DESC"
+)
+_SQL_WORLD_ENCOUNTERS_OF = (
+    "SELECT encounter_id, owner_guid, start_at, end_at, zone, instance_id, died"
+    " FROM world_encounters"
+    " WHERE (instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches))"
+    " AND encounter_id IN"
+    " (SELECT encounter_id FROM world_encounter_players WHERE player_key = ?)"
+    " ORDER BY start_at DESC, encounter_id DESC"
+)
+_SQL_WORLD_PLAYERS_ALL = (
+    "SELECT encounter_id, player_key, side, killed_by_you, killed_you"
+    " FROM world_encounter_players ORDER BY encounter_id, player_key"
+)
+_SQL_WORLD_KEYS = "SELECT DISTINCT player_key FROM world_encounter_players"
+_SQL_FORGET_IN_WORLD = "DELETE FROM world_encounter_players WHERE player_key = ?"
+_SQL_COUNT_WORLD = (
+    "SELECT"
+    " (SELECT count(*) FROM world_encounters"
+    " WHERE instance_id IS NULL OR instance_id NOT IN (SELECT map_id FROM matches)),"
+    " (SELECT count(DISTINCT p.player_key) FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))),"
+    " (SELECT count(*) FROM world_logs)"
+)
+_SQL_MATCH_MAPS = "SELECT DISTINCT map_id FROM matches"
+
+
+@dataclasses.dataclass
+class _WorldPart:
+    faced: int = 0
+    allied: int = 0
+    kills: int = 0
+    deaths: int = 0
+    first: int | None = None
+    last: int | None = None
+    zone: str | None = None
+
+
+def _has_world(conn: sqlite3.Connection) -> bool:
+    """Whether this file has the world tables (a copy kept before schema 4
+    does not)."""
+    return bool(conn.execute(_SQL_HAS_WORLD).fetchone()[0])
+
+
+def _world_parts(conn: sqlite3.Connection) -> dict[str, _WorldPart]:
+    """Each stored key's part in the open-world encounters the database
+    keeps, added up."""
+    out: dict[str, _WorldPart] = {}
+    if not _has_world(conn):
+        return out
+    for key, side, killed_by_you, killed_you, start, end, zone in conn.execute(_SQL_WORLD_PARTS):
+        part = out.setdefault(str(key), _WorldPart())
+        if side == "foe":
+            part.faced += 1
+        else:
+            part.allied += 1
+        part.kills += int(killed_by_you)
+        part.deaths += int(killed_you)
+        part.first = int(start) if part.first is None else min(part.first, int(start))
+        part.last = int(end)  # in the order of the encounters' ends
+        part.zone = _text(zone)
+    return out
+
+
+Resume = Literal["new", "continued", "moved", "restarted"]
+
+
+class WorldResume(_Model):
+    """Where a scan of one log starts (§21.3, M20-18): `start`, the offset
+    read to before, and `state`, where the log was there. `how`: `new` (a
+    log not read before), `continued` (the same log, grown or not), `moved`
+    (a log read before under another path: the same first line, and at
+    least as long), `restarted` (a log at a path read before, now shorter
+    or with another first line: a new log, read from its start). `log_id`
+    is the database's row of the log, None for a new one."""
+
+    start: int
+    state: worldpvp.ZoneState | None = None
+    how: Resume
+    log_id: int | None = None
+
+
+class WorldOutcome(_Model):
+    """What `crew scan-log` did. `state`: `scanned` (written), `unchanged`
+    (nothing new in the log), `skipped` (another wowlab was writing the
+    database, or read the same log meanwhile), `elsewhere` (a database for
+    this book exists for another install root or flavor folder: `crew sync
+    --adopt`). `read_from` and `read_to` are the log's offsets; the counts
+    are of this scan: fights counted, fights in a battleground, arena or
+    instance (`outside_world`), before the log's first zone line
+    (`no_zone`) or with a time that could not be read (`no_time`); the
+    encounters kept and left out (past the cap, or a time out of range);
+    the opponents and allies in them, the players added to the database,
+    and players not kept (past an encounter's side limit, or a name that
+    is not Name-Realm)."""
+
+    state: Literal["scanned", "unchanged", "skipped", "elsewhere"]
+    words: str
+    database: str
+    how: Resume
+    read_from: int
+    read_to: int
+    fights: int = 0
+    outside_world: int = 0
+    no_zone: int = 0
+    no_time: int = 0
+    encounters_added: int = 0
+    encounters_left_out: int = 0
+    opponents: int = 0
+    allies: int = 0
+    players_added: int = 0
+    players_left_out: int = 0
+
+
+class CrewWorldEncounterRow(_Model):
+    """One open-world encounter wowlab's crew database keeps (§21.3,
+    M20-18): when it started and ended (`start`, `end`, seconds since the
+    epoch), the zone and the client's instance id, which of your characters
+    (`owner_guid`, the game's id the lab-addon stored), whether you died
+    (`died`), and by stored key the players who fought you (`foes`), fought
+    beside you (`allies`), took your killing blow (`your_kills`) and dealt
+    you yours (`killed_you`), as far as the log showed. A forgotten player
+    is in none."""
+
+    start: int
+    end: int
+    zone: str | None
+    instance_id: int | None
+    owner_guid: str
+    died: bool
+    foes: list[str]
+    allies: list[str]
+    your_kills: list[str]
+    killed_you: list[str]
+
+
+_LogRow = tuple[int, str, str, int, int, "worldpvp.ZoneState | None"]
+
+
+def _log_row(row: tuple[object, ...] | None) -> _LogRow | None:
+    if row is None:
+        return None
+    log_id, path, head, size, read_to, state = row
+    zone: worldpvp.ZoneState | None = None
+    if isinstance(state, str):
+        try:
+            zone = worldpvp.ZoneState.model_validate_json(state)
+        except ValueError:
+            zone = None
+    return int(str(log_id)), str(path), str(head), int(str(size)), int(str(read_to)), zone
+
+
+def _resume(conn: sqlite3.Connection, log: str, size: int, head: str) -> WorldResume:
+    if not _has_world(conn):
+        return WorldResume(start=0, how="new")
+    by_path = _log_row(conn.execute(_SQL_WORLD_LOG_BY_PATH, (log,)).fetchone())
+    if by_path is not None:
+        log_id, _, was_head, _, read_to, state = by_path
+        if was_head == head and size >= read_to:
+            return WorldResume(start=read_to, state=state, how="continued", log_id=log_id)
+        return WorldResume(start=0, how="restarted", log_id=log_id)
+    for row in conn.execute(_SQL_WORLD_LOG_BY_HEAD, (head,)).fetchall():
+        moved = _log_row(row)
+        assert moved is not None
+        log_id, _, _, _, read_to, state = moved
+        if size >= read_to:
+            return WorldResume(start=read_to, state=state, how="moved", log_id=log_id)
+    return WorldResume(start=0, how="new")
+
+
+def world_resume(flavor_folder: str, account: str, log: str, size: int, head: str) -> WorldResume:
+    """Where a scan of the log at `log` (its size and the SHA-256 of its
+    first line, `head`) starts: a log is told apart by its path, size and
+    first line, and read once, resuming at the offset an earlier scan read
+    to. Writes nothing but what opening the database needs; with no
+    database yet, the log is new."""
+
+    def use(conn: sqlite3.Connection) -> WorldResume:
+        return _resume(conn, log, size, head)
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, WorldResume) else WorldResume(start=0, how="new")
+
+
+def world_maps(flavor_folder: str, account: str) -> set[int]:
+    """The instance ids of the battlegrounds and arenas the database keeps
+    a match on: a fight there is not the open world."""
+
+    def use(conn: sqlite3.Connection) -> set[int]:
+        return {int(r[0]) for r in conn.execute(_SQL_MATCH_MAPS)}
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, set) else set()
+
+
+def _world_players(e: worldpvp.WorldEncounter) -> tuple[list[worldpvp.WorldPlayer], int]:
+    """An encounter's players, one per stored key (two GUIDs giving one key
+    are one row, a foe once a foe), and how many were not kept (a name not
+    Name-Realm, or past `MATCH_SIDE_MAX` on a side)."""
+    by_key: dict[str, worldpvp.WorldPlayer] = {}
+    left_out = e.players_left_out
+    sides = {"foe": 0, "ally": 0}
+    for p in e.players:
+        if not _key_ok(p.key):
+            left_out += 1
+            continue
+        held = by_key.get(p.key)
+        if held is None:
+            if sides[p.side] >= MATCH_SIDE_MAX:
+                left_out += 1
+                continue
+            sides[p.side] += 1
+            by_key[p.key] = p
+            continue
+        by_key[p.key] = held.model_copy(
+            update={
+                "side": "foe" if "foe" in (held.side, p.side) else "ally",
+                "hits": min(held.hits + p.hits, COUNTER_MAX),
+                "killed_by_you": held.killed_by_you or p.killed_by_you,
+                "killed_you": held.killed_you or p.killed_you,
+            }
+        )
+    return list(by_key.values()), left_out
+
+
+def _time_ok(t: int) -> bool:
+    return TIME_MIN <= t <= int(time.time()) + TIME_AHEAD
+
+
+def _scanned_words(outcome: WorldOutcome) -> str:
+    def n(count: int, one: str, many: str) -> str:
+        return f"{count:,} {one if count == 1 else many}"
+
+    return (
+        "Read the combat log into wowlab's crew database: "
+        f"{n(outcome.encounters_added, 'open-world encounter', 'open-world encounters')} "
+        f"with {n(outcome.opponents, 'opponent', 'opponents')} and "
+        f"{n(outcome.allies, 'ally', 'allies')} "
+        f"({n(outcome.players_added, 'player', 'players')} new to the database)."
+    )
+
+
+def _world_outcome(state: WorldState, words: str, base: dict[str, object]) -> WorldOutcome:
+    return WorldOutcome.model_validate({"state": state, "words": words, **base})
+
+
+WorldState = Literal["scanned", "unchanged", "skipped", "elsewhere"]
+
+
+def record_world(
+    target: Target,
+    log: str,
+    size: int,
+    head: str,
+    resume: WorldResume,
+    scan: worldpvp.WorldScan,
+) -> WorldOutcome:
+    """Keep what one scan of a log found (§21.3, M20-18): its encounters, a
+    row for each player the database does not keep yet (name and realm as
+    the log gave them, the GUID when it is in the client's shape), and the
+    offset read to with where the log was there. One transaction under the
+    write lock, after today's copy; the log's row must still be as `resume`
+    read it (else another scan read it meanwhile, and this one keeps
+    nothing). Never `matches` or the four counters. Never raises for a
+    skipped or misplaced scan: the outcome says why."""
+    path = database_path(target.flavor_folder, target.account)
+    base: dict[str, object] = {
+        "database": str(path),
+        "how": resume.how,
+        "read_from": resume.start,
+        "read_to": scan.end,
+        "fights": scan.fights,
+        "outside_world": scan.outside_world,
+        "no_zone": scan.no_zone,
+        "no_time": scan.no_time,
+    }
+    exists = os.path.lexists(path)
+    if not exists:
+        orphan = _orphans(target)
+        if orphan:
+            root, folder, found = orphan[0]
+            words = _elsewhere(found, root, folder, target.account).words
+            return _world_outcome("elsewhere", words, base)
+    try:
+        conn = _open(path, create=True)
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return _world_outcome("skipped", _skipped(path).words, base)
+        raise CrewDbError(f"The crew database {path} cannot be opened ({exc}).") from exc
+    assert conn is not None
+    try:
+        meta = _meta(conn)
+        if "install_root" in meta and meta.get("install_root") != target.install_root:
+            words = _elsewhere(
+                path, meta.get("install_root"), meta.get("flavor_folder"), target.account
+            ).words
+            return _world_outcome("elsewhere", words, base)
+        if not scan.encounters and scan.end == resume.start and resume.how == "continued":
+            return _world_outcome(
+                "unchanged",
+                "wowlab's crew database already holds everything in this combat log.",
+                base,
+            )
+        return _record_open(conn, path, exists, (log, size, head), resume, scan, base)
+    except _Replaced:
+        words = (
+            "wowlab's crew database was deleted or replaced while the log was read (a forget "
+            "of every player does that), so nothing was kept; run the command again."
+        )
+        return _world_outcome("skipped", words, base)
+    except _ReadMeanwhile:
+        words = (
+            "Another wowlab read this combat log into the crew database meanwhile, so this "
+            "scan kept nothing; run the command again to read what is new."
+        )
+        return _world_outcome("skipped", words, base)
+    except sqlite3.OperationalError as exc:
+        if _locked(exc):
+            return _world_outcome("skipped", _skipped(path).words, base)
+        raise CrewDbError(f"The crew database {path} could not be written ({exc}).") from exc
+    except sqlite3.Error as exc:
+        raise CrewDbError(f"The crew database {path} could not be written ({exc}).") from exc
+    finally:
+        conn.close()
+
+
+class _ReadMeanwhile(Exception):  # noqa: N818 - a signal, not an error
+    """Another scan moved the log's row after this one read it."""
+
+
+def _record_open(
+    conn: sqlite3.Connection,
+    path: Path,
+    existed: bool,
+    seen: tuple[str, int, str],
+    resume: WorldResume,
+    scan: worldpvp.WorldScan,
+    base: dict[str, object],
+) -> WorldOutcome:
+    log, size, head = seen
+    ident = _ident(path)
+    now_ns = time.time_ns()
+    added = left_out = players_added = players_left_out = 0
+    foes: set[str] = set()
+    allies: set[str] = set()
+    with _transaction(conn):
+        _still(path, ident)
+        if _resume(conn, log, size, head) != resume:
+            raise _ReadMeanwhile
+        if existed:
+            _daily_copy(conn, path)
+        rows = _rows(conn)
+        kept = int(conn.execute(_SQL_WORLD_COUNT).fetchone()[0])
+        state = scan.state.model_dump_json()
+        at = int(time.time())
+        if resume.log_id is None:
+            cursor = conn.execute(_SQL_WORLD_LOG_INSERT, (log, head, size, scan.end, state, at))
+            log_id = cursor.lastrowid
+        else:
+            log_id = resume.log_id
+            conn.execute(_SQL_WORLD_LOG_DROP, (log, log_id))
+            conn.execute(_SQL_WORLD_LOG_UPDATE, (log, head, size, scan.end, state, at, log_id))
+        for e in scan.encounters:
+            if kept >= MAX_WORLD_ENCOUNTERS or not (_time_ok(e.start) and _time_ok(e.end)):
+                left_out += 1
+                continue
+            players, out = _world_players(e)
+            players_left_out += out
+            values = (log_id, e.owner_guid, e.start, e.end, e.zone, e.instance_id, int(e.died))
+            encounter_id = conn.execute(_SQL_WORLD_INSERT, values).lastrowid
+            kept += 1
+            added += 1
+            for p in players:
+                guid = p.guid if guid_kept(p.guid) else None
+                conn.execute(
+                    _SQL_WORLD_PLAYER_INSERT,
+                    (
+                        encounter_id,
+                        p.key,
+                        guid,
+                        p.side,
+                        min(p.hits, COUNTER_MAX),
+                        int(p.killed_by_you),
+                        int(p.killed_you),
+                    ),
+                )
+                (foes if p.side == "foe" else allies).add(p.key)
+                if p.key in rows:
+                    if guid is not None:
+                        conn.execute(_SQL_SET_GUID_IF_NONE, (guid, p.key))
+                    continue
+                # A player only the log names: a row of their own, in no
+                # group and no match, never in the game's list.
+                row = _Row(
+                    p.key, p.name, p.realm, None, None, None, None, 0, None, None, None, None,
+                    None, None, 0, 0, now_ns, now_ns, guid=guid,
+                )  # fmt: skip
+                conn.execute(_SQL_PLAYER_INSERT, (row.key, *row.values()))
+                rows[p.key] = row
+                players_added += 1
+    outcome = _world_outcome("scanned", "", base).model_copy(
+        update={
+            "encounters_added": added,
+            "encounters_left_out": left_out + scan.left_out,
+            "opponents": len(foes),
+            "allies": len(allies - foes),
+            "players_added": players_added,
+            "players_left_out": players_left_out,
+        }
+    )
+    return outcome.model_copy(update={"words": _scanned_words(outcome)})
+
+
+def world_encounters(
+    flavor_folder: str, account: str, key: str | None = None
+) -> list[CrewWorldEncounterRow]:
+    """The open-world encounters wowlab's crew database keeps, newest first
+    (`key`: only those the player was in, by stored key); empty when there
+    is no database yet."""
+
+    def use(conn: sqlite3.Connection) -> list[CrewWorldEncounterRow]:
+        if not _has_world(conn):
+            return []
+        found = (
+            conn.execute(_SQL_WORLD_ENCOUNTERS_ALL).fetchall()
+            if key is None
+            else conn.execute(_SQL_WORLD_ENCOUNTERS_OF, (key,)).fetchall()
+        )
+        parts: dict[int, tuple[list[str], list[str], list[str], list[str]]] = {
+            int(r[0]): ([], [], [], []) for r in found
+        }
+        for encounter_id, player_key, side, killed_by_you, killed_you in conn.execute(
+            _SQL_WORLD_PLAYERS_ALL
+        ):
+            held = parts.get(int(encounter_id))
+            if held is None:
+                continue
+            k = str(player_key)
+            held[0 if side == "foe" else 1].append(k)
+            if killed_by_you:
+                held[2].append(k)
+            if killed_you:
+                held[3].append(k)
+        return [
+            CrewWorldEncounterRow(
+                start=int(start),
+                end=int(end),
+                zone=_text(zone),
+                instance_id=None if instance_id is None else int(instance_id),
+                owner_guid=str(owner),
+                died=bool(died),
+                foes=parts[int(encounter_id)][0],
+                allies=parts[int(encounter_id)][1],
+                your_kills=parts[int(encounter_id)][2],
+                killed_you=parts[int(encounter_id)][3],
+            )
+            for encounter_id, owner, start, end, zone, instance_id, died in found
+        ]
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, list) else []
+
+
 __all__ = [
     "APPLICATION_ID",
     "COUNTER_MAX",
@@ -2516,11 +3151,13 @@ __all__ = [
     "MATCH_SIDE_MAX",
     "MAX_MATCHES",
     "MAX_PLAYERS",
+    "MAX_WORLD_ENCOUNTERS",
     "SCHEMA",
     "AdoptOutcome",
     "CrewDbError",
     "CrewMatchRow",
     "CrewRow",
+    "CrewWorldEncounterRow",
     "DatabaseSummary",
     "Forgetting",
     "MarkField",
@@ -2529,6 +3166,8 @@ __all__ = [
     "SyncOutcome",
     "SyncPlan",
     "Target",
+    "WorldOutcome",
+    "WorldResume",
     "adopt",
     "check_book",
     "copies",
@@ -2544,6 +3183,10 @@ __all__ = [
     "match_problems",
     "matches",
     "read",
+    "record_world",
     "summaries",
     "sync",
+    "world_encounters",
+    "world_maps",
+    "world_resume",
 ]
