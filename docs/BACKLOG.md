@@ -3806,8 +3806,24 @@ Owner decision, 2026-11-20. Out of combat, a player's tooltip gains one line whe
 
 ---
 
+## [ ] M20-18 — World PvP: opponents from the combat log
+**Size:** L · **Depends on:** M20-12, M20-13 · **Sources:** `docs/LAB_PLAN.md` §6.8 (the combat-log reader), §21.3; ADR-0036 with its notes of 2026-11-20; ADR-0039; owner decision of 2026-11-21
+
+The owner writes a combat log in game (`/combatlog`). The desk reads it (read-only, L1) and finds the players who fought the owner outside a battleground or arena, and keeps them in the crew database as opponents. No addon change.
+
+- **Who the owner is:** the GUID the lab-addon stores (schema 5), for every character of the account that has one; without one the command says so and names the fix (log in once with the addon). Never a guess from flags when a GUID is known.
+- **What counts as a fight:** damage between the owner (or the owner's pet or guardian) and a unit whose GUID is a player's and whose flags say hostile, in either direction, outside an instance of type battleground or arena (the log's zone and map lines say where). Fights with the same player close together are one encounter; state the gap. A duel is not world PvP where the log can tell.
+- **What is kept, per opponent:** name and realm as the log gives them, the GUID, encounters, the owner's killing blows on them and their killing blows on the owner where the log shows them, first and last time, the last zone; per encounter: when, where, who was on each side, how it ended as far as the log shows. Allies in the fight (friendly players who damaged the same enemies) are kept as with you.
+- **Where:** the crew database, a schema step in the pattern of M20-02 and M20-12 (the copy first), beside the scoreboard matches and never mixed into their counts: world encounters have their own columns and their own `kind`.
+- **Commands:** `crew scan-log [PATH]` (default: the newest log; each log is read once, told apart by its path, size and first line, and reading is resumable by offset so a growing log is not counted twice); `crew list --world`, `crew show` with the world record, `crew matches --world` or a sibling, the Crew tab through existing endpoints. `crew forget` removes a player's world record and their part in every encounter.
+- **Bounds:** a line over 1 MiB as the reader already treats it; a stated cap on encounters kept and on players per encounter; a log of 1 GB read in bounded memory; a time target stated and measured.
+
+**Acceptance:** real combat-log fixtures already in the repository still parse the same; constructed lines, labelled, for every PvP case (the fixtures hold little or no world PvP); a `@live` test against the owner's own log that CI never runs; text and `--json` say the same; `doctor` prints counts only; forget leaves no key and no GUID of the player in the database or its copies. Every statement about what the log's lines mean that a fixture does not show is marked not yet confirmed. Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: one new command, new options, the Crew tab; the wiki's crew and combat-log pages.
+
+---
+
 ## [ ] M20-10 — PvP book wave review
-**Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-09, M20-11, M20-12
+**Size:** S · **Depends on:** M20-01, M20-02, M20-03, M20-04, M20-05, M20-06, M20-09, M20-11, M20-12, M20-18
 
 `docs/handoffs/M20-review.md`: what shipped, each ADR-0036 term with its proof for the database, what stayed [verify], what the option A gap lost in practice, and whether world PvP is worth a wave.
 
