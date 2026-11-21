@@ -2620,6 +2620,61 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     Macros section holds each macro's name and body, or why it is absent;
     a schema-3 or schema-4 record keeps the old words.
 
+  *The owner's second schema-5 run (2026-11-20, Forever 71037, with M20-16
+  installed; M20-17).* After one login of about 30 seconds and a logout,
+  `wowlab char show` printed `Action bars: 0 of slots 1 to 180 filled (none
+  recorded; …); read out of combat` and `dropped: 0 values`, where the
+  same character's file from the session before said `27 of slots 1 to 180
+  filled (3 item, 8 macro, 15 spell, 1 summonpet)`; nothing had been removed
+  from the bars, and the record said `Written: … at logout`. It also printed
+  `realm … (written without spaces: taken from the character's full name;
+  the game gave no realm name)`, so at that gather both `GetRealmName()` and
+  `GetNormalizedRealmName()` gave nothing usable; `Macros: 1 account-wide
+  macro and 8 macros of this character's` (the M20-16 fix works); a key
+  bindings line with 303 listed and 0 not plain (309 and 1 on 70959); and,
+  last, "The addon records no time; the time shown is the file's
+  modification time." under a record that carries its time. Fixed in M20-17:
+  - The cause, from the code: after the first pass a change event
+    (`ACTIONBAR_SLOT_CHANGED`; believed fired as the character leaves the
+    world **[verify]**) left `actionbars` dirty, the 30 s timer had not
+    run, and the pass at `PLAYER_LOGOUT` read every slot when
+    `GetActionInfo` already answered nothing. A read that raises or is
+    blocked keeps the earlier record; one that answers empty did not, so
+    it replaced the good record. Every on-world section had the same
+    hazard (`gear`, `spellbook`, `bindings`, `macros`, `identity`, the
+    talents, currencies, professions and collections). Now the pass at
+    logout gathers only a dirty section with no record from this session,
+    as a last resort, marked `at_logout = true` in its `gathered` entry. A
+    section whose record lacks its `again_without` field (identity without
+    a realm) is read once more; the session's record and time always stay,
+    and only the realm's own keys (`realm`, `realm_absent`, `realm_from`,
+    `realm_normalized`, `realm_tried`; the section's `again_fields`) are
+    taken from that read when it has a realm, marked `again_at_logout =
+    "realm"` in the section's `gathered` entry (fix round 1: a read at
+    logout may be emptier in the guild, name or GUID). Every
+    other section is written as the session's passes gathered it, with its
+    own time in `gathered`. A change in the last 30 s before logout is
+    therefore not recorded; `/wowlab save` before logging out takes it.
+    The crew book has no pass at logout: its passes run on a timer, which
+    does not run after `PLAYER_LOGOUT`.
+  - The crew book's home realm (the realm part of a same-realm player's
+    key) is `GetNormalizedRealmName()`, else the second return of
+    `UnitFullName("player")`, each tested with `issecretvalue`, with every
+    space and hyphen removed from whichever answered (the client's
+    normalization as believed, not yet confirmed **[verify]**), so a key is
+    the same whichever source answered. It is read when a key needs it and
+    kept for the session only once found; `/wowlab crew` says when no home
+    realm could be found. Before, a client whose normalized-realm call gave
+    nothing skipped every same-realm player without a word.
+  - `identity.realm_tried` holds what each source asked before the one
+    named in `realm_from` gave, and every reason now names the kind of
+    nothing: a secret value, an empty string, or the type (`nil`, a
+    number, …).
+  - `char show` prints each section's gather time and names the sections
+    the pass at logout gathered; its no-time note is printed only for a
+    record without a time of its own, and `char list` no longer says the
+    addon records no time.
+
   The reader reads schema 1 to 4 files as before and refuses a schema it
   does not know. The desk uses the stored text: `char show` prints the
   character's name, realm and guild, the macro counts and when the file was
@@ -6634,7 +6689,8 @@ Each is the smallest thing that does the job; say so and it changes.
 *Overturned by the owner on 2026-11-20 ("Yes, all of them"; M20-14):
 decisions 2 and 8.* The tooltip line is built: out of combat, while the
 book is on, the game's tooltip for a player the book holds gains one line
-with the rating, the matches with and against you, and the first 60
+with the rating, the matches with and against you ("Battlegrounds: 3 with
+you, 1 against.", the owner's wording of 2026-11-21), and the first 60
 characters of the note (cut before a character, never inside one); nothing
 when the name or realm is a secret value, nothing in combat, and no line
 when the book holds none of the three. The hook is

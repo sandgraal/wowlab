@@ -49,10 +49,16 @@ BOOK = g.BOOK
 HOOK = ("onTooltip", "tipShow", "hoverKey", "tipText")
 # What the hook's functions may call: the pinned helpers, each other, the
 # note's start and the print flattening; nothing that walks the book.
-HOOK_CALLS = frozenset({"crewOn", "crewBlocked", "secret", "noteStart", "shown", *HOOK})
+# M20-17: and homeRealm, the owner's realm for a same-realm key, scanned with
+# the hook's functions (it walks nothing either).
+HOOK_HELPERS = ("homeRealm",)
+HOOK_CALLS = frozenset(
+    {"crewOn", "crewBlocked", "secret", "noteStart", "shown", *HOOK, *HOOK_HELPERS}
+)
 # Lua's own functions the hook may call (no `pairs`, `ipairs` or `next`).
 HOOK_BUILTINS = frozenset(
     {"type", "pcall", "string", "UnitIsPlayer", "UnitName", "GetNormalizedRealmName"}
+    | {"UnitFullName"}
 )
 HOOK_HANDLER = (
     "function onTooltip ( tooltip ) " + g.CREW_GATE + " "
@@ -117,7 +123,7 @@ def tooltip_problems(text: str) -> list[str]:
     rendered = g._render(t)
     problems: list[str] = []
     heads: dict[str, int] = {}
-    for label in (*HOOK, "hookTooltip", "noteStart", "readMember"):
+    for label in (*HOOK, *HOOK_HELPERS, "hookTooltip", "noteStart", "readMember"):
         found = _functions(flow, label)
         if len(found) != 1:
             problems.append(f"{label} is defined {len(found)} times, not once")
@@ -184,7 +190,7 @@ def tooltip_problems(text: str) -> list[str]:
     if len(uses) != len(adds) + len(compared):
         problems.append("the game's tooltip is used other than for AddLine")
     # Cheap: the hook reaches only its own helpers and walks nothing.
-    for label in HOOK:
+    for label in (*HOOK, *HOOK_HELPERS):
         fn = flow.functions[heads[label]]
         for k in range(fn.start, fn.stop):
             x = t[k]
@@ -515,7 +521,7 @@ def test_m20_14_each_kept_rule_fails_its_own_edit() -> None:
 def test_m20_14_the_tooltip_line_uses_the_warning_s_words() -> None:
     """The line says what the warning says, in its words: the rating as
     "you rated", the note as "Your note:", flattened as every printed field
-    is (`shown`), and the matches as the desk words them."""
+    is (`shown`), and the matches as the owner worded them (2026-11-21)."""
     flow = _flow(CREW.read_text(encoding="utf-8"))
     (head,) = _functions(flow, "tipText")
     tip = _text(flow, head)
@@ -523,7 +529,8 @@ def test_m20_14_the_tooltip_line_uses_the_warning_s_words() -> None:
     warning = _text(flow, warn)
     for words in ("you rated", "rated good", "rated bad", '" Your note: "'):
         assert words.lower() in tip.lower() and words.lower() in warning.lower(), words
-    assert '" In matches with you " .. allied .. ", against you " .. faced' in tip
+    # The matches in the owner's wording (decision of 2026-11-21).
+    assert '" Battlegrounds: " .. allied .. " with you, " .. faced .. " against."' in tip
     assert (
         "ns . Number ( entry . allied ) or 0" in tip and "ns . Number ( entry . faced ) or 0" in tip
     )

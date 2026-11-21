@@ -2,7 +2,7 @@
 `history` (M17-02)."""
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -102,6 +102,26 @@ _CHAR_NOTES = [
 ]
 
 
+def _time_notes(own_times: Iterable[bool]) -> list[str]:
+    """The one decision on the no-time note (M20-17): `_CHAR_NOTES` with it
+    when any record shown holds no time of its own, without it when every
+    one does (`own_times`: one flag per record shown)."""
+    if all(own_times):
+        return [_CHAR_NOTES[0]]
+    return list(_CHAR_NOTES)
+
+
+def _own_time(record: labaddon.CharDB) -> bool:
+    """Whether a record holds the addon's own write time (schema 5's
+    `written_at`)."""
+    return isinstance(record, labaddon.CharDBV5) and record.written_at is not None
+
+
+def _char_notes(record: labaddon.CharDB) -> list[str]:
+    """The notes for one record (`_time_notes`)."""
+    return _time_notes([_own_time(record)])
+
+
 class CharShowReport(_Out):
     """`wowlab char show --json`: the character's `WowLabCharDB` as the model
     for its schema reads it (unknown keys kept), and the account `WowLabDB`."""
@@ -185,7 +205,7 @@ def char_show(
         skip_ignored=ignored,
         customization_loads_ago=labaddon.customization_loads_ago(record),
         unknown_keys=labaddon.unknown_keys(record),
-        notes=_CHAR_NOTES,
+        notes=_char_notes(record),
         installed_version=chosen.version,
         older_client=labaddon.older_client(labaddon.client_build(record), chosen.version),
         lab_addon=addoninstall.lab_addon_state(chosen),
@@ -210,7 +230,7 @@ def char_show(
     else:
         for line in labaddon.describe_account(account_record):
             _say(line)
-    for note in _CHAR_NOTES:
+    for note in report.notes:
         _say_note(note)
 
 
@@ -297,9 +317,11 @@ class CharListReport(_Out):
 
 _CHAR_LIST_NOTES = [
     _CHAR_NOTES[0],
-    "The addon records no time; the time shown is the file's modification time: the "
-    "client's last save, unless something wrote the file since (a wowlab snap restore, undo "
-    "or sv merge, or a copy).",
+    # M20-17: a schema-5 record holds its own time, so the list no longer
+    # says the addon records none.
+    "The time shown is the file's modification time: the client's last save, unless "
+    "something wrote the file since (a wowlab snap restore, undo or sv merge, or a copy); "
+    "wowlab char show also prints the time a current lab-addon recorded.",
     "One row per folder: a renamed or transferred character (and a deleted one "
     "[verify]) keeps its old folder and last save here.",
 ]
@@ -1491,7 +1513,7 @@ def char_gear(
     if missing is not None:
         raise CliError(missing)
     table = _slot_table()
-    notes = list(_CHAR_NOTES)
+    notes = _char_notes(record)
     if how == "latest":
         notes.append(
             "The character is the one whose WowLab.lua has the newest modification time; "
@@ -1569,7 +1591,7 @@ def char_gear(
         f"{_home_words(table.user_file)} (create the folder if it is missing); a value there "
         "replaces the shipped one."
     )
-    _say_notes([*standing, *_CHAR_NOTES], notes_out, keep=[_home_words(table.user_file)])
+    _say_notes([*standing, *_char_notes(record)], notes_out, keep=[_home_words(table.user_file)])
 
 
 class CharBindsFile(_Out):
@@ -2216,6 +2238,7 @@ class CharHistoryReport(_Out):
 
 _HISTORY_NOTES = [
     *_CHAR_NOTES,
+    # (`_history_notes` drops the no-time note when every row has a time.)
     "One row per save: copies with the same save time are one record, however many "
     "snapshots hold it. A restore gives the file a new time, so a restored record shows "
     "again as a later row, marked with the save whose contents it has.",
@@ -2233,6 +2256,19 @@ _HISTORY_NOTES = [
     "installed client (wowlab db2 fetch), even for older saves; without them the id is "
     "shown.",
 ]
+
+
+# The first schema whose addon writes `written_at` on every write (M20-13).
+_OWN_TIME_SCHEMA = 5
+
+
+def _history_notes(rows: Sequence[charhistory.HistoryRow]) -> list[str]:
+    """`_HISTORY_NOTES`, with the no-time note decided by `_time_notes` over
+    the rows shown (each row's record schema says whether it has a time)."""
+    head = _time_notes(r.record_schema >= _OWN_TIME_SCHEMA for r in rows)
+    return [*head, *_HISTORY_NOTES[len(_CHAR_NOTES) :]]
+
+
 _HISTORY_FEW = (
     "To see this character change over time, take a snapshot after you play "
     "(wowlab snap create): each logout or /reload saves a new record, and each snapshot "
@@ -2425,7 +2461,7 @@ def char_history(
         damaged_snapshots=_damaged_records(store, found.damaged_snapshots),
         snapshots_searched=found.snapshots_searched,
         snapshots_holding=found.snapshots_holding,
-        notes=_HISTORY_NOTES,
+        notes=_history_notes(found.rows),
     )
     if json_out:
         _emit(report)
@@ -2694,7 +2730,7 @@ def char_kept(
             character=f"{copy.realm_folder}/{copy.character_folder}",
             file=copy.file,
             mtime_ns=copy.saved_at_ns,
-            notes=list(_CHAR_NOTES),
+            notes=_char_notes(record),
         )
         spec_name, currency_name = _history_names(row.version)
         history_store = snapshot.SnapshotStore()
@@ -2719,7 +2755,7 @@ def char_kept(
             damaged_snapshots=_damaged_records(history_store, found_history.damaged_snapshots),
             snapshots_searched=found_history.snapshots_searched,
             snapshots_holding=found_history.snapshots_holding,
-            notes=_HISTORY_NOTES,
+            notes=_history_notes(found_history.rows),
         )
     report = CharKeptReport(
         kept=[row],

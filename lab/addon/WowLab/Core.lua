@@ -92,6 +92,12 @@ local debugNext = false
 ns.announced = nil
 -- time() of each section's last gather this session, by section key.
 local gatheredAt = {}
+-- M20-17: true for a section whose record was gathered by the logout pass
+-- (a last resort: nothing earlier this session), by section key.
+local gatheredAtLogout = {}
+-- M20-17 round 1: true for a section whose `again_fields` came from the
+-- logout read while the rest of its record is the session's, by key.
+local againAtLogout = {}
 
 -- The absent reason of a switched-off section.
 local SWITCHED_OFF = "switched off by the owner"
@@ -256,6 +262,8 @@ end)
 --   immediate = true,              -- gather on the event itself, not debounced
 --   again_without = "field",       -- M20-16: a record without this field leaves the
 --                                  -- section dirty, so the next pass gathers it again
+--   again_fields = { "field", ... },  -- M20-17: what a logout read of such a record
+--                                     -- supplies; the rest stays the session's
 --   not_gathered = "reason",       -- absent reason if never gathered this session
 --   carry = function(saved) ... end,   -- at ADDON_LOADED: a record to keep from
 --                                      -- the loaded WowLabCharDB, or nil
@@ -282,7 +290,8 @@ local firstPassDone = false
 
 -- After the first pass (schema 5): change events only mark their section
 -- dirty, and the dirty sections are gathered together at most once every
--- GATHER_INTERVAL seconds, out of combat, and at PLAYER_LOGOUT. A pass whose
+-- GATHER_INTERVAL seconds, out of combat. At PLAYER_LOGOUT only a section
+-- with nothing gathered this session is (gatherAtLogout, M20-17). A pass whose
 -- timer ends in combat waits for PLAYER_REGEN_ENABLED, and no new timer
 -- starts meanwhile. Combat is known from the client's own events
 -- (PLAYER_REGEN_DISABLED and PLAYER_REGEN_ENABLED) and asked as the world is
@@ -340,6 +349,71 @@ local function gatherDirty()
     for _, section in ipairs(ns.sections) do
         if section.dirty then
             gather(section)
+        end
+    end
+end
+
+-- The logout pass (M20-17). On the owner's run on 71037 (2026-11-20) a
+-- logout about 30 s after login wrote `actionbars` with 0 of 180 slots
+-- filled and nothing dropped, where the session before had written 27 and
+-- nothing had been removed from the bars. A change event after the first
+-- pass (ACTIONBAR_SLOT_CHANGED; the client is believed to fire such events
+-- as the character leaves the world [verify]) left the section dirty, the
+-- 30 s timer had not run, and the pass at PLAYER_LOGOUT read every slot when
+-- GetActionInfo already answered nothing; that read replaced the good
+-- record. So at logout only a dirty section with no record from this
+-- session is gathered, as a last resort (`at_logout` in `gathered`). A
+-- section whose record lacks its `again_without` field (identity's realm,
+-- M20-16) is read again; the session's record and its time are always put
+-- back, and only its `again_fields` are taken from the new read, when it has
+-- the field (`again_at_logout` in `gathered`). Every
+-- other section is written as this session's passes gathered it, with its
+-- own time in `gathered`; a change in the last GATHER_INTERVAL seconds
+-- before logout is not recorded (`/wowlab save` before logging out takes it).
+
+-- True when the section's record from this session lacks its
+-- `again_without` field.
+local function lacksAgain(section)
+    local held = ns.state[section.key]
+    return section.again_without ~= nil and type(held) == "table" and held[section.again_without] == nil
+end
+
+-- Copies the section's `again_fields` (identity: the realm and the keys that
+-- belong to it) from the logout read `fresh` into the session's record
+-- `held`; a field the logout read has not written is cleared, so the
+-- session's `realm_absent` goes. Nothing else of the logout read is kept: a
+-- read as the world is torn down may be emptier in every other field.
+local function takeAgain(section, held, fresh)
+    for _, field in ipairs(section.again_fields or {}) do
+        if type(field) == "string" then
+            -- Text or true/false (realm_normalized); anything else clears it.
+            local value = fresh[field]
+            if type(value) == "boolean" then
+                held[field] = ns.Bool(value)
+            else
+                held[field] = ns.String(value)
+            end
+        end
+    end
+end
+
+local function gatherAtLogout()
+    for _, section in ipairs(ns.sections) do
+        if section.dirty and not section.gathered then
+            gather(section)
+            if section.gathered then
+                gatheredAtLogout[section.key] = true
+            end
+        elseif section.dirty and lacksAgain(section) then
+            local held, heldAt = ns.state[section.key], gatheredAt[section.key]
+            gather(section)
+            local fresh = ns.state[section.key]
+            ns.state[section.key] = held
+            gatheredAt[section.key] = heldAt
+            if type(fresh) == "table" and fresh[section.again_without] ~= nil then
+                takeAgain(section, held, fresh)
+                againAtLogout[section.key] = true
+            end
         end
     end
 end
@@ -595,12 +669,22 @@ end
 
 -- `gathered`: time() of each section's last gather this session, in section
 -- order; a section not gathered this session, or switched off, has none.
+-- M20-17: `at_logout = true` on one the logout pass gathered.
 local function gatheredList()
     local list = {}
     for _, section in ipairs(ns.sections) do
         local at = ns.Number(gatheredAt[section.key])
         if at and not section.off then
-            list[#list + 1] = { section = ns.String(section.key), at = at }
+            local entry = { section = ns.String(section.key), at = at }
+            if gatheredAtLogout[section.key] then
+                entry.at_logout = true
+            end
+            -- Round 1: the field the logout read supplied (identity:
+            -- "realm"); `at` stays the time of the session's record.
+            if againAtLogout[section.key] then
+                entry.again_at_logout = ns.String(section.again_without)
+            end
+            list[#list + 1] = entry
         end
     end
     return list
@@ -808,9 +892,10 @@ ns.On("PLAYER_LOGOUT", function()
         return
     end
     -- Nothing is gathered in combat: a logout or /reload in combat writes
-    -- what the session's earlier passes gathered.
+    -- what the session's earlier passes gathered. Out of combat only what
+    -- gatherAtLogout allows (M20-17).
     if not inCombat then
-        gatherDirty()
+        gatherAtLogout()
     end
     ns.Write("logout")
 end)
