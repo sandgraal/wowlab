@@ -133,5 +133,5 @@ ns.Section({
 ns.Section({
     key = "collections.appearances",
     path = { "collections", "appearances" },
-    not_gathered = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks",
+    not_gathered = "not gathered: asking the client for the appearance collection crashed the Forever client once; the addon no longer asks",
 })

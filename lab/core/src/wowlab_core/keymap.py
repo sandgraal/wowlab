@@ -214,10 +214,12 @@ def slot_page_note(slot: int) -> str:
     return f"page {page}, button {button}: no bar of the default UI shows this page"
 
 
-def dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
+def dropped(section: object, needs: frozenset[str]) -> list[str]:
     """What a section's probes say was dropped: calls that raised, values
-    dropped as secret or untestable, and the needed functions missing."""
-    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
+    dropped as secret or untestable (counted as `labaddon.counted_probes`
+    says), and the needed functions missing."""
+    probes: Sequence[labaddon.ApiProbe] = getattr(section, "probes", None) or []
+    counted = labaddon.counted_probes(section)
     errors = sum(p.errors for p in counted)
     secret = sum(p.secret for p in counted)
     out: list[str] = []
@@ -396,7 +398,7 @@ def _usable_bars(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the action-bar section is absent: {section.absent}", None
-    why = dropped(section.probes, _ACTIONBARS_NEEDS) + labaddon.quiet_words(section)
+    why = dropped(section, _ACTIONBARS_NEEDS) + labaddon.quiet_words(section)
     untyped = sum(1 for s in section.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")
@@ -416,7 +418,7 @@ def _usable_bindings(
         return None, no_record, None
     if isinstance(section, labaddon.AbsentProbedSection):
         return None, f"the bindings section is absent: {section.absent}", None
-    why = dropped(section.probes, _BINDINGS_NEEDS) + labaddon.quiet_words(section)
+    why = dropped(section, _BINDINGS_NEEDS) + labaddon.quiet_words(section)
     note = (
         f"The bindings record is incomplete ({'; '.join(why)}): a key shown only in a file "
         "may be one the record dropped."

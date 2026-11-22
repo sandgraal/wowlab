@@ -398,7 +398,10 @@ Notes on the fields:
   `BARBER_SHOP_CLOSE` came twice for one sit. `GetViewingChrModel`
   returned nil. M11-29's other question, why, is still **[verify]**.
 - `collections.appearances` is always
-  `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once (M11-03); the addon no longer asks" }`.
+  `{ absent = "not gathered: asking the client for the appearance collection crashed the Forever client once; the addon no longer asks" }`.
+  An addon older than schema 5's release wrote the same words with a ticket
+  id, `once (M11-03); the addon`; `char show` prints such a file's reason
+  in the words above, and `--json` keeps it as the file holds it (M16-64).
   On the first M11-03 login (build 1.60.1.70009), one call,
   `GetCategoryAppearances(9)` (9 is Waist on Retail), made about 4 s after
   entering the world, hit the client assertion `BC_ASSERT(this->m_has_value)`
