@@ -331,10 +331,12 @@ def _schema_words(record: labaddon.CharDB) -> str:
     )
 
 
-def _dropped(probes: Sequence[labaddon.ApiProbe], needs: frozenset[str]) -> list[str]:
+def _dropped(section: object, needs: frozenset[str]) -> list[str]:
     """What a section's own probes say it may be missing: calls that raised,
-    values dropped as secret or untestable, a needed function not there."""
-    counted = [p for p in probes if p.api not in labaddon.LOOKED_UP]
+    values dropped as secret or untestable (counted as
+    `labaddon.counted_probes` says), a needed function not there."""
+    probes: Sequence[labaddon.ApiProbe] = getattr(section, "probes", None) or []
+    counted = labaddon.counted_probes(section)
     errors = sum(p.errors for p in counted)
     secret = sum(p.secret for p in counted)
     out: list[str] = []
@@ -360,7 +362,7 @@ def _spellbook(record: labaddon.CharDB | None, no_record: str) -> labaddon.Spell
         return f"no spellbook record (the section is absent: {record.spellbook.absent})"
     book = record.spellbook
     flyout = (book.item_types or {}).get("Flyout")
-    why = _dropped(book.probes, _SPELLBOOK_NEEDS) + labaddon.quiet_words(book)
+    why = _dropped(book, _SPELLBOOK_NEEDS) + labaddon.quiet_words(book)
     unnamed = sum(
         1 for i in book.list_ if i.spell_name is None and (flyout is None or i.type != flyout)
     )
@@ -384,7 +386,7 @@ def _actionbars(record: labaddon.CharDB | None, no_record: str) -> labaddon.Acti
     if isinstance(record.actionbars, labaddon.AbsentProbedSection):
         return f"no action-bar record (the section is absent: {record.actionbars.absent})"
     bars = record.actionbars
-    why = _dropped(bars.probes, _ACTIONBARS_NEEDS) + labaddon.quiet_words(bars)
+    why = _dropped(bars, _ACTIONBARS_NEEDS) + labaddon.quiet_words(bars)
     untyped = sum(1 for s in bars.slots if s.type is None)
     if untyped:
         why.append(f"{untyped} slot(s) have no type")

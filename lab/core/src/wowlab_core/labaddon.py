@@ -135,6 +135,8 @@ __all__ = [
     "ACCOUNT_SCHEMAS",
     "ACCOUNT_VARIABLE",
     "ADDON_NAME",
+    "APPEARANCES_REASON",
+    "APPEARANCES_REASON_WITH_TICKET",
     "A_FOLDER",
     "CHAR_SCHEMAS",
     "CHAR_VARIABLE",
@@ -213,6 +215,7 @@ __all__ = [
     "choose_lab_file",
     "client_build",
     "clip_reason",
+    "counted_probes",
     "customization_import",
     "customization_loads_ago",
     "describe",
@@ -3865,6 +3868,19 @@ def dropped_of(record: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def counted_probes(record: object) -> list[ApiProbe]:
+    """The probes whose errors and dropped values a section's summary counts:
+    every one but the looked-up names, and, in a schema-5 record (a debug
+    session's), but issecretvalue's own too, as the addon's `dropped` leaves
+    it out: its errors are values already counted on the API that gave them
+    (M16-55). Schema 3 and 4 keep issecretvalue's, as they always have."""
+    probes: list[ApiProbe] = list(getattr(record, "probes", None) or [])
+    counted = [p for p in probes if p.api not in LOOKED_UP]
+    if isinstance(record, _Quiet):
+        counted = [p for p in counted if p.api != "issecretvalue"]
+    return counted
+
+
 def quiet_words(record: object) -> list[str]:
     """What a schema-5 section's `dropped` says it may be missing, in the
     words the readers of `probes` use; empty when it holds probes or drops
@@ -3991,12 +4007,28 @@ APPEARANCES_EVENTS_NOTE = (
 )
 
 
+# The addon's own reason for `collections.appearances`, as an addon before
+# M16-64 wrote it (with a ticket id) and as it writes it now. Text output
+# prints the older one in the current words, so no ticket id reaches a
+# player; `--json` keeps the reason as the file holds it.
+APPEARANCES_REASON_WITH_TICKET = (
+    "not gathered: asking the client for the appearance collection crashed the Forever "
+    "client once (M11-03); the addon no longer asks"
+)
+APPEARANCES_REASON = (
+    "not gathered: asking the client for the appearance collection crashed the Forever "
+    "client once; the addon no longer asks"
+)
+
+
 def _appearances(record: AbsentSection | None) -> list[str]:
     """`collections.appearances` registers no events (M11-20), so its line
     says nothing about events; a list in the file gets a note and stays in
     --json."""
     if record is None:
         return [f"Appearances: {NOT_IN_FILE}"]
+    if record.absent == APPEARANCES_REASON_WITH_TICKET and record.absent_clipped is None:
+        record = record.model_copy(update={"absent": APPEARANCES_REASON})
     lines = [f"Appearances: {_absent(record, events_shown=False)}"]
     if record.events_unregistered is not None:
         lines.append(APPEARANCES_EVENTS_NOTE)

@@ -27,9 +27,11 @@ FIRST = "macos/forever/WTF/Account/90000001#6/1/Labchard-Labrealmg/SavedVariable
 
 _BASE: Any = luadata.parse((FIXTURES / FIRST).read_bytes()).to_python()["WowLabCharDB"]
 
+# The capture's file holds the reason with "(M11-03)"; text output says it
+# without the ticket id (M16-64).
 APPEARANCES_REASON = (
     "not gathered: asking the client for the appearance collection crashed the Forever client "
-    "once (M11-03); the addon no longer asks"
+    "once; the addon no longer asks"
 )
 
 
