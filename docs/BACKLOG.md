@@ -2191,7 +2191,8 @@ The store tree is created 0700 and its files 0600, whatever the umask. Existing 
 ---
 
 ## [ ] M16-46 — The reader for schema 5, and bar-addon binds in the keybind views
-**Size:** S · **Depends on:** M16-45 · **Sources:** raider:F4, addon-author:F10 (owner Q10)
+**Size:** S · **Depends on:** M16-45, M20-15 · **Sources:** raider:F4, addon-author:F10 (owner Q10)
+*Sorted 2026-11-22: the first bullet below is done (M20-13 and M20-16 read schema 5). The second waits on M20-15. The owner's run of 2026-11-20 (build 71037) showed the game's binding list holding no `MACRO` or `CLICK` command at all, so there may be nothing for these views to name; the schema 5 capture settles it, and this ticket is built or dropped then.*
 
 - `labaddon` reads schema 5. A schema it does not know is still refused, as §13.1 says. *(2026-11-11: delivered by M16-45 with #379's reader half; this ticket keeps the bullet below.)*
 - `char binds`, `binds list` and `binds coach` show `CLICK` binds as the addon button they press, named from the frame (no hard-coded addon names).
@@ -3622,7 +3623,8 @@ Three places still show the validator's text for a damaged snapshot record, whic
 
 ---
 
-## [ ] M19-08 — Crew book wave review
+## [x] M19-08 — Crew book wave review
+*Written 2026-11-22 at the owner's request, with M19-07 still open: `docs/handoffs/M19-review.md` says so, and that nothing of the crew book has been checked in the game.*
 **Size:** S · **Depends on:** M19-01, M19-02, M19-03, M19-04, M19-05, M19-06, M19-07, M19-10, M19-11
 
 `docs/handoffs/M19-review.md`: what shipped, each ADR-0036 term with its proof, what stayed [verify], the wiki rows, that M19-09 was built, and what the owner might pick next.
