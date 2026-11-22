@@ -2362,7 +2362,8 @@ as tickets and built in this wave. Each one cites the review that found it.
 
 **Acceptance:** a constructed test (labelled) on that shape keeps `-- about x`; the existing sv-merge suites and probes pass; reviewed by `code-reviewer`. User-facing: none beyond the kept comment.
 
-## [ ] M16-55 — The views' "values dropped" count leaves out `issecretvalue` errors, as the addon's `dropped` does
+## [x] M16-55 — The views' "values dropped" count leaves out `issecretvalue` errors, as the addon's `dropped` does
+*Built 2026-11-22 (#683). The defect still existed, in `keymap.dropped` and `macrocheck._dropped` (the ticket's `labaddon.dropped_words` no longer exists); fixed for schema 5 records only. The singular wording the ticket mentions was never on main.*
 **Size:** XS · **Depends on:** M16-45 · **Sources:** the M16-45 round-2 domain review (2026-11-06)
 
 `labaddon.dropped_words` (the probe path, used for schema 3 and 4 and in a schema-5 debug session) still counts `issecretvalue` errors, while the addon's `dropped` leaves them out, so a debug session can count one value twice. Add `p.api != "issecretvalue"` to the `counted` filter for schema 5, keep schema 3 and 4 output unchanged, and fix the singular "1 of them click bindings" wording in `char show`.
@@ -2433,7 +2434,7 @@ Change the message in `guard._refuse_others_on_target_accounts` to M16-62T's wor
 
 **Acceptance:** `test_cli_player_copy.py` covers the strings; reviewed by `code-reviewer`. User-facing: the reworded messages.
 
-## [ ] M16-64 — The lab-addon writes no ticket id into WowLab.lua
+## [x] M16-64 — The lab-addon writes no ticket id into WowLab.lua
 **Size:** XS · **Depends on:** M16-45 · **Sources:** the M15-01 reviews (2026-11-02)
 
 `lab/addon/WowLab/Collections.lua` writes "(M11-03)" into the saved file, where a player reads it. Remove ticket ids from every string the addon stores or prints, update `lab/addon/README.md` where it documents that string, and add a static test that refuses `M\d\d-\d\d` in addon strings. It depends on M16-45 and lands before schema 5 is released, so the changed stored text is part of schema 5, not a new schema (LAB_PLAN §13.1); if a release with schema 5 has gone out first, stop and report.
