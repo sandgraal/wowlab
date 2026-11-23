@@ -72,6 +72,11 @@ What the models accept (M11-03 capture, `docs/LAB_FORMATS.md` amendment of
   is accepted bounded, as UTF-8, and with no control character (a macro
   body may hold line breaks and tabs). Schema 1 to 4 files are read
   exactly as before.
+- Schema 5 also carries `combatlog` (M20-19; ADR-0026, note of
+  2026-11-22) from a lab-addon with the combat-log switch: what the switch
+  last did (a count, the time, direction and reason of the last switch, the
+  idle time), never anything the log holds. A schema-5 file without it is
+  read as before; `char show` prints it only when the file holds it.
 - A section the owner switched off (M11-21) is an absent record with the
   addon's reason; `WowLabCharDB.skip` is kept as a list of section keys, and
   a key this reader does not know is kept but ignored (`skip_known`).
@@ -189,6 +194,7 @@ __all__ = [
     "CharacterFile",
     "ClassTalents",
     "ClippedReason",
+    "CombatLog",
     "Customization",
     "CustomizationImport",
     "CustomizationV2",
@@ -266,6 +272,8 @@ SECTION_KEYS: tuple[str, ...] = (
     "identity",
     # Schema 5 (M20-13).
     "macros",
+    # Schema 5 (M20-19): the combat-log switch.
+    "combatlog",
 )
 
 # The addon's absent reason for a section in the skip list (Core.lua).
@@ -1761,6 +1769,26 @@ class IdentityV5(Identity):
     guild_set_aside: Reason | None = None
 
 
+class CombatLog(_Section):
+    """`combatlog` (schema 5, M20-19): the lab-addon's combat-log switch.
+    `switches` counts every switch it made, kept across sessions; `last_at`
+    (`time()`), `last_to` and `last_why` are the last one; `mine`: the log
+    was on because the addon turned it on; `log_on`: the log's state at the
+    switch's last check; `hands_off`: the player turned off a log the addon
+    had turned on, so it was left off for that session; `advanced`: the
+    Advanced Combat Logging setting at the last switch on."""
+
+    idle_minutes: Annotated[int, Field(ge=1, le=120)] | None = None
+    switches: Count | None = None
+    last_at: Int | None = None
+    last_to: Literal["on", "off"] | None = None
+    last_why: Reason | None = None
+    mine: bool | None = None
+    log_on: bool | None = None
+    hands_off: bool | None = None
+    advanced: bool | None = None
+
+
 class Gathered(_Record):
     """One entry of `gathered`: a section key and `time()` at its last
     gather in the session that wrote the file. `at_logout` (M20-17): True
@@ -1824,6 +1852,10 @@ class CharDBV5(CharDBV4):
     macros: (
         Annotated[Annotated[Macros, Tag(_P)] | Annotated[AbsentProbedSectionV5, Tag(_A)], _SPLIT]
         | None
+    ) = None
+    # M20-19: from a lab-addon with the combat-log switch; absent before it.
+    combatlog: (
+        Annotated[Annotated[CombatLog, Tag(_P)] | Annotated[AbsentSection, Tag(_A)], _SPLIT] | None
     ) = None
 
 
@@ -3903,6 +3935,34 @@ def _record_probes(record: Any) -> list[str]:
     return _probe_lines(record.probes)
 
 
+def _combatlog(record: CombatLog) -> list[str]:
+    """The combat-log switch's record in two lines at most: what it last did
+    and the log's state at its last check; nothing the log holds."""
+    idle = f"{record.idle_minutes} min" if record.idle_minutes is not None else "not reported"
+    switches = record.switches or 0
+    made = "1 switch" if switches == 1 else f"{switches} switches"
+    head = f"Combat-log switch: {made} made, idle time {idle}"
+    if record.last_to is not None and record.last_at is not None:
+        when = datetime.fromtimestamp(record.last_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+        why = f" ({record.last_why})" if record.last_why else ""
+        head += f"; the last turned the log {record.last_to} at {when}{why}"
+    lines = [head]
+    state = []
+    if record.log_on is not None:
+        state.append(f"the log was {'on' if record.log_on else 'off'} at its last check")
+        if record.log_on and record.mine:
+            state.append("turned on by WowLab")
+        elif record.log_on:
+            state.append("turned on by you, so WowLab leaves it on")
+    if record.hands_off:
+        state.append("you turned it off by hand, so WowLab left it off that session")
+    if record.advanced is False:
+        state.append("Advanced Combat Logging was off")
+    if state:
+        lines.append("  " + "; ".join(state))
+    return lines
+
+
 def _macros(record: Macros, render: Callable[[str], str] = str) -> list[str]:
     lines = [
         f"Macros: {_count(record.account, 'account-wide macro')} and "
@@ -4161,6 +4221,9 @@ def describe(char: CharDB, render: Callable[[str], str] = str) -> list[str]:
         lines += _section("Key bindings", char.bindings, lambda rec: _bindings(rec, render))
     if isinstance(char, CharDBV5):
         lines += _section("Macros", char.macros, lambda rec: _macros(rec, render))
+        # A file from a lab-addon before the switch has none: no line.
+        if char.combatlog is not None:
+            lines += _section("Combat-log switch", char.combatlog, _combatlog)
     unknown = unknown_keys(char)
     if unknown:
         lines.append("")

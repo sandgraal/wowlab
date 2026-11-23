@@ -7321,6 +7321,44 @@ reaches a player kept only there, with no players row, and drops their name
 and GUID from every state in the database and every copy; `--all` deletes
 them with the database.
 
+*As built (2026-11-22, M20-19; ADR-0026, note of 2026-11-22): the lab-addon
+switches the combat log.* A new section, `combatlog` (`CombatLog.lua`),
+calls `LoggingCombat` by time and place only: **on** in the open world
+(`IsInInstance` false) and not in a raid group (`IsInRaid`), checked 15 s
+after each loading screen (the first after login waits as the first
+recording pass does, so `/wowlab skip combatlog` typed in that window stops
+the first call), on `ZONE_CHANGED_NEW_AREA` and `GROUP_ROSTER_UPDATE`;
+**off** in an instance, in a raid group, and after the idle time with no
+combat (`IDLE_MINUTES`, 10 by default, a saved setting from 1 to 120, from
+when the log went on or the last fight ended). After an idle switch-off only
+the next fight (`PLAYER_REGEN_DISABLED`) turns it back on, and that is the
+one thing it does in combat; a zone or group change in combat is checked
+when the fight ends. No PvP flag, no nearby players. It reads the log's
+state first and turns off only a log it turned on (`mine`, kept across
+`/reload`): a log found on that it did not turn on is the player's, left on
+and said once; one it turned on that the player turns off stays off for the
+session, said once. It checks each switch took; where `LoggingCombat` is
+missing, gives no state or does not switch, the section is dormant for the
+session, one line, written absent with the reason. One chat line per switch
+("combat log off (entered an instance)."), one line a session when
+`advancedCombatLogging` is off (read with `C_CVar.GetCVar`, never set).
+`/wowlab combatlog` gives its state; `on` and `off` are the section's
+`unskip` and `skip` (default on, saved per character); `idle <minutes>` sets
+the idle time. The record `WowLabCharDB.combatlog` (schema 5, no bump: a
+file without it reads as before) holds `idle_minutes`, `switches` (kept
+across sessions), `last_at`, `last_to`, `last_why`, `mine`, `log_on`,
+`hands_off` and `advanced`, never what the log holds; `char show` prints it.
+Core gains `ns.Say` and `ns.Wake` (a section's own timer, run out of combat
+only, through `gather`, so a skip stops it). The M20-13 rule that only the
+barber-shop section gathers on its event now names this section too, with
+its in-combat path pinned. The rule is graded on a Python model of the
+pinned Lua functions with a stub client (`tests/addon/test_m20_19_combatlog.py`).
+Not yet confirmed **[verify]**: that the owner's client gives addons
+`LoggingCombat` and lets it switch the log in and out of combat, that it
+answers true or false with no argument, that the log stays on across
+`/reload`, `IsInInstance` in the open world, the setting's name; the owner's
+first run is still to come.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

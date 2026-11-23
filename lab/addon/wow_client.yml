@@ -304,3 +304,14 @@ globals:
         type: string
       - required: false
         type: number
+
+  # --- The combat-log switch (CombatLog.lua, M20-19) ------------------------
+  # All [verify]: tested for before the first call, called only from the
+  # `combatlog` section's gather. IsInRaid and InCombatLockdown (above) are
+  # also asked there.
+  LoggingCombat:
+    property: read-only
+  IsInInstance:
+    args: []
+  C_CVar.GetCVar:
+    property: read-only

@@ -190,6 +190,11 @@ local function say(message)
     print("|cff33ff99WowLab|r: " .. message)
 end
 
+-- One chat line for a section's own news (the combat-log switch, M20-19).
+function ns.Say(message)
+    say(message)
+end
+
 -- Events ----------------------------------------------------------------------
 
 local frame = CreateFrame("Frame")
@@ -568,6 +573,30 @@ local function sectionByKey(key)
         end
     end
     return nil
+end
+
+-- What ns.Wake's timer runs: the immediate section `key`, gathered with
+-- `event`, out of combat only (a timer that ends in combat is dropped; the
+-- section catches up when combat ends). A section switched off meanwhile is
+-- not gathered (gather refuses).
+local function wake(key, event)
+    local section = sectionByKey(key)
+    if section and section.immediate and not inCombat then
+        gather(section, event)
+    end
+end
+
+-- Gathers an immediate section again in `seconds`, its gather handed `event`
+-- (CombatLog.lua's own timers, M20-19). False, and nothing scheduled, without
+-- C_Timer.
+function ns.Wake(key, seconds, event)
+    if not timerAfter or type(seconds) ~= "number" or type(event) ~= "string" then
+        return false
+    end
+    timerAfter(seconds, function()
+        wake(key, event)
+    end)
+    return true
 end
 
 -- Switches a section off for the rest of the session and adds it to the skip
@@ -988,10 +1017,40 @@ local function debugCommand(word)
     )
 end
 
+-- `/wowlab combatlog [on|off|idle <minutes>]` (M20-19): the combat-log
+-- switch is the `combatlog` section, so on and off are its unskip and skip.
+-- The typed words are only compared; the minutes are read as a number.
+local function combatLogCommand(word, minutes)
+    local section = sectionByKey("combatlog")
+    if not section then
+        return
+    end
+    if word == "on" then
+        if ns.skip.combatlog or section.off then
+            skipCommand("unskip", "combatlog")
+        else
+            say("the combat-log switch is already on.")
+        end
+    elseif word == "off" then
+        if section.off then
+            say("the combat-log switch is already off.")
+            return
+        end
+        skipCommand("skip", "combatlog")
+        say("WowLab leaves the combat log as it is now; /combatlog turns it off by hand.")
+    elseif word == "idle" then
+        ns.CombatLogIdle(minutes)
+    elseif word == "" then
+        ns.CombatLogStatus(section.off)
+    else
+        say("/wowlab combatlog on  or  /wowlab combatlog off  or  /wowlab combatlog idle <minutes>")
+    end
+end
+
 SLASH_WOWLAB1 = "/wowlab"
 SlashCmdList.WOWLAB = function(message)
     -- The typed text is compared, never stored.
-    local command, key = string.match(message or "", "^%s*(%S*)%s*(%S*)")
+    local command, key, extra = string.match(message or "", "^%s*(%S*)%s*(%S*)%s*(%S*)")
     command = string.lower(command or "")
     key = string.lower(key or "")
     if command == "skip" or command == "unskip" then
@@ -1016,6 +1075,12 @@ SlashCmdList.WOWLAB = function(message)
         else
             say("in combat: nothing is gathered in combat. Type it again after the fight.")
         end
+    elseif command == "combatlog" then
+        if not ns.probe then
+            say("not loaded yet.")
+            return
+        end
+        combatLogCommand(key, extra)
     elseif command == "crew" then
         -- The crew book (Crew.lua), handed the whole typed text: a name and a
         -- note are not lowercased.
@@ -1024,6 +1089,7 @@ SlashCmdList.WOWLAB = function(message)
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
         say("/wowlab debug on|off  records the research probes from the next /reload or login (off by default).")
+        say("/wowlab combatlog on|off  turns the combat log on in the open world and off in instances, raids and when idle.")
         say("/wowlab crew  the crew book of players you group with: off until you turn it on.")
     end
 end
