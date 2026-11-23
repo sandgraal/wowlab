@@ -193,7 +193,7 @@ def test_m21_11_the_changes_are_the_pinned_ones() -> None:
 
 # Constructed: each edit undoes one fix (or breaks its pin) and must fail.
 EDITS: dict[str, tuple[Path, str, str]] = {
-    "macros: the global before the table": (
+    "macros: the client's table never read": (
         ACTIONS,
         '    local consts = type(Constants) == "table" and Constants.MacroConsts or nil\n',
         "    local consts = nil\n",
