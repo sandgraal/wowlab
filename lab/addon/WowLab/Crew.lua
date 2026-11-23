@@ -255,7 +255,11 @@ local function pvpSnapshot()
             for i = 1, ns.Number(packed.n) or 0 do
                 snap.positions[i] = type(packed[i])
             end
-            if not read then
+            -- M21-11: only a row the wrapper found. At 71037 the 12.0.1
+            -- deprecation wrapper answers for a row C_PvP.GetScoreInfo does
+            -- not have, with a nil name and side 0, so the sixth value is a
+            -- side only when the first is not nil (type only, never compared).
+            if not read and type(packed[1]) ~= "nil" then
                 name = packed[1]
                 side = packed[6]
             end
@@ -391,14 +395,18 @@ local function featureMissing()
 end
 
 -- The owner's home realm, the realm part of a same-realm player's key
--- (M20-17), or nil; and true when a source gave a value the client calls
--- secret. GetNormalizedRealmName(), else the second return of
--- UnitFullName("player"): on the owner's run on 71037 (2026-11-20) the
--- identity gather got a realm only from the second. Either answer is kept
--- with every space and hyphen removed, the way the client is believed to
--- normalize a realm name ([verify], not yet confirmed), so a player's key is
--- the same whichever source answered. Read when a key needs it; kept for the
--- session once found, never while no source gave one.
+-- (M20-17), or nil; and true when the source gave a value the client calls
+-- secret. GetNormalizedRealmName() only, kept with every space and hyphen
+-- removed, the way the client is believed to normalize a realm name
+-- ([verify], not yet confirmed). M21-11: the second return of
+-- UnitFullName("player") is no longer taken when that gives none. On a
+-- client whose realm calls give no realm (Forever: the owner's runs on
+-- 71037, 2026-11-20) that slot holds the character's second name, not a
+-- realm (UnitName("target") gave "Tay", "Soulrend" on 2026-11-23), and it
+-- would have keyed another player with the owner's second name; [verify]
+-- with /dump UnitFullName("player") and /dump GetNormalizedRealmName().
+-- Read when a key needs it; kept for the session once found, never while
+-- the source gave none.
 local homeFound = nil
 local function homeRealm()
     if not crewOn() then
@@ -424,19 +432,6 @@ local function homeRealm()
             end
         end
     end
-    if type(UnitFullName) == "function" then
-        local _, fullRealm = UnitFullName("player")
-        if secret(fullRealm) then
-            hidden = true
-        end
-        if not secret(fullRealm) and type(fullRealm) == "string" then
-            local bare = string.gsub(fullRealm, "[%s%-]", "")
-            if bare ~= "" then
-                homeFound = bare
-                return homeFound, false
-            end
-        end
-    end
     return nil, hidden
 end
 
@@ -451,8 +446,8 @@ local function fieldsMissing()
     local missing = ""
     if homeRealm() == nil then
         missing = missing
-            .. " Players from your own realm are skipped: no home realm could be found"
-            .. " (neither GetNormalizedRealmName nor your full name gave one)."
+            .. " Players the game names without a realm are skipped: no home realm could be found"
+            .. " (GetNormalizedRealmName gave none)."
     end
     if type(UnitClass) ~= "function" then
         missing = missing .. " No class: the client has no UnitClass function."

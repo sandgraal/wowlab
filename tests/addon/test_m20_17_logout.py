@@ -245,18 +245,8 @@ EDITS: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list[str]],
         _crew,
         "is not behind the on and combat tests",
     ),
-    "crew secret: the full name's realm compared before the test": (
-        CREW,
-        [
-            (
-                '        local _, fullRealm = UnitFullName("player")\n',
-                '        local _, fullRealm = UnitFullName("player")\n'
-                '        if fullRealm == "" then\n            return\n        end\n',
-            )
-        ],
-        _crew,
-        "fullRealm (from UnitFullName) is used before the secret test",
-    ),
+    # M21-11: the full name's second value left the crew book's home realm;
+    # its two secret-test edits went with it.
     "crew secret: the normalized realm stored before the test": (
         CREW,
         [
@@ -268,18 +258,6 @@ EDITS: dict[str, tuple[Path, list[tuple[str, str]], Callable[[Path], list[str]],
         ],
         _crew,
         "normalized (from GetNormalizedRealmName) is used before the secret test",
-    ),
-    "crew secret: the full name's realm concatenated before the test": (
-        CREW,
-        [
-            (
-                '        local _, fullRealm = UnitFullName("player")\n',
-                '        local _, fullRealm = UnitFullName("player")\n'
-                '        local joined = "x-" .. fullRealm\n',
-            )
-        ],
-        _crew,
-        "fullRealm (from UnitFullName) is used before the secret test",
     ),
     # The own-value calls stay confined: UnitFullName outside Identity.lua
     # and Crew.lua.
@@ -317,21 +295,21 @@ def test_m20_17_each_rule_fails_its_own_edit() -> None:
 def test_m20_17_the_crew_home_realm_is_one_rule_for_every_key() -> None:
     """Every same-realm key (the roster pass, the tooltip, the target, the
     match) takes the realm from homeRealm, which strips spaces and hyphens
-    from whichever source answered, so the key is the same either way;
-    nothing else in Crew.lua asks a realm call."""
+    from GetNormalizedRealmName's answer; nothing else in Crew.lua asks a
+    realm call. M21-11: the second return of UnitFullName("player") is no
+    longer a source (on Forever it is the owner's second name)."""
     text = g._render(g._tokens(CREW))
     assert text.count("GetNormalizedRealmName ( )") == 1
-    assert text.count('UnitFullName ( "player" )') == 1
+    assert "UnitFullName" not in text
     assert text.count('string . gsub ( normalized , "[%s%-]" , "" )') == 1
-    assert text.count('string . gsub ( fullRealm , "[%s%-]" , "" )') == 1
     assert text.count("homeRealm ( )") == 6  # the definition and five uses
     assert text.count("local home = homeRealm ( )") == 3
     assert "local home , hidden = homeRealm ( )" in text
     # Kept only once found: the cache is set only to a non-empty bare text.
-    assert text.count("homeFound = bare") == 2
-    assert text.count("homeFound =") == 3  # and its declaration, `= nil`
+    assert text.count("homeFound = bare") == 1
+    assert text.count("homeFound =") == 2  # and its declaration, `= nil`
     assert "local homeFound = nil" in text
-    assert text.count('if bare ~= "" then homeFound = bare return homeFound , false end') == 2
+    assert text.count('if bare ~= "" then homeFound = bare return homeFound , false end') == 1
     # `/wowlab crew` says when no home realm could be found.
     assert "if homeRealm ( ) == nil then missing = missing .." in text
 

@@ -31,15 +31,17 @@
 -- - guid: UnitGUID("player");
 -- - name: the first return of UnitName("player");
 -- - realm: GetRealmName(), the realm's display name; since M20-16, when it
---   gives nothing usable, GetNormalizedRealmName() and then the second
---   return of UnitFullName("player"), with `realm_from` naming the source
---   and `realm_normalized` set for the last two. A record with no realm
+--   gives nothing usable, GetNormalizedRealmName(), with `realm_from`
+--   naming the source and `realm_normalized` set for the second. Since
+--   M21-11 the second return of UnitFullName("player"), asked when neither
+--   gives a realm, is kept as `second_name` (Forever's second name,
+--   [verify]), never as the realm. A record with no realm
 --   keeps the section dirty (`again_without`), so a later pass, at logout at
 --   the latest, asks again; at logout its record replaces this one only when
 --   it has a realm (Core.lua, M20-17). Since M20-17 `realm_tried` holds what
 --   each source asked before the answering one gave (nil, an empty string,
 --   another type, or a secret value), and `realm_absent` the same for all
---   three;
+--   of them;
 -- - guild: the first return of GetGuildInfo("player"); nil means no guild,
 --   or a guild the client has not loaded yet [verify]. PLAYER_GUILD_UPDATE
 --   gathers the section again.
@@ -145,12 +147,11 @@ ns.Section({
             record.name = ns.String(keptName)
             record.name_absent = ns.String(whyName)
         end
-        -- The realm (M20-16): the first of three sources that gives a
+        -- The realm (M20-16): the first of two sources that gives a
         -- non-empty text the client does not call secret, and which one it
         -- was in `realm_from`: "realm_name" (GetRealmName, the display
-        -- name), "normalized_realm_name" (GetNormalizedRealmName) or
-        -- "full_name" (the second return of UnitFullName("player")). The last
-        -- two give the normalized form, with no spaces ([verify]), and
+        -- name) or "normalized_realm_name" (GetNormalizedRealmName), which
+        -- gives the normalized form, with no spaces ([verify]), and
         -- `realm_normalized` says so. None: `realm_absent` holds each
         -- source's reason. On the owner's run on 71037 (2026-11-20),
         -- GetRealmName gave nothing usable at the first pass.
@@ -183,18 +184,29 @@ ns.Section({
                 end
             end
         end
+        -- M21-11: with no realm from either realm call, the second return
+        -- of UnitFullName("player") is the character's second name, not a
+        -- realm: on Forever the slot other clients use for the realm holds
+        -- the second name (UnitName("target") gave "Tay", "Soulrend" on the
+        -- launch client, 2026-11-23), and both realm calls gave nothing on
+        -- the owner's runs on 71037 (2026-11-20). It is kept as
+        -- `second_name`, `second_name_from = "full_name"`, never as the
+        -- realm; [verify] with /dump UnitFullName("player") and
+        -- /dump GetNormalizedRealmName(). Until M21-11 it was taken as the
+        -- realm (`realm_from = "full_name"`). With a realm, the slot is not
+        -- read.
         if not record.realm then
             if type(UnitFullName) ~= "function" then
                 realmWhy = realmWhy .. "; the client has no UnitFullName function"
             else
-                local fullRealm = select(2, UnitFullName("player"))
-                local keptFull, whyFull = ownText(fullRealm, "the second return of UnitFullName")
-                if keptFull then
-                    record.realm = ns.String(keptFull)
-                    record.realm_from = "full_name"
-                    record.realm_normalized = true
+                local second = select(2, UnitFullName("player"))
+                local keptSecond, whySecond = ownText(second, "the second return of UnitFullName")
+                if keptSecond then
+                    record.second_name = ns.String(keptSecond)
+                    record.second_name_from = "full_name"
+                    realmWhy = realmWhy .. "; the second return of UnitFullName is the second name"
                 else
-                    realmWhy = realmWhy .. "; " .. ns.String(whyFull)
+                    realmWhy = realmWhy .. "; " .. ns.String(whySecond)
                 end
             end
         end

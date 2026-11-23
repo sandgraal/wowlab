@@ -85,15 +85,18 @@ WowLabCharDB = {
   bindings = { binding_set, account_bindings, character_bindings, commands, commands_left_out, keys_left_out, list = { { command, keys = { "<key>", ... } } }, probes },
   -- schema 5 (M20-13): bindings without commands_left_out and keys_left_out, every command and key as given,
   -- and (M20-16) commands_not_plain, the listed commands, keyed or not, that are not a plain upper-case name;
+  -- and (M21-11) binding_sets = { <name> = <number>, ... }, the client's Enum.BindingSet, in place of account_bindings and character_bindings;
   -- probes only in a debug session, `dropped` (a whole number) in their place on spellbook, actionbars, bindings and macros;
-  macros = { account, character, first_character_index, account_slots_from = "MAX_ACCOUNT_MACROS"|"fallback", list = { { index, scope = "account"|"character", name, icon | icon_text, body } }, probes | dropped },
+  macros = { account, character, first_character_index, account_slots_from = "MacroConsts"|"MAX_ACCOUNT_MACROS"|"fallback", list = { { index, scope = "account"|"character", name, icon | icon_text, body } }, probes | dropped },
   -- schema 4 (M15-01); each value is exactly one of <field> and <field>_absent:
   identity = { race_id | race_id_absent, sex_raw | sex_raw_absent, class_id | class_id_absent, class_file | class_file_absent,
                guid | guid_absent, name | name_absent, realm | realm_absent, guild | guild_absent,  -- the last four: schema 5
                realm_from, realm_normalized,  -- M20-16: the realm's source, and true when only its form without spaces was given
-               realm_tried },  -- M20-17: what the sources asked before realm_from gave
+               realm_tried,  -- M20-17: what the sources asked before realm_from gave
+               second_name, second_name_from = "full_name" },  -- M21-11: the second return of UnitFullName("player") when no realm call gave a realm
   -- schema 5 (M20-19), the combat-log switch; what it did, never what the log holds:
   combatlog = { idle_minutes, switches, last_at, last_to = "on"|"off", last_why, mine, paused?, log_on, hands_off, advanced,
+                state_from = "IsLoggingCombat"|"LoggingCombat", advanced_from = "IsLoggingCombat"|"setting",  -- M21-11
                 dormant?, refused_in_combat? } | { absent },  -- absent only when switched off with /wowlab skip
 }
 probes = { { api, present, calls, errors, answered, secret } }  -- one per API the section asks, in a fixed order, then issecretvalue, C_Secrets, canaccessvalue
@@ -135,7 +138,7 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
 
 - `macros`, a new section in `Actions.lua`: `GetNumMacros` gives the account
   and character counts; the account macros are indices 1 to the account
-  count, this character's start at `MAX_ACCOUNT_MACROS + 1`
+  count, this character's start after the account's macro slots
   (`first_character_index`), each run walked to at most 256. Each entry is
   the index, the scope, and `GetMacroInfo`'s name, icon (`icon` when a
   number, `icon_text` when text) and body as the client returns them. Read
@@ -149,7 +152,11 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   which is 120 (the API list at 70938). The addon then takes its own 120
   account slots, which is Blizzard's own value, and writes
   `account_slots_from = "fallback"`; `"MAX_ACCOUNT_MACROS"` when the global
-  was a number. The macro window is never loaded for it. *History,
+  was a number. The macro window is never loaded for it. *2026-11-23,
+  M21-11:* the addon reads `Constants.MacroConsts.MAX_ACCOUNT_MACROS` first
+  (`account_slots_from = "MacroConsts"`), then the global, then its own 120,
+  each taken only as a whole number of at least 1. That the table answers
+  on the client is **[verify]** until a capture shows `"MacroConsts"`. *History,
   corrected 2026-11-23:* until then this paragraph said the global was
   defined by the macro window's load-on-demand Lua, and called 120 the
   community value; neither held at 71037 ("The [verify] notes against the
@@ -180,6 +187,17 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   `realm_absent` joins the three reasons, and the section stays due for
   another gather (Core.lua's `again_without`), so the next pass, at logout
   at the latest, asks again and its record replaces the one without a realm.
+  *2026-11-23, M21-11:* the second return of `UnitFullName("player")` is no
+  longer a realm. On Forever the slot other clients use for the realm holds
+  the character's second name (the owner's `UnitName("target")` gave
+  `"Tay", "Soulrend"`, and `GetPlayerInfoByGUID` the name `"Tay Soulrend"`
+  with an empty realm), and both realm calls gave nothing on the owner's
+  runs on 71037. So it is asked only when neither realm call gives a realm,
+  and kept as `second_name` with `second_name_from = "full_name"`;
+  `realm_absent` then ends with "the second return of UnitFullName is the
+  second name". `realm_from = "full_name"` is no longer written (a file an
+  earlier addon wrote keeps it). **[verify]** with the owner's `/dump
+  UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1).
 - `gear` keeps each link as the client gives it, a crafter's GUID included,
   and no longer writes `crafter_removed`.
 - `gathered` lists `time()` at each section's last gather this session, and
@@ -557,7 +575,10 @@ Notes on the fields:
   the file cannot say which), so neither key is written, and `binding_set`
   2 (with "Character Specific Key Bindings" ticked) cannot be named from
   the file. `Enum.BindingSet` is a **[verify]** candidate for a later
-  schema. On 70425 the eight lines of both (identical) `bindings-cache.wtf`
+  schema. *2026-11-23, M21-11:* neither constant is asked any more (no file
+  of the 71037 UI source defines them); schema 5 records `binding_sets`,
+  the client's `Enum.BindingSet`, member name to number, which names
+  `binding_set`. On 70425 the eight lines of both (identical) `bindings-cache.wtf`
   files matched the live keys. The other 118 bound commands are
   unexplained. A spell dragged onto a key and the owner's `/say` macro were
   in neither cache, so the caches may predate the session **[verify]**. One
@@ -736,7 +757,10 @@ that `LoggingCombat()` with no argument returns `true` or `false`; that the
 log stays on across `/reload` and across a logout to another character;
 whether each switch-on starts a new log file; whether entering an instance
 fires `ZONE_CHANGED_NEW_AREA` before the 15 s check; the setting's name
-`advancedCombatLogging`. The owner's first run should check: the chat lines
+`advancedCombatLogging`; since M21-11, that `C_ChatInfo.IsLoggingCombat`
+answers addons with the log's state and the advanced flag (read first;
+`state_from` and `advanced_from` in the record say which call answered,
+`LoggingCombat()` and the setting being the fallbacks). The owner's first run should check: the chat lines
 at login, an instance and an idle; a switch in combat; and how many files
 `Logs/` holds after a session.
 
@@ -1101,7 +1125,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_SpecializationInfo.GetSpecializationInfo` | spec: id (first return only) | [verify] | yes |
 | `C_ClassTalents.GetLastSelectedSavedConfigID` | talents.class: last selected saved loadout (needs a spec id) | [verify] | yes |
 | `C_Traits.GenerateImportString` | talents.class: loadout export string | [verify] | yes |
-| `Constants` | talents.legacy: numeric `*SYSTEM_ID*` fields | [verify] | yes |
+| `Constants` | talents.legacy: numeric `*SYSTEM_ID*` fields; macros (M21-11): `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, the account's macro slots, a whole number of at least 1, read first (`account_slots_from = "MacroConsts"`) | [verify]; `MacroConsts` is 120 in the list at 70938 and Blizzard_MacroUI reads it at 71037, not yet read by the addon on the client | yes |
 | `CreateFrame` | event frame | [verify] | yes |
 | `C_EventUtils.IsEventValid` | skip events the client does not know | [verify] | yes |
 | `GetBuildInfo` | client version, build, interface | [verify] | yes |
@@ -1145,8 +1169,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | present on 70425 (M13-05 capture); what it does: [verify] | yes (its functions; the table itself is not a line of the list) |
 | `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | present on 70425 (M13-05 capture); what it does: [verify] | yes (not in forever-addon-kit's 69893 list) |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | ran on 70425 (M13-05 capture: `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4); a future-spell item not yet seen: [verify] | yes |
-| `ACCOUNT_BINDINGS` | bindings: the client's value for the account-wide set, recorded beside `binding_set` | [verify]: not a number at the last gather on 70425 (nil or another type; M13-05 capture), so not recorded; `Enum.BindingSet` is a candidate | no: defined nowhere in the 71037 UI source, and not a GlobalString at 70938; the client's set numbers are `Enum.BindingSet` (Default 0, Account 1, Character 2, Current 3) |
-| `CHARACTER_BINDINGS` | bindings: the client's value for the character's set, recorded beside `binding_set` | [verify]: not a number at the last gather on 70425 (nil or another type; M13-05 capture), so not recorded; `Enum.BindingSet` is a candidate | no: as `ACCOUNT_BINDINGS` |
+| `Enum.BindingSet` | bindings (M21-11): `binding_sets`, member name to number, read from the client, so a reader can name `binding_set`; replaces `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS`, asked until M21-11, which no file of the 71037 UI source defines and which were never numbers (70425 capture) | [verify]: Default 0, Account 1, Character 2, Current 3 in the list at 70938; not yet read by the addon on the client | yes |
 | `C_SpellBook.GetNumSpellBookSkillLines` | spellbook: how many skill lines | ran on 70425 (M13-05 capture: 4); other builds: [verify] | yes |
 | `C_SpellBook.GetSpellBookSkillLineInfo` | spellbook: each line's item offset and count, guild, hidden and spec flags (the line's `name` is never read) | ran on 70425 (M13-05 capture: 4 of 4 answered); other builds: [verify] | yes |
 | `C_SpellBook.GetSpellBookItemInfo` | spellbook: item type, action and spell id, passive and off-spec flags (its `name` field is never read) | ran on 70425 (M13-05 capture: 28 of 28 answered); other builds: [verify] | yes |
@@ -1155,7 +1178,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetActionInfo` | actionbars: type, id and subtype per slot, 1 to 180 | ran on 70425 (M13-05 capture: 180 calls, 0 errors, 26 answered); a `#showtooltip` macro slot had no subtype; other builds: [verify] | yes |
 | `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype; macros (schema 5): each macro's name, icon and body | ran on 70425 (M13-05 capture: 2 of 2 answered); index numbering and the body's return: [verify] | yes |
 | `GetNumMacros` | macros (schema 5): the account and character counts | [verify] | yes |
-| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it; nil on 71037 (the owner's run, 2026-11-20; "until the macro window is opened" was a guess, and on 2026-11-23 no file of the 71037 UI source assigns it), and then the addon's own 120 is used, Blizzard's own value in `Constants.MacroConsts` (`account_slots_from = "fallback"`, M20-16) | [verify]: that character macros are numbered from 121 | no: defined nowhere in the 71037 UI source; the client's value is `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, 120 at 70938 |
+| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it, when `Constants.MacroConsts.MAX_ACCOUNT_MACROS` gives no count (M21-11; `account_slots_from = "MAX_ACCOUNT_MACROS"`); nil on 71037 (the owner's run, 2026-11-20; "until the macro window is opened" was a guess, and on 2026-11-23 no file of the 71037 UI source assigns it), and then the addon's own 120 is used, Blizzard's own value in `Constants.MacroConsts` (`account_slots_from = "fallback"`, M20-16) | [verify]: that character macros are numbered from 121 | no: defined nowhere in the 71037 UI source; the client's value is `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, 120 at 70938 |
 | `GetCurrentBindingSet` | bindings: which binding set is active, raw | ran on 70425 (M13-05 capture: 2, with "Character Specific Key Bindings" ticked); other builds: [verify] | yes |
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
@@ -1166,8 +1189,8 @@ on from one, fails the test until someone lists it on purpose.
 | `UnitIsPlayer` | crew book: `/wowlab crew good`, `bad`, `clear` and `note` use the target only when it is a player; the tooltip line is shown only for a player (`mouseover`) | [verify] | yes |
 | `UnitName` | crew book: a member's or the target's name and realm (nil or empty realm: the owner's own); identity (schema 5): the character's `name` | [verify] | yes |
 | `GetRealmName` | identity (schema 5): the character's `realm`, as its display name; gave nothing usable at the first pass on the owner's run on 71037 (2026-11-20), so two fallbacks follow it (M20-16) | [verify] | yes |
-| `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty; identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
-| `UnitFullName` | identity (M20-16): the character's `realm` from its second return, for the player only, when neither realm call gives one (`realm_from = "full_name"`); crew book (M20-17): the owner's realm when `GetNormalizedRealmName` gives none, spaces and hyphens removed from either answer | [verify] | yes |
+| `GetNormalizedRealmName` | crew book: the owner's realm, for a member whose realm comes back nil or empty (since M21-11 the only source: with none, such a member is skipped); identity (M20-16): the character's `realm` when `GetRealmName` gives none (`realm_from = "normalized_realm_name"`) | [verify] | yes |
+| `UnitFullName` | identity (M21-11): its second return, for the player only, when neither realm call gives a realm, kept as `second_name` (`second_name_from = "full_name"`), never as the realm; from M20-16 to M21-11 it was the `realm` (`realm_from = "full_name"`), and from M20-17 to M21-11 the crew book's home realm when `GetNormalizedRealmName` gave none. On Forever the realm slot of a unit name holds the second name (the owner's `UnitName("target")`, 2026-11-23) | [verify]: `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) | yes |
 | `UnitGroupRolesAssigned` | crew book: `role`, never replaced by `NONE` | [verify] | yes |
 | `GetGuildInfo` | crew book: `guild` (first return only), never cleared by a nil; identity (schema 5): the character's `guild` | [verify] | yes |
 | `GetInstanceInfo` | crew book: `where` (the name, with `\|` removed) and `where_id` (eighth return), left out when the type is `none` (the open world) | [verify] | yes |
@@ -1183,14 +1206,15 @@ on from one, fails the test until someone lists it on purpose.
 | `C_PvP.GetScoreInfo` | crew book: each scoreboard row once the match has a winner, every field whose value is a number, text or true/false copied as it is (the row's `name`, `guid`, `faction` as the side, `raceName`, `classToken`, `talentSpec`, `honorLevel` and the totals among them); the probe: whether it exists, the first row's field names and type names | [verify] | yes |
 | `C_PvP.IsSoloShuffle` | crew book: a solo shuffle is kept as `kind = "shuffle"`, with no sides, result or counts | [verify] | yes |
 | `GetNumBattlefieldScores` | crew book: how many rows to read (at most 80); the probe: the row count | [verify] | yes |
-| `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | no: at 71037 only `Blizzard_Deprecated`'s 12.0.1 file defines it, a wrapper over `C_PvP.GetScoreInfo`, loaded for `mainline` (Forever included) when the `loadDeprecationFallbacks` setting is on, which defaults to `"1"` at 70938; so probably present [verify] |
+| `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row and the first value is not nil (M21-11: the wrapper answers a missing row with a nil name and side 0) | [verify] | no: at 71037 only `Blizzard_Deprecated`'s 12.0.1 file defines it, a wrapper over `C_PvP.GetScoreInfo`, loaded for `mainline` (Forever included) when the `loadDeprecationFallbacks` setting is on, which defaults to `"1"` at 70938; so probably present [verify] |
 | `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept; asked once more when a winner is reported and the scoreboard has no rows | [verify] | yes |
 | `GetBattlefieldWinner` | crew book: a match is read once it gives a winner; `won` when it is 0 or 1; the probe: the winner as a whole number | [verify] | yes |
 | `GetBattlefieldArenaFaction` | crew book: the player's own side when the own row is not found; the probe: the same as a whole number | [verify] | yes |
 | `IsActiveBattlefieldArena` | crew book's scoreboard probe: whether it exists (not called) | [verify] | yes |
-| `LoggingCombat` | combatlog: with no argument, whether the combat log is on (true or false); with `true` or `false`, turns it on or off, then asked again to check it changed | [verify] | yes |
+| `LoggingCombat` | combatlog: with `true` or `false`, turns the combat log on or off; with no argument, whether it is on (true or false), when `C_ChatInfo.IsLoggingCombat` does not say (M21-11; `state_from = "LoggingCombat"`) | [verify] | yes |
 | `IsInInstance` | combatlog: its first return, `true` in an instance (the log goes off), `false` in the open world | [verify] | yes |
-| `C_CVar.GetCVar` | combatlog: `advancedCombatLogging` only, `"1"` or `"0"`, read after a switch on; never set | [verify] | yes |
+| `C_CVar.GetCVar` | combatlog: `advancedCombatLogging` only, `"1"` or `"0"`, read after a switch on when `C_ChatInfo.IsLoggingCombat` gives no advanced flag (M21-11; `advanced_from = "setting"`); never set | [verify] | yes |
+| `C_ChatInfo.IsLoggingCombat` | combatlog (M21-11): its first return, whether the combat log is on, read before `LoggingCombat()` (`state_from = "IsLoggingCombat"`); its second, Advanced Combat Logging, read after a switch on before the setting (`advanced_from = "IsLoggingCombat"`); the documented way to read both (71037 API documentation) | [verify] | yes |
 
 Addon-defined globals: `WowLabCharDB`, `WowLabDB`, `WowLabCrewDB` (the crew book), `SLASH_WOWLAB1`.
 
@@ -1254,7 +1278,8 @@ which the call ran.
   which forever-addon-kit's walker registered, is not in it either, as the
   kit's README and the field guide say. In the list means the client knows
   the name; that it fires on Forever is still shown only by
-  `events_received`.
+  `events_received`. *2026-11-23, M21-11:* `BARBER_SHOP_SUCCESS` is no
+  longer registered; the control stays, as the test of a refused name.
 - 2026-11-23: `issecretvalue` and `canaccessvalue` are the client's own
   globals (GlobalAPI at 70938; Blizzard's own UI code calls both at 71037),
   and `C_Secrets` is the client's table with 27 functions: the client
@@ -1266,6 +1291,9 @@ which the call ran.
   `binding_set` 2 with "Character Specific Key Bindings" ticked matches
   `Character`. The addon still asks for both (never numbers, so nothing is
   recorded; `Actions.lua`, line 420) and does not read the enum.
+  *2026-11-23, M21-11:* it asks for neither now and records the enum as
+  `binding_sets`; that it reads the same four members on the client is
+  [verify] until a capture holds them.
 - 2026-11-23, a correction to "macros" above: no file of the 71037 UI
   source defines the global `MAX_ACCOUNT_MACROS`. Blizzard_MacroUI reads
   `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, which is 120 at 70938 (with
@@ -1273,7 +1301,10 @@ which the call ran.
   because the window had not loaded. 120 is Blizzard's own value, the same
   as the addon's fallback; what stays [verify] is that the character
   macros are numbered from 121. The addon still asks for the global and
-  falls back.
+  falls back. *2026-11-23, M21-11:* it reads
+  `Constants.MacroConsts.MAX_ACCOUNT_MACROS` first
+  (`account_slots_from = "MacroConsts"`), then the global, then its 120;
+  that the table answers on the client is [verify].
 - 2026-11-23: `INVSLOT_FIRST_EQUIPPED` is 1 (head) and
   `INVSLOT_LAST_EQUIPPED` 19 (tabard), with `INVSLOT_RANGED` 18, in
   `Blizzard_FrameXMLBase`'s `Constants.lua` at 71037. Whether slot 18 ever
@@ -1294,6 +1325,8 @@ which the call ran.
   its sixth value when `C_PvP.GetScoreInfo` gave no row, can record a side
   that no row gave: `first_side = 0`. Ticket M21-11 fixes that; until then
   a `first_side` of 0 with no name string is not evidence of a side.
+  *2026-11-23, M21-11:* fixed: the sixth value is taken as the side only
+  when the first is not nil (tested with `type`).
 - 2026-11-23, combat log: `COMBAT_LOG_EVENT` and
   `COMBAT_LOG_EVENT_UNFILTERED` are flagged `HasRestrictions` in the 71037
   API documentation. The field guide says registering them from an addon
@@ -1304,10 +1337,26 @@ which the call ran.
   code may call it on Forever is not documented and stays [verify] (the
   owner's in-game check). The documented way to read the state is
   `C_ChatInfo.IsLoggingCombat`, which returns `enabled` and `advanced`
-  (71037 API documentation); ticket M21-11 adopts it.
+  (71037 API documentation); ticket M21-11 adopts it. *2026-11-23,
+  M21-11:* adopted: read first for the state and the advanced flag, with
+  `LoggingCombat()` and the setting as fallbacks, and `state_from` and
+  `advanced_from` in the record; which one answers on Forever is [verify].
+  It is the one name of `C_ChatInfo` the addon reads; `tests/addon` refuses
+  every other use of the table.
   `C_CombatLog.IsCombatLogRestricted` exists; the addon does not ask it.
   `advancedCombatLogging` is the setting name Blizzard's own options use at
   71037.
+- 2026-11-23 (M21-11, from the domain review of M21-02 and the owner's
+  in-game check): on Forever the second value of a unit's full name, the
+  slot other clients use for the realm, holds the character's second name
+  (`UnitName("target")` gave `"Tay", "Soulrend"`; `GetPlayerInfoByGUID`
+  the name `"Tay Soulrend"` and realm `""`). So `UnitFullName("player")`'s
+  second return, which `identity` took as the realm (`realm_from =
+  "full_name"`) and the crew book as the home realm, is very likely the
+  owner's second name. Since M21-11 `identity` keeps it as `second_name`
+  (asked only when neither realm call gives a realm) and the crew book's
+  home realm is `GetNormalizedRealmName()` only. [verify] with `/dump
+  UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1).
 - 2026-11-23, the beta's SavedVariables cold-start bug (field guide, fact 8
   and §5, on 69893 and 69913: files under `WTF/Account` never loaded on a
   cold start; per-character ones were restored across a `/reload` within

@@ -34,7 +34,9 @@
 -- for addons there and a call from an addon switches the log, in and out of
 -- combat; that LoggingCombat() with no argument answers true or false; that
 -- the log stays on across /reload and across characters; IsInInstance in the
--- open world; the advancedCombatLogging setting's name. Where LoggingCombat
+-- open world; the advancedCombatLogging setting's name; that
+-- C_ChatInfo.IsLoggingCombat, read first since M21-11, answers addons with
+-- the log's state and the advanced flag. Where LoggingCombat
 -- is missing, or the log does not change when asked out of combat, the switch
 -- is dormant for the session and says so once; a refusal in combat is
 -- counted and tried again when the fight ends.
@@ -110,7 +112,9 @@ local idleTimerAt = nil -- time() the last idle timer asked for ends
 local arrivedAt = nil -- time() of the last loading screen
 local fighting = false
 local logOn = nil -- the log's state at the last check
-local advanced = nil -- the advancedCombatLogging setting at the last switch on
+local advanced = nil -- Advanced Combat Logging at the last switch on
+local stateFrom = nil -- the call that last said the log's state (M21-11)
+local advancedFrom = nil -- where `advanced` came from (M21-11)
 local told = {}
 
 local function sayOnce(name, text)
@@ -172,10 +176,24 @@ local function readBack()
 end
 
 -- The log's state as the client says it: true, false, or nil when it says
--- neither.
+-- neither. M21-11: the documented C_ChatInfo.IsLoggingCombat first (its
+-- first return; 71037 API documentation), else LoggingCombat() with no
+-- argument, which has no entry there; `stateFrom` names the one that
+-- answered. Both [verify].
 local function logState()
+    -- The one name of C_ChatInfo the addon reads (M21-11): tests/addon allows
+    -- this lookup and no other use of the table, whose sends stay refused.
+    local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")
+    if isLogging then
+        local okIs, onIs = pcall(isLogging)
+        if okIs and type(onIs) == "boolean" then
+            stateFrom = "IsLoggingCombat"
+            return onIs
+        end
+    end
     local ok, on = pcall(LoggingCombat)
     if ok and type(on) == "boolean" then
+        stateFrom = "LoggingCombat"
         return on
     end
     return nil
@@ -203,16 +221,32 @@ local function place()
     return "world"
 end
 
--- The advancedCombatLogging setting: true, false, or nil when not known.
+-- Advanced Combat Logging: true, false, or nil when not known. M21-11: the
+-- second return of C_ChatInfo.IsLoggingCombat (`advanced`) first, else the
+-- advancedCombatLogging setting; `advancedFrom` names the one that answered.
+-- Both [verify].
 local function advancedOn()
+    advancedFrom = nil
+    -- The one name of C_ChatInfo the addon reads (M21-11): tests/addon allows
+    -- this lookup and no other use of the table, whose sends stay refused.
+    local isLogging = ns.Fn(C_ChatInfo, "IsLoggingCombat")
+    if isLogging then
+        local okIs, _, flag = pcall(isLogging)
+        if okIs and type(flag) == "boolean" then
+            advancedFrom = "IsLoggingCombat"
+            return flag
+        end
+    end
     local get = ns.Fn(C_CVar, "GetCVar")
     if not get then
         return nil
     end
     local value = ns.Call(get, "advancedCombatLogging")
     if value == "1" then
+        advancedFrom = "setting"
         return true
     elseif value == "0" then
+        advancedFrom = "setting"
         return false
     end
     return nil
@@ -457,6 +491,8 @@ local function record()
         log_on = ns.Bool(logOn),
         hands_off = ns.Bool(handsOff),
         advanced = ns.Bool(advanced),
+        state_from = ns.String(stateFrom),
+        advanced_from = ns.String(advancedFrom),
         dormant = ns.String(dormant),
         refused_in_combat = refusedInCombat > 0 and ns.Number(refusedInCombat) or nil,
     }

@@ -231,7 +231,13 @@ the account folder, character macros in the character folder.
   holds for this build. Deleting macros in game removes their records at the
   next logout, and the indices close up.
 - `MAX_ACCOUNT_MACROS` and `MAX_CHARACTER_MACROS` are nil on this client;
-  120 per set is the community value, not observed.
+  120 per set is the community value, not observed. *Amended 2026-11-23
+  (M21-09, M21-11):* no file of the 71037 UI source assigns either global;
+  the client's own counts are `Constants.MacroConsts.MAX_ACCOUNT_MACROS`
+  (120) and `MAX_CHARACTER_MACROS` (30) in the API list at 70938, which
+  Blizzard_MacroUI reads. The indices above (147 and 149 for character
+  macros 27 and 29) fit 120 account slots. The lab-addon reads the table
+  first since M21-11.
 - A new account macro was written as
   `VER 3 0000000000000001 "wowlab acc" "134400"`, CRLF, like the character
   file. Whether the client writes a macro with an empty body was not tested.

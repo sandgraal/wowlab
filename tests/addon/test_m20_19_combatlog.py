@@ -75,11 +75,11 @@ HASHED = {
     "turn": "78ff540ad54d94993dfa0e58a735119c730265ffa6c4425a460a3c97c48f73a1",
     "turnOn": "534838797f8a6f26f9cff024a27a49c4ba0046d82da94f756c398aac416da991",
     "noted": "0e36c3a46268186517e100c77a6054ab15d24825a3db671dea83b79aaf47b5d1",
-    "logState": "d45a448e7839389494dcf8ddf64cf1ea6581e998f3d2454f2b3540ff41ab4e22",
+    "logState": "ff6b9ba4bd28ccff82c0b2081b687f946f062829a561d393106803c89dae6058",
     "place": "3f4da679586b0e01b9c389ddc1fc7b041e8f01a540722eaeb0447f555070e6a9",
     "inCombatNow": "7c30f6318c8fef757bc9fed6bd633d0d1bda542e749857a59bcfdfc629f82765",
     "readBack": "0322b4e0ed7cbf91eef704dc622ac75351805c5f8ca691225953ef2a818bbae7",
-    "record": "4fa6a641ba70bd34813b3dde5ac62b3453ebea6468441b29b924f460414cc143",
+    "record": "f4b2afcae168a952925c88520da707116bbd85c998fd6783e6776372d2d6e56c",
     "gather": "b341cd959d0128f0372c7d95edc4fc60175d3fe1e9e187c2855a33197bc6c373",
     "armIdle": "ef39d1fbe133b8ad1c63cc31107b705340ce70f4e03f2518420d909d34913fc5",
     "sayOnce": "5b67ebe8cec0ab4c95bc1b282db6c833fe7a44351c69088eb1fe86dfc3b02f56",
@@ -213,7 +213,10 @@ TRIGGER = {
 class Client:
     """The game, as the switch sees it. `log` is the combat log's state;
     `answers` False makes LoggingCombat() say neither true nor false;
-    `obeys` False leaves the log as it is when asked to switch it."""
+    `obeys` False leaves the log as it is when asked to switch it. M21-11:
+    `has_is_logging` gives the client C_ChatInfo.IsLoggingCombat, which says
+    the log's state (`is_logging_answers` False: neither true nor false) and
+    `acl_flag`, its advanced flag (None: neither)."""
 
     log: bool = False
     has_logging: bool = True
@@ -223,6 +226,9 @@ class Client:
     raid: bool = False
     lockdown: bool = False
     acl: str | None = "1"
+    has_is_logging: bool = False
+    is_logging_answers: bool = True
+    acl_flag: bool | None = None
     has_timer: bool = True
     now: int = 1_000_000
     core_in_combat: bool = False  # Core.lua's inCombat, from the REGEN events
@@ -242,6 +248,10 @@ class Client:
             if self.obeys:
                 self.log = on
         return self.log if self.answers else None
+
+    def is_logging_combat(self) -> tuple[bool | None, bool | None]:
+        self.call("IsLoggingCombat")
+        return (self.log if self.is_logging_answers else None), self.acl_flag
 
 
 class Switch:
@@ -273,6 +283,8 @@ class Switch:
         self.fighting = False
         self.log_on: bool | None = None
         self.advanced: bool | None = None
+        self.state_from: str | None = None  # M21-11
+        self.advanced_from: str | None = None  # M21-11
         self.told: set[str] = set()
 
     # Core.lua --------------------------------------------------------------
@@ -342,8 +354,17 @@ class Switch:
         self.mine = held.get("mine") is True
 
     def log_state(self) -> bool | None:
+        # M21-11: the documented C_ChatInfo.IsLoggingCombat first.
+        if self.c.has_is_logging:
+            on_is, _ = self.c.is_logging_combat()
+            if isinstance(on_is, bool):
+                self.state_from = "IsLoggingCombat"
+                return on_is
         on = self.c.logging_combat()
-        return on if isinstance(on, bool) else None
+        if isinstance(on, bool):
+            self.state_from = "LoggingCombat"
+            return on
+        return None
 
     def place(self) -> str:
         self.c.call("IsInInstance")
@@ -356,8 +377,18 @@ class Switch:
         return self.c.lockdown
 
     def advanced_on(self) -> bool | None:
+        self.advanced_from = None
+        # M21-11: IsLoggingCombat's second return first.
+        if self.c.has_is_logging:
+            _, flag = self.c.is_logging_combat()
+            if isinstance(flag, bool):
+                self.advanced_from = "IsLoggingCombat"
+                return flag
         self.c.call("C_CVar.GetCVar")
-        return {"1": True, "0": False}.get(self.c.acl or "")
+        value = {"1": True, "0": False}.get(self.c.acl or "")
+        if value is not None:
+            self.advanced_from = "setting"
+        return value
 
     def noted(self, to: str, why: str) -> None:
         self.switches += 1
@@ -515,6 +546,8 @@ class Switch:
             "log_on": self.log_on,
             "hands_off": self.hands_off,
             "advanced": self.advanced,
+            "state_from": self.state_from,
+            "advanced_from": self.advanced_from,
             "dormant": self.dormant,
             "refused_in_combat": self.refused_in_combat or None,
         }
@@ -993,3 +1026,29 @@ def test_m20_19_every_chat_line_is_in_the_source() -> None:
     for claim in ("you turned", "as you set it", "game options"):
         assert claim not in text.split("local _, ns = ...")[1], claim
     assert 'ns.Say("combat log " .. to .. " (" .. why .. ").")' in text
+
+
+def test_m21_11_the_documented_call_says_the_state_and_the_flag() -> None:
+    """M21-11: with C_ChatInfo.IsLoggingCombat the switch reads the state and
+    the advanced flag from it; LoggingCombat only switches, and in combat
+    the client is asked what it was asked before, by the other name."""
+    s = _switch(has_is_logging=True, acl_flag=True, acl="0")
+    s.login()
+    assert s.c.log is True
+    assert s.state is not None
+    assert s.state["state_from"] == "IsLoggingCombat"
+    assert s.state["advanced"] is True and s.state["advanced_from"] == "IsLoggingCombat"
+    s.advance(IDLE_MINUTES * 60)
+    assert s.c.log is False
+    s.fire("PLAYER_REGEN_DISABLED")
+    assert s.c.log is True
+    assert s.c.calls_in_combat == ["IsLoggingCombat", "LoggingCombat(true)", "IsLoggingCombat"]
+
+
+def test_m21_11_a_documented_call_that_says_nothing_falls_back() -> None:
+    s = _switch(has_is_logging=True, is_logging_answers=False, acl_flag=None, acl="1")
+    s.login()
+    assert s.c.log is True
+    assert s.state is not None
+    assert s.state["state_from"] == "LoggingCombat"
+    assert s.state["advanced"] is True and s.state["advanced_from"] == "setting"

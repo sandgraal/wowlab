@@ -2598,17 +2598,24 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
   had said 309 listed and "1 command of those listed not a plain upper-case
   name", so the binding list holds at least one command that is not a plain
   name, with no key bound through it. Fixed in M20-16:
-  - `MAX_ACCOUNT_MACROS` is defined by the macro window's Lua, which loads
-    on demand, so it is nil until the player opens that window. The
-    `macros` section no longer depends on it: without it the character
-    macros are asked from index 121 (120 account slots, the community
-    value, **[verify]** on this client), and `account_slots_from` records
-    `"MAX_ACCOUNT_MACROS"` or `"fallback"`. The macro window is never
-    loaded to get the constant.
+  - `MAX_ACCOUNT_MACROS` was nil. The `macros` section no longer depends
+    on it: without it the character macros are asked from index 121 (120
+    account slots, **[verify]** on this client), and `account_slots_from`
+    records `"MAX_ACCOUNT_MACROS"` or `"fallback"`. *Corrected 2026-11-23
+    (M21-09, M21-11):* this bullet said the global is defined by the macro
+    window's Lua and is nil until that window is opened. It is not: no
+    file of the 71037 UI source assigns a global `MAX_ACCOUNT_MACROS`;
+    Blizzard_MacroUI reads `Constants.MacroConsts.MAX_ACCOUNT_MACROS`,
+    which is 120 in the API list at 70938, so 120 is Blizzard's own value,
+    not a community one. Since M21-11 the addon reads that table first
+    (`account_slots_from = "MacroConsts"`), then the global, then its own
+    120; `char show` no longer gives the window as the reason.
   - `identity.realm` is the first non-empty, non-secret answer of
     `GetRealmName()`, `GetNormalizedRealmName()` and the second return of
     `UnitFullName("player")`, each tested with `issecretvalue`; `realm_from`
     names it and `realm_normalized = true` marks the form without spaces.
+    (Since M21-11 the third is kept as the second name, never as the realm:
+    see the M21-11 note below.)
     A record with no realm keeps the section due for another gather, so a
     realm found later (at logout at the latest) replaces the absent one.
   - `bindings.commands_not_plain` counts the listed commands, keyed or not,
@@ -2659,7 +2666,8 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     does not run after `PLAYER_LOGOUT`.
   - The crew book's home realm (the realm part of a same-realm player's
     key) is `GetNormalizedRealmName()`, else the second return of
-    `UnitFullName("player")`, each tested with `issecretvalue`, with every
+    `UnitFullName("player")` (dropped in M21-11: see the note below), each
+    tested with `issecretvalue`, with every
     space and hyphen removed from whichever answered (the client's
     normalization as believed, not yet confirmed **[verify]**), so a key is
     the same whichever source answered. It is read when a key needs it and
@@ -2674,6 +2682,56 @@ sandbox gets a local page as well as the CLI. L1–L8 apply to every ticket.
     the pass at logout gathered; its no-time note is printed only for a
     record without a time of its own, and `char list` no longer says the
     addon records no time.
+
+  *Addon fixes from the launch-build API list (2026-11-23, M21-11; schema
+  5, no bump: a file without the new keys reads as before).* From the
+  M21-09 findings (`lab/addon/README.md`, "The [verify] notes against the
+  launch-build list and the field guide") and the owner's in-game check of
+  2026-11-23. Every new read is **[verify]** until a capture shows it ran.
+  - `macros`: the account's macro slots come from
+    `Constants.MacroConsts.MAX_ACCOUNT_MACROS` first, then the global
+    `MAX_ACCOUNT_MACROS`, then the addon's own 120, each taken only as a
+    whole number of at least 1; `account_slots_from` is `"MacroConsts"`,
+    `"MAX_ACCOUNT_MACROS"` or `"fallback"`.
+  - The crew book's scoreboard probe takes `GetBattlefieldScore`'s first
+    and sixth values as the name and the side only when the first is not
+    nil (tested with `type`, never compared): at 71037 the 12.0.1
+    deprecation wrapper answers a row `C_PvP.GetScoreInfo` does not have
+    with a nil name and side 0, so a `first_side` of 0 with no name was not
+    evidence of a side.
+  - `bindings` no longer asks for `ACCOUNT_BINDINGS` and
+    `CHARACTER_BINDINGS`, which no file of the 71037 UI source defines and
+    which were never numbers; it records `binding_sets`, the client's
+    `Enum.BindingSet`, member name to number (Default 0, Account 1,
+    Character 2, Current 3 in the list at 70938), and `char show` names
+    `binding_set` by it ("2 (the character's own bindings)").
+  - `combatlog` reads the log's state with the documented
+    `C_ChatInfo.IsLoggingCombat` (its first return) before
+    `LoggingCombat()`, and Advanced Combat Logging from its second return
+    before the `advancedCombatLogging` setting; `state_from`
+    (`"IsLoggingCombat"` or `"LoggingCombat"`) and `advanced_from`
+    (`"IsLoggingCombat"` or `"setting"`) name the source. `LoggingCombat`
+    still does the switching. This is the one name of `C_ChatInfo` the
+    addon reads; the table's sends stay refused (`tests/addon`).
+  - `customization` no longer registers `BARBER_SHOP_SUCCESS`, which is
+    not in the client's event list and never got an entry (70425 capture).
+  - On Forever the slot other clients use for the realm in a unit's full
+    name holds the character's second name (the owner's
+    `UnitName("target")` gave `"Tay", "Soulrend"`; `GetPlayerInfoByGUID`
+    gave the name `"Tay Soulrend"` and an empty realm), and both realm
+    calls gave nothing on the owner's runs on 71037. So `identity` asks the
+    second return of `UnitFullName("player")` only when neither realm call
+    gives a realm, and keeps it as `second_name` with `second_name_from =
+    "full_name"`, never as the realm (`realm_from = "full_name"` is no
+    longer written; a file an earlier addon wrote keeps it, and `char show`
+    says that value is probably the second name). The record then has no
+    realm, so the section stays due for another gather and the logout pass
+    asks the realm calls once more, as M20-16 does for any record without
+    a realm. The crew book's home realm is `GetNormalizedRealmName()` only:
+    a player the game names without a realm is skipped when it gives none,
+    rather than keyed with the owner's second name. **[verify]** with the
+    owner's `/dump UnitFullName("player")` and `/dump
+    GetNormalizedRealmName()` (M22-O1).
 
   The reader reads schema 1 to 4 files as before and refuses a schema it
   does not know. The desk uses the stored text: `char show` prints the
@@ -7419,6 +7477,13 @@ Crew tab button now reads "Read the combat logs not read before"; a run
 stopped at the page's 120 s limit says that what was read is kept and that
 pressing the button again reads on (each part of a read is kept as it is
 read), and the UI's refusal of a path says that only the Logs folder is read.
+
+*M21-11 (2026-11-23).* The switch reads the log's state with the documented
+`C_ChatInfo.IsLoggingCombat` (first return) before `LoggingCombat()`, and
+Advanced Combat Logging from its second return before the
+`advancedCombatLogging` setting; the record's `state_from` and
+`advanced_from` name the source. `LoggingCombat(on)` still switches. Both
+reads are **[verify]** until a capture shows which answered.
 
 ### 21.4 The terms of ADR-0036, for the new store
 
