@@ -76,8 +76,10 @@ that CI never runs, all three together. No asset byte enters the
 repository.
 A second, from ADR-0036 (accepted 2026-11-11; named here 2026-11-18): the
 reader of a crew-book record is graded on constructed records, labelled,
-and an owner-run `@live` test, because term 3 of that ADR keeps every
-real crew record out of the repository.
+and an owner-run `@live` test. Term 3 of that ADR, which kept every real
+crew record out of the repository, was lifted on 2026-11-23 (owner
+decision), so a real crew capture with a provenance row is allowed again
+and preferred where one exists.
 
 ## Where truth lives
 
