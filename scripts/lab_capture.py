@@ -75,18 +75,15 @@ words or more, or of FREE_TEXT_MIN_LETTERS non-ASCII letters or more, is
 flagged "free text, review by hand", with its place and never its text; the
 flag is a note, not a refusal.
 
-The crew book (M19-04, ADR-0036 term 3): any file, whatever its name or kind,
-`--sv` and `.lua.bak` included, whose bytes hold `WowLabCrewDB` in any casing
-is refused unless the name occurs once, as a top-level assignment of the one
-empty shape of `docs/LAB_PLAN.md` §20.5 (CREW_BOOK_NAME, crew_book_problems).
-There is no flag that empties a book or skips the check; the refusal gives the
-reason, never a key.
-
 The lab-addon's file (M20-13): in a file holding `WowLabCharDB`, a player
 GUID that is not the owner's (a crafter's in an item link) gets an invented
 GUID, as another player's does in a combat log (labaddon_other_guids). Macro
 text, binding commands, guild names and times are kept as captured (owner's
 ruling, 2026-11-20).
+
+The crew book (`WowLabCrewDB`, the crew and PvP records) is captured like
+any other SavedVariables file: M19-04's refusal was removed by M21-01 when
+the owner lifted ADR-0036 term 3 (note of 2026-11-23).
 
 SQLite files (M20-02, `docs/LAB_PLAN.md` §21.4 term 3): any file, whatever its
 name or kind, holding the SQLite database header, or starting with a rollback
@@ -2843,195 +2840,9 @@ def sv_stats(data: bytes) -> SvStats:
     )
 
 
-# The crew book (M19-04; docs/LAB_PLAN.md §20.5 term 3, ADR-0036 term 3). The
-# lab-addon's `WowLabCrewDB` holds other players' names, realms, guilds and
-# the player's notes about them, and never enters the repository. So any
-# file, whatever it is called and whatever kind it is, whose bytes hold the
-# name in any ASCII casing is refused, unless the name occurs exactly once,
-# in code (not inside a quoted string, a long-bracket string or a comment),
-# at brace depth 0, at the start of a line, spelled exactly, and as the start
-# of an assignment whose whole table matches the one empty shape below as
-# the client writes it (LAB_FORMATS §4.2 amended: no indentation, every entry
-# ends with `,`, an empty table is `{` and `}` on two lines). Leading blanks
-# are allowed on a line; nothing else is. Keys are bracketed strings, each at
-# most once, in any order, and only these: `schema`, `on`, `started`,
-# `probe`, `skipped`, `players`, `current`, and schema 2's `matches`,
-# `matched` and `warned` (§21.2, M20-03). `players`, `current`, `matches`
-# and `matched` are empty; `probe` holds at most `["loads"]` and `["lost"]`
-# (so a book with the scoreboard probe's `pvp` block refuses); every other
-# value is a number or a boolean, never a string. One `WowLabCrewDB = nil` line is
-# accepted in place of the table. `CrewDB` anywhere else, in any casing, and
-# `CrewDB` in UTF-16 refuse. Nothing is parsed or rewritten: the scan only
-# skips strings and comments, and the shape is matched entry by entry on the
-# raw bytes. There is no flag that empties a book or skips this. A refusal
-# gives the reason only, never a key or an offset.
-CREW_BOOK_NAME = b"WowLabCrewDB"
-_CREW_BOOK_ANY_CASE_RE = re.compile(re.escape(CREW_BOOK_NAME), re.IGNORECASE)
-CREW_BOOK_IN_TEXT_LABEL = "crew book (WowLabCrewDB) named inside a string or comment"
-CREW_BOOK_TWICE_LABEL = "crew book (WowLabCrewDB) named more than once"
-CREW_BOOK_CASING_LABEL = "crew book (WowLabCrewDB) named in another casing"
-CREW_BOOK_NOT_TOP_LABEL = "crew book (WowLabCrewDB) named other than as a top-level assignment"
-CREW_BOOK_NOT_EMPTY_LABEL = "crew book (WowLabCrewDB) not in the one empty shape"
-_CREW_SCAN_RE = re.compile(rb"--|\[=*\[|[\"'{}]")
-_CREW_TEXT_RE = re.compile(rb"--|\[=*\[|[\"']")
-# The client's serializer writes plain `NAME = value` assignments only; these
-# write a global under a computed name (`_G["WowLab\67rewDB"]`), which no
-# content search for the name can see. In code they refuse the file.
-_CREW_GLOBAL_WRITE_RE = re.compile(rb"\b_G\s*\[|\brawset\b|\bsetglobal\b")
-CREW_BOOK_GLOBAL_WRITE_LABEL = (
-    "global-table write (_G[, rawset or setglobal) in code, which the client never writes"
-)
-_CREW_EOL = rb"\r?\n"
-_CREW_INDENT = rb"[ \t]*"
-_CREW_NUMBER = rb"-?[0-9]{1,20}(?:\.[0-9]{1,20})?"
-_CREW_EMPTY = rb"\{" + _CREW_EOL + _CREW_INDENT + rb"\}"
-_CREW_HEAD_RE = re.compile(re.escape(CREW_BOOK_NAME) + rb" = \{" + _CREW_EOL)
-_CREW_KEY_RE = re.compile(_CREW_INDENT + rb'\["([a-z]{1,8})"\] = ')
-_CREW_VALUE_RE = {
-    b"schema": re.compile(_CREW_NUMBER),
-    b"started": re.compile(_CREW_NUMBER),
-    b"skipped": re.compile(_CREW_NUMBER),
-    b"on": re.compile(rb"true|false"),
-    b"players": re.compile(_CREW_EMPTY),
-    b"current": re.compile(_CREW_EMPTY),
-    # Schema 2 (docs/LAB_PLAN.md §21.2, M20-03): the match list and the
-    # once-per-match marker, both empty, and the near-full line's time. A
-    # match names players, so a book whose `matches` holds one refuses; the
-    # scoreboard probe's `probe.pvp` is not part of the empty shape either.
-    b"matches": re.compile(_CREW_EMPTY),
-    b"matched": re.compile(_CREW_EMPTY),
-    b"warned": re.compile(_CREW_NUMBER),
-}
-# `probe` is §13.1's probe: `loads`, a number, and `lost`, a boolean (the
-# addon sets it true for one load). Each at most once, in any order.
-_CREW_PROBE_VALUE_RE = {
-    b"loads": re.compile(_CREW_NUMBER),
-    b"lost": re.compile(rb"true|false"),
-}
-_CREW_OPEN_RE = re.compile(rb"\{" + _CREW_EOL)
-_CREW_ENTRY_END_RE = re.compile(rb"," + _CREW_EOL)
-_CREW_NESTED_CLOSE_RE = re.compile(_CREW_INDENT + rb"\}")
-_CREW_CLOSE_RE = re.compile(rb"\}(?:" + _CREW_EOL + rb"|\Z)")
-# A declared variable never set: the client writes `X = nil` (LAB_FORMATS
-# §4.2 amended). It holds no record, so one such line is accepted.
-_CREW_NIL_RE = re.compile(re.escape(CREW_BOOK_NAME) + rb" = nil(?:" + _CREW_EOL + rb"|\Z)")
-# `CrewDB` in any casing: a name escaped (`\87owLabCrewDB`) or concatenated
-# (`"WowLab".."CrewDB"`) still holds it, so any occurrence of it other than
-# the one accepted name refuses the file.
-_CREW_PART_RE = re.compile(rb"crewdb", re.IGNORECASE)
-# The same part in UTF-16, little- or big-endian, with or without a BOM: the
-# ASCII letters interleaved with NUL bytes.
-_CREW_UTF16_RE = re.compile(rb"\x00".join(bytes([c]) for c in b"crewdb"), re.IGNORECASE)
-CREW_BOOK_PART_LABEL = "crew book (CrewDB) named apart from one top-level assignment"
-CREW_BOOK_UTF16_LABEL = "crew book (CrewDB) named in UTF-16"
-
-
-def _crew_depth_at(data: bytes, target: int) -> int | None:
-    """Brace depth at `target`, counted outside strings and comments; None when
-    `target` lies inside a string or a comment, or after one that never closes
-    (fail closed: the file is malformed there)."""
-    depth = at = 0
-    while True:
-        token = _CREW_SCAN_RE.search(data, at, target)
-        if token is None:
-            return depth
-        start = token.start()
-        first = token.group(0)[:1]
-        if first == b"{":
-            depth += 1
-            at = token.end()
-            continue
-        if first == b"}":
-            depth -= 1
-            at = token.end()
-            continue
-        if first == b"-":
-            end = _skip_comment(data, start)
-        elif first == b"[":
-            end = _skip_long(data, start)
-        else:
-            body = _QUOTED_BODY_RE[data[start]].match(data, start + 1)
-            assert body is not None  # the body pattern matches the empty string
-            stop = body.end()
-            if stop >= len(data) or data[stop] != data[start]:
-                return None  # a quoted string with no closing quote
-            end = stop + 1
-        if end < 0 or end > target:
-            return None
-        at = end
-
-
-def _crew_entries(data: bytes, at: int, values: dict[bytes, re.Pattern[bytes]]) -> int | None:
-    """End of a run of `["key"] = value,` lines at `at`, every key from
-    `values` and none twice (`probe` takes its own nested table); None when a
-    line breaks the shape."""
-    seen: set[bytes] = set()
-    while (key := _CREW_KEY_RE.match(data, at)) is not None:
-        name = key.group(1)
-        if name in seen:
-            return None
-        seen.add(name)
-        if name == b"probe" and values is _CREW_VALUE_RE:
-            opened = _CREW_OPEN_RE.match(data, key.end())
-            inner = (
-                None if opened is None else _crew_entries(data, opened.end(), _CREW_PROBE_VALUE_RE)
-            )
-            value_end = None
-            if inner is not None and (closed := _CREW_NESTED_CLOSE_RE.match(data, inner)):
-                value_end = closed.end()
-        elif (value_re := values.get(name)) is not None and (
-            value := value_re.match(data, key.end())
-        ):
-            value_end = value.end()
-        else:
-            return None
-        if value_end is None or (end := _CREW_ENTRY_END_RE.match(data, value_end)) is None:
-            return None
-        at = end.end()
-    return at
-
-
-def crew_book_assignment_ok(data: bytes, at: int) -> bool:
-    """Whether the assignment starting at `at` is the one empty crew-book
-    shape, or the one `WowLabCrewDB = nil` line. Shape only: where it stands
-    is `crew_book_problems`' business."""
-    if _CREW_NIL_RE.match(data, at):
-        return True
-    head = _CREW_HEAD_RE.match(data, at)
-    if head is None:
-        return False
-    end = _crew_entries(data, head.end(), _CREW_VALUE_RE)
-    return end is not None and _CREW_CLOSE_RE.match(data, end) is not None
-
-
-def _global_write_in_code(data: bytes) -> bool:
-    """Whether `_G[`, `rawset` or `setglobal` stands in code, outside every
-    quoted string, long-bracket string and comment. One pass; a quoted string
-    with no closing quote ends at its line break, as in `table_shape`."""
-    at = 0
-    while at < len(data):
-        token = _CREW_TEXT_RE.search(data, at)
-        stop = len(data) if token is None else token.start()
-        if _CREW_GLOBAL_WRITE_RE.search(data, at, stop):
-            return True
-        if token is None:
-            return False
-        first = token.group(0)[:1]
-        if first == b"-":
-            end = _skip_comment(data, stop)
-        elif first == b"[":
-            end = _skip_long(data, stop)
-        else:
-            end = _skip_quoted(data, stop)
-        if end < 0:
-            return False  # a long string or comment that runs to the end
-        at = max(end, stop + 1)
-    return False
-
-
 # An SQLite database is never captured (docs/LAB_PLAN.md §21.4 term 3,
-# M20-02): wowlab's crew database keeps other players' names and the
-# player's notes, and no SQLite file is a format the Lab's fixtures need.
+# M20-02; kept by ADR-0036's note of 2026-11-23, M21-01): it is a binary
+# file no parser of the Lab needs as a fixture; wowlab's crew database is one.
 # Decided by content, never by name: the database header anywhere (a
 # journal or a write-ahead log may hold a copy of the database's first
 # page), or a rollback journal's own header at the start.
@@ -3062,38 +2873,6 @@ def sqlite_problems(data: bytes) -> list[str]:
     """Why `data` may not be captured as an SQLite file; empty if it may."""
     if SQLITE_SIGNATURE in data or _sqlite_journal(data):
         return [SQLITE_LABEL]
-    return []
-
-
-def crew_book_problems(data: bytes) -> list[str]:
-    """Why `data` may not be captured because of the crew book; empty if it may.
-
-    Decided from content alone, never from a file name. Fail closed: anything
-    other than one top-level empty book (or one `= nil` line) refuses, and so
-    does a global-table write in code, which can hide the name entirely."""
-    if _global_write_in_code(data):
-        return [CREW_BOOK_GLOBAL_WRITE_LABEL]
-    if _CREW_UTF16_RE.search(data):
-        return [CREW_BOOK_UTF16_LABEL]
-    found = _CREW_BOOK_ANY_CASE_RE.search(data)
-    if found is None:
-        return [CREW_BOOK_PART_LABEL] if _CREW_PART_RE.search(data) else []
-    first = found.start()
-    if _CREW_BOOK_ANY_CASE_RE.search(data, found.end()) is not None:
-        return [CREW_BOOK_TWICE_LABEL]
-    parts = _CREW_PART_RE.finditer(data)
-    if any(part.start() != found.end() - len(b"crewdb") for part in parts):
-        return [CREW_BOOK_PART_LABEL]
-    if found.group(0) != CREW_BOOK_NAME:
-        return [CREW_BOOK_CASING_LABEL]
-    depth = _crew_depth_at(data, first)
-    if depth is None:
-        return [CREW_BOOK_IN_TEXT_LABEL]
-    at_line_start = first == 0 or data[first - 1 : first] in (b"\n", b"\r")
-    if depth != 0 or not at_line_start:
-        return [CREW_BOOK_NOT_TOP_LABEL]
-    if not crew_book_assignment_ok(data, first):
-        return [CREW_BOOK_NOT_EMPTY_LABEL]
     return []
 
 
@@ -3500,9 +3279,6 @@ def process(
         # By content, for every file kind and name: no SQLite file is captured
         # (wowlab's crew database, its copies and journals among them).
         return Outcome(item, dest, ScrubResult(b"", (), tuple(sqlite)), [*sqlite, *path_problems])
-    if crew := crew_book_problems(original):
-        # By content, for every file kind and name: nothing below runs on a crew book.
-        return Outcome(item, dest, ScrubResult(b"", (), tuple(crew)), [*crew, *path_problems])
     if kind == "combatlog" and (binary := _log_content_refusals(original)):
         # Not a plain-text log: nothing below could scrub it, so nothing runs.
         problems = [*binary, *path_problems]
@@ -3599,7 +3375,6 @@ def process(
         *result.problems,
         *kept_whole,
         *sqlite_problems(result.data),
-        *crew_book_problems(result.data),
         *path_problems,
     ]
     other_players = len(units.guids) if units is not None else 0

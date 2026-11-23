@@ -1,11 +1,12 @@
 """ "What leaves your machine", said once (M16-07, docs/LAB_PLAN.md §18.1 item 2).
 
-The drift test: README.md and docs/INSTALL.md each carry the block exactly
-as `disclosure.render_markdown()` renders it, between its markers, and
+The drift test: docs/INSTALL.md carries the block exactly as
+`disclosure.render_markdown()` renders it, between its markers, and
 `doctor`'s first-run intro prints `disclosure.lines()`. A copy edited by
-hand fails here; `scripts/gen_network_block.py --write` rewrites the
-documents. Reads the two documents and the package only; nothing is
-written but into `tmp_path`.
+hand fails here; `scripts/gen_network_block.py --write` rewrites it.
+README.md describes the latest release (M21-01): it keeps its markers, and
+its copy is rewritten with `--readme` when a release is published. Reads the
+two documents and the package only; nothing is written but into `tmp_path`.
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ import typer
 from wowlab_core import cli, disclosure, firstrun
 
 REPO = Path(__file__).resolve().parents[3]
-DOCS = (REPO / "README.md", REPO / "docs" / "INSTALL.md")
+README = REPO / "README.md"
+DOCS = (REPO / "docs" / "INSTALL.md",)
 
 
 @pytest.mark.parametrize("doc", DOCS, ids=lambda p: p.name)
@@ -34,6 +36,12 @@ def test_each_document_carries_the_block_once_and_as_rendered(doc: Path) -> None
         f"{doc.name}: the block differs; run `uv run python scripts/gen_network_block.py --write`"
     )
     assert disclosure.render_doc(text) == text
+
+
+def test_the_readme_keeps_its_markers_for_the_release() -> None:
+    """README.md's copy follows the latest release, not `main`; its markers
+    stay so the release's `--write --readme` can put the block back."""
+    assert disclosure.has_block(README.read_text(encoding="utf-8"))
 
 
 def test_the_first_run_intro_prints_the_block() -> None:
@@ -50,13 +58,14 @@ def test_the_block_has_the_three_rows() -> None:
     doctor, tables, link = disclosure.ROWS
     assert doctor.startswith("`wowlab doctor --check-builds` downloads")
     assert "`wowlab db2` and `wowlab looks` download" in tables and "`--build`" in tables
-    assert "dressing-room link" in link and "public game ids only" in link
+    assert "dressing room" in link and "opens in your own browser, and only when you click" in link
+    assert "wowlab itself makes no request to it" in link
     assert "Nothing is uploaded" in disclosure.HEAD
 
 
 def test_the_old_network_sentences_are_gone() -> None:
     """No copy that says `doctor` asks wago.tools unless `--offline`."""
-    for doc in DOCS:
+    for doc in (*DOCS, README):
         text = doc.read_text(encoding="utf-8")
         assert "doctor --offline" not in text, doc.name
         assert "`--offline` skips" not in text, doc.name
@@ -169,3 +178,49 @@ def test_the_generator_fails_on_a_document_without_its_markers_constructed(
     gen.DOCS = (doc,)  # type: ignore[attr-defined]
     assert gen.main([mode]) == 1  # type: ignore[attr-defined]
     assert doc.read_text(encoding="utf-8") == "top\nno block here\n"
+
+
+def test_the_link_row_says_what_a_link_carries() -> None:
+    """M21-01 (ADR-0019, amendment of 2026-11-23): a clicked link may carry
+    names, and the row says so; nothing in the block still promises it
+    never does."""
+    (link,) = [row for row in disclosure.ROWS if "dressing room" in row]
+    for carried in ("a character's name, realm, region and guild", "game ids"):
+        assert carried in link, carried
+    text = disclosure.render_markdown()
+    assert "never a name" not in text and "public game ids only" not in text
+    for doc in DOCS:
+        assert "never a name" not in doc.read_text(encoding="utf-8"), doc.name
+
+
+def test_the_generator_leaves_the_readme_copy_to_the_release_constructed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stale = f"top\n{disclosure.BEGIN}\nthe last release's words\n{disclosure.END}\n"
+    install = tmp_path / "INSTALL.md"
+    install.write_text(f"top\n{disclosure.render_markdown()}", encoding="utf-8")
+    readme = tmp_path / "README.md"
+    readme.write_text(stale, encoding="utf-8")
+    gen = _gen()
+    gen.DOCS = (install,)  # type: ignore[attr-defined]
+    gen.RELEASE_DOCS = (readme,)  # type: ignore[attr-defined]
+    assert gen.main(["--check"]) == 0  # type: ignore[attr-defined]
+    assert gen.main(["--write"]) == 0  # type: ignore[attr-defined]
+    assert readme.read_text(encoding="utf-8") == stale
+    assert gen.main(["--check", "--readme"]) == 1  # type: ignore[attr-defined]
+    assert gen.main(["--write", "--readme"]) == 0  # type: ignore[attr-defined]
+    assert readme.read_text(encoding="utf-8") == f"top\n{disclosure.render_markdown()}"
+    capsys.readouterr()
+
+
+def test_the_generator_still_fails_on_a_readme_without_its_markers_constructed(
+    tmp_path: Path,
+) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("top\nno block here\n", encoding="utf-8")
+    gen = _gen()
+    gen.DOCS = ()  # type: ignore[attr-defined]
+    gen.RELEASE_DOCS = (readme,)  # type: ignore[attr-defined]
+    assert gen.main(["--check"]) == 1  # type: ignore[attr-defined]
+    assert gen.main(["--write"]) == 1  # type: ignore[attr-defined]
+    assert readme.read_text(encoding="utf-8") == "top\nno block here\n"
