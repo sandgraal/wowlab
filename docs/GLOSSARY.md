@@ -6,6 +6,8 @@ For engineers who do not play World of Warcraft. Several of these are named misl
 
 **Region** — `us`, `eu`, `kr`, `tw`, `cn`. Separate data centers with separate character namespaces. The same character name can exist in every region and they are unrelated.
 
+**Region (portal)** — the region a client plays in, as the `portal` CVar in the flavor's `WTF/Config.wtf` holds it. It is not an account setting and not a realm. The Forever launch client writes `SET portal "US"` (upper case; fixture `macos-70888`, build 1.60.1.70888) and the Forever beta wrote `SET portal "test"` (fixture `macos`, build 1.60.1.69913), which names no public region. wowlab folds the ASCII case and reports one of `us`, `eu`, `kr`, `tw`; any other value (`test`, empty, `cn`, anything with a space or a control byte) is no region, and the reports say why (`wowlab_core.region`, M21-02). Because Forever characters have no realm, a Forever character is region plus first name plus second name. The combat log's unit names end in a region part (`<Name>-<Realm>-<Region>`), which is empty on every Forever name seen so far, and Forever is believed to have no cross-region play **[verify]**, so a crew-book player takes the account's own region. The region is per flavor folder: two flavors of one install can name different ones.
+
 **Realm** — a server within a region. Character names are unique per realm, not per region. The API uses a slugified realm name (`area-52`, not `Area 52`).
 
 **Character identity is therefore (region, realm, name), not name.** Characters can also transfer realms, which changes their identity key without changing the character. On disk a character is `WTF/Account/<ACCOUNT>/<Realm>/<Character>/`, so a transfer or rename leaves the old folder behind and starts a new one.

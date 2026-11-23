@@ -39,6 +39,7 @@ from wowlab_core import (
     labaddon,
     layout,
     luadata,
+    region,
     snapshot,
     worldpvp,
 )
@@ -64,6 +65,7 @@ from wowlab_core.cli._common import (
     _listed,
     _Out,
     _plural,
+    _region_fields,
     _Report,
     _say,
     _say_err,
@@ -73,6 +75,7 @@ from wowlab_core.cli._common import (
     crew_app,
 )
 from wowlab_core.errors import WowlabError
+from wowlab_core.region import Region
 
 # ─── crew ────────────────────────────────────────────────────────────────────
 
@@ -160,6 +163,12 @@ class CrewReport(_Out):
     # M20-18: only players met in the open world (from a combat log `crew
     # scan-log` read), latest open-world encounter first.
     world: bool = False
+    # M21-02: the crew book's region, the flavor's `portal` setting (`us`,
+    # `eu`, `kr` or `tw`), which every player row carries as `region`; when
+    # it is None, `region_absent` says why. Both None when no book was
+    # chosen.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 class CrewShowReport(_Out):
@@ -180,6 +189,9 @@ class CrewShowReport(_Out):
     lines: list[str]
     notes: list[str]
     sync: crewdb.SyncOutcome | None = None
+    # M21-02: as in `CrewReport`.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 class _Opened:
@@ -325,19 +337,43 @@ def _target(opened: _Opened) -> crewdb.Target | None:
     )
 
 
+def _crew_region(opened: _Opened) -> region.RegionReading | None:
+    """The chosen book's region (M21-02): its flavor's `portal` setting,
+    read from the flavor's Config.wtf; None when no one book was chosen."""
+    if opened.place is None or opened.where is None:
+        return None
+    _, lay = opened.where
+    return region.read(lay.flavor_path, root=lay.install_root)
+
+
+def _crew_region_line(reading: region.RegionReading | None) -> str | None:
+    """The text line that names the book's region; None without a book."""
+    if reading is None:
+        return None
+    if reading.region is not None:
+        return f"Region: {reading.region.upper()} (your game's region, given to every player)"
+    return f"Region: not known: {reading.absent}"
+
+
 def _from_database(
-    opened: _Opened,
+    opened: _Opened, reading: region.RegionReading | None = None
 ) -> tuple[crewdb.SyncOutcome | None, list[crewdb.CrewRow]]:
     """Sync the chosen book into wowlab's crew database, then every player
-    the database keeps (§21.3, "Reading"). A sync that did not run says why
-    in its outcome; the players are then the database's as they were."""
+    the database keeps (§21.3, "Reading"), each with the book's region
+    (`reading`). A sync that did not run says why in its outcome; the
+    players are then the database's as they were."""
     target = _target(opened)
     if target is None:
         return None, []
     outcome: crewdb.SyncOutcome | None = None
     if opened.book.state != "not_turned_on" and opened.data is not None:
         outcome = crewdb.sync(target, opened.data, opened.book, reread=_rereader(opened))
-    return outcome, crewdb.read(target.flavor_folder, target.account, opened.book)
+    return outcome, crewdb.read(
+        target.flavor_folder,
+        target.account,
+        opened.book,
+        region=reading.region if reading is not None else None,
+    )
 
 
 def _rereader(opened: _Opened) -> Callable[[], bytes] | None:
@@ -560,7 +596,8 @@ def crew_list(
     since_at = _since(since)
     opened = _open_book(root, flavor, account)
     book = opened.book
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     on_map: set[str] | None = None
     target = _target(opened)
     if map_text is not None:
@@ -613,6 +650,8 @@ def crew_list(
         map=map_text,
         since=since,
         world=world,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)
@@ -724,7 +763,8 @@ def crew_show(
     JSON: CrewShowReport."""
     opened = _open_book(root, flavor, account)
     book, place = opened.book, opened.place
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     caveat = _sync_caveat(outcome)
     player: crewdb.CrewRow | None = None
     if book.state != "not_turned_on" or kept:
@@ -751,6 +791,9 @@ def crew_show(
         assert place is not None
         lines = [f"{player.key}, from the crew book of {_place_words(place)}, {_AS_OF}:"]
         lines += _field_lines(player)
+        region_line = _crew_region_line(reading)
+        if region_line is not None:
+            lines.append(f"  {region_line}")
         if player.also_known_as:
             lines.append(
                 "  Also seen as: "
@@ -781,6 +824,8 @@ def crew_show(
         lines=lines,
         notes=_CREW_NOTES,
         sync=outcome,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)
@@ -826,6 +871,10 @@ class CrewMatchesReport(_Out):
     # showed, and the stored keys against you and with you.
     world: bool = False
     encounters: list[crewdb.CrewWorldEncounterRow] = pydantic.Field(default_factory=list)
+    # M21-02: the region of every stored key in `matches` and `encounters`,
+    # as in `CrewReport`.
+    region: Region | None = None
+    region_absent: str | None = None
 
 
 _MATCH_KIND_WORDS = {"bg": "battleground", "arena": "arena", "shuffle": "solo shuffle"}
@@ -897,7 +946,8 @@ def crew_matches(
     JSON: CrewMatchesReport."""
     opened = _open_book(root, flavor, account)
     book, place = opened.book, opened.place
-    outcome, kept = _from_database(opened)
+    reading = _crew_region(opened)
+    outcome, kept = _from_database(opened, reading)
     target = _target(opened)
     caveat = _sync_caveat(outcome)
     key: str | None = None
@@ -962,6 +1012,8 @@ def crew_matches(
         sync=outcome,
         world=world,
         encounters=encounters,
+        region=_region_fields(reading)[0],
+        region_absent=_region_fields(reading)[1],
     )
     if json_out:
         _emit(report)

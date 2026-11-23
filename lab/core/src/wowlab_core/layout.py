@@ -81,8 +81,8 @@ from pydantic import (
     ValidationInfo,
 )
 
+from wowlab_core import charname, longpath
 from wowlab_core import filemap as _filemap
-from wowlab_core import longpath
 from wowlab_core.filemap import FileMapEntry
 
 # `is_link`: the one link test, defined in `install` so discovery uses it
@@ -894,21 +894,21 @@ class Layout:
                     if realm_name.casefold() == _SAVED_VARIABLES.casefold():
                         continue
                     rrel = (*arel, realm_name)
-                    numeric = realm_name.isascii() and realm_name.isdigit()
+                    numeric = charname.is_numeric_folder(realm_name)
                     characters = []
                     for char_name in dirs_in(rrel):
                         if char_name.casefold() == _SAVED_VARIABLES.casefold():
                             continue  # not a character (review probe, M10-06)
                         crel = (*rrel, char_name)
-                        first, sep, second = char_name.partition("-")
+                        first, second = charname.split_folder(char_name, numeric=numeric)
                         characters.append(
                             Character(
                                 folder=char_name,
                                 path=_rel_text(crel),
                                 realm_folder=realm_name,
                                 shape="numeric_folder" if numeric else "realm_name",
-                                first_name=first if numeric and sep else char_name,
-                                second_name=second if numeric and sep else None,
+                                first_name=first,
+                                second_name=second,
                                 files=files_in(crel),
                                 folders=dirs_in(crel),
                                 twins=(),
