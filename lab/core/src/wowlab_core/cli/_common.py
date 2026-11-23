@@ -482,6 +482,14 @@ crew_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crew_app, name="crew", short_help="The players you grouped with (the crew book).")
+live_app = typer.Typer(
+    help="What the Live view of wowlab ui shows: your latest match from the combat log, and what "
+    "changed since your last save.",
+    no_args_is_help=True,
+)
+app.add_typer(
+    live_app, name="live", short_help="Your latest match and what changed since your last save."
+)
 
 # The modules of this package in the order they register their commands when
 # all are imported, which is the order `wowlab --help` lists them in. Each
@@ -509,6 +517,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_live",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -537,6 +546,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "live": ("_cmd_live",),
 }
 
 

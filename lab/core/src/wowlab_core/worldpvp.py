@@ -128,6 +128,7 @@ __all__ = [
     "WorldPlayer",
     "WorldScan",
     "ZoneState",
+    "in_open_world",
     "normalize_realm",
     "player_key",
     "read_world",
@@ -377,6 +378,18 @@ def player_key(unit_name: str, home_realm: str | None) -> tuple[str, str, str] |
     return key, name, realm
 
 
+def in_open_world(state: ZoneState, pvp_maps: Iterable[int] | frozenset[int] = ()) -> bool:
+    """Whether the log is in the open world at `state`: after a zone line
+    whose difficulty is 0, outside an arena match, and on no instance id of
+    `pvp_maps` (the battlegrounds and arenas a match is kept on). The one
+    place this rule lives."""
+    return (
+        state.difficulty == 0
+        and not state.arena
+        and (state.instance_id is None or state.instance_id not in pvp_maps)
+    )
+
+
 # ─── encounters being built ──────────────────────────────────────────────────
 
 
@@ -445,7 +458,9 @@ class _Reader:
         owners: Mapping[str, str | None],
         state: ZoneState | None,
         pvp_maps: frozenset[int],
+        place: Callable[[ZoneState], bool | None] | None = None,
     ) -> None:
+        self.place = place
         self.owners = {
             g.upper(): (normalize_realm(r) or None if r else None) for g, r in owners.items()
         }
@@ -506,14 +521,15 @@ class _Reader:
         )
 
     def in_world(self) -> bool | None:
+        """Whether a fight here counts: the open world, or what `place`
+        says when the caller gave one (`live`'s match recap counts the
+        battleground's own fights); None before any zone line."""
         s = self.state
         if s.difficulty is None and s.instance_id is None and s.zone is None:
             return None
-        return (
-            s.difficulty == 0
-            and not s.arena
-            and (s.instance_id is None or s.instance_id not in self.pvp_maps)
-        )
+        if self.place is not None:
+            return self.place(s)
+        return in_open_world(s, self.pvp_maps)
 
     # who ---------------------------------------------------------------------
 
@@ -852,6 +868,7 @@ def scan_entries(
     start: int = 0,
     state: ZoneState | None = None,
     pvp_maps: Iterable[int] = (),
+    place: Callable[[ZoneState], bool | None] | None = None,
 ) -> WorldScan:
     """The open-world encounters in a log's lines (as `combatlog.read_log`
     yields them, from `start`), for your characters' GUIDs `owners` (each
@@ -862,8 +879,11 @@ def scan_entries(
     `end` is its offset, so the next read takes it whole. A read that
     holds `MAX_ENCOUNTERS` or `MAX_READ_PLAYERS` stops at the first line
     with no encounter open, and at twice either bound before the line that
-    would start one (`more`, `end` that line's offset)."""
-    reader = _Reader(owners, state, frozenset(pvp_maps))
+    would start one (`more`, `end` that line's offset). `place`, when
+    given, decides instead of the open-world rule where a fight counts,
+    from where the log is (`ZoneState`); a fight it answers False for is
+    counted in `outside_world` (M22-05: a battleground's own fights)."""
+    reader = _Reader(owners, state, frozenset(pvp_maps), place)
     lines = unparsed = bad = 0
     end = start
     more = False

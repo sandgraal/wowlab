@@ -7420,6 +7420,47 @@ stopped at the page's 120 s limit says that what was read is kept and that
 pressing the button again reads on (each part of a read is kept as it is
 read), and the UI's refusal of a path says that only the Logs folder is read.
 
+*As built (2026-11-23, M22-05): the Live view and `live recap`.* `wowlab
+ui` gains a **Live** section. The page asks the server every
+`live.POLL_SECONDS` (3) while it is shown and the browser tab is not
+hidden; the server answers `GET /api/live` in its own process
+(`live.Watcher`, held in memory, writing nothing): the newest modification
+time of the `.lua` files in every account's and character's
+`SavedVariables/` of the install wowlab finds by itself (at most 4,000
+stat'ed, links not followed, never opened), and the newest combat log's
+name and size with the zone and arena lines added since the last poll (at
+most 4 MiB read; other lines are passed over by their event name). Its
+query holds the token and at most one `flavor`, the exact name of one of
+that install's flavor folders. When the save time, the log, its count of
+zone lines or of arena end lines changes, the page runs `live recap --json`
+through `/api/run`. **The match recap** is the latest stay, in the newest 3
+logs (256 MiB at most), in a place the open-world rule does not take
+(`worldpvp.in_open_world`, now the one place that rule lives), that shows
+an arena line, is on a map a match was kept on (wowlab's crew database or
+the book), or holds a fight with a player. Who you fought is `worldpvp`'s
+fight rule counted inside that place (`scan_entries(place=)`); killing
+blows are `PARTY_KILL` lines by you or a unit flagged yours on a player;
+deaths are `UNIT_DIED` lines of your GUID. It is over when a later zone
+line, the arena's end line or a newer log follows. The result is the
+arena's end line against the team on its start line, else the crew book's
+match on that map from 120 s before the stay to 900 s after its last line;
+the book is saved only at `/reload` or logout, and the view says so. **The
+session recap** compares the newest save of the character's `WowLab.lua`
+with the one before it (`charhistory`: level, gear, currencies), the items
+Syndicator lists for the character (every table under its entry with an
+`itemID`, `itemCount` or 1; keyed `First Second`, the folder name or
+`Name-Realm`) against the copy in the snapshot holding that earlier save,
+the book's matches since then, and the open-world encounters of the logs
+written since (256 MiB at most). Measured: a poll of the owner's install
+(83 SavedVariables files, a 1.2 MB log) took 25 ms the first time and
+3.4 ms after; a constructed flavor with 402 files and a 4.8 MB log, on the
+external test volume, 84 ms and 19 ms (Apple silicon, 2026-11-23). **The
+lab-addon switches the log off in an instance** (M20-19), so a battleground
+shows its fights only when the player logs it with `/combatlog`; the recap
+says so when a match holds no fight. Not yet confirmed: a battleground's
+zone line difficulty, the lines that end a battleground, the arena lines'
+fields, Syndicator's layout beyond one capture.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

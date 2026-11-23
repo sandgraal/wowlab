@@ -464,6 +464,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
+        # M22-05: the captures hold no game id and no earlier save, so both
+        # say so; test_cli_live.py runs it on a constructed match and store.
+        ["live", "recap"],
+        ["live", "recap", "--notes"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],
