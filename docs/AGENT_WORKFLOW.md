@@ -23,6 +23,20 @@ every other workflow that ran Claude. No review runs in CI; the independent
 `code-reviewer` verdict (with `domain-reviewer` and `security-reviewer` by
 area) is the review gate, as it already was for merging since 2026-10-17.
 
+*Amended 2026-11-23 (owner decision: "lighter when it makes sense"):* `code-reviewer` grades every branch. The others are added only where they find real defects:
+- **`security-reviewer`** for:
+  - the write gate, process detection and the Lua data parser;
+  - the capture tool and fixtures;
+  - `.github/`;
+  - the UI server's request handling, its CSP or headers, any new network call, and any new write site.
+- **`domain-reviewer`** for a change that parses game or addon data, or that states a WoW fact in output or docs.
+
+A change to UI layout or text, docs only, or tests only gets `code-reviewer` alone.
+
+*Also 2026-11-23 (owner):*
+- **The UI is the product.** The owner uses only `wowlab ui`, so every feature must be reachable there, and a ticket that adds a command adds its UI control in the same ticket.
+- **Owner in-game checks are batched.** The conductor collects every [verify] that needs the client into one checklist ticket per wave, and avoids one-off asks.
+
 Every writer is graded by someone who did not write the thing. For the two
 load-bearing files, the ones that rewrite the owner's data (`luadata.py` and
 `guard.py` under `lab/core/src/wowlab_core/`), that separation is enforced
