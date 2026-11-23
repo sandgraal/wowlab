@@ -1031,6 +1031,11 @@ local function combatLogCommand(word, minutes)
         say("the combat-log switch is switched off with /wowlab skip; /wowlab unskip combatlog  turns it back on.")
     elseif word == "on" or word == "off" then
         ns.CombatLogSwitch(word == "on")
+        -- Resumed: its check now, out of combat only (wake's guard); in
+        -- combat it runs when the fight ends.
+        if word == "on" then
+            wake("combatlog", "WOWLAB_COMBATLOG_ENTER")
+        end
     elseif word == "idle" then
         ns.CombatLogIdle(minutes)
     elseif word == "" then

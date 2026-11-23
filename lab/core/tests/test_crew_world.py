@@ -697,3 +697,50 @@ def test_scan_log_with_a_path_reads_only_that_log_constructed(make: Any, owner: 
     report = cli.CrewScanLogReport.model_validate(_json(_scan(env, str(second), "--json")))
     assert [f.log for f in report.logs] == [f"Logs/{SECOND_NAME}"]
     assert [e.foes for e in crewdb.world_encounters(FLAVOR, ACCOUNT)] == [[KEY_D]]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="chmod 000 does not make a file unreadable here",
+)
+def test_scan_log_skips_and_names_a_log_it_cannot_read_constructed(make: Any, owner: Any) -> None:
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    second = _write_log(env, _second_log(), name=SECOND_NAME)
+    _aged(second, 2_000_000)
+    _aged(_write_log(env, _third_log(), name=THIRD_NAME), 3_000_000)
+    second.chmod(0)
+    try:
+        report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+        assert (report.logs_read, report.logs_unreadable) == (2, 1)
+        [bad] = [f for f in report.logs if f.unreadable is not None]
+        assert bad.log == f"Logs/{SECOND_NAME}" and bad.scan is None
+        assert bad.unreadable is not None
+        assert bad.unreadable.startswith("the file could not be opened: ")
+        assert report.log == f"Logs/{THIRD_NAME}"
+        text = _scan(env)
+        assert text.exit_code == 0, text.output
+        assert "1 could not be read" in text.stdout.splitlines()[0]
+        assert any(f"Logs/{SECOND_NAME}: not read, skipped" in x for x in text.stdout.splitlines())
+        # With PATH, the error stays an error.
+        alone = _scan(env, str(second))
+        assert alone.exit_code != 0 and "is not readable" in alone.output
+    finally:
+        second.chmod(0o644)
+    later = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert (later.logs_read, later.logs_already_read, later.logs_unreadable) == (1, 2, 0)
+
+
+def test_scan_log_says_how_many_older_logs_it_did_not_look_at_constructed(
+    make: Any, owner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_MAX_LOGS", 2)
+    env = make(_book())
+    _aged(_write_log(env, _fight()), 1_000_000)
+    _aged(_write_log(env, _second_log(), name=SECOND_NAME), 2_000_000)
+    _aged(_write_log(env, _third_log(), name=THIRD_NAME), 3_000_000)
+    report = cli.CrewScanLogReport.model_validate(_json(_scan(env, "--json")))
+    assert report.logs_not_looked_at == 1
+    assert [f.log for f in report.logs] == [f"Logs/{SECOND_NAME}", f"Logs/{THIRD_NAME}"]
+    text = _scan(env).stdout.splitlines()
+    assert "  1 older log not looked at: only the newest 2 are." in text

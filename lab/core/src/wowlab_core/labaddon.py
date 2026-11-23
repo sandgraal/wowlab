@@ -3966,7 +3966,7 @@ def _combatlog(record: CombatLog) -> list[str]:
     lines = [head]
     state = []
     if record.dormant is not None:
-        state.append(f"it did nothing that session: {record.dormant}")
+        state.append(f"it stopped switching that session: {record.dormant}")
     if record.log_on is not None:
         state.append(f"the log was {'on' if record.log_on else 'off'} at its last check")
         if record.log_on and record.mine:
@@ -3976,8 +3976,10 @@ def _combatlog(record: CombatLog) -> list[str]:
     if record.hands_off:
         state.append("turned off outside WowLab, so WowLab left it off that session")
     if record.refused_in_combat:
+        n = record.refused_in_combat
         state.append(
-            f"the game refused {record.refused_in_combat} in combat (tried again after the fight)"
+            f"the game refused {n} {'switch' if n == 1 else 'switches'} in combat "
+            "(each tried again after the fight)"
         )
     if record.advanced is False:
         state.append("Advanced Combat Logging was off")

@@ -57,8 +57,8 @@ RUN = (
     "if not started then return end "
     'if trigger == "combat" then fighting = true active = ns . Number ( time ( ) ) resume ( ) '
     'elseif trigger == "calm" then fighting = false active = ns . Number ( time ( ) ) '
-    "if retry then retry = false resume ( ) end "
     'if waiting then waiting = false check ( "enter" ) end '
+    "if retry then retry = false resume ( ) end "
     "if mine then armIdle ( ) end "
     'elseif trigger == "enter" then '
     "if fighting or inCombatNow ( ) then waiting = true else waiting = false "
@@ -78,7 +78,7 @@ HASHED = {
     "logState": "d45a448e7839389494dcf8ddf64cf1ea6581e998f3d2454f2b3540ff41ab4e22",
     "place": "3f4da679586b0e01b9c389ddc1fc7b041e8f01a540722eaeb0447f555070e6a9",
     "inCombatNow": "7c30f6318c8fef757bc9fed6bd633d0d1bda542e749857a59bcfdfc629f82765",
-    "readBack": "2fffd3f7bb7dcbb1401c9d71a73ec54f42076930b9843286038050261f37a852",
+    "readBack": "29f4d04accee159e1226b3cea464ddc3c3a1360577e2174a586d6958a9e8e094",
     "record": "4fa6a641ba70bd34813b3dde5ac62b3453ebea6468441b29b924f460414cc143",
     "gather": "b341cd959d0128f0372c7d95edc4fc60175d3fe1e9e187c2855a33197bc6c373",
     "armIdle": "ef39d1fbe133b8ad1c63cc31107b705340ce70f4e03f2518420d909d34913fc5",
@@ -174,6 +174,7 @@ def test_m20_19_core_wake_and_slash_branch() -> None:
     # On and off pause and resume the switch in its own record; a section
     # switched off with /wowlab skip stays off until unskip.
     assert 'ns . CombatLogSwitch ( word == "on" )' in command
+    assert 'if word == "on" then wake ( "combatlog" , "WOWLAB_COMBATLOG_ENTER" ) end' in command
     assert "skipCommand" not in command
     assert 'if section . off and word ~= "" then' in command
 
@@ -325,6 +326,7 @@ class Switch:
         self.paused = held.get("paused") is True
         if was and not self.paused:
             self.started = True
+            self.waiting = True
         if self.loaded:
             return
         self.loaded = True
@@ -478,12 +480,12 @@ class Switch:
         elif trigger == "calm":
             self.fighting = False
             self.active = self.c.now
-            if self.retry:
-                self.retry = False
-                self.resume()
             if self.waiting:
                 self.waiting = False
                 self.check("enter")
+            if self.retry:
+                self.retry = False
+                self.resume()
             if self.mine:
                 self.arm_idle()
         elif trigger == "enter":
@@ -541,6 +543,9 @@ class Switch:
             return
         if on:
             held.pop("paused", None)
+            # Core's combatLogCommand: wake("combatlog", ENTER), out of combat.
+            if not self.c.core_in_combat and not self.off:
+                self.gather("WOWLAB_COMBATLOG_ENTER")
         else:
             held["paused"] = True
 
@@ -845,10 +850,44 @@ def test_m20_19_off_then_on_keeps_mine_and_the_count() -> None:
     again = s.reload()
     again.login()
     assert again.c.switch_calls == [True]
-    again.command_switch(True)  # /wowlab combatlog on
-    again.fire("ZONE_CHANGED_NEW_AREA")
+    again.command_switch(True)  # /wowlab combatlog on: checked at once
     assert again.c.log is False  # still the addon's log: turned off in the instance
     assert again.state is not None and again.state["switches"] == 2
+
+
+def test_m20_19_on_checks_at_once_and_in_combat_when_the_fight_ends() -> None:
+    s = _switch()
+    s.login()
+    s.command_switch(False)  # /wowlab combatlog off
+    s.c.log = False  # turned off by hand while paused
+    s.command_switch(True)  # /wowlab combatlog on: checked now
+    assert s.c.log is False  # turned off outside WowLab: left off
+    t = _switch()
+    t.login()
+    t.command_switch(False)
+    t.c.instance = True
+    t.fire("ZONE_CHANGED_NEW_AREA")
+    assert t.c.log is True  # paused: left on
+    t.fire("PLAYER_REGEN_DISABLED")
+    t.command_switch(True)  # in combat: Core's wake is dropped
+    assert t.c.log is True and t.c.calls_in_combat == []
+    t.fire("PLAYER_REGEN_ENABLED")
+    assert t.c.log is False
+    assert t.c.chat[-1] == f"combat log off ({WHY_INSTANCE})."
+
+
+def test_m20_19_a_retry_after_the_fight_follows_the_place() -> None:
+    s = _switch()
+    s.login()
+    s.advance(IDLE_MINUTES * 60)
+    s.c.obeys = False
+    s.fire("PLAYER_REGEN_DISABLED")
+    s.c.instance = True
+    s.fire("ZONE_CHANGED_NEW_AREA")
+    s.c.obeys = True
+    s.fire("PLAYER_REGEN_ENABLED")
+    assert s.c.log is False and s.c.switch_calls[-1] is True  # the refused one only
+    assert s.c.switch_calls.count(True) == 2
 
 
 def test_m20_19_a_refusal_in_combat_is_tried_again_after_the_fight() -> None:

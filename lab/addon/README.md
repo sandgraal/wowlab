@@ -691,25 +691,32 @@ so world PvP can be read from the log at the desk:
 - **In combat** it does one thing: turn back on a log it turned off for
   idling. A zone or group change in combat is checked when the fight ends. A
   switch the game refuses in combat is counted (`refused_in_combat`) and
-  tried again when the fight ends; refused out of combat, the switch is
-  dormant for the session.
+  tried again when the fight ends, after the owed place check, so never in
+  an instance or a raid group; refused out of combat, the switch stops
+  switching for the session.
 - **Chat:** one line per switch, with the reason (`WowLab: combat log on
   (open world).`); one line once a session when Advanced Combat Logging is
   off (it never changes that setting).
 - `/wowlab combatlog` says whether the switch is on, the idle time, how many
   switches it has made and the last one. `/wowlab combatlog off` and `on`
-  pause and resume it at once (the log is left as it is), kept in its
-  record, so the count and whether the log is WowLab's are kept.
+  pause and resume it at once, kept in its record, so the count and whether
+  the log is WowLab's are kept. Paused, the log is left as it is; `on`
+  checks it at once (in combat, when the fight ends). A log WowLab had on
+  that is turned off and on again by hand while paused is taken as
+  WowLab's after `on`; one turned off by hand while paused stays off for
+  the session.
   `/wowlab combatlog idle <minutes>` sets the idle time, 1 to 120. Both are
   saved at the next `/reload` or logout. `/wowlab skip combatlog` stops it as
   it stops any section, and drops its record.
-- **Dormant** where the game gives addons no `LoggingCombat`, or the log does
-  not change when asked out of combat: one line, no error; the record keeps
-  its count and says why (`dormant`).
+- **Stopped for the session** where the game gives addons no
+  `LoggingCombat`, or the log does not change when asked out of combat: one
+  line, no error; the record keeps its count and says why (`dormant`), and
+  `/wowlab combatlog` says "stopped switching this session".
 - **Log files.** Each switch-on may start a new `WoWCombatLog-*.txt` in
   `Logs/` [verify]; they pile up there, and deleting old ones is yours to
-  do. `wowlab crew scan-log` with no file reads every log not read before,
-  oldest first.
+  do. `wowlab crew scan-log` with no file reads every log not read before
+  (the newest 1,000), oldest first; one it cannot open is skipped and named,
+  and the others are read.
 - The record, `WowLabCharDB.combatlog`: `idle_minutes`, `switches` (a count
   kept across sessions), `last_at` (`time()` of the last switch), `last_to`
   (`"on"` or `"off"`), `last_why`, `mine` (the log is on because WowLab

@@ -1138,10 +1138,16 @@ log at each switch-on [verify])."""
 class CrewScanLogFile(_Out):
     """One log a `crew scan-log` with no PATH looked at: its name (relative
     to the flavor folder) and what its read did (`state` `unchanged` when it
-    was read before and has not grown)."""
+    was read before and has not grown); or, for a log that could not be
+    read, no `scan` and `unreadable`, the reason (the other logs are read
+    all the same)."""
 
     log: str
-    scan: crewdb.WorldOutcome
+    scan: crewdb.WorldOutcome | None = None
+    unreadable: str | None = None
+
+    def unreadable_text(self) -> str:
+        return self.unreadable or "not read"
 
 
 class CrewScanLogReport(_Out):
@@ -1150,9 +1156,12 @@ class CrewScanLogReport(_Out):
     database. `log` is the file read (relative to the flavor folder when it
     is in it; with no PATH, the last log looked at), `scan` what that read
     did; with no PATH (M20-19) every log of the Logs folder not read before
-    is read, oldest first, each once, and `logs` lists each log looked at,
-    `logs_read` how many had something new and `logs_already_read` how many
-    had nothing new; `characters` how many of the account's characters wowlab
+    is read, oldest first, each once (the newest 1,000), and `logs` lists
+    each log looked at, `logs_read` how many had something new,
+    `logs_already_read` how many had nothing new, `logs_unreadable` how many
+    could not be read (skipped) and `logs_not_looked_at` how many older logs
+    were past the newest 1,000; `characters` how many of the account's
+    characters wowlab
     knows by their game id (the lab-addon's) and `characters_without_id`
     how many it has a lab-addon record of with no game id (their fights
     are not read), `scan` what the read found and kept (`state`, offsets,
@@ -1171,6 +1180,8 @@ class CrewScanLogReport(_Out):
     logs: list[CrewScanLogFile] = pydantic.Field(default_factory=list)
     logs_read: int = 0
     logs_already_read: int = 0
+    logs_unreadable: int = 0
+    logs_not_looked_at: int = 0
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1310,7 +1321,7 @@ def crew_scan_log(
         typer.Argument(
             metavar="[PATH]",
             help="The combat log to read; when not given, every log in the game's Logs folder "
-            "not read before, oldest first.",
+            "not read before (the newest 1,000), oldest first.",
             show_default=False,
         ),
     ] = None,
@@ -1326,8 +1337,8 @@ def crew_scan_log(
     fight ended. The log holds only what the game showed you while logging
     was on. Each log is read once; a log that grew is read on from where
     the last read stopped. Without PATH every log in the Logs folder not
-    read before is read, oldest first. Nothing in the game folder is
-    changed.
+    read before is read (the newest 1,000), oldest first; one that cannot
+    be read is skipped and named. Nothing in the game folder is changed.
 
     \f
     JSON: CrewScanLogReport."""
@@ -1350,33 +1361,61 @@ def crew_scan_log(
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
         files = [CrewScanLogFile(log=label, scan=outcome)]
+        older = 0
     else:
         # Imported here: `crew` loads no other command's module until a log is needed.
         from wowlab_core.cli._cmd_log import _logs_dir
 
         logs = _logs_dir(lay)
-        found = combatlog.find_logs(logs)[-_MAX_LOGS:] if logs is not None else []
+        every = combatlog.find_logs(logs) if logs is not None else []
+        found = every[-_MAX_LOGS:]
         if not found:
             raise CliError(
                 f"no combat log in {lay.flavor_path}: turn logging on in game with /combatlog, "
                 "fight, then run this again"
             )
-        files = []
-        for each in found:
-            got = _read_log_parts(target, each, owners)
-            files.append(CrewScanLogFile(log=_log_label(lay, each), scan=got))
-            if got.state in ("skipped", "elsewhere"):
-                break
-        last = files[-1]
-        outcome, label = last.scan, last.log
         if len(found) == 1:
+            outcome = _read_log_parts(target, found[0], owners)
+            label = _log_label(lay, found[0])
+            files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
             lines = (
                 _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
             )
         else:
+            files = []
+            for each in found:
+                try:
+                    got = _read_log_parts(target, each, owners)
+                except CliError as exc:
+                    # One log that cannot be read does not hold the others.
+                    cause = exc.__cause__
+                    why = (
+                        f"the file could not be opened: {cause.strerror or cause}"
+                        if isinstance(cause, OSError)
+                        else str(exc)
+                    )
+                    files.append(CrewScanLogFile(log=_log_label(lay, each), unreadable=why))
+                    continue
+                files.append(CrewScanLogFile(log=_log_label(lay, each), scan=got))
+                if got.state in ("skipped", "elsewhere"):
+                    break
+            read_any = [f for f in files if f.scan is not None]
+            if not read_any:
+                raise CliError(
+                    f"none of the {len(found)} combat logs in the Logs folder could be read: "
+                    + files[-1].unreadable_text()
+                )
+            last = read_any[-1]
+            assert last.scan is not None
+            outcome, label = last.scan, last.log
             words, lines = _many_logs_text(files, len(found), place, without)
-    read = sum(1 for f in files if f.scan.state == "scanned")
+        older = len(every) - len(found)
+        if older:
+            lines.append(
+                f"  {_plural(older, 'older log')} not looked at: only the newest {_MAX_LOGS:,} are."
+            )
+    states = [f.scan.state for f in files if f.scan is not None]
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1388,8 +1427,10 @@ def crew_scan_log(
         lines=lines,
         notes=_WORLD_NOTES,
         logs=files,
-        logs_read=read,
-        logs_already_read=sum(1 for f in files if f.scan.state == "unchanged"),
+        logs_read=states.count("scanned"),
+        logs_already_read=states.count("unchanged"),
+        logs_unreadable=sum(1 for f in files if f.unreadable is not None),
+        logs_not_looked_at=0 if path is not None else older,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:
@@ -1408,23 +1449,31 @@ def crew_scan_log(
 def _many_logs_text(
     files: list[CrewScanLogFile], found: int, place: str, without: int
 ) -> tuple[str, list[str]]:
-    """The text of a scan of several logs: how many were read and how many
-    had nothing new, then each log read with what it held."""
-    read = [f for f in files if f.scan.state == "scanned"]
-    old = sum(1 for f in files if f.scan.state == "unchanged")
-    last = files[-1].scan
+    """The text of a scan of several logs: how many were read, how many had
+    nothing new and how many could not be read, then each log read with what
+    it held and each log that could not be read with why."""
+    scans = [f.scan for f in files if f.scan is not None]
+    last = scans[-1]
     if last.state in ("skipped", "elsewhere"):
-        return f"{last.words} ({place}, {files[-1].log})", []
-    encounters = sum(f.scan.encounters_added for f in read)
+        named = next(f for f in files if f.scan is last)
+        return f"{last.words} ({place}, {named.log})", []
+    read = [f for f in files if f.scan is not None and f.scan.state == "scanned"]
+    old = sum(1 for s in scans if s.state == "unchanged")
+    bad = [f for f in files if f.unreadable is not None]
+    encounters = sum(f.scan.encounters_added for f in read if f.scan is not None)
+    unread = f"; {len(bad)} could not be read" if bad else ""
     words = (
         f"Read {_plural(len(read), 'combat log')} of {found} in the Logs folder "
-        f"({old} read before, nothing new): {_plural(encounters, 'open-world encounter')} "
-        f"added ({place})"
+        f"({old} read before, nothing new{unread}): "
+        f"{_plural(encounters, 'open-world encounter')} added ({place})"
     )
     lines: list[str] = []
     for f in read:
+        assert f.scan is not None
         lines.append(f"  {f.log}: {f.scan.words}")
         lines += ["  " + line for line in _scan_lines(f.scan, 0)]
+    for f in bad:
+        lines.append(f"  {f.log}: not read, skipped ({f.unreadable_text()})")
     if without:
         lines += _scan_lines(last, without)[-1:]
     return words, lines

@@ -81,7 +81,8 @@ def test_constructed_dormant_paused_and_refused_in_combat() -> None:
     assert isinstance(char.combatlog, labaddon.CombatLog)
     lines = labaddon.describe(char)
     assert any(
-        "it did nothing that session: LoggingCombat missing: the combat log is not switched" in x
+        "it stopped switching that session: LoggingCombat missing: the combat log is not switched"
+        in x
         for x in lines
     )
     assert any(x.startswith("Combat-log switch: 3 switches made") for x in lines)
@@ -90,7 +91,10 @@ def test_constructed_dormant_paused_and_refused_in_combat() -> None:
         x.startswith("Combat-log switch: off (/wowlab combatlog off); 3 switches") for x in lines
     )
     lines = labaddon.describe(m16._char(_raw(refused_in_combat=2)))
-    assert any("the game refused 2 in combat (tried again after the fight)" in x for x in lines)
+    assert any(
+        "the game refused 2 switches in combat (each tried again after the fight)" in x
+        for x in lines
+    )
 
 
 def test_constructed_switched_off_is_an_absent_record() -> None:

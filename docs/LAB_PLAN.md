@@ -7389,6 +7389,20 @@ file, a switch in combat. The first run checks the chat lines (login, an
 instance, an idle, a fight) and counts the files in `Logs/` after a
 session. `doctor` does not show the switch; `char show` does.
 
+*Fix round 2 (2026-11-22, M20-19).* At the end of a fight the owed place
+check runs before a retry of a switch refused in combat, so a retry never
+turns the log on in an instance or a raid group. `/wowlab combatlog on`
+asks for a check at once through Core's `wake` (out of combat; in combat
+the end of the fight runs it). A log WowLab had on that is turned off and on
+by hand while paused is taken as WowLab's after `on`. The record's
+`dormant` is shown as "stopped switching that session", and
+`refused_in_combat` as "the game refused N switches in combat (each tried
+again after the fight)". `crew scan-log` with no PATH says it looks at the
+newest 1,000 logs and how many older ones it did not look at
+(`logs_not_looked_at`); a log it cannot open is skipped, named with its
+reason (`logs[].unreadable`, `logs_unreadable`) and the newer logs are read;
+a PATH that cannot be read is still an error.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |

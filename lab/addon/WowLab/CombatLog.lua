@@ -138,6 +138,7 @@ local function readBack()
     paused = held.paused == true
     if was and not paused then
         started = true
+        waiting = true
     end
     if loaded then
         return
@@ -406,13 +407,16 @@ local function run(trigger)
     elseif trigger == "calm" then
         fighting = false
         active = ns.Number(time())
-        if retry then
-            retry = false
-            resume()
-        end
+        -- The owed check first: a fight that ended in an instance or a raid
+        -- group leaves the log off there, and the retry below finds the
+        -- switch no longer idled.
         if waiting then
             waiting = false
             check("enter")
+        end
+        if retry then
+            retry = false
+            resume()
         end
         if mine then
             armIdle()
@@ -541,7 +545,7 @@ function ns.CombatLogStatus(off)
     if held.paused == true then
         text = "the combat-log switch is off (/wowlab combatlog on  turns it on); " .. count .. " switches"
     elseif type(held.dormant) == "string" then
-        text = "the combat-log switch does nothing this session: " .. held.dormant .. "; " .. count .. " switches"
+        text = "the combat-log switch stopped switching this session: " .. held.dormant .. "; " .. count .. " switches"
     end
     if type(held.last_to) == "string" and type(held.last_why) == "string" then
         text = text .. ", the last " .. held.last_to .. " (" .. held.last_why .. ")"
@@ -550,8 +554,11 @@ function ns.CombatLogStatus(off)
 end
 
 -- `/wowlab combatlog on|off`: resumes or pauses the switch at once, kept in
--- the record (saved at the next /reload or logout). The log is left as it
--- is; the count, the last switch and whether the log is WowLab's are kept.
+-- the record (saved at the next /reload or logout). Paused, the log is left
+-- as it is; the count, the last switch and whether the log is WowLab's are
+-- kept (a log turned on by hand while paused is taken as WowLab's after
+-- `on` if WowLab's was on before). On resume Core.lua asks for a check at
+-- once (out of combat; in combat, when the fight ends).
 function ns.CombatLogSwitch(on)
     local held = ns.state[KEY]
     if type(held) ~= "table" or type(held.absent) ~= "nil" then
@@ -560,7 +567,7 @@ function ns.CombatLogSwitch(on)
     end
     if on then
         held.paused = nil
-        ns.Say("the combat-log switch is on; it acts at the next zone change, group change, fight or loading screen.")
+        ns.Say("the combat-log switch is on; it checks the combat log now (in combat, when the fight ends).")
     else
         held.paused = true
         ns.Say("the combat-log switch is off; the combat log is left as it is (/combatlog turns it off by hand).")
