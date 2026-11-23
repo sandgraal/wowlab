@@ -229,6 +229,21 @@ def test_a_bad_id_header_is_an_error_constructed(tmp_path: Path, header: str) ->
         store.ids("Npc")
 
 
+def test_an_id_header_declaring_too_many_ids_is_refused_constructed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(questiedb, "MAX_IDS", 3)
+    store = _store(tmp_path, toc_text({"Npc": {i: {1: "n"} for i in range(1, 5)}}))
+    with pytest.raises(QuestieDBError, match="declares 4 ids, more than 3"):
+        store.ids("Npc")
+
+
+def test_the_id_caps_leave_room_over_the_real_size() -> None:
+    # The owner's largest header: 23,978 ids, about 120 KB inflated.
+    assert questiedb.MAX_IDS >= 40 * 23_978
+    assert questiedb.MAX_IDS_BYTES >= 30 * 120_000
+
+
 def test_an_id_header_inflating_past_the_cap_is_refused_constructed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -264,9 +279,11 @@ def test_lists_what_it_leaves_out_constructed(tmp_path: Path) -> None:
     store = _store(tmp_path, slice_toc())
     parts = [left.part for left in store.left_out()]
     assert parts == [
-        "corrections the addon applies in game for each character",
+        "the corrections Questie picks by the character's faction and class",
         "names in other languages",
     ]
+    why = store.left_out()[0].why
+    assert "lists both factions' givers" in why and "some quests show no zone" in why
 
 
 # ─── the drop tables ─────────────────────────────────────────────────────────
@@ -276,16 +293,76 @@ def test_reads_the_literal_drop_tables_and_leaves_the_code_out_constructed(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path, slice_toc())
-    tables, left = questiedb.read_drop_tables(store)
-    assert [(t.name, t.file, t.chances) for t in tables] == [
-        ("wowheadData", DROPS_FILE, {2589: {3: 12.5}}),
-        ("cmangosData", DROPS_FILE, {2589: {3: 10.0}}),
+    data = questiedb.read_drop_tables(store)
+    assert [(t.name, t.file, t.chances) for t in data.tables] == [
+        ("wowheadData", DROPS_FILE, {2589: {3: 12.5}, 725: {3: 45.04, 12676: 37.6}}),
+        ("cmangosData", DROPS_FILE, {2589: {3: 10.0}, 725: {12676: 80.0}}),
     ]
-    assert [(x.part, x.why) for x in left] == [
+    # The first section's corrections, the table references read as their
+    # tokens' negative numbers, never evaluated.
+    assert data.corrections is not None
+    assert (data.corrections.name, data.corrections.file) == ("Era", CORRECTIONS_FILE)
+    assert data.corrections.chances == {
+        2589: {3: questiedb.REFERENCE_WOWHEAD},
+        725: {3: 50.0, 12676: questiedb.REFERENCE_PSERVER},
+    }
+    # A later section with figures, and one holding a call, are left out by
+    # name; an empty section says nothing.
+    assert [(x.part, x.why) for x in data.left_out] == [
         (
-            f"the drop file {CORRECTIONS_FILE}",
-            "it is Lua code (drop-rate corrections), which wowlab never runs",
-        )
+            f"the drop corrections Tbc in {CORRECTIONS_FILE}",
+            "Questie applies them only on later game versions",
+        ),
+        (
+            f"the drop corrections Cata in {CORRECTIONS_FILE}",
+            "they hold more than figures and table references, so reading them would mean "
+            "running them",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"Q.Era = {\n  [1] = { [2] = DropKeys.OTHER },\n}\n",
+        b"Q.Era = {\n  [1] = { [2] = DropKeys.WOWHEAD() },\n}\n",
+        b"Q.Era = {\n  [1] = { [2] = -DropKeys.WOWHEAD },\n}\n",
+        b"Q.Era = {\n  [1] = { [2] = setmetatable({}, {}) },\n}\n",
+        b"Q.Era = {\n  [1] = { [2] = 5 } --[[ a long comment ]]\n}\n",
+        b'Q.Era = {\n  [1] = { [2] = "DropKeys.WOWHEAD" },\n}\n',
+        b"Q.Era = {\n  [1] = { [2] = 5 },\n",
+    ],
+)
+def test_corrections_that_are_not_figures_or_references_are_left_out_constructed(
+    tmp_path: Path, body: bytes
+) -> None:
+    store = _store(tmp_path, slice_toc())
+    path = store.path.parent / "support" / "Forever" / "DropTables" / "itemDropCorrections.lua"
+    path.write_bytes(body)
+    data = questiedb.read_drop_tables(store)
+    assert data.corrections is None
+    assert [x.part for x in data.left_out] == [f"the drop corrections Era in {CORRECTIONS_FILE}"]
+
+
+def test_a_drop_file_with_no_table_is_left_out_as_code_constructed(tmp_path: Path) -> None:
+    store = _store(tmp_path, slice_toc())
+    path = store.path.parent / "support" / "Forever" / "DropTables" / "itemDropCorrections.lua"
+    path.write_bytes(b"local x = 1\nprint(x)\n")
+    data = questiedb.read_drop_tables(store)
+    assert [(x.part, x.why) for x in data.left_out] == [
+        (f"the drop file {CORRECTIONS_FILE}", "it is Lua code, which wowlab never runs")
+    ]
+
+
+def test_reads_questiedbs_own_zone_names_constructed(tmp_path: Path) -> None:
+    store = _store(tmp_path, slice_toc())
+    names, left = questiedb.read_zone_names(store)
+    assert names == {12: "Elwynn Forest", 10022: "Dire Maul Gordok Commons"} and left == []
+    path = store.path.parent / "src" / "corrections" / "enum" / "zones.lua"
+    path.write_bytes(b"constants.zoneIDs = {\n  A = 1,\n  B = getId(),\n}\n")
+    names, left = questiedb.read_zone_names(store)
+    assert names == {} and [x.part for x in left] == [
+        "QuestieDB's own zone names in src\\corrections\\enum\\zones.lua"
     ]
 
 
@@ -310,13 +387,13 @@ def test_a_long_string_that_is_not_one_literal_is_left_out_by_name_constructed(
     store = _store(tmp_path, slice_toc())
     path = store.path.parent / "support" / "Forever" / "DropTables" / "classicItemDrops.lua"
     path.write_bytes(body)
-    tables, left = questiedb.read_drop_tables(store)
+    data = questiedb.read_drop_tables(store)
     if refused:
-        assert tables == []
-        assert left[0].part == f"the drop table a in {DROPS_FILE}"
-        assert "running it" in left[0].why
+        assert data.tables == []
+        assert data.left_out[0].part == f"the drop table a in {DROPS_FILE}"
+        assert "running it" in data.left_out[0].why
     else:
-        assert [t.chances for t in tables] == [{7: {8: 50.0}}]
+        assert [t.chances for t in data.tables] == [{7: {8: 50.0}}]
 
 
 def test_a_listed_path_that_climbs_out_is_not_read_constructed(tmp_path: Path) -> None:
@@ -324,7 +401,7 @@ def test_a_listed_path_that_climbs_out_is_not_read_constructed(tmp_path: Path) -
     toc = toc_text({}, files=["..\\DropTables\\..\\Secret.lua", "DropTables\\..\\..\\x.lua"])
     store = _store(tmp_path, toc)
     outside.write_bytes(b"T.wowheadData = [[return { [1] = { [2] = 3 } }]]\n")
-    assert questiedb.read_drop_tables(store) == ([], [])
+    assert questiedb.read_drop_tables(store) == questiedb.DropData(tables=[])
 
 
 def test_reading_writes_nothing_constructed(tmp_path: Path) -> None:

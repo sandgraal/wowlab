@@ -112,8 +112,8 @@ def test_finds_with_both_sources_and_says_it_in_text_constructed(
     assert "  Drops from Sharptalon (level 31) in Ashenvale at 75.0, 70.1" in result.stdout
     assert "  Starts the quest Sharptalon's Claw (level 30, Ashenvale)" in result.stdout
     assert (
-        "  Turned in to Senani Thunderheart (level 30, Horde) in Ashenvale at 73.8, 61.5"
-        in result.stdout
+        "Turned in to Senani Thunderheart (level 30, friendly to Horde) in Ashenvale at 73.8, 61.5"
+        in " ".join(result.stdout.split())
     )
     assert result.stdout.rstrip().endswith("notes: --notes shows them")
     assert requests == []
@@ -137,9 +137,10 @@ def test_json_carries_the_detail_lines_and_states_constructed(
     ]
     assert hit.lines == [
         "Reward of the quest A Rogue's Deal (level 5, Elwynn Forest)",
-        "Sold by Innkeeper Grosk (Innkeeper, level 30, Horde) in Orgrimmar at 54.1, 68.4 "
-        "(and 1 more spot); Durotar at 51.5, 41.6",
-        "Sold by Innkeeper Farley (Innkeeper, level 30, Alliance) in Elwynn Forest at 43.8, 65.8",
+        "Sold by Innkeeper Grosk (Innkeeper, level 30, friendly to Horde) in Orgrimmar at "
+        "54.1, 68.4 (and 1 more spot); Durotar at 51.5, 41.6",
+        "Sold by Innkeeper Farley (Innkeeper, level 30, friendly to Alliance) in Elwynn Forest "
+        "at 43.8, 65.8",
     ]
     assert report.questiedb.state == "read"
     assert [(t.table, t.state) for t in report.game_tables] == [
@@ -156,8 +157,17 @@ def test_drop_chances_and_the_limit_constructed(root: Path, user_data: Path) -> 
     (hit,) = report.hits
     assert hit.lines[0] == (
         "Drops from Flesh Eater (level 24-25) in Duskwood at 25.1, 38.2 (and 1 more spot), "
-        "12.5%, 10% chance"
+        "12.5% (Wowhead), 10% (cmangos)"
     )
+    # Questie's figure first, labelled, one decimal: a correction, then the
+    # server table's (its correction points there), then Wowhead's.
+    (paw,) = _report("gnoll paw").hits
+    assert paw.lines == [
+        "Drops from Sharptalon (level 31) in Ashenvale at 75.0, 70.1, 80% (cmangos), "
+        "37.6% (Wowhead)",
+        "Drops from Flesh Eater (level 24-25) in Duskwood at 25.1, 38.2 (and 1 more spot), "
+        "50% (Questie's correction), 45% (Wowhead)",
+    ]
     report = _report("innkeeper", "--limit", "1")
     assert report.total == 2 and len(report.hits) == 1
     assert report.words == '2 matches for "innkeeper"; the best one is shown.'
@@ -222,10 +232,67 @@ def test_notes_list_what_was_left_out_constructed(root: Path, user_data: Path) -
     _cached(user_data, "ItemSparse", "AreaTable")
     result = run("lookup", "claw", "--notes")
     text = " ".join(result.stdout.split())
-    assert "Not read: corrections the addon applies in game for each character" in text
+    assert "Read: QuestieDB 1.1.4 (QuestieDB_Forever.toc)." in text
+    assert "Not read: the corrections Questie picks by the character's faction and class" in text
+    assert "a quest given on both sides lists both factions' givers" in text
     assert "Not read: names in other languages" in text
-    assert "itemDropCorrections.lua, because it is Lua code" in text
+    assert "Not read: the drop corrections Tbc in" in text
     assert "Drop chances are shown only where QuestieDB's drop tables have one" in text
+    assert "the first is the one Questie itself shows" in text
+
+
+def test_the_lines_for_the_review_findings_constructed(root: Path, user_data: Path) -> None:
+    _cached(user_data, "ItemSparse", "AreaTable")
+    (docs,) = _report("mcbride").hits
+    assert docs.lines == ["Given with the quest Report to Goldshire (level varies, Elwynn Forest)"]
+    (linen,) = _report("linen cloth").hits
+    assert "Used in the quest A Rogue's Deal (level 5, Elwynn Forest)" in linen.lines
+    (merchant,) = _report("wandering merchant").hits
+    assert merchant.lines == ["Level 20", "Usually in Durotar; QuestieDB keeps no spot for it"]
+    (brute,) = _report("gordok").hits
+    assert brute.lines[1] == (
+        "Found in Dire Maul Gordok Commons (QuestieDB's own area 10022, inside an instance)"
+    )
+    (trial,) = _report("class trial").hits
+    assert trial.lines == [
+        "Level 10; needs level 10; no zone: a class, profession or other quest category"
+    ]
+    (shortsword,) = _report("worn shortsword").hits
+    assert shortsword.lines == ["Reward of the quest A Rogue's Deal (level 5, Elwynn Forest)"]
+    (box,) = _report("box of supplies").hits
+    assert box.lines == [
+        "QuestieDB names no drop, object, container, vendor or quest for it, and no quest "
+        "that uses it."
+    ]
+
+
+def test_an_item_when_questiedb_is_not_read_is_unknown_constructed(
+    root: Path, user_data: Path
+) -> None:
+    _cached(user_data, "ItemSparse", "AreaTable")
+    shutil.rmtree(root / FLAVOR / "Interface" / "AddOns" / "QuestieDB")
+    (hit,) = _report("linen").hits
+    assert hit.lines == ["QuestieDB is not read, so where it comes from is unknown."]
+    report = _report("linen")
+    assert report.caveat == (
+        "QuestieDB is not installed for this game version, so only the game's item table was "
+        "searched."
+    )
+
+
+def test_the_caveat_is_in_the_json_and_names_several_tocs_constructed(
+    root: Path, user_data: Path
+) -> None:
+    _cached(user_data, "ItemSparse", "AreaTable")
+    assert _report("claw").caveat is None
+    place(root / FLAVOR, slice_toc(), name="QuestieDB_Other.toc")
+    report = _report("claw")
+    assert report.questiedb.tocs == ["QuestieDB_Forever.toc", "QuestieDB_Other.toc"]
+    assert report.caveat is not None and report.caveat.startswith(
+        "QuestieDB has 2 files that hold its data (QuestieDB_Forever.toc, QuestieDB_Other.toc); "
+        "wowlab read QuestieDB_Forever.toc"
+    )
+    assert report.caveat.endswith("may not be the one the game loads (not yet confirmed).")
 
 
 def test_help_and_text_are_player_copy(root: Path, user_data: Path) -> None:

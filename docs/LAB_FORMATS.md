@@ -627,16 +627,38 @@ compiled with `loadstring`, and their text is a literal table.
   an array, doubles for coordinates. No tag, no indefinite length, no
   `undefined` was seen; the reader refuses them.
 - Field numbers are the addon's (`src/meta/<kind>Meta.lua`). Read by
-  `lookup`: item 1 name, 2 NPC drops, 3 object drops, 4 container items,
-  5 the quest it starts, 6 quests that reward it, 9 item level, 10 required
-  level, 14 vendors; NPC 1 name, 4 and 5 levels, 6 rank, 7 spawns
-  (`{zone: [[x, y], …]}`, x and y map percentages; `-1, -1` inside an
-  instance), 9 zone, 10 and 11 quests started and ended, 13 friendly to
-  (`A`, `H`, `AH`), 14 title; quest 1 name, 2 starters and 3 finishers
-  (`{1: NPCs, 2: objects, 3: items}`, as a map or an array with holes),
-  4 required level, 5 level, 17 zone (positive: an AreaTable id; negative:
-  a quest sort); object 1 name, 2 and 3 quests, 4 spawns, 5 zone. Zones are
-  AreaTable ids, named from the game table (§9).
+  `lookup`:
+  - item: 1 name, 2 NPC drops, 3 object drops, 4 containers that can hold
+    it, 5 the quest it starts, 6 quests that reward it, 9 item level,
+    10 required level, 14 vendors, 15 related quests (the quests it is used
+    in: shown as "Used in the quest");
+  - NPC: 1 name, 4 and 5 levels, 6 rank, 7 spawns (`{zone: [[x, y], …]}`,
+    x and y map percentages; `-1, -1` is a spawn inside an instance, with
+    no spot on a map), 9 zone (QuestieDB's best estimate of where it is most
+    common: shown as "Usually in <zone>" when there is no spawn), 10 and 11
+    quests started and ended, 13 friendly to (`A`, `H` or `AH`; a missing
+    field 13 means friendly to neither faction), 14 title;
+  - quest: 1 name, 2 starters (`{1: NPCs, 2: objects, 3: items}`, a map or
+    an array with holes), 3 finishers (NPC and object groups only), 4
+    required level, 5 level (0 or below: unknown or scaling with the
+    player), 11 `sourceItemId`, the item handed over with the quest (read
+    the other way round, for an item: "Given with the quest"; 1,011 items of
+    the owner's copy, such as 745 Marshal McBride's Documents, have no other
+    source), 17 zone (positive: a zone id; negative: a quest sort, the
+    category a class, profession or holiday quest is filed under, shown as
+    "no zone");
+  - object: 1 name, 2 and 3 quests, 4 spawns, 5 zone.
+- Zone ids are AreaTable ids, named from the game table (§9), **except**
+  the areas QuestieDB numbers itself, such as the wings of an instance
+  (10000 and up in the owner's copy: 10022 is Dire Maul's Gordok Commons).
+  The game table has no such id; QuestieDB's own zone list
+  (`src\corrections\enum\zones.lua`, `constants.zoneIDs = { NAME = number
+  }`, a literal, read with `luadata`) names it, and `lookup` says "QuestieDB's
+  own area 10022" and never names such an id from AreaTable. Which instance
+  a wing belongs to is in `support\<flavor>\Zones\dungeons.lua`, which is
+  code (`isHorde and {…} or {…}` and `UnitFactionGroup`), so it is not
+  read. An own id that the game table also uses is **[verify]**: none at
+  1.60.1.71037, whose AreaTable has no id from 10000 to 10089.
 
 **The drop tables.** The TOC lists `support\<flavor>\DropTables\…lua`
 files. `classicItemDrops.lua` assigns two Lua long strings,
@@ -646,16 +668,49 @@ files. `classicItemDrops.lua` assigns two Lua long strings,
 parsed by `luadata` (§4) as data; anything else in that shape is left out.
 They cover the items quests ask for, not every drop.
 
+**The drop corrections.** `itemDropCorrections.lua` assigns one table per
+game version, `QuestieItemDropCorrections.Era = { [item] = { [npc] = value
+} }`, then `.Tbc`, `.Wotlk`, `.Cata`, `.MoP`. A value is a percent (`100`,
+`1.5`) or a pointer at one table's figure, `DropKeys.WOWHEAD` or
+`DropKeys.PSERVER` (`DropDB.correctionKeys`, -1 and -2 in Questie). Under
+the conductor's ruling of 2026-11-23 (L3) those two tokens are recognised
+as data, never evaluated, and the rest of a section must be a literal; a
+section with anything else is left out by name. The owner's Era section:
+86 items, 228 `WOWHEAD` pointers and 108 percents, no `PSERVER` pointer. Questie applies Era on
+every game version and the later sections only from their own expansion
+on (`Questie/Database/DropTables/dropDB.lua`); which expansion Forever
+counts as is **[verify]**, so `lookup` uses the first section only and
+lists the others.
+
+**The figure Questie shows** (`DropDB:GetItemDroprate`): its correction
+when it is a percent; when it points at a table, that table's figure; else
+the private server table's (`cmangosData`), else Wowhead's. `lookup` shows
+that figure first and labels each one: "50% (Questie's correction),
+45% (Wowhead)", "80% (cmangos), 37.6% (Wowhead)".
+
 **Left out, by name** (listed in `lookup --json`'s `questiedb.left_out`
 and behind `--notes`):
 
-- the corrections under `src\corrections\…`, Lua functions the addon runs
-  per character in game (the fixed ones are already folded into the store,
-  as `foreverItemFixes.lua` says: "Static body stripped at package time");
-- `itemDropCorrections.lua`, Lua code that names Questie's constants
-  (`DropDB.correctionKeys.WOWHEAD`);
+- the corrections Questie picks by the character's faction and class
+  (`src\corrections\…`, Lua functions the addon runs in game; the ones for
+  every character are already folded into the store, as
+  `foreverItemFixes.lua` says: "Static body stripped at package time").
+  Without them a quest given on both sides lists both factions' givers,
+  and some quests show no zone;
+- the drop corrections of later game versions, and any correction section
+  that is not data;
 - `X-l10n-<locale>-<Kind>` blocks, the names in other languages: data, not
   needed for the English names the rows hold.
+
+**Several TOCs.** When more than one TOC named after the folder holds a
+store, `lookup` reads the one whose `## Interface` holds the client's
+interface version (`addoncheck`'s rule for which TOC loads, itself
+**[verify]**), else the first by name, and says which it read and that it
+may not be the one the game loads. The owner's copy has one.
+
+**Bounds.** An id header may inflate to at most 4 MiB and declare at most
+1,000,000 ids (the owner's largest: about 120 KB, 23,978 ids); above
+either it is refused with the reason.
 
 ## Amendments
 

@@ -145,8 +145,14 @@ SLICE: dict[str, dict[int, dict[int, object]]] = {
         16305: {1: "Sharptalon's Claw", 2: [12676], 5: 2, 9: 20, 10: 20},
         # name, questRewards, itemLevel, requiredLevel, vendors
         159: {1: "Refreshing Spring Water", 6: [8], 9: 5, 10: 1, 14: [1000, 1001]},
-        # name, objectDrops, itemDrops (a container), itemLevel
-        2589: {1: "Linen Cloth", 2: [3], 3: [31], 4: [6827], 9: 5},
+        # name, npcDrops, objectDrops, itemDrops (a container), itemLevel,
+        # relatedQuests
+        2589: {1: "Linen Cloth", 2: [3], 3: [31], 4: [6827], 9: 5, 15: [8]},
+        # name, itemLevel: handed over with quest 54 (its sourceItemId)
+        745: {1: "Marshal McBride's Documents", 9: 1},
+        # name, npcDrops, itemLevel: dropped where only the corrections or
+        # one table give a chance
+        725: {1: "Gnoll Paw", 2: [3, 12676], 9: 1},
         # name, questRewards, itemLevel, requiredLevel
         25: {1: "Worn Shortsword", 6: [8], 9: 2, 10: 1},
         6827: {1: "Box of Supplies", 9: 1},
@@ -188,6 +194,11 @@ SLICE: dict[str, dict[int, dict[int, object]]] = {
         # Spawns in zone 1 only: a CBOR array, its one zone at index 1; zone 1
         # is not in the recorded zone subset.
         1002: {1: "Lost Wanderer", 4: 5, 5: 5, 7: [[[10.0, 20.0]]]},
+        # No spawn: only QuestieDB's estimate of its zone (field 9).
+        1003: {1: "Wandering Merchant", 4: 20, 5: 20, 9: 14},
+        # Inside an instance wing QuestieDB numbers itself (10022), with the
+        # -1, -1 point it writes for a spawn inside an instance.
+        11441: {1: "Gordok Brute", 4: 57, 5: 58, 7: {10022: [[-1, -1]]}, 9: 10022},
     },
     "Quest": {
         # name, startedBy {items}, finishedBy [[npcs]], requiredLevel, level, zone
@@ -195,6 +206,8 @@ SLICE: dict[str, dict[int, dict[int, object]]] = {
         8: {1: "A Rogue's Deal", 2: [[1000]], 3: [[1000]], 4: 1, 5: 5, 17: 12},
         # A quest sorted by category (a negative zoneOrSort): no zone.
         9: {1: "The Class Trial", 4: 10, 5: 10, 17: -61},
+        # sourceItemId 745; a level QuestieDB does not know (0)
+        54: {1: "Report to Goldshire", 4: 1, 5: 0, 11: 745, 17: 12},
     },
     "Object": {
         # name, questStarts, spawns, zoneID
@@ -205,6 +218,18 @@ SLICE: dict[str, dict[int, dict[int, object]]] = {
 DROPS_FILE = "support\\Forever\\DropTables\\classicItemDrops.lua"
 CORRECTIONS_FILE = "support\\Forever\\DropTables\\itemDropCorrections.lua"
 FIX_FILE = "src\\corrections\\Forever\\foreverItemFixes.lua"
+ZONES_FILE = "src\\corrections\\enum\\zones.lua"
+
+# QuestieDB's own zone list: AreaTable ids and the areas it numbers itself.
+ZONES_LUA = b"""-- Shared zone symbols.
+local _, LibQuestieDB = ...
+local constants = LibQuestieDB.Enum
+
+constants.zoneIDs = {
+  ELWYNN_FOREST = 12,
+  DIRE_MAUL_GORDOK_COMMONS = 10022,
+}
+"""
 
 DROPS_LUA = b"""---@class QuestieClassicItemDrops
 local QuestieClassicItemDrops = QuestieLoader:CreateModule("QuestieClassicItemDrops")
@@ -213,11 +238,18 @@ QuestieClassicItemDrops.wowheadData = [[return {
     [2589] = { -- Linen Cloth
         [3] = 12.5,
     },
+    [725] = { -- Gnoll Paw
+        [3] = 45.04,
+        [12676] = 37.6,
+    },
 }]]
 
 QuestieClassicItemDrops.cmangosData = [[return {
     [2589] = { -- Linen Cloth
         [3] = 10,
+    },
+    [725] = { -- Gnoll Paw
+        [12676] = 80,
     },
 }]]
 """
@@ -225,8 +257,29 @@ QuestieClassicItemDrops.cmangosData = [[return {
 CORRECTIONS_LUA = b"""---@class QuestieItemDropCorrections
 local QuestieItemDropCorrections = QuestieLoader:CreateModule("QuestieItemDropCorrections")
 local DropKeys = DropDB.correctionKeys
+-- [itemID] = { -- Item Name
+--    [npcID] = DropDB.correctionKeys.WOWHEAD,
+-- }
+
 QuestieItemDropCorrections.Era = {
-    [2589] = { [3] = DropKeys.WOWHEAD },
+    [2589] = { -- Linen Cloth
+        [3] = DropKeys.WOWHEAD,
+    },
+    [725] = { -- Gnoll Paw
+        [3] = 50,
+        [12676] = DropKeys.PSERVER,
+    },
+}
+
+QuestieItemDropCorrections.Tbc = { -- only on later game versions
+    [2589] = { [3] = 1.5 },
+}
+
+QuestieItemDropCorrections.Wotlk = {
+}
+
+QuestieItemDropCorrections.Cata = {
+    [725] = { [3] = math.max(1, 2) },
 }
 """
 
@@ -240,6 +293,8 @@ def place(flavor: Path, toc: bytes, *, folder: str = "QuestieDB", name: str | No
     (addon / "support" / "Forever" / "DropTables" / "itemDropCorrections.lua").write_bytes(
         CORRECTIONS_LUA
     )
+    (addon / "src" / "corrections" / "enum").mkdir(parents=True, exist_ok=True)
+    (addon / "src" / "corrections" / "enum" / "zones.lua").write_bytes(ZONES_LUA)
     path = addon / (name or f"{folder}_Forever.toc")
     path.write_bytes(toc)
     return path
@@ -249,7 +304,7 @@ def slice_toc(**kwargs: object) -> bytes:
     """The lookup tests' slice, listing the drop files and one correction."""
     return toc_text(
         SLICE,
-        files=[FIX_FILE, DROPS_FILE, CORRECTIONS_FILE],
+        files=[ZONES_FILE, FIX_FILE, DROPS_FILE, CORRECTIONS_FILE],
         extra=["## X-l10n-Version: 1", "## X-l10n-deDE-Item: ~1~", "## X-l10n-deDE-Item-1: AA=="],
         **kwargs,  # type: ignore[arg-type]
     )

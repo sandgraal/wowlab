@@ -24,14 +24,27 @@ from the owner's install of QuestieDB 1.1.4 on 2026-11-23
   {...}]]`, which Questie compiles with `loadstring` in game. Only that
   shape is taken: the text between `return` and the closing bracket is a
   table constructor and is parsed by `luadata`, which accepts literals only
-  and rejects everything else with a position. Anything else in those files
-  (the drop-rate corrections, which name Questie's own constants) is code
-  and is left out, by name.
+  and rejects everything else with a position.
+- **The drop corrections.** A drop file with no such string is Questie's
+  corrections, `Module.Section = { [item] = { [npc] = value } }` per game
+  version. Under the conductor's ruling of 2026-11-23 (L3), a narrow token
+  recognizer reads them: `DropKeys.WOWHEAD` and `DropKeys.PSERVER` (also
+  spelled `DropDB.correctionKeys.…`), Questie's pointers at one table's
+  figure, become -1 and -2, the numbers Questie gives them, and the rest
+  must be a literal for `luadata`. Nothing is evaluated; a section holding
+  anything else is left out by name. Only the first section is used, the
+  one Questie applies on every game version; later ones are listed as left
+  out.
+- **QuestieDB's own zone list.** `constants.zoneIDs = { NAME = number }` in
+  a file the TOC lists under an `enum` folder, read with `luadata` when it
+  is a literal. It names the areas QuestieDB numbers itself (the wings of an
+  instance), which the game's zone table does not have.
 
-What is not read, and why, is listed (`left_out`): the corrections the addon
-applies in game per character (Lua functions), the names in other languages
-(`X-l10n-...`, which this reader does not need: the stored names are
-English), and any drop-table file that is not one literal.
+What is not read, and why, is listed (`left_out`): the corrections Questie
+picks by the character's faction and class (Lua functions), the names in
+other languages (`X-l10n-...`, which this reader does not need: the stored
+names are English), the drop corrections of later game versions, and any
+drop file or section that is not data.
 
 CBOR (RFC 8949) is decoded by a narrow reader of the subset the store uses:
 integers, byte and text strings, arrays and maps of definite length, false,
@@ -62,10 +75,15 @@ __all__ = [
     "ADDON_FOLDER",
     "KINDS",
     "MAX_CBOR_DEPTH",
+    "MAX_IDS",
     "MAX_IDS_BYTES",
     "MAX_STORE_BYTES",
     "MAX_SUPPORT_FILE_BYTES",
+    "REFERENCE_PSERVER",
+    "REFERENCE_WOWHEAD",
     "CborError",
+    "DropCorrections",
+    "DropData",
     "DropTable",
     "Kind",
     "LeftOut",
@@ -76,6 +94,7 @@ __all__ = [
     "find_toc",
     "open_store",
     "read_drop_tables",
+    "read_zone_names",
 ]
 
 ADDON_FOLDER = "QuestieDB"
@@ -89,8 +108,11 @@ MAX_STORE_BYTES = 256 * 1024 * 1024
 """The largest TOC read as a store. The owner's is 18.8 MB."""
 MAX_SUPPORT_FILE_BYTES = 32 * 1024 * 1024
 """The largest drop-table file read. The owner's is 572 KB."""
-MAX_IDS_BYTES = 64 * 1024 * 1024
-"""The most bytes one id header may inflate to."""
+MAX_IDS_BYTES = 4 * 1024 * 1024
+"""The most bytes one id header may inflate to. The owner's largest inflates
+to about 120 KB (23,978 ids); this is over 30 times that."""
+MAX_IDS = 1_000_000
+"""The most ids one header may declare. The owner's largest has 23,978."""
 MAX_CBOR_DEPTH = 32
 """The deepest CBOR nesting accepted. The store's deepest is 5."""
 _MAX_CHUNKS = 65536
@@ -259,6 +281,26 @@ class DropTable(_Model):
     chances: dict[int, dict[int, float]]
 
 
+class DropCorrections(_Model):
+    """Questie's own drop corrections, the section it applies on every game
+    version (the first in its file): item id -> NPC id -> a percent, or
+    `REFERENCE_WOWHEAD` (-1) / `REFERENCE_PSERVER` (-2) for "use that
+    table's figure". `name` is the section's Lua field, `file` its file."""
+
+    name: str
+    file: str
+    chances: dict[int, dict[int, float]]
+
+
+class DropData(_Model):
+    """What the drop files gave: the literal tables, the corrections, and
+    what was left out."""
+
+    tables: list[DropTable]
+    corrections: DropCorrections | None = None
+    left_out: list[LeftOut] = []
+
+
 def _fold(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii").lower()
 
@@ -371,8 +413,16 @@ class QuestieStore:
             raw = inflate.decompress(packed, MAX_IDS_BYTES)
         except zlib.error as exc:
             raise QuestieDBError(f"{key} is not a zlib stream: {exc}") from None
-        if inflate.unconsumed_tail or not inflate.eof:
-            raise QuestieDBError(f"{key} is cut short or inflates past {MAX_IDS_BYTES} bytes")
+        if inflate.unconsumed_tail:
+            raise QuestieDBError(f"{key} inflates past {MAX_IDS_BYTES} bytes, so it is not read")
+        if not inflate.eof:
+            raise QuestieDBError(f"{key} is cut short")
+        # The array's declared length is checked before any id is built.
+        head = _Cbor(raw)
+        if raw and raw[0] >> 5 == 4:
+            declared = head._argument(head._take(1)[0] & 31, 0)
+            if declared > MAX_IDS:
+                raise QuestieDBError(f"{key} declares {declared} ids, more than {MAX_IDS}")
         value = decode_cbor(raw)
         if not isinstance(value, list) or not all(type(v) is int and v > 0 for v in value):
             raise QuestieDBError(f"{key} is not a list of ids")
@@ -432,9 +482,10 @@ class QuestieStore:
         if any("\\corrections\\" in f or f.startswith("corrections\\") for f in folded):
             out.append(
                 LeftOut(
-                    part="corrections the addon applies in game for each character",
-                    why="they are Lua code, which wowlab never runs; the fixed ones are "
-                    "already in the data it reads",
+                    part="the corrections Questie picks by the character's faction and class",
+                    why="they are Lua code, which wowlab never runs (the ones for every "
+                    "character are already in the data it reads), so a quest given on "
+                    "both sides lists both factions' givers, and some quests show no zone",
                 )
             )
         if any(k.startswith("X-l10n-") and k != "X-l10n-Version" for k in self.meta):
@@ -513,27 +564,112 @@ def _literal_tables(data: bytes, file: str) -> tuple[list[DropTable], list[str]]
     return tables, refused
 
 
-def read_drop_tables(store: QuestieStore) -> tuple[list[DropTable], list[LeftOut]]:
-    """The literal drop-chance tables of the files the store's TOC lists
-    under a `DropTables` folder, and what was left out of them."""
-    tables: list[DropTable] = []
-    left: list[LeftOut] = []
+def _listed_files(store: QuestieStore, folder: str) -> Iterator[tuple[str, Path]]:
+    """`(as listed, path)` of each `.lua` file the TOC lists inside a folder
+    named `folder` (ASCII case folded); a listed path that climbs (`..`) is
+    never read."""
     base = store.path.parent
     for listed in store.files:
         parts = [p for p in re.split(r"[\\/]", listed) if p]
-        if not parts or not any(_fold(p) == "droptables" for p in parts[:-1]):
+        if not parts or not any(_fold(p) == folder for p in parts[:-1]):
             continue
         if any(p in (".", "..") for p in parts) or not parts[-1].lower().endswith(".lua"):
             continue
-        path = base.joinpath(*parts)
-        try:
-            with longpath.open_read(path) as handle:
-                data = handle.read(MAX_SUPPORT_FILE_BYTES + 1)
-        except OSError:
+        yield listed, base.joinpath(*parts)
+
+
+def _read_listed(path: Path) -> bytes | None:
+    try:
+        with longpath.open_read(path) as handle:
+            data = handle.read(MAX_SUPPORT_FILE_BYTES + 1)
+    except OSError:
+        return None
+    return data if len(data) <= MAX_SUPPORT_FILE_BYTES else None
+
+
+def _constructor_end(data: bytes, start: int) -> int:
+    """The index after the `}` that closes the table constructor opening at
+    `data[start]` (`{`), skipping quoted strings and line comments; -1 when
+    it is not closed, or holds a long bracket (`[[`, `--[[`), which this
+    scanner does not follow. It only finds the end; `luadata` reads what is
+    inside."""
+    depth = 0
+    i = start
+    n = len(data)
+    while i < n:
+        c = data[i]
+        if c == 0x7B:  # {
+            depth += 1
+        elif c == 0x7D:  # }
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif c in (0x22, 0x27):  # a quoted string
+            quote = c
+            i += 1
+            while i < n and data[i] != quote:
+                if data[i] in (0x0A, 0x0D):
+                    return -1
+                i += 2 if data[i] == 0x5C else 1
+        elif data.startswith(b"--", i):
+            if re.match(rb"--\[=*\[", data[i : i + 64]):
+                return -1
+            end = data.find(b"\n", i)
+            if end < 0:
+                return -1
+            i = end
+        elif re.match(rb"\[=*\[", data[i : i + 64]):
+            return -1
+        i += 1
+    return -1
+
+
+def _assigned_constructors(data: bytes, field: bytes | None = None) -> Iterator[tuple[str, bytes]]:
+    """`(field, constructor bytes)` of each `Module.field = {` at the start of
+    a line (only `field` when given), in file order; a constructor that
+    cannot be delimited is given as empty bytes."""
+    name = re.escape(field) if field is not None else rb"[A-Za-z_][A-Za-z0-9_]*"
+    pattern = re.compile(rb"(?m)^[ \t]*[A-Za-z_][A-Za-z0-9_]*\.(" + name + rb")[ \t]*=[ \t]*\{")
+    for match in pattern.finditer(data):
+        start = match.end() - 1
+        end = _constructor_end(data, start)
+        yield match.group(1).decode("ascii"), (data[start:end] if end > 0 else b"")
+
+
+# A drop correction that points at a table instead of giving a figure: the two
+# names Questie's own `DropDB.correctionKeys` defines, recognised as tokens,
+# never evaluated (the conductor's ruling of 2026-11-23 under L3). Their values
+# in Questie are negative (-1, -2), so they cannot be mistaken for a figure.
+_REFERENCE = re.compile(rb"=([ \t]*)(?:DropDB\.correctionKeys|DropKeys)\.(WOWHEAD|PSERVER)\b")
+_REFERENCE_VALUES = {b"WOWHEAD": b"-1", b"PSERVER": b"-2"}
+REFERENCE_WOWHEAD = -1.0
+REFERENCE_PSERVER = -2.0
+
+
+def _corrections(body: bytes) -> dict[int, dict[int, float]] | None:
+    """One correction section read as data: each reference token becomes its
+    negative number and the rest must be a literal (`luadata`); None when it
+    is not one."""
+    literal = _REFERENCE.sub(lambda m: b"=" + m.group(1) + _REFERENCE_VALUES[m.group(2)], body)
+    try:
+        value = luadata.parse(b"t =" + literal).to_python().get("t")
+    except luadata.LuaDataError:
+        return None
+    return _chances(value)
+
+
+def read_drop_tables(store: QuestieStore) -> DropData:
+    """The drop chances of the files the store's TOC lists under a
+    `DropTables` folder: the literal tables, the corrections of the first
+    correction section (the one Questie applies on every game version), and
+    what was left out of them."""
+    tables: list[DropTable] = []
+    corrections: DropCorrections | None = None
+    left: list[LeftOut] = []
+    for listed, path in _listed_files(store, "droptables"):
+        data = _read_listed(path)
+        if data is None:
             left.append(LeftOut(part=f"the drop file {listed}", why="it could not be read"))
-            continue
-        if len(data) > MAX_SUPPORT_FILE_BYTES:
-            left.append(LeftOut(part=f"the drop file {listed}", why="it is too large to read"))
             continue
         found, refused = _literal_tables(data, listed)
         tables.extend(found)
@@ -544,11 +680,72 @@ def read_drop_tables(store: QuestieStore) -> tuple[list[DropTable], list[LeftOut
                     why="its text is not plain data, so reading it would mean running it",
                 )
             )
-        if not found and not refused:
+        if found or refused:
+            continue
+        sections = list(_assigned_constructors(data))
+        read_any = False
+        for section, body in sections:
+            values = _corrections(body) if body else None
+            if values is None:
+                left.append(
+                    LeftOut(
+                        part=f"the drop corrections {section} in {listed}",
+                        why="they hold more than figures and table references, so reading "
+                        "them would mean running them",
+                    )
+                )
+                continue
+            if corrections is None:
+                corrections = DropCorrections(name=section, file=listed, chances=values)
+                read_any = True
+            elif values:
+                left.append(
+                    LeftOut(
+                        part=f"the drop corrections {section} in {listed}",
+                        why="Questie applies them only on later game versions",
+                    )
+                )
+        if not sections and not read_any:
             left.append(
                 LeftOut(
-                    part=f"the drop file {listed}",
-                    why="it is Lua code (drop-rate corrections), which wowlab never runs",
+                    part=f"the drop file {listed}", why="it is Lua code, which wowlab never runs"
                 )
             )
-    return tables, left
+    return DropData(tables=tables, corrections=corrections, left_out=left)
+
+
+def _area_words(name: str) -> str:
+    """`DIRE_MAUL_GORDOK_COMMONS` as `Dire Maul Gordok Commons`; a word with
+    a digit (`AQ40`) stays as written."""
+    return " ".join(w if any(c.isdigit() for c in w) else w.capitalize() for w in name.split("_"))
+
+
+def read_zone_names(store: QuestieStore) -> tuple[dict[int, str], list[LeftOut]]:
+    """QuestieDB's own names of its zone ids, from the `zoneIDs` table of a
+    file the TOC lists under an `enum` folder, when that table is a literal
+    (`NAME = number`): id -> the name in words (the first name of an id).
+    It numbers some areas itself, such as the wings of an instance, with ids
+    the game's zone table does not have."""
+    out: dict[int, str] = {}
+    left: list[LeftOut] = []
+    for listed, path in _listed_files(store, "enum"):
+        if _fold(path.name) != "zones.lua":
+            continue
+        data = _read_listed(path)
+        for _, body in _assigned_constructors(data or b"", b"zoneIDs"):
+            try:
+                value = luadata.parse(b"t =" + body).to_python().get("t") if body else None
+            except luadata.LuaDataError:
+                value = None
+            if not isinstance(value, dict):
+                left.append(
+                    LeftOut(
+                        part=f"QuestieDB's own zone names in {listed}",
+                        why="the table is not plain data",
+                    )
+                )
+                continue
+            for name, number in value.items():
+                if isinstance(name, str) and type(number) is int and number not in out:
+                    out[number] = _area_words(name)
+    return out, left

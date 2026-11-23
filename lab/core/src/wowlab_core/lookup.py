@@ -27,13 +27,13 @@ flavor (L6).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from wowlab_core import gamedata, questiedb
+from wowlab_core import addoncheck, gamedata, questiedb, toc
 from wowlab_core.questiedb import Kind
 
 __all__ = [
@@ -69,11 +69,11 @@ _POINTS = 5
 # QuestieDB's field numbers (`src/meta/<kind>Meta.lua` in the addon).
 _ITEM_NAME, _ITEM_NPC_DROPS, _ITEM_OBJECT_DROPS, _ITEM_ITEM_DROPS = 1, 2, 3, 4
 _ITEM_START_QUEST, _ITEM_QUEST_REWARDS, _ITEM_LEVEL, _ITEM_REQUIRED_LEVEL = 5, 6, 9, 10
-_ITEM_VENDORS = 14
+_ITEM_VENDORS, _ITEM_RELATED_QUESTS = 14, 15
 _NPC_MIN_LEVEL, _NPC_MAX_LEVEL, _NPC_RANK, _NPC_SPAWNS, _NPC_ZONE = 4, 5, 6, 7, 9
 _NPC_QUEST_STARTS, _NPC_QUEST_ENDS, _NPC_FRIENDLY, _NPC_SUBNAME = 10, 11, 13, 14
 _QUEST_STARTED_BY, _QUEST_FINISHED_BY, _QUEST_REQUIRED_LEVEL, _QUEST_LEVEL = 2, 3, 4, 5
-_QUEST_ZONE_OR_SORT = 17
+_QUEST_SOURCE_ITEM, _QUEST_ZONE_OR_SORT = 11, 17
 _OBJECT_QUEST_STARTS, _OBJECT_QUEST_ENDS, _OBJECT_SPAWNS, _OBJECT_ZONE = 2, 3, 4, 5
 # The groups of a quest's starters and finishers: NPCs, objects, items.
 _BY_NPC, _BY_OBJECT, _BY_ITEM = 1, 2, 3
@@ -84,12 +84,19 @@ class _Model(BaseModel):
 
 
 class Place(_Model):
-    """Where something is in one zone: the zone's id (an AreaTable id), its
-    name when the zone table is downloaded, how many points QuestieDB keeps
-    there, and the first few as map percentages `[x, y]`."""
+    """Where something is in one zone: the zone's id, its name, how many
+    points QuestieDB keeps there, and the first few as map percentages
+    `[x, y]` (`-1, -1` is a spawn inside an instance, with no spot on a
+    map). The id is an AreaTable id, named from the zone table when it is
+    downloaded, except an area QuestieDB numbers itself (`own_area`: the
+    zone table has no such id, and QuestieDB's own zone list names it), such
+    as a wing of an instance. `estimated` is a place with no spot, QuestieDB's
+    best guess of the zone where the NPC or object is most often found."""
 
     zone_id: int
     zone: str | None = None
+    own_area: bool = False
+    estimated: bool = False
     count: int
     points: list[tuple[float, float]]
 
@@ -100,12 +107,19 @@ class ItemRef(_Model):
 
 
 class QuestRef(_Model):
+    """A quest: name, level as QuestieDB keeps it (0 or below: unknown or
+    scaling with the player), required level, and its zone, or `sort_id`,
+    the category QuestieDB files it under instead of a zone (a class,
+    profession or holiday quest; a negative zoneOrSort)."""
+
     id: int
     name: str | None = None
     level: int | None = None
     required_level: int | None = None
     zone_id: int | None = None
     zone: str | None = None
+    own_area: bool = False
+    sort_id: int | None = None
 
 
 class NpcRef(_Model):
@@ -129,19 +143,31 @@ class ObjectRef(_Model):
 
 
 class DropSource(_Model):
-    """An NPC that drops the item, and the drop chance in percent from each
-    of QuestieDB's drop tables that has one (`wowheadData`, `cmangosData`);
-    empty when none does (they cover quest items only)."""
+    """An NPC that drops the item. `chances`: the drop chance in percent
+    from each of QuestieDB's drop tables that has one (`cmangosData`,
+    `wowheadData`), in the order Questie consults them, and `correction`,
+    Questie's own figure when its corrections give one. `chance` and
+    `chance_from` are the figure Questie itself shows and where it came from
+    (`correction` or a table's name): its correction first (a figure, or a
+    pointer at one table), else the server table's, else Wowhead's. All are
+    empty when no table has the pair (they cover the items quests ask for)."""
 
     npc: NpcRef
     chances: dict[str, float] = {}
+    correction: float | None = None
+    chance: float | None = None
+    chance_from: str | None = None
 
 
 class ItemSources(_Model):
     """Where one item comes from. `name`, `item_level`, `required_level` and
     `quality` (the game's quality id) come from QuestieDB or, where it has
     none, the item table; `in_questiedb` and `in_game_table` say which of
-    the two know the item."""
+    the two know the item. `drops`, `object_drops`, `containers` (items that
+    can hold it), `quest_rewards`, `vendors` and `starts_quest` are the
+    item's own QuestieDB fields; `given_by_quests` are the quests whose row
+    names it as the item handed over with the quest, and `related_quests`
+    the quests the item's row says it is used in."""
 
     id: int
     name: str | None = None
@@ -156,6 +182,8 @@ class ItemSources(_Model):
     quest_rewards: list[QuestRef] = []
     vendors: list[NpcRef] = []
     starts_quest: QuestRef | None = None
+    given_by_quests: list[QuestRef] = []
+    related_quests: list[QuestRef] = []
 
 
 class NpcDetail(_Model):
@@ -205,11 +233,17 @@ class QuestieState(_Model):
     """What became of QuestieDB: `read`; `not_installed` (no QuestieDB
     folder, or none with a TOC named after it); `not_baked` (its TOC holds
     no data store wowlab reads); `unreadable` (`detail` says why). `info`
-    names the TOC read; `left_out` the parts not read; `unreadable_rows`
-    counts entities whose stored data could not be decoded."""
+    names the TOC read; `tocs` every TOC named after the folder that holds a
+    data store, and `chosen_by` how one was picked when there were several
+    (`only`; `interface`, the only one whose `## Interface` holds the
+    client's; `name_order`, the first by name); `left_out` the parts not
+    read; `unreadable_rows` counts entities whose stored data could not be
+    decoded."""
 
     state: QuestieStateName
     info: questiedb.StoreInfo | None = None
+    tocs: list[str] = []
+    chosen_by: Literal["only", "interface", "name_order"] | None = None
     detail: str | None = None
     left_out: list[questiedb.LeftOut] = []
     unreadable_rows: int = 0
@@ -385,6 +419,28 @@ def _fold(text: str) -> str:
     return text.casefold()
 
 
+def _is_wowhead(table: str) -> bool:
+    """Whether a drop table is Wowhead's (`wowheadData`); every other one is
+    a private server's (`cmangosData`), which Questie consults first."""
+    return table.casefold().startswith("wowhead")
+
+
+def _choose(
+    stores: list[questiedb.QuestieStore], version: str | None
+) -> tuple[questiedb.QuestieStore, Literal["only", "interface", "name_order"]]:
+    """The store to read of several (`LookupIndex.for_flavor`)."""
+    if len(stores) == 1:
+        return stores[0], "only"
+    client = addoncheck.client_interface(version)
+    if client is not None:
+        matching = [
+            s for s in stores if client in toc.parse_interface(s.meta.get("Interface", "")).versions
+        ]
+        if len(matching) == 1:
+            return matching[0], "interface"
+    return stores[0], "name_order"
+
+
 class LookupIndex:
     """Search and detail over QuestieDB and the game tables of one flavor.
     Build one with `LookupIndex.for_flavor`; every read is lazy and cached for the
@@ -401,9 +457,11 @@ class LookupIndex:
         self._rows = _Rows(store) if store is not None else None
         self._questie = questie
         self._game = _GameTables(version, cache_dir)
-        self._drops: list[questiedb.DropTable] | None = None
-        self._drop_left: list[questiedb.LeftOut] = []
+        self._drops: questiedb.DropData | None = None
+        self._own_zones: dict[int, str] | None = None
+        self._zone_left: list[questiedb.LeftOut] = []
         self._rewards: dict[int, list[int]] | None = None
+        self._source_items: dict[int, list[int]] | None = None
 
     @classmethod
     def for_flavor(
@@ -411,11 +469,16 @@ class LookupIndex:
     ) -> LookupIndex:
         """The index of one flavor folder: its QuestieDB (read-only) and the
         game tables cached for `version`. Never raises for a missing or
-        unreadable QuestieDB; `questie` says what became of it."""
+        unreadable QuestieDB; `questie` says what became of it.
+
+        With several TOCs named after the folder that hold a data store, the
+        one read is the only one whose `## Interface` holds the client's
+        interface version (the rule `addoncheck` takes for which TOC the
+        client loads, itself **[verify]**), else the first by name."""
         folder, tocs = questiedb.find_toc(flavor_path / "Interface" / "AddOns")
         if folder is None or not tocs:
             return cls(None, QuestieState(state="not_installed"), version, cache_dir=cache_dir)
-        store: questiedb.QuestieStore | None = None
+        stores: list[questiedb.QuestieStore] = []
         failure: str | None = None
         for path in tocs:
             try:
@@ -424,16 +487,22 @@ class LookupIndex:
                 failure = str(exc)
                 continue
             if candidate.baked:
-                store = candidate
-                break
-        if store is None:
+                stores.append(candidate)
+        if not stores:
             state: QuestieStateName = "unreadable" if failure else "not_baked"
             return cls(
                 None, QuestieState(state=state, detail=failure), version, cache_dir=cache_dir
             )
+        store, chosen_by = _choose(stores, version)
         return cls(
             store,
-            QuestieState(state="read", info=store.info(), left_out=store.left_out()),
+            QuestieState(
+                state="read",
+                info=store.info(),
+                tocs=[s.path.name for s in stores],
+                chosen_by=chosen_by,
+                left_out=store.left_out(),
+            ),
             version,
             cache_dir=cache_dir,
         )
@@ -447,7 +516,8 @@ class LookupIndex:
         state = self._questie
         if self._rows is None:
             return state
-        left = list(state.left_out) + self._drop_left
+        drops = self._drops.left_out if self._drops is not None else []
+        left = list(state.left_out) + list(drops) + self._zone_left
         unreadable = sum(self._rows.store.unreadable.values())
         return state.model_copy(update={"left_out": left, "unreadable_rows": unreadable})
 
@@ -471,10 +541,37 @@ class LookupIndex:
 
     # ── QuestieDB helpers ──
 
-    def _zone(self, zone_id: int | None) -> str | None:
+    def _own(self) -> dict[int, str]:
+        """QuestieDB's own zone list, read once."""
+        if self._own_zones is None:
+            if self._rows is None:
+                self._own_zones = {}
+            else:
+                self._own_zones, self._zone_left = questiedb.read_zone_names(self._rows.store)
+        return self._own_zones
+
+    def _zone(self, zone_id: int | None) -> tuple[str | None, bool]:
+        """A zone id's name, and whether it is an area QuestieDB numbers
+        itself: an id the downloaded zone table lacks and QuestieDB's own
+        zone list names. Such an id is never named from the zone table."""
         if zone_id is None or zone_id <= 0:
-            return None
-        return self._game.zones().get(zone_id)
+            return None, False
+        zones = self._game.zones()
+        if zone_id in zones:
+            return zones[zone_id], False
+        own = self._own().get(zone_id) if zones else None
+        return (own, True) if own is not None else (None, False)
+
+    def _place(self, zone_id: int, kept: list[tuple[float, float]], *, estimated: bool) -> Place:
+        name, own = self._zone(zone_id)
+        return Place(
+            zone_id=zone_id,
+            zone=name,
+            own_area=own,
+            estimated=estimated,
+            count=len(kept),
+            points=kept[:_POINTS],
+        )
 
     def _places(self, value: object) -> list[Place]:
         out: list[Place] = []
@@ -482,14 +579,7 @@ class LookupIndex:
             kept = [
                 p for p in (_point(v) for v in (points if isinstance(points, list) else [])) if p
             ]
-            out.append(
-                Place(
-                    zone_id=zone_id,
-                    zone=self._zone(zone_id),
-                    count=len(kept),
-                    points=kept[:_POINTS],
-                )
-            )
+            out.append(self._place(zone_id, kept, estimated=False))
         out.sort(key=lambda p: -p.count)
         return out
 
@@ -505,14 +595,23 @@ class LookupIndex:
             return QuestRef(id=entity)
         zone = _int(row.get(_QUEST_ZONE_OR_SORT))
         zone_id = zone if zone is not None and zone > 0 else None
+        name, own = self._zone(zone_id)
         return QuestRef(
             id=entity,
             name=_text(row.get(1)),
             level=_int(row.get(_QUEST_LEVEL)),
             required_level=_int(row.get(_QUEST_REQUIRED_LEVEL)),
             zone_id=zone_id,
-            zone=self._zone(zone_id),
+            zone=name,
+            own_area=own,
+            sort_id=zone if zone is not None and zone < 0 else None,
         )
+
+    def _estimated(self, row: Mapping[object, object], field: int) -> list[Place]:
+        zone = _int(row.get(field))
+        if zone is None or zone <= 0:
+            return []
+        return [self._place(zone, [], estimated=True)]
 
     def _npc_ref(self, entity: int) -> NpcRef:
         if self._rows is None:
@@ -521,10 +620,6 @@ class LookupIndex:
         if row is None:
             return NpcRef(id=entity)
         places = self._places(self._rows.table("Npc", entity, _NPC_SPAWNS))
-        if not places:
-            zone = _int(row.get(_NPC_ZONE))
-            if zone is not None and zone > 0:
-                places = [Place(zone_id=zone, zone=self._zone(zone), count=0, points=[])]
         return NpcRef(
             id=entity,
             name=_text(row.get(1)),
@@ -532,7 +627,7 @@ class LookupIndex:
             level_min=_int(row.get(_NPC_MIN_LEVEL)),
             level_max=_int(row.get(_NPC_MAX_LEVEL)),
             friendly_to=_text(row.get(_NPC_FRIENDLY)),
-            places=places,
+            places=places or self._estimated(row, _NPC_ZONE),
         )
 
     def _object_ref(self, entity: int) -> ObjectRef:
@@ -542,11 +637,9 @@ class LookupIndex:
         if row is None:
             return ObjectRef(id=entity)
         places = self._places(self._rows.table("Object", entity, _OBJECT_SPAWNS))
-        if not places:
-            zone = _int(row.get(_OBJECT_ZONE))
-            if zone is not None and zone > 0:
-                places = [Place(zone_id=zone, zone=self._zone(zone), count=0, points=[])]
-        return ObjectRef(id=entity, name=_text(row.get(1)), places=places)
+        return ObjectRef(
+            id=entity, name=_text(row.get(1)), places=places or self._estimated(row, _OBJECT_ZONE)
+        )
 
     def _item_ref(self, entity: int) -> ItemRef:
         name = self._name("Item", entity)
@@ -555,14 +648,48 @@ class LookupIndex:
             name = known[0] if known else None
         return ItemRef(id=entity, name=name)
 
-    def drop_tables(self) -> list[questiedb.DropTable]:
-        """QuestieDB's literal drop tables, read once."""
+    def drop_data(self) -> questiedb.DropData:
+        """QuestieDB's drop tables and corrections, read once."""
         if self._drops is None:
             if self._rows is None:
-                self._drops = []
+                self._drops = questiedb.DropData(tables=[])
             else:
-                self._drops, self._drop_left = questiedb.read_drop_tables(self._rows.store)
+                self._drops = questiedb.read_drop_tables(self._rows.store)
         return self._drops
+
+    def _drop(self, item_id: int, npc: int) -> DropSource:
+        """One NPC's drop of the item, with each table's chance in the order
+        Questie consults them (the server tables, then Wowhead's) and the
+        figure Questie shows (`questie/Database/DropTables/dropDB.lua`,
+        `GetItemDroprate`): a correction that is a figure; one that points at
+        a table, that table's figure; else the server table's, else
+        Wowhead's."""
+        data = self.drop_data()
+        ordered = sorted(data.tables, key=lambda t: _is_wowhead(t.name))
+        chances = {
+            t.name: t.chances[item_id][npc] for t in ordered if npc in t.chances.get(item_id, {})
+        }
+        fixed = data.corrections.chances.get(item_id, {}).get(npc) if data.corrections else None
+        server = [name for name in chances if not _is_wowhead(name)]
+        wowhead = [name for name in chances if _is_wowhead(name)]
+        chance: float | None = None
+        chance_from: str | None = None
+        if fixed is not None and fixed >= 0:
+            chance, chance_from = fixed, "correction"
+        elif fixed == questiedb.REFERENCE_WOWHEAD and wowhead:
+            chance, chance_from = chances[wowhead[0]], wowhead[0]
+        elif fixed == questiedb.REFERENCE_PSERVER and server:
+            chance, chance_from = chances[server[0]], server[0]
+        if chance is None and (server or wowhead):
+            chance_from = (server or wowhead)[0]
+            chance = chances[chance_from]
+        return DropSource(
+            npc=self._npc_ref(npc),
+            chances=chances,
+            correction=fixed if fixed is not None and fixed >= 0 else None,
+            chance=chance,
+            chance_from=chance_from,
+        )
 
     def _reward_index(self) -> dict[int, list[int]]:
         """Quest id -> the items whose row names it as a reward."""
@@ -576,6 +703,21 @@ class LookupIndex:
             for quest in _ids(self._rows.table("Item", entity, _ITEM_QUEST_REWARDS)):
                 self._rewards.setdefault(quest, []).append(entity)
         return self._rewards
+
+    def _source_item_index(self) -> dict[int, list[int]]:
+        """Item id -> the quests whose row names it as the item handed over
+        with the quest (`sourceItemId`)."""
+        if self._source_items is not None:
+            return self._source_items
+        self._source_items = {}
+        if self._rows is None:
+            return self._source_items
+        self._rows.load("Quest")
+        for quest, row in self._rows.rows["Quest"].items():
+            item = _int(row.get(_QUEST_SOURCE_ITEM))
+            if item is not None and item > 0:
+                self._source_items.setdefault(item, []).append(quest)
+        return self._source_items
 
     # ── details ──
 
@@ -604,16 +746,8 @@ class LookupIndex:
         def table(field: int) -> list[int]:
             return _ids(rows.table("Item", item_id, field))
 
-        drops: list[DropSource] = []
-        tables = self.drop_tables()
-        for npc in table(_ITEM_NPC_DROPS):
-            chances = {
-                t.name: t.chances[item_id][npc] for t in tables if npc in t.chances.get(item_id, {})
-            }
-            drops.append(DropSource(npc=self._npc_ref(npc), chances=chances))
-        drops.sort(
-            key=lambda d: (-max(d.chances.values(), default=0.0), d.npc.name or "", d.npc.id)
-        )
+        drops = [self._drop(item_id, npc) for npc in table(_ITEM_NPC_DROPS)]
+        drops.sort(key=lambda d: (-(d.chance or 0.0), d.npc.name or "", d.npc.id))
         start = _int(row.get(_ITEM_START_QUEST))
         return out.model_copy(
             update={
@@ -623,6 +757,10 @@ class LookupIndex:
                 "quest_rewards": [self._quest_ref(q) for q in table(_ITEM_QUEST_REWARDS)],
                 "vendors": [self._npc_ref(n) for n in table(_ITEM_VENDORS)],
                 "starts_quest": self._quest_ref(start) if start else None,
+                "given_by_quests": [
+                    self._quest_ref(q) for q in self._source_item_index().get(item_id, [])
+                ],
+                "related_quests": [self._quest_ref(q) for q in table(_ITEM_RELATED_QUESTS)],
             }
         )
 

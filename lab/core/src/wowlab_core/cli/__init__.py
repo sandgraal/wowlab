@@ -2108,6 +2108,9 @@ if TYPE_CHECKING:
         _object_lines as _object_lines,
     )
     from wowlab_core.cli._cmd_lookup import (
+        _percent as _percent,
+    )
+    from wowlab_core.cli._cmd_lookup import (
         _places as _places,
     )
     from wowlab_core.cli._cmd_lookup import (
@@ -2117,13 +2120,31 @@ if TYPE_CHECKING:
         _quest as _quest,
     )
     from wowlab_core.cli._cmd_lookup import (
+        _quest_level as _quest_level,
+    )
+    from wowlab_core.cli._cmd_lookup import (
         _quest_lines as _quest_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest_zone as _quest_zone,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _read_words as _read_words,
     )
     from wowlab_core.cli._cmd_lookup import (
         _report_hit as _report_hit,
     )
     from wowlab_core.cli._cmd_lookup import (
+        _several_words as _several_words,
+    )
+    from wowlab_core.cli._cmd_lookup import (
         _spots as _spots,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _table_label as _table_label,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _where as _where,
     )
     from wowlab_core.cli._cmd_lookup import (
         _zone as _zone,

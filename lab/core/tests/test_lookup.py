@@ -145,11 +145,59 @@ def test_drop_chances_objects_and_containers_constructed(flavor: Path, cache: Pa
     assert sources is not None
     (drop,) = sources.drops
     assert drop.npc.name == "Flesh Eater"
-    assert drop.chances == {"wowheadData": 12.5, "cmangosData": 10.0}
+    # In the order Questie consults them: the server table, then Wowhead's.
+    assert list(drop.chances.items()) == [("cmangosData", 10.0), ("wowheadData", 12.5)]
+    # Its correction points at Wowhead's figure, which Questie then shows.
+    assert (drop.chance, drop.chance_from, drop.correction) == (12.5, "wowheadData", None)
     assert [p.zone for p in drop.npc.places] == ["Duskwood"]
+    assert [q.name for q in sources.related_quests] == ["A Rogue's Deal"]
     (box,) = sources.object_drops
     assert (box.name, box.places[0].zone) == ("Old Lion Statue", "Elwynn Forest")
     assert [(c.id, c.name) for c in sources.containers] == [(6827, "Box of Supplies")]
+
+
+def test_the_figure_questie_shows_follows_its_corrections_constructed(
+    flavor: Path, cache: Path
+) -> None:
+    sources = _index(flavor, cache).item_sources(725)
+    assert sources is not None
+    by_npc = {d.npc.id: d for d in sources.drops}
+    # A correction that is a figure wins over both tables.
+    flesh = by_npc[3]
+    assert (flesh.chance, flesh.chance_from, flesh.correction) == (50.0, "correction", 50.0)
+    assert flesh.chances == {"wowheadData": 45.04}
+    # A correction that points at the server table shows that table's figure.
+    sharp = by_npc[12676]
+    assert (sharp.chance, sharp.chance_from) == (80.0, "cmangosData")
+    assert list(sharp.chances) == ["cmangosData", "wowheadData"]
+    # Sorted by the figure Questie shows.
+    assert [d.npc.id for d in sources.drops] == [12676, 3]
+
+
+def test_no_correction_takes_the_server_figure_then_wowheads_constructed(
+    tmp_path: Path, cache: Path
+) -> None:
+    flavor = tmp_path / "plain" / FLAVOR
+    place(flavor, slice_toc())
+    corrections = flavor / "Interface" / "AddOns" / "QuestieDB" / "support" / "Forever"
+    (corrections / "DropTables" / "itemDropCorrections.lua").write_bytes(b"-- none\n")
+    sources = _index(flavor, cache).item_sources(725)
+    assert sources is not None
+    by_npc = {d.npc.id: d for d in sources.drops}
+    assert (by_npc[12676].chance, by_npc[12676].chance_from) == (80.0, "cmangosData")
+    assert (by_npc[3].chance, by_npc[3].chance_from) == (45.04, "wowheadData")
+
+
+def test_an_item_handed_over_with_a_quest_constructed(flavor: Path, cache: Path) -> None:
+    sources = _index(flavor, cache).item_sources(745)
+    assert sources is not None
+    (given,) = sources.given_by_quests
+    assert (given.id, given.name, given.level, given.zone) == (
+        54,
+        "Report to Goldshire",
+        0,
+        "Elwynn Forest",
+    )
 
 
 def test_an_item_no_source_knows_is_none_constructed(flavor: Path, cache: Path) -> None:
@@ -202,6 +250,70 @@ def test_a_quest_with_givers_finishers_rewards_and_zone_constructed(
     assert [i.name for i in deal.rewards] == ["Worn Shortsword", "Refreshing Spring Water"]
     trial = index.quest(9)
     assert trial is not None and trial.quest.zone_id is None and trial.quest.zone is None
+    assert trial.quest.sort_id == -61
+
+
+def test_an_npc_with_no_spot_has_an_estimated_zone_constructed(flavor: Path, cache: Path) -> None:
+    detail = _index(flavor, cache).npc(1003)
+    assert detail is not None
+    (where,) = detail.npc.places
+    assert (where.zone, where.estimated, where.count, where.points) == ("Durotar", True, 0, [])
+
+
+def test_an_area_questiedb_numbers_itself_is_never_named_from_the_zone_table_constructed(
+    flavor: Path, cache: Path
+) -> None:
+    detail = _index(flavor, cache).npc(11441)
+    assert detail is not None
+    (where,) = detail.npc.places
+    assert (where.zone_id, where.zone, where.own_area, where.points) == (
+        10022,
+        "Dire Maul Gordok Commons",
+        True,
+        [(-1.0, -1.0)],
+    )
+    # A zone the game table names keeps the game's name.
+    farley = _index(flavor, cache).npc(1000)
+    assert farley is not None and farley.npc.places[0].own_area is False
+
+
+def test_without_the_zone_table_an_own_area_is_only_a_number_constructed(
+    flavor: Path, tmp_path: Path
+) -> None:
+    detail = _index(flavor, _cache(tmp_path, "ItemSparse")).npc(11441)
+    assert detail is not None
+    (where,) = detail.npc.places
+    assert (where.zone, where.own_area) == (None, False)
+
+
+@pytest.mark.parametrize(
+    ("interfaces", "read", "chosen_by"),
+    [
+        (("11508", "11508"), "QuestieDB_A.toc", "name_order"),
+        (("11508", "16001"), "QuestieDB_B.toc", "interface"),
+    ],
+)
+def test_several_tocs_with_data_pick_by_interface_then_name_constructed(
+    tmp_path: Path,
+    cache: Path,
+    interfaces: tuple[str, str],
+    read: str,
+    chosen_by: str,
+) -> None:
+    flavor = tmp_path / "two" / FLAVOR
+    for name, interface in zip(("QuestieDB_A.toc", "QuestieDB_B.toc"), interfaces, strict=True):
+        toc = slice_toc().replace(b"## Interface: 11508", f"## Interface: {interface}".encode())
+        place(flavor, toc, name=name)
+    # An empty third TOC holds no store and is not counted.
+    (flavor / "Interface" / "AddOns" / "QuestieDB" / "QuestieDB.toc").write_bytes(b"## Title: x\n")
+    state = _index(flavor, cache, version="1.60.1.71037").questie
+    assert state.info is not None and state.info.toc == read
+    assert state.tocs == ["QuestieDB_A.toc", "QuestieDB_B.toc"] and state.chosen_by == chosen_by
+
+
+def test_one_toc_is_chosen_by_only_constructed(flavor: Path, cache: Path) -> None:
+    state = _index(flavor, cache).questie
+    assert state.tocs == ["QuestieDB_Forever.toc"] and state.chosen_by == "only"
 
 
 def test_an_object_with_its_place_and_quest_constructed(flavor: Path, cache: Path) -> None:
@@ -220,9 +332,10 @@ def test_states_when_everything_is_read_constructed(flavor: Path, cache: Path) -
     state = index.questie
     assert state.state == "read" and state.info is not None and state.info.version == "1.1.4"
     assert [x.part for x in state.left_out] == [
-        "corrections the addon applies in game for each character",
+        "the corrections Questie picks by the character's faction and class",
         "names in other languages",
-        "the drop file support\\Forever\\DropTables\\itemDropCorrections.lua",
+        "the drop corrections Tbc in support\\Forever\\DropTables\\itemDropCorrections.lua",
+        "the drop corrections Cata in support\\Forever\\DropTables\\itemDropCorrections.lua",
     ]
     assert state.unreadable_rows == 0
     assert [(t.table, t.state) for t in index.game_tables()] == [

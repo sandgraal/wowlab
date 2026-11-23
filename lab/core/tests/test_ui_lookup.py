@@ -102,13 +102,16 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
 _VIEW = r"""
 const realFetch = fetch;
 let inflight = 0;
+let maxInflight = 0;
 const standIn = ctx.fetch;
 ctx.fetch = async (url, opts) => {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   const ours = body && String(url).startsWith("/api/run") && Array.isArray(body.command) && body.command[0] === "lookup";
-  if (!ours || (body.params && body.params.fetch === true)) return standIn(url, opts);
+  const held = ours && (scenario.held || []).some((h) => canon(h.command) === canon(body.command) && canon(h.params) === canon(body.params || {}));
+  if (!ours || held || (body.params && body.params.fetch === true)) return standIn(url, opts);
   requests.push({ url: String(url), body: body });
   inflight += 1;
+  maxInflight = Math.max(maxInflight, inflight);
   try {
     const headers = Object.assign({}, opts.headers || {}, { "X-Wowlab-Session": scenario.lookup_token });
     const reply = await realFetch(scenario.lookup_server + String(url), { method: "POST", headers: headers, body: opts.body });
@@ -151,6 +154,7 @@ function lookupView() {
     caveat: t("lookup-caveat"), caveatHidden: ids["lookup-caveat"].hidden,
     leftOut: ids["lookup-left-out"].children.map((c) => c.textContent), leftOutHidden: ids["lookup-left-out"].hidden,
     active: documentStub.activeElement ? documentStub.activeElement.id : null,
+    maxInflight: maxInflight,
     drawn: lookupEls().filter((e) => !(e.id in ids)).map((e) => ({ tag: e.tagName, cls: e.className, id: e.id,
       title: e.title, attrs: Object.keys(e.attrs) })),
   };
@@ -165,6 +169,15 @@ _STEPS = r"""
       } else if (step.lookup_type !== undefined) {
         const before = requests.length;
         ids["lookup-query"].value = step.lookup_type; ids["lookup-query"].fire("input"); await settle();
+        out.steps.push(Object.assign(lookupView(), { newRequests: requests.slice(before) }));
+      } else if (step.lookup_burst !== undefined) {
+        // Several pauses in typing while the first run is still going: each
+        // pause's timer fires (one tick), no wait for the server between.
+        const before = requests.length;
+        for (const text of step.lookup_burst) {
+          ids["lookup-query"].value = text; ids["lookup-query"].fire("input"); await tick();
+        }
+        await settle();
         out.steps.push(Object.assign(lookupView(), { newRequests: requests.slice(before) }));
       } else if (step.lookup_kind !== undefined) {
         const before = requests.length;
@@ -291,7 +304,10 @@ def test_typing_searches_and_draws_the_commands_lines_as_text_constructed(
     assert [h["lines"] for h in typed["hits"]] == [h["lines"] for h in report["hits"]]
     assert typed["hits"][0]["heading"] == "NPC: Sharptalon (12676)"
     assert typed["offerHidden"] is True and typed["caveatHidden"] is True
-    assert typed["leftOut"][0].startswith("Not read: corrections the addon applies")
+    # The About list is the command's own notes, the TOC read first.
+    assert typed["leftOut"] == report["notes"]
+    assert typed["leftOut"][0] == "Read: QuestieDB 1.1.4 (QuestieDB_Forever.toc)."
+    assert typed["caveat"] == "" and report["caveat"] is None
     _inert(typed)
     assert _bodies(quests) == [
         {"command": ["lookup"], "params": {"query": "sharptalon", "limit": "10", "kind": "quest"}}
@@ -335,7 +351,11 @@ def test_no_questiedb_says_so_and_still_finds_the_item_table_constructed(
         "searched."
     )
     assert [h["heading"] for h in typed["hits"]] == ["Item: Linen Cloth (2589), item level 5"]
-    assert typed["leftOutHidden"] is True
+    report = json.loads(s.reply({"query": "linen", "limit": "10"})["stdout"])
+    assert typed["caveat"] == report["caveat"]
+    assert typed["hits"][0]["lines"] == [
+        "QuestieDB is not read, so where it comes from is unknown."
+    ]
 
 
 def test_clearing_the_box_clears_the_hits_and_runs_nothing_constructed(
@@ -353,13 +373,13 @@ def test_clearing_the_box_clears_the_hits_and_runs_nothing_constructed(
 
 def test_hostile_names_are_shown_as_text_constructed(served: Any, tmp_path: Path) -> None:
     hostile = (
-        'Gnoll<img src=x onerror="alert(1)"><script>alert(2)</script>javascript:alert(3)'
+        'Kobold<img src=x onerror="alert(1)"><script>alert(2)</script>javascript:alert(3)'
         "\x1b[31m" + chr(0x9B) + "2J" + chr(0x202E) + "Boss"
     )
     entities = {k: dict(v) for k, v in SLICE.items()}
     entities["Npc"] = {**SLICE["Npc"], 4242: {1: hostile, 4: 10, 5: 10, 7: {12: [[1.0, 2.0]]}}}
     s = served(toc_text(entities))
-    out = _drive(s, tmp_path / "node", [{"lookup_tab": True}, {"lookup_type": "gnoll"}])
+    out = _drive(s, tmp_path / "node", [{"lookup_tab": True}, {"lookup_type": "kobold"}])
     typed = out["steps"][1]
     (hit,) = typed["hits"]
     shown = hit["heading"]
@@ -382,3 +402,38 @@ def test_the_tab_builds_nothing_from_the_data() -> None:
         line.split("=", 1)[1].strip() for line in block.splitlines() if "className =" in line
     ]
     assert classes == ['"panel lookup-hit";', '"crew-lines";']
+
+
+def test_typing_runs_one_search_at_a_time_and_the_last_text_wins_constructed(
+    served: Any, tmp_path: Path
+) -> None:
+    s = served(slice_toc())
+    out = _drive(
+        s,
+        tmp_path / "node",
+        [{"lookup_tab": True}, {"lookup_burst": ["sha", "shar", "sharp", "sharptalon"]}],
+    )
+    burst = out["steps"][1]
+    # The first pause runs; the ones while it runs wait, and only the last
+    # text runs after it.
+    assert burst["maxInflight"] == 1
+    assert [b["params"]["query"] for b in _bodies(burst)] == ["sha", "sharptalon"]
+    assert burst["status"] == '3 matches for "sharptalon".'
+
+
+def test_an_error_reply_shows_the_error_and_no_stale_caveat_constructed(
+    served: Any, tmp_path: Path
+) -> None:
+    s = served(None)
+    params = {"query": "boom", "limit": "10"}
+    failed = s.reply(params) | {"exit_code": 1, "stdout": "", "stderr": "wowlab: it broke"}
+    out = _drive(
+        s,
+        tmp_path / "node",
+        [{"lookup_tab": True}, {"lookup_type": "linen"}, {"lookup_type": "boom"}],
+        [{"command": ["lookup"], "params": params, "reply": failed}],
+    )
+    shown, broke = out["steps"][1], out["steps"][2]
+    assert shown["caveatHidden"] is False
+    assert broke["status"] == "wowlab: it broke" and broke["statusRole"] == "alert"
+    assert broke["caveatHidden"] is True and broke["hits"] == []

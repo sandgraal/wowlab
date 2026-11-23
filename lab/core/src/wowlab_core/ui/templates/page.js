@@ -4067,7 +4067,7 @@
     ["quest", "Quests"],
     ["object", "Objects"],
   ];
-  const lookupState = { seq: 0, timer: null, fetching: false };
+  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null };
   fillSelect(byId("lookup-kind"), LOOKUP_KINDS);
 
   function lookupSay(text, isError) {
@@ -4103,40 +4103,52 @@
     const missing = tables.some((t) => t && t.state === "missing");
     byId("lookup-offer").hidden = !missing;
     byId("lookup-fetch").disabled = lookupState.fetching;
-    const questie = report.questiedb && typeof report.questiedb === "object" ? report.questiedb : {};
-    let caveat = "";
-    if (questie.state === "not_installed") caveat = "QuestieDB is not installed for this game version, so only the game's item table was searched.";
-    else if (questie.state === "not_baked" || questie.state === "unreadable") caveat = "QuestieDB could not be read, so only the game's item table was searched.";
-    byId("lookup-caveat").textContent = caveat;
+    // The caveat and the notes are the command's own sentences, the ones
+    // its text output prints (one fact, one place).
+    const caveat = typeof report.caveat === "string" ? report.caveat : "";
+    byId("lookup-caveat").textContent = visible(caveat);
     byId("lookup-caveat").hidden = !caveat;
-    const left = Array.isArray(questie.left_out) ? questie.left_out.filter((l) => l && typeof l.part === "string") : [];
-    byId("lookup-left-out").replaceChildren(
-      ...left.map((l) => make("li", visible("Not read: " + l.part + (typeof l.why === "string" ? ", because " + l.why : "") + "."))),
-    );
-    byId("lookup-left-out").hidden = left.length === 0 || hits.length === 0;
+    const notes = Array.isArray(report.notes) ? report.notes.filter((n) => typeof n === "string") : [];
+    byId("lookup-left-out").replaceChildren(...notes.map((n) => make("li", visible(n))));
+    byId("lookup-left-out").hidden = notes.length === 0;
   }
 
+  // One run at a time: a search asked for while one runs waits, and only the
+  // latest of those runs when it ends, so typing never stacks up runs.
   async function runLookup(fetch) {
     const query = byId("lookup-query").value.trim();
     if (!query && !fetch) {
       lookupState.seq += 1;
+      lookupState.queued = null;
       byId("lookup-hits").replaceChildren();
-      byId("lookup-left-out").hidden = true;
       lookupSay("", false);
       return;
     }
-    const seq = ++lookupState.seq;
-    lookupSay(fetch ? "Downloading zone and item names…" : "Looking up…", false);
-    const reply = await runJson(["lookup"], lookupParams(fetch), true);
-    if (seq !== lookupState.seq) return;
-    const report = reply.data;
-    if (!report || typeof report !== "object" || typeof report.words !== "string") {
-      byId("lookup-hits").replaceChildren();
-      lookupSay(reply.error ? shown(reply.error) : "The lookup came back in a shape this page does not know.", true);
+    if (lookupState.running) {
+      lookupState.queued = { fetch: Boolean(fetch) || Boolean(lookupState.queued && lookupState.queued.fetch) };
       return;
     }
-    drawLookup(report);
-    lookupSay(visible(report.words), Boolean(reply.error));
+    lookupState.running = true;
+    const seq = ++lookupState.seq;
+    try {
+      lookupSay(fetch ? "Downloading zone and item names…" : "Looking up…", false);
+      const reply = await runJson(["lookup"], lookupParams(fetch), true);
+      if (seq !== lookupState.seq) return;
+      const report = reply.data;
+      if (!report || typeof report !== "object" || typeof report.words !== "string") {
+        byId("lookup-hits").replaceChildren();
+        byId("lookup-caveat").hidden = true;
+        lookupSay(reply.error ? shown(reply.error) : "The lookup came back in a shape this page does not know.", true);
+        return;
+      }
+      drawLookup(report);
+      lookupSay(visible(report.words), Boolean(reply.error));
+    } finally {
+      lookupState.running = false;
+      const next = lookupState.queued;
+      lookupState.queued = null;
+      if (next) await runLookup(next.fetch);
+    }
   }
 
   function lookupSoon() {

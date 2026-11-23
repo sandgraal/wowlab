@@ -55,7 +55,9 @@ class LookupReport(_Out):
     (`questiedb`: its state, the TOC read, the parts not read and why) and
     of each game table (`game_tables`: `cached`, `fetched`, `missing`,
     `error` or `no_version`), `words`, the sentence the text output opens
-    with, and `notes`, the standing notes `--notes` prints."""
+    with, `caveat`, the one line it adds after the answer when one applies
+    (QuestieDB not read, the tables not downloaded, several QuestieDB
+    files), and `notes`, the standing notes `--notes` prints."""
 
     query: str
     kinds: list[lookup.SearchKind]
@@ -66,6 +68,7 @@ class LookupReport(_Out):
     total: int
     hits: list[LookupHitReport]
     words: str
+    caveat: str | None = None
     notes: list[str]
 
 
@@ -89,7 +92,11 @@ def _point(p: tuple[float, float]) -> str:
     return f"{p[0]:.1f}, {p[1]:.1f}"
 
 
-def _zone(zone: str | None, zone_id: int) -> str:
+def _zone(zone: str | None, zone_id: int, own: bool = False) -> str:
+    if own:
+        # An area QuestieDB numbers itself (a wing of an instance, say): its
+        # own name for it, never the game zone table's for that number.
+        return f"{zone} (QuestieDB's own area {zone_id})" if zone else f"area {zone_id}"
     return zone or f"zone {zone_id}"
 
 
@@ -99,7 +106,7 @@ def _places(places: list[lookup.Place]) -> str | None:
         return None
     parts: list[str] = []
     for place in places[:3]:
-        where = _zone(place.zone, place.zone_id)
+        where = _zone(place.zone, place.zone_id, place.own_area)
         mapped = [p for p in place.points if p[0] >= 0 and p[1] >= 0]
         if mapped:
             more = place.count - 1
@@ -107,9 +114,11 @@ def _places(places: list[lookup.Place]) -> str | None:
             if more > 0:
                 spot += f" (and {_plural(more, 'more spot')})"
             where += spot
-        elif place.points:
+        elif place.points and place.own_area and place.zone:
             # QuestieDB writes -1, -1 for a spawn inside an instance, which
             # has no spot on the zone's map.
+            where = f"{place.zone} (QuestieDB's own area {place.zone_id}, inside an instance)"
+        elif place.points:
             where += " (inside)"
         parts.append(where)
     text = "in " + "; ".join(parts)
@@ -118,27 +127,52 @@ def _places(places: list[lookup.Place]) -> str | None:
     return text
 
 
+def _where(places: list[lookup.Place]) -> str | None:
+    """Where an NPC or object is: its spots, or, when QuestieDB keeps none,
+    the zone it gives as the most likely one."""
+    if len(places) == 1 and places[0].estimated:
+        p = places[0]
+        return f"usually in {_zone(p.zone, p.zone_id, p.own_area)}; QuestieDB keeps no spot for it"
+    return _places(places)
+
+
 def _npc(n: lookup.NpcRef, *, faction: bool = False) -> str:
     bits = [n.name or f"NPC {n.id}"]
     detail = [d for d in (n.subname, _levels(n.level_min, n.level_max)) if d]
     if faction and n.friendly_to in _FACTIONS:
-        detail.append(_FACTIONS[n.friendly_to])
+        detail.append(f"friendly to {_FACTIONS[n.friendly_to]}")
     if detail:
         bits.append(f"({', '.join(detail)})")
-    where = _places(n.places)
+    where = _where(n.places)
     if where:
         bits.append(where)
     return " ".join(bits)
 
 
 def _object(o: lookup.ObjectRef) -> str:
-    where = _places(o.places)
+    where = _where(o.places)
     name = o.name or f"object {o.id}"
     return f"{name} {where}" if where else name
 
 
+def _quest_level(level: int | None) -> str | None:
+    if level is None:
+        return None
+    # QuestieDB keeps 0 or a negative level for a quest whose level it does
+    # not know or that scales with the player.
+    return f"level {level}" if level > 0 else "level varies"
+
+
+def _quest_zone(q: lookup.QuestRef) -> str | None:
+    if q.zone_id is not None:
+        return _zone(q.zone, q.zone_id, q.own_area)
+    if q.sort_id is not None:
+        return "no zone: a class, profession or other quest category"
+    return None
+
+
 def _quest(q: lookup.QuestRef) -> str:
-    detail = [d for d in (f"level {q.level}" if q.level else None, q.zone) if d]
+    detail = [d for d in (_quest_level(q.level), _quest_zone(q)) if d]
     name = q.name or f"quest {q.id}"
     return f"{name} ({', '.join(detail)})" if detail else name
 
@@ -155,14 +189,32 @@ def _hit_list(label: str, entries: list[str]) -> list[str]:
     return lines
 
 
+def _table_label(name: str) -> str:
+    """A drop table as a player knows its source: `wowheadData` is
+    Wowhead, `cmangosData` cmangos (a private server project)."""
+    if name == "correction":
+        return "Questie's correction"
+    base = name[: -len("Data")] if name.endswith("Data") else name
+    return "Wowhead" if base.casefold() == "wowhead" else base
+
+
+def _percent(value: float) -> str:
+    return f"{round(value, 1):g}%"
+
+
 def _chance(d: lookup.DropSource) -> str:
-    if not d.chances:
-        return ""
-    words = ", ".join(f"{v:g}%" for v in sorted(set(d.chances.values()), reverse=True))
-    return f", {words} chance"
+    """`, 45% (Wowhead), 80% (cmangos)`: the figure Questie shows first,
+    then each other table's, in the order Questie consults them."""
+    shown: list[str] = []
+    if d.chance is not None and d.chance_from is not None:
+        shown.append(f"{_percent(d.chance)} ({_table_label(d.chance_from)})")
+    shown += [
+        f"{_percent(v)} ({_table_label(k)})" for k, v in d.chances.items() if k != d.chance_from
+    ]
+    return ", " + ", ".join(shown) if shown else ""
 
 
-def _item_lines(s: lookup.ItemSources | None) -> list[str]:
+def _item_lines(s: lookup.ItemSources | None, questie_read: bool = True) -> list[str]:
     if s is None:
         return []
     lines: list[str] = []
@@ -171,15 +223,22 @@ def _item_lines(s: lookup.ItemSources | None) -> list[str]:
     lines += _hit_list("Found in the object", [_object(o) for o in objects])
     lines += _hit_list("Found in", [_item(i) for i in s.containers])
     lines += _hit_list("Reward of the quest", [_quest(q) for q in s.quest_rewards])
+    lines += _hit_list("Given with the quest", [_quest(q) for q in s.given_by_quests])
     vendors = sorted(s.vendors, key=lambda n: -_spots(n.places))
     lines += _hit_list("Sold by", [_npc(n, faction=True) for n in vendors])
     if s.starts_quest is not None:
         lines.append(f"Starts the quest {_quest(s.starts_quest)}")
+    lines += _hit_list("Used in the quest", [_quest(q) for q in s.related_quests])
     if not lines:
         if s.in_questiedb:
-            lines.append("QuestieDB names no drop, vendor or quest for it.")
-        else:
+            lines.append(
+                "QuestieDB names no drop, object, container, vendor or quest for it, and no "
+                "quest that uses it."
+            )
+        elif questie_read:
             lines.append("Only the game's item table knows it; QuestieDB has no entry for it.")
+        else:
+            lines.append("QuestieDB is not read, so where it comes from is unknown.")
     return lines
 
 
@@ -194,8 +253,11 @@ def _npc_lines(d: lookup.NpcDetail | None) -> list[str]:
     if about:
         text = "; ".join(about)
         lines.append(text[:1].upper() + text[1:])
-    where = _places(n.places)
-    lines.append(f"Found {where}" if where else "QuestieDB keeps no place for it.")
+    where = _where(n.places)
+    if where is not None and where.startswith("usually"):
+        lines.append(where[:1].upper() + where[1:])
+    else:
+        lines.append(f"Found {where}" if where else "QuestieDB keeps no place for it.")
     lines += _hit_list("Gives the quest", [_quest(q) for q in d.starts])
     lines += _hit_list("Takes the quest", [_quest(q) for q in d.ends])
     return lines
@@ -204,8 +266,11 @@ def _npc_lines(d: lookup.NpcDetail | None) -> list[str]:
 def _object_lines(d: lookup.ObjectDetail | None) -> list[str]:
     if d is None:
         return []
-    where = _places(d.object.places)
-    lines = [f"Found {where}" if where else "QuestieDB keeps no place for it."]
+    where = _where(d.object.places)
+    if where is not None and where.startswith("usually"):
+        lines = [where[:1].upper() + where[1:]]
+    else:
+        lines = [f"Found {where}" if where else "QuestieDB keeps no place for it."]
     lines += _hit_list("Starts the quest", [_quest(q) for q in d.starts])
     lines += _hit_list("Ends the quest", [_quest(q) for q in d.ends])
     return lines
@@ -215,16 +280,18 @@ def _quest_lines(d: lookup.QuestDetail | None) -> list[str]:
     if d is None:
         return []
     q = d.quest
+    zone = _quest_zone(q)
     about = [
         x
         for x in (
-            f"Level {q.level}" if q.level else None,
+            _quest_level(q.level),
             f"needs level {q.required_level}" if q.required_level else None,
-            f"in {q.zone}" if q.zone else (f"in zone {q.zone_id}" if q.zone_id else None),
+            (zone if zone.startswith("no zone") else f"in {zone}") if zone else None,
         )
         if x
     ]
-    lines = ["; ".join(about)] if about else []
+    text = "; ".join(about)
+    lines = [text[:1].upper() + text[1:]] if text else []
     lines += _hit_list("Given by", [_npc(n, faction=True) for n in d.started_by_npcs])
     lines += _hit_list("Starts at the object", [_object(o) for o in d.started_by_objects])
     lines += _hit_list("Starts from the item", [_item(i) for i in d.started_by_items])
@@ -248,9 +315,9 @@ def _heading(hit: lookup.LookupHit) -> str:
     return head
 
 
-def _report_hit(hit: lookup.LookupHit) -> LookupHitReport:
+def _report_hit(hit: lookup.LookupHit, questie_read: bool = True) -> LookupHitReport:
     lines = (
-        _item_lines(hit.item)
+        _item_lines(hit.item, questie_read)
         + _npc_lines(hit.npc)
         + _quest_lines(hit.quest)
         + _object_lines(hit.object)
@@ -300,27 +367,69 @@ _NOTE_SOURCE = (
 )
 _NOTE_CHANCE = (
     "Drop chances are shown only where QuestieDB's drop tables have one; those cover the items "
-    "quests ask for."
+    "quests ask for. Where a drop has several, the first is the one Questie itself shows: its "
+    "own correction, else the private-server figure (cmangos), else Wowhead's."
 )
 _NOTE_POINTS = "Spots are map coordinates, as the in-game map shows them: across, then down."
 
 
+def _read_words(questie: lookup.QuestieState) -> str | None:
+    """`QuestieDB 1.1.4 (QuestieDB_Forever.toc)`: which copy was read."""
+    info = questie.info
+    if info is None:
+        return None
+    version = f" {info.version}" if info.version else ""
+    return f"QuestieDB{version} ({info.toc})"
+
+
+def _several_words(questie: lookup.QuestieState) -> str | None:
+    """What to say when QuestieDB has several TOCs that hold its data."""
+    if len(questie.tocs) < 2 or questie.info is None:
+        return None
+    how = (
+        "the one whose game version matches yours"
+        if questie.chosen_by == "interface"
+        else "the first by name"
+    )
+    return (
+        f"QuestieDB has {len(questie.tocs)} files that hold its data "
+        f"({', '.join(questie.tocs)}); wowlab read {questie.info.toc}, {how}, which may not be "
+        "the one the game loads (not yet confirmed)."
+    )
+
+
 def _notes(questie: lookup.QuestieState) -> list[str]:
-    notes = [_NOTE_SOURCE, _NOTE_CHANCE, _NOTE_POINTS]
+    notes: list[str] = []
+    read = _read_words(questie)
+    if read is not None:
+        notes.append(f"Read: {read}.")
+    several = _several_words(questie)
+    if several is not None:
+        notes.append(several)
+    notes += [_NOTE_SOURCE, _NOTE_CHANCE, _NOTE_POINTS]
     notes += [f"Not read: {left.part}, because {left.why}." for left in questie.left_out]
-    if questie.unreadable_rows:
+    n = questie.unreadable_rows
+    if n:
         notes.append(
-            f"{_plural(questie.unreadable_rows, 'entry')} of QuestieDB could not be read and "
-            "were left out."
+            "1 entry of QuestieDB could not be read and was left out."
+            if n == 1
+            else f"{n} entries of QuestieDB could not be read and were left out."
         )
     return notes
 
 
 def _caveat(questie: lookup.QuestieState, tables: list[lookup.GameTableState]) -> str | None:
     if questie.state == "not_installed":
-        return "QuestieDB is not installed for this game version, so only the game's item table was searched."
+        return (
+            "QuestieDB is not installed for this game version, so only the game's item table "
+            "was searched."
+        )
     if questie.state in ("not_baked", "unreadable"):
-        why = f" ({questie.detail})" if questie.detail else ""
+        why = (
+            f" ({questie.detail})"
+            if questie.detail
+            else " (it holds no data in the form wowlab reads)"
+        )
         return f"QuestieDB could not be read{why}, so only the game's item table was searched."
     if any(t.state == "missing" for t in tables):
         return (
@@ -330,7 +439,7 @@ def _caveat(questie: lookup.QuestieState, tables: list[lookup.GameTableState]) -
     failed = [t for t in tables if t.state == "error"]
     if failed:
         return f"The {failed[0].table} table could not be read: {failed[0].detail}"
-    return None
+    return _several_words(questie)
 
 
 @app.command(
@@ -386,7 +495,7 @@ def lookup_cmd(
     hits, total = index.search(query, kinds=kinds, limit=limit)
     tables = [fetched.get(t.table, t) for t in index.game_tables()]
     questie = index.questie
-    shown = [_report_hit(h) for h in hits]
+    shown = [_report_hit(h, questie.state == "read") for h in hits]
     searched = questie.state == "read" or any(t.state in ("cached", "fetched") for t in tables[:1])
     asked = '"' + query.strip() + '"'
     if not query.strip():
@@ -413,6 +522,7 @@ def lookup_cmd(
         total=total,
         hits=shown,
         words=words,
+        caveat=_caveat(questie, tables),
         notes=_notes(questie),
     )
     if json_out:
@@ -425,6 +535,6 @@ def lookup_cmd(
             for line in hit.lines:
                 _say_prose(line, indent="  ", hang="    ")
         _say("")
-        _say_notes(report.notes, notes, _caveat(questie, tables))
+        _say_notes(report.notes, notes, report.caveat)
     if not searched or not query.strip():
         raise typer.Exit(EXIT_ERROR)
