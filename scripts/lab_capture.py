@@ -75,15 +75,18 @@ words or more, or of FREE_TEXT_MIN_LETTERS non-ASCII letters or more, is
 flagged "free text, review by hand", with its place and never its text; the
 flag is a note, not a refusal.
 
-The lab-addon's file (M20-13): in a file holding `WowLabCharDB`, a player
-GUID that is not the owner's (a crafter's in an item link) gets an invented
-GUID, as another player's does in a combat log (labaddon_other_guids). Macro
-text, binding commands, guild names and times are kept as captured (owner's
-ruling, 2026-11-20).
+The lab-addon's files (M20-13, M21-01): in a file holding `WowLabCharDB`
+or `WowLabCrewDB`, a player GUID that is not the owner's (a crafter's in an
+item link, a recorded player's `guid`) gets an invented GUID, as another
+player's does in a combat log (labaddon_other_guids). Macro text, binding
+commands, guild names and times are kept as captured (owner's ruling,
+2026-11-20).
 
 The crew book (`WowLabCrewDB`, the crew and PvP records) is captured like
-any other SavedVariables file: M19-04's refusal was removed by M21-01 when
-the owner lifted ADR-0036 term 3 (note of 2026-11-23).
+any other lab-addon file: M19-04's refusal was removed by M21-01 when the
+owner lifted ADR-0036 term 3 (note of 2026-11-23). Names, realms, guilds,
+notes and ratings are kept as captured; only the GUIDs are invented, as
+above.
 
 SQLite files (M20-02, `docs/LAB_PLAN.md` §21.4 term 3): any file, whatever its
 name or kind, holding the SQLite database header, or starting with a rollback
@@ -1722,12 +1725,17 @@ class OtherPlayers:
 # appearance, byte-level, so the owner's capture is not refused for wearing
 # a crafted item. Macro text, binding commands, guild names and times are
 # not secret (the owner's ruling of 2026-11-20) and are kept as captured.
-LABADDON_VARIABLE_RE = re.compile(rb"(?m)^WowLabCharDB\s*=")
+# The account-wide crew book (`WowLabCrewDB`, beside `WowLabDB`) keeps a
+# `guid` for every player it records; since M21-01 lets a book be captured,
+# a file holding it gets the same treatment, so its names, realms, guilds,
+# notes and ratings pass through unchanged and only the GUIDs are invented.
+LABADDON_VARIABLE_RE = re.compile(rb"(?m)^(?:WowLabCharDB|WowLabCrewDB)\s*=")
 
 
 def labaddon_other_guids(data: bytes, identity: Identity) -> OtherUnits | None:
     """Invented GUIDs for every player GUID in `data` that is not one of
-    the owner's, when `data` holds `WowLabCharDB`; None otherwise."""
+    the owner's, when `data` holds `WowLabCharDB` or `WowLabCrewDB`; None
+    otherwise."""
     if LABADDON_VARIABLE_RE.search(data) is None:
         return None
     players: dict[bytes, int] = {}
