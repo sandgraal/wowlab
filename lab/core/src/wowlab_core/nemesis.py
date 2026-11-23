@@ -39,6 +39,7 @@ rule is one edit.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable
 from typing import Literal
 
@@ -86,6 +87,9 @@ HOW_COUNTED = (
 # ─── the input ───────────────────────────────────────────────────────────────
 
 # Where a fight came from. A new source adds a value here and a reader.
+# The kill pairs of a battleground's combat log (M22-15) are not a new
+# fight: they fold into that match's fight (its `kills` and `deaths`
+# beside its `team`), so a match stays one fight per player.
 Source = Literal["match", "world"]
 Result = Literal["win", "loss"]
 
@@ -144,8 +148,9 @@ class Team(_Model):
 
 
 class Record(_Model):
-    """One player's record against you: the fights, the start of the first
-    and of the latest (`first`, `last`; None with no fight), how many fights
+    """One player's record against you, for a player with at least one
+    fight (a player with none has no record: None, `null` in JSON): the
+    fights, the start of the first and of the latest (`first`, `last`), how many fights
     each source gave (`sources`, by source name: `match`, `world`), and the
     two parts, `personal` and `team`, kept apart."""
 
@@ -157,48 +162,120 @@ class Record(_Model):
     team: Team = Field(default_factory=Team)
 
 
-def record_of(fights: Iterable[Fight]) -> Record:
-    """The record the fights given add up to (all of one player's)."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class Tally:
+    """One player's fights from one source, already added up: what a
+    database reader totals with one `GROUP BY` per source, and what
+    `tally_of` totals from `Fight`s. `first` and `last` are the start of
+    the first and of the latest fight."""
+
+    key: str
+    source: str
+    fights: int
+    kills: int
+    deaths: int
+    wins: int
+    losses: int
+    first: int
+    last: int
+
+
+def tally_of(fights: Iterable[Fight]) -> list[Tally]:
+    """The fights given, added up by player and source."""
+    sums: dict[tuple[str, str], list[int]] = {}
+    for f in fights:
+        held = sums.get((f.key, f.source))
+        if held is None:
+            sums[(f.key, f.source)] = [
+                1,
+                f.kills,
+                f.deaths,
+                f.team == "win",
+                f.team == "loss",
+                f.at,
+                f.at,
+            ]
+            continue
+        held[0] += 1
+        held[1] += f.kills
+        held[2] += f.deaths
+        held[3] += f.team == "win"
+        held[4] += f.team == "loss"
+        held[5] = min(held[5], f.at)
+        held[6] = max(held[6], f.at)
+    return [Tally(key, source, *map(int, v)) for (key, source), v in sums.items()]
+
+
+def record_from(tallies: Iterable[Tally]) -> Record | None:
+    """The record one player's tallies add up to (one per source); None for
+    none: a player with no fight has no record."""
     n = kills = deaths = wins = losses = 0
     first: int | None = None
     last: int | None = None
     sources: dict[str, int] = {}
-    for f in fights:
-        n += 1
-        kills += f.kills
-        deaths += f.deaths
-        wins += f.team == "win"
-        losses += f.team == "loss"
-        first = f.at if first is None else min(first, f.at)
-        last = f.at if last is None else max(last, f.at)
-        sources[f.source] = sources.get(f.source, 0) + 1
-    return Record(
-        fights=n,
-        first=first,
-        last=last,
-        sources=dict(sorted(sources.items())),
-        personal=Personal(kills=kills, deaths=deaths, nemesis=is_nemesis(kills, deaths)),
-        team=Team(wins=wins, losses=losses, rival=is_rival(wins, losses)),
+    for t in tallies:
+        n += t.fights
+        kills += t.kills
+        deaths += t.deaths
+        wins += t.wins
+        losses += t.losses
+        first = t.first if first is None else min(first, t.first)
+        last = t.last if last is None else max(last, t.last)
+        sources[t.source] = sources.get(t.source, 0) + t.fights
+    if n == 0:
+        return None
+    # One validation of the whole nested record (a crew read builds one per
+    # player, 20,000 at the cap): measured faster than building the three
+    # models one by one.
+    return Record.model_validate(
+        {
+            "fights": n,
+            "first": first,
+            "last": last,
+            "sources": dict(sorted(sources.items())),
+            "personal": {"kills": kills, "deaths": deaths, "nemesis": is_nemesis(kills, deaths)},
+            "team": {"wins": wins, "losses": losses, "rival": is_rival(wins, losses)},
+        }
     )
+
+
+def records_from(tallies: Iterable[Tally]) -> dict[str, Record]:
+    """Each player's record, by stored key, from every source's tallies
+    together. A player with no fight has no entry."""
+    by_key: dict[str, list[Tally]] = {}
+    for t in tallies:
+        by_key.setdefault(t.key, []).append(t)
+    out: dict[str, Record] = {}
+    for key, found in by_key.items():
+        record = record_from(found)
+        if record is not None:
+            out[key] = record
+    return out
+
+
+def record_of(fights: Iterable[Fight]) -> Record | None:
+    """The record the fights given add up to (all of one player's); None
+    for no fight."""
+    return record_from(tally_of(fights))
 
 
 def records(*sources: Iterable[Fight]) -> dict[str, Record]:
     """Each player's record, by stored key, from every source's fights
     together. A player with no fight has no entry."""
-    by_key: dict[str, list[Fight]] = {}
-    for fights in sources:
-        for f in fights:
-            by_key.setdefault(f.key, []).append(f)
-    return {key: record_of(found) for key, found in by_key.items()}
+    return records_from(t for fights in sources for t in tally_of(fights))
 
 
-def nemesis_order(record: Record, key: str) -> tuple[int, int, str]:
+def nemesis_order(record: Record | None, key: str) -> tuple[int, int, str]:
     """Most killed by them first, then the fewest of your killing blows on
-    them, then by stored key."""
+    them, then by stored key; no record counts as none of either."""
+    if record is None:
+        return (0, 0, key)
     return (-record.personal.deaths, record.personal.kills, key)
 
 
-def rival_order(record: Record, key: str) -> tuple[int, int, str]:
+def rival_order(record: Record | None, key: str) -> tuple[int, int, str]:
     """Most team losses to them first, then the fewest team wins over them,
-    then by stored key."""
+    then by stored key; no record counts as none of either."""
+    if record is None:
+        return (0, 0, key)
     return (-record.team.losses, record.team.wins, key)

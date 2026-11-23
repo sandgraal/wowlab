@@ -7433,29 +7433,37 @@ from the open world today; a trade counts one of each. **Team:** a match's
 it decides nothing; a match keeps no killing blows. **The record:**
 fights, the start of the first and latest fight, the fights each source
 gave, `personal` {kills, deaths, nemesis} and `team` {wins, losses,
-rival}. It is counted from the database's rows only, not from the four
-counters, which also count matches the game dropped before a sync saw
-them. **A nemesis** has killed you at least 3 times, and more often than
+rival}; a player with no fight has none (`record: null`). It is counted
+from the database's rows only, not from the four counters, which also
+count matches the game dropped before a sync saw them. Every read totals
+it per player (*fix round 2:* the matches by two plain scans added up in
+Python, the open world from the scan the open-world columns already make),
+and `crewdb.fights(KEY)` lists one player's rows (`WHERE player_key = ?`);
+a test checks the totals equal those rows added up. **A nemesis** has killed you at least 3 times, and more often than
 you killed them (`nemesis.is_nemesis`, `NEMESIS_RULE`). **A rival team**
 is a player whose side beat yours in at least 3 battleground or arena
 matches, and more often than yours beat theirs (`nemesis.is_rival`,
 `RIVAL_RULE`). Team results never feed the nemesis rule. Both rules and
 their words live in `nemesis.py`; the help of `crew list --nemeses` and
 `--rivals`, `crew show` and the Crew tab print them. `crew list` rows and
-`--json` carry `record`; `--nemeses` (most killed by them first, then the
-fewest of your killing blows, then key), `--rivals` (most team losses
-first, then fewest team wins, then key), `--sort deaths` and `--sort
-team_losses`; `crew show` prints both parts with their rules, and its
+`--json` carry `record`; `--nemeses` and `--rivals`; `--sort deaths`
+(most killed by them first, then the fewest of your killing blows, then
+key), `--sort team_losses` (most team losses first, then fewest team wins,
+then key) and `--sort world` (latest open-world encounter first). With no
+`--sort`, `--nemeses` uses `deaths`, else `--rivals` uses `team_losses`,
+else `--world` uses `world`, else `last`; a `--sort` given always wins, and
+the report's `sort` is the order used. `crew show` prints both parts with their rules, and its
 `--json` adds `fights` (the rows), `nemesis_rule` and `rival_rule`. The
 Crew tab: a "Record against them" column, the badges "Nemesis" and "Rival
 team", "Your nemeses" and "Rival teams" in the Matches filter (each shows
-its rule), and the orders "Most killed by them" and "Most team losses to
-them". Not yet sources, each to join as one more list of fights in
-`crewdb._fights`: Spy's sightings and any wins and losses it records
-(M22-02), and the kill pairs of a battleground's combat log (a later
-ticket: the addon turns the log on in battlegrounds and `crew scan-log`
-reads those segments), which will be personal fights like the open
-world's.
+its rule), and the orders "Most killed by them", "Most team losses to
+them" and "Latest open-world fight first"; choosing a view sends no order
+and the Order box then shows the one the command used. Not yet sources:
+Spy's sightings and any wins and losses it records (M22-02), one more
+source of tallies and fights in `crewdb`; and the kill pairs of a
+battleground's combat log (M22-15: the addon turns the log on in
+battlegrounds and `crew scan-log` reads those segments), which fold into
+that match's fight as its killing blows, never a second fight.
 
 ### 21.4 The terms of ADR-0036, for the new store
 

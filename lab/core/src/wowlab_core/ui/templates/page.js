@@ -3640,11 +3640,15 @@
     key: null, // the stored key of the player shown
     pending: null, // the plan Confirm would run: { command, params, token }
     searchTimer: null,
+    // The Matches filter just changed (M22-03): the next read sends no order,
+    // so the command uses that view's own, and the Order box then shows it.
+    viewOrder: false,
   };
   const CREW_RATED = [["", "Everyone"], ["good", "Rated good"], ["bad", "Rated bad"], ["any", "Rated either way"]];
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+    ["world", "Latest open-world fight first"],
     ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
@@ -3841,7 +3845,7 @@
     if (search.trim() !== "") params.search = search;
     const rated = byId("crew-rated").value;
     if (rated) params.rated = rated;
-    params.sort = byId("crew-sort").value || "last";
+    if (!crew.viewOrder) params.sort = byId("crew-sort").value || "last";
     // The match filters (M20-09): each the command's own option, sent only
     // when set, so the matching is Python's.
     const pvp = byId("crew-pvp").value;
@@ -3874,6 +3878,9 @@
       return;
     }
     crew.report = report;
+    // The Order box shows the order the command used (M22-03).
+    crew.viewOrder = false;
+    if (CREW_SORT.some(([value]) => value === report.sort)) byId("crew-sort").value = report.sort;
     drawCrew();
     // A history on show is read again: a forget or a sync may have changed it.
     if (!byId("crew-matches").hidden) showCrewMatches(false, crew.world);
@@ -3891,7 +3898,10 @@
   });
   byId("crew-rated").addEventListener("change", () => loadCrew());
   byId("crew-sort").addEventListener("change", () => loadCrew());
-  byId("crew-pvp").addEventListener("change", () => loadCrew());
+  byId("crew-pvp").addEventListener("change", () => {
+    crew.viewOrder = true;
+    loadCrew();
+  });
   byId("crew-since").addEventListener("change", () => loadCrew());
   byId("crew-map").addEventListener("input", () => {
     if (crew.searchTimer !== null) clearTimeout(crew.searchTimer);

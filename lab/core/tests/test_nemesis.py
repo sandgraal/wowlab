@@ -113,10 +113,34 @@ def test_a_later_source_of_kill_pairs_is_one_more_list_of_fights_constructed() -
     assert got[KEY_C].personal == nemesis.Personal(kills=0, deaths=3, nemesis=True)
 
 
-def test_no_fight_is_the_empty_record_constructed() -> None:
-    empty = nemesis.Record()
-    assert nemesis.record_of([]) == empty
-    assert not empty.personal.nemesis and not empty.team.rival and empty.first is None
+def test_no_fight_is_no_record_constructed() -> None:
+    assert nemesis.record_of([]) is None
+    assert nemesis.record_from([]) is None
+    assert nemesis.records() == {} and nemesis.records_from([]) == {}
+    # The orders put a player with no record with those who never lost.
+    assert nemesis.nemesis_order(None, KEY_A) == nemesis.rival_order(None, KEY_A) == (0, 0, KEY_A)
+
+
+def test_tallies_total_to_the_same_record_as_the_fights_constructed() -> None:
+    """What the database totals with one GROUP BY per source (a `Tally`)
+    and what the fights add up to give the same record."""
+    fights = [
+        _fight(row=1, at=T + 10, team="loss"),
+        _fight(row=2, at=T + 20, team="win"),
+        _fight(row=3, at=T + 30),
+        _fight(source="world", row=1, at=T + 5, deaths=1),
+        _fight(source="world", row=2, at=T + 90, kills=1, deaths=1),
+        _fight(KEY_A, row=1, team="loss"),
+    ]
+    tallies = [
+        nemesis.Tally(KEY_C, "match", 3, 0, 0, 1, 1, T + 10, T + 30),
+        nemesis.Tally(KEY_C, "world", 2, 1, 2, 0, 0, T + 5, T + 90),
+        nemesis.Tally(KEY_A, "match", 1, 0, 0, 0, 1, T, T),
+    ]
+    assert sorted(nemesis.tally_of(fights), key=lambda t: (t.key, t.source)) == sorted(
+        tallies, key=lambda t: (t.key, t.source)
+    )
+    assert nemesis.records_from(tallies) == nemesis.records(fights)
 
 
 def test_records_split_by_player_and_take_any_number_of_sources_constructed() -> None:

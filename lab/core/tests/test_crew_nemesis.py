@@ -159,7 +159,7 @@ def test_each_record_adds_up_the_matches_and_encounters_kept_constructed(make: A
     assert d.team == nemesis.Team(wins=0, losses=1, rival=False)
     assert d.personal == nemesis.Personal(kills=1, deaths=0, nemesis=False)
     # A was only ever with you, B only beside you: no fight.
-    assert rows[KEY_A].record == nemesis.Record() and rows[KEY_B].record == nemesis.Record()
+    assert rows[KEY_A].record is None and rows[KEY_B].record is None
 
 
 @pytest.mark.parametrize("key", [KEY_A, KEY_B, KEY_C, KEY_D])
@@ -169,9 +169,13 @@ def test_every_count_is_traced_to_its_source_rows_constructed(make: Any, key: st
     fights = crewdb.fights(FLAVOR, ACCOUNT, key)
     # The fights are exactly the rows the database's own tables hold for them.
     assert {(f.source, f.row) for f in fights} == _rows_of(env, key)
-    assert len(fights) == len({(f.source, f.row) for f in fights}) == record.fights
-    # And the record is those fights added up.
+    assert len(fights) == len({(f.source, f.row) for f in fights})
+    # And the record is those fights added up; no fight, no record.
     assert record == nemesis.record_of(fights)
+    if record is None:
+        assert fights == []
+        return
+    assert record.fights == len(fights)
     assert record.team.losses == sum(f.team == "loss" for f in fights)
     assert record.team.wins == sum(f.team == "win" for f in fights)
     assert record.personal.kills == sum(f.kills for f in fights)
@@ -203,7 +207,8 @@ def test_a_forgotten_player_has_no_fights_left_constructed(make: Any) -> None:
     assert result.exit_code == 0, result.output
     assert crewdb.fights(FLAVOR, ACCOUNT, KEY_C) == []
     assert KEY_C not in env.rows()
-    assert env.rows()[KEY_D].record.fights == 3  # the others keep theirs
+    kept = env.rows()[KEY_D].record
+    assert kept is not None and kept.fights == 3  # the others keep theirs
 
 
 # ─── the commands ────────────────────────────────────────────────────────────
@@ -346,3 +351,46 @@ def test_a_scanned_log_gives_the_personal_record_constructed(make: Any, owner: A
     assert (b.fights, b.personal.kills, b.personal.deaths) == (1, 0, 1)
     assert a.team == b.team == nemesis.Team()
     assert a.sources == b.sources == {"world": 1}
+
+
+def test_a_player_with_no_fight_has_a_null_record_in_json_constructed(make: Any) -> None:
+    env = _built(make)
+    listed = _json(env, "crew", "list")
+    by_key = {p["key"]: p for p in listed["players"]}
+    assert by_key[KEY_A]["record"] is None and by_key[KEY_B]["record"] is None
+    assert by_key[KEY_C]["record"]["team"]["rival"] is True
+    shown = _json(env, "crew", "show", KEY_A)
+    assert shown["player"]["record"] is None and shown["fights"] == []
+
+
+@pytest.mark.parametrize(
+    ("args", "used"),
+    [
+        ((), "last"),
+        (("--nemeses",), "deaths"),
+        (("--rivals",), "team_losses"),
+        (("--world",), "world"),
+        (("--nemeses", "--rivals"), "deaths"),
+        (("--nemeses", "--sort", "last"), "last"),
+        (("--rivals", "--sort", "name"), "name"),
+        (("--world", "--sort", "last"), "last"),
+    ],
+    ids=lambda v: "-".join(v) if isinstance(v, tuple) else v,
+)
+def test_a_view_has_its_own_order_unless_sort_is_given_constructed(
+    make: Any, args: tuple[str, ...], used: str
+) -> None:
+    env = _built(make)
+    _d_kills_you_three_times(env)
+    report = cli.CrewReport.model_validate(_json(env, "crew", "list", *args))
+    assert report.sort == used
+
+
+def test_the_sql_totals_equal_the_fights_added_up_constructed(make: Any) -> None:
+    """Every read totals the records in SQL; the rows `fights` lists, added
+    up in Python, give the same records for every player."""
+    env = _built(make)
+    _d_kills_you_three_times(env)
+    totalled = {k: r.record for k, r in env.rows().items() if r.record is not None}
+    assert totalled == nemesis.records(crewdb.fights(FLAVOR, ACCOUNT))
+    assert set(totalled) == {KEY_C, KEY_D}
