@@ -34,13 +34,14 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import platformdirs
 import pytest
 import test_ui_character as char_tab
 from test_ui_confirm import _commands, _confirm, _plan, _post, _token
 from test_ui_confirm_writes import _SHIM, _serving
 from test_ui_explorer import _node, _page_ids
 
-from wowlab_core import cli, crewbook, guard, ui
+from wowlab_core import cli, crewbook, crewdb, guard, ui, worldpvp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 
@@ -441,7 +442,7 @@ function crewView() {
     words: t("crew-words"), offer: t("crew-offer"), offerHidden: ids["crew-offer"].hidden,
     toolsHidden: ids["crew-tools"].hidden, status: t("crew-status"), statusRole: ids["crew-status"].getAttribute("role"),
     tableHidden: table.hidden,
-    nemesisRule: { text: t("crew-nemesis-rule"), hidden: ids["crew-nemesis-rule"].hidden },
+    rule: { text: t("crew-rule"), hidden: ids["crew-rule"].hidden },
     heads: table.all().filter((e) => e.tagName === "th").map((e) => e.textContent),
     rows: rows.map((tr) => tr.children.map((c) => c.textContent)),
     unread: ids["crew-unread"].children.map((c) => c.textContent),
@@ -549,8 +550,17 @@ def _bodies(step: dict[str, Any]) -> list[dict[str, Any]]:
     return [r["body"] for r in step["newRequests"]]
 
 
-# `badge badge-nemesis` (M22-03): the nemesis mark, a fixed class and text.
-_DRAWN_CLASSES = {"", "char-table hub crew", "unseen", "hub-row", "hub-open", "badge badge-nemesis"}
+# `badge badge-nemesis` and `badge badge-rival` (M22-03): the two marks, each
+# a fixed class and text.
+_DRAWN_CLASSES = {
+    "",
+    "char-table hub crew",
+    "unseen",
+    "hub-row",
+    "hub-open",
+    "badge badge-nemesis",
+    "badge badge-rival",
+}
 
 
 def _inert(view: dict[str, Any], *pieces: str) -> None:
@@ -1103,9 +1113,10 @@ def test_the_open_world_buttons_and_filter_go_through_the_command_constructed(
 # ─── the record against each opponent (M22-03) ───────────────────────────────
 
 
-def _nemesis_book() -> bytes:
-    """A schema 2 book (constructed): KEY_C against you in three lost
-    matches and one won, KEY_D in one lost; KEY_A always with you."""
+def _record_book() -> bytes:
+    """A schema 2 book (constructed): KEY_C's side beat yours three times
+    and lost once (a rival team), KEY_D's beat yours once; KEY_A always with
+    you."""
     return book(
         {KEY_A: player(), KEY_B: player(), KEY_C: player(), KEY_D: player()},
         schema=2,
@@ -1118,50 +1129,98 @@ def _nemesis_book() -> bytes:
     )
 
 
-def test_the_record_the_badge_and_the_nemeses_view_come_from_the_command_constructed(
-    crew_at: Any, tmp_path: Path
+def _d_kills_you_three_times(crew: Crew, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three open-world deaths to KEY_D (constructed), kept in the crew
+    database the server's runs use, as a combat-log scan keeps them."""
+    monkeypatch.setattr(platformdirs, "user_data_path", lambda *a, **k: crew.data)
+    target = crewdb.Target(
+        install_root=os.path.realpath(crew.root),
+        flavor_folder=FLAVOR,
+        flavor_path=str(crew.root / FLAVOR),
+        account=ACCOUNT,
+        file=LIVE,
+    )
+    name, realm = KEY_D.split("-")
+    foe = worldpvp.WorldPlayer(
+        key=KEY_D, name=name, realm=realm, guid="", side="foe", hits=1, killed_you=True
+    )
+    encounters = [
+        worldpvp.WorldEncounter(
+            owner_guid="Player-9999-00000001",
+            start=T2 + 1000 * n,
+            end=T2 + 1000 * n + 30,
+            zone="Invented Test Woods",
+            instance_id=0,
+            died=True,
+            players=[foe],
+        )
+        for n in (1, 2, 3)
+    ]
+    scan = worldpvp.WorldScan(start=0, end=10, state=worldpvp.ZoneState(), encounters=encounters)
+    resume = crewdb.WorldResume(start=0, how="new")
+    out = crewdb.record_world(target, "Logs/invented.txt", 10, "0" * 64, resume, scan)
+    assert out.state == "scanned", out.words
+
+
+def test_the_record_the_two_badges_and_the_two_views_come_from_the_command_constructed(
+    crew_at: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    crew = crew_at(_nemesis_book())
+    crew = crew_at(_record_book())
+    crew.report(LIST, {})  # the first sync makes the database
+    _d_kills_you_three_times(crew, monkeypatch)
     steps: list[dict[str, Any]] = [
         {"crew_tab": True},
         {"crew_set": "crew-pvp", "value": "nemeses"},
+        {"crew_set": "crew-pvp", "value": "rivals"},
         {"crew_set": "crew-pvp", "value": ""},
-        {"crew_set": "crew-sort", "value": "losses"},
+        {"crew_set": "crew-sort", "value": "deaths"},
+        {"crew_set": "crew-sort", "value": "team_losses"},
         {"crew_open": 0},
     ]
     out = _drive(crew, tmp_path / "node", steps)
-    tab, nemeses, everyone, by_losses, opened = out["steps"]
+    tab, nemeses, rivals, everyone, by_deaths, by_team, opened = out["steps"]
     listed = crew.report(LIST, {})
     record = {p["key"]: p["record"] for p in listed["players"]}
-    assert (record[KEY_C]["fights"], record[KEY_C]["losses"], record[KEY_C]["nemesis"]) == (
-        4,
-        3,
-        True,
-    )
-    # The record on every row, as the command added it up.
+    assert record[KEY_C]["team"] == {"wins": 1, "losses": 3, "rival": True}
+    assert record[KEY_C]["personal"] == {"kills": 0, "deaths": 0, "nemesis": False}
+    assert record[KEY_D]["team"] == {"wins": 0, "losses": 1, "rival": False}
+    assert record[KEY_D]["personal"] == {"kills": 0, "deaths": 3, "nemesis": True}
+    # The record on every row, as the command added it up, its parts apart.
+    c_name, d_name = KEY_C + "Rival team", KEY_D + "Nemesis"
     cells = {r[0]: r[2] for r in tab["rows"]}
-    assert cells[KEY_C + "Nemesis"] == "4 fights, won 1, lost 3"
-    assert cells[KEY_D] == "1 fight, won 0, lost 1"
+    assert cells[c_name] == "4 fights; they killed you 0, you killed them 0; team won 1, lost 3"
+    assert cells[d_name] == "4 fights; they killed you 3, you killed them 0; team won 0, lost 1"
     assert cells[KEY_A] == "none" and cells[KEY_B] == "none"
-    # The badge: only on the nemesis, a fixed class and word.
-    badges = [e for e in tab["drawn"] if e["cls"] == "badge badge-nemesis"]
-    assert len(badges) == 1 and badges[0]["tag"] == "span"
+    # Two badges, each on its own player, each a fixed class and word.
+    drawn = [e for e in tab["drawn"] if e["cls"].startswith("badge")]
+    assert sorted((e["cls"], e["tag"]) for e in drawn) == [
+        ("badge badge-nemesis", "span"),
+        ("badge badge-rival", "span"),
+    ]
     _inert(tab)
-    assert tab["nemesisRule"]["hidden"] is True
-    # The nemeses view is the command's own filter, and says the rule.
+    assert tab["rule"]["hidden"] is True
+    # Each view is the command's own filter, and says its own rule.
     assert _bodies(nemeses) == [
         {"command": ["crew", "list"], "params": {"sort": "last", "nemeses": True}}
     ]
-    assert [r[0] for r in nemeses["rows"]] == [KEY_C + "Nemesis"]
-    assert nemeses["nemesisRule"] == {"text": listed["nemesis_rule"], "hidden": False}
-    assert "at least 3 times" in nemeses["nemesisRule"]["text"]
-    assert everyone["nemesisRule"]["hidden"] is True and len(everyone["rows"]) == 4
-    # Sorted by losses, through the command's own order.
-    assert _bodies(by_losses) == [{"command": ["crew", "list"], "params": {"sort": "losses"}}]
-    assert [r[0] for r in by_losses["rows"]][:2] == [KEY_C + "Nemesis", KEY_D]
+    assert [r[0] for r in nemeses["rows"]] == [d_name]
+    assert nemeses["rule"] == {"text": listed["nemesis_rule"], "hidden": False}
+    assert _bodies(rivals) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "rivals": True}}
+    ]
+    assert [r[0] for r in rivals["rows"]] == [c_name]
+    assert rivals["rule"] == {"text": listed["rival_rule"], "hidden": False}
+    assert everyone["rule"]["hidden"] is True and len(everyone["rows"]) == 4
+    # The two sorts, through the command's own orders.
+    assert _bodies(by_deaths) == [{"command": ["crew", "list"], "params": {"sort": "deaths"}}]
+    # D killed you 3 times; the others never did, so they follow by key.
+    assert [r[0] for r in by_deaths["rows"]] == [d_name, KEY_A, KEY_B, c_name]
+    assert _bodies(by_team) == [{"command": ["crew", "list"], "params": {"sort": "team_losses"}}]
+    assert [r[0] for r in by_team["rows"]][:2] == [c_name, d_name]
     # The player's panel shows `crew show`'s record lines.
     shown = crew.report(SHOW, {"name": KEY_C})
     assert opened["player"]["lines"] == [line.strip() for line in shown["lines"]]
     assert (
-        "Record against them: 4 fights (4 in matches); won 1, lost 3" in opened["player"]["lines"]
+        "Team results in matches against them: your side won 1, their side won 3"
+        in opened["player"]["lines"]
     )

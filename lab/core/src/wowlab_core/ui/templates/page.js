@@ -3645,14 +3645,15 @@
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
-    ["losses", "Most fights lost to them first"],
+    ["deaths", "Most killed by them"], ["team_losses", "Most team losses to them"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
-  // `crew list --nemeses` (M22-03): your nemeses, most fights lost to them first.
+  // `crew list --nemeses` and `--rivals` (M22-03): your nemeses (by killing
+  // blows), and rival teams (by battleground and arena results).
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
-    ["world", "Met in the open world"], ["nemeses", "Your nemeses"],
+    ["world", "Met in the open world"], ["nemeses", "Your nemeses"], ["rivals", "Rival teams"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
   const CREW_COLUMNS = [
@@ -3708,15 +3709,18 @@
     return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
   }
 
-  // The record against them (M22-03), as `crew list --json` adds it up:
-  // fights, won and lost; "none" with no fight kept.
+  // The record against them (M22-03), as `crew list --json` adds it up,
+  // its two parts apart: killing blows each way, then team results; "none"
+  // with no fight kept.
   function crewRecord(record) {
     const r = record && typeof record === "object" ? record : {};
     const fights = hubNum(r.fights);
     if (fights === null || fights === 0) return "none";
-    const won = hubNum(r.wins) || 0;
-    const lost = hubNum(r.losses) || 0;
-    return pluralWord(fights, " fight") + ", won " + won + ", lost " + lost;
+    const me = r.personal && typeof r.personal === "object" ? r.personal : {};
+    const team = r.team && typeof r.team === "object" ? r.team : {};
+    return pluralWord(fights, " fight") +
+      "; they killed you " + (hubNum(me.deaths) || 0) + ", you killed them " + (hubNum(me.kills) || 0) +
+      "; team won " + (hubNum(team.wins) || 0) + ", lost " + (hubNum(team.losses) || 0);
   }
 
   function crewCells(p) {
@@ -3752,10 +3756,17 @@
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";
     name.appendChild(open);
-    // The nemesis badge (M22-03): Python's verdict, never the page's.
-    if (p.record && p.record.nemesis === true) {
+    // The two badges (M22-03), each Python's verdict, never the page's:
+    // Nemesis from killing blows, Rival team from match results.
+    const record = p.record && typeof p.record === "object" ? p.record : {};
+    if (record.personal && record.personal.nemesis === true) {
       const badge = make("span", "Nemesis");
       badge.className = "badge badge-nemesis";
+      name.appendChild(badge);
+    }
+    if (record.team && record.team.rival === true) {
+      const badge = make("span", "Rival team");
+      badge.className = "badge badge-rival";
       name.appendChild(badge);
     }
     tr.appendChild(name);
@@ -3777,9 +3788,13 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
-    // The nemeses view says the rule it applies, in Python's words (M22-03).
-    const rule = byId("crew-nemesis-rule");
-    rule.textContent = on && report.nemeses === true ? visible(hubStr(report.nemesis_rule) || "") : "";
+    // The nemeses and rival-team views say the rule they apply, in Python's
+    // words (M22-03).
+    const rule = byId("crew-rule");
+    const rules = [];
+    if (report.nemeses === true) rules.push(hubStr(report.nemesis_rule) || "");
+    if (report.rivals === true) rules.push(hubStr(report.rival_rule) || "");
+    rule.textContent = on ? visible(rules.filter(Boolean).join(" ")) : "";
     rule.hidden = !rule.textContent;
     const box = byId("crew-table");
     const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
@@ -3834,6 +3849,7 @@
     if (pvp === "allied") params.allied = true;
     if (pvp === "world") params.world = true;
     if (pvp === "nemeses") params.nemeses = true;
+    if (pvp === "rivals") params.rivals = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;

@@ -428,10 +428,11 @@ class CrewRow(crewbook.CrewPlayer):
     # (a rename or a realm move gives a new key, not a new id). Rows are not
     # merged; each lists the others.
     also_known_as: list[str] = Field(default_factory=list)
-    # The record against them (M22-03, `nemesis`): fights, killing blows
-    # each way, wins and losses, first and latest fight, and whether they
-    # are your nemesis, added up from the matches and open-world encounters
-    # the database keeps (`fights` lists the rows).
+    # The record against them (M22-03, `nemesis`): fights, first and latest
+    # fight, the fights per source, and two parts kept apart: `personal`
+    # (killing blows each way, nemesis) and `team` (match wins and losses
+    # against their side, rival team); added up from the matches and
+    # open-world encounters the database keeps (`fights` lists the rows).
     record: nemesis.Record = Field(default_factory=nemesis.Record)
     # The record with and against (§21.2, §21.3): matches on your side and
     # against you, and of each the ones your side won, as the database adds
@@ -3238,16 +3239,18 @@ def world_encounters(
 
 # ─── the record against each opponent (M22-03) ───────────────────────────────
 
-# Every player on the other side of a kept match: one fight each. A solo
-# shuffle lists no one on the other side, so it is in no fight.
+# Every player on the other side of a kept match: one fight each, with its
+# team result and no killing blows. A solo shuffle lists no one on the
+# other side, so it is in no fight.
 _SQL_FIGHTS_IN_MATCHES = (
     "SELECT mp.player_key, m.match_id, m.at, m.map, m.won"
     " FROM match_players AS mp JOIN matches AS m ON m.match_id = mp.match_id"
     " WHERE mp.side = 'foes'"
     " ORDER BY m.at, m.match_id, mp.player_key"
 )
-# Every player who fought you in a kept open-world encounter, leaving out an
-# encounter on a map the database keeps a match on, as `_SQL_WORLD_PARTS`.
+# Every player who fought you in a kept open-world encounter, with the
+# killing blows between you and no team result, leaving out an encounter on
+# a map the database keeps a match on, as `_SQL_WORLD_PARTS`.
 _SQL_FIGHTS_IN_WORLD = (
     "SELECT p.player_key, e.encounter_id, e.start_at, e.zone, p.killed_by_you, p.killed_you"
     " FROM world_encounter_players AS p"
@@ -3266,7 +3269,7 @@ def _match_fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
             row=int(match_id),
             at=int(at),
             place=_text(map_name),
-            result=nemesis.match_result(None if won is None else bool(won)),
+            team=nemesis.team_result(None if won is None else bool(won)),
         )
         for key, match_id, at, map_name, won in conn.execute(_SQL_FIGHTS_IN_MATCHES)
     ]
@@ -3284,7 +3287,6 @@ def _world_fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
             place=_text(zone),
             kills=int(killed_by_you),
             deaths=int(killed_you),
-            result=nemesis.world_result(bool(killed_by_you), bool(killed_you)),
         )
         for key, encounter_id, start, zone, killed_by_you, killed_you in conn.execute(
             _SQL_FIGHTS_IN_WORLD
@@ -3294,8 +3296,8 @@ def _world_fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
 
 def _fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
     """Every fight the database keeps, oldest first within each source: one
-    list per source, joined. A source added later (M22-02, Spy) adds its
-    reader here."""
+    list per source, joined. A source added later (Spy, M22-02; the kill
+    pairs of a battleground's combat log) adds its reader here."""
     return [*_match_fights(conn), *_world_fights(conn)]
 
 

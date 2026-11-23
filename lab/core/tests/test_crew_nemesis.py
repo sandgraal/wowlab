@@ -1,9 +1,10 @@
 """The record against each opponent at the desk (M22-03, docs/LAB_PLAN.md
 §21.3): from the matches and open-world encounters wowlab's crew database
-keeps, each player's fights, killing blows each way, wins and losses, first
-and latest fight and the nemesis mark, in `crew list`, `crew list
---nemeses`, `crew show` and their `--json`; every count traced to the
-source rows it was added up from.
+keeps, each player's fights, first and latest fight, and two parts kept
+apart (owner ruling, 2026-11-23): killing blows each way and the nemesis
+mark, and team results and the rival-team mark; in `crew list`, `crew list
+--nemeses` and `--rivals`, `crew show` and their `--json`; every count
+traced to the source rows it was added up from.
 
 CONSTRUCTED INPUT, every byte: crew books from `parser/_crew_build.py` with
 the four invented keys, open-world encounters built here as a combat-log
@@ -39,11 +40,12 @@ ZONE = "Invented Test Woods"
 
 
 def _matches() -> list[dict[str, Any]]:
-    """Five matches (constructed): C is against you in four (lost, lost with
-    D, won, no winner); a solo shuffle puts C and D with you and no one
-    against you."""
+    """Six matches (constructed): C is against you in five (lost, lost,
+    lost with D, won, no winner); a solo shuffle puts C and D with you and
+    no one against you."""
     return [
         match([KEY_A], [KEY_C], at=T2, won=False),
+        match([KEY_A], [KEY_C], at=T2 + 30, won=False),
         match([KEY_A], [KEY_C, KEY_D], at=T2 + 60, won=False),
         match([], [KEY_C], at=T2 + 120, won=True),
         match([KEY_A], [KEY_C], at=T2 + 180, won=None),
@@ -146,14 +148,16 @@ def test_each_record_adds_up_the_matches_and_encounters_kept_constructed(make: A
     env = _built(make)
     rows = env.rows()
     c, d = rows[KEY_C].record, rows[KEY_D].record
-    # C: four matches (lost, lost, won, no winner), the death and the trade.
-    assert (c.fights, c.wins, c.losses, c.kills, c.deaths) == (6, 1, 3, 1, 2)
-    assert (c.first, c.last, c.sources) == (T2, T2 + 2000, {"match": 4, "world": 2})
-    assert c.nemesis is True
+    # C: five matches (lost, lost, lost, won, no winner), the death and the trade.
+    assert (c.fights, c.first, c.last) == (7, T2, T2 + 2000)
+    assert c.sources == {"match": 5, "world": 2}
+    assert c.team == nemesis.Team(wins=1, losses=3, rival=True)
+    assert c.personal == nemesis.Personal(kills=1, deaths=2, nemesis=False)
     # D: the lost match, your killing blow, the fight with none.
-    assert (d.fights, d.wins, d.losses, d.kills, d.deaths) == (3, 1, 1, 1, 0)
-    assert (d.first, d.last, d.sources) == (T2 + 60, T2 + 3000, {"match": 1, "world": 2})
-    assert d.nemesis is False
+    assert (d.fights, d.first, d.last) == (3, T2 + 60, T2 + 3000)
+    assert d.sources == {"match": 1, "world": 2}
+    assert d.team == nemesis.Team(wins=0, losses=1, rival=False)
+    assert d.personal == nemesis.Personal(kills=1, deaths=0, nemesis=False)
     # A was only ever with you, B only beside you: no fight.
     assert rows[KEY_A].record == nemesis.Record() and rows[KEY_B].record == nemesis.Record()
 
@@ -168,22 +172,24 @@ def test_every_count_is_traced_to_its_source_rows_constructed(make: Any, key: st
     assert len(fights) == len({(f.source, f.row) for f in fights}) == record.fights
     # And the record is those fights added up.
     assert record == nemesis.record_of(fights)
-    assert record.losses == sum(f.result == "loss" for f in fights)
-    assert record.wins == sum(f.result == "win" for f in fights)
-    assert record.kills == sum(f.kills for f in fights)
-    assert record.deaths == sum(f.deaths for f in fights)
-    # Each match fight's result is that match's own.
+    assert record.team.losses == sum(f.team == "loss" for f in fights)
+    assert record.team.wins == sum(f.team == "win" for f in fights)
+    assert record.personal.kills == sum(f.kills for f in fights)
+    assert record.personal.deaths == sum(f.deaths for f in fights)
+    # A match gives only its team result; an encounter only killing blows.
     kept = {m.at: m.won for m in crewdb.matches(FLAVOR, ACCOUNT)}
     for f in fights:
         if f.source == "match":
-            assert f.result == nemesis.match_result(kept[f.at])
+            assert f.team == nemesis.team_result(kept[f.at]) and (f.kills, f.deaths) == (0, 0)
+        else:
+            assert f.team is None
 
 
 def test_an_encounter_on_a_kept_match_map_is_no_fight_constructed(make: Any) -> None:
     env = _built(make)
     fights = crewdb.fights(FLAVOR, ACCOUNT, KEY_C)
     assert T2 + 4000 not in {f.at for f in fights}
-    assert env.rows()[KEY_C].record.losses == 3  # not 4
+    assert env.rows()[KEY_C].record.personal.deaths == 2  # not 3
 
 
 def test_no_database_means_no_fights_constructed(make: Any) -> None:
@@ -210,6 +216,15 @@ def _json(env: Env, *args: str) -> dict[str, Any]:
     return loaded
 
 
+def _d_kills_you_three_times(env: Env) -> None:
+    """Three more deaths to D, from another log: D becomes a nemesis."""
+    _world(
+        env,
+        [_encounter(T2 + 5000 + i * 100, [_p(KEY_D, "foe", you=True)]) for i in range(3)],
+        1,
+    )
+
+
 def test_list_json_carries_the_record_on_every_row_constructed(make: Any) -> None:
     env = _built(make)
     report = cli.CrewReport.model_validate(_json(env, "crew", "list"))
@@ -217,48 +232,57 @@ def test_list_json_carries_the_record_on_every_row_constructed(make: Any) -> Non
     assert set(by_key) == {KEY_A, KEY_B, KEY_C, KEY_D}
     for key, p in by_key.items():
         assert p.record == nemesis.record_of(crewdb.fights(FLAVOR, ACCOUNT, key))
-    assert report.nemeses is False and report.nemesis_rule == nemesis.RULE
+    assert (report.nemeses, report.rivals) == (False, False)
+    assert (report.nemesis_rule, report.rival_rule) == (nemesis.NEMESIS_RULE, nemesis.RIVAL_RULE)
 
 
-def test_list_nemeses_keeps_only_nemeses_most_losses_first_constructed(make: Any) -> None:
+def test_nemeses_and_rivals_are_two_lists_constructed(make: Any) -> None:
     env = _built(make)
-    # Three more deaths to D, from another log, make D a nemesis with more
-    # losses than C.
-    _world(
-        env,
-        [_encounter(T2 + 5000 + i * 100, [_p(KEY_D, "foe", you=True)]) for i in range(3)],
-        1,
-    )
-    report = cli.CrewReport.model_validate(_json(env, "crew", "list", "--nemeses"))
-    assert report.nemeses is True
-    assert [(p.key, p.record.losses, p.record.wins) for p in report.players] == [
-        (KEY_D, 4, 1),
-        (KEY_C, 3, 1),
-    ]
-    assert all(p.record.nemesis for p in report.players)
+    _d_kills_you_three_times(env)
+    nemeses = cli.CrewReport.model_validate(_json(env, "crew", "list", "--nemeses"))
+    assert nemeses.nemeses is True
+    # D killed you 3 times and you killed D once: a nemesis, not a rival team.
+    assert [(p.key, p.record.personal.deaths) for p in nemeses.players] == [(KEY_D, 3)]
+    rivals = cli.CrewReport.model_validate(_json(env, "crew", "list", "--rivals"))
+    assert rivals.rivals is True
+    # C's side beat yours 3 times to 1: a rival team, not a nemesis (2 deaths, 1 kill).
+    assert [(p.key, p.record.team.losses) for p in rivals.players] == [(KEY_C, 3)]
+    both = cli.CrewReport.model_validate(_json(env, "crew", "list", "--nemeses", "--rivals"))
+    assert both.players == []
     text = env.run("crew", "list", "--nemeses")
     assert text.exit_code == 0, text.output
     lines = text.stdout.splitlines()
-    assert "2 of 4 players match." in lines
-    rows = [line for line in lines if line.startswith("  Invented")]
-    assert [r.split(":")[0].strip() for r in rows] == [KEY_D, KEY_C]
-    assert "record against them: 6 fights, won 1, lost 4; your nemesis" in rows[0]
+    assert "1 of 4 players match." in lines
+    (row,) = [line for line in lines if line.startswith("  Invented")]
+    assert row.startswith(f"  {KEY_D}: ")
+    assert (
+        "record against them: 6 fights; they killed you 3, you killed them 1; "
+        "team won 0, lost 1; your nemesis" in row
+    )
+    assert "rival team" not in row
 
 
-def test_sort_losses_orders_everyone_by_losses_constructed(make: Any) -> None:
+def test_the_two_sorts_constructed(make: Any) -> None:
     env = _built(make)
-    report = cli.CrewReport.model_validate(_json(env, "crew", "list", "--sort", "losses"))
-    assert [p.key for p in report.players] == [KEY_C, KEY_D, KEY_A, KEY_B]
+    _d_kills_you_three_times(env)
+    by_deaths = cli.CrewReport.model_validate(_json(env, "crew", "list", "--sort", "deaths"))
+    assert [p.key for p in by_deaths.players] == [KEY_D, KEY_C, KEY_A, KEY_B]
+    by_team = cli.CrewReport.model_validate(_json(env, "crew", "list", "--sort", "team_losses"))
+    assert [p.key for p in by_team.players] == [KEY_C, KEY_D, KEY_A, KEY_B]
 
 
-def test_list_text_shows_the_record_and_the_mark_constructed(make: Any) -> None:
+def test_list_text_shows_the_record_and_the_marks_constructed(make: Any) -> None:
     env = _built(make)
     result = env.run("crew", "list")
     assert result.exit_code == 0, result.output
     row = {line.split(":")[0].strip(): line for line in result.stdout.splitlines()}
-    assert "record against them: 6 fights, won 1, lost 3; your nemesis" in row[KEY_C]
-    assert "record against them: 3 fights, won 1, lost 1" in row[KEY_D]
-    assert "nemesis" not in row[KEY_D]
+    assert (
+        "record against them: 7 fights; they killed you 2, you killed them 1; "
+        "team won 1, lost 3; rival team" in row[KEY_C]
+    )
+    assert "your nemesis" not in row[KEY_C]
+    assert "record against them: 3 fights" in row[KEY_D]
+    assert "nemesis" not in row[KEY_D] and "rival" not in row[KEY_D]
     assert "record against them" not in row[KEY_A]
 
 
@@ -269,27 +293,32 @@ def test_show_text_and_json_carry_the_record_and_its_rows_constructed(make: Any)
     assert report.player.record == nemesis.record_of(report.fights)
     assert report.fights == crewdb.fights(FLAVOR, ACCOUNT, KEY_C)
     assert {(f.source, f.row) for f in report.fights} == _rows_of(env, KEY_C)
-    assert report.nemesis_rule == nemesis.RULE
+    assert (report.nemesis_rule, report.rival_rule) == (nemesis.NEMESIS_RULE, nemesis.RIVAL_RULE)
     result = env.run("crew", "show", KEY_C)
     assert result.exit_code == 0, result.output
     lines = result.stdout.splitlines()
     assert lines[: len(report.lines)] == report.lines
-    assert "  Record against them: 6 fights (4 in matches, 2 in the open world); won 1, lost 3" in (
-        lines
+    assert any(
+        line.startswith("  Record against them: 7 fights (5 in matches, 2 in the open world)")
+        for line in lines
     )
-    assert "  Killing blows: yours on them 1, theirs on you 2" in lines
-    assert f"  Your nemesis: yes ({nemesis.RULE})" in lines
+    assert "  Killing blows: theirs on you 2, yours on them 1" in lines
+    assert f"  Your nemesis: no ({nemesis.NEMESIS_RULE})" in lines
+    assert "  Team results in matches against them: your side won 1, their side won 3" in lines
+    assert f"  Rival team: yes ({nemesis.RIVAL_RULE})" in lines
     nobody = cli.CrewShowReport.model_validate(_json(env, "crew", "show", KEY_A))
     assert nobody.fights == [] and "  Record against them: no fight kept" in nobody.lines
 
 
-def test_the_rule_is_in_the_help_constructed(make: Any) -> None:
+def test_both_rules_are_in_the_help_constructed(make: Any) -> None:
     env = make(_book())
     result = env.run("crew", "list", "--help")
     assert result.exit_code == 0, result.output
     flat = " ".join(result.stdout.split())
-    assert "--nemeses" in flat and nemesis.RULE in flat
-    assert "losses: most fights lost to them first" in flat
+    assert "--nemeses" in flat and nemesis.NEMESIS_RULE in flat
+    assert "--rivals" in flat and nemesis.RIVAL_RULE in flat
+    assert "deaths: most killed by them first" in flat
+    assert "team_losses: most team losses to them first" in flat
 
 
 # ─── from a combat log, end to end ───────────────────────────────────────────
@@ -300,9 +329,9 @@ def owner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_owner_guids", lambda lay, account: ({OWNER_GUID: None}, 0))
 
 
-def test_a_scanned_log_gives_the_record_constructed(make: Any, owner: Any) -> None:
-    """You hit A, B hits you, you kill A, B kills you: a win over A, a loss
-    to B, each one open-world fight."""
+def test_a_scanned_log_gives_the_personal_record_constructed(make: Any, owner: Any) -> None:
+    """You hit A, B hits you, you kill A, B kills you: a killing blow on A,
+    a death to B, each one open-world fight with no team result."""
     env = make(book({KEY_A: player(), KEY_B: player()}))
     logs = env.flavor / "Logs"
     logs.mkdir()
@@ -313,7 +342,7 @@ def test_a_scanned_log_gives_the_record_constructed(make: Any, owner: Any) -> No
     assert result.exit_code == 0, result.output
     rows = env.rows()
     a, b = rows[KEY_A].record, rows[KEY_B].record
-    assert (a.fights, a.wins, a.losses, a.kills, a.deaths) == (1, 1, 0, 1, 0)
-    assert (b.fights, b.wins, b.losses, b.kills, b.deaths) == (1, 0, 1, 0, 1)
+    assert (a.fights, a.personal.kills, a.personal.deaths) == (1, 1, 0)
+    assert (b.fights, b.personal.kills, b.personal.deaths) == (1, 0, 1)
+    assert a.team == b.team == nemesis.Team()
     assert a.sources == b.sources == {"world": 1}
-    assert not a.nemesis and not b.nemesis
