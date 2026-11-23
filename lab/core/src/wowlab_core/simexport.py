@@ -138,12 +138,12 @@ class OutError(WowlabError, ValueError):
 
 class Source(_Model):
     repository: str
-    commit: str = Field(pattern=_COMMIT.pattern)
+    commit: str = Field(pattern=f"^{_COMMIT.pattern}$")
     read: list[str]
 
 
 class Format(_Model):
-    flavor: str = Field(pattern=_WORD.pattern)
+    flavor: str = Field(pattern=f"^{_WORD.pattern}$")
     slots: list[int] = Field(min_length=1, max_length=32)
 
 
@@ -474,6 +474,8 @@ def build(
 # ─── the file ────────────────────────────────────────────────────────────────
 
 _FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+# Names Windows keeps for devices, with any extension (`NUL.json` is NUL).
+_DEVICE = re.compile(r"(?i)(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?")
 _WHAT = "sim exports"
 
 
@@ -485,9 +487,10 @@ def exports_dir() -> Path:
 def out_path(out: str) -> Path:
     """Where `--out <out>` writes: `out` is a plain file name (letters,
     digits, `.`, `_` and `-`, at most 100, not starting with a dot or
-    ending in one), taken inside `exports_dir()`. Raises `OutError`;
-    reads only."""
-    if not _FILE_NAME.fullmatch(out) or out.endswith(".") or ".." in out:
+    ending in one, and not a name Windows keeps for a device), taken inside
+    `exports_dir()`. Raises `OutError`; reads only."""
+    bad = not _FILE_NAME.fullmatch(out) or out.endswith(".") or ".." in out
+    if bad or _DEVICE.fullmatch(out):
         raise OutError(
             f"--out takes a plain file name (letters, digits, '.', '_' and '-'), which goes "
             f"into wowlab's {EXPORTS_DIR} folder; {out[:120]!r} is not one"

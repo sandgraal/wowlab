@@ -161,6 +161,8 @@ def _format_text() -> str:
     ("old", "new"),
     [
         (f'commit = "{COMMIT}"', 'commit = "main"'),
+        (f'commit = "{COMMIT}"', f'commit = "{COMMIT}x"'),
+        ('flavor = "forever"', 'flavor = "forever\\n"'),
         ('"5" = "Undead"', '"5" = "<b>Undead</b>"'),
         ('"9" = "warlock"', '"9" = "Warlock"'),
         ('"9" = "warlock"', '"x9" = "warlock"'),
@@ -365,7 +367,7 @@ def user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.mark.parametrize(
     "name",
     ["", ".", "..", "../x.json", "a/b.json", "a\\b.json", ".hidden", "x.", "a..b", "x" * 101,
-     "C:x", "x y", "é.json", "x.json\n"],
+     "C:x", "x y", "é.json", "x.json\n", "NUL", "con.json", "Com1.txt"],
     ids=lambda n: f"constructed: {n!r}",
 )  # fmt: skip
 def test_out_takes_only_a_plain_file_name_constructed(user_data: Path, name: str) -> None:
