@@ -329,3 +329,21 @@ def test_constructed_list_files_that_disagree_are_refused() -> None:
 def test_check_command_exits_zero_on_the_repository(capsys: pytest.CaptureFixture[str]) -> None:
     assert fa.main(["check"]) == 0
     assert capsys.readouterr().err == ""
+
+
+def test_the_addon_s_own_globals_are_the_ones_it_writes_whole() -> None:
+    """Four names, none of them the client's: the SavedVariables and the slash
+    command. (Read from the property, so this file names none of them.)"""
+    std = fa.STD.read_text(encoding="utf-8")
+    own = set(fa.std_globals(std)) - fa.client_globals(std)
+    assert len(own) == 4
+    assert all(name.startswith(("WowLab", "SLASH_WOWLAB")) for name in own)
+
+
+def test_constructed_std_reads_each_name_s_property() -> None:
+    std = (
+        "---\nbase: lua51\nglobals:\n  Own:\n    property: full-write\n"
+        "  C_X.Y:\n    property: read-only\n  F:\n    args: []\n"
+    )
+    assert fa.std_globals(std) == {"Own": "full-write", "C_X.Y": "read-only", "F": None}
+    assert fa.client_globals(std) == {"C_X.Y", "F"}
