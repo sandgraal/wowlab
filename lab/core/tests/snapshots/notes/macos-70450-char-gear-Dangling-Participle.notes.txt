@@ -2,6 +2,7 @@ exit 0
 Character: 1/Dangling-Participle in account 90000001#6
 File: WTF/Account/90000001#6/1/Dangling-Participle/SavedVariables/WowLab.lua
 Written: <local time> (the file's modification time: the character as of that save)
+Region: not known: the portal setting in WTF/Config.wtf is "test", not one of us, eu, kr, tw
 Level: 10
 Class: MAGE (class id 8)
 Race: race id 2
