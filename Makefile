@@ -33,9 +33,10 @@ lint: ## ruff check + format check + mypy --strict (the commit gate)
 selene: ## Fetch the pinned selene binary into .tools/ (checksum-verified)
 	$(UV) run --frozen python scripts/fetch_selene.py
 
-lint-lua: ## Static Lua lint of lab/addon with pinned selene (offline; never runs Lua)
+lint-lua: ## Static Lua lint of lab/addon with pinned selene and its API list check (offline; never runs Lua)
 	@[ -x "$(SELENE)" ] || { echo "selene not found at $(SELENE); run 'make selene' first"; exit 1; }
 	cd lab/addon && "$(SELENE)" WowLab
+	$(UV) run --frozen python scripts/forever_api.py check
 
 format: ## Apply ruff fixes and formatting
 	$(UV) run --frozen ruff check --fix .

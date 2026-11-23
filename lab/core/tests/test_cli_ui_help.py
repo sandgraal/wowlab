@@ -29,9 +29,9 @@ def test_every_command_the_page_refuses_is_named() -> None:
     text = _help()
     sentence = (
         "ui itself, log tail --follow, looks page --out, casc cat --out, char model --out, "
-        "crew scan-log PATH, snap export and snap rm are not offered, so casc cat and char "
-        "model write only to their default places and crew scan-log reads only the newest "
-        "combat log."
+        "char sim-export --out, crew scan-log PATH, snap export and snap rm are not offered, "
+        "so casc cat and char model write only to their default places, char sim-export "
+        "writes no file and crew scan-log reads only the newest combat log."
     )
     assert sentence in text
     # Each leaf the server refuses whole is in the sentence.

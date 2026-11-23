@@ -15,7 +15,7 @@ all) the three things `docs/LAB_PLAN.md` §20.1 says a scan must pin:
   named constant and one function.
 
 The book's saved variable is named through `test_lab_addon.BOOK`, so this
-file never spells it (tests/repo/test_crew_book_out_of_repo.py).
+file never spells it (for M19-04's repository scan, removed by M21-01).
 """
 
 from __future__ import annotations

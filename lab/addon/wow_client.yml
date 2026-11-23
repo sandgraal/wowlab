@@ -7,6 +7,11 @@
 #
 # Declaring a name here says the addon may test for it; it is not a claim
 # that the Forever client has it. Status per name: lab/addon/README.md.
+# Whether the launch build knows the name is the README's Baseline column,
+# which `make lint-lua` checks against the generated list in forever_api/
+# (scripts/forever_api.py check). That list is a reference, not a selene
+# standard: a client name stays undeclared, and fails the lint, until it is
+# added here.
 ---
 base: lua51
 name: wow_client

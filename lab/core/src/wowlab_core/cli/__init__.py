@@ -200,6 +200,7 @@ if TYPE_CHECKING:
     from wowlab_core import pathfacts as pathfacts
     from wowlab_core import process as process
     from wowlab_core import profiles as profiles
+    from wowlab_core import simexport as simexport
     from wowlab_core import snaparchive as snaparchive
     from wowlab_core import snapshot as snapshot
     from wowlab_core import svmerge as svmerge
@@ -735,6 +736,9 @@ if TYPE_CHECKING:
         CharShowReport as CharShowReport,
     )
     from wowlab_core.cli._cmd_char import (
+        CharSimExportReport as CharSimExportReport,
+    )
+    from wowlab_core.cli._cmd_char import (
         CharSummaryBackup as CharSummaryBackup,
     )
     from wowlab_core.cli._cmd_char import (
@@ -933,6 +937,9 @@ if TYPE_CHECKING:
         _summary_value as _summary_value,
     )
     from wowlab_core.cli._cmd_char import (
+        _talent_table as _talent_table,
+    )
+    from wowlab_core.cli._cmd_char import (
         _time_notes as _time_notes,
     )
     from wowlab_core.cli._cmd_char import (
@@ -958,6 +965,9 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_char import (
         char_show as char_show,
+    )
+    from wowlab_core.cli._cmd_char import (
+        char_sim_export as char_sim_export,
     )
     from wowlab_core.cli._cmd_charmodel import (
         _AS_OF_LOOK as _AS_OF_LOOK,

@@ -1261,6 +1261,20 @@ def test_char_model_out_is_refused(real: Any, recorder: Recorder, out: str) -> N
     assert len(recorder.calls()) == 1
 
 
+@pytest.mark.parametrize("out", ["mine.json", "-", "../../x.json", ""])
+def test_char_sim_export_out_is_refused(real: Any, recorder: Recorder, out: str) -> None:
+    """M21-08: from the UI the export is shown to copy; `char sim-export
+    --out` writes a file in the data folder, so it is refused whatever its
+    value, and `char sim-export` without it runs."""
+    reply = _run(real, ["char", "sim-export"], {"out": out, "character": "Sangraal-Sett"})
+    assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]
+    assert recorder.calls() == []
+    argv = _argv_of(_run(real, ["char", "sim-export"], {"character": "Sangraal-Sett"}))
+    parsed = _parsed(_real_tree(), ["char", "sim-export"], argv)
+    assert (parsed["out"], parsed["character"]) == (None, "Sangraal-Sett"), argv
+    assert len(recorder.calls()) == 1
+
+
 def test_no_shell_is_involved(
     planted: Any, recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

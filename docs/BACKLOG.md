@@ -3884,7 +3884,9 @@ Facts the research established (2026-11-23), for every ticket below:
 
 Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader (read-only, L1). `region` (`us`, `eu`, `kr`, `tw`; anything else, `test` included, is `None`) joins `CharSummaryRow`, `CharGearReport` and the crew rows of `crew list`/`crew show`/`crew matches` (for a crew player: the `-Region` part the combat log gave, else the player's own region, since Forever has no cross-region play [verify]). Forever's first and second names: the folder form `<First>-<Second>` and the in-game form are both kept, and each report says which is which.
 
-**Acceptance:** tests on real fixtures (the `Config.wtf` of each flavor fixture) and constructed hostile values; `--json` carries `region`; `docs/GLOSSARY.md` gains **Region (portal)**. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `region` in `char list`/`crew` output.
+**Acceptance:** tests on real fixtures (the `Config.wtf` of each flavor fixture) and constructed hostile values; `--json` carries `region`; `docs/GLOSSARY.md` gains **Region (portal)**.
+
+*Conductor rulings, 2026-11-23 (review round 1):* `cn` is a known region too (it has no armory links; M21-03 says so per link); the combat log's `-Region` part is not stored, since it is empty on the only Forever log seen. *Owner's in-game check, 2026-11-23 (Forever launch client, US):* `UnitName("target")` returned `"Tay", "Soulrend"`, so on Forever the slot retail uses for the realm holds the **second name**, and a crew key `Name-Realm` is `<First>-<Second>`; `GetPlayerInfoByGUID` returned name `"Tay Soulrend"` and realm `""`; `GetCurrentRegionName()` returned `"US"`. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `region` in `char list`/`crew` output.
 
 ---
 
@@ -3896,6 +3898,8 @@ Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader
 Link kinds, this ticket: **profile** (Blizzard armory character and guild; wofwforever.com Journey Companion `…/?region=&name=&surname=`, recorded example from its form; forevertwinking.com character, template left out until M21-O1 gives one, and no link is drawn for a site with no template), **item** (Wowhead `https://www.wowhead.com/forever/item={id}`; `bonus` only once M21-O2 confirms the page reads it), **spell** (`…/forever/spell={id}`). A site's room for a flavor follows `dressing_sites.toml`'s band table; a character of a flavor with no room gets no link.
 
 `page.js` (`DRESSING_ORIGIN` around line 59, the check around lines 1985–2030): one pinned origin becomes the allowlist of origins in `link_sites.toml`, served to the page by the server (not fetched from outside), with the same checks for every link: https, exact origin, no userinfo, the URL round-trips identically. Every outside link opens with `target="_blank" rel="noopener noreferrer"`; the server's `Referrer-Policy: no-referrer` stays.
+
+*Amended 2026-11-23 (owner, in session):* **forevertwinking.com is for the owner's own characters only.** Its addresses carry the site's own character number (`/armory/13-sandgraal-rizzen`; `/armory/sandgraal-rizzen` gives an error) and its builds a server-made code (`/builds/dwhe4ngw2p`), so neither can be built. Instead the player pastes a forevertwinking address for a character once (`wowlab char link set --site forevertwinking URL`, and a field on the Character tab through the confirm flow); wowlab keeps it per character in a small file under the user data directory (never in the install; validated against the origin and path shapes above, recorded examples `https://forevertwinking.com/armory/13-sandgraal-rizzen` and `https://forevertwinking.com/builds/dwhe4ngw2p`) and shows it as a link; `char link list` and `char link forget` show and drop it. No forevertwinking link is drawn for a crew or PvP row. **Armory names on Forever:** first and second name come from the crew key's two parts (M21-02's ruling); the armory link is built from first, second and region; a row with no second name or no region gets no armory link and says why. `cn` gets no armory link.
 
 **Acceptance:** example-URL tests for every template; hostile names (a quote, `<`, `#`, `?`, `/`, `..`, 300 characters, an RTL mark; labelled constructed) give a safe URL or no link; `page.js` tests: an origin outside the list, `http:`, userinfo and a non-round-tripping URL each render as plain text; the CSP header byte-identical. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: none until M21-04 and M21-05.
 
@@ -3955,10 +3959,12 @@ A dev-time script (`scripts/`, stdlib only) fetched by hand, never in CI, from a
 
 ---
 
-## [ ] M21-O1 — Owner: two forevertwinking.com addresses
+## [x] M21-O1 — Owner: two forevertwinking.com addresses
 **Size:** XS · **owner**
 
 forevertwinking.com's terms forbid an AI agent from reading it, so this one is yours. In your own browser, copy (1) the address of one character page from its armory, and (2) one gear-planner share link. Paste both into the session. The conductor adds them to M21-03's `link_sites.toml` as recorded examples.
+
+*Done 2026-11-23:* `https://forevertwinking.com/armory/13-sandgraal-rizzen` and `https://forevertwinking.com/builds/dwhe4ngw2p`; the slug alone errors. Owner: "forevertwinking is just for my chars then". M21-03 amended.
 
 ---
 
@@ -3969,9 +3975,294 @@ Click each new link on one of your characters and on one opponent; copy one wowf
 
 ---
 
-## [ ] M21-10 — Links out wave review
-**Size:** S · **Depends on:** M21-01 to M21-09, M21-O1, M21-O2
+## [ ] M21-11 — Addon fixes from the launch-build API list
+**Size:** S · **Depends on:** M21-09 · **Sources:** M21-09's README findings and its domain review (2026-11-23)
 
-`docs/handoffs/M21-review.md`: what shipped, each link with its recorded example, the per-site assessment of the owner's bookmarks (Build / Reference / Later / No, from the conductor's review of 2026-11-23), and what stayed [verify].
+In `lab/addon/WowLab`: (1) macro slots: read `Constants.MacroConsts.MAX_ACCOUNT_MACROS` (guarded) before the 120 fallback, record where the value came from, and correct the false "loaded once the macro window has been opened" reason in `Actions.lua`, the owner-facing text in `labaddon.py` (around line 4007, with its tests) and `docs/LAB_PLAN.md` (around line 2601); (2) the scoreboard probe in `Crew.lua` stops taking `GetBattlefieldScore`'s sixth value as the side when the first is nil and `C_PvP.GetScoreInfo` gave no row (the 12.0.1 deprecation shim returns `faction = 0` for no row); (3) stop asking for `ACCOUNT_BINDINGS`/`CHARACTER_BINDINGS`, which no 71037 UI file defines, and record `Enum.BindingSet` where it helps; (4) read the combat log's state and advanced flag with the documented `C_ChatInfo.IsLoggingCombat`; (5) drop the registration of `BARBER_SHOP_SUCCESS`, which is not in the client's event list. (6) *Added 2026-11-23 (domain review of M21-02):* on Forever, `UnitFullName("player")`'s second value is very likely the character's second name, not a realm, so `homeRealm()` in `Crew.lua` and `realm_from = "full_name"` in `Identity.lua` mislabel it; check with the owner's batched `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M22-O1) and record the second name as such.
+
+**Acceptance:** stub-client tests per change; `make lint-lua` green; README rows updated with dated lines; no new [verify] marked confirmed without a capture. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: the macro-slot line in `char show`/`doctor`.
+
+---
+
+## [ ] M21-12 — Full names and region for every player met
+**Size:** M · **Depends on:** M21-02, M21-11 (both change `Crew.lua`) · **Sources:** the owner's in-game check of 2026-11-23 (M21-02's note)
+
+The lab-addon (crew book schema bump, with migration) records the region once per book from `GetCurrentRegionName()`, and, out of combat only (ADR-0026), resolves the GUIDs of players the book met but holds no full name for, with `GetPlayerInfoByGUID` (sixth value: `"First Second"`; seventh: realm, empty on Forever; eighth: [verify], 22 for a level-22 character). The desk fills a crew row's first and second name and region from those, and a player known only from `crew scan-log` (the combat log) borrows them from the book row with the same GUID (`crewdb`'s GUID aliases). Each value says where it came from.
+
+**Acceptance:** stub-client tests for the resolve (out of combat only, a GUID the client no longer knows returns nothing and is retried later, a cap per login); desk tests on constructed books and logs; the owner confirms one open-world opponent resolves (M21-O2). Reviewed by `code-reviewer`, `domain-reviewer` and `security-reviewer`. User-facing: full names and armory links on open-world rows.
+
+---
+
+## [ ] M21-10 — Links out wave review
+**Size:** S · **Depends on:** M21-01 to M21-09, M21-11, M21-12, M21-O1, M21-O2
+
+`docs/handoffs/M21-review.md`: what shipped, each link with its recorded example, the per-site assessment of the owner's bookmarks (Build / Reference / Later / No, from the conductor's review of 2026-11-23), and what stayed [verify]. The next release's runbook gains `uv run python scripts/gen_network_block.py --write --readme` (M21-01: the README's network block follows the release, not `main`). The owner's crew-book cold-start check (from M21-09: take a wowlab snapshot first, then two client restarts and an account-wide `/reload` with the book on) is listed for the owner.
 
 **Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
+
+---
+
+# Milestone M22 — Twink and PvP companion
+
+Picked by the owner on 2026-11-23 ("i agree with your proposed next wave, do it", and "leverage spy addon where you can"). It ships after M21, which is v0.4. Tickets that touch no M21 file may start while M21 finishes.
+
+The owner's answers of 2026-11-23 that shape it:
+- Main: Sandgraal (Forever, US), an Undead warlock, twinking at the x9 brackets, 29 first.
+- The UI is the product (`docs/AGENT_WORKFLOW.md`, amendment of 2026-11-23).
+- Wanted: fights and win/loss per opponent with a nemesis tag, shown in game on the tooltip.
+- Wanted: a live companion that refreshes after `/reload`, logout and a battleground.
+- Lookups: answer what the owner looks up outside the game.
+- Installed addons include Spy, Questie/QuestieDB, Auctionator, Baganator/Syndicator, ForeverLevelingBiS, UpgradeScout and ItemTree.
+- ADR-0040 (accepted 2026-11-23) lifts the limits that M22-10 to M22-13 need.
+
+What Spy saves, from the owner's install, read on 2026-11-23:
+- Account-wide: `SpyDB` in `WTF/Account/<acct>/SavedVariables/Spy.lua`.
+- Per character: `SpyPerCharDB` in `<acct>/<digits>/<First>-<Second>/SavedVariables/Spy.lua`, holding `PlayerData`, `KOSData`, `IgnoreData`, `Encounters` and `version` "1.1".
+- Each `PlayerData` row has `name` ("First-Second"), class, race, level, guild, faction, `isEnemy`, `isGuess`, zone, subZone, `mapID`, mapX/mapY and `time`.
+- Win and loss fields appear in Spy's code (`wins`/`loses` [verify]), but are absent from the owner's 24 rows so far.
+
+## [ ] M22-01 — Read Spy's saved data
+**Size:** M · **Sources:** the facts above; ADR-0036 and ADR-0040; L3, L4, L8
+
+`wowlab_core.spy` reads `SpyDB` and `SpyPerCharDB` through `luadata` (L3; nothing executed).
+- It produces typed rows for `PlayerData` (keeping unknown fields), `KOSData`, `IgnoreData` and `Encounters`.
+- Each row records which file and character it came from.
+
+The CLI gets `wowlab spy list` and `spy show NAME`, both with `--json`. The UI's Crew tab gets the same controls (UI-first).
+
+**Acceptance:**
+- A real capture of the owner's `Spy.lua` files goes through `scripts/lab_capture.py`, with a provenance row. Names are kept, under ADR-0036's note of 2026-11-23.
+- Round-trip and refusal tests pass.
+- An unknown Spy version is read with a warning.
+
+Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-02 — Spy feeds the PvP book
+**Size:** M · **Depends on:** M22-01 · **Sources:** ADR-0039, `crewdb`
+
+`crew sync` also takes Spy's rows into the crew database as **sightings**: when, where (zone, subzone, map and coordinates), level, guild, and enemy or not. It also takes Spy's kill-on-sight flag and any wins and losses Spy recorded.
+- Every value keeps its source, "Spy".
+- The player key is Spy's `name`, which is the `<First>-<Second>` form the crew book uses (M21-02).
+- A Spy-only player gets a players row.
+
+The Crew tab gains:
+- a "Seen by Spy" filter;
+- a player's last-seen place and time;
+- the KOS flag.
+
+**Acceptance:** tests on the M22-01 capture and constructed databases; a re-sync is idempotent; `crew forget` also drops a player's Spy-sourced rows (Spy's own file is never written). Reviewed by `code-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-03 — Nemesis: the record against each opponent
+**Size:** M · **Depends on:** M22-02
+
+For each player, from battleground matches, open-world encounters (`scan-log`) and Spy, compute:
+- fights;
+- your killing blows on them and their killing blows on you;
+- wins and losses, where a match result or a death decides it;
+- first and last met.
+
+A **nemesis** is a player who has beaten you at least 3 times and more often than you beat them. The rule lives in one place and is shown in its help text, so the owner can ask to change it.
+
+The Crew tab gains:
+- the record on every row;
+- a "Nemeses" view, sorted by losses;
+- a nemesis badge.
+
+`crew show` and `--json` carry the same.
+
+**Acceptance:** desk tests on constructed matches, encounters and Spy rows; every count is traced to its source rows. Reviewed by `code-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-04 — The record on the in-game tooltip
+**Size:** M · **Depends on:** M22-03, M21-11 (both change addon files)
+
+Hovering a player in game adds one line: "Fought 4× · 1-3 · Nemesis" (and "KOS" when Spy flags them). The line has two sources:
+1. **The addon's own book, live.** It counts the matches and meetings it recorded itself.
+2. **A summary table from the desk.** The desk writes it, through `guard` and only while the client is closed (L2), into `WowLabDeskDB`, a new SavedVariables file of the lab-addon. It covers what only the desk knows: combat logs and Spy history. The addon reads the table at login. The line says when the desk's part was last updated.
+
+The UI gets a "Send records to the game" button that runs the write and shows its confirm flow.
+
+**Acceptance:**
+- Stub-client tests for the tooltip line, with the book alone, the desk table alone, and both.
+- The guard path is tested.
+- Nothing is read or written in combat that touches a secret value (ADR-0026).
+
+Reviewed by `code-reviewer`, `security-reviewer` (a new write) and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-05 — Live companion and session recap
+**Size:** L · **Sources:** `docs/LAB_PLAN.md` §21 (logs), the snapshot store
+
+`wowlab ui` gains a **Live** view, meant for a second monitor.
+- It watches, read-only (L1):
+  - the account's SavedVariables, whose times change at `/reload` and logout;
+  - the combat log, which the game writes live.
+- It refreshes on a change and needs no click.
+- After a battleground ends (the log leaves the instance, or shows the match end), it shows a match recap read from the log: who you fought, your killing blows, your deaths and the result. Saved addon data only lands at `/reload` or logout, and the view says so.
+- After a `/reload` or logout, it shows a session recap:
+  - opponents met;
+  - gear changes, taken from the record against the previous snapshot;
+  - new items, from Syndicator or Baganator where present [verify];
+  - currencies and levels gained.
+
+The page polls the local server; nothing leaves the machine.
+
+**Acceptance:** tests on constructed growing logs and changing files; the recap is checked against a real log fixture; the polling interval and its cost are measured. Reviewed by `code-reviewer`, `security-reviewer` (new server routes) and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-06 — Twink gap view
+**Size:** L · **Sources:** game tables through `gamedata` (ADR-0022); ItemSparse, ItemBonus, the random-suffix lists (M21-08)
+
+The Character tab gets a **Twink** panel. The player picks a bracket (19, 29, 39, 49 or 59), defaulting to the next one above their level that has a twink cap.
+
+For every slot, the panel shows:
+- what is worn;
+- the best candidates the character can use at that level cap;
+- the gap between the two.
+
+**Candidates:**
+- Usable by class, armor and weapon type, with a required level at or below the cap.
+- Scored with stat weights per class and spec. The weights live in a packaged TOML, with warlock (affliction) first, and the owner can edit them; the panel says which weights it used.
+- An item with random suffixes is scored per suffix.
+
+**Sources:**
+- Each candidate names its source where the local data has one: a quest or drop, via M22-08.
+- It links to Wowhead.
+- A "Plan on ForeverTwinking" link opens `https://forevertwinking.com/planner?class=<class>&race=<race>&bracket=l<cap>`. That address shape comes from the owner's history (`?class=warlock&race=undead&bracket=l29`); its parameter values are [verify].
+
+**Acceptance:** tests with recorded tables for a real build; the owner checks the 29 list against what they know (M22-O1). Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-07 — The UI reaches every command
+**Size:** M
+
+Make two lists:
+- every `wowlab` command and option;
+- every UI control.
+
+For each command the UI cannot run, add a control, or say why it stays CLI-only (for example, a write the UI refuses on purpose). After this ticket, a test fails whenever a new command has no UI control and no listed reason.
+
+**Acceptance:** the list is committed; the parity test is green. Reviewed by `code-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-08 — Lookups from the player's own addons and the game tables
+**Size:** M · **Depends on:** M22-01 (the reader pattern)
+
+A search box in the UI answers: where an item drops or which quest gives it; who sells it; and where an NPC or quest is.
+- It searches QuestieDB, the owner's installed copy, read as data.
+- QuestieDB keeps its tables as Lua strings the addon compiles at run time [verify]. If any part needs Lua to be executed, that part is left out and listed (L3).
+- It then searches the game tables (`gamedata`).
+
+M22-06 uses the same index for item sources.
+
+**Acceptance:** a real capture of the QuestieDB data files is not committed (third-party addon data; names only, as M21-09 did with Ketho, plus an owner-run `@live` test). Tests run on constructed slices. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-09 — Owner: Blizzard API client
+**Size:** XS · **owner**
+
+At develop.battle.net, create an API client: name "wowlab (personal)", any redirect URL. Paste the client ID and secret into `wowlab blizzard login`, which M22-11 provides, or into the UI's field. They stay in the user config directory and never in the repository or a log.
+
+---
+
+## [ ] M22-10 — Pictures: icons and portraits
+**Size:** M · **Sources:** ADR-0040 (1)
+
+Two sources of images:
+- **Item and spell icons**, from `https://wow.zamimg.com/images/wow/icons/medium/<icon>.jpg`. The icon name comes from the game tables (ItemDisplayInfo or SpellMisc → the icon file name [verify]).
+- **Character portraits**, from `render.worldofwarcraft.com`, using the address the profile API returns (M22-11), never a guessed one.
+
+Changes:
+- The CSP `img-src` adds exactly these two origins; every other directive stays byte-identical.
+- The builder validates every image URL as M21-03 does.
+- Gear rows, twink candidates and crew rows show the pictures.
+
+**Acceptance:** CSP tests; URL-builder tests with hostile names; a page with no network still renders, with no broken-image layout shift. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-11 — Public profiles from Blizzard's API
+**Size:** M · **Depends on:** M22-09 · **Sources:** ADR-0040 (2)
+
+`wowlab_core.bnet`:
+- Client-credentials token, stdlib `urllib`, https only, no cross-host redirects.
+- Fetches character profile, equipment, media and guild for a region and name, on a click or command only.
+- Cached per request.
+
+Whether Forever characters are served, and under which namespace and realm slug, is [verify]. The ticket ends with a recorded probe, and stops if Forever is not served.
+
+The Crew tab and the Character tab show item level, gear, guild and portrait for a player, each with its fetch time.
+
+**Acceptance:** tests on recorded replies (ADR-0012; no live call in tests); the secret is never logged or printed; an owner-run `@live` test. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-12 — The addon reads more
+**Size:** M · **Depends on:** M22-04 (addon files) · **Sources:** ADR-0040 (3), ADR-0026
+
+Each of these is behind its own `/wowlab` switch:
+1. **Whispers in and out**, with time and the other player's name, kept in the book with a limit.
+2. **Group invites.**
+3. **Trade-channel lines that name an item link.** The desk can show the prices people ask.
+4. **In combat:** hostile players the addon may read without touching a secret value. Which calls are safe is [verify] in the batched owner check; until then, nothing new is read in combat.
+
+The desk reads all four into crewdb. The UI gets a "Messages" panel on a crew player's page and a trade-price list.
+
+**Acceptance:** stub-client tests; secret values are never compared or stored; switches default off for other players, as ADR-0036 term 2 requires. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-13 — Coach in the UI
+**Size:** L · **Sources:** ADR-0040 (4), ADR-0032
+
+A "Coach" panel in `wowlab ui` sends a question, along with the character's packet (gear, talents, binds, macros, PvP record, twink gaps), to an engine:
+- the local `claude` CLI (Claude Code), run headless as a child process with the packet on stdin, using the player's own subscription; or
+- a configured API provider.
+
+The panel works like this:
+- It shows the exact packet before the first send.
+- It renders the reply as text.
+- A reply that holds a proposal goes through the proposal validator and the confirm flow, then `guard` (L2).
+- Nothing is sent on a timer.
+
+**Acceptance:** tests with a stub engine; the packet is shown before the send; a malformed reply plans nothing; the child process gets no inherited secrets beyond its own config. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M22-O1 — Owner: the batched in-game check
+**Size:** S · **owner** · **Depends on:** the M22 tickets that list [verify] items
+
+One session, from a checklist the conductor writes. It covers:
+- the M21-12 resolve;
+- the tooltip line (M22-04);
+- one battleground recap (M22-05);
+- the 29 twink list (M22-06);
+- QuestieDB data form (M22-08);
+- in-combat reads (M22-12);
+- the crew-book cold-start check (M21-09's README order); `/dump UnitFullName("player")` and `/dump GetNormalizedRealmName()` (M21-11 item 6); and `/dump C_PvP.GetScoreInfo(1)` on a battleground scoreboard (is the name `First Second`, `First-Second`, or with a realm?).
+
+---
+
+## [ ] M22-14 — Wave review
+**Size:** S · **Depends on:** M22-01 to M22-13, M22-O1
+
+`docs/handoffs/M22-review.md`; dispatch stops until the owner's next pick.
+
+---
+
+## [ ] M22-15 — Combat log on in battlegrounds; killing blows there count toward Nemesis
+**Size:** M · **Depends on:** M21-11 (addon files), M21-02 (worldpvp), M22-03 (the record) · **Sources:** ADR-0026 note of 2026-11-23; `docs/LAB_PLAN.md` §21 (scan-log)
+
+The lab-addon's combat-log rule (M20-19) also turns logging on in a battleground or arena instance and off on leaving it; dungeons and raids stay off; one quiet chat line per switch, as now. `crew scan-log` reads battleground and arena segments as well (today it skips them): within a match segment it records your killing blows (`PARTY_KILL` by you or your pet) and your deaths (`UNIT_DIED` of your GUID, credited to the hostile player who last damaged you within 30 s, as the open-world rule), joined to the match the scoreboard recorded where one matches by map and time, kept as battleground fights beside world encounters. M22-03's **Nemesis** counts these personal kills and deaths; **Rival team** stays team results only.
+
+**Acceptance:** stub-client tests for the switch on entering and leaving a battleground; scan-log tests on a constructed battleground segment and, once the owner has played one battleground with logging on, a real captured slice (M22-O1); the record traces each battleground kill to its log line. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes (the chat lines, the Nemesis counts, the wiki's addon and crew pages).

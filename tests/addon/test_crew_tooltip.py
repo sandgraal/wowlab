@@ -30,7 +30,7 @@ unit is `mouseover`, whether adding a line taints anything and whether a
 name is a secret value in an instance are [verify] in game.
 
 The book's saved variable is named through `test_lab_addon.BOOK`, so this
-file never spells it (tests/repo/test_crew_book_out_of_repo.py).
+file never spells it (for M19-04's repository scan, removed by M21-01).
 """
 
 from __future__ import annotations

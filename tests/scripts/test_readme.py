@@ -147,30 +147,34 @@ def test_the_first_screen_states_the_trust_model() -> None:
 # ADR-0019's and ADR-0031's amendments of 2026-10-19 (M15-02): a link the
 # player clicks (the Character tab's dressing-room link) is their browser's
 # traffic, not wowlab's; each trust-model sentence says so.
-# The clause says what the click carries: the address's public game ids. It
-# promises nothing about what the site does with them (its own script reads
-# the address's fragment).
+# The clause says what the click carries. Since the amendments of 2026-11-23
+# (M21-01) that may be names as well as game ids. It promises nothing about
+# what the site does with them.
 LINK_CLAUSE = (
-    "and a link you click opens in your own browser, carrying your character's race, "
-    "body type, class, level and equipped item and bonus ids to that site"
+    "and a link you click opens in your own browser, carrying a character's name, "
+    "realm, region and guild, and game ids to that site"
 )
 SECURITY = ROOT / "SECURITY.md"
 
 
 # Since M16-07 the README says what leaves the machine once, in the generated
 # block (`wowlab_core.disclosure`, `lab/core/tests/test_disclosure.py` is its
-# drift test); its link row carries the same payload LINK_CLAUSE names.
-LINK_PAYLOAD = "your character's race, body type, class, level and equipped item and bonus ids"
+# drift test); its link row carries the same payload LINK_CLAUSE names. The
+# README's copy of the block follows the latest release (M21-01), so here it
+# is checked for its place on the first screen, not for its words.
+LINK_PAYLOAD = "a character's name, realm, region and guild, and game ids"
 
 
 def test_the_trust_model_sentences_name_the_clicked_link() -> None:
     from wowlab_core import disclosure
 
     screen = _first_screen()
-    assert disclosure.render_markdown() in screen, "the network block is on the first screen"
-    (link,) = [row for row in disclosure.ROWS if "dressing-room link" in row]
+    assert disclosure.BEGIN in screen and disclosure.END in screen, (
+        "the network block is on the first screen"
+    )
+    (link,) = [row for row in disclosure.ROWS if "dressing room" in row]
     assert "opens in your own browser, and only when you click it" in link
-    assert LINK_PAYLOAD + " to that site" in link and LINK_PAYLOAD in LINK_CLAUSE
+    assert LINK_PAYLOAD in link and LINK_PAYLOAD in LINK_CLAUSE
     row = next(line for line in _readme().splitlines() if "**Stays on your machine.**" in line)
     assert '"What leaves your machine"' in row, "the promise row points at the block"
     assert "wago.tools" not in row, "and does not say it a second time"

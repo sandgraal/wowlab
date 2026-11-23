@@ -153,7 +153,24 @@ _CREW_DB = (
     "regular file, or has a second hard link; folders 0700 and files 0600; --adopt moves "
     "a file only from one crew/ folder to another"
 )
+_SIMEXPORT = "lab/core/src/wowlab_core/simexport.py"
+_SIM_FILE = (
+    "`wowlab char sim-export --out` (M21-08): only <user data>/wowlab/sim-exports/<name>, "
+    "<name> a plain file name (letters, digits, '.', '_' and '-', no separator, no '..'); "
+    "the folder is refused before and after it is made when it or any folder above it holds "
+    ".build.info or .flavor.info, and when it is a link; the file is refused when it is a "
+    "link or not a regular file; `wowlab ui` refuses --out"
+)
 ALLOWED: dict[tuple[str, str], str] = {
+    (_SIMEXPORT, "from wowlab_core.snapshot import make_private_dirs"): _SIM_FILE
+    + "; imports the folder maker for the sim-exports folder only",
+    (_SIMEXPORT, "make_private_dirs(folder)  # 0700 under the user data directory (M16-78)"): (
+        _SIM_FILE + "; the sim-exports folder and its missing parents (0700)"
+    ),
+    (_SIMEXPORT, 'with tmp.open("xb") as handle:'): _SIM_FILE
+    + "; a new temp name beside the export (x mode)",
+    (_SIMEXPORT, "tmp.replace(target)"): _SIM_FILE + "; the temp file onto the export, whole",
+    (_SIMEXPORT, "tmp.unlink(missing_ok=True)"): _SIM_FILE + "; its own temp file",
     (_CREWDB, "import sqlite3"): _CREW_DB,
     (_CREWDB, "snapshot.make_private_dirs(folder)"): _CREW_DB,
     (_CREWDB, "f.chmod(0o700)"): _CREW_DB,

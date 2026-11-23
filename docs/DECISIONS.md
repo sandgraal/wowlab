@@ -237,6 +237,8 @@ When all three hold, the record keeps the command, the action slot number and th
 
 **Note (2026-11-22; owner decision in session: asked whether the addon may switch the combat log on and off by itself, and by what rule, the owner answered "yeah time only i agree, do it"):** the addon may call the client's `LoggingCombat()` to turn the combat log on and off. It is a game-side call that writes nothing into the install (L1, L2 are untouched) and is not input automation (L7). The rule is time and place only: on in the open world (outside any instance) and not in a raid group; off on entering an instance or a raid group, and off after a stated idle time with no combat, back on at the next combat. No trigger from the owner's PvP flag (the owner is always flagged) and none from who is near. The addon does not change the Advanced Combat Logging setting; it says once when that setting is off. Each switch prints one quiet chat line, and one setting turns the whole feature off. Where the client cannot set the log from an addon, the feature is dormant and says so; that is [verify] until the owner's client shows it.
 
+**Note (2026-11-23; owner decision in session, "yes, turn on combat logging in battlegrounds", after the conductor laid out the cost: larger log files, no gameplay effect):** the place rule of the note above gains battlegrounds and arenas: the addon also turns the combat log on in a battleground or arena instance, and off again on leaving it (then the open-world rule applies). Dungeons and raids stay off. Everything else in that note is unchanged. Ticket M22-15.
+
 ## ADR-0027 — Generated local pages are self-contained static HTML
 
 **Status:** Accepted (2026-09-28; proposed 2026-09-28) — owner decision; the status edit was made by the conductor on the owner's explicit instruction
@@ -692,3 +694,50 @@ Each candidate below is described as its maintainers' documentation describes it
 **Decision:** `wowlab_core.crewdb` keeps one SQLite file per crew book under the user data directory, never inside an install and never in the repository, using the standard library's `sqlite3` with `STRICT` tables; it adds no dependency. The Lab fills it by reading the saved file (a sync); the addon never sees it. It is primary data, not a cache: writes are transactions, a copy is kept before its schema changes, and the Lab keeps recent copies. It falls under every term of ADR-0036: local only, nothing recorded until the book is turned on, no such file in the repository (a fixed `application_id` lets a test refuse one), left out of anything shared, and listed and deleted through the `crew` commands. No command runs SQL the player types against it. The in-game list stays bounded (20,000 players) and the addon says when it is nearly full.
 
 **Consequences:** History has no limit at the desk and questions about it are index lookups. A record the game drops before a sync saw it is lost, which the owner accepted (option A). The Lab now holds data that exists nowhere else, so losing or corrupting the file loses history; snapshots do not cover it. `crew forget` has a third place to clear. Two stores can disagree, so the plan fixes which wins (§21.3). A second SQLite use with a different duty from `db2lake`'s means the two must not share code that assumes a rebuildable cache.
+
+---
+
+## ADR-0040 — Four more self-imposed limits lifted: pictures, public profiles, the addon reading more, a built-in coach
+
+**Status:** Accepted (2026-11-23) — owner decision in session. The owner asked "what other self imposed limits should we remove so our product can be greater and better? remember there is nothing identifying or personal about the world of warcraft". The conductor listed four candidates, and the owner answered "lift limits on the candidates". The conductor made the status edit on the owner's explicit instruction.
+
+**Context:** Each limit below came from the conductor's plans or from reviewers, not from the owner:
+- The page loads nothing from outside (ADR-0027, ADR-0029, ADR-0035).
+- The Lab fetches only wago.tools (ADR-0019, ADR-0022).
+- The addon does not read chat until a ticket says so (ADR-0036, note of 2026-11-20).
+- The addon reads nothing in combat (ADR-0026).
+- Advice leaves the machine only through `advise --send` (ADR-0032).
+
+The owner wants opponents and their own characters shown as fully as the game and its public services allow. What stays is what protects the account, the install and the machine: L1, L2, L3 and L7; the write gate; no outside *script* in the page, since the page can run wowlab commands; and the account-level scrub (ADR-0019, 2026-10-17).
+
+**Decision:**
+1. **Pictures.** The UI's CSP may add, to `img-src` only, the image hosts of Blizzard's render service (`https://render.worldofwarcraft.com`) and Wowhead's icon CDN (`https://wow.zamimg.com`). These cover item and spell icons, and the character portraits Blizzard's armory serves.
+   - `script-src`, `connect-src`, `frame-src` and `style-src` are unchanged. No tooltip script, frame or model viewer is loaded.
+   - Each image address is built by the Lab from game ids and names, the same way M21-03 builds links. It is validated against those two origins and never comes from the page or a record as a whole URL.
+   - A page that shows such an image reveals to that host what the player is looking at. The owner accepts this.
+2. **Public profiles.** The Lab may fetch public character and guild profiles from Blizzard's official game-data and profile API.
+   - It uses the player's own API client, created by the player at develop.battle.net and stored in the user config directory.
+   - It runs on a command or a click, never on a timer or at start.
+   - It uses stdlib `urllib` with verification on and https only, with no redirects to another host.
+   - Responses are cached under the user data directory, keyed by what was asked and when.
+   - It sends only what the request needs (region, realm or second name, character name), never install data.
+   - No test or workflow calls the service (ADR-0012); recorded replies grade the client.
+   - Whether the API serves Forever characters is [verify] (owner ticket).
+3. **The addon reads more.** The lab-addon may record:
+   - chat the client hands to addons (whispers, party and guild chat, invites, trade-channel lines), kept locally like the crew book;
+   - in combat, whatever the client lets an addon read without touching a secret value (ADR-0026's secret-value rule stands, because it is the client's).
+
+   Each new kind of record is its own switch with a default chosen in its ticket.
+4. **A built-in coach.** `wowlab ui` may ask a model about the player's own data and recorded history. The model may be:
+   - the locally installed Claude Code CLI, run as a child process and using the player's own subscription; or
+   - a configured API provider, as ADR-0032 stage two describes.
+
+   The packet is shown before it is sent. A reply is data. Any change it proposes goes through the proposal validator and the write gate (L2), as ADR-0032 already requires. The owner's 2026-11-04 rule that no *workflow* calls Claude is unchanged: this runs on the player's machine, at the player's request.
+
+**Consequences:**
+- ADR-0019's "the only network traffic is fetching public game tables" gains two more exceptions, the profile API (2) and the coach (4), and the images the player's browser loads (1). The trust-model sentence in the README and `doctor` changes when each ships.
+- ADR-0027, ADR-0029 and ADR-0035's "no external request from the page" now excludes `img-src` for the two image hosts.
+- ADR-0026 and ADR-0036's chat exclusion is lifted for tickets that record chat.
+- ADR-0032 gains a second engine, the local Claude Code CLI.
+- `security-reviewer` reviews each of the four when it is built.
+- Tickets: M22-10 (pictures), M22-11 (profiles), M22-12 (the addon reads more), M22-13 (the coach).
