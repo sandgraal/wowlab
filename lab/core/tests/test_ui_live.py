@@ -182,7 +182,7 @@ def test_the_page_has_a_live_section_and_view() -> None:
 
 def test_the_page_polls_only_the_server_and_reads_with_live_recap() -> None:
     script = _script()
-    block = script[script.index("// ─── the Live view") : script.index("// ─── tabs ───")]
+    block = script[script.index("// ─── the Live view") : script.index("// ─── the crew book")]
     assert re.findall(r'fetch\(api\("([^"]*)"\)', block) == ["/api/live"]
     assert re.findall(r"runJson\(\[([^\]]*)\]", block) == ['"live", "recap"']
     assert 'credentials: "omit"' in block and "headers: keyed()" in block

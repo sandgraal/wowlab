@@ -356,6 +356,7 @@ def test_no_external_url_appears_in_the_page(server: Any) -> None:
         "/api/commands",
         "/api/run",
         "/api/looks-page",
+        "/api/live",  # M22-05: the Live view's poll
     }
     for sink in (
         "XMLHttpRequest",

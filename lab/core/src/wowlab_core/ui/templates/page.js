@@ -3532,6 +3532,91 @@
     byId("char-picker").focus();
   }
 
+  // ─── tabs ───
+  // The header's five sections (M18-03), each a group of views: Characters (the
+  // table of every character and the character page), Backups, Addons,
+  // Keybinds (the character page's keys alone) and Advanced (Explorer, Gaps,
+  // Commands, Looks). A section with more than one view has its own row of
+  // tabs. `showTab` shows one view and marks its section and its tab.
+  const SECTIONS = {
+    characters: ["account", "character", "crew"],
+    backups: ["backups"],
+    addons: ["addons"],
+    keybinds: ["keybinds"],
+    live: ["live"],
+    advanced: ["explorer", "gaps", "commands", "looks"],
+  };
+  // The views with a tab, in their order; the first is shown when the page opens.
+  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
+  // Every view's element. Keybinds shows the character page's own element
+  // with its keys and macros panels alone, so the picker and the keys are
+  // one; the character page shows the rest.
+  const VIEWS = ["account", "character", "crew", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
+  const CHARACTER_PANELS = ["char-page", "char-about"];
+  const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
+  // The view each section showed last, so going back to it lands there.
+  const sectionShown = { characters: "account", advanced: "explorer" };
+
+  function sectionOf(name) {
+    for (const section of Object.keys(SECTIONS)) {
+      if (SECTIONS[section].includes(name)) return section;
+    }
+    return "characters";
+  }
+
+  function showTab(name) {
+    tabShown = name;
+    if (name !== "character") character.opening += 1;
+    const section = sectionOf(name);
+    sectionShown[section] = name;
+    for (const which of Object.keys(SECTIONS)) {
+      const on = which === section;
+      byId("sec-" + which).setAttribute("aria-selected", on ? "true" : "false");
+    }
+    byId("characters-tabs").hidden = section !== "characters";
+    byId("advanced-tabs").hidden = section !== "advanced";
+    for (const which of TABS) {
+      const on = which === name;
+      byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
+    }
+    const keys = name === "keybinds";
+    const element = keys ? "character" : name;
+    for (const which of VIEWS) byId(which + "-view").hidden = which !== element;
+    for (const panel of KEYBIND_PANELS) byId(panel).hidden = !keys;
+    for (const panel of CHARACTER_PANELS) byId(panel).hidden = keys;
+    byId("char-view-title").textContent = keys ? "Keybinds" : "Character";
+    if (name === "account" || name === "backups" || name === "addons") {
+      // A run from the Commands tab may have changed the store or the
+      // install since the report was read (M17-04): read it again.
+      if (backup.stale && !backup.busy) {
+        backup.stale = false;
+        hub.asked = null;
+      }
+      loadHub();
+    }
+    if (name === "gaps") loadGaps();
+    if (name === "crew") loadCrew();
+    if (name === "live") startLive();
+    else stopLive();
+    if (name === "character" || keys) {
+      const listed = loadCharacters();
+      if (keys && character.kept) {
+        listed.then(() => {
+          if (character.kept) leaveKept();
+        });
+      }
+    }
+  }
+  for (const section of Object.keys(SECTIONS)) {
+    byId("sec-" + section).addEventListener("click", () =>
+      showTab(sectionShown[section] || SECTIONS[section][0]));
+  }
+  for (const which of TABS) byId("tab-" + which).addEventListener("click", () => showTab(which));
+  byId("char-back").addEventListener("click", () => {
+    showTab("account");
+    byId("tab-account").focus();
+  });
+
   // ─── the Live view (M22-05) ───
   // For a second screen while the game runs. While the view is shown (and
   // the browser tab is not hidden) it asks the server every few seconds
@@ -3635,7 +3720,7 @@
         }
       }
     }
-    if (seq === liveState.seq) liveState.timer = window.setTimeout(livePoll, liveState.seconds * 1000);
+    if (seq === liveState.seq) liveState.timer = setTimeout(livePoll, liveState.seconds * 1000);
   }
 
   function startLive() {
@@ -3649,94 +3734,9 @@
     liveState.started = false;
     liveState.seq += 1;
     liveState.seen = null;
-    if (liveState.timer !== null) window.clearTimeout(liveState.timer);
+    if (liveState.timer !== null) clearTimeout(liveState.timer);
     liveState.timer = null;
   }
-
-  // ─── tabs ───
-  // The header's five sections (M18-03), each a group of views: Characters (the
-  // table of every character and the character page), Backups, Addons,
-  // Keybinds (the character page's keys alone) and Advanced (Explorer, Gaps,
-  // Commands, Looks). A section with more than one view has its own row of
-  // tabs. `showTab` shows one view and marks its section and its tab.
-  const SECTIONS = {
-    characters: ["account", "character", "crew"],
-    backups: ["backups"],
-    addons: ["addons"],
-    keybinds: ["keybinds"],
-    live: ["live"],
-    advanced: ["explorer", "gaps", "commands", "looks"],
-  };
-  // The views with a tab, in their order; the first is shown when the page opens.
-  const TABS = ["account", "character", "crew", "explorer", "gaps", "commands", "looks"];
-  // Every view's element. Keybinds shows the character page's own element
-  // with its keys and macros panels alone, so the picker and the keys are
-  // one; the character page shows the rest.
-  const VIEWS = ["account", "character", "crew", "backups", "addons", "live", "explorer", "gaps", "commands", "looks"];
-  const CHARACTER_PANELS = ["char-page", "char-about"];
-  const KEYBIND_PANELS = ["char-keys-panel", "char-macros-panel"];
-  // The view each section showed last, so going back to it lands there.
-  const sectionShown = { characters: "account", advanced: "explorer" };
-
-  function sectionOf(name) {
-    for (const section of Object.keys(SECTIONS)) {
-      if (SECTIONS[section].includes(name)) return section;
-    }
-    return "characters";
-  }
-
-  function showTab(name) {
-    tabShown = name;
-    if (name !== "character") character.opening += 1;
-    const section = sectionOf(name);
-    sectionShown[section] = name;
-    for (const which of Object.keys(SECTIONS)) {
-      const on = which === section;
-      byId("sec-" + which).setAttribute("aria-selected", on ? "true" : "false");
-    }
-    byId("characters-tabs").hidden = section !== "characters";
-    byId("advanced-tabs").hidden = section !== "advanced";
-    for (const which of TABS) {
-      const on = which === name;
-      byId("tab-" + which).setAttribute("aria-selected", on ? "true" : "false");
-    }
-    const keys = name === "keybinds";
-    const element = keys ? "character" : name;
-    for (const which of VIEWS) byId(which + "-view").hidden = which !== element;
-    for (const panel of KEYBIND_PANELS) byId(panel).hidden = !keys;
-    for (const panel of CHARACTER_PANELS) byId(panel).hidden = keys;
-    byId("char-view-title").textContent = keys ? "Keybinds" : "Character";
-    if (name === "account" || name === "backups" || name === "addons") {
-      // A run from the Commands tab may have changed the store or the
-      // install since the report was read (M17-04): read it again.
-      if (backup.stale && !backup.busy) {
-        backup.stale = false;
-        hub.asked = null;
-      }
-      loadHub();
-    }
-    if (name === "gaps") loadGaps();
-    if (name === "crew") loadCrew();
-    if (name === "live") startLive();
-    else stopLive();
-    if (name === "character" || keys) {
-      const listed = loadCharacters();
-      if (keys && character.kept) {
-        listed.then(() => {
-          if (character.kept) leaveKept();
-        });
-      }
-    }
-  }
-  for (const section of Object.keys(SECTIONS)) {
-    byId("sec-" + section).addEventListener("click", () =>
-      showTab(sectionShown[section] || SECTIONS[section][0]));
-  }
-  for (const which of TABS) byId("tab-" + which).addEventListener("click", () => showTab(which));
-  byId("char-back").addEventListener("click", () => {
-    showTab("account");
-    byId("tab-account").focus();
-  });
 
   // ─── the crew book (M19-06, docs/LAB_PLAN.md §20.4) ───
   // The players the lab-addon's crew book keeps, from `crew list --json`:
