@@ -27,7 +27,7 @@ from wowlab_core import crewdb
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _crew_build import KEY_A, KEY_C
+from _crew_build import ACCOUNT, KEY_A, KEY_C
 from _world_lines import ALLY_C, FOE_A, log, you_hit
 from test_crew_world import _book, _scan, _write_log, owner  # noqa: F401 - the fixture
 from test_crewdb import Env, make  # noqa: F401 - the fixture
@@ -202,6 +202,117 @@ def test_a_launch_log_whose_file_is_gone_is_left_as_it_is_constructed(
     launch = _write_log(env, _fights())
     assert _scan(env).exit_code == 0
     launch.unlink()
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        conn.execute("BEGIN")
+        assert crewdb._requeue_launch_logs(conn) == 0
+        conn.execute("COMMIT")
+        assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+# ─── fix round 4: marks follow the player; same log only; flavor gate ────────
+
+TAY_GUID = FOE_TAY[0]
+
+
+def _rate_old_tay(env: Env) -> None:
+    """The schema-4 database's old-key row, rated and noted at the desk."""
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        conn.execute(
+            "UPDATE players SET rating = 'good', note = 'healed me', rating_own = 1,"
+            " note_own = 1, marks_changed = marks_changed + 1 WHERE player_key = ?",
+            (OLD_TAY,),
+        )
+    finally:
+        conn.close()
+
+
+def _scan_json(env: Env) -> dict[str, Any]:
+    result = env.run("crew", "scan-log", "--json")
+    assert result.exit_code == 0, result.output
+    loaded: dict[str, Any] = json.loads(result.stdout)
+    return loaded
+
+
+def test_a_rating_and_note_on_the_old_key_follow_the_player_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    _as_schema_4_with_old_keys(env)
+    _rate_old_tay(env)
+    report = _scan_json(env)
+    assert (report["logs_read_again"], report["marks_carried"]) == (1, 1)
+    rows = _rows(env)
+    assert OLD_TAY not in rows
+    assert (rows[TAY]["rating"], rows[TAY]["note"]) == ("good", "healed me")
+    assert rows[TAY]["guid"] == TAY_GUID
+    # Said once: the old row is gone, so nothing is carried again.
+    text = env.run("crew", "scan-log")
+    assert text.exit_code == 0 and "Kept your rating or note" not in text.stdout
+    assert _scan_json(env)["marks_carried"] == 0
+
+
+def test_a_rating_is_not_moved_when_the_game_id_names_two_players_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    _as_schema_4_with_old_keys(env)
+    _rate_old_tay(env)
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:  # a second key with the same game id (a rename, constructed)
+        conn.execute(
+            "INSERT INTO players (player_key, name, realm, guid, marks_changed, marks_agreed)"
+            " VALUES ('Tay-Elsewhere', 'Tay', 'Elsewhere', ?, 0, 0)",
+            (TAY_GUID,),
+        )
+    finally:
+        conn.close()
+    report = _scan_json(env)
+    assert (report["marks_carried"], report["marks_not_carried"]) == (0, 1)
+    rows = _rows(env)
+    assert rows[OLD_TAY]["rating"] == "good" and rows[TAY]["rating"] is None
+    assert "Tay-Elsewhere" in rows
+    text = env.run("crew", "scan-log").stdout
+    assert "left as they were" not in text  # nothing new read, nothing said
+
+
+def test_a_log_that_changed_since_is_not_reread_and_said_once_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    launch = _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    _as_schema_4_with_old_keys(env)
+    launch.write_bytes(launch.read_bytes().replace(b"4/1/2026", b"4/3/2026", 1))
+    before = _count(env, "SELECT count(*) FROM world_encounter_players")
+    result = env.run("crew", "scan-log")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("could not be read again") == 1
+    assert "crew forget removes one" in result.stdout
+    # Nothing of the old read was deleted: its old key is still there.
+    assert _count(env, f"SELECT count(*) FROM players WHERE player_key = '{OLD_TAY}'") == 1
+    assert _count(env, "SELECT count(*) FROM world_encounter_players") >= before
+    later = env.run("crew", "scan-log")
+    assert "could not be read again" not in later.stdout
+
+
+def test_no_log_is_requeued_on_a_flavor_without_second_names_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    account = env.flavor / "WTF" / "Account" / ACCOUNT
+    (account / "Somerealm").mkdir()
+    (account / "1" / "Sandgraal-Rizzen").rename(account / "Somerealm" / "Sandgraal")
+    (account / "1").rmdir()
     conn = sqlite3.connect(env.db(), isolation_level=None)
     try:
         conn.execute("BEGIN")

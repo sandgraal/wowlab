@@ -1346,7 +1346,9 @@ Dated entries, newest last. Each names the fixture that prompted it.
   beta left it empty. The beta (build 1.60.1.70009, fixture `macos/`) wrote
   three parts, `"<Name>-<Realm>-"`: the realm-style folder name with its spaces
   removed and no second name. So the bullet above holds for the beta only.
-  wowlab now reads four or more parts as first name, second name, realm
+  On a flavor whose account folders hold `<digits>/<First>-<Second>/`
+  characters (and only there; elsewhere the old reading stands), wowlab now
+  reads four or more parts as first name, second name, realm
   (the parts between, joined by `-`) and region, and keys the player
   `<First>-<Second>`, as the lab-addon keys a Forever player; three or fewer
   are read as before (`worldpvp.unit_parts`). Whether a realm can hold a

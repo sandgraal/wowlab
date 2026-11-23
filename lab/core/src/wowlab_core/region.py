@@ -1,10 +1,12 @@
 """region: the client's region, from the `portal` CVar (M21-02).
 
-A Forever character has no realm the player sees or the armory uses (a
-GUID still carries a server id): the client reports its second name in
-the slot where retail reports the realm. The player and the armory name it
-by region, first name and second name (docs/GLOSSARY.md, "Region
-(portal)" and "Second name"). The region is the `portal` CVar in the
+For a Forever character the armory address names no realm (research,
+M21 preamble); the launch client's combat log names one (`Roleplay PvP`
+for every player in the fixture). Whether a region holds more than one,
+and whether a first and second name are unique per region or per realm,
+is [verify]. The client reports the second name in the slot where retail
+reports the realm, and the armory names a character by region, first name
+and second name (docs/GLOSSARY.md, "Region (portal)" and "Second name"). The region is the `portal` CVar in the
 flavor's `WTF/Config.wtf` as the client last wrote it (at its last exit),
 read through the WTF reader (`wtfconfig.read_config`, read-only, L1): the
 last `SET portal` line in the file, its name compared without ASCII case.

@@ -1,7 +1,10 @@
 """charname: a character's names in the forms wowlab reports (M21-02).
 
-A Forever character has a player-chosen first and second name and no realm
-the player sees or the armory uses (docs/GLOSSARY.md, "Second name"). The
+A Forever character has a player-chosen first and second name. The armory
+address names no realm (research, M21 preamble); the launch client's combat
+log names one (`Roleplay PvP` for every player in the fixture). Whether a
+region holds more than one, and whether a first and second name are unique
+per region or per realm, is [verify] (docs/GLOSSARY.md, "Second name"). The
 client reports the second name in the slot where retail reports the realm:
 on the owner's launch client (US, 2026-11-23), `UnitName("target")` gave
 the first and the second name as its two values, and

@@ -61,7 +61,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wowlab_core import charname, crewbook, crewedit, guard, snapshot, worldpvp
+from wowlab_core import (
+    charname,
+    combatlog,
+    crewbook,
+    crewedit,
+    guard,
+    layout,
+    snapshot,
+    worldpvp,
+)
 from wowlab_core.errors import WowlabError
 from wowlab_core.region import Region, region_of
 
@@ -775,31 +784,130 @@ def _requeue_launch_logs(conn: sqlite3.Connection) -> int:
     it keyed `<First>-<Second><Realm>` (the second name and the realm run
     together). A log is of that form when a unit name its stored read state
     remembers (`ZoneState.names`, the latest hostile players' names) has
-    four or more parts; a beta log's three-part names are left as they
-    are. Its encounters and their players' parts are deleted, and its row
-    kept (path and first line) with offset 0, no state and `scanned_at` 0,
-    so the next `crew scan-log` reads it from its start under the new keys
-    and says so (`WorldOutcome.read_again`). A player row only such an
-    encounter held (never in the game's list, no group, no match, no
-    rating or note) is deleted with it; every other row stays. A log whose
-    file is no longer at its stored path is left as it is (it could not be
-    read again, so nothing of it is deleted). Run inside
-    the migration's transaction, after the `.before-schema-4` copy;
-    running it again changes nothing. Returns how many logs it queued."""
+    four or more parts and its flavor folder (the log's `Logs/` folder's
+    parent) names characters by second name (`layout.has_second_names`,
+    the signal `crew scan-log` uses; L6). A beta log's three-part names, and
+    any log of another flavor, are left as they are.
+
+    A queued log must still be the same file: one at its stored path whose
+    first line hashes to the stored `head_sha256`. Its encounters and their
+    players' parts are then deleted, and its row kept (path and first line)
+    with offset 0, no state and `scanned_at` 0, so the next `crew scan-log`
+    reads it from its start under the new keys and says so
+    (`WorldOutcome.read_again`). Of the players its parts named, a row no
+    longer held by anything (never in the game's list, no group, no match,
+    no rating or note, no other encounter) is deleted; no other row is
+    touched. A launch-form log that is gone from its path or is no longer
+    the same log is not read again: nothing of it is deleted, its row is
+    marked (`scanned_at` -1) and the next scan says once that its players
+    keep the old key. Run inside the migration's transaction, after the
+    `.before-schema-4` copy; running it again changes nothing. Returns how
+    many logs it queued."""
     queued = 0
-    for log_id, path, text in conn.execute(_SQL_REQUEUE_LOG_STATES).fetchall():
+    held: set[str] = set()
+    flavors: dict[Path, bool] = {}
+    for log_id, path, head_sha, text in conn.execute(_SQL_REQUEUE_LOG_STATES).fetchall():
         state = _state_of(text)
-        if state is None or not any(len(n.split("-")) >= 4 for n in state.names.values()):
+        if state is None or not isinstance(path, str):
             continue
-        if not (isinstance(path, str) and Path(path).is_file()):
-            continue  # it cannot be read again: its encounters stay as they are
+        if not any(len(n.split("-")) >= 4 for n in state.names.values()):
+            continue
+        log_path = Path(path)
+        flavor = log_path.parent.parent
+        if flavor not in flavors:
+            flavors[flavor] = _names_by_second_name(flavor)
+        if not flavors[flavor]:
+            continue
+        if not _same_log(log_path, head_sha):
+            conn.execute(_SQL_REQUEUE_MARK_NOT_REREAD, (log_id,))
+            continue
+        held.update(str(k) for (k,) in conn.execute(_SQL_REQUEUE_PART_KEYS, (log_id,)))
         conn.execute(_SQL_REQUEUE_DROP_PARTS, (log_id,))
         conn.execute(_SQL_REQUEUE_DROP_ENCOUNTERS, (log_id,))
         conn.execute(_SQL_REQUEUE_RESET_LOG, (log_id,))
         queued += 1
-    if queued:
-        conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYERS)
+    for key in sorted(held):
+        conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER, (key,))
     return queued
+
+
+def _carry_marks(
+    conn: sqlite3.Connection,
+    rows: dict[str, _Row],
+    seen: dict[str, tuple[worldpvp.WorldPlayer, str]],
+) -> tuple[int, int]:
+    """(carried, not carried): for each player this read named in four
+    parts (`seen`: key to the player and their GUID), the rating and note
+    an earlier wowlab kept under their old launch-log key,
+    `<First>-<Second><Realm>` (second name and realm run together, spaces
+    and hyphens dropped), moved onto the full-name key (M21-02). Only from
+    an old row the game's list never gave, with a rating or a note and the
+    same GUID, and only when that GUID names exactly one other key, this
+    one, which has no rating or note of its own; the old row is then
+    deleted unless an encounter or a match still holds it. Any other such
+    old row stays as it is and is counted as not carried."""
+    carried = not_carried = 0
+    for key, (p, guid) in seen.items():
+        second = p.second_name or ""
+        old_key = f"{p.name}-{worldpvp.normalize_realm(second + (p.log_realm or ''))}"
+        old = rows.get(old_key)
+        new = rows.get(key)
+        if old_key == key or old is None or new is None or _from_book(old):
+            continue
+        if old.rating is None and old.note is None:
+            continue
+        if old.guid != guid:
+            continue
+        others = [str(k) for (k,) in conn.execute(_SQL_KEYS_OF_GUID, (guid, old_key))]
+        if others != [key] or new.rating is not None or new.note is not None:
+            not_carried += 1
+            continue
+        conn.execute(
+            _SQL_CARRY_MARKS,
+            (
+                old.rating,
+                old.note,
+                old.rating_own,
+                old.note_own,
+                old.marks_changed,
+                old.marks_agreed,
+                key,
+            ),
+        )
+        rows[key] = dataclasses.replace(
+            new,
+            rating=old.rating,
+            note=old.note,
+            rating_own=old.rating_own,
+            note_own=old.note_own,
+            marks_changed=old.marks_changed,
+            marks_agreed=old.marks_agreed,
+        )
+        if not conn.execute(_SQL_HELD_ELSEWHERE, (old_key, old_key)).fetchone()[0]:
+            conn.execute(_SQL_FORGET_PLAYER, (old_key,))
+            conn.execute(_SQL_FORGET_LOG_NAMES, (old_key,))
+            del rows[old_key]
+        carried += 1
+    return carried, not_carried
+
+
+def _names_by_second_name(flavor: Path) -> bool:
+    """Whether the flavor folder at `flavor` names its characters by first
+    and second name, read from its folders; no when it cannot be read."""
+    try:
+        return layout.has_second_names(layout.Layout(flavor))
+    except (OSError, ValueError, WowlabError):
+        return False
+
+
+def _same_log(path: Path, head_sha: object) -> bool:
+    """Whether the file at `path` is the log a row records: its first line
+    hashes to `head_sha`. No when it is gone or cannot be read."""
+    try:
+        _, head = combatlog.head(path)
+    except (OSError, ValueError, WowlabError):
+        return False
+    return isinstance(head_sha, str) and hashlib.sha256(head).hexdigest() == head_sha
 
 
 def _create(conn: sqlite3.Connection) -> None:
@@ -2458,11 +2566,17 @@ def _state_of(text: object) -> worldpvp.ZoneState | None:
 
 def _state_keys(state: worldpvp.ZoneState) -> dict[str, set[str]]:
     """Each saved name's keys, by GUID: the key it makes on any realm the
-    state knows (a name with no realm part is on yours)."""
+    state knows (a name with no realm part is on yours), read both with and
+    without second names (M21-02: a four-part name is `<First>-<Second>` on
+    a flavor that has them), so a forget finds it either way."""
     homes: list[str | None] = [None, *state.homes.values()]
     out: dict[str, set[str]] = {}
     for guid, name in state.names.items():
-        made = (worldpvp.player_key(name, home) for home in homes)
+        made = (
+            worldpvp.player_key(name, home, second_names=second)
+            for home in homes
+            for second in (False, True)
+        )
         out[guid] = {m[0] for m in made if m is not None}
     return out
 
@@ -2837,7 +2951,12 @@ _SQL_LOG_NAMES_SET = (
 )
 _SQL_FORGET_LOG_NAMES = "DELETE FROM log_names WHERE player_key = ?"
 # The 4 -> 5 re-read of launch-form logs (`_requeue_launch_logs`).
-_SQL_REQUEUE_LOG_STATES = "SELECT log_id, path, state FROM world_logs ORDER BY log_id"
+_SQL_REQUEUE_LOG_STATES = "SELECT log_id, path, head_sha256, state FROM world_logs ORDER BY log_id"
+_SQL_REQUEUE_PART_KEYS = (
+    "SELECT DISTINCT player_key FROM world_encounter_players WHERE encounter_id IN"
+    " (SELECT encounter_id FROM world_encounters WHERE log_id = ?)"
+)
+_SQL_REQUEUE_MARK_NOT_REREAD = "UPDATE world_logs SET scanned_at = -1 WHERE log_id = ?"
 _SQL_REQUEUE_DROP_PARTS = (
     "DELETE FROM world_encounter_players WHERE encounter_id IN"
     " (SELECT encounter_id FROM world_encounters WHERE log_id = ?)"
@@ -2846,12 +2965,25 @@ _SQL_REQUEUE_DROP_ENCOUNTERS = "DELETE FROM world_encounters WHERE log_id = ?"
 _SQL_REQUEUE_RESET_LOG = (
     "UPDATE world_logs SET size = 0, read_to = 0, state = NULL, scanned_at = 0 WHERE log_id = ?"
 )
-_SQL_REQUEUE_DROP_LOG_ONLY_PLAYERS = (
-    "DELETE FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0 AND allied = 0"
-    " AND faced = 0 AND allied_seen = 0 AND faced_seen = 0 AND pvp_last IS NULL"
-    " AND rating IS NULL AND note IS NULL"
+_SQL_REQUEUE_DROP_LOG_ONLY_PLAYER = (
+    "DELETE FROM players WHERE player_key = ? AND in_book = 0 AND met = 0 AND met_seen = 0"
+    " AND allied = 0 AND faced = 0 AND allied_seen = 0 AND faced_seen = 0"
+    " AND pvp_last IS NULL AND rating IS NULL AND note IS NULL"
     " AND player_key NOT IN (SELECT player_key FROM world_encounter_players)"
     " AND player_key NOT IN (SELECT player_key FROM match_players)"
+)
+# What a scan says once (M21-02): logs the 4 -> 5 step could not read again.
+_SQL_NOT_REREAD_COUNT = "SELECT count(*) FROM world_logs WHERE scanned_at = -1"
+_SQL_NOT_REREAD_SAID = "UPDATE world_logs SET scanned_at = 1 WHERE scanned_at = -1"
+# A rating or note kept on an old launch-log key follows the player (M21-02).
+_SQL_KEYS_OF_GUID = "SELECT player_key FROM players WHERE guid = ? AND player_key != ?"
+_SQL_CARRY_MARKS = (
+    "UPDATE players SET rating = ?, note = ?, rating_own = ?, note_own = ?,"
+    " marks_changed = ?, marks_agreed = ? WHERE player_key = ?"
+)
+_SQL_HELD_ELSEWHERE = (
+    "SELECT (SELECT count(*) FROM world_encounter_players WHERE player_key = ?)"
+    " + (SELECT count(*) FROM match_players WHERE player_key = ?)"
 )
 _SQL_WORLD_LOG_SCANNED_AT = "SELECT scanned_at FROM world_logs WHERE log_id = ?"
 # An encounter on a map the database keeps a battleground or arena match on
@@ -3060,8 +3192,15 @@ class WorldOutcome(_Model):
     players_added: int = 0
     players_left_out: int = 0
     # M21-02: this read started a log over that the schema-5 migration
-    # queued (a launch-client log an earlier wowlab keyed the old way).
+    # queued (a launch-client log an earlier wowlab keyed the old way);
+    # how many such logs the migration could not read again (moved,
+    # deleted or changed), said once; and how many players' rating or note,
+    # kept under such an old key, now sit under their full name, and how
+    # many could not be moved because the match was not unambiguous.
     read_again: bool = False
+    logs_kept_old_keys: int = 0
+    marks_carried: int = 0
+    marks_not_carried: int = 0
 
 
 class CrewWorldEncounterRow(_Model):
@@ -3324,6 +3463,10 @@ def _record_open(
         state = scan.state.model_dump_json()
         at = int(time.time())
         read_again = False
+        # Counted before this log's row is written: it may be one of them.
+        kept_old = int(conn.execute(_SQL_NOT_REREAD_COUNT).fetchone()[0])
+        if kept_old:
+            conn.execute(_SQL_NOT_REREAD_SAID)
         if resume.log_id is None:
             cursor = conn.execute(_SQL_WORLD_LOG_INSERT, (log, head, size, scan.end, state, at))
             log_id = cursor.lastrowid
@@ -3333,6 +3476,7 @@ def _record_open(
             read_again = was is not None and was[0] == 0  # queued by the 4 -> 5 step
             conn.execute(_SQL_WORLD_LOG_DROP, (log, log_id))
             conn.execute(_SQL_WORLD_LOG_UPDATE, (log, head, size, scan.end, state, at, log_id))
+        seen_full: dict[str, tuple[worldpvp.WorldPlayer, str]] = {}
         for e in scan.encounters:
             if kept >= MAX_WORLD_ENCOUNTERS or not (_time_ok(e.start) and _time_ok(e.end)):
                 left_out += 1
@@ -3366,6 +3510,8 @@ def _record_open(
                 logged = _log_name_values(p)
                 if logged is not None:  # M21-02: a four-part unit name
                     conn.execute(_SQL_LOG_NAMES_SET, (p.key, *logged))
+                if p.second_name is not None and guid is not None:
+                    seen_full[p.key] = (p, guid)
                 if p.key in rows:
                     if guid is not None:
                         conn.execute(_SQL_SET_GUID_IF_NONE, (guid, p.key))
@@ -3379,6 +3525,7 @@ def _record_open(
                 conn.execute(_SQL_PLAYER_INSERT, (row.key, *row.values()))
                 rows[p.key] = row
                 players_added += 1
+        carried, not_carried = _carry_marks(conn, rows, seen_full)
     outcome = _world_outcome("scanned", "", base).model_copy(
         update={
             "encounters_added": added,
@@ -3388,6 +3535,9 @@ def _record_open(
             "players_added": players_added,
             "players_left_out": players_left_out,
             "read_again": read_again,
+            "logs_kept_old_keys": kept_old,
+            "marks_carried": carried,
+            "marks_not_carried": not_carried,
         }
     )
     return outcome.model_copy(update={"words": scanned_words(outcome)})

@@ -249,8 +249,7 @@ def test_constructed_another_characters_guid_is_not_you() -> None:
         ("Inventeda-Fakerealm-", None, "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm-EU", None, "Inventeda-Fakerealm"),
         ("Inventeda-Fake realm-", None, "Inventeda-Fakerealm"),
-        # M21-02: four parts are the launch client's <First>-<Second>-<Realm>-<Region>.
-        ("Inventeda-Fake-realm-EU", None, "Inventeda-Fake"),
+        ("Inventeda-Fake-realm-EU", None, "Inventeda-Fakerealm"),
         ("Inventeda", "Fake-real m", "Inventeda-Fakerealm"),
         ("Inventeda-Fakerealm", None, "Inventeda-Fakerealm"),
         ("Inventeda", "Fakerealm", "Inventeda-Fakerealm"),
@@ -276,6 +275,29 @@ def test_constructed_another_characters_guid_is_not_you() -> None:
 def test_constructed_unit_names_to_keys(name: str, home: str | None, want: str | None) -> None:
     got = worldpvp.player_key(name, home)
     assert (got[0] if got else None) == want
+
+
+@pytest.mark.parser
+@pytest.mark.parametrize(
+    ("name", "want"),
+    [
+        # M21-02: on a flavor with second names, four or more parts are the
+        # launch client's <First>-<Second>-<Realm>-<Region>.
+        ("Inventeda-Fake-realm-EU", ("Inventeda-Fake", "Inventeda", "Fake")),
+        ("Tay-Soulrend-Roleplay PvP-US", ("Tay-Soulrend", "Tay", "Soulrend")),
+        # Fewer parts read as before.
+        ("Inventeda-Fakerealm-", ("Inventeda-Fakerealm", "Inventeda", "Fakerealm")),
+        ("Inventeda-Fake realm-EU", ("Inventeda-Fakerealm", "Inventeda", "Fakerealm")),
+    ],
+    ids=["four-parts", "launch", "three-parts", "three-parts-space"],
+)
+def test_constructed_unit_names_on_a_second_name_flavor(
+    name: str, want: tuple[str, str, str]
+) -> None:
+    assert worldpvp.player_key(name, None, second_names=True) == want
+    if name.count("-") >= 3:  # without second names, the old reading
+        got = worldpvp.player_key(name, None)
+        assert got is not None and got[0] != want[0]
 
 
 @pytest.mark.parser

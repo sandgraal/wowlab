@@ -376,13 +376,7 @@ def _crew_second_names(opened: _Opened) -> bool:
     if opened.place is None or opened.where is None:
         return False
     _, lay = opened.where
-    return any(
-        c.second_name is not None
-        for acct in lay.wtf_walk().accounts
-        for realm in acct.realms
-        if realm.kind == "numeric"
-        for c in realm.characters
-    )
+    return layout.has_second_names(lay)
 
 
 def _from_database(
@@ -1277,6 +1271,13 @@ class CrewScanLogReport(_Out):
     # M21-02: logs read again from their start because an earlier wowlab
     # keyed their launch-client players the old way (the schema-5 step).
     logs_read_again: int = 0
+    # M21-02: logs the schema-5 step could not read again (their players
+    # keep the old key; said once), and ratings and notes moved from an old
+    # launch-log key to the full name, or left because the match was not
+    # unambiguous.
+    logs_kept_old_keys: int = 0
+    marks_carried: int = 0
+    marks_not_carried: int = 0
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1376,6 +1377,7 @@ def _read_log_parts(
     target: crewdb.Target,
     path: Path,
     owners: dict[str, str | None],
+    second_names: bool = False,
 ) -> crewdb.WorldOutcome:
     """Read the log and keep what it holds, a bounded part at a time: each
     part is read from where the last stopped and kept in its own write."""
@@ -1391,7 +1393,12 @@ def _read_log_parts(
         resume = crewdb.world_resume(target.flavor_folder, target.account, key, size, head_sha)
         try:
             scan = worldpvp.read_world(
-                path, owners, start=resume.start, state=resume.state, pvp_maps=maps
+                path,
+                owners,
+                start=resume.start,
+                state=resume.state,
+                pvp_maps=maps,
+                second_names=second_names,
             )
         except OSError as exc:
             raise CliError(f"cannot read the combat log {path}: {exc.strerror or exc}") from exc
@@ -1448,10 +1455,13 @@ def crew_scan_log(
     owners, without = _owner_guids(lay, target.account)
     if not owners:
         raise CliError(_NO_OWNER.format(account=target.account))
+    # M21-02: four-part unit names are first and second name only where the
+    # flavor's characters have second names (read from the folders, L6).
+    second_names = layout.has_second_names(lay)
     assert opened.place is not None
     place = _place_words(opened.place)
     if path is not None:
-        outcome = _read_log_parts(target, path, owners)
+        outcome = _read_log_parts(target, path, owners, second_names)
         label = _log_label(lay, path)
         words = f"{outcome.words} ({place}, {label})"
         lines = _scan_lines(outcome, without) if outcome.state in ("scanned", "unchanged") else []
@@ -1470,7 +1480,7 @@ def crew_scan_log(
                 "fight, then run this again"
             )
         if len(found) == 1:
-            outcome = _read_log_parts(target, found[0], owners)
+            outcome = _read_log_parts(target, found[0], owners, second_names)
             label = _log_label(lay, found[0])
             files = [CrewScanLogFile(log=label, scan=outcome)]
             words = f"{outcome.words} ({place}, {label})"
@@ -1481,7 +1491,7 @@ def crew_scan_log(
             files = []
             for each in found:
                 try:
-                    got = _read_log_parts(target, each, owners)
+                    got = _read_log_parts(target, each, owners, second_names)
                 except CliError as exc:
                     # One log that cannot be read does not hold the others.
                     cause = exc.__cause__
@@ -1518,6 +1528,28 @@ def crew_scan_log(
             f"{'was' if again == 1 else 'were'} read again from the start, so each player "
             "in them is now kept under their first and second name."
         )
+    scans = [f.scan for f in files if f.scan is not None]
+    kept_old = sum(o.logs_kept_old_keys for o in scans)
+    carried = sum(o.marks_carried for o in scans)
+    not_carried = sum(o.marks_not_carried for o in scans)
+    if kept_old:
+        lines.append(
+            f"  {_plural(kept_old, 'combat log')} an earlier wowlab read could not be read "
+            "again (moved, deleted or changed since): "
+            f"{'its' if kept_old == 1 else 'their'} players keep the old key, the second name "
+            "and the realm run together; crew forget removes one."
+        )
+    if carried:
+        lines.append(
+            f"  Kept your rating or note on {_plural(carried, 'player')} under their full name."
+        )
+    if not_carried:
+        lines.append(
+            f"  {_plural(not_carried, 'player')} rated or noted under an old key "
+            f"{'was' if not_carried == 1 else 'were'} left as they were: their game id names "
+            "more than one player, or the full name already has a rating or note; both rows "
+            "are kept."
+        )
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1534,6 +1566,9 @@ def crew_scan_log(
         logs_unreadable=sum(1 for f in files if f.unreadable is not None),
         logs_not_looked_at=0 if path is not None else older,
         logs_read_again=again,
+        logs_kept_old_keys=kept_old,
+        marks_carried=carried,
+        marks_not_carried=not_carried,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:

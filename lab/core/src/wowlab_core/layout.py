@@ -112,6 +112,7 @@ __all__ = [
     "WtfWalk",
     "absent",
     "classify",
+    "has_second_names",
     "is_link",
     "layouts",
     "link_facts",
@@ -1639,3 +1640,24 @@ def named_paths(folder: Path, parts: Sequence[str]) -> list[str]:
 def layouts(install: Install, limits: Limits | None = None) -> tuple[Layout, ...]:
     """One `Layout` per discovered flavor, in `install.flavors` order."""
     return tuple(Layout.for_flavor(f, install.root, limits) for f in install.flavors)
+
+
+def has_second_names(lay: Layout) -> bool:
+    """Whether a flavor names its characters by first and second name
+    (M21-02): a digits-only folder of one of its accounts holds a
+    `<First>-<Second>` character folder. The client then reports a player's
+    second name where retail reports the realm (a crew key is
+    `<First>-<Second>`), and its combat log writes four-part unit names.
+    Read from the folders, never from the flavor's name (L6); a walk that
+    cannot be made says no."""
+    try:
+        accounts = lay.wtf_walk().accounts
+    except (OSError, ValueError):
+        return False
+    return any(
+        c.second_name is not None
+        for acct in accounts
+        for realm in acct.realms
+        if realm.kind == "numeric"
+        for c in realm.characters
+    )

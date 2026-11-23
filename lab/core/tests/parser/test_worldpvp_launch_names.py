@@ -47,7 +47,7 @@ def test_every_player_of_the_launch_log_is_named_in_four_parts() -> None:
     names = _player_names(LAUNCH_LOG)
     assert len(names) == 41  # the capture's "other-players-pseudonymised: 41"
     for text in names.values():
-        parts = worldpvp.unit_parts(text)
+        parts = worldpvp.unit_parts(text, second_names=True)
         assert parts.second, text
         assert parts.realm == "Roleplay PvP" and parts.region == "US", text
 
@@ -57,14 +57,24 @@ def test_a_four_part_name_gives_first_second_realm_region_and_its_key() -> None:
     names = _player_names(LAUNCH_LOG)
     text = names["Player-9998-00000001"]
     assert text == "Labothera-Crazywater-Roleplay PvP-US"
-    assert worldpvp.unit_parts(text) == worldpvp.UnitParts(
+    assert worldpvp.unit_parts(text, second_names=True) == worldpvp.UnitParts(
         "Labothera", "Crazywater", "Roleplay PvP", "US"
     )
     # Keyed `<First>-<Second>`, as the lab-addon keys a Forever player.
-    assert worldpvp.player_key(text, None) == ("Labothera-Crazywater", "Labothera", "Crazywater")
+    assert worldpvp.player_key(text, None, second_names=True) == (
+        "Labothera-Crazywater",
+        "Labothera",
+        "Crazywater",
+    )
+    # On a flavor without second names the old reading stands: name, realm.
+    assert worldpvp.player_key(text, None) == (
+        "Labothera-CrazywaterRoleplayPvP",
+        "Labothera",
+        "CrazywaterRoleplayPvP",
+    )
     for guid, name in names.items():
-        parts = worldpvp.unit_parts(name)
-        got = worldpvp.player_key(name, None)
+        parts = worldpvp.unit_parts(name, second_names=True)
+        got = worldpvp.player_key(name, None, second_names=True)
         assert got is not None and got[0] == f"{parts.name}-{parts.second}", guid
 
 
@@ -72,7 +82,7 @@ def test_a_four_part_name_gives_first_second_realm_region_and_its_key() -> None:
 def test_the_beta_logs_three_part_name_has_no_second_name() -> None:
     (text,) = set(_player_names(BETA_LOG).values())
     assert text == "Labchard-LabrealmbPartbPartcPartd-"
-    parts = worldpvp.unit_parts(text)
+    parts = worldpvp.unit_parts(text, second_names=True)
     assert parts == worldpvp.UnitParts("Labchard", None, "LabrealmbPartbPartcPartd", "")
     # Its middle part is the realm: the key is `<Name>-<Realm>`, as before.
     assert worldpvp.player_key(text, None) == (

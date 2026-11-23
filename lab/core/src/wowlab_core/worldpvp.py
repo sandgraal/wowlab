@@ -75,8 +75,9 @@ is not the encounter's.
 `"<Name>-<Realm>-<Region>"`, the region empty and the realm without its
 spaces. The launch client's log (1.60.1.71037, M21-02) writes another player
 `"<First>-<Second>-<Realm>-<Region>"`, the realm with its spaces (`Roleplay
-PvP`) and the region set (`US`): a name of four or more parts is keyed
-`<First>-<Second>`, as the lab-addon keys a Forever player (the client
+PvP`) and the region set (`US`): on a flavor whose characters have second
+names (`second_names`, which the caller finds from the folders, L6) a name
+of four or more parts is keyed `<First>-<Second>`, as the lab-addon keys a Forever player (the client
 reports the second name where retail reports the realm), and its realm and
 region are kept beside the key as written (`unit_parts`). A shorter name's key is
 `<Name>-<Realm>` with the realm part normalized in one place
@@ -363,12 +364,16 @@ def normalize_realm(text: str) -> str:
 
 
 class UnitParts(NamedTuple):
-    """A player's unit name split as the log writes it (M21-02). Four or
-    more parts are the launch client's `<First>-<Second>-<Realm>-<Region>`
-    (`second` set, `realm` the parts between the second name and the
-    region, joined by `-`, as written); three are the beta's
-    `<Name>-<Realm>-<Region>`, two `<Name>-<Realm>`, one a name alone
-    (`second` None, and `realm` and `region` empty when not given)."""
+    """A player's unit name split as the log writes it (M21-02). On a
+    flavor whose characters have second names (`second_names`, the caller's
+    finding from the folders, L6), four or more parts are the launch
+    client's `<First>-<Second>-<Realm>-<Region>` (`second` set, `realm` the
+    parts between the second name and the region, joined by `-`, as
+    written). Otherwise, and for fewer parts, a name is `<Name>-<Realm>`
+    with an optional last `-<Region>`: three or more parts give the name,
+    the parts between joined by `-` as the realm, and the region; two
+    `<Name>-<Realm>`; one a name alone (`second` None, and `realm` and
+    `region` empty when not given)."""
 
     name: str
     second: str | None
@@ -376,37 +381,38 @@ class UnitParts(NamedTuple):
     region: str
 
 
-def unit_parts(unit_name: str) -> UnitParts:
-    """The parts of a unit name, nothing normalized."""
+def unit_parts(unit_name: str, *, second_names: bool = False) -> UnitParts:
+    """The parts of a unit name, nothing normalized (see `UnitParts`)."""
     parts = unit_name.split("-")
-    if len(parts) >= 4:
+    if second_names and len(parts) >= 4:
         return UnitParts(parts[0], parts[1], "-".join(parts[2:-1]), parts[-1])
-    if len(parts) == 3:
-        return UnitParts(parts[0], None, parts[1], parts[2])
+    if len(parts) >= 3:
+        return UnitParts(parts[0], None, "-".join(parts[1:-1]), parts[-1])
     if len(parts) == 2:
         return UnitParts(parts[0], None, parts[1], "")
     return UnitParts(parts[0], None, "", "")
 
 
-def _parts(unit_name: str) -> tuple[str, str]:
+def _parts(unit_name: str, second_names: bool = False) -> tuple[str, str]:
     """(name, realm normalized) of a unit name as the log writes it; the
-    realm empty when the name has no realm part. A four-part name's realm
-    is its realm part, not its second name."""
-    got = unit_parts(unit_name)
+    realm empty when the name has no realm part. With `second_names`, a
+    four-part name's realm is its realm part, not its second name."""
+    got = unit_parts(unit_name, second_names=second_names)
     return got.name, normalize_realm(got.realm)
 
 
-def _who(unit_name: str, home_realm: str | None) -> Who | None:
+def _who(unit_name: str, home_realm: str | None, second_names: bool = False) -> Who | None:
     """The key of a player's unit name and what the log gave besides
     (M21-02); None when no key can be made of it. A four-part name is
     keyed `<First>-<Second>`, as the lab-addon keys a Forever player, so
     one player is one key across the log and the crew book; the realm and
-    region parts are kept beside it as written. A shorter name is keyed
-    `<Name>-<Realm>` with the realm normalized, a name with no realm part
-    on `home_realm` (not yet confirmed)."""
+    region parts are kept beside it as written. That reading is used only
+    with `second_names` (a flavor whose characters have them). Any other
+    name is keyed `<Name>-<Realm>` with the realm normalized, a name with
+    no realm part on `home_realm` (not yet confirmed)."""
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in unit_name):
         return None
-    got = unit_parts(unit_name)
+    got = unit_parts(unit_name, second_names=second_names)
     if got.second is not None:
         if not got.name or not got.second:
             return None
@@ -427,12 +433,14 @@ def _who(unit_name: str, home_realm: str | None) -> Who | None:
     return Who(key, name, realm, None, None, got.region or None)
 
 
-def player_key(unit_name: str, home_realm: str | None) -> tuple[str, str, str] | None:
+def player_key(
+    unit_name: str, home_realm: str | None, *, second_names: bool = False
+) -> tuple[str, str, str] | None:
     """(key, name, the key's second part) of a player's unit name as the
-    log writes it; None when no key can be made of it. A four-part name
-    (`<First>-<Second>-<Realm>-<Region>`) gives `<First>-<Second>`; a
-    shorter one `<Name>-<Realm>` (see `_who`)."""
-    who = _who(unit_name, home_realm)
+    log writes it; None when no key can be made of it. With
+    `second_names`, a four-part name (`<First>-<Second>-<Realm>-<Region>`)
+    gives `<First>-<Second>`; any other `<Name>-<Realm>` (see `_who`)."""
+    who = _who(unit_name, home_realm, second_names)
     return None if who is None else (who.key, who.name, who.realm)
 
 
@@ -521,7 +529,9 @@ class _Reader:
         owners: Mapping[str, str | None],
         state: ZoneState | None,
         pvp_maps: frozenset[int],
+        second_names: bool = False,
     ) -> None:
+        self.second_names = second_names
         self.owners = {
             g.upper(): (normalize_realm(r) or None if r else None) for g, r in owners.items()
         }
@@ -633,7 +643,7 @@ class _Reader:
             return None
         if flags & combatlog.AFFILIATION_MASK in (_AFFILIATION_PARTY, _AFFILIATION_RAID):
             return None  # in your group: charmed or mind-controlled, not an opponent
-        return _who(name.text, self.home_of(owner))
+        return _who(name.text, self.home_of(owner), self.second_names)
 
     def friend(self, guid: object, name: object, flags: int | None, owner: str) -> Who | None:
         if not isinstance(guid, str) or not _PLAYER_GUID.fullmatch(guid):
@@ -644,7 +654,7 @@ class _Reader:
             return None
         if flags & _REACTION_MASK != _REACTION_FRIENDLY:
             return None
-        return _who(name.text, self.home_of(owner))
+        return _who(name.text, self.home_of(owner), self.second_names)
 
     def note_unit(self, guid: object, name: object, flags: int | None) -> None:
         if not isinstance(guid, str):
@@ -671,7 +681,7 @@ class _Reader:
         ):
             self.logging = up
         if up not in self.homes and isinstance(name, Quoted):
-            _, realm = _parts(name.text)
+            _, realm = _parts(name.text, self.second_names)
             if realm:
                 self.homes[up] = realm
 
@@ -815,7 +825,7 @@ class _Reader:
         name = self.names.get(owner)
         if name is None:
             return None, True
-        who = _who(name, self.home_of(you))
+        who = _who(name, self.home_of(you), self.second_names)
         if who is None:
             return None, True
         return (you, owner, who), False
@@ -936,6 +946,7 @@ def scan_entries(
     start: int = 0,
     state: ZoneState | None = None,
     pvp_maps: Iterable[int] = (),
+    second_names: bool = False,
 ) -> WorldScan:
     """The open-world encounters in a log's lines (as `combatlog.read_log`
     yields them, from `start`), for your characters' GUIDs `owners` (each
@@ -947,7 +958,7 @@ def scan_entries(
     holds `MAX_ENCOUNTERS` or `MAX_READ_PLAYERS` stops at the first line
     with no encounter open, and at twice either bound before the line that
     would start one (`more`, `end` that line's offset)."""
-    reader = _Reader(owners, state, frozenset(pvp_maps))
+    reader = _Reader(owners, state, frozenset(pvp_maps), second_names)
     lines = unparsed = bad = 0
     end = start
     more = False
@@ -1063,6 +1074,7 @@ def read_world(
     start: int = 0,
     state: ZoneState | None = None,
     pvp_maps: Iterable[int] = (),
+    second_names: bool = False,
 ) -> WorldScan:
     """`scan_entries` on the log at `path`, read-only from `start`, with
     only `WORLD_EVENTS` tokenized, and of their damage lines only those
@@ -1074,4 +1086,5 @@ def read_world(
         start=start,
         state=state,
         pvp_maps=pvp_maps,
+        second_names=second_names,
     )
