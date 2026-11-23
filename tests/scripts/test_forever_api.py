@@ -331,6 +331,18 @@ def test_check_command_exits_zero_on_the_repository(capsys: pytest.CaptureFixtur
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.live
+def test_live_fetch_and_generate_reproduce_the_committed_list(tmp_path: Path) -> None:
+    """Owner-run, by hand, never in CI (ADR-0012; `-m 'not live'` is the
+    default): download the six pinned files from GitHub into a temp folder,
+    generate, and compare with the committed list byte for byte.
+
+        uv run pytest tests/scripts/test_forever_api.py -m live -p no:cacheprovider
+    """
+    fa.fetch(tmp_path)
+    assert fa.generate(tmp_path) == _committed()
+
+
 def test_the_addon_s_own_globals_are_the_ones_it_writes_whole() -> None:
     """Four names, none of them the client's: the SavedVariables and the slash
     command. (Read from the property, so this file names none of them.)"""

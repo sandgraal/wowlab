@@ -140,18 +140,20 @@ owner's own account shows, kept as the client gives it, and a quieter addon:
   the index, the scope, and `GetMacroInfo`'s name, icon (`icon` when a
   number, `icon_text` when text) and body as the client returns them. Read
   out of combat, every value cleaned with `issecretvalue` first, like the
-  other three sections there. That the character macros start after
-  `MAX_ACCOUNT_MACROS` on Forever, and the constant itself, are **[verify]**.
+  other three sections there. That the character macros are numbered from
+  121, after the 120 account slots, on Forever is **[verify]**.
   Since M20-16 a nil `MAX_ACCOUNT_MACROS` no longer leaves the section
-  absent: the constant is defined by the macro window's own Lua, which
-  loads on demand, so it was nil at every gather of the owner's first run
-  (71037, 2026-11-20). The addon then takes its own 120 account slots
-  (**[verify]**, the community value) and writes `account_slots_from =
-  "fallback"`; `"MAX_ACCOUNT_MACROS"` when the constant was a number. The
-  macro window is never loaded for it. *Corrected 2026-11-23:* at 71037 the
-  macro window's Lua does not define the global either; it reads
-  `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, 120 at 70938 ("The [verify]
-  notes against the launch-build list" below).
+  absent. It was nil at every gather of the owner's first run (71037,
+  2026-11-20) because no file of the client's UI defines a global by that
+  name: Blizzard_MacroUI reads `Constants.MacroConsts.MAX_ACCOUNT_MACROS`,
+  which is 120 (the API list at 70938). The addon then takes its own 120
+  account slots, which is Blizzard's own value, and writes
+  `account_slots_from = "fallback"`; `"MAX_ACCOUNT_MACROS"` when the global
+  was a number. The macro window is never loaded for it. *History,
+  corrected 2026-11-23:* until then this paragraph said the global was
+  defined by the macro window's load-on-demand Lua, and called 120 the
+  community value; neither held at 71037 ("The [verify] notes against the
+  launch-build list" below).
 - `bindings` keeps every command `GetBinding` lists, as the client
   returns it, with every key `GetBindingKey` gives for it, as text.
   `commands_left_out` and `keys_left_out` are no longer written. Whether
@@ -1139,7 +1141,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetProfessions` | professions: indices | [verify] | yes |
 | `GetProfessionInfo` | professions: rank, max, skill line, modifier | [verify] | yes |
 | `InCombatLockdown` | spellbook, actionbars, bindings, macros: nothing is read in combat, or when this cannot say (schema 3); since schema 5 also asked once as the world is entered, so a pass waits for the end of combat; the crew book likewise | ran on 70425 (M13-05 capture: all three sections gathered out of combat); its answer in combat: [verify] | yes |
-| `issecretvalue` | spellbook, actionbars, bindings, macros, and identity's schema-5 values: each value is tested before it is used or stored; a secret one is dropped and counted; the crew book likewise (counted in `skipped`) | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); whether it is the client's or an addon's, and restricted content: [verify] | yes (not in forever-addon-kit's 69893 list) |
+| `issecretvalue` | spellbook, actionbars, bindings, macros, and identity's schema-5 values: each value is tested before it is used or stored; a secret one is dropped and counted; the crew book likewise (counted in `skipped`) | ran on 70425 (M13-05 capture: a global function present, a boolean on every call, 0 secret); the client's (GlobalAPI, 70938; dated 2026-11-23); what it returns in restricted content: [verify] | yes (not in forever-addon-kit's 69893 list) |
 | `C_Secrets` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has the table | present on 70425 (M13-05 capture); what it does: [verify] | yes (its functions; the table itself is not a line of the list) |
 | `canaccessvalue` | spellbook, actionbars, bindings: looked up, never called; its probe says whether the client has it | present on 70425 (M13-05 capture); what it does: [verify] | yes (not in forever-addon-kit's 69893 list) |
 | `Enum.SpellBookItemType` | spellbook: `item_types`, member name to number, read from the client | ran on 70425 (M13-05 capture: `None` 0, `Spell` 1, `FutureSpell` 2, `PetAction` 3, `Flyout` 4); a future-spell item not yet seen: [verify] | yes |
@@ -1153,7 +1155,7 @@ on from one, fails the test until someone lists it on purpose.
 | `GetActionInfo` | actionbars: type, id and subtype per slot, 1 to 180 | ran on 70425 (M13-05 capture: 180 calls, 0 errors, 26 answered); a `#showtooltip` macro slot had no subtype; other builds: [verify] | yes |
 | `GetMacroInfo` | actionbars: probe only, whether a macro slot's id names a macro, asked only when the slot has no subtype; macros (schema 5): each macro's name, icon and body | ran on 70425 (M13-05 capture: 2 of 2 answered); index numbering and the body's return: [verify] | yes |
 | `GetNumMacros` | macros (schema 5): the account and character counts | [verify] | yes |
-| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it; nil on 71037 (the owner's run, 2026-11-20; "until the macro window is opened" was a guess, and on 2026-11-23 no file of the 71037 UI source assigns it), and then the addon's own 120 is used (`account_slots_from = "fallback"`, M20-16) | [verify] | no: defined nowhere in the 71037 UI source; the client's value is `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, 120 at 70938 |
+| `MAX_ACCOUNT_MACROS` | macros (schema 5): the character macros start after it; nil on 71037 (the owner's run, 2026-11-20; "until the macro window is opened" was a guess, and on 2026-11-23 no file of the 71037 UI source assigns it), and then the addon's own 120 is used, Blizzard's own value in `Constants.MacroConsts` (`account_slots_from = "fallback"`, M20-16) | [verify]: that character macros are numbered from 121 | no: defined nowhere in the 71037 UI source; the client's value is `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, 120 at 70938 |
 | `GetCurrentBindingSet` | bindings: which binding set is active, raw | ran on 70425 (M13-05 capture: 2, with "Character Specific Key Bindings" ticked); other builds: [verify] | yes |
 | `GetNumBindings` | bindings: how many binding commands | ran on 70425 (M13-05 capture: 299); other builds: [verify] | yes |
 | `GetBinding` | bindings: each command (first return only) | ran on 70425 (M13-05 capture: 299 of 299 answered); whether it lists a spell dragged onto a key: [verify] | yes |
@@ -1181,7 +1183,7 @@ on from one, fails the test until someone lists it on purpose.
 | `C_PvP.GetScoreInfo` | crew book: each scoreboard row once the match has a winner, every field whose value is a number, text or true/false copied as it is (the row's `name`, `guid`, `faction` as the side, `raceName`, `classToken`, `talentSpec`, `honorLevel` and the totals among them); the probe: whether it exists, the first row's field names and type names | [verify] | yes |
 | `C_PvP.IsSoloShuffle` | crew book: a solo shuffle is kept as `kind = "shuffle"`, with no sides, result or counts | [verify] | yes |
 | `GetNumBattlefieldScores` | crew book: how many rows to read (at most 80); the probe: the row count | [verify] | yes |
-| `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | no: at 71037 only `Blizzard_Deprecated`'s 12.0.1 file defines it, and only when the `loadDeprecationFallbacks` setting is on |
+| `GetBattlefieldScore` | crew book's scoreboard probe: whether it exists; for the first row, the type name at each position, and the first and sixth values used as the name (tested, never kept) and the side when `C_PvP.GetScoreInfo` gave no row | [verify] | no: at 71037 only `Blizzard_Deprecated`'s 12.0.1 file defines it, a wrapper over `C_PvP.GetScoreInfo`, loaded for `mainline` (Forever included) when the `loadDeprecationFallbacks` setting is on, which defaults to `"1"` at 70938; so probably present [verify] |
 | `RequestBattlefieldScoreData` | crew book's scoreboard probe: whether it exists; called once per match, and whether that call ran is kept; asked once more when a winner is reported and the scoreboard has no rows | [verify] | yes |
 | `GetBattlefieldWinner` | crew book: a match is read once it gives a winner; `won` when it is 0 or 1; the probe: the winner as a whole number | [verify] | yes |
 | `GetBattlefieldArenaFaction` | crew book: the player's own side when the own row is not found; the probe: the same as a whole number | [verify] | yes |
@@ -1255,23 +1257,23 @@ which the call ran.
   `events_received`.
 - 2026-11-23: `issecretvalue` and `canaccessvalue` are the client's own
   globals (GlobalAPI at 70938; Blizzard's own UI code calls both at 71037),
-  and `C_Secrets` is the client's table with 27 functions. That settles
-  "whether it is the client's or an addon's" for those rows; what they
-  return in restricted content stays [verify].
+  and `C_Secrets` is the client's table with 27 functions: the client
+  defines them. What they return in restricted content stays [verify].
 - 2026-11-23: `ACCOUNT_BINDINGS` and `CHARACTER_BINDINGS` are defined
   nowhere in the 71037 UI source and are not GlobalStrings at 70938, which
   explains why neither was a number on 70425. `Enum.BindingSet` is in the
   list (Default 0, Account 1, Character 2, Current 3); the 70425 capture's
   `binding_set` 2 with "Character Specific Key Bindings" ticked matches
-  `Character`. The addon still records neither constant and does not read
-  the enum.
-- 2026-11-23, a correction to "macros" above: the macro window's Lua does
-  not define `MAX_ACCOUNT_MACROS` at 71037. It reads
-  `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, and no file of the UI source
-  assigns the global, so it was nil for that reason, not because the window
-  had not loaded. The client's value is 120 at 70938
-  (`Constants.MacroConsts`, with `MAX_CHARACTER_MACROS` 30), the same as the
-  addon's fallback. The addon still asks for the global and falls back.
+  `Character`. The addon still asks for both (never numbers, so nothing is
+  recorded; `Actions.lua`, line 420) and does not read the enum.
+- 2026-11-23, a correction to "macros" above: no file of the 71037 UI
+  source defines the global `MAX_ACCOUNT_MACROS`. Blizzard_MacroUI reads
+  `Constants.MacroConsts.MAX_ACCOUNT_MACROS`, which is 120 at 70938 (with
+  `MAX_CHARACTER_MACROS` 30), so the global was nil for that reason, not
+  because the window had not loaded. 120 is Blizzard's own value, the same
+  as the addon's fallback; what stays [verify] is that the character
+  macros are numbered from 121. The addon still asks for the global and
+  falls back.
 - 2026-11-23: `INVSLOT_FIRST_EQUIPPED` is 1 (head) and
   `INVSLOT_LAST_EQUIPPED` 19 (tabard), with `INVSLOT_RANGED` 18, in
   `Blizzard_FrameXMLBase`'s `Constants.lua` at 71037. Whether slot 18 ever
@@ -1280,37 +1282,59 @@ which the call ran.
   the list, and `Blizzard_DeprecatedSpecialization`, which defines them on
   other clients, still loads only for `classic, standard` at 71037, as the
   field guide said on 69913.
-- 2026-11-23: `GetBattlefieldScore` is not in the list; at 71037 only
+- 2026-11-23: `GetBattlefieldScore` is not in the list. At 71037 only
   `Blizzard_Deprecated`'s 12.0.1 file defines it, as a wrapper over
-  `C_PvP.GetScoreInfo`, and only when the `loadDeprecationFallbacks`
-  setting is on. The scoreboard probe tests for it before use and asks
-  `C_PvP.GetScoreInfo` first, so a client without it loses only the probe's
-  fallback.
+  `C_PvP.GetScoreInfo`. That file is listed `[AllowLoadGameType mainline]`,
+  and `mainline` covers Forever's `camelot` (the field guide, fact 4); it
+  returns early unless the `loadDeprecationFallbacks` setting is on, and
+  that setting defaults to `"1"` at 70938 (Ketho's CVars list). So the
+  function is probably present on Forever [verify]. When
+  `C_PvP.GetScoreInfo` has no row, the wrapper still answers, with
+  `name` nil and `faction` 0, so the scoreboard probe, which falls back to
+  its sixth value when `C_PvP.GetScoreInfo` gave no row, can record a side
+  that no row gave: `first_side = 0`. Ticket M21-11 fixes that; until then
+  a `first_side` of 0 with no name string is not evidence of a side.
 - 2026-11-23, combat log: `COMBAT_LOG_EVENT` and
   `COMBAT_LOG_EVENT_UNFILTERED` are flagged `HasRestrictions` in the 71037
-  API documentation, as the field guide says (registering them from an
-  addon is forbidden). The addon registers neither. `LoggingCombat` is in
-  the list and Blizzard's own `/combatlog` calls it at 71037, but it has no
-  entry in the API documentation, so whether addon code may call it on
-  Forever is not documented and stays [verify] (the owner's in-game check).
+  API documentation. The field guide says registering them from an addon
+  is forbidden (it fires `ADDON_ACTION_FORBIDDEN`); what the flag does at
+  run time on Forever is [verify]. The addon registers neither.
+  `LoggingCombat` is in the list and Blizzard's own `/combatlog` calls it
+  at 71037, but it has no entry in the API documentation, so whether addon
+  code may call it on Forever is not documented and stays [verify] (the
+  owner's in-game check). The documented way to read the state is
+  `C_ChatInfo.IsLoggingCombat`, which returns `enabled` and `advanced`
+  (71037 API documentation); ticket M21-11 adopts it.
   `C_CombatLog.IsCombatLogRestricted` exists; the addon does not ask it.
   `advancedCombatLogging` is the setting name Blizzard's own options use at
   71037.
 - 2026-11-23, the beta's SavedVariables cold-start bug (field guide, fact 8
-  and §5: on 69893 and 69913, files under `WTF/Account` never loaded on a
-  cold start; per-character ones survived a `/reload`): the per-character
-  half has not been seen since. `probe.loads` rose to 8 on 70058 and to 2 on
-  70450, with a carried barber-shop record, so `WowLabCharDB` loaded in a
-  later session; the captures do not record whether any of those sessions
-  followed a client restart. The account-wide half is untested by any
+  and §5, on 69893 and 69913: files under `WTF/Account` never loaded on a
+  cold start; per-character ones were restored across a `/reload` within
+  one client run, account-wide ones not even then). No capture shows it
+  since. The evidence: `Labchard-Labrealmg` went from `probe.loads` 4 at
+  70009 to 8 at 70058, across a build change, so the client was launched
+  at least once in between and the counter did not go back to 1; and the
+  70888 `Sandgraal-Rizzen` file has `probe.loads` 25 with a barber-shop
+  record carried from load 6. Why that does not prove the bug is gone: no
+  file records when the client was launched, so a launch whose load failed
+  (the counter back to 1) followed by enough loads in one run could still
+  reach 8; the 70888 record shows only that no load failed between loads 6
+  and 25 of that character, not that a launch fell in that stretch; and
+  both are per-character. The account-wide half is untested by any
   capture: `WowLabDB` holds no counter, and no crew record is in the
   repository. If the account-wide file failed to load, `WowLabCrewDB`
-  would read as a book never turned on, and the client's logout write
-  would save the file without it (the field guide: a failed load is
-  followed by a save that overwrites the good file). The addon does not
-  guard against that; the game's `WowLab.lua.bak` and wowlab's snapshots
-  are the copies left. [verify] with two client restarts and the crew
-  book on.
+  would read as a book never turned on, and the client's next write would
+  save the file without it (the field guide: a failed load is followed by
+  a save that overwrites the good file). The addon does not guard against
+  that. What is left is wowlab's snapshots, and the game's
+  `WowLab.lua.bak`, believed to be the previous write ([verify],
+  `docs/LAB_FILE_MAP.md`), which holds that copy only until the next save
+  replaces it. The owner's check, [verify]: take a wowlab snapshot first
+  (`wowlab snap create`); turn the crew book on and let it record; type
+  `/reload` and see that `/wowlab crew` still shows the book (the
+  account-wide `/reload` case); then exit the game, launch it again, and
+  check the same twice more.
 
 ## M11-03 [verify] checklist
 
