@@ -194,6 +194,7 @@ if TYPE_CHECKING:
     from wowlab_core import looks as looks
     from wowlab_core import lookspage as lookspage
     from wowlab_core import lookstore as lookstore
+    from wowlab_core import lookup as lookup
     from wowlab_core import luadata as luadata
     from wowlab_core import macrocheck as macrocheck
     from wowlab_core import macroplace as macroplace
@@ -220,6 +221,7 @@ if TYPE_CHECKING:
     from wowlab_core.cli import _cmd_install as _cmd_install
     from wowlab_core.cli import _cmd_log as _cmd_log
     from wowlab_core.cli import _cmd_looks as _cmd_looks
+    from wowlab_core.cli import _cmd_lookup as _cmd_lookup
     from wowlab_core.cli import _cmd_macros as _cmd_macros
     from wowlab_core.cli import _cmd_names as _cmd_names
     from wowlab_core.cli import _cmd_profile as _cmd_profile
@@ -2038,6 +2040,96 @@ if TYPE_CHECKING:
     )
     from wowlab_core.cli._cmd_looks import (
         looks_show as looks_show,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _FACTIONS as _FACTIONS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _LOOKUP_KIND_WORDS as _LOOKUP_KIND_WORDS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_CHANCE as _NOTE_CHANCE,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_POINTS as _NOTE_POINTS,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _NOTE_SOURCE as _NOTE_SOURCE,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _SHOWN as _SHOWN,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        LookupHitReport as LookupHitReport,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        LookupReport as LookupReport,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _caveat as _caveat,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _chance as _chance,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _fetch as _fetch,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _heading as _heading,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _hit_list as _hit_list,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _item as _item,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _item_lines as _item_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _levels as _levels,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _matches as _matches,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _notes as _notes,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _npc as _npc,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _npc_lines as _npc_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _object as _object,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _object_lines as _object_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _places as _places,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _point as _point,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest as _quest,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _quest_lines as _quest_lines,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _report_hit as _report_hit,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _spots as _spots,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        _zone as _zone,
+    )
+    from wowlab_core.cli._cmd_lookup import (
+        lookup_cmd as lookup_cmd,
     )
     from wowlab_core.cli._cmd_macros import (
         _FIX_KEPT as _FIX_KEPT,

@@ -586,6 +586,77 @@ the M2's vertices are the seven skins' sets one after another; whether a
 LOD skin's lookup is relative to its set and what other models do stay
 **[verify]**, amendment of 2026-11-17).
 
+## 13. QuestieDB's data (third-party addon data; M22-08)
+
+QuestieDB is the database the Questie addon reads. `wowlab lookup`
+(`wowlab_core.questiedb`, `wowlab_core.lookup`) reads the player's own
+installed copy, read-only, and executes none of it (L3). No byte of it is
+committed: the tests run on constructed slices built in this encoding
+(`lab/core/tests/_questie_build.py`) and an owner-run `@live` test reads the
+installed copy (`test_questiedb_live.py`). The facts below are from the
+owner's install of QuestieDB 1.1.4 (`QuestieDB_Forever.toc`, 18.8 MB,
+`## X-Mode: baked`, `## X-Contract-Version: 4`), read on 2026-11-23.
+
+The ticket's **[verify]**, "QuestieDB keeps its tables as Lua strings the
+addon compiles at run time", is **settled, 2026-11-23: no, for the entity
+data.** Quests, NPCs, objects and items live in the TOC itself, as
+metadata the client hands to the addon (`C_AddOns.GetAddOnMetadata`) and
+the addon decodes with the client's `C_EncodingUtil`
+(`src/read/baked.lua`). Only the drop-chance tables are Lua strings
+compiled with `loadstring`, and their text is a literal table.
+
+**The baked store.** Every value is a `## X-...` directive of the TOC (§3).
+
+- A value that is exactly `~N~` is a chunk header: the value is the
+  directives `<key>-1` … `<key>-N` joined in order. Base64 never starts
+  with `~`. The owner's largest is 79 parts (`X-Item-IDS`).
+- `X-<Kind>-IDS` (Kind `Item`, `Npc`, `Quest`, `Object`): base64 of a zlib
+  stream (`C_EncodingUtil.DecompressString(…, 1)`; the stream begins `eJ`,
+  `78 9c`) of a CBOR array of the kind's ids. The owner's: 23,978 items,
+  15,564 NPCs, 6,080 quests, 7,471 objects.
+- `X-<Kind>-<id>-S`: base64 of a CBOR value, the entity's scalar row,
+  keyed by field number: a map, or an array when the stored numbers run
+  1..n (1,916 NPC rows and 1,726 object rows are arrays). `p`, a byte-string
+  key, is the presence mask: bit `n - 1` set when table field `n` is
+  stored. One NPC id in the header (of 15,564) has no row.
+- `X-<Kind>-<id>-<n>`: base64 of CBOR, table field `n`, read only when its
+  presence bit is set.
+- CBOR as written: unsigned and negative integers up to 64 bits (a quest's
+  race mask is 8,589,934,770), byte strings for every string (major type 2,
+  not 3), definite-length arrays and maps, `null` (simple 22) for a hole in
+  an array, doubles for coordinates. No tag, no indefinite length, no
+  `undefined` was seen; the reader refuses them.
+- Field numbers are the addon's (`src/meta/<kind>Meta.lua`). Read by
+  `lookup`: item 1 name, 2 NPC drops, 3 object drops, 4 container items,
+  5 the quest it starts, 6 quests that reward it, 9 item level, 10 required
+  level, 14 vendors; NPC 1 name, 4 and 5 levels, 6 rank, 7 spawns
+  (`{zone: [[x, y], …]}`, x and y map percentages; `-1, -1` inside an
+  instance), 9 zone, 10 and 11 quests started and ended, 13 friendly to
+  (`A`, `H`, `AH`), 14 title; quest 1 name, 2 starters and 3 finishers
+  (`{1: NPCs, 2: objects, 3: items}`, as a map or an array with holes),
+  4 required level, 5 level, 17 zone (positive: an AreaTable id; negative:
+  a quest sort); object 1 name, 2 and 3 quests, 4 spawns, 5 zone. Zones are
+  AreaTable ids, named from the game table (§9).
+
+**The drop tables.** The TOC lists `support\<flavor>\DropTables\…lua`
+files. `classicItemDrops.lua` assigns two Lua long strings,
+`QuestieClassicItemDrops.wowheadData = [[return { … }]]` (1,219 items) and
+`.cmangosData` (813 items): item id → NPC id → percent. The text after
+`return` is a table constructor of numbers and comments only, so it is
+parsed by `luadata` (§4) as data; anything else in that shape is left out.
+They cover the items quests ask for, not every drop.
+
+**Left out, by name** (listed in `lookup --json`'s `questiedb.left_out`
+and behind `--notes`):
+
+- the corrections under `src\corrections\…`, Lua functions the addon runs
+  per character in game (the fixed ones are already folded into the store,
+  as `foreverItemFixes.lua` says: "Static body stripped at package time");
+- `itemDropCorrections.lua`, Lua code that names Questie's constants
+  (`DropDB.correctionKeys.WOWHEAD`);
+- `X-l10n-<locale>-<Kind>` blocks, the names in other languages: data, not
+  needed for the English names the rows hold.
+
 ## Amendments
 
 Dated entries, newest last. Each names the fixture that prompted it.

@@ -509,6 +509,7 @@ _PART_NAMES = (
     "_cmd_casc",
     "_cmd_charmodel",
     "_cmd_crew",
+    "_cmd_lookup",
     "_cmd_ui",
 )
 # The modules to import before a root command or group is looked up (M15-22):
@@ -537,6 +538,7 @@ _COMMAND_MODULES: dict[str, tuple[str, ...]] = {
     "char": ("_cmd_char", "_cmd_charmodel"),
     "casc": ("_cmd_casc",),
     "crew": ("_cmd_crew",),
+    "lookup": ("_cmd_lookup",),
 }
 
 

@@ -737,6 +737,7 @@ def test_each_tab_panel_starts_at_h2_and_skips_no_level() -> None:
         "account-view",
         "character-view",
         "crew-view",
+        "lookup-view",
         "backups-view",
         "addons-view",
         "explorer-view",

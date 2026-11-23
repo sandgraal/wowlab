@@ -459,6 +459,11 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["crew", "scan-log"],
         ["crew", "list", "--world"],
         ["crew", "matches", "--world", "--notes"],
+        # M22-08: the sandbox holds no QuestieDB and no item table, so both
+        # say there is nothing to search; test_cli_lookup.py runs it on a
+        # constructed QuestieDB slice and lints that text too.
+        ["lookup", "claw"],
+        ["lookup", "claw", "--notes"],
         ["db2", "builds"],
         ["db2", "fetch", "ChrClasses", "--build", TABLE_BUILD],
         ["db2", "head", "ChrClasses", "--build", TABLE_BUILD],

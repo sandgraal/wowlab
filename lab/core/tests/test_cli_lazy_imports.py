@@ -131,7 +131,7 @@ def test_the_tree_is_the_same_whatever_was_imported_first() -> None:
     )
     assert canonical == backwards == looked_up
     names = [name for name, _ in canonical]
-    assert names[:5] == ["doctor", "tree", "explain", "undo", "ui"]
+    assert names[:6] == ["doctor", "tree", "explain", "undo", "lookup", "ui"]
     snap = dict(canonical)["snap"]
     assert list(snap)[-1] == "restore"
 
