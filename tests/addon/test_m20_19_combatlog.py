@@ -78,7 +78,7 @@ HASHED = {
     "logState": "d45a448e7839389494dcf8ddf64cf1ea6581e998f3d2454f2b3540ff41ab4e22",
     "place": "3f4da679586b0e01b9c389ddc1fc7b041e8f01a540722eaeb0447f555070e6a9",
     "inCombatNow": "7c30f6318c8fef757bc9fed6bd633d0d1bda542e749857a59bcfdfc629f82765",
-    "readBack": "29f4d04accee159e1226b3cea464ddc3c3a1360577e2174a586d6958a9e8e094",
+    "readBack": "0322b4e0ed7cbf91eef704dc622ac75351805c5f8ca691225953ef2a818bbae7",
     "record": "4fa6a641ba70bd34813b3dde5ac62b3453ebea6468441b29b924f460414cc143",
     "gather": "b341cd959d0128f0372c7d95edc4fc60175d3fe1e9e187c2855a33197bc6c373",
     "armIdle": "ef39d1fbe133b8ad1c63cc31107b705340ce70f4e03f2518420d909d34913fc5",
@@ -327,6 +327,7 @@ class Switch:
         if was and not self.paused:
             self.started = True
             self.waiting = True
+            self.fighting = self.in_combat_now()
         if self.loaded:
             return
         self.loaded = True
@@ -874,6 +875,22 @@ def test_m20_19_on_checks_at_once_and_in_combat_when_the_fight_ends() -> None:
     t.fire("PLAYER_REGEN_ENABLED")
     assert t.c.log is False
     assert t.c.chat[-1] == f"combat log off ({WHY_INSTANCE})."
+
+
+def test_m20_19_on_after_a_pause_in_a_fight_asks_whether_it_is_still_a_fight() -> None:
+    s = _switch()
+    s.login()
+    s.fire("PLAYER_REGEN_DISABLED")
+    s.command_switch(False)  # paused in the fight: run never sees its end
+    s.fire("PLAYER_REGEN_ENABLED")
+    s.c.instance = True
+    s.c.lockdown = True  # a new fight when `on` is typed
+    s.c.core_in_combat = True
+    s.command_switch(True)
+    assert s.c.log is True  # in combat: nothing switched
+    s.c.lockdown = False
+    s.fire("PLAYER_REGEN_ENABLED")
+    assert s.c.log is False
 
 
 def test_m20_19_a_retry_after_the_fight_follows_the_place() -> None:

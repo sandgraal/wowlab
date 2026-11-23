@@ -280,9 +280,13 @@ _REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, tuple[bool, str]]] = {
     ("log", "tail"): {"follow": (True, "a run must end")},
     ("looks", "page"): {"out": (False, "it can create a file anywhere outside an install")},
     # M20-18: `crew scan-log PATH` reads any file it is named; from the UI it
-    # reads only the newest combat log in the flavor's Logs folder.
+    # reads only the flavor's Logs folder (M20-19: every log there not read
+    # before).
     ("crew", "scan-log"): {
-        "path": (False, "from the UI only the newest log in the game's Logs folder is read")
+        "path": (
+            False,
+            "from the UI only the game's Logs folder is read: every combat log there not read before",
+        )
     },
     # M15-06 (§17.1 "In the UI"): from the UI an extracted file goes only to
     # its default place under the user data directory; `--out` names another

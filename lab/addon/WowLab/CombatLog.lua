@@ -121,6 +121,16 @@ local function sayOnce(name, text)
     ns.Say(text)
 end
 
+-- Whether the client is in combat now (a /reload in combat sends no
+-- PLAYER_REGEN_DISABLED); false when it cannot say.
+local function inCombatNow()
+    if type(InCombatLockdown) ~= "function" then
+        return false
+    end
+    local ok, locked = pcall(InCombatLockdown)
+    return ok and locked == true
+end
+
 -- Reads what the carried record kept, once; and the idle time and the pause,
 -- at every gather (`/wowlab combatlog idle`, `off` and `on` change them in
 -- the record).
@@ -139,6 +149,8 @@ local function readBack()
     if was and not paused then
         started = true
         waiting = true
+        -- Paused, no fight's start or end reached `run`: ask the client.
+        fighting = inCombatNow()
     end
     if loaded then
         return
@@ -189,16 +201,6 @@ local function place()
         return "raid group"
     end
     return "world"
-end
-
--- Whether the client is in combat now (a /reload in combat sends no
--- PLAYER_REGEN_DISABLED); false when it cannot say.
-local function inCombatNow()
-    if type(InCombatLockdown) ~= "function" then
-        return false
-    end
-    local ok, locked = pcall(InCombatLockdown)
-    return ok and locked == true
 end
 
 -- The advancedCombatLogging setting: true, false, or nil when not known.

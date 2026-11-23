@@ -195,7 +195,7 @@
     const posted = await postRun({ command: command, params: everyFlavor ? params || {} : withFlavor(command, params) });
     if (posted.error) return { error: posted.error };
     const result = posted.result;
-    if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit." };
+    if (result.timed_out) return { error: "wowlab " + command.join(" ") + " stopped at its time limit.", timedOut: true };
     if (result.truncated) return { error: "wowlab " + command.join(" ") + " printed more than the page can hold." };
     if (result.exit_code !== 0) {
       const text = String(result.stderr || "").trim();
@@ -3831,19 +3831,27 @@
   byId("crew-matches-show").addEventListener("click", () => showCrewMatches(true, false));
   byId("crew-world-show").addEventListener("click", () => showCrewMatches(true, true));
 
-  // `crew scan-log` (M20-18): the newest combat log read into wowlab's own
-  // crew database (nothing in the game folder changes), then the list again.
+  // `crew scan-log` (M20-18; M20-19: every log not read before, oldest
+  // first): read into wowlab's own crew database (nothing in the game folder
+  // changes), then the list again. Each part of a read is kept as it is
+  // read, so a run stopped at the time limit keeps what it read and the next
+  // press reads on from there.
   async function scanCrewLog() {
     const seq = ++crew.scanSeq;
     const button = byId("crew-scan-log");
     button.disabled = true;
-    crewSay("Reading the newest combat log…", false);
+    crewSay("Reading every combat log not read before… Many logs can take a while.", false);
     const reply = await runJson(["crew", "scan-log"], crewParams({}));
     button.disabled = false;
     if (seq !== crew.scanSeq) return;
     const report = reply.data;
+    if (reply.timedOut) {
+      await loadCrew();
+      crewSay("Reading the combat logs took longer than the page waits for. What was read is kept; press the button again to read on.", true);
+      return;
+    }
     if (!report || typeof report.words !== "string") {
-      crewSay(reply.error ? shown(reply.error) : "The combat log's read came back in a shape this page does not know.", true);
+      crewSay(reply.error ? shown(reply.error) : "The combat logs' read came back in a shape this page does not know.", true);
       return;
     }
     await loadCrew();

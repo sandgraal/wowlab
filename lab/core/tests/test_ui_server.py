@@ -1222,7 +1222,7 @@ def test_looks_page_out_is_refused(real: Any, recorder: Recorder, out: str) -> N
 )
 def test_crew_scan_log_path_is_refused(real: Any, recorder: Recorder, path: str) -> None:
     """M20-18: `crew scan-log PATH` reads any file it is named; from the UI
-    only the newest combat log in the game's Logs folder is read, so a path
+    only the game's Logs folder is read (every log not read before), so a path
     is refused whatever its value, and the leaf without one runs."""
     reply = _run(real, ["crew", "scan-log"], {"path": path})
     assert (reply.status, reply.error()) == (403, "excluded"), reply.body[:300]

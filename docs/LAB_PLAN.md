@@ -7403,6 +7403,14 @@ newest 1,000 logs and how many older ones it did not look at
 reason (`logs[].unreadable`, `logs_unreadable`) and the newer logs are read;
 a PATH that cannot be read is still an error.
 
+*Fix round 3 (2026-11-22, M20-19).* A pause typed in a fight hides the
+fight's end from the switch, so `/wowlab combatlog on` asks the client
+whether it is in combat (`InCombatLockdown`) before its check. The UI's
+Crew tab button now reads "Read the combat logs not read before"; a run
+stopped at the page's 120 s limit says that what was read is kept and that
+pressing the button again reads on (each part of a read is kept as it is
+read), and the UI's refusal of a path says that only the Logs folder is read.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |
