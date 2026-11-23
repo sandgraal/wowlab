@@ -3645,15 +3645,19 @@
   const CREW_SORT = [
     ["last", "Last grouped, newest first"], ["met", "Most groups first"], ["name", "By name"],
     ["faced", "Most matches against you first"], ["allied", "Most matches with you first"],
+    ["losses", "Most fights lost to them first"],
   ];
   // `crew list --faced` and `--allied` (M20-09): players met in a match.
   // `crew list --world` (M20-18): players met in the open world, from a combat log.
+  // `crew list --nemeses` (M22-03): your nemeses, most fights lost to them first.
   const CREW_PVP = [
     ["", "Everyone"], ["faced", "Against you in a match"], ["allied", "With you in a match"],
-    ["world", "Met in the open world"],
+    ["world", "Met in the open world"], ["nemeses", "Your nemeses"],
   ];
   const CREW_RATE = [["good", "good"], ["bad", "bad"], ["none", "none (take it away)"]];
-  const CREW_COLUMNS = ["Player", "Class", "Groups", "Last grouped", "Last instance", "Your rating", "Your note"];
+  const CREW_COLUMNS = [
+    "Player", "Class", "Record against them", "Groups", "Last grouped", "Last instance", "Your rating", "Your note",
+  ];
 
   function fillSelect(select, choices) {
     select.replaceChildren();
@@ -3704,6 +3708,17 @@
     return visible(text.charAt(0).toUpperCase() + text.slice(1).toLowerCase());
   }
 
+  // The record against them (M22-03), as `crew list --json` adds it up:
+  // fights, won and lost; "none" with no fight kept.
+  function crewRecord(record) {
+    const r = record && typeof record === "object" ? record : {};
+    const fights = hubNum(r.fights);
+    if (fights === null || fights === 0) return "none";
+    const won = hubNum(r.wins) || 0;
+    const lost = hubNum(r.losses) || 0;
+    return pluralWord(fights, " fight") + ", won " + won + ", lost " + lost;
+  }
+
   function crewCells(p) {
     const level = hubNum(p.level);
     const klass = crewClass(p.class_token);
@@ -3713,6 +3728,7 @@
     const met = hubNum(p.met);
     return [
       who || NOT_RECORDED,
+      crewRecord(p.record),
       met === null ? NOT_RECORDED : String(met),
       crewDay(p.last) || NOT_RECORDED,
       hubStr(p.where) ? visible(p.where) : "none",
@@ -3736,6 +3752,12 @@
     open.className = "hub-open";
     open.title = "Show everything the crew book keeps about this player";
     name.appendChild(open);
+    // The nemesis badge (M22-03): Python's verdict, never the page's.
+    if (p.record && p.record.nemesis === true) {
+      const badge = make("span", "Nemesis");
+      badge.className = "badge badge-nemesis";
+      name.appendChild(badge);
+    }
     tr.appendChild(name);
     for (const text of crewCells(p)) tr.appendChild(make("td", text));
     tr.addEventListener("click", () => openCrewPlayer(p.key));
@@ -3755,6 +3777,10 @@
     notes.replaceChildren(...(Array.isArray(report.notes) ? report.notes : [])
       .filter((n) => typeof n === "string").map((n) => make("li", visible(n))));
     byId("crew-tools").hidden = !on;
+    // The nemeses view says the rule it applies, in Python's words (M22-03).
+    const rule = byId("crew-nemesis-rule");
+    rule.textContent = on && report.nemeses === true ? visible(hubStr(report.nemesis_rule) || "") : "";
+    rule.hidden = !rule.textContent;
     const box = byId("crew-table");
     const players = Array.isArray(report.players) ? report.players.filter((p) => p && typeof p.key === "string") : [];
     const unread = Array.isArray(report.unread) ? report.unread.filter((u) => u && typeof u.key === "string") : [];
@@ -3807,6 +3833,7 @@
     if (pvp === "faced") params.faced = true;
     if (pvp === "allied") params.allied = true;
     if (pvp === "world") params.world = true;
+    if (pvp === "nemeses") params.nemeses = true;
     const map = byId("crew-map").value;
     if (map.trim() !== "") params.map_text = map;
     const since = byId("crew-since").value;

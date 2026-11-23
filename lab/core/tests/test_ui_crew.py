@@ -441,6 +441,7 @@ function crewView() {
     words: t("crew-words"), offer: t("crew-offer"), offerHidden: ids["crew-offer"].hidden,
     toolsHidden: ids["crew-tools"].hidden, status: t("crew-status"), statusRole: ids["crew-status"].getAttribute("role"),
     tableHidden: table.hidden,
+    nemesisRule: { text: t("crew-nemesis-rule"), hidden: ids["crew-nemesis-rule"].hidden },
     heads: table.all().filter((e) => e.tagName === "th").map((e) => e.textContent),
     rows: rows.map((tr) => tr.children.map((c) => c.textContent)),
     unread: ids["crew-unread"].children.map((c) => c.textContent),
@@ -548,7 +549,8 @@ def _bodies(step: dict[str, Any]) -> list[dict[str, Any]]:
     return [r["body"] for r in step["newRequests"]]
 
 
-_DRAWN_CLASSES = {"", "char-table hub crew", "unseen", "hub-row", "hub-open"}
+# `badge badge-nemesis` (M22-03): the nemesis mark, a fixed class and text.
+_DRAWN_CLASSES = {"", "char-table hub crew", "unseen", "hub-row", "hub-open", "badge badge-nemesis"}
 
 
 def _inert(view: dict[str, Any], *pieces: str) -> None:
@@ -569,6 +571,7 @@ def _inert(view: dict[str, Any], *pieces: str) -> None:
             "button",
             "li",
             "option",
+            "span",
             "#text",
         }, e
         assert e["title"] in ("", "Show everything the crew book keeps about this player"), e
@@ -624,6 +627,7 @@ def test_the_list_searches_filters_and_orders_through_the_command_constructed(
     assert tab["heads"] == [
         "Player",
         "Class",
+        "Record against them",
         "Groups",
         "Last grouped",
         "Last instance",
@@ -632,7 +636,15 @@ def test_the_list_searches_filters_and_orders_through_the_command_constructed(
     ]
     # The CLI's order: newest group first.
     assert [r[0] for r in tab["rows"]] == [KEY_A, KEY_C, KEY_B]
-    assert tab["rows"][0][1:] == ["Mage, level 60", "3", tab["rows"][0][3], WHERE, "none", NOTE]
+    assert tab["rows"][0][1:] == [
+        "Mage, level 60",
+        "none",
+        "3",
+        tab["rows"][0][4],
+        WHERE,
+        "none",
+        NOTE,
+    ]
     assert tab["status"] == "3 players." and tab["toolsHidden"] is False
     assert _bodies(by_met) == [{"command": ["crew", "list"], "params": {"sort": "met"}}]
     assert by_met["rows"][0][0] == KEY_B
@@ -672,7 +684,7 @@ def test_hostile_names_guilds_notes_and_instances_are_shown_as_text_constructed(
     assert row[0] == _visible(key)
     assert "⟨U+001B⟩[31m⟨U+009B⟩2J⟨U+202E⟩" in row[0]
     assert '<img src=x onerror="alert(1)">' in row[0] and "javascript:alert(3)" in row[0]
-    assert row[4] == _visible(where) and row[6] == _visible(note)
+    assert row[5] == _visible(where) and row[7] == _visible(note)
     assert opened["player"]["title"] == _visible(key)
     lines = opened["player"]["lines"]
     assert f"Guild last seen (kept if they left it): {_visible(guild)}" in lines
@@ -1086,3 +1098,70 @@ def test_the_open_world_buttons_and_filter_go_through_the_command_constructed(
         {"command": ["crew", "scan-log"], "params": {"account": ACCOUNT, "flavor": FLAVOR}}
     ]
     assert "wowlab does not know which characters are yours" in " ".join(scanned["status"].split())
+
+
+# ─── the record against each opponent (M22-03) ───────────────────────────────
+
+
+def _nemesis_book() -> bytes:
+    """A schema 2 book (constructed): KEY_C against you in three lost
+    matches and one won, KEY_D in one lost; KEY_A always with you."""
+    return book(
+        {KEY_A: player(), KEY_B: player(), KEY_C: player(), KEY_D: player()},
+        schema=2,
+        matches=[
+            match([KEY_A], [KEY_C], at=T2, won=False),
+            match([KEY_A], [KEY_C, KEY_D], at=T2 + 60, won=False),
+            match([KEY_A], [KEY_C], at=T2 + 120, won=False),
+            match([KEY_A], [KEY_C], at=T2 + 180, won=True),
+        ],
+    )
+
+
+def test_the_record_the_badge_and_the_nemeses_view_come_from_the_command_constructed(
+    crew_at: Any, tmp_path: Path
+) -> None:
+    crew = crew_at(_nemesis_book())
+    steps: list[dict[str, Any]] = [
+        {"crew_tab": True},
+        {"crew_set": "crew-pvp", "value": "nemeses"},
+        {"crew_set": "crew-pvp", "value": ""},
+        {"crew_set": "crew-sort", "value": "losses"},
+        {"crew_open": 0},
+    ]
+    out = _drive(crew, tmp_path / "node", steps)
+    tab, nemeses, everyone, by_losses, opened = out["steps"]
+    listed = crew.report(LIST, {})
+    record = {p["key"]: p["record"] for p in listed["players"]}
+    assert (record[KEY_C]["fights"], record[KEY_C]["losses"], record[KEY_C]["nemesis"]) == (
+        4,
+        3,
+        True,
+    )
+    # The record on every row, as the command added it up.
+    cells = {r[0]: r[2] for r in tab["rows"]}
+    assert cells[KEY_C + "Nemesis"] == "4 fights, won 1, lost 3"
+    assert cells[KEY_D] == "1 fight, won 0, lost 1"
+    assert cells[KEY_A] == "none" and cells[KEY_B] == "none"
+    # The badge: only on the nemesis, a fixed class and word.
+    badges = [e for e in tab["drawn"] if e["cls"] == "badge badge-nemesis"]
+    assert len(badges) == 1 and badges[0]["tag"] == "span"
+    _inert(tab)
+    assert tab["nemesisRule"]["hidden"] is True
+    # The nemeses view is the command's own filter, and says the rule.
+    assert _bodies(nemeses) == [
+        {"command": ["crew", "list"], "params": {"sort": "last", "nemeses": True}}
+    ]
+    assert [r[0] for r in nemeses["rows"]] == [KEY_C + "Nemesis"]
+    assert nemeses["nemesisRule"] == {"text": listed["nemesis_rule"], "hidden": False}
+    assert "at least 3 times" in nemeses["nemesisRule"]["text"]
+    assert everyone["nemesisRule"]["hidden"] is True and len(everyone["rows"]) == 4
+    # Sorted by losses, through the command's own order.
+    assert _bodies(by_losses) == [{"command": ["crew", "list"], "params": {"sort": "losses"}}]
+    assert [r[0] for r in by_losses["rows"]][:2] == [KEY_C + "Nemesis", KEY_D]
+    # The player's panel shows `crew show`'s record lines.
+    shown = crew.report(SHOW, {"name": KEY_C})
+    assert opened["player"]["lines"] == [line.strip() for line in shown["lines"]]
+    assert (
+        "Record against them: 4 fights (4 in matches); won 1, lost 3" in opened["player"]["lines"]
+    )

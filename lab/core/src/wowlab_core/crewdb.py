@@ -61,7 +61,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wowlab_core import crewbook, crewedit, guard, snapshot, worldpvp
+from wowlab_core import crewbook, crewedit, guard, nemesis, snapshot, worldpvp
 from wowlab_core.errors import WowlabError
 
 # ─── constants ───────────────────────────────────────────────────────────────
@@ -428,6 +428,11 @@ class CrewRow(crewbook.CrewPlayer):
     # (a rename or a realm move gives a new key, not a new id). Rows are not
     # merged; each lists the others.
     also_known_as: list[str] = Field(default_factory=list)
+    # The record against them (M22-03, `nemesis`): fights, killing blows
+    # each way, wins and losses, first and latest fight, and whether they
+    # are your nemesis, added up from the matches and open-world encounters
+    # the database keeps (`fights` lists the rows).
+    record: nemesis.Record = Field(default_factory=nemesis.Record)
     # The record with and against (§21.2, §21.3): matches on your side and
     # against you, and of each the ones your side won, as the database adds
     # them up across syncs; and the latest match the saved file named.
@@ -980,7 +985,7 @@ def read(flavor_folder: str, account: str, book: crewbook.CrewBook | None = None
         rows = list(_rows(conn).values())
         aliases = _aliases(rows)
         world = _world_parts(conn)
-        return [_public(r, book, aliases, world) for r in rows]
+        return _with_records([_public(r, book, aliases, world) for r in rows], conn)
     except sqlite3.Error as exc:
         raise CrewDbError(f"The crew database {path} cannot be read ({exc}).") from exc
     finally:
@@ -3231,6 +3236,90 @@ def world_encounters(
     return got if isinstance(got, list) else []
 
 
+# ─── the record against each opponent (M22-03) ───────────────────────────────
+
+# Every player on the other side of a kept match: one fight each. A solo
+# shuffle lists no one on the other side, so it is in no fight.
+_SQL_FIGHTS_IN_MATCHES = (
+    "SELECT mp.player_key, m.match_id, m.at, m.map, m.won"
+    " FROM match_players AS mp JOIN matches AS m ON m.match_id = mp.match_id"
+    " WHERE mp.side = 'foes'"
+    " ORDER BY m.at, m.match_id, mp.player_key"
+)
+# Every player who fought you in a kept open-world encounter, leaving out an
+# encounter on a map the database keeps a match on, as `_SQL_WORLD_PARTS`.
+_SQL_FIGHTS_IN_WORLD = (
+    "SELECT p.player_key, e.encounter_id, e.start_at, e.zone, p.killed_by_you, p.killed_you"
+    " FROM world_encounter_players AS p"
+    " JOIN world_encounters AS e ON e.encounter_id = p.encounter_id"
+    " WHERE p.side = 'foe'"
+    " AND (e.instance_id IS NULL OR e.instance_id NOT IN (SELECT map_id FROM matches))"
+    " ORDER BY e.start_at, e.encounter_id, p.player_key"
+)
+
+
+def _match_fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
+    return [
+        nemesis.Fight(
+            key=str(key),
+            source="match",
+            row=int(match_id),
+            at=int(at),
+            place=_text(map_name),
+            result=nemesis.match_result(None if won is None else bool(won)),
+        )
+        for key, match_id, at, map_name, won in conn.execute(_SQL_FIGHTS_IN_MATCHES)
+    ]
+
+
+def _world_fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
+    if not _has_world(conn):
+        return []
+    return [
+        nemesis.Fight(
+            key=str(key),
+            source="world",
+            row=int(encounter_id),
+            at=int(start),
+            place=_text(zone),
+            kills=int(killed_by_you),
+            deaths=int(killed_you),
+            result=nemesis.world_result(bool(killed_by_you), bool(killed_you)),
+        )
+        for key, encounter_id, start, zone, killed_by_you, killed_you in conn.execute(
+            _SQL_FIGHTS_IN_WORLD
+        )
+    ]
+
+
+def _fights(conn: sqlite3.Connection) -> list[nemesis.Fight]:
+    """Every fight the database keeps, oldest first within each source: one
+    list per source, joined. A source added later (M22-02, Spy) adds its
+    reader here."""
+    return [*_match_fights(conn), *_world_fights(conn)]
+
+
+def _with_records(rows: list[CrewRow], conn: sqlite3.Connection) -> list[CrewRow]:
+    """Each row with its record against you (`nemesis.records`), from every
+    fight the database keeps; a player with no fight keeps the empty one."""
+    found = nemesis.records(_fights(conn))
+    return [r.model_copy(update={"record": found[r.key]}) if r.key in found else r for r in rows]
+
+
+def fights(flavor_folder: str, account: str, key: str | None = None) -> list[nemesis.Fight]:
+    """The fights wowlab's crew database keeps (`key`: only that player's,
+    by stored key), each one source row: a kept match with the player on the
+    other side, or a kept open-world encounter in which they fought you.
+    Their record (`CrewRow.record`) is these added up. Empty when there is
+    no database yet."""
+
+    def use(conn: sqlite3.Connection) -> list[nemesis.Fight]:
+        return [f for f in _fights(conn) if key is None or f.key == key]
+
+    got = _read_with(flavor_folder, account, use)
+    return got if isinstance(got, list) else []
+
+
 __all__ = [
     "APPLICATION_ID",
     "COUNTER_MAX",
@@ -3262,6 +3351,7 @@ __all__ = [
     "crew_root",
     "database_path",
     "entry_problems",
+    "fights",
     "forget",
     "holds",
     "kept_words",

@@ -7420,6 +7420,31 @@ stopped at the page's 120 s limit says that what was read is kept and that
 pressing the button again reads on (each part of a read is kept as it is
 read), and the UI's refusal of a path says that only the Logs folder is read.
 
+*As built (2026-11-23, M22-03): the record against each opponent.*
+`wowlab_core.nemesis`, pure, adds up **fights**, one per source row that put
+a player against you: a kept match with them on the other side (`foes`; a
+solo shuffle has none), and a kept open-world encounter in which they were a
+foe (an encounter on a map the database keeps a match on is left out, as
+above). A match is a win or a loss against everyone on the other side, by
+its `won`; with no winner it decides nothing, and it keeps no killing blows.
+In the open world your killing blow on them (`killed_by_you`) with none of
+theirs on you is a win, theirs on you (`killed_you`) with none of yours a
+loss; a trade, or neither, decides nothing. **The record:** fights, your
+killing blows and theirs, wins, losses, the start of the first and latest
+fight, and the fights each source gave. It is counted from the database's
+rows only, not from the four counters, which also count matches the game
+dropped before a sync saw them. **A nemesis** has beaten you at least 3
+times and more often than you beat them; the rule is `nemesis.is_nemesis`,
+said once in `nemesis.RULE`, which `crew list --nemeses`'s help, `crew
+show` and the Crew tab print. `crew list` rows and `--json` carry `record`;
+`crew list --nemeses` (most losses first, then fewest wins, then key) and
+`--sort losses`; `crew show` prints the record and `--json` adds `fights`,
+the rows it is added up from, and `nemesis_rule`. The Crew tab: a "Record
+against them" column, a "Nemesis" badge, a "Your nemeses" choice in the
+Matches filter that shows the rule, and "Most fights lost to them first".
+Spy's sightings and any wins and losses it records (M22-02) are not yet a
+source: they join as one more list of fights in `crewdb._fights`.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |
