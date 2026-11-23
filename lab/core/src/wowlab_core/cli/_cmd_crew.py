@@ -1274,6 +1274,9 @@ class CrewScanLogReport(_Out):
     logs_already_read: int = 0
     logs_unreadable: int = 0
     logs_not_looked_at: int = 0
+    # M21-02: logs read again from their start because an earlier wowlab
+    # keyed their launch-client players the old way (the schema-5 step).
+    logs_read_again: int = 0
 
 
 def _owner_guids(lay: layout.Layout, account: str) -> tuple[dict[str, str | None], int]:
@@ -1508,6 +1511,13 @@ def crew_scan_log(
                 f"  {_plural(older, 'older log')} not looked at: only the newest {_MAX_LOGS:,} are."
             )
     states = [f.scan.state for f in files if f.scan is not None]
+    again = sum(1 for f in files if f.scan is not None and f.scan.read_again)
+    if again:
+        lines.append(
+            f"  {_plural(again, 'combat log')} an earlier wowlab read "
+            f"{'was' if again == 1 else 'were'} read again from the start, so each player "
+            "in them is now kept under their first and second name."
+        )
     report = CrewScanLogReport(
         flavor_folder=target.flavor_folder,
         account=target.account,
@@ -1523,6 +1533,7 @@ def crew_scan_log(
         logs_already_read=states.count("unchanged"),
         logs_unreadable=sum(1 for f in files if f.unreadable is not None),
         logs_not_looked_at=0 if path is not None else older,
+        logs_read_again=again,
     )
     failed = outcome.state in ("skipped", "elsewhere")
     if json_out:

@@ -764,7 +764,42 @@ def _migrate(conn: sqlite3.Connection, path: Path, version: int) -> None:
         for step in range(version, SCHEMA):
             for name in sorted(k for k in _MIGRATIONS if k[0] == step):
                 conn.execute(_MIGRATIONS[name])
+            if step == 4:
+                _requeue_launch_logs(conn)
             conn.execute(_SQL_SET_VERSION[step + 1])
+
+
+def _requeue_launch_logs(conn: sqlite3.Connection) -> int:
+    """4 -> 5 (M21-02): queue for a new read every combat log an earlier
+    wowlab read in the launch client's four-part name form, whose players
+    it keyed `<First>-<Second><Realm>` (the second name and the realm run
+    together). A log is of that form when a unit name its stored read state
+    remembers (`ZoneState.names`, the latest hostile players' names) has
+    four or more parts; a beta log's three-part names are left as they
+    are. Its encounters and their players' parts are deleted, and its row
+    kept (path and first line) with offset 0, no state and `scanned_at` 0,
+    so the next `crew scan-log` reads it from its start under the new keys
+    and says so (`WorldOutcome.read_again`). A player row only such an
+    encounter held (never in the game's list, no group, no match, no
+    rating or note) is deleted with it; every other row stays. A log whose
+    file is no longer at its stored path is left as it is (it could not be
+    read again, so nothing of it is deleted). Run inside
+    the migration's transaction, after the `.before-schema-4` copy;
+    running it again changes nothing. Returns how many logs it queued."""
+    queued = 0
+    for log_id, path, text in conn.execute(_SQL_REQUEUE_LOG_STATES).fetchall():
+        state = _state_of(text)
+        if state is None or not any(len(n.split("-")) >= 4 for n in state.names.values()):
+            continue
+        if not (isinstance(path, str) and Path(path).is_file()):
+            continue  # it cannot be read again: its encounters stay as they are
+        conn.execute(_SQL_REQUEUE_DROP_PARTS, (log_id,))
+        conn.execute(_SQL_REQUEUE_DROP_ENCOUNTERS, (log_id,))
+        conn.execute(_SQL_REQUEUE_RESET_LOG, (log_id,))
+        queued += 1
+    if queued:
+        conn.execute(_SQL_REQUEUE_DROP_LOG_ONLY_PLAYERS)
+    return queued
 
 
 def _create(conn: sqlite3.Connection) -> None:
@@ -2801,6 +2836,24 @@ _SQL_LOG_NAMES_SET = (
     " realm = excluded.realm, region = excluded.region"
 )
 _SQL_FORGET_LOG_NAMES = "DELETE FROM log_names WHERE player_key = ?"
+# The 4 -> 5 re-read of launch-form logs (`_requeue_launch_logs`).
+_SQL_REQUEUE_LOG_STATES = "SELECT log_id, path, state FROM world_logs ORDER BY log_id"
+_SQL_REQUEUE_DROP_PARTS = (
+    "DELETE FROM world_encounter_players WHERE encounter_id IN"
+    " (SELECT encounter_id FROM world_encounters WHERE log_id = ?)"
+)
+_SQL_REQUEUE_DROP_ENCOUNTERS = "DELETE FROM world_encounters WHERE log_id = ?"
+_SQL_REQUEUE_RESET_LOG = (
+    "UPDATE world_logs SET size = 0, read_to = 0, state = NULL, scanned_at = 0 WHERE log_id = ?"
+)
+_SQL_REQUEUE_DROP_LOG_ONLY_PLAYERS = (
+    "DELETE FROM players WHERE in_book = 0 AND met = 0 AND met_seen = 0 AND allied = 0"
+    " AND faced = 0 AND allied_seen = 0 AND faced_seen = 0 AND pvp_last IS NULL"
+    " AND rating IS NULL AND note IS NULL"
+    " AND player_key NOT IN (SELECT player_key FROM world_encounter_players)"
+    " AND player_key NOT IN (SELECT player_key FROM match_players)"
+)
+_SQL_WORLD_LOG_SCANNED_AT = "SELECT scanned_at FROM world_logs WHERE log_id = ?"
 # An encounter on a map the database keeps a battleground or arena match on
 # is not the open world, whenever that match was synced (`map_id` is the
 # client's instance id, as `ZONE_CHANGE`'s first field is).
@@ -3006,6 +3059,9 @@ class WorldOutcome(_Model):
     allies: int = 0
     players_added: int = 0
     players_left_out: int = 0
+    # M21-02: this read started a log over that the schema-5 migration
+    # queued (a launch-client log an earlier wowlab keyed the old way).
+    read_again: bool = False
 
 
 class CrewWorldEncounterRow(_Model):
@@ -3267,11 +3323,14 @@ def _record_open(
         kept = int(conn.execute(_SQL_WORLD_COUNT).fetchone()[0])
         state = scan.state.model_dump_json()
         at = int(time.time())
+        read_again = False
         if resume.log_id is None:
             cursor = conn.execute(_SQL_WORLD_LOG_INSERT, (log, head, size, scan.end, state, at))
             log_id = cursor.lastrowid
         else:
             log_id = resume.log_id
+            was = conn.execute(_SQL_WORLD_LOG_SCANNED_AT, (log_id,)).fetchone()
+            read_again = was is not None and was[0] == 0  # queued by the 4 -> 5 step
             conn.execute(_SQL_WORLD_LOG_DROP, (log, log_id))
             conn.execute(_SQL_WORLD_LOG_UPDATE, (log, head, size, scan.end, state, at, log_id))
         for e in scan.encounters:
@@ -3328,6 +3387,7 @@ def _record_open(
             "allies": len(allies - foes),
             "players_added": players_added,
             "players_left_out": players_left_out,
+            "read_again": read_again,
         }
     )
     return outcome.model_copy(update={"words": scanned_words(outcome)})

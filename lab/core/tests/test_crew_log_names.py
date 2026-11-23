@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from wowlab_core import crewdb
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "parser"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -88,3 +90,123 @@ def test_forget_drops_what_the_log_gave_constructed(make: Any, owner: Any) -> No
     finally:
         conn.close()
     assert TAY.encode() not in env.db().read_bytes()
+
+
+# ─── the schema-5 step re-reads launch logs an earlier wowlab keyed ──────────
+
+OLD_TAY = "Tay-SoulrendRoleplayPvP"  # how schema 4's wowlab keyed the four-part name
+
+
+def _as_schema_4_with_old_keys(env: Env) -> None:
+    """Rewrite the database as the schema-4 wowlab left it after reading the
+    same log: no `log_names`, user_version 4, and the four-part name keyed
+    `<First>-<Second><Realm>` (second name and realm run together, spaces
+    dropped). The read state keeps the raw unit names, as it always has."""
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        conn.execute("PRAGMA secure_delete = ON")
+        conn.execute("BEGIN")
+        conn.execute("DROP TABLE log_names")
+        conn.execute(
+            "UPDATE players SET player_key = ?, realm = ? WHERE player_key = ?",
+            (OLD_TAY, "SoulrendRoleplayPvP", TAY),
+        )
+        conn.execute(
+            "UPDATE world_encounter_players SET player_key = ? WHERE player_key = ?",
+            (OLD_TAY, TAY),
+        )
+        conn.execute("PRAGMA user_version = 4")
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
+def _count(env: Env, sql: str) -> int:
+    conn = sqlite3.connect(env.db())
+    try:
+        return int(conn.execute(sql).fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_the_schema_5_step_rereads_a_launch_log_under_the_new_keys_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    launch = _write_log(env, _fights())
+    beta = _write_log(
+        env,
+        log(you_hit(FOE_A, 20)).replace(b"4/1/2026", b"3/30/2026"),
+        "WoWCombatLog-033026_021630.txt",
+    )
+    assert _scan(env).exit_code == 0
+    assert _count(env, "SELECT count(*) FROM world_encounters") == 2
+    _as_schema_4_with_old_keys(env)
+    assert OLD_TAY.encode() in env.db().read_bytes()
+
+    result = env.run("crew", "scan-log", "--json")
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["logs_read_again"] == 1
+    again = [f for f in report["logs"] if f["scan"]["read_again"]]
+    assert [f["log"] for f in again] == [f"Logs/{launch.name}"]
+    rows = _rows(env)
+    assert TAY in rows and OLD_TAY not in rows
+    assert (rows[TAY]["second_name"], rows[TAY]["realm"]) == ("Soulrend", "Roleplay PvP")
+    # No stale encounter: one per log, the launch log's read once more.
+    assert _count(env, "SELECT count(*) FROM world_encounters") == 2
+    assert (
+        _count(env, f"SELECT count(*) FROM world_encounter_players WHERE player_key = '{OLD_TAY}'")
+        == 0
+    )
+    # The book's player and the beta log are as they were.
+    assert rows[KEY_A]["world_faced"] == 2
+    assert beta.name not in [f["log"].split("/")[-1] for f in again]
+    # The copy kept before the step holds the old key; nothing else does.
+    copy = env.db().with_name(env.db().name + ".before-schema-4")
+    assert OLD_TAY.encode() in copy.read_bytes()
+    assert OLD_TAY.encode() not in env.db().read_bytes()
+    # Said once: the next scan reads nothing again.
+    text = env.run("crew", "scan-log")
+    assert text.exit_code == 0 and "read again from the start" not in text.stdout
+    later = json.loads(env.run("crew", "scan-log", "--json").stdout)
+    assert later["logs_read_again"] == 0
+
+
+def test_the_requeue_step_runs_again_without_change_constructed(make: Any, owner: Any) -> None:
+    env = make(_book())
+    _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("BEGIN")
+        assert crewdb._requeue_launch_logs(conn) == 1
+        assert crewdb._requeue_launch_logs(conn) == 0
+        conn.execute("COMMIT")
+        assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 0
+        assert conn.execute("SELECT read_to, scanned_at FROM world_logs").fetchall() == [(0, 0)]
+    finally:
+        conn.close()
+    # The book's players stay; the log-only ones go until the log is read again.
+    rows = _rows(env)
+    assert KEY_A in rows and TAY not in rows and KEY_C not in rows
+    assert _scan(env).exit_code == 0
+    assert {TAY, KEY_C} <= set(_rows(env))
+
+
+def test_a_launch_log_whose_file_is_gone_is_left_as_it_is_constructed(
+    make: Any, owner: Any
+) -> None:
+    env = make(_book())
+    launch = _write_log(env, _fights())
+    assert _scan(env).exit_code == 0
+    launch.unlink()
+    conn = sqlite3.connect(env.db(), isolation_level=None)
+    try:
+        conn.execute("BEGIN")
+        assert crewdb._requeue_launch_logs(conn) == 0
+        conn.execute("COMMIT")
+        assert conn.execute("SELECT count(*) FROM world_encounters").fetchone()[0] == 1
+    finally:
+        conn.close()
