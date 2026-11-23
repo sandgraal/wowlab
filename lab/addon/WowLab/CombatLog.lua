@@ -10,28 +10,34 @@
 --   - the idle time (IDLE_MINUTES by default, a saved setting) with no combat
 --     since the log went on or the last fight ended: off.
 -- In combat it does one thing only: at the start of a fight, a log it turned
--- off for idling in the open world goes back on. A zone or group change in
--- combat is checked when the fight ends.
+-- off for idling in the open world goes back on (so the hit that started the
+-- fight is not in the log). A zone or group change in combat is checked when
+-- the fight ends.
 --
--- It turns off only a log it turned on itself. A log found on that it did not
--- turn on is the player's: left on, never turned off, and said once. A log
--- it turned on that the player turned off by hand stays off for the rest of
--- the session, said once. It never changes the Advanced Combat Logging
--- setting; it says once a session when that setting is off.
+-- It turns off only a log it turned on itself (`mine`, per character; the
+-- log is the client's, for every character). A log found on that it did not
+-- turn on is left on, never turned off, and said once. A log it turned on
+-- that was turned off outside WowLab stays off for the rest of the session,
+-- said once. Another addon that switches the combat log by itself will fight
+-- this one. It never changes the Advanced Combat Logging setting; it says
+-- once a session when that setting is off.
 --
--- It is a section (`combatlog`), so `/wowlab skip combatlog` (or
--- `/wowlab combatlog off`) switches the whole feature off, and its record in
--- WowLabCharDB says what it last did: a count and the time and reason of the
--- last switch, never anything the log holds. LoggingCombat is the only thing
--- it changes; the client writes the log, not the addon.
+-- `/wowlab combatlog off` and `on` pause and resume the switch at once and
+-- are saved in its record, which keeps the count, the last switch and `mine`
+-- through them. It is also a section (`combatlog`): `/wowlab skip combatlog`
+-- stops every call at once, as for any section, and drops the record. The
+-- record in WowLabCharDB says what it last did: a count and the time and
+-- reason of the last switch, never anything the log holds. LoggingCombat is
+-- the only thing it changes; the client writes the log, not the addon.
 --
 -- Not yet confirmed on the owner's client [verify]: that LoggingCombat exists
 -- for addons there and a call from an addon switches the log, in and out of
 -- combat; that LoggingCombat() with no argument answers true or false; that
--- the log stays on across /reload; IsInInstance in the open world; the
--- advancedCombatLogging setting's name. Where LoggingCombat is missing, or
--- the log does not change when asked, the switch is dormant for the session
--- and says so once.
+-- the log stays on across /reload and across characters; IsInInstance in the
+-- open world; the advancedCombatLogging setting's name. Where LoggingCombat
+-- is missing, or the log does not change when asked out of combat, the switch
+-- is dormant for the session and says so once; a refusal in combat is
+-- counted and tried again when the fight ends.
 
 local _, ns = ...
 
@@ -86,16 +92,21 @@ local idleMinutes = IDLE_MINUTES
 -- The log is on because this addon turned it on (the log stays on across a
 -- /reload [verify], and stays the addon's to turn off).
 local mine = false
+-- `/wowlab combatlog off`: the switch does nothing until `on`.
+local paused = false
 
 -- This session only.
 local loaded = false -- the carried record has been read
 local started = false -- the first check after the loading screen has run
 local ownSeen = false -- the addon's own log was seen on this session
-local handsOff = false -- the player turned off a log the addon turned on
+local handsOff = false -- a log the addon turned on was turned off outside it
 local dormant = nil -- why the switch does nothing this session
+local refusedInCombat = 0 -- switches the game refused in combat
+local retry = false -- a switch refused in combat, tried again when it ends
 local idled = false -- turned off for idling in the open world, since the last loading screen
-local waiting = false -- a zone or group change came in combat
-local active = nil -- time() of the last switch on, fight start or fight end
+local waiting = false -- a check is owed (a loading screen, or a change in combat)
+local active = nil -- time() the idle time counts from: switch on, fight start or end
+local idleTimerAt = nil -- time() the last idle timer asked for ends
 local arrivedAt = nil -- time() of the last loading screen
 local fighting = false
 local logOn = nil -- the log's state at the last check
@@ -110,8 +121,9 @@ local function sayOnce(name, text)
     ns.Say(text)
 end
 
--- Reads what the carried record kept, once; and the idle time, at every
--- gather (`/wowlab combatlog idle` changes it in the record).
+-- Reads what the carried record kept, once; and the idle time and the pause,
+-- at every gather (`/wowlab combatlog idle`, `off` and `on` change them in
+-- the record).
 local function readBack()
     local held = ns.state[KEY]
     if type(held) ~= "table" or type(held.absent) ~= "nil" then
@@ -119,6 +131,13 @@ local function readBack()
     end
     if type(held.idle_minutes) == "number" then
         idleMinutes = held.idle_minutes
+    end
+    -- Turned back on with `/wowlab combatlog on`: the switch acts at once,
+    -- without waiting for a loading screen.
+    local was = paused
+    paused = held.paused == true
+    if was and not paused then
+        started = true
     end
     if loaded then
         return
@@ -204,17 +223,48 @@ local function noted(to, why)
     ns.Say("combat log " .. to .. " (" .. why .. ").")
 end
 
--- Turns the log on or off, and checks that it changed. Returns false, and
--- leaves the switch dormant for the session, when it did not.
+-- Asks for the idle check when the idle time is up, counted from `active`
+-- (from now when no clock runs: after a /reload the addon's log is still on
+-- with none). A timer already asked for that ends no later is enough: when it
+-- ends early it asks again.
+local function armIdle()
+    local now = ns.Number(time())
+    if not now then
+        return
+    end
+    if not active then
+        active = now
+    end
+    local due = active + idleMinutes * 60
+    if idleTimerAt and idleTimerAt > now and idleTimerAt <= due then
+        return
+    end
+    local wait = due - now
+    if wait < 1 then
+        wait = 1
+    end
+    if ns.Wake(KEY, wait, IDLE_EVENT) then
+        idleTimerAt = now + wait
+    end
+end
+
+-- Turns the log on or off, and checks that it changed. Returns false when
+-- it did not: in combat the refusal is counted and tried again when the
+-- fight ends; out of combat the switch is dormant for the session.
 local function turn(on)
     pcall(LoggingCombat, on)
-    if logState() ~= on then
-        dormant = "the game did not switch the combat log when asked"
-        sayOnce("refused", "the game did not switch the combat log when asked, so WowLab leaves it to you this session.")
+    if logState() == on then
+        logOn = on
+        return true
+    end
+    if fighting then
+        refusedInCombat = refusedInCombat + 1
+        retry = true
         return false
     end
-    logOn = on
-    return true
+    dormant = "the game did not switch the combat log when asked"
+    sayOnce("refused", "the game did not switch the combat log when asked, so WowLab leaves it alone this session.")
+    return false
 end
 
 local function turnOn(why)
@@ -226,17 +276,14 @@ local function turnOn(why)
     idled = false
     active = ns.Number(time())
     noted("on", why)
-    ns.Wake(KEY, idleMinutes * 60, IDLE_EVENT)
+    armIdle()
     -- The setting is read out of combat only.
     if fighting then
         return
     end
     advanced = advancedOn()
     if advanced == false then
-        sayOnce(
-            "advanced",
-            "Advanced Combat Logging is off (game options, Network); wowlab reads more from the log with it on."
-        )
+        sayOnce("advanced", "Advanced Combat Logging is off; wowlab reads more from the log with it on.")
     end
 end
 
@@ -258,12 +305,12 @@ local function check(trigger)
     local on = logState()
     if on == nil then
         dormant = "LoggingCombat gave no state"
-        sayOnce("no state", "the game did not say whether the combat log is on, so WowLab leaves it to you this session.")
+        sayOnce("no state", "the game did not say whether the combat log is on, so WowLab leaves it alone this session.")
         return
     end
     logOn = on
     -- A log the addon turned on and finds off, after it was seen on this
-    -- session: the player turned it off. Found off at the first check of a
+    -- session: turned off outside WowLab. Found off at the first check of a
     -- session, a client restart ended it; that is no one's hand.
     if mine and on then
         ownSeen = true
@@ -271,7 +318,7 @@ local function check(trigger)
         mine = false
         if ownSeen then
             handsOff = true
-            sayOnce("hands off", "you turned the combat log off; WowLab leaves it off until the next /reload or login.")
+            sayOnce("hands off", "the combat log was turned off outside WowLab; WowLab leaves it off until the next /reload or login.")
         end
     end
     local where = place()
@@ -287,19 +334,19 @@ local function check(trigger)
     local wanted = want(trigger, where)
     if wanted == "on" and not on then
         turnOn(WHY_WORLD)
-    elseif wanted == "on" and on and not mine then
-        sayOnce("already on", "the combat log was already on; WowLab leaves it as you set it and will not turn it off.")
-    elseif wanted == "off" and on and mine then
-        if turn(false) then
-            mine = false
-            idled = trigger == "idle"
-            if where == "instance" then
-                noted("off", WHY_INSTANCE)
-            elseif where == "raid group" then
-                noted("off", WHY_RAID)
-            else
-                noted("off", WHY_IDLE)
-            end
+    elseif wanted == "on" and mine then
+        armIdle()
+    elseif wanted == "on" then
+        sayOnce("already on", "the combat log was already on, not turned on by WowLab; WowLab leaves it on and will not turn it off.")
+    elseif wanted == "off" and on and mine and turn(false) then
+        mine = false
+        idled = trigger == "idle"
+        if where == "instance" then
+            noted("off", WHY_INSTANCE)
+        elseif where == "raid group" then
+            noted("off", WHY_RAID)
+        else
+            noted("off", WHY_IDLE)
         end
     end
 end
@@ -314,7 +361,7 @@ local function resume()
     if on == false then
         turnOn(WHY_COMBAT)
     elseif on == true then
-        -- Turned on by the player meanwhile: theirs.
+        -- Turned on outside WowLab meanwhile: not the addon's.
         idled = false
         logOn = true
     end
@@ -359,12 +406,16 @@ local function run(trigger)
     elseif trigger == "calm" then
         fighting = false
         active = ns.Number(time())
+        if retry then
+            retry = false
+            resume()
+        end
         if waiting then
             waiting = false
             check("enter")
         end
         if mine then
-            ns.Wake(KEY, idleMinutes * 60, IDLE_EVENT)
+            armIdle()
         end
     elseif trigger == "enter" then
         if fighting or inCombatNow() then
@@ -375,17 +426,20 @@ local function run(trigger)
         end
     elseif trigger == "idle" then
         local now = ns.Number(time())
-        if not fighting and now and active and now - active >= idleMinutes * 60 then
+        if fighting or not now or not active then
+            return
+        end
+        if now - active >= idleMinutes * 60 then
             check("idle")
+        elseif mine then
+            armIdle()
         end
     end
 end
 
--- The section's record: what the switch did, never what the log holds.
+-- The section's record: what the switch did, never what the log holds. A
+-- dormant session keeps what was carried and says why it did nothing.
 local function record()
-    if dormant then
-        return ns.Absent(dormant)
-    end
     return {
         idle_minutes = ns.Number(idleMinutes),
         switches = ns.Number(switches),
@@ -393,9 +447,12 @@ local function record()
         last_to = ns.String(lastTo),
         last_why = ns.String(lastWhy),
         mine = ns.Bool(mine),
+        paused = paused or nil,
         log_on = ns.Bool(logOn),
         hands_off = ns.Bool(handsOff),
         advanced = ns.Bool(advanced),
+        dormant = ns.String(dormant),
+        refused_in_combat = refusedInCombat > 0 and ns.Number(refusedInCombat) or nil,
     }
 end
 
@@ -411,7 +468,8 @@ ns.Section({
     },
     immediate = true,
     -- What the last session kept, rebuilt from checked values; the first
-    -- gather reads it back (readBack).
+    -- gather reads it back (readBack). A dormant session's record is carried
+    -- the same way; its reason is not.
     carry = function(saved)
         local r = type(saved) == "table" and saved.combatlog or nil
         if type(r) ~= "table" or type(r.absent) ~= "nil" then
@@ -438,13 +496,16 @@ ns.Section({
         if r.mine == true then
             out.mine = true
         end
+        if r.paused == true then
+            out.paused = true
+        end
         return out
     end,
     gather = function(event)
-        if dormant then
+        readBack()
+        if dormant or paused then
             return record()
         end
-        readBack()
         if type(LoggingCombat) ~= "function" then
             dormant = "LoggingCombat missing: the combat log is not switched"
             sayOnce("missing", "this game gives addons no combat-log switch, so WowLab does not turn the combat log on or off.")
@@ -459,32 +520,51 @@ ns.Section({
 })
 
 -- `/wowlab combatlog` with no word: the switch's state, in one line, from
--- its record. `off`: the section is switched off.
+-- its record. `off`: the section is switched off with `/wowlab skip`.
 function ns.CombatLogStatus(off)
     if off then
-        ns.Say("the combat-log switch is off; /wowlab combatlog on  turns it on from the next /reload or login.")
+        ns.Say("the combat-log switch is switched off with /wowlab skip; /wowlab unskip combatlog  turns it back on.")
         return
     end
     local held = ns.state[KEY]
-    if type(held) ~= "table" then
-        ns.Say("the combat-log switch is on; it has not run yet this session.")
-        return
-    end
-    if type(held.absent) == "string" then
-        ns.Say("the combat-log switch is on but does nothing this session: " .. held.absent)
+    if type(held) ~= "table" or type(held.absent) ~= "nil" then
+        ns.Say("the combat-log switch has not run yet this session.")
         return
     end
     local minutes = type(held.idle_minutes) == "number" and held.idle_minutes or IDLE_MINUTES
     local count = type(held.switches) == "number" and held.switches or 0
-    local text = "the combat-log switch is on: on in the open world, off in instances, in raid groups and after "
+    local text = "the combat-log switch is on: on in the open world, off in instances, in a raid group and after "
         .. minutes
         .. " min with no combat; "
         .. count
         .. " switches"
+    if held.paused == true then
+        text = "the combat-log switch is off (/wowlab combatlog on  turns it on); " .. count .. " switches"
+    elseif type(held.dormant) == "string" then
+        text = "the combat-log switch does nothing this session: " .. held.dormant .. "; " .. count .. " switches"
+    end
     if type(held.last_to) == "string" and type(held.last_why) == "string" then
         text = text .. ", the last " .. held.last_to .. " (" .. held.last_why .. ")"
     end
     ns.Say(text .. ".")
+end
+
+-- `/wowlab combatlog on|off`: resumes or pauses the switch at once, kept in
+-- the record (saved at the next /reload or logout). The log is left as it
+-- is; the count, the last switch and whether the log is WowLab's are kept.
+function ns.CombatLogSwitch(on)
+    local held = ns.state[KEY]
+    if type(held) ~= "table" or type(held.absent) ~= "nil" then
+        ns.Say("the combat-log switch has not run yet this session; type it again in a moment.")
+        return
+    end
+    if on then
+        held.paused = nil
+        ns.Say("the combat-log switch is on; it acts at the next zone change, group change, fight or loading screen.")
+    else
+        held.paused = true
+        ns.Say("the combat-log switch is off; the combat log is left as it is (/combatlog turns it off by hand).")
+    end
 end
 
 -- `/wowlab combatlog idle <minutes>`: the idle time, IDLE_LEAST to IDLE_MOST
@@ -498,7 +578,7 @@ function ns.CombatLogIdle(text)
     end
     local held = ns.state[KEY]
     if type(held) ~= "table" or type(held.absent) ~= "nil" then
-        ns.Say("the combat-log switch is off or not running this session, so the idle time cannot be set now.")
+        ns.Say("the combat-log switch has not run yet this session; type it again in a moment.")
         return
     end
     held.idle_minutes = ns.Number(minutes)

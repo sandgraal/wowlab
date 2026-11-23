@@ -1773,10 +1773,13 @@ class CombatLog(_Section):
     """`combatlog` (schema 5, M20-19): the lab-addon's combat-log switch.
     `switches` counts every switch it made, kept across sessions; `last_at`
     (`time()`), `last_to` and `last_why` are the last one; `mine`: the log
-    was on because the addon turned it on; `log_on`: the log's state at the
-    switch's last check; `hands_off`: the player turned off a log the addon
-    had turned on, so it was left off for that session; `advanced`: the
-    Advanced Combat Logging setting at the last switch on."""
+    was on because the addon turned it on; `paused`: switched off with
+    `/wowlab combatlog off`; `log_on`: the log's state at the switch's last
+    check; `hands_off`: a log the addon had turned on was turned off outside
+    it, so it was left off for that session; `advanced`: the Advanced Combat
+    Logging setting at the last switch on; `dormant`: why the switch did
+    nothing that session; `refused_in_combat`: switches the game refused in
+    combat (tried again when the fight ended)."""
 
     idle_minutes: Annotated[int, Field(ge=1, le=120)] | None = None
     switches: Count | None = None
@@ -1784,9 +1787,12 @@ class CombatLog(_Section):
     last_to: Literal["on", "off"] | None = None
     last_why: Reason | None = None
     mine: bool | None = None
+    paused: bool | None = None
     log_on: bool | None = None
     hands_off: bool | None = None
     advanced: bool | None = None
+    dormant: Reason | None = None
+    refused_in_combat: Count | None = None
 
 
 class Gathered(_Record):
@@ -3935,27 +3941,44 @@ def _record_probes(record: Any) -> list[str]:
     return _probe_lines(record.probes)
 
 
+def _utc_minute(at: int) -> str:
+    """`time()` as a UTC minute, or words when it is not a time this reader
+    can show (a hand-edited file)."""
+    try:
+        return datetime.fromtimestamp(at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+    except (OverflowError, OSError, ValueError):
+        return "a time that cannot be read"
+
+
 def _combatlog(record: CombatLog) -> list[str]:
     """The combat-log switch's record in two lines at most: what it last did
-    and the log's state at its last check; nothing the log holds."""
+    and the log's state at its last check; nothing the log holds. The log is
+    the game's, for every character; `mine` is this character's record."""
     idle = f"{record.idle_minutes} min" if record.idle_minutes is not None else "not reported"
     switches = record.switches or 0
     made = "1 switch" if switches == 1 else f"{switches} switches"
     head = f"Combat-log switch: {made} made, idle time {idle}"
+    if record.paused:
+        head = f"Combat-log switch: off (/wowlab combatlog off); {made} made, idle time {idle}"
     if record.last_to is not None and record.last_at is not None:
-        when = datetime.fromtimestamp(record.last_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
         why = f" ({record.last_why})" if record.last_why else ""
-        head += f"; the last turned the log {record.last_to} at {when}{why}"
+        head += f"; the last turned the log {record.last_to} at {_utc_minute(record.last_at)}{why}"
     lines = [head]
     state = []
+    if record.dormant is not None:
+        state.append(f"it did nothing that session: {record.dormant}")
     if record.log_on is not None:
         state.append(f"the log was {'on' if record.log_on else 'off'} at its last check")
         if record.log_on and record.mine:
             state.append("turned on by WowLab")
         elif record.log_on:
-            state.append("turned on by you, so WowLab leaves it on")
+            state.append("not turned on by WowLab, so WowLab leaves it on")
     if record.hands_off:
-        state.append("you turned it off by hand, so WowLab left it off that session")
+        state.append("turned off outside WowLab, so WowLab left it off that session")
+    if record.refused_in_combat:
+        state.append(
+            f"the game refused {record.refused_in_combat} in combat (tried again after the fight)"
+        )
     if record.advanced is False:
         state.append("Advanced Combat Logging was off")
     if state:

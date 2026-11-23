@@ -62,25 +62,52 @@ def test_constructed_its_own_log_and_the_setting_off() -> None:
     )
 
 
-def test_constructed_the_players_log_and_hands_off() -> None:
+def test_constructed_a_log_not_its_own_and_hands_off() -> None:
     lines = labaddon.describe(m16._char(_raw(log_on=True, mine=False)))
-    assert "  the log was on at its last check; turned on by you, so WowLab leaves it on" in lines
+    assert (
+        "  the log was on at its last check; not turned on by WowLab, so WowLab leaves it on"
+        in lines
+    )
     lines = labaddon.describe(m16._char(_raw(hands_off=True)))
-    assert any("you turned it off by hand, so WowLab left it off that session" in x for x in lines)
+    assert any("turned off outside WowLab, so WowLab left it off that session" in x for x in lines)
+    # The log is the game's, for every character: no claim about who did it.
+    assert not any("you turned" in x or "by you" in x for x in lines)
 
 
-def test_constructed_dormant_and_switched_off_are_absent_records() -> None:
-    raw = m16._raw()
-    raw["combatlog"] = {"absent": "LoggingCombat missing: the combat log is not switched"}
+def test_constructed_dormant_paused_and_refused_in_combat() -> None:
+    raw = _raw(dormant="LoggingCombat missing: the combat log is not switched")
     char = m16._char(raw)
     assert isinstance(char, labaddon.CharDBV5)
-    assert isinstance(char.combatlog, labaddon.AbsentSection)
+    assert isinstance(char.combatlog, labaddon.CombatLog)
     lines = labaddon.describe(char)
-    assert any(x.startswith("Combat-log switch: absent (LoggingCombat missing") for x in lines)
+    assert any(
+        "it did nothing that session: LoggingCombat missing: the combat log is not switched" in x
+        for x in lines
+    )
+    assert any(x.startswith("Combat-log switch: 3 switches made") for x in lines)
+    lines = labaddon.describe(m16._char(_raw(paused=True)))
+    assert any(
+        x.startswith("Combat-log switch: off (/wowlab combatlog off); 3 switches") for x in lines
+    )
+    lines = labaddon.describe(m16._char(_raw(refused_in_combat=2)))
+    assert any("the game refused 2 in combat (tried again after the fight)" in x for x in lines)
+
+
+def test_constructed_switched_off_is_an_absent_record() -> None:
+    raw = m16._raw()
     raw["combatlog"] = {"absent": labaddon.SWITCHED_OFF}
     raw["skip"] = ["combatlog"]
     char = m16._char(raw)
+    assert isinstance(char, labaddon.CharDBV5)
+    assert isinstance(char.combatlog, labaddon.AbsentSection)
     assert labaddon.skip_known(char) == (["combatlog"], [])
+    assert any(x.startswith("Combat-log switch: ") for x in labaddon.describe(char))
+
+
+@pytest.mark.parametrize("at", [2**53, -(2**53)])
+def test_constructed_a_last_switch_time_out_of_range_is_shown_not_raised(at: int) -> None:
+    lines = labaddon.describe(m16._char(_raw(last_at=at)))
+    assert any("the last turned the log off at a time that cannot be read" in x for x in lines)
 
 
 def test_constructed_a_file_without_the_switch_prints_no_line() -> None:
@@ -99,6 +126,8 @@ def test_constructed_a_file_without_the_switch_prints_no_line() -> None:
         ("idle_minutes", 121),
         ("mine", 1),
         ("last_why", "line\nbreak"),
+        ("refused_in_combat", -1),
+        ("paused", "yes"),
     ],
 )
 def test_constructed_a_value_out_of_shape_is_refused(field: str, value: object) -> None:

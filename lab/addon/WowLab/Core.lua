@@ -1017,27 +1017,20 @@ local function debugCommand(word)
     )
 end
 
--- `/wowlab combatlog [on|off|idle <minutes>]` (M20-19): the combat-log
--- switch is the `combatlog` section, so on and off are its unskip and skip.
--- The typed words are only compared; the minutes are read as a number.
+-- `/wowlab combatlog [on|off|idle <minutes>]` (M20-19): handed to
+-- CombatLog.lua, which pauses and resumes the switch in its own record. A
+-- switch turned off with `/wowlab skip combatlog` is turned back on only by
+-- `/wowlab unskip combatlog`. The typed words are only compared; the minutes
+-- are read as a number.
 local function combatLogCommand(word, minutes)
     local section = sectionByKey("combatlog")
     if not section then
         return
     end
-    if word == "on" then
-        if ns.skip.combatlog or section.off then
-            skipCommand("unskip", "combatlog")
-        else
-            say("the combat-log switch is already on.")
-        end
-    elseif word == "off" then
-        if section.off then
-            say("the combat-log switch is already off.")
-            return
-        end
-        skipCommand("skip", "combatlog")
-        say("WowLab leaves the combat log as it is now; /combatlog turns it off by hand.")
+    if section.off and word ~= "" then
+        say("the combat-log switch is switched off with /wowlab skip; /wowlab unskip combatlog  turns it back on.")
+    elseif word == "on" or word == "off" then
+        ns.CombatLogSwitch(word == "on")
     elseif word == "idle" then
         ns.CombatLogIdle(minutes)
     elseif word == "" then
@@ -1089,7 +1082,10 @@ SlashCmdList.WOWLAB = function(message)
         say("/wowlab save  refreshes the tables in memory (written at the next /reload or logout).")
         say("/wowlab skip <section>  switches a section off; /wowlab unskip <section>  back on; /wowlab skip  lists.")
         say("/wowlab debug on|off  records the research probes from the next /reload or login (off by default).")
-        say("/wowlab combatlog on|off  turns the combat log on in the open world and off in instances, raids and when idle.")
+        say(
+            "/wowlab combatlog on|off  switches WowLab's automatic combat log (on in the open world; off in instances, "
+                .. "in a raid group and when idle), at once; /wowlab combatlog  its state."
+        )
         say("/wowlab crew  the crew book of players you group with: off until you turn it on.")
     end
 end

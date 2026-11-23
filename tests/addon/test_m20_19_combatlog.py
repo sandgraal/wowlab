@@ -57,28 +57,32 @@ RUN = (
     "if not started then return end "
     'if trigger == "combat" then fighting = true active = ns . Number ( time ( ) ) resume ( ) '
     'elseif trigger == "calm" then fighting = false active = ns . Number ( time ( ) ) '
+    "if retry then retry = false resume ( ) end "
     'if waiting then waiting = false check ( "enter" ) end '
-    "if mine then ns . Wake ( KEY , idleMinutes * 60 , IDLE_EVENT ) end "
+    "if mine then armIdle ( ) end "
     'elseif trigger == "enter" then '
     "if fighting or inCombatNow ( ) then waiting = true else waiting = false "
     'check ( "enter" ) end '
     'elseif trigger == "idle" then local now = ns . Number ( time ( ) ) '
-    "if not fighting and now and active and now - active >= idleMinutes * 60 then "
-    'check ( "idle" ) end end end'
+    "if fighting or not now or not active then return end "
+    'if now - active >= idleMinutes * 60 then check ( "idle" ) '
+    "elseif mine then armIdle ( ) end end end"
 )
 # The rest of what decides, by the SHA-256 of the rendered body. A change to
 # one is a change to the model below: update both.
 HASHED = {
-    "check": "4e249cd643e8bfa85478c1d3428149b4eeb5fea4618aafef0580d810ec1f9866",
-    "turn": "6b9c0d293ba39c3cbf17b8c23c286dc03bd8a4a88fbc0e074de6fc699ab3e201",
-    "turnOn": "f4fb05e1f43f55fbd0b2c6d014526d36aa9027e445900dfd5e9b95d12d7cbed5",
+    "check": "685c1694cec8365921da8e3e1f44100eed84ab12041d866388b0088767b7d1eb",
+    "turn": "78ff540ad54d94993dfa0e58a735119c730265ffa6c4425a460a3c97c48f73a1",
+    "turnOn": "534838797f8a6f26f9cff024a27a49c4ba0046d82da94f756c398aac416da991",
     "noted": "0e36c3a46268186517e100c77a6054ab15d24825a3db671dea83b79aaf47b5d1",
     "logState": "d45a448e7839389494dcf8ddf64cf1ea6581e998f3d2454f2b3540ff41ab4e22",
     "place": "3f4da679586b0e01b9c389ddc1fc7b041e8f01a540722eaeb0447f555070e6a9",
     "inCombatNow": "7c30f6318c8fef757bc9fed6bd633d0d1bda542e749857a59bcfdfc629f82765",
-    "readBack": "f3c5dd0ce02a3dde37a98c4334c7446872fcc757959ae89b3b634e946d8bfc84",
-    "record": "2e4727ad06d983e705a1029ac37cb3ce93a91e2a678b6a437ffffb6b83dd3c06",
-    "gather": "f0547589770a555ad19dd0e9fab3cd3be1164cdef38530c6d75df0a05c6ee9a5",
+    "readBack": "2fffd3f7bb7dcbb1401c9d71a73ec54f42076930b9843286038050261f37a852",
+    "record": "4fa6a641ba70bd34813b3dde5ac62b3453ebea6468441b29b924f460414cc143",
+    "gather": "b341cd959d0128f0372c7d95edc4fc60175d3fe1e9e187c2855a33197bc6c373",
+    "armIdle": "ef39d1fbe133b8ad1c63cc31107b705340ce70f4e03f2518420d909d34913fc5",
+    "sayOnce": "5b67ebe8cec0ab4c95bc1b282db6c833fe7a44351c69088eb1fe86dfc3b02f56",
 }
 CORE_WAKE = (
     "function wake ( key , event ) local section = sectionByKey ( key ) "
@@ -149,7 +153,8 @@ def test_m20_19_constructed_edits_fail_the_pins(tmp_path: Path) -> None:
         ("        resume()\n", '        resume()\n        check("enter")\n'),
         ("local IDLE_MINUTES = 10\n", "local IDLE_MINUTES = 1\n"),
         ("    pcall(LoggingCombat, on)\n", "    pcall(LoggingCombat, true)\n"),
-        ('            idled = trigger == "idle"\n', "            idled = true\n"),
+        ('        idled = trigger == "idle"\n', "        idled = true\n"),
+        ("    if told[name] then\n", "    if false then\n"),
     ]
     for n, (old, new) in enumerate(edits):
         assert old in real, old
@@ -166,9 +171,11 @@ def test_m20_19_core_wake_and_slash_branch() -> None:
     assert 'elseif command == "combatlog" then' in slash
     assert "combatLogCommand ( key , extra )" in slash
     command = g._body(flow, "combatLogCommand")
-    # On and off are the section's unskip and skip.
-    assert 'skipCommand ( "unskip" , "combatlog" )' in command
-    assert 'skipCommand ( "skip" , "combatlog" )' in command
+    # On and off pause and resume the switch in its own record; a section
+    # switched off with /wowlab skip stays off until unskip.
+    assert 'ns . CombatLogSwitch ( word == "on" )' in command
+    assert "skipCommand" not in command
+    assert 'if section . off and word ~= "" then' in command
 
 
 def test_m20_19_section_spec() -> None:
@@ -242,21 +249,25 @@ class Switch:
     def __init__(self, client: Client, carried: dict[str, object] | None = None) -> None:
         self.c = client
         self.state: dict[str, object] | None = carried  # ns.state.combatlog
-        self.off = False  # section.off (`/wowlab combatlog off`)
+        self.off = False  # section.off (`/wowlab skip combatlog`)
         self.switches = 0
         self.last_at: int | None = None
         self.last_to: str | None = None
         self.last_why: str | None = None
         self.idle_minutes = IDLE_MINUTES
         self.mine = False
+        self.paused = False
         self.loaded = False
         self.started = False
         self.own_seen = False
         self.hands_off = False
         self.dormant: str | None = None
+        self.refused_in_combat = 0
+        self.retry = False
         self.idled = False
         self.waiting = False
         self.active: int | None = None
+        self.idle_timer_at: int | None = None
         self.arrived_at: int | None = None
         self.fighting = False
         self.log_on: bool | None = None
@@ -310,6 +321,10 @@ class Switch:
             return
         if isinstance(held.get("idle_minutes"), int):
             self.idle_minutes = held["idle_minutes"]  # type: ignore[assignment]
+        was = self.paused
+        self.paused = held.get("paused") is True
+        if was and not self.paused:
+            self.started = True
         if self.loaded:
             return
         self.loaded = True
@@ -348,14 +363,29 @@ class Switch:
         self.last_why = why
         self.c.chat.append(f"combat log {to} ({why}).")
 
+    def arm_idle(self) -> None:
+        now = self.c.now
+        if self.active is None:
+            self.active = now
+        due = self.active + self.idle_minutes * 60
+        if self.idle_timer_at is not None and now < self.idle_timer_at <= due:
+            return
+        wait = max(due - now, 1)
+        if self.wake(wait, "WOWLAB_COMBATLOG_IDLE"):
+            self.idle_timer_at = now + wait
+
     def turn(self, on: bool) -> bool:
         self.c.logging_combat(on)
-        if self.log_state() != on:
-            self.dormant = "the game did not switch the combat log when asked"
-            self.say_once("refused", "the game did not switch the combat log when asked")
+        if self.log_state() == on:
+            self.log_on = on
+            return True
+        if self.fighting:
+            self.refused_in_combat += 1
+            self.retry = True
             return False
-        self.log_on = on
-        return True
+        self.dormant = "the game did not switch the combat log when asked"
+        self.say_once("refused", "the game did not switch the combat log when asked")
+        return False
 
     def turn_on(self, why: str) -> None:
         if not self.turn(True):
@@ -365,7 +395,7 @@ class Switch:
         self.idled = False
         self.active = self.c.now
         self.noted("on", why)
-        self.wake(self.idle_minutes * 60, "WOWLAB_COMBATLOG_IDLE")
+        self.arm_idle()
         if self.fighting:
             return
         self.advanced = self.advanced_on()
@@ -392,7 +422,7 @@ class Switch:
             self.mine = False
             if self.own_seen:
                 self.hands_off = True
-                self.say_once("hands off", "you turned the combat log off")
+                self.say_once("hands off", "the combat log was turned off outside WowLab")
         where = self.place()
         if where != "world":
             self.idled = False
@@ -401,14 +431,15 @@ class Switch:
         wanted = self.want(trigger, where)
         if wanted == "on" and not on:
             self.turn_on(WHY_WORLD)
-        elif wanted == "on" and on and not self.mine:
-            self.say_once("already on", "the combat log was already on")
-        elif wanted == "off" and on and self.mine:  # noqa: SIM102 (as the Lua nests it)
-            if self.turn(False):
-                self.mine = False
-                self.idled = trigger == "idle"
-                why = {"instance": WHY_INSTANCE, "raid group": WHY_RAID}.get(where, WHY_IDLE)
-                self.noted("off", why)
+        elif wanted == "on" and self.mine:
+            self.arm_idle()
+        elif wanted == "on":
+            self.say_once("already on", "the combat log was already on, not turned on by WowLab")
+        elif wanted == "off" and on and self.mine and self.turn(False):
+            self.mine = False
+            self.idled = trigger == "idle"
+            why = {"instance": WHY_INSTANCE, "raid group": WHY_RAID}.get(where, WHY_IDLE)
+            self.noted("off", why)
 
     def resume(self) -> None:
         if not self.idled or self.hands_off:
@@ -431,9 +462,13 @@ class Switch:
         if trigger == "start":
             self.started = True
             trigger = "enter"
-        if trigger == "calm" and not self.started and self.arrived_at is not None:  # noqa: SIM102
-            if self.c.now - self.arrived_at >= FIRST_DELAY:
-                self.started = True
+        if (
+            trigger == "calm"
+            and not self.started
+            and self.arrived_at is not None
+            and self.c.now - self.arrived_at >= FIRST_DELAY
+        ):
+            self.started = True
         if not self.started:
             return
         if trigger == "combat":
@@ -443,11 +478,14 @@ class Switch:
         elif trigger == "calm":
             self.fighting = False
             self.active = self.c.now
+            if self.retry:
+                self.retry = False
+                self.resume()
             if self.waiting:
                 self.waiting = False
                 self.check("enter")
             if self.mine:
-                self.wake(self.idle_minutes * 60, "WOWLAB_COMBATLOG_IDLE")
+                self.arm_idle()
         elif trigger == "enter":
             if self.fighting or self.in_combat_now():
                 self.waiting = True
@@ -455,16 +493,14 @@ class Switch:
                 self.waiting = False
                 self.check("enter")
         elif trigger == "idle":
-            if (
-                not self.fighting
-                and self.active is not None
-                and self.c.now - self.active >= self.idle_minutes * 60
-            ):
+            if self.fighting or self.active is None:
+                return
+            if self.c.now - self.active >= self.idle_minutes * 60:
                 self.check("idle")
+            elif self.mine:
+                self.arm_idle()
 
     def record(self) -> dict[str, object]:
-        if self.dormant:
-            return {"absent": self.dormant}
         rec = {
             "idle_minutes": self.idle_minutes,
             "switches": self.switches,
@@ -472,17 +508,20 @@ class Switch:
             "last_to": self.last_to,
             "last_why": self.last_why,
             "mine": self.mine,
+            "paused": self.paused or None,
             "log_on": self.log_on,
             "hands_off": self.hands_off,
             "advanced": self.advanced,
+            "dormant": self.dormant,
+            "refused_in_combat": self.refused_in_combat or None,
         }
         return {k: v for k, v in rec.items() if v is not None}
 
     def gather(self, event: str) -> None:
-        if self.dormant:
+        self.read_back()
+        if self.dormant or self.paused:
             self.state = self.record()
             return
-        self.read_back()
         if not self.c.has_logging:
             self.dormant = "LoggingCombat missing: the combat log is not switched"
             self.say_once("missing", "this game gives addons no combat-log switch")
@@ -493,12 +532,35 @@ class Switch:
             self.run(trigger)
         self.state = self.record()
 
+    # CombatLog.lua's commands ------------------------------------------------
+
+    def command_switch(self, on: bool) -> None:
+        """ns.CombatLogSwitch: writes the pause into the record only."""
+        held = self.state
+        if not isinstance(held, dict) or "absent" in held:
+            return
+        if on:
+            held.pop("paused", None)
+        else:
+            held["paused"] = True
+
     # Scenario helpers ------------------------------------------------------
 
     def login(self) -> None:
         """Entering the world, then the 15 s until the first check."""
         self.fire("PLAYER_ENTERING_WORLD")
         self.advance(FIRST_DELAY)
+
+    def reload(self) -> Switch:
+        """A /reload: a new Lua state with the record the write carried (the
+        carry keeps these keys); the log is unchanged and the old session's
+        timers die with it."""
+        held = self.state or {}
+        keep = ("switches", "last_at", "last_to", "last_why", "idle_minutes", "mine", "paused")
+        carried = {k: held[k] for k in keep if k in held and held[k] is not False}
+        self.c.timers.clear()
+        self.c.chat.clear()
+        return Switch(self.c, carried)
 
 
 def _switch(**client: object) -> Switch:
@@ -633,9 +695,7 @@ def test_m20_19_a_log_already_on_is_the_players_and_never_turned_off() -> None:
     s = _switch(log=True)
     s.login()
     assert s.c.switch_calls == []
-    assert s.c.chat == [
-        "the combat log was already on",
-    ]
+    assert s.c.chat == ["the combat log was already on, not turned on by WowLab"]
     s.c.instance = True
     s.fire("ZONE_CHANGED_NEW_AREA")
     s.c.instance = False
@@ -646,20 +706,20 @@ def test_m20_19_a_log_already_on_is_the_players_and_never_turned_off() -> None:
     s.advance(3 * IDLE_MINUTES * 60)
     assert s.c.switch_calls == []
     assert s.c.log is True
-    assert s.c.chat == ["the combat log was already on"]  # said once
+    assert s.c.chat == ["the combat log was already on, not turned on by WowLab"]  # once
     assert s.state is not None and s.state["mine"] is False
 
 
-def test_m20_19_a_log_the_player_turns_off_stays_off() -> None:
+def test_m20_19_a_log_turned_off_outside_wowlab_stays_off() -> None:
     s = _switch()
     s.login()
-    s.c.log = False  # /combatlog by hand
+    s.c.log = False  # /combatlog by hand, or another addon
     s.fire("ZONE_CHANGED_NEW_AREA")
     s.fire("PLAYER_REGEN_DISABLED")
     s.fire("PLAYER_REGEN_ENABLED")
     s.fire("ZONE_CHANGED_NEW_AREA")
     assert s.c.switch_calls == [True]
-    assert s.c.chat[-1] == "you turned the combat log off"
+    assert s.c.chat[-1] == "the combat log was turned off outside WowLab"
     assert s.state is not None and s.state["hands_off"] is True
 
 
@@ -670,7 +730,8 @@ def test_m20_19_the_call_missing_leaves_it_dormant_with_one_line() -> None:
     s.fire("PLAYER_REGEN_DISABLED")
     assert s.c.switch_calls == []
     assert s.c.chat == ["this game gives addons no combat-log switch"]
-    assert s.state == {"absent": "LoggingCombat missing: the combat log is not switched"}
+    assert s.state is not None
+    assert s.state["dormant"] == "LoggingCombat missing: the combat log is not switched"
 
 
 def test_m20_19_a_refused_switch_leaves_it_dormant() -> None:
@@ -679,14 +740,15 @@ def test_m20_19_a_refused_switch_leaves_it_dormant() -> None:
     s.fire("ZONE_CHANGED_NEW_AREA")
     assert s.c.switch_calls == [True]  # asked once, then never again
     assert s.c.chat == ["the game did not switch the combat log when asked"]
-    assert s.state == {"absent": "the game did not switch the combat log when asked"}
+    assert s.state is not None
+    assert s.state["dormant"] == "the game did not switch the combat log when asked"
 
 
 def test_m20_19_no_state_from_the_client_leaves_it_dormant() -> None:
     s = _switch(answers=False)
     s.login()
     assert s.c.switch_calls == []
-    assert s.state == {"absent": "LoggingCombat gave no state"}
+    assert s.state is not None and s.state["dormant"] == "LoggingCombat gave no state"
 
 
 def test_m20_19_advanced_combat_logging_off_is_said_once() -> None:
@@ -710,18 +772,98 @@ def test_m20_19_a_reload_keeps_the_count_and_its_own_log() -> None:
     s.fire("ZONE_CHANGED_NEW_AREA")
     s.c.instance = False
     s.fire("ZONE_CHANGED_NEW_AREA")
-    assert s.state is not None
-    carried = {k: v for k, v in s.state.items() if k in {"switches", "last_at", "last_to"}}
-    carried |= {"last_why": s.state["last_why"], "mine": True, "idle_minutes": 10}
-    # /reload: the log stays on [verify]; the carried record says it is the addon's.
-    again = Switch(s.c, carried)
-    again.c.chat.clear()
+    # /reload: the log stays on [verify]; the carried record says it is the
+    # addon's, and the old session's timers are gone.
+    again = s.reload()
     again.login()
+    assert again.c.timers, "no idle timer after the reload"
     again.c.instance = True
     again.fire("ZONE_CHANGED_NEW_AREA")
     assert again.state is not None
     assert again.state["switches"] == 4
     assert again.c.chat == [f"combat log off ({WHY_INSTANCE})."]
+
+
+def test_m20_19_after_a_reload_its_own_log_still_idles_off() -> None:
+    s = _switch()
+    s.login()
+    again = s.reload()
+    again.login()
+    again.advance(IDLE_MINUTES * 60 - 1)
+    assert again.c.log is True
+    again.advance(1)
+    assert again.c.log is False
+
+
+def test_m20_19_a_longer_idle_time_set_mid_session_still_idles_off() -> None:
+    s = _switch()
+    s.login()
+    s.advance(60)
+    assert s.state is not None
+    s.state["idle_minutes"] = 30  # /wowlab combatlog idle 30
+    s.advance(29 * 60 - 1)
+    assert s.c.log is True
+    s.advance(1)
+    assert s.c.log is False
+    assert len(s.c.timers) <= 1
+
+
+def test_m20_19_zone_changes_do_not_pile_up_idle_timers() -> None:
+    s = _switch()
+    s.login()
+    for _ in range(20):
+        s.fire("ZONE_CHANGED_NEW_AREA")
+    assert len([t for t in s.c.timers if t[1] == "WOWLAB_COMBATLOG_IDLE"]) == 1
+
+
+def test_m20_19_a_dormant_session_keeps_what_was_carried() -> None:
+    carried: dict[str, object] = {
+        "switches": 7,
+        "last_to": "on",
+        "last_why": WHY_WORLD,
+        "idle_minutes": 25,
+        "mine": True,
+    }
+    s = Switch(Client(has_logging=False), carried)
+    s.login()
+    assert s.state is not None
+    assert s.state["dormant"] == "LoggingCombat missing: the combat log is not switched"
+    for key, value in carried.items():
+        assert s.state[key] == value, key
+    again = s.reload()
+    assert again.state is not None and again.state["switches"] == 7
+
+
+def test_m20_19_off_then_on_keeps_mine_and_the_count() -> None:
+    s = _switch()
+    s.login()
+    s.command_switch(False)  # /wowlab combatlog off
+    s.c.instance = True
+    s.fire("ZONE_CHANGED_NEW_AREA")
+    assert s.c.log is True  # paused: left as it is
+    assert s.state is not None and s.state["paused"] is True and s.state["mine"] is True
+    again = s.reload()
+    again.login()
+    assert again.c.switch_calls == [True]
+    again.command_switch(True)  # /wowlab combatlog on
+    again.fire("ZONE_CHANGED_NEW_AREA")
+    assert again.c.log is False  # still the addon's log: turned off in the instance
+    assert again.state is not None and again.state["switches"] == 2
+
+
+def test_m20_19_a_refusal_in_combat_is_tried_again_after_the_fight() -> None:
+    s = _switch()
+    s.login()
+    s.advance(IDLE_MINUTES * 60)
+    assert s.c.log is False
+    s.c.obeys = False
+    s.fire("PLAYER_REGEN_DISABLED")
+    assert s.state is not None and s.state["refused_in_combat"] == 1
+    assert "dormant" not in s.state
+    s.c.obeys = True
+    s.fire("PLAYER_REGEN_ENABLED")
+    assert s.c.log is True
+    assert s.c.chat[-1] == f"combat log on ({WHY_COMBAT})."
 
 
 def test_m20_19_a_restart_ends_the_log_without_hands_off() -> None:
@@ -782,11 +924,16 @@ def test_m20_19_every_chat_line_is_in_the_source() -> None:
     """The model's chat lines are the start of the source's lines."""
     text = COMBATLOG.read_text(encoding="utf-8")
     for line in (
-        "the combat log was already on; WowLab leaves it as you set it and will not turn it off.",
-        "you turned the combat log off; WowLab leaves it off until the next /reload or login.",
+        "the combat log was already on, not turned on by WowLab; WowLab leaves it on and will "
+        "not turn it off.",
+        "the combat log was turned off outside WowLab; WowLab leaves it off until the next "
+        "/reload or login.",
         "this game gives addons no combat-log switch, so WowLab does not turn the combat log",
-        "the game did not switch the combat log when asked, so WowLab leaves it to you",
-        "Advanced Combat Logging is off (game options, Network)",
+        "the game did not switch the combat log when asked, so WowLab leaves it alone",
+        "Advanced Combat Logging is off; wowlab reads more from the log with it on.",
     ):
         assert line in text, line
+    # Neither the player's hand nor a menu path is claimed.
+    for claim in ("you turned", "as you set it", "game options"):
+        assert claim not in text.split("local _, ns = ...")[1], claim
     assert 'ns.Say("combat log " .. to .. " (" .. why .. ").")' in text

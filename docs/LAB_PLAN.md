@@ -7359,6 +7359,36 @@ answers true or false with no argument, that the log stays on across
 `/reload`, `IsInInstance` in the open world, the setting's name; the owner's
 first run is still to come.
 
+*Fix round 1 (2026-11-22, M20-19; supersedes the note above where they
+differ).* **Idle clock:** the idle timer is asked for whenever the addon's
+own log is on with no timer that ends in time, so after a `/reload` (the log
+still on, `mine` carried) the clock runs from the first check, and an idle
+check that finds the time not yet up (a longer `idle` set meanwhile) asks
+again; one timer at a time. **On and off:** `/wowlab combatlog off` and `on`
+pause and resume the switch at once (`paused` in the record), keeping
+`mine`, the count and the last switch; `/wowlab skip combatlog` still stops
+it as any section and drops the record. **Dormant:** the record keeps its
+shape and what was carried, with `dormant` (the reason); a switch refused in
+combat is counted (`refused_in_combat`) and tried again when the fight ends,
+and only a refusal out of combat makes the session dormant. **Words:** the
+log is the game's, for every character, and `mine` is per character, so the
+lines say "not turned on by WowLab" and "turned off outside WowLab", never
+who did it. **Limits:** after an idle switch-off the log returns once the
+fight has started, so the opening hit is not in it (a longer idle time
+avoids that); a log turned off and on by hand within 15 s of a loading
+screen cannot be told from WowLab's (do not toggle it then); another addon
+that switches the log by itself will fight this one. **Log files:** each
+switch-on may start a new `WoWCombatLog-*.txt` [verify], so `crew scan-log`
+with no PATH now reads every log in `Logs/` not read before, oldest first,
+each once (the newest 1,000 looked at; the each-log-once bookkeeping above;
+`logs`, `logs_read` and `logs_already_read` in `--json`), and says how many
+it read and how many had nothing new; a PATH reads that log only. Old logs
+are the player's to delete. Not yet confirmed **[verify]** in addition:
+across a logout to another character, whether a switch-on starts a new
+file, a switch in combat. The first run checks the chat lines (login, an
+instance, an idle, a fight) and counts the files in `Logs/` after a
+session. `doctor` does not show the switch; `char show` does.
+
 ### 21.4 The terms of ADR-0036, for the new store
 
 | Term | What holds it | Proof |
