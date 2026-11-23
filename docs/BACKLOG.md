@@ -3855,3 +3855,123 @@ World PvP is read from a combat log (M20-18) and the owner cannot start one in t
 `docs/handoffs/M20-review.md`: what shipped, each ADR-0036 term with its proof for the database, what stayed [verify], what the option A gap lost in practice, and whether world PvP is worth a wave.
 
 **Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).
+
+---
+
+# Milestone M21 — Links out
+
+Picked by the owner on 2026-11-23, after the conductor's review of the owner's `Gaming/Wow/Forever` bookmarks (the per-site assessment is in this wave's handoff, M21-10). The owner's goal: from the Character tab and from every player the crew book or the PvP book met, in a battleground or the open world, open that player's profile on the Blizzard armory, forevertwinking.com and similar sites; and open the player's own look, talents and gear on Purist, wowforeverbuilds, Wowhead and WoWSims. ADR-0019's, ADR-0031's and ADR-0032's amendments and ADR-0036's note of 2026-11-23 (owner decision, accepted) lift the name limits this needs. M20's owner items (M20-06, M20-15) and its review run beside this wave; M21 touches no M20 file except the Crew tab rows (M21-05).
+
+Facts the research established (2026-11-23), for every ticket below:
+- Forever characters have no realm: a character is region + first name + second name. Blizzard's Forever armory is `https://worldofwarcraft.blizzard.com/{locale}/forever/{region}/armory/character/{first}-{second}` and guilds `…/forever/{region}/armory/guild/{slug}` [verify the slug rules on a real character].
+- The region is the `portal` CVar in `Config.wtf` (`redact.py:37` keeps it); `crew scan-log` keys players `Name-Realm-Region` from the combat log (`docs/LAB_PLAN.md` §21, around line 7243).
+- forevertwinking.com allows linking to any page and forbids scraping, reuse of its data and AI-agent collection (its terms of 2026-11-05; its robots.txt blocks Claude agents). wowlab only ever links to it; no agent opens it; its address formats come from the owner (M21-O1). Its armory lists only characters registered there at twink levels (10, 19, 29, 39, 49, 59), so its link sits beside the armory's, never instead of it.
+- No outside script, frame or image enters the page: Wowhead's `tooltips.js` stays out (a remote script in a page that can run wowlab commands). The CSP (`ui/__init__.py` around line 440) is unchanged by every ticket here.
+
+## [ ] M21-01 — The name limits lifted in code and text
+**Size:** S · **Depends on:** — · **Sources:** ADR-0019, ADR-0031, ADR-0032 amendments and ADR-0036 note of 2026-11-23
+
+- `disclosure.py` (around line 42) and `docs/INSTALL.md` (line 34): the dressing-room sentence no longer says "public game ids only, never a name"; it says what links now carry (names, realm, region, guild, game ids), that they open only when clicked, and that wowlab itself makes no request. `README.md` follows at the next release (it describes the latest release).
+- `scripts/lab_capture.py`: the crew-book rule (around lines 78 and 2846, ADR-0036 term 3) goes: a crew book is captured like any other SavedVariables file. The SQLite rule (around lines 91 and 3032) stays. The repository test that refuses a crew record in the tree goes with it; tests that pinned the refusal are updated to pin the new behaviour.
+- The spec of the not-yet-built `advise --send` packet (`docs/LAB_PLAN.md` §16.5) is left to the conductor; no code exists to change.
+
+**Acceptance:** the capture tool captures a constructed crew book unchanged (byte-identical), and still refuses an SQLite file; the disclosure text and its tests updated; `make lint`, targeted tests green. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: the disclosure line in `wowlab ui` and INSTALL.md; the wiki's privacy wording.
+
+---
+
+## [ ] M21-02 — The region
+**Size:** S · **Depends on:** — · **Sources:** `docs/LAB_FORMATS.md` (Config.wtf, `portal`); `redact.py:37`
+
+Read `portal` from the flavor's `WTF/Config.wtf` through the existing WTF reader (read-only, L1). `region` (`us`, `eu`, `kr`, `tw`; anything else, `test` included, is `None`) joins `CharSummaryRow`, `CharGearReport` and the crew rows of `crew list`/`crew show`/`crew matches` (for a crew player: the `-Region` part the combat log gave, else the player's own region, since Forever has no cross-region play [verify]). Forever's first and second names: the folder form `<First>-<Second>` and the in-game form are both kept, and each report says which is which.
+
+**Acceptance:** tests on real fixtures (the `Config.wtf` of each flavor fixture) and constructed hostile values; `--json` carries `region`; `docs/GLOSSARY.md` gains **Region (portal)**. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: `region` in `char list`/`crew` output.
+
+---
+
+## [ ] M21-03 — `links`: one builder for every outside link
+**Size:** M · **Depends on:** M21-02 · **Sources:** `dressing.py`, `dressing_sites.toml`; ADR-0019 amendment of 2026-11-23
+
+`wowlab_core.links`: a pure function per link kind, no network, every site's address template, slug rules (case, spaces, apostrophes, accents, hyphens) and origin in a packaged `link_sites.toml`, each template with at least one recorded example URL that the tests rebuild byte for byte. `dressing.py` keeps its public API and moves onto the shared plumbing (origin, limits, examples), or stays beside it; the implementer chooses and says why.
+
+Link kinds, this ticket: **profile** (Blizzard armory character and guild; wofwforever.com Journey Companion `…/?region=&name=&surname=`, recorded example from its form; forevertwinking.com character, template left out until M21-O1 gives one, and no link is drawn for a site with no template), **item** (Wowhead `https://www.wowhead.com/forever/item={id}`; `bonus` only once M21-O2 confirms the page reads it), **spell** (`…/forever/spell={id}`). A site's room for a flavor follows `dressing_sites.toml`'s band table; a character of a flavor with no room gets no link.
+
+`page.js` (`DRESSING_ORIGIN` around line 59, the check around lines 1985–2030): one pinned origin becomes the allowlist of origins in `link_sites.toml`, served to the page by the server (not fetched from outside), with the same checks for every link: https, exact origin, no userinfo, the URL round-trips identically. Every outside link opens with `target="_blank" rel="noopener noreferrer"`; the server's `Referrer-Policy: no-referrer` stays.
+
+**Acceptance:** example-URL tests for every template; hostile names (a quote, `<`, `#`, `?`, `/`, `..`, 300 characters, an RTL mark; labelled constructed) give a safe URL or no link; `page.js` tests: an origin outside the list, `http:`, userinfo and a non-round-tripping URL each render as plain text; the CSP header byte-identical. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: none until M21-04 and M21-05.
+
+---
+
+## [ ] M21-04 — Character tab: profiles, guild and gear links
+**Size:** S · **Depends on:** M21-03
+
+The hero panel (`page.html` around lines 86–154) gains a "Profiles" row: Armory, ForeverTwinking (once its template exists), Journey; the guild name links to the armory's guild page; each gear row's item name becomes a Wowhead link (the name stays the link's own text; nothing is fetched); the spellbook view links spells the same way. `char show`/`char gear --json` carry the URLs.
+
+**Acceptance:** UI tests on a constructed character: each link's `href`; a character with no region shows the row without profile links and says why. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes (wiki's Character page).
+
+---
+
+## [ ] M21-05 — Crew and PvP rows link out
+**Size:** S · **Depends on:** M21-03
+
+Every player row of the Crew tab (the list, `crew show`, both teams of `crew matches`, and `--world` open-world encounters, foes and allies) gets the same profile links as M21-04; `crew list/show/matches --json` carry them; the plain CLI prints the armory URL on `crew show`.
+
+**Acceptance:** tests on constructed crew databases: a battleground opponent, an open-world foe from `scan-log` with a `-Region` part and one without, a player with a realm part; each row's links. Reviewed by `code-reviewer` and `security-reviewer`. User-facing: yes (wiki's Crew page).
+
+---
+
+## [ ] M21-06 — Purist: "See my look"
+**Size:** S · **Depends on:** M21-03
+
+A Purist link beside the dressing-room button, built in `links` from the record: hash `#2|<label>|<race>.<sex>.1.1.<class>.forever|0.0.0|<option>:<choice>,…|<item>,…` (format version 2; field 3 is race id, sex 0/1, classic models, sheathed, class id, game; customization pairs from `labaddon.py` around lines 847–863; equipped item ids in slot order, no bonus ids). The label is the character's name. Purist's format was read from its `/lib/look.js` on 2026-11-23 [verify on each Purist update]; the oracle is the owner's own bookmark (`#2|Nymbil%20Stinkfinger|7.0.1.1.4.forever|0.0.0|9430:78207,…|49,2108,…`), which the builder must rebuild from a constructed record holding the same values.
+
+**Acceptance:** the oracle rebuilt byte for byte; a record without customization or gear gives a link with those parts empty, or none if Purist refuses that (say which); added to `link_sites.toml` and the allowlist. Reviewed by `code-reviewer`, `security-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M21-07 — Talents: "Open my talents" on wowforeverbuilds
+**Size:** M · **Depends on:** M21-03 · **Sources:** ADR-0022 (gamedata)
+
+`gamedata` gains `Talent` and `TalentTab` (cached per build, never overwritten). From the record's Legacy talents, build `https://wowforeverbuilds.com/talents/{class-slug}?b={ranks}&race={race-slug}`: per tree (tab order), talents sorted by row then column, one rank digit each, trailing zeros stripped, trees joined with `-`, empty trailing trees dropped (the site checks `^[0-9]{0,40}(-[0-9]{0,40}){0,2}$` and refuses an illegal build). The site's format was read from its source on 2026-11-23; the oracle is one build URL the owner copies (M21-O2) and the recorded tables of a real build.
+
+**Acceptance:** the oracle rebuilt; a character with no talent record or an unknown talent id gets no link and says why; recorded table fixtures with provenance rows. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M21-08 — "Copy for WoWSims"
+**Size:** M · **Depends on:** — · **Sources:** wowsims/forever (MIT) `proto/` and its import format
+
+`wowlab char sim-export [--out PATH]` writes the character in the JSON wowsims/forever's individual sim imports (race, class, level, talents, each slot's item id, enchant, gems and random suffix), to stdout or a file under the user data directory; the Character tab gets a button that shows it with a copy control. The schema is read from the pinned commit of wowsims' `proto/` named in the module's docstring; nothing is fetched at run time.
+
+**Acceptance:** a test on a real character fixture against a recorded export the owner imported successfully (M21-O2); unknown slots left out and listed. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: yes.
+
+---
+
+## [ ] M21-09 — The addon's API reference at the launch build
+**Size:** S · **Depends on:** — · **Sources:** Ketho/BlizzardInterfaceResources `forever` branch; Gethe/wow-ui-source `forever` branch (1.60.1.71037)
+
+A dev-time script (`scripts/`, stdlib only) fetched by hand, never in CI, from a pinned commit of Ketho/BlizzardInterfaceResources' `forever` branch: it regenerates the luacheck globals `make lint-lua` uses and the API list `lab/addon/README.md` cites, replacing forever-addon-kit's 69893 lists. The idea comes from mparke/forever-addons (GPL; nothing copied). The README's [verify] notes are checked against that list and forever-addons' field guide (combat-log restrictions on Forever, the beta's SavedVariables cold-start bug), each with a dated line.
+
+**Acceptance:** `make lint-lua` green on the regenerated globals; the pinned commit and build named; a generated file marked generated. Reviewed by `code-reviewer` and `domain-reviewer`. User-facing: none.
+
+---
+
+## [ ] M21-O1 — Owner: two forevertwinking.com addresses
+**Size:** XS · **owner**
+
+forevertwinking.com's terms forbid an AI agent from reading it, so this one is yours. In your own browser, copy (1) the address of one character page from its armory, and (2) one gear-planner share link. Paste both into the session. The conductor adds them to M21-03's `link_sites.toml` as recorded examples.
+
+---
+
+## [ ] M21-O2 — Owner: click and confirm
+**Size:** S · **Depends on:** M21-04, M21-05, M21-06, M21-07, M21-08 · **owner**
+
+Click each new link on one of your characters and on one opponent; copy one wowforeverbuilds build URL into the session (M21-07's oracle); import one `sim-export` into WoWSims; and say whether a Wowhead `/forever/item=` page with `?bonus=` shows the bonused item.
+
+---
+
+## [ ] M21-10 — Links out wave review
+**Size:** S · **Depends on:** M21-01 to M21-09, M21-O1, M21-O2
+
+`docs/handoffs/M21-review.md`: what shipped, each link with its recorded example, the per-site assessment of the owner's bookmarks (Build / Reference / Later / No, from the conductor's review of 2026-11-23), and what stayed [verify].
+
+**Acceptance:** the handoff merged; dispatch stops until the owner's next pick (ADR-0024).

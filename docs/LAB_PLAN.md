@@ -6555,6 +6555,12 @@ ADR-0019's amendment of 2026-10-17, and the sentence of term 2 promises
 nothing about them. The bug-report template's warning names the crew
 book.
 
+*Amended 2026-11-23 (M21, owner decision; ADR-0036 note of that date):*
+term 3 is lifted. A real crew or PvP book record may be captured into the
+repository like any other SavedVariables file, the capture tool's crew
+rule goes (M21-01), and a reader may be graded on a real capture again.
+What this section says below about term 3 is history.
+
 **L8 and the reader.** L8 and ADR-0026 grade the reader of the addon's
 record on real captures; ADR-0036 term 3 forbids a real crew record in the
 repository. So `crewbook` is graded on constructed files, labelled, plus
