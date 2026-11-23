@@ -114,6 +114,8 @@ REFUSED_PARAMS: Mapping[tuple[str, ...], Mapping[str, str]] = {
     ("char", "model"): {
         "out": "from the UI the model goes only to its default place in wowlab's data folder"
     },
+    # M21-08: from the UI the export is shown to copy; `--out` writes a file.
+    ("char", "sim-export"): {"out": "from the UI the export is shown to copy, not written"},
     # M20-18: `crew scan-log` reads only the Logs folder from the UI (M20-19:
     # every log there not read before).
     ("crew", "scan-log"): {

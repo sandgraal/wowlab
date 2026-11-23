@@ -770,7 +770,8 @@ def run_commands(inst: install.Install, sweep: Sweep) -> None:
         sweep.cli("macros", "list", *ch, "--json")
         sweep.cli("macros", "check", *ch, "--json")
         sweep.cli("sv", "list", *ch, "--json")
-        for sub in ("show", "gear", "binds", "macros", "history"):
+        # M21-08: `char sim-export` reads only without --out, which the sweep never passes.
+        for sub in ("show", "gear", "binds", "macros", "history", "sim-export"):
             sweep.cli("char", sub, *ch, "--json")
         if _has_combat_log(f.path):
             sweep.cli("binds", "coach", *ch, "--json")

@@ -1317,6 +1317,10 @@
     // The `kept_in_backups` row of a character kept only in a backup, while
     // its page is shown (M18-06); null for a character in the game folder.
     kept: null,
+    // The params the picked character's reads were run with, for Copy for
+    // WoWSims (M21-08); null for a character kept only in a backup.
+    params: null,
+    simSeq: 0, // bumped by every export asked for and every clear
     // What `char list` said on stderr when it exited with an error (a row it
     // could not read, a place it could not look inside): the status line
     // keeps it while characters are read.
@@ -1531,6 +1535,7 @@
     // The flavor the list read, else (every flavor listed) the row's own.
     const flavor = character.flavor || (typeof entry.flavor === "string" && entry.flavor ? entry.flavor : null);
     if (flavor) params.flavor = flavor;
+    character.params = params;
     for (const load of [loadGear, loadKeys, loadMacros, loadHistory]) {
       await load(entry, params, seq);
       if (seq !== character.seq) return;
@@ -1547,6 +1552,8 @@
   function clearCharacter() {
     for (const id of CHAR_BOXES) byId(id).replaceChildren();
     clearDressing();
+    clearSim();
+    character.params = null;
     character.kept = null;
     byId("char-kept").textContent = "";
     byId("char-kept").hidden = true;
@@ -1586,6 +1593,7 @@
     drawCharSources(report);
     drawGear(report);
     drawDressing(report.dressing);
+    byId("char-sim-button").hidden = false;
   }
 
   // One fact; `title`, when given, is the exact value behind the one shown.
@@ -2042,6 +2050,76 @@
     box.append(make("span", "Item ids: "), ids, copyButton(text, "Copy the item ids"));
     box.hidden = false;
   }
+
+  // ─── Copy for WoWSims (M21-08) ───
+  // `char sim-export --json`, run only when the button is clicked, for the
+  // character picked from the game folder (never one kept only in a backup,
+  // and never with --out: the server refuses it). Its `sim.text` is shown
+  // as text beside a Copy button that copies it exactly; what the export
+  // leaves out is listed, and its note shown, each in the report's words. The page opens and
+  // fetches nothing outside its own server: the player pastes the text into
+  // WoWSims themselves.
+  function clearSim() {
+    character.simSeq += 1;
+    const button = byId("char-sim-button");
+    button.hidden = true;
+    button.disabled = false;
+    button.setAttribute("aria-expanded", "false");
+    byId("char-sim").hidden = true;
+    byId("char-sim-status").textContent = "";
+    byId("char-sim-text").textContent = "";
+    byId("char-sim-text").hidden = true;
+    byId("char-sim-copy").replaceChildren();
+    byId("char-sim-left").replaceChildren();
+    byId("char-sim-left").hidden = true;
+    byId("char-sim-note").textContent = "";
+  }
+
+  async function loadSim() {
+    const params = character.params;
+    if (!params || character.kept) return;
+    const seq = character.seq;
+    const mine = ++character.simSeq;
+    const button = byId("char-sim-button");
+    button.disabled = true;
+    button.setAttribute("aria-expanded", "true");
+    byId("char-sim").hidden = false;
+    byId("char-sim-text").hidden = true;
+    byId("char-sim-copy").replaceChildren();
+    byId("char-sim-left").replaceChildren();
+    byId("char-sim-left").hidden = true;
+    byId("char-sim-note").textContent = "";
+    byId("char-sim-status").textContent = "Writing the export…";
+    const reply = await runJson(["char", "sim-export"], params);
+    if (seq !== character.seq || mine !== character.simSeq) return;
+    button.disabled = false;
+    const report = reply.data;
+    const sim = report && typeof report === "object" ? report.sim : null;
+    if (reply.error || !sim || typeof sim !== "object" || typeof sim.text !== "string" || !sim.text) {
+      byId("char-sim-status").textContent = reply.error
+        ? shown(reply.error)
+        : "wowlab char sim-export printed something this page does not know.";
+      return;
+    }
+    byId("char-sim-status").textContent = "The character as WoWSims' Addon Import reads it:";
+    const text = byId("char-sim-text");
+    text.textContent = visible(sim.text);
+    text.hidden = false;
+    byId("char-sim-copy").replaceChildren(copyButton(sim.text, "Copy the WoWSims export"));
+    const left = objects(sim.left_out).filter((l) => typeof l.what === "string" && typeof l.why === "string");
+    if (left.length) {
+      const list = byId("char-sim-left");
+      for (const l of left) list.appendChild(make("li", "Left out: " + visible(l.what) + ": " + visible(l.why)));
+      list.hidden = false;
+    }
+    // The report's own note, word for word as the CLI and --json give it:
+    // where to paste, what WoWSims warns, and that the import is not yet confirmed.
+    byId("char-sim-note").textContent = typeof sim.note === "string" ? visible(sim.note) : "";
+  }
+
+  byId("char-sim-button").addEventListener("click", () => {
+    loadSim();
+  });
 
   // ─── the keys and macros panels (M14-09, §16.3) ───
   // Laid out from `char binds --json` and `char macros --json`. A key's

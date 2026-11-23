@@ -422,6 +422,10 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
         ["char", "history"],
         ["char", "kept"],
         ["char", "kept", "--notes"],
+        # M21-08: no game table is cached in the sandbox, so the talents are
+        # left out and the line says how to get them.
+        ["char", "sim-export"],
+        ["char", "sim-export", "--notes"],
         *[
             [*cmd, "--character", c]
             for c in chars
@@ -431,6 +435,7 @@ def read_commands(root: Path, tmp_path: Path) -> list[list[str]]:
                 ["char", "binds"],
                 ["char", "macros"],
                 ["char", "history"],
+                ["char", "sim-export"],
                 ["binds", "list"],
                 ["macros", "list"],
                 ["macros", "check"],
