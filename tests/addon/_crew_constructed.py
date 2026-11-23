@@ -4,8 +4,7 @@ CONSTRUCTED INPUT, labelled as such (L8, ADR-0036 term 3): nothing here is
 addon code, nothing is installed or run, and no line holds a player's name,
 realm or key. tests/addon/test_lab_addon.py loads this module by path and
 grades these sources with the rules it builds from `BOOK`; it does not name
-the book itself. tests/repo/test_crew_book_out_of_repo.py lists this file
-among its constructed test files and grades every line of it.
+the book itself.
 """
 
 from __future__ import annotations

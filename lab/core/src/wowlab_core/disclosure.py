@@ -2,11 +2,13 @@
 
 `docs/LAB_PLAN.md` §18.1 item 2. The one statement of what wowlab sends over
 the network. Its text lives here and nowhere else: `doctor`'s first-run
-intro prints `lines()`, and README.md and docs/INSTALL.md carry
-`render_markdown()` between the `<!-- network:begin -->` and
-`<!-- network:end -->` markers, rewritten by `scripts/gen_network_block.py`.
-A drift test (`lab/core/tests/test_disclosure.py`) fails when any copy
-differs.
+intro prints `lines()`, and docs/INSTALL.md carries `render_markdown()`
+between the `<!-- network:begin -->` and `<!-- network:end -->` markers,
+rewritten by `scripts/gen_network_block.py`. A drift test
+(`lab/core/tests/test_disclosure.py`) fails when that copy differs.
+README.md carries the same markers, but it describes the latest release, so
+its copy is rewritten when a release is published
+(`scripts/gen_network_block.py --write --readme`), not on every change here.
 
 The words are player copy (`.claude/rules/player-copy.md`): commands in
 backticks, which read the same in a terminal and in Markdown, and no ticket,
@@ -37,10 +39,10 @@ ROWS: tuple[str, ...] = (
     "fetch` downloads the tables that name races, classes, specs and professions the same "
     "way, for each version you have installed, and only the ones not already downloaded. "
     "`wowlab char model` downloads the tables it needs for your installed version, once.",
-    "A dressing-room link opens in your own browser, and only when you click it, "
-    "carrying your character's race, body type, class, level and equipped item and "
-    "bonus ids to that site: public game ids only, never a name. wowlab itself makes no "
-    "request to it.",
+    "A link to another site, such as a dressing room or a character's profile, opens in "
+    "your own browser, and only when you click it, carrying what that page needs: a "
+    "character's name, realm, region and guild, and game ids such as race, body type, "
+    "class, level and equipped item and bonus ids. wowlab itself makes no request to it.",
 )
 
 

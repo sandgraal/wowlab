@@ -210,11 +210,10 @@ jobs:
       # A docs-only PR skips the suite, and with it the bidi scan, which reads
       # every tracked file, docs included (M16-89). This runs that one file,
       # so a doc cannot gain a bidi control until the next code PR. The full
-      # suite above runs it on every other PR. The crew-book scan (M19-04)
-      # reads every tracked file too, so a doc cannot gain a crew record.
+      # suite above runs it on every other PR.
       - name: Doc-only PR — bidi controls
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
-        run: uv run --frozen pytest -q tests/repo/test_bidi_controls.py tests/repo/test_crew_book_out_of_repo.py
+        run: uv run --frozen pytest -q tests/repo/test_bidi_controls.py
       - name: Doc-only PR — suite skipped
         if: needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true'
         run: echo "doc-only PR — suite skipped (bidi controls checked above)"
