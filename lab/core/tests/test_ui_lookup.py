@@ -179,6 +179,15 @@ _STEPS = r"""
         }
         await settle();
         out.steps.push(Object.assign(lookupView(), { newRequests: requests.slice(before) }));
+      } else if (step.lookup_type_then_fetch !== undefined) {
+        // A search starts; the download is clicked while it runs, so it is
+        // queued: the button stays off until the queued download has run.
+        const before = requests.length;
+        ids["lookup-query"].value = step.lookup_type_then_fetch; ids["lookup-query"].fire("input"); await tick();
+        ids["lookup-fetch"].fire("click"); await tick();
+        const during = ids["lookup-fetch"].disabled;
+        await settle();
+        out.steps.push(Object.assign(lookupView(), { during: during, newRequests: requests.slice(before) }));
       } else if (step.lookup_kind !== undefined) {
         const before = requests.length;
         ids["lookup-kind"].value = step.lookup_kind; ids["lookup-kind"].fire("change"); await settle();
@@ -437,3 +446,28 @@ def test_an_error_reply_shows_the_error_and_no_stale_caveat_constructed(
     assert shown["caveatHidden"] is False
     assert broke["status"] == "wowlab: it broke" and broke["statusRole"] == "alert"
     assert broke["caveatHidden"] is True and broke["hits"] == []
+
+
+def test_the_download_button_stays_off_until_the_queued_download_ran_constructed(
+    served: Any, tmp_path: Path
+) -> None:
+    s = served(slice_toc(), tables=())
+    plain = {"query": "claw", "limit": "10"}
+    after = json.loads(s.reply(plain)["stdout"])
+    for table in after["game_tables"]:
+        table["state"] = "fetched"
+    reply = s.reply(plain) | {"stdout": json.dumps(after)}
+    held = [{"command": ["lookup"], "params": plain | {"fetch": True}, "reply": reply}]
+    out = _drive(
+        s,
+        tmp_path / "node",
+        [{"lookup_tab": True}, {"lookup_type_then_fetch": "claw"}],
+        held,
+    )
+    step = out["steps"][1]
+    assert step["during"] is True
+    assert _bodies(step) == [
+        {"command": ["lookup"], "params": plain},
+        {"command": ["lookup"], "params": plain | {"fetch": True}},
+    ]
+    assert step["fetchDisabled"] is False and step["offerHidden"] is True

@@ -344,6 +344,39 @@ def test_corrections_that_are_not_figures_or_references_are_left_out_constructed
     assert [x.part for x in data.left_out] == [f"the drop corrections Era in {CORRECTIONS_FILE}"]
 
 
+def test_an_unclosed_section_leaves_it_and_every_later_one_out_constructed(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path, slice_toc())
+    path = store.path.parent / "support" / "Forever" / "DropTables" / "itemDropCorrections.lua"
+    path.write_bytes(
+        b"Q.Era = {\n  [1] = { [2] = 5 },\n}\nQ.Tbc = {\n  [1] = { [2] = 6 },\nQ.Cata = {\n}\n"
+    )
+    data = questiedb.read_drop_tables(store)
+    assert data.corrections is not None and data.corrections.chances == {1: {2: 5.0}}
+    assert [x.part for x in data.left_out] == [
+        f"the drop corrections Tbc in {CORRECTIONS_FILE}",
+        f"the drop corrections Cata in {CORRECTIONS_FILE}",
+    ]
+
+
+def test_a_zone_file_that_cannot_be_read_or_holds_no_list_is_left_out_constructed(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path, slice_toc())
+    path = store.path.parent / "src" / "corrections" / "enum" / "zones.lua"
+    path.write_bytes(b"local x = 1\n")
+    assert questiedb.read_zone_names(store)[1] == [
+        questiedb.LeftOut(
+            part="QuestieDB's own zone names in src\\corrections\\enum\\zones.lua",
+            why="it holds no zone list wowlab reads",
+        )
+    ]
+    path.unlink()
+    names, left = questiedb.read_zone_names(store)
+    assert names == {} and [x.why for x in left] == ["it could not be read"]
+
+
 def test_a_drop_file_with_no_table_is_left_out_as_code_constructed(tmp_path: Path) -> None:
     store = _store(tmp_path, slice_toc())
     path = store.path.parent / "support" / "Forever" / "DropTables" / "itemDropCorrections.lua"

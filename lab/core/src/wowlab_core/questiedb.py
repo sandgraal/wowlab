@@ -520,11 +520,19 @@ def _close_bracket(data: bytes, start: int, level: bytes) -> int:
     return end
 
 
+def _keyed(value: object) -> object:
+    """A table `luadata` gave as a list (its keys ran 1..n) as the dict of
+    those keys, so an item or NPC id 1 reads like any other."""
+    return dict(enumerate(value, start=1)) if isinstance(value, list) else value
+
+
 def _chances(value: object) -> dict[int, dict[int, float]] | None:
+    value = _keyed(value)
     if not isinstance(value, dict):
-        return {} if value == [] or value == {} else None
+        return None
     out: dict[int, dict[int, float]] = {}
     for item, by_npc in value.items():
+        by_npc = _keyed(by_npc)
         if type(item) is not int or not isinstance(by_npc, dict):
             return None
         row: dict[int, float] = {}
@@ -627,13 +635,32 @@ def _constructor_end(data: bytes, start: int) -> int:
 def _assigned_constructors(data: bytes, field: bytes | None = None) -> Iterator[tuple[str, bytes]]:
     """`(field, constructor bytes)` of each `Module.field = {` at the start of
     a line (only `field` when given), in file order; a constructor that
-    cannot be delimited is given as empty bytes."""
+    cannot be delimited is given as empty bytes.
+
+    Linear in the file: a match inside the constructor just read is part of
+    it and is passed over, and after the first constructor that does not
+    close (its scan reached the end of the file) every later match is given
+    as empty bytes without another scan, so a file of unclosed lines costs
+    one pass, not one per line."""
     name = re.escape(field) if field is not None else rb"[A-Za-z_][A-Za-z0-9_]*"
     pattern = re.compile(rb"(?m)^[ \t]*[A-Za-z_][A-Za-z0-9_]*\.(" + name + rb")[ \t]*=[ \t]*\{")
+    after = 0
+    unclosed = False
     for match in pattern.finditer(data):
+        found = match.group(1).decode("ascii")
+        if unclosed:
+            yield found, b""
+            continue
+        if match.start() < after:
+            continue
         start = match.end() - 1
         end = _constructor_end(data, start)
-        yield match.group(1).decode("ascii"), (data[start:end] if end > 0 else b"")
+        if end < 0:
+            unclosed = True
+            yield found, b""
+            continue
+        after = end
+        yield found, data[start:end]
 
 
 # A drop correction that points at a table instead of giving a figure: the two
@@ -732,7 +759,20 @@ def read_zone_names(store: QuestieStore) -> tuple[dict[int, str], list[LeftOut]]
         if _fold(path.name) != "zones.lua":
             continue
         data = _read_listed(path)
-        for _, body in _assigned_constructors(data or b"", b"zoneIDs"):
+        if data is None:
+            left.append(
+                LeftOut(part=f"QuestieDB's own zone names in {listed}", why="it could not be read")
+            )
+            continue
+        bodies = list(_assigned_constructors(data, b"zoneIDs"))
+        if not bodies:
+            left.append(
+                LeftOut(
+                    part=f"QuestieDB's own zone names in {listed}",
+                    why="it holds no zone list wowlab reads",
+                )
+            )
+        for _, body in bodies:
             try:
                 value = luadata.parse(b"t =" + body).to_python().get("t") if body else None
             except luadata.LuaDataError:

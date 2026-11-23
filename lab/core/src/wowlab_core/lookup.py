@@ -90,7 +90,9 @@ class Place(_Model):
     map). The id is an AreaTable id, named from the zone table when it is
     downloaded, except an area QuestieDB numbers itself (`own_area`: the
     zone table has no such id, and QuestieDB's own zone list names it), such
-    as a wing of an instance. `estimated` is a place with no spot, QuestieDB's
+    as a wing of an instance, or a whole continent or the world (10073
+    Kalimdor, 10074 Eastern Kingdoms, 10089 Azeroth in the owner's copy),
+    whose spots are on that continent's or the world's map. `estimated` is a place with no spot, QuestieDB's
     best guess of the zone where the NPC or object is most often found."""
 
     zone_id: int

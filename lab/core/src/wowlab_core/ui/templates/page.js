@@ -4067,7 +4067,7 @@
     ["quest", "Quests"],
     ["object", "Objects"],
   ];
-  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null };
+  const lookupState = { seq: 0, timer: null, fetching: false, running: false, queued: null, waiters: [] };
   fillSelect(byId("lookup-kind"), LOOKUP_KINDS);
 
   function lookupSay(text, isError) {
@@ -4126,7 +4126,9 @@
     }
     if (lookupState.running) {
       lookupState.queued = { fetch: Boolean(fetch) || Boolean(lookupState.queued && lookupState.queued.fetch) };
-      return;
+      // Settled once the queued run has run, so a caller (the download
+      // button) waits for it.
+      return new Promise((resolve) => lookupState.waiters.push(resolve));
     }
     lookupState.running = true;
     const seq = ++lookupState.seq;
@@ -4146,8 +4148,11 @@
     } finally {
       lookupState.running = false;
       const next = lookupState.queued;
+      const waiters = lookupState.waiters;
       lookupState.queued = null;
+      lookupState.waiters = [];
       if (next) await runLookup(next.fetch);
+      for (const resolve of waiters) resolve();
     }
   }
 

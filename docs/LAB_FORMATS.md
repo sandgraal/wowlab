@@ -650,7 +650,11 @@ compiled with `loadstring`, and their text is a literal table.
   - object: 1 name, 2 and 3 quests, 4 spawns, 5 zone.
 - Zone ids are AreaTable ids, named from the game table (§9), **except**
   the areas QuestieDB numbers itself, such as the wings of an instance
-  (10000 and up in the owner's copy: 10022 is Dire Maul's Gordok Commons).
+  (10000 and up in the owner's copy: 10022 is Dire Maul's Gordok Commons)
+  and whole continents or the world (10073 Kalimdor, 10074 Eastern
+  Kingdoms, 10089 Azeroth), whose spots are on that continent's or the
+  world's map (`support\<flavor>\Zones\areaIdToUiMapId.lua`: "Synthetic
+  AreaID: Kalimdor continent map").
   The game table has no such id; QuestieDB's own zone list
   (`src\corrections\enum\zones.lua`, `constants.zoneIDs = { NAME = number
   }`, a literal, read with `luadata`) names it, and `lookup` says "QuestieDB's
@@ -679,8 +683,11 @@ section with anything else is left out by name. The owner's Era section:
 86 items, 228 `WOWHEAD` pointers and 108 percents, no `PSERVER` pointer. Questie applies Era on
 every game version and the later sections only from their own expansion
 on (`Questie/Database/DropTables/dropDB.lua`); which expansion Forever
-counts as is **[verify]**, so `lookup` uses the first section only and
-lists the others.
+counts as is settled, 2026-11-23: Era
+(`Questie/Modules/Expansions.lua`: `[18] = 1, -- WOW_PROJECT_CAMELOT
+(Forever) uses Era content`), so `lookup` uses the first section only and
+lists the others. It finds the first section by its place in the file, not
+by a name or a project id.
 
 **The figure Questie shows** (`DropDB:GetItemDroprate`): its correction
 when it is a percent; when it points at a table, that table's figure; else
